@@ -348,9 +348,30 @@ export async function queryMemory(
     console.warn("[jme] FTS5 query failed:", errMsg(err));
   }
 
+  // Single return path so telemetry (logRecall) fires for EVERY recall —
+  // including empty-result recalls — preserving source:'jme' and latency.
+  const logAndReturn = (results: JmeRecallResult[]): JmeRecallResult[] => {
+    try {
+      logRecall({
+        bank: "jme",
+        query,
+        source: "jme",
+        results: results.map((r) => ({
+          content: r.factText,
+          relevance: r.score,
+          createdAt: new Date(r.ts).toISOString(),
+        })),
+        latencyMs: Date.now() - startedAt,
+      });
+    } catch {
+      // telemetry is best-effort — never fail a recall on an audit-write error
+    }
+    return results;
+  };
+
   // ── 3. Gather all candidate IDs ────────────────────────────────────────────
   const allIds = new Set([...vectorScores.keys(), ...keywordScores.keys()]);
-  if (allIds.size === 0) return [];
+  if (allIds.size === 0) return logAndReturn([]);
 
   // ── 4. Fetch metadata for all candidates ──────────────────────────────────
   const idList = [...allIds].join(",");
@@ -391,23 +412,7 @@ export async function queryMemory(
 
   // Telemetry: record this recall in the shared audit table with source:'jme'
   // so JME retrievals are observable alongside the hindsight/sqlite paths.
-  try {
-    logRecall({
-      bank: "jme",
-      query,
-      source: "jme",
-      results: results.map((r) => ({
-        content: r.factText,
-        relevance: r.score,
-        createdAt: new Date(r.ts).toISOString(),
-      })),
-      latencyMs: Date.now() - startedAt,
-    });
-  } catch {
-    // telemetry is best-effort — never fail a recall on an audit-write error
-  }
-
-  return results;
+  return logAndReturn(results);
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
