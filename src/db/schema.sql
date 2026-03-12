@@ -1,0 +1,68 @@
+-- Mission Control database schema
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id             INTEGER PRIMARY KEY,
+  task_id        TEXT UNIQUE NOT NULL,
+  parent_task_id TEXT REFERENCES tasks(task_id),
+  spawn_type     TEXT DEFAULT 'root' CHECK(spawn_type IN ('root','subtask')),
+  title          TEXT NOT NULL,
+  description    TEXT NOT NULL,
+  priority       TEXT DEFAULT 'medium' CHECK(priority IN ('critical','high','medium','low')),
+  status         TEXT DEFAULT 'pending' CHECK(status IN ('pending','classifying','queued','running','completed','failed','cancelled')),
+  agent_type     TEXT CHECK(agent_type IN ('fast','nanoclaw','heavy','swarm')),
+  classification TEXT,
+  assigned_to    TEXT,
+  input          TEXT,
+  output         TEXT,
+  error          TEXT,
+  progress       INTEGER DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+  metadata       TEXT,
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now')),
+  started_at     TEXT,
+  completed_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(agent_type);
+CREATE INDEX IF NOT EXISTS idx_tasks_task_id ON tasks(task_id);
+
+CREATE TABLE IF NOT EXISTS runs (
+  id             INTEGER PRIMARY KEY,
+  run_id         TEXT UNIQUE NOT NULL,
+  task_id        TEXT NOT NULL REFERENCES tasks(task_id),
+  agent_type     TEXT NOT NULL,
+  status         TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed','cancelled')),
+  phase          TEXT,
+  trace          TEXT,
+  goal_graph     TEXT,
+  input          TEXT NOT NULL,
+  output         TEXT,
+  error          TEXT,
+  token_usage    TEXT,
+  duration_ms    INTEGER,
+  container_id   TEXT,
+  created_at     TEXT DEFAULT (datetime('now')),
+  completed_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+
+CREATE TABLE IF NOT EXISTS agents (
+  id             INTEGER PRIMARY KEY,
+  agent_id       TEXT UNIQUE NOT NULL,
+  name           TEXT NOT NULL,
+  type           TEXT NOT NULL CHECK(type IN ('fast','nanoclaw','heavy')),
+  status         TEXT DEFAULT 'offline' CHECK(status IN ('online','idle','busy','error','offline')),
+  capabilities   TEXT,
+  model          TEXT,
+  config         TEXT,
+  last_seen      TEXT,
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE INDEX IF NOT EXISTS idx_agents_type ON agents(type);
