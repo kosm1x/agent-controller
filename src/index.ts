@@ -17,6 +17,8 @@ import { httpTool } from "./tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "./tools/builtin/file.js";
 import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
+import "./runners/nanoclaw-runner.js";
+import "./runners/swarm-runner.js";
 
 function main(): void {
   const config = getConfig();

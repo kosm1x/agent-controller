@@ -1,0 +1,236 @@
+/**
+ * Orchestrator integration test — mock planner, executor, reflector.
+ * Tests the plan→execute→reflect flow, replan triggers, event emission.
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { GoalStatus } from "./types.js";
+import type { ExecutionResult, ReflectionResult } from "./types.js";
+import { GoalGraph } from "./goal-graph.js";
+
+// Mock all dependencies
+vi.mock("./planner.js", () => ({
+  plan: vi.fn(),
+  replan: vi.fn(),
+}));
+
+vi.mock("./executor.js", () => ({
+  executeGraph: vi.fn(),
+}));
+
+vi.mock("./reflector.js", () => ({
+  reflect: vi.fn(),
+}));
+
+vi.mock("../lib/event-bus.js", () => ({
+  eventBus: {
+    emit: vi.fn(() => true),
+    broadcast: vi.fn(),
+    on: vi.fn(),
+  },
+}));
+
+import { orchestrate } from "./orchestrator.js";
+import { plan, replan } from "./planner.js";
+import { executeGraph } from "./executor.js";
+import { reflect } from "./reflector.js";
+import { eventBus } from "../lib/event-bus.js";
+
+const mockPlan = vi.mocked(plan);
+const mockReplan = vi.mocked(replan);
+const mockExecuteGraph = vi.mocked(executeGraph);
+const mockReflect = vi.mocked(reflect);
+const mockEventBusEmit = vi.mocked(eventBus.emit);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+function makeGraph(): GoalGraph {
+  const graph = new GoalGraph();
+  graph.addGoal({
+    id: "g-1",
+    description: "Goal 1",
+    status: GoalStatus.COMPLETED,
+  });
+  graph.addGoal({
+    id: "g-2",
+    description: "Goal 2",
+    status: GoalStatus.COMPLETED,
+  });
+  return graph;
+}
+
+function makeExecResult(): ExecutionResult {
+  return {
+    goalResults: {
+      "g-1": {
+        goalId: "g-1",
+        ok: true,
+        result: "done",
+        durationMs: 100,
+        toolCalls: 2,
+        toolFailures: 0,
+      },
+      "g-2": {
+        goalId: "g-2",
+        ok: true,
+        result: "done",
+        durationMs: 100,
+        toolCalls: 1,
+        toolFailures: 0,
+      },
+    },
+    summary: {
+      completed: 2,
+      failed: 0,
+      pending: 0,
+      blocked: 0,
+      in_progress: 0,
+      total: 2,
+    },
+    totalToolCalls: 3,
+    totalToolFailures: 0,
+  };
+}
+
+function makeReflection(): ReflectionResult {
+  return {
+    success: true,
+    score: 1.0,
+    learnings: ["All goals completed"],
+    summary: "Perfect execution",
+  };
+}
+
+describe("orchestrate", () => {
+  it("should run plan→execute→reflect successfully", async () => {
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce(graph);
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce(makeReflection());
+
+    const result = await orchestrate("task-1", "Test task");
+
+    expect(result.success).toBe(true);
+    expect(result.reflection.score).toBe(1.0);
+    expect(result.reflection.summary).toBe("Perfect execution");
+    expect(result.goalGraph.goals).toHaveProperty("g-1");
+    expect(result.goalGraph.goals).toHaveProperty("g-2");
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.traceId).toBeDefined();
+
+    // Verify phase ordering
+    expect(mockPlan).toHaveBeenCalledTimes(1);
+    expect(mockExecuteGraph).toHaveBeenCalledTimes(1);
+    expect(mockReflect).toHaveBeenCalledTimes(1);
+  });
+
+  it("should emit progress events", async () => {
+    mockPlan.mockResolvedValueOnce(makeGraph());
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce(makeReflection());
+
+    await orchestrate("task-2", "Test task");
+
+    // Should have emitted multiple progress events
+    const progressCalls = mockEventBusEmit.mock.calls.filter(
+      (call) => call[0] === "task.progress",
+    );
+    expect(progressCalls.length).toBeGreaterThanOrEqual(4); // plan start/end, execute start/end, reflect
+  });
+
+  it("should throw when planning fails", async () => {
+    mockPlan.mockRejectedValueOnce(new Error("LLM unreachable"));
+
+    await expect(orchestrate("task-3", "Failing task")).rejects.toThrow(
+      "Planning failed",
+    );
+  });
+
+  it("should trigger replan when tool failure rate exceeds threshold", async () => {
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce(graph);
+
+    // First execution: high failure rate
+    const highFailExec: ExecutionResult = {
+      goalResults: {
+        "g-1": {
+          goalId: "g-1",
+          ok: true,
+          result: "done",
+          durationMs: 100,
+          toolCalls: 5,
+          toolFailures: 4,
+        },
+      },
+      summary: {
+        completed: 1,
+        failed: 1,
+        pending: 0,
+        blocked: 0,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 5,
+      totalToolFailures: 4,
+    };
+    mockExecuteGraph.mockResolvedValueOnce(highFailExec);
+
+    // Replan returns new graph
+    const replanGraph = makeGraph();
+    mockReplan.mockResolvedValueOnce(replanGraph);
+
+    // Second execution: clean
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce(makeReflection());
+
+    const result = await orchestrate("task-4", "Replanning task");
+
+    expect(mockReplan).toHaveBeenCalledTimes(1);
+    expect(mockExecuteGraph).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(true);
+  });
+
+  it("should respect maxReplans config", async () => {
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce(graph);
+
+    const highFailExec: ExecutionResult = {
+      goalResults: {},
+      summary: {
+        completed: 0,
+        failed: 0,
+        pending: 0,
+        blocked: 1,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 10,
+      totalToolFailures: 8,
+    };
+
+    // All executions fail with high failure rate
+    mockExecuteGraph.mockResolvedValue(highFailExec);
+    mockReplan.mockResolvedValue(makeGraph());
+    mockReflect.mockResolvedValueOnce(makeReflection());
+
+    await orchestrate("task-5", "Many replans", { maxReplans: 2 });
+
+    // Should replan at most 2 times
+    expect(mockReplan.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("should collect trace events", async () => {
+    mockPlan.mockResolvedValueOnce(makeGraph());
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce(makeReflection());
+
+    const result = await orchestrate("task-6", "Traced task");
+
+    expect(result.trace.length).toBeGreaterThan(0);
+    const types = result.trace.map((e) => e.type);
+    expect(types).toContain("phase_start");
+    expect(types).toContain("phase_end");
+  });
+});

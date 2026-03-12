@@ -276,16 +276,16 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**Phases 1-4 complete.** 6,789 lines across 28 source files. Zero type errors.
+**v1 complete.** All 6 phases done. 39 source files, 71 tests passing, zero type errors.
 
 | Phase | Status | What |
 |-------|--------|------|
 | 1. Foundation | Done | Hono server, SQLite/WAL, X-Api-Key auth, persistent event bus, adapter plugin system |
-| 2. Core API + Dispatch | Done | 4-way heuristic classifier, task dispatcher, task/agent REST routes |
+| 2. Core API + Dispatch | Done | 4-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
 | 3. Inference + Fast Runner | Done | Vendor-agnostic LLM adapter (primary+fallback), tool registry, built-in tools, fast runner |
 | 4. Prometheus Core | Done | Goal graph DAG, planner, executor, reflector, orchestrator, heavy runner |
-| 5. NanoClaw + Swarm | Pending | Docker container runner, swarm decomposition + fan-out |
-| 6. SSE + Docker + Polish | Pending | SSE event stream, Dockerfile, docker-compose, Makefile |
+| 5. NanoClaw + Swarm | Done | Docker container runner with sentinel protocol, swarm fan-out with depth guard (max 3) |
+| 6. SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
 
 ---
 

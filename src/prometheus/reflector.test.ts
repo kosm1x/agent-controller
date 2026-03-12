@@ -1,0 +1,176 @@
+/**
+ * Reflector tests — mock infer() to return canned reflection JSON.
+ * Tests LLM evaluation, heuristic fallback, score divergence override.
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { GoalStatus } from "./types.js";
+import type { ExecutionResult } from "./types.js";
+import { GoalGraph } from "./goal-graph.js";
+
+vi.mock("../inference/adapter.js", () => ({
+  infer: vi.fn(),
+}));
+
+import { reflect } from "./reflector.js";
+import { infer } from "../inference/adapter.js";
+
+const mockInfer = vi.mocked(infer);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+function makeGraph(completed: number, failed: number): GoalGraph {
+  const graph = new GoalGraph();
+  for (let i = 0; i < completed; i++) {
+    graph.addGoal({
+      id: `c-${i}`,
+      description: `Completed ${i}`,
+      status: GoalStatus.COMPLETED,
+    });
+  }
+  for (let i = 0; i < failed; i++) {
+    graph.addGoal({
+      id: `f-${i}`,
+      description: `Failed ${i}`,
+      status: GoalStatus.FAILED,
+    });
+  }
+  return graph;
+}
+
+function makeExecResult(graph: GoalGraph): ExecutionResult {
+  const goalResults: Record<
+    string,
+    {
+      goalId: string;
+      ok: boolean;
+      result?: string;
+      error?: string;
+      durationMs: number;
+      toolCalls: number;
+      toolFailures: number;
+    }
+  > = {};
+  const json = graph.toJSON();
+  for (const [id, goal] of Object.entries(json.goals)) {
+    goalResults[id] = {
+      goalId: id,
+      ok: goal.status === GoalStatus.COMPLETED,
+      result: goal.status === GoalStatus.COMPLETED ? "done" : undefined,
+      error: goal.status === GoalStatus.FAILED ? "failed" : undefined,
+      durationMs: 100,
+      toolCalls: 1,
+      toolFailures: goal.status === GoalStatus.FAILED ? 1 : 0,
+    };
+  }
+  return {
+    goalResults,
+    summary: graph.summary(),
+    totalToolCalls: Object.keys(goalResults).length,
+    totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
+  };
+}
+
+describe("reflect", () => {
+  it("should return LLM assessment when valid", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: ["Lesson 1"],
+        summary: "Good execution",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    const result = await reflect("Test task", graph, execResult);
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(0.9);
+    expect(result.learnings).toContain("Lesson 1");
+    expect(result.summary).toBe("Good execution");
+  });
+
+  it("should fall back to heuristic on invalid LLM JSON", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "This is not JSON",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const graph = makeGraph(8, 2);
+    const execResult = makeExecResult(graph);
+    const result = await reflect("Test task", graph, execResult);
+
+    expect(result.score).toBe(0.8); // 8/10
+    expect(result.learnings).toContain(
+      "Reflection LLM unavailable; scored via heuristic",
+    );
+  });
+
+  it("should fall back to heuristic on inference error", async () => {
+    mockInfer.mockRejectedValueOnce(new Error("Provider down"));
+
+    const graph = makeGraph(5, 5);
+    const execResult = makeExecResult(graph);
+    const result = await reflect("Test task", graph, execResult);
+
+    expect(result.score).toBe(0.5); // 5/10
+    expect(result.success).toBe(false);
+  });
+
+  it("should override LLM score when divergence > 0.3", async () => {
+    // LLM says 1.0 but only 5/10 goals completed
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 1.0,
+        learnings: ["Everything great"],
+        summary: "Perfect",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(5, 5);
+    const execResult = makeExecResult(graph);
+    const result = await reflect("Test task", graph, execResult);
+
+    // Heuristic override: 5/10 = 0.5, divergence = 0.5 > 0.3
+    expect(result.score).toBe(0.5);
+    expect(result.success).toBe(false); // score < 0.8 and has failed goals
+  });
+
+  it("should accept LLM score when close to heuristic", async () => {
+    // LLM says 0.85, heuristic is 0.8 — within threshold
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.85,
+        learnings: ["Close to heuristic"],
+        summary: "Almost perfect",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(8, 2);
+    const execResult = makeExecResult(graph);
+    const result = await reflect("Test task", graph, execResult);
+
+    expect(result.score).toBe(0.85); // LLM score accepted
+  });
+});

@@ -27,7 +27,7 @@ export interface TaskSubmission {
   spawnType?: "root" | "subtask";
 }
 
-interface TaskRow {
+export interface TaskRow {
   id: number;
   task_id: string;
   parent_task_id: string | null;
@@ -99,11 +99,53 @@ function acquireContainerSlot(): boolean {
 
 function releaseContainerSlot(): void {
   if (activeContainers > 0) activeContainers--;
+  drainContainerQueue();
 }
 
 /** Returns true if the runner type requires a container slot. */
 function needsContainer(agentType: AgentType): boolean {
   return agentType === "nanoclaw";
+}
+
+// ---------------------------------------------------------------------------
+// Container queue — retries queued tasks when a slot frees up
+// ---------------------------------------------------------------------------
+
+interface QueuedContainerTask {
+  taskId: string;
+  agentType: AgentType;
+  submission: TaskSubmission;
+}
+
+const containerQueue: QueuedContainerTask[] = [];
+
+function enqueueContainerTask(
+  taskId: string,
+  agentType: AgentType,
+  submission: TaskSubmission,
+): void {
+  containerQueue.push({ taskId, agentType, submission });
+  console.log(
+    `[dispatch] Task ${taskId} queued for container slot (${containerQueue.length} in queue)`,
+  );
+}
+
+function drainContainerQueue(): void {
+  while (containerQueue.length > 0) {
+    const next = containerQueue[0];
+    if (!acquireContainerSlot()) break;
+    containerQueue.shift();
+    console.log(
+      `[dispatch] Dequeued task ${next.taskId} — container slot acquired`,
+    );
+    dispatchWithSlot(next.taskId, next.agentType, next.submission).catch(
+      (err) => {
+        console.error(`[dispatch] Queued task ${next.taskId} failed:`, err);
+        updateTaskStatus(next.taskId, "failed", undefined, String(err));
+        releaseContainerSlot();
+      },
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,13 +247,32 @@ async function dispatchTask(
   // Container concurrency check
   if (needsContainer(agentType)) {
     if (!acquireContainerSlot()) {
-      updateTaskStatus(taskId, "queued", undefined, undefined);
-      // TODO: queue and retry when a slot frees up
-      console.warn(
-        `[dispatch] No container slots available for task ${taskId}, staying queued`,
-      );
+      enqueueContainerTask(taskId, agentType, submission);
       return;
     }
+  }
+
+  await dispatchWithSlot(taskId, agentType, submission);
+}
+
+/**
+ * Execute a task that already has any required container slot acquired.
+ * Releases the slot on completion.
+ */
+async function dispatchWithSlot(
+  taskId: string,
+  agentType: AgentType,
+  submission: TaskSubmission,
+): Promise<void> {
+  const runner = runners.get(agentType);
+  if (!runner) {
+    updateTaskStatus(
+      taskId,
+      "failed",
+      undefined,
+      `No runner registered for type: ${agentType}`,
+    );
+    return;
   }
 
   const db = getDatabase();

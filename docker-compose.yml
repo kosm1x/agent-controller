@@ -1,0 +1,29 @@
+services:
+  mission-control:
+    build: .
+    ports:
+      - "${MC_PORT:-8080}:8080"
+    environment:
+      - MC_API_KEY=${MC_API_KEY:?required}
+      - MC_DB_PATH=/data/mc.db
+      - INFERENCE_PRIMARY_URL=${INFERENCE_PRIMARY_URL:?required}
+      - INFERENCE_PRIMARY_KEY=${INFERENCE_PRIMARY_KEY:?required}
+      - INFERENCE_PRIMARY_MODEL=${INFERENCE_PRIMARY_MODEL:?required}
+      - INFERENCE_FALLBACK_URL=${INFERENCE_FALLBACK_URL:-}
+      - INFERENCE_FALLBACK_KEY=${INFERENCE_FALLBACK_KEY:-}
+      - INFERENCE_FALLBACK_MODEL=${INFERENCE_FALLBACK_MODEL:-}
+      - NANOCLAW_IMAGE=${NANOCLAW_IMAGE:-nanoclaw-agent:latest}
+      - MAX_CONCURRENT_CONTAINERS=${MAX_CONCURRENT_CONTAINERS:-5}
+    volumes:
+      - mc-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - mc-net
+    restart: unless-stopped
+
+volumes:
+  mc-data:
+
+networks:
+  mc-net:
+    driver: bridge
