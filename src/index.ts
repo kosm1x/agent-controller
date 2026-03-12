@@ -16,6 +16,7 @@ import { shellTool } from "./tools/builtin/shell.js";
 import { httpTool } from "./tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "./tools/builtin/file.js";
 import "./runners/fast-runner.js";
+import "./runners/heavy-runner.js";
 
 function main(): void {
   const config = getConfig();
