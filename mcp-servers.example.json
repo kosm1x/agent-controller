@@ -1,0 +1,11 @@
+{
+  "filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  },
+  "weather": {
+    "command": "node",
+    "args": ["./mcp-servers/weather.js"],
+    "enabled": false
+  }
+}

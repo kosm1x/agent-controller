@@ -34,6 +34,9 @@ export interface Config {
   nanoclawImage: string;
   /** Max simultaneous containers. */
   maxConcurrentContainers: number;
+
+  /** Path to MCP servers config file (optional). */
+  mcpConfigPath?: string;
 }
 
 function required(key: string): string {
@@ -72,6 +75,8 @@ export function loadConfig(): Config {
 
     nanoclawImage: process.env.NANOCLAW_IMAGE ?? "nanoclaw-agent:latest",
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),
+
+    mcpConfigPath: optional("MC_MCP_CONFIG"),
   };
 }
 

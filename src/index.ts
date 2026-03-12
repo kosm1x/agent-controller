@@ -1,7 +1,7 @@
 /**
  * Mission Control — Server entry point.
  *
- * Initializes database, event bus, and starts the Hono HTTP server.
+ * Initializes database, event bus, MCP servers, and starts the Hono HTTP server.
  */
 
 import { serve } from "@hono/node-server";
@@ -9,6 +9,7 @@ import { getConfig } from "./config.js";
 import { initDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
+import { initMcp, shutdownMcp } from "./mcp/index.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -20,7 +21,7 @@ import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
 import "./runners/swarm-runner.js";
 
-function main(): void {
+async function main(): Promise<void> {
   const config = getConfig();
 
   // Initialize database
@@ -36,6 +37,10 @@ function main(): void {
   toolRegistry.register(httpTool);
   toolRegistry.register(fileReadTool);
   toolRegistry.register(fileWriteTool);
+
+  // Initialize MCP tool servers (adds tools to registry)
+  await initMcp();
+
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
 
   // Create and start HTTP server
@@ -53,6 +58,18 @@ function main(): void {
       console.log(`[mc] Health check: http://localhost:${info.port}/health`);
     },
   );
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    console.log("[mc] Shutting down...");
+    await shutdownMcp();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
-main();
+main().catch((err) => {
+  console.error("[mc] Fatal:", err);
+  process.exit(1);
+});

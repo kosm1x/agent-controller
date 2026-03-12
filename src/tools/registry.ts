@@ -5,7 +5,7 @@
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool } from "./types.js";
 
-class ToolRegistry {
+export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
 
   /** Register a tool. Replaces if name already exists. */

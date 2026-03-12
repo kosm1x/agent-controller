@@ -129,6 +129,23 @@ INFERENCE_FALLBACK_MODEL=MiniMax-M1                   # optional
 
 Automatic failover, exponential backoff on 429/5xx, SSE streaming, truncation detection, model-specific guards.
 
+### MCP tool servers (v2)
+
+Any MCP-compatible tool server can be connected via `mcp-servers.json`:
+
+```json
+{
+  "filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  }
+}
+```
+
+MCP tools are automatically discovered at startup and registered alongside built-in tools. Tool names are namespaced as `{serverId}__{toolName}` (e.g., `filesystem__read_file`). All existing runners (fast, heavy, swarm) can use MCP tools with zero configuration — just include the namespaced tool name in the `tools` array when submitting a task, or omit `tools` to make all tools available.
+
+Set `MC_MCP_CONFIG` to point to a custom config path, or place `mcp-servers.json` in the project root. If the config file doesn't exist, the system works exactly as before with only built-in tools.
+
 ---
 
 ## API
@@ -215,6 +232,13 @@ agent-controller/
         http.ts              # HTTP fetch
         file.ts              # File read/write
 
+    mcp/                     # MCP tool server integration (v2)
+      types.ts               # Config schema, namespace separator
+      config.ts              # Load mcp-servers.json
+      bridge.ts              # MCP tool → MC Tool adapter
+      manager.ts             # Connect servers, discover tools, register
+      index.ts               # initMcp(), shutdownMcp()
+
     prometheus/              # Plan-Execute-Reflect core (TypeScript)
       goal-graph.ts          # DAG: goals, dependencies, status, validation
       orchestrator.ts        # Plan-Execute-Reflect loop with replan triggers
@@ -271,21 +295,23 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | `INFERENCE_MAX_TOKENS` | No | `4096` | Max tokens per response |
 | `NANOCLAW_IMAGE` | No | `nanoclaw-agent:latest` | NanoClaw container image |
 | `MAX_CONCURRENT_CONTAINERS` | No | `5` | Max simultaneous containers |
+| `MC_MCP_CONFIG` | No | `./mcp-servers.json` | Path to MCP servers config |
 
 ---
 
 ## Current status
 
-**v1 complete.** All 6 phases done. 39 source files, 71 tests passing, zero type errors.
+**v1 complete. v2 in progress.** 44 source files, 91 tests passing, zero type errors.
 
 | Phase | Status | What |
 |-------|--------|------|
-| 1. Foundation | Done | Hono server, SQLite/WAL, X-Api-Key auth, persistent event bus, adapter plugin system |
-| 2. Core API + Dispatch | Done | 4-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
-| 3. Inference + Fast Runner | Done | Vendor-agnostic LLM adapter (primary+fallback), tool registry, built-in tools, fast runner |
-| 4. Prometheus Core | Done | Goal graph DAG, planner, executor, reflector, orchestrator, heavy runner |
-| 5. NanoClaw + Swarm | Done | Docker container runner with sentinel protocol, swarm fan-out with depth guard (max 3) |
-| 6. SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
+| v1: Foundation | Done | Hono server, SQLite/WAL, X-Api-Key auth, persistent event bus, adapter plugin system |
+| v1: Core API + Dispatch | Done | 4-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
+| v1: Inference + Fast Runner | Done | Vendor-agnostic LLM adapter (primary+fallback), tool registry, built-in tools, fast runner |
+| v1: Prometheus Core | Done | Goal graph DAG, planner, executor, reflector, orchestrator, heavy runner |
+| v1: NanoClaw + Swarm | Done | Docker container runner with sentinel protocol, swarm fan-out with depth guard (max 3) |
+| v1: SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
+| v2: MCP Integration | Done | MCP client, external tool servers, namespaced tools, graceful degradation |
 
 ---
 
