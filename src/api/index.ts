@@ -9,12 +9,23 @@ import { health } from "./routes/health.js";
 import { tasks } from "./routes/tasks.js";
 import { agents } from "./routes/agents.js";
 import { events } from "./routes/events.js";
+import { buildAgentCard } from "../a2a/agent-card.js";
+import { a2a } from "../a2a/server.js";
 
 export function createApp(): Hono {
   const app = new Hono();
 
   // Health check — no auth
   app.route("/", health);
+
+  // A2A Agent Card — no auth (per A2A spec)
+  app.get("/.well-known/agent.json", (c) => c.json(buildAgentCard()));
+
+  // A2A JSON-RPC endpoint — authenticated
+  const a2aApi = new Hono();
+  a2aApi.use("/*", apiKeyAuth);
+  a2aApi.route("/", a2a);
+  app.route("/a2a", a2aApi);
 
   // All /api/* routes require API key
   const api = new Hono();

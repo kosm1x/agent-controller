@@ -3,7 +3,7 @@
  */
 
 /** Agent/runner type identifiers. */
-export type AgentType = "fast" | "nanoclaw" | "heavy" | "swarm";
+export type AgentType = "fast" | "nanoclaw" | "heavy" | "swarm" | "a2a";
 
 /** Input passed to a runner when executing a task. */
 export interface RunnerInput {

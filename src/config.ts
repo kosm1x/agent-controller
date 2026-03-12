@@ -37,6 +37,11 @@ export interface Config {
 
   /** Path to MCP servers config file (optional). */
   mcpConfigPath?: string;
+
+  /** A2A agent name for discovery card (optional). */
+  a2aName?: string;
+  /** A2A agent base URL for discovery card (optional). */
+  a2aUrl?: string;
 }
 
 function required(key: string): string {
@@ -77,6 +82,9 @@ export function loadConfig(): Config {
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),
 
     mcpConfigPath: optional("MC_MCP_CONFIG"),
+
+    a2aName: optional("A2A_AGENT_NAME"),
+    a2aUrl: optional("A2A_AGENT_URL"),
   };
 }
 

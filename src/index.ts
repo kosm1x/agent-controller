@@ -20,6 +20,7 @@ import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
 import "./runners/swarm-runner.js";
+import "./runners/a2a-runner.js";
 
 async function main(): Promise<void> {
   const config = getConfig();

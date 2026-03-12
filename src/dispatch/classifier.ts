@@ -33,6 +33,7 @@ const VALID_AGENT_TYPES = new Set<AgentType>([
   "nanoclaw",
   "heavy",
   "swarm",
+  "a2a",
 ]);
 
 // Patterns and their score contributions

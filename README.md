@@ -8,7 +8,7 @@ A unified orchestrator that receives tasks and routes them to the right kind of 
 
 Agent Controller is a single backend service that sits between you and your AI agents. You submit a task through the API. It classifies by complexity, picks the right execution strategy, runs it, and streams results back in real time.
 
-Four runner types, one dispatcher:
+Five runner types, one dispatcher:
 
 - **Fast** runs in-process. LLM + tools, loop until done, return. Seconds, not minutes. Good for: running a command, fetching data, quick file edits.
 
@@ -18,7 +18,9 @@ Four runner types, one dispatcher:
 
 - **Swarm** combines planning with parallel execution. Decomposes a large task into a goal graph, then fans out independent goals as sub-tasks — each routed back through the dispatcher to fast or NanoClaw agents running in parallel. Good for: audits across multiple modules, comprehensive analysis, any task with parallelizable sub-work.
 
-You don't have to choose. Set `agent_type: "auto"` and the classifier picks. Or override explicitly.
+- **A2A** delegates to external A2A-compatible agents. Discovers the remote agent via its agent card, sends the task via JSON-RPC, polls until complete. Good for: interop with LangGraph, CrewAI, AutoGen, or other MC instances.
+
+You don't have to choose. Set `agent_type: "auto"` and the classifier picks. Or override explicitly. (A2A is explicit-only — the classifier never auto-selects it.)
 
 ---
 
@@ -48,7 +50,7 @@ Agent Controller doesn't replace either pattern. It routes to the right one — 
 
 5. **Observable by default.** Every state change emits an event to a crash-safe SQLite-backed bus. SSE endpoint for real-time monitoring. Token usage tracked per run.
 
-6. **Protocol-aware.** Internal REST for v1. Architecture designed for A2A (agent discovery) and MCP (tool integration) in v2 without rewrite.
+6. **Protocol-aware.** REST API for task management. MCP for external tool servers. A2A for agent-to-agent interoperability. All protocol endpoints coexist on a single Hono server.
 
 ---
 
@@ -57,13 +59,16 @@ Agent Controller doesn't replace either pattern. It routes to the right one — 
 ### Task lifecycle
 
 ```
-POST /api/tasks
-      |
+POST /api/tasks           POST /a2a (JSON-RPC)
+      |                        |
+      |   ┌────────────────────┘
+      |   |     sendMessage → mapper → submitTask()
+      v   v
   Classifier ── score 0-2:  fast
       |         score 3-5:  nanoclaw
       |         score 6-8:  heavy
       |         score 9+:   swarm
-      |         (or explicit override)
+      |         explicit:   a2a (delegate to remote)
       v
   Dispatcher ── idempotency check
       |         concurrency guard (max 5 containers)
@@ -76,15 +81,19 @@ POST /api/tasks
       +──── Heavy Runner ─────── in-process ──────────── result
       |                          (Plan-Execute-Reflect)
       +──── Swarm Runner ─────── Heavy planner ──────┐
-                                                     |
-                            sub-tasks dispatched ←───┘
-                            in parallel to fast/
-                            nanoclaw runners
-                                  |
-                            results aggregated
-                            reflector evaluates
-                                  |
-                                result
+      |                                              |
+      |                     sub-tasks dispatched ←───┘
+      |                     in parallel to fast/
+      |                     nanoclaw runners
+      |                           |
+      |                     results aggregated
+      |                     reflector evaluates
+      |                           |
+      |                         result
+      |
+      +──── A2A Runner ─────── delegate to remote ──── poll ──── result
+                                A2A agent via
+                                JSON-RPC
 ```
 
 ### Fast runner
@@ -111,6 +120,26 @@ Auto-replans if tool failure rate exceeds threshold or goals get blocked.
 The planner decomposes the task into a goal graph. Each independent goal becomes a sub-task routed back through the dispatcher. Sub-tasks run in parallel (fast or NanoClaw, based on classification). As sub-tasks complete, newly unblocked goals dispatch. Results aggregate. Reflector evaluates the whole.
 
 Parent-child relationship tracked in the database. Cancelling a swarm cancels all sub-tasks.
+
+### A2A runner
+
+Delegates tasks to external A2A-compatible agents. The runner:
+1. Fetches the remote agent's card from `/.well-known/agent.json` (cached 5 min)
+2. Sends the task via `sendMessage` JSON-RPC
+3. Polls `getTask` with exponential backoff (1s → 15s, 10 min timeout)
+
+Requires explicit `agent_type: "a2a"` and `input: { a2a_target: "http://remote:8080", a2a_key: "optional" }`.
+
+### A2A server
+
+MC also acts as an A2A server — external agents can discover MC and submit tasks:
+
+- `GET /.well-known/agent.json` — Agent card (no auth, per A2A spec)
+- `POST /a2a` — JSON-RPC endpoint (requires `X-Api-Key`)
+  - `sendMessage` — submit a task
+  - `getTask` — get task status + artifacts
+  - `cancelTask` — cancel a task
+  - `sendStreamingMessage` — submit + receive SSE updates
 
 ### Inference adapter
 
@@ -163,6 +192,8 @@ All endpoints require `X-Api-Key` header except health check.
 | `GET` | `/api/agents` | List agents |
 | `GET` | `/api/events/stream` | SSE real-time event stream |
 | `GET` | `/health` | Health check (no auth) |
+| `GET` | `/.well-known/agent.json` | A2A agent card (no auth) |
+| `POST` | `/a2a` | A2A JSON-RPC endpoint |
 
 ### Examples
 
@@ -184,6 +215,19 @@ curl -X POST http://localhost:8080/api/tasks \
 
 # Watch events in real time
 curl -N http://localhost:8080/api/events/stream -H "X-Api-Key: $MC_API_KEY"
+
+# A2A: Discover agent capabilities (no auth)
+curl http://localhost:8080/.well-known/agent.json
+
+# A2A: Send a task via JSON-RPC
+curl -X POST http://localhost:8080/a2a \
+  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"sendMessage","id":1,"params":{"message":{"role":"user","parts":[{"type":"text","text":"What is 2+2?"}]}}}'
+
+# A2A: Delegate to a remote agent
+curl -X POST http://localhost:8080/api/tasks \
+  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
+  -d '{"title":"Remote task","description":"Delegate this","agent_type":"a2a","input":{"a2a_target":"http://other-agent:8080","a2a_key":"their-key"}}'
 ```
 
 ---
@@ -210,7 +254,7 @@ agent-controller/
         health.ts            # GET /health
 
     dispatch/
-      classifier.ts          # 4-way heuristic classification
+      classifier.ts          # 5-way heuristic classification
       dispatcher.ts          # Task lifecycle + runner routing + concurrency
 
     runners/
@@ -219,6 +263,7 @@ agent-controller/
       nanoclaw-runner.ts     # NanoClaw Docker container spawn
       heavy-runner.ts        # In-process Plan-Execute-Reflect
       swarm-runner.ts        # Plan decomposition + sub-task fan-out
+      a2a-runner.ts          # Delegate to external A2A agents
       container.ts           # Docker spawn/kill/timeout helpers
 
     inference/
@@ -238,6 +283,14 @@ agent-controller/
       bridge.ts              # MCP tool → MC Tool adapter
       manager.ts             # Connect servers, discover tools, register
       index.ts               # initMcp(), shutdownMcp()
+
+    a2a/                     # A2A agent interoperability (v2)
+      types.ts               # A2A protocol types, JSON-RPC, status mapping
+      agent-card.ts          # Dynamic agent card builder
+      mapper.ts              # Bidirectional MC ↔ A2A conversion
+      server.ts              # JSON-RPC handler (sendMessage, getTask, etc.)
+      client.ts              # RPC client + agent card cache
+      index.ts               # Barrel exports
 
     prometheus/              # Plan-Execute-Reflect core (TypeScript)
       goal-graph.ts          # DAG: goals, dependencies, status, validation
@@ -296,22 +349,25 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | `NANOCLAW_IMAGE` | No | `nanoclaw-agent:latest` | NanoClaw container image |
 | `MAX_CONCURRENT_CONTAINERS` | No | `5` | Max simultaneous containers |
 | `MC_MCP_CONFIG` | No | `./mcp-servers.json` | Path to MCP servers config |
+| `A2A_AGENT_NAME` | No | `Mission Control` | A2A agent card display name |
+| `A2A_AGENT_URL` | No | `http://localhost:{port}` | A2A agent card base URL |
 
 ---
 
 ## Current status
 
-**v1 complete. v2 in progress.** 44 source files, 91 tests passing, zero type errors.
+**v1 complete. v2 in progress.** 51 source files, 130 tests passing, zero type errors.
 
 | Phase | Status | What |
 |-------|--------|------|
 | v1: Foundation | Done | Hono server, SQLite/WAL, X-Api-Key auth, persistent event bus, adapter plugin system |
-| v1: Core API + Dispatch | Done | 4-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
+| v1: Core API + Dispatch | Done | 5-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
 | v1: Inference + Fast Runner | Done | Vendor-agnostic LLM adapter (primary+fallback), tool registry, built-in tools, fast runner |
 | v1: Prometheus Core | Done | Goal graph DAG, planner, executor, reflector, orchestrator, heavy runner |
 | v1: NanoClaw + Swarm | Done | Docker container runner with sentinel protocol, swarm fan-out with depth guard (max 3) |
 | v1: SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
 | v2: MCP Integration | Done | MCP client, external tool servers, namespaced tools, graceful degradation |
+| v2: A2A Protocol | Done | Agent discovery, JSON-RPC server/client, bidirectional interop, streaming, a2a-runner |
 
 ---
 

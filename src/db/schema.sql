@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description    TEXT NOT NULL,
   priority       TEXT DEFAULT 'medium' CHECK(priority IN ('critical','high','medium','low')),
   status         TEXT DEFAULT 'pending' CHECK(status IN ('pending','classifying','queued','running','completed','failed','cancelled')),
-  agent_type     TEXT CHECK(agent_type IN ('fast','nanoclaw','heavy','swarm')),
+  agent_type     TEXT CHECK(agent_type IN ('fast','nanoclaw','heavy','swarm','a2a')),
   classification TEXT,
   assigned_to    TEXT,
   input          TEXT,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS agents (
   id             INTEGER PRIMARY KEY,
   agent_id       TEXT UNIQUE NOT NULL,
   name           TEXT NOT NULL,
-  type           TEXT NOT NULL CHECK(type IN ('fast','nanoclaw','heavy')),
+  type           TEXT NOT NULL CHECK(type IN ('fast','nanoclaw','heavy','a2a')),
   status         TEXT DEFAULT 'offline' CHECK(status IN ('online','idle','busy','error','offline')),
   capabilities   TEXT,
   model          TEXT,
@@ -66,3 +66,11 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_agents_type ON agents(type);
+
+-- A2A context-to-task mapping (for multi-turn conversations)
+CREATE TABLE IF NOT EXISTS a2a_contexts (
+  context_id  TEXT PRIMARY KEY,
+  task_id     TEXT NOT NULL REFERENCES tasks(task_id),
+  created_at  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_ctx_task ON a2a_contexts(task_id);
