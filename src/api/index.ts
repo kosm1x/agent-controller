@@ -6,6 +6,8 @@
 import { Hono } from "hono";
 import { apiKeyAuth } from "./auth.js";
 import { health } from "./routes/health.js";
+import { tasks } from "./routes/tasks.js";
+import { agents } from "./routes/agents.js";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -17,11 +19,8 @@ export function createApp(): Hono {
   const api = new Hono();
   api.use("/*", apiKeyAuth);
 
-  // Task routes (Phase 2)
-  // api.route("/tasks", tasks);
-
-  // Agent routes (Phase 2)
-  // api.route("/agents", agents);
+  api.route("/tasks", tasks);
+  api.route("/agents", agents);
 
   // SSE events (Phase 6)
   // api.route("/events", events);
