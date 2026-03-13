@@ -35,13 +35,35 @@ export class TelegramAdapter implements ChannelAdapter {
     }
 
     this.bot = new Bot(BOT_TOKEN);
+    this.setupHandlers();
 
-    // Status check command
+    // Initialize bot info (getMe) without starting polling
+    await this.bot.init();
+    console.log(`[telegram] Bot initialized: @${this.bot.botInfo.username}`);
+
+    // Clear any stale polling sessions
+    await this.bot.api.deleteWebhook({ drop_pending_updates: true });
+
+    // Start polling in background — don't await (it resolves only on stop)
+    this.bot.start({
+      drop_pending_updates: true,
+      onStart: () => {
+        console.log("[telegram] Polling started");
+      },
+    });
+
+    // Give polling a moment to confirm no 409
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  /** Register command and message handlers on the bot instance. */
+  private setupHandlers(): void {
+    if (!this.bot) return;
+
     this.bot.command("ping", (ctx) => {
       ctx.reply("Mission Control online.");
     });
 
-    // Chat ID discovery
     this.bot.command("chatid", (ctx) => {
       ctx.reply(`Chat ID: ${ctx.chat.id}`);
     });
@@ -50,7 +72,6 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.messageHandler) return;
       if (ctx.message.text.startsWith("/")) return;
 
-      // Owner-only filter
       const chatId = String(ctx.chat.id);
       if (chatId !== OWNER_CHAT_ID) return;
 
@@ -65,15 +86,6 @@ export class TelegramAdapter implements ChannelAdapter {
 
     this.bot.catch((err) => {
       console.error("[telegram] Bot error:", err.message);
-    });
-
-    return new Promise<void>((resolve) => {
-      this.bot!.start({
-        onStart: (botInfo) => {
-          console.log(`[telegram] Bot connected: @${botInfo.username}`);
-          resolve();
-        },
-      });
     });
   }
 
