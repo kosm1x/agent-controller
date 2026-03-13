@@ -19,6 +19,7 @@ import type {
   IncomingMessage,
   OutgoingMessage,
 } from "./types.js";
+import { getMemoryService } from "../memory/index.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -26,25 +27,26 @@ const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 /** All 15 commit-bridge tools available for chat tasks. */
 const COMMIT_TOOLS = [
   "commit__get_daily_snapshot",
-  "commit__list_tasks",
-  "commit__create_task",
-  "commit__update_task",
-  "commit__complete_task",
   "commit__get_hierarchy",
+  "commit__list_tasks",
   "commit__list_goals",
   "commit__list_objectives",
-  "commit__list_recurring",
-  "commit__complete_recurring_today",
-  "commit__log_journal",
-  "commit__list_journal",
-  "commit__get_vision",
-  "commit__set_vision",
-  "commit__run_weekly_review",
+  "commit__search_journal",
+  "commit__list_ideas",
+  "commit__update_status",
+  "commit__complete_recurring",
+  "commit__create_journal_entry",
+  "commit__create_task",
+  "commit__create_goal",
+  "commit__create_objective",
+  "commit__update_task",
+  "commit__bulk_reprioritize",
 ];
 
 interface PendingReply {
   channel: ChannelName;
   to: string;
+  originalText: string;
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
 }
@@ -98,6 +100,32 @@ export class MessageRouter {
     const titleText =
       msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
 
+    // Recall relevant memories for conversation context
+    let memoriesBlock = "";
+    try {
+      const memory = getMemoryService();
+      if (memory.backend === "hindsight") {
+        const memories = await memory.recall(msg.text, {
+          bank: "mc-jarvis",
+          tags: [msg.channel],
+          maxResults: 5,
+        });
+        if (memories.length > 0) {
+          memoriesBlock =
+            "\n\n## Relevant memories\n" +
+            memories.map((m) => `- ${m.content}`).join("\n");
+        }
+      }
+    } catch {
+      // Non-fatal — proceed without memory context
+    }
+
+    const tools = [...COMMIT_TOOLS];
+    const memory = getMemoryService();
+    if (memory.backend === "hindsight") {
+      tools.push("memory_search", "memory_store");
+    }
+
     const result = await submitTask({
       title: `Chat: ${titleText}`,
       description: `Eres Jarvis, el asistente estratégico personal de Fede. Responde al siguiente mensaje de manera concisa, orientada a la acción, en español mexicano. Si se relaciona con tareas, metas u objetivos, usa las herramientas commit__ disponibles para consultar o modificar datos reales antes de responder.
@@ -110,12 +138,12 @@ Jerarquía COMMIT (NO confundas niveles):
 
 Cuando el usuario pregunte por "metas" o "goals", usa list_goals. NO presentes visiones como metas.
 
-Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.
+Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.${memoriesBlock}
 
 Mensaje del usuario:
 ${msg.text}`,
       agentType: "auto",
-      tools: COMMIT_TOOLS,
+      tools,
       tags: ["messaging", msg.channel],
     });
 
@@ -139,6 +167,7 @@ ${msg.text}`,
     this.pendingReplies.set(result.taskId, {
       channel: msg.channel,
       to: msg.from,
+      originalText: msg.text,
       interimTimer,
       finalTimer,
     });
@@ -226,6 +255,23 @@ ${msg.text}`,
     const resultText = this.extractResultText(data.result);
     if (resultText) {
       this.sendToChannel(pending.channel, pending.to, resultText);
+
+      // Retain the exchange in conversation memory
+      try {
+        const memory = getMemoryService();
+        if (memory.backend === "hindsight") {
+          const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
+          memory
+            .retain(exchange, {
+              bank: "mc-jarvis",
+              tags: [pending.channel, "conversation"],
+              async: true,
+            })
+            .catch(() => {});
+        }
+      } catch {
+        // Non-fatal
+      }
     }
   }
 

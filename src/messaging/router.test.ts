@@ -144,7 +144,7 @@ describe("MessageRouter", () => {
       const call = (submitTask as any).mock.calls[0][0];
       expect(call.tools).toHaveLength(15);
       expect(call.tools).toContain("commit__get_daily_snapshot");
-      expect(call.tools).toContain("commit__complete_recurring_today");
+      expect(call.tools).toContain("commit__complete_recurring");
     });
 
     it("should include Jarvis persona in description", async () => {
