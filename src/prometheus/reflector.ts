@@ -10,7 +10,7 @@ import type { ChatMessage } from "../inference/adapter.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
 import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
-import { getDatabase } from "../db/index.js";
+import { getMemoryService } from "../memory/index.js";
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -99,18 +99,20 @@ export async function reflect(
 
   const learnings = assessment.learnings ?? [];
 
-  // Persist learnings to DB if taskId provided
+  // Persist learnings via memory service
   if (taskId && learnings.length > 0) {
-    try {
-      const db = getDatabase();
-      const stmt = db.prepare(
-        "INSERT INTO learnings (task_id, content, source) VALUES (?, ?, 'reflection')",
-      );
-      for (const learning of learnings) {
-        stmt.run(taskId, learning);
-      }
-    } catch {
-      // DB may not be initialized in tests — best-effort persistence
+    const memory = getMemoryService();
+    for (const learning of learnings) {
+      memory
+        .retain(learning, {
+          bank: "mc-operational",
+          tags: ["reflection"],
+          taskId,
+          async: true,
+        })
+        .catch(() => {
+          // Best-effort persistence
+        });
     }
   }
 

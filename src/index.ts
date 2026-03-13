@@ -15,6 +15,8 @@ import {
   stopRitualScheduler,
 } from "./rituals/scheduler.js";
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
+import { initMemoryService } from "./memory/index.js";
+import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -44,8 +46,25 @@ async function main(): Promise<void> {
   toolRegistry.register(fileReadTool);
   toolRegistry.register(fileWriteTool);
 
+  // Initialize memory service (Hindsight if configured, else SQLite)
+  const memory = await initMemoryService();
+
+  // Migrate existing learnings to Hindsight if applicable
+  if (memory.backend === "hindsight") {
+    await migrateLearningsToHindsight(db);
+  }
+
   // Initialize MCP tool servers (adds tools to registry)
   await initMcp();
+
+  // Register memory tools if Hindsight is enabled
+  if (memory.backend === "hindsight") {
+    const { memorySearchTool, memoryStoreTool, memoryReflectTool } =
+      await import("./tools/builtin/memory.js");
+    toolRegistry.register(memorySearchTool);
+    toolRegistry.register(memoryStoreTool);
+    toolRegistry.register(memoryReflectTool);
+  }
 
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
 

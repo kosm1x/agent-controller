@@ -10,7 +10,7 @@ import type { ChatMessage } from "../inference/adapter.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
 import type { TokenUsage } from "./types.js";
-import { getDatabase } from "../db/index.js";
+import { getMemoryService } from "../memory/index.js";
 
 // ---------------------------------------------------------------------------
 // System prompts
@@ -85,22 +85,15 @@ interface PlanResponse {
 /**
  * Decompose a task description into a GoalGraph via LLM.
  */
-function queryPriorLearnings(limit: number): string[] {
-  try {
-    const db = getDatabase();
-    const rows = db
-      .prepare("SELECT content FROM learnings ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as Array<{ content: string }>;
-    return rows.map((r) => r.content);
-  } catch {
-    return [];
-  }
-}
-
 export async function plan(
   taskDescription: string,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
-  const learnings = queryPriorLearnings(5);
+  const memories = await getMemoryService().recall(taskDescription, {
+    bank: "mc-operational",
+    tags: ["planning"],
+    maxResults: 5,
+  });
+  const learnings = memories.map((m) => m.content);
   const learningsBlock =
     learnings.length > 0
       ? `\n\n## Prior learnings\n${learnings.map((l) => `- ${l}`).join("\n")}`

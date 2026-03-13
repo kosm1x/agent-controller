@@ -13,7 +13,7 @@ import { GoalGraph } from "./goal-graph.js";
 import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult } from "./types.js";
-import { getDatabase } from "../db/index.js";
+import { getMemoryService } from "../memory/index.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,26 +55,30 @@ function classifyError(
 // Prompt building
 // ---------------------------------------------------------------------------
 
-function queryPriorLearnings(limit: number): string[] {
+async function recallLearnings(
+  goalDescription: string,
+  limit: number,
+): Promise<string[]> {
   try {
-    const db = getDatabase();
-    const rows = db
-      .prepare("SELECT content FROM learnings ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as Array<{ content: string }>;
-    return rows.map((r) => r.content);
+    const memories = await getMemoryService().recall(goalDescription, {
+      bank: "mc-operational",
+      tags: ["execution"],
+      maxResults: limit,
+    });
+    return memories.map((m) => m.content);
   } catch {
     return [];
   }
 }
 
-function buildGoalPrompt(goal: Goal, context: string): string {
+async function buildGoalPrompt(goal: Goal, context: string): Promise<string> {
   const criteria =
     goal.completionCriteria.length > 0
       ? goal.completionCriteria.map((c, i) => `  ${i + 1}. ${c}`).join("\n")
       : "  (no specific criteria — use best judgment)";
 
   // Inject prior learnings if available
-  const learnings = queryPriorLearnings(10);
+  const learnings = await recallLearnings(goal.description, 10);
   const learningsSection =
     learnings.length > 0
       ? `## Prior learnings\n${learnings.map((l, i) => `  ${i + 1}. ${l}`).join("\n")}\n\n`
@@ -157,7 +161,7 @@ export async function executeGoal(
     }
 
     try {
-      const systemPrompt = buildGoalPrompt(goal, context);
+      const systemPrompt = await buildGoalPrompt(goal, context);
       const messages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Execute this goal: ${goal.description}` },

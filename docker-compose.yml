@@ -45,8 +45,32 @@ services:
       retries: 3
     restart: unless-stopped
 
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    profiles: ["hindsight"]
+    ports:
+      - "${HINDSIGHT_PORT:-8888}:8888"
+      - "${HINDSIGHT_UI_PORT:-9999}:9999"
+    environment:
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_LLM_API_KEY:-${INFERENCE_PRIMARY_KEY}}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL:-gpt-4o-mini}
+      - HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_BASE_URL:-}
+      - HINDSIGHT_API_MCP_ENABLED=true
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+    networks:
+      - mc-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/v1/default/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   mc-data:
+  hindsight-data:
 
 networks:
   mc-net:

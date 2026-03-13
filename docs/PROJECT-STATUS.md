@@ -12,9 +12,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | 66 (+5 in commit-bridge) |
-| Test files | 20 |
-| Tests passing | 190 |
+| Source files | 76 (+5 in commit-bridge) |
+| Test files | 22 |
+| Tests passing | 208 |
 | Type errors | 0 |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
@@ -35,8 +35,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Done | — |
 | v2.6 | JARVIS Integration — commit-bridge MCP server (15 tools), ritual scheduler (morning/nightly) | Done | — |
 | v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
-| v2.8 | Classifier Evolution — ML-based classification from task history | Planned | — |
-| v2.8 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
+| v2.8 | Hindsight Memory — semantic long-term memory via Hindsight sidecar, memory service abstraction, agent memory tools | Done | — |
+| v2.9 | Classifier Evolution — ML-based classification from task history | Planned | — |
+| v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
 ## Runners
 
@@ -69,6 +70,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-13 | — | v2.8: Hindsight memory integration — MemoryService abstraction, Hindsight HTTP client + backend with circuit breaker, 3 agent memory tools, Jarvis conversation memory, learnings migration, Docker Compose sidecar |
+| 2026-03-13 | — | Fix: COMMIT_TOOLS list in router — 8/15 tool names were stale and didn't match actual commit-bridge MCP tools |
 | 2026-03-13 | — | Fix: ACI tool descriptions for COMMIT hierarchy — LLM no longer confuses visions with goals in Telegram chat |
 | 2026-03-13 | — | v2.7: Messaging layer — WhatsApp (Baileys) + Telegram (Grammy) adapters, message router, ritual broadcast, formatter, 31 new tests |
 | 2026-03-13 | — | v2.6: JARVIS integration — commit-bridge MCP server (15 Supabase tools), ritual scheduler (morning briefing + nightly close), validated with live data |
@@ -88,7 +91,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 - Full task lifecycle: submit → classify → dispatch → execute → stream results
 - 5 runner types with automatic complexity-based routing
-- 4 built-in tools (shell_exec, http_fetch, file_read, file_write) + 15 MCP tools (commit-bridge: Supabase read/write for COMMIT-AI)
+- 4-7 built-in tools (shell_exec, http_fetch, file_read, file_write + memory_search, memory_store, memory_reflect when Hindsight enabled) + 15 MCP tools (commit-bridge)
 - A2A interop: MC acts as both A2A server (receives tasks) and client (delegates tasks)
 - SSE real-time event stream with replay and filtering
 - Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
@@ -101,6 +104,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Bidirectional messaging: WhatsApp (Baileys) + Telegram (Grammy), owner-only, every inbound message becomes a task
 - Ritual broadcast: morning briefing and nightly close results delivered to all active messaging channels
 - Message formatting: markdown dialect conversion (WA/TG), auto-splitting for Telegram 4096-char limit
+- Hindsight long-term memory: semantic+keyword+graph+temporal retrieval via Docker sidecar (`docker compose --profile hindsight up -d`)
+- Memory service abstraction: pluggable backends (SQLite fallback, Hindsight for semantic), circuit breaker (3 failures → 60s cooldown)
+- Agent memory tools: memory_search, memory_store, memory_reflect — LLMs can explicitly search/store memories during execution
+- Jarvis conversation memory: recalls past conversations before responding, retains exchanges after completion
 
 ## Blocked / Dependencies
 
@@ -111,8 +118,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.5 Container Heavy Runner | — | Done |
 | v2.6 JARVIS Integration | — | Done |
 | v2.7 Messaging Layer | — | Done |
-| v2.8 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
-| v2.9 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
+| v2.8 Hindsight Memory | — | Done |
+| v2.9 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
+| v2.10 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
 
 ## Known Issues
 
