@@ -50,6 +50,13 @@ export interface Config {
   /** Max simultaneous containers. */
   maxConcurrentContainers: number;
 
+  /** Run heavy tasks inside a Docker container instead of in-process. */
+  heavyRunnerContainerized: boolean;
+  /** Docker image for containerized heavy runner. */
+  heavyRunnerImage: string;
+  /** Timeout for containerized heavy runner in milliseconds. */
+  heavyRunnerTimeoutMs: number;
+
   /** Path to MCP servers config file (optional). */
   mcpConfigPath?: string;
 
@@ -105,6 +112,11 @@ export function loadConfig(): Config {
 
     nanoclawImage: process.env.NANOCLAW_IMAGE ?? "nanoclaw-agent:latest",
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),
+
+    heavyRunnerContainerized: process.env.HEAVY_RUNNER_CONTAINERIZED === "true",
+    heavyRunnerImage:
+      process.env.HEAVY_RUNNER_IMAGE ?? "mission-control:latest",
+    heavyRunnerTimeoutMs: int("HEAVY_RUNNER_TIMEOUT_MS", 900_000),
 
     mcpConfigPath: optional("MC_MCP_CONFIG"),
 

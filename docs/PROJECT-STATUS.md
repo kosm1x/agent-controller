@@ -12,9 +12,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | 53 |
+| Source files | 54 |
 | Test files | 17 |
-| Tests passing | 148 |
+| Tests passing | 152 |
 | Type errors | 0 |
 | Dependencies | 4 (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk) |
 
@@ -32,7 +32,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.3 | Frontend Dashboard — real-time web UI for tasks/agents/events | Done | — |
 | v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
 | v2.4 | LiteLLM Backend — sidecar proxy, configurable retries, inference health probe | Done | — |
-| v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Planned | — |
+| v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Done | — |
 | v2.6 | Classifier Evolution — ML-based classification from task history | Planned | — |
 | v2.7 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
@@ -42,7 +42,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 |--------|------|--------|--------------|
 | Fast | In-process | Live | LLM + tool loop, max 10 rounds |
 | NanoClaw | Docker container | Live | Sentinel stdin/stdout protocol, 5-min timeout |
-| Heavy | In-process | Live | Prometheus Plan-Execute-Reflect, auto-replan |
+| Heavy | In-process or Docker | Live | Prometheus PER, optional container isolation via `HEAVY_RUNNER_CONTAINERIZED` |
 | Swarm | In-process + sub-tasks | Live | Goal decomposition, parallel fan-out, depth guard (3) |
 | A2A | Remote delegation | Live | JSON-RPC to external agents, exponential backoff polling |
 
@@ -67,6 +67,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-13 | — | v2.5: Container heavy runner — optional Docker isolation for heavy tasks, worker entrypoint, container slot sharing |
 | 2026-03-13 | — | v2.4: LiteLLM sidecar — Docker Compose profile, configurable retries, inference health probe, env.example |
 | 2026-03-13 | — | v2.3.1: Prometheus core improvements — token tracking, budget/timeouts, context compression, tool repair, learnings persistence, abort signals |
 | 2026-03-13 | — | v2.3: Frontend dashboard — real-time web UI, SSE events, goal graph visualization |
@@ -89,6 +90,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Swarm parallel decomposition with sub-task fan-out
 - Real-time web dashboard at `/dashboard/` with task management, agent fleet view, event log, goal graph SVG
 - LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
+- Optional Docker isolation for heavy tasks (`HEAVY_RUNNER_CONTAINERIZED=true`) — same MC image, container slot sharing
 
 ## Blocked / Dependencies
 
@@ -96,7 +98,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 |------|-----------|-------|
 | v2.3 Frontend Dashboard | — | Done |
 | v2.4 LiteLLM | — | Done |
-| v2.5 Container Heavy Runner | v1.4 + Docker | Heavy runner inside Docker container |
+| v2.5 Container Heavy Runner | — | Done |
 | v2.6 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
 | v2.7 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
 

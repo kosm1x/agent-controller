@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { classify } from "./classifier.js";
+import { getConfig } from "../config.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,9 @@ function releaseContainerSlot(): void {
 
 /** Returns true if the runner type requires a container slot. */
 function needsContainer(agentType: AgentType): boolean {
-  return agentType === "nanoclaw";
+  if (agentType === "nanoclaw") return true;
+  if (agentType === "heavy") return getConfig().heavyRunnerContainerized;
+  return false;
 }
 
 // ---------------------------------------------------------------------------

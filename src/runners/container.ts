@@ -47,6 +47,8 @@ export interface SpawnContainerOptions {
   input: ContainerInput;
   envVars?: Record<string, string>;
   timeoutMs?: number;
+  /** Override the container's default CMD (e.g. ["node", "dist/runners/heavy-worker.js"]). */
+  command?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +95,9 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   }
 
   args.push(image);
+
+  // Append custom command if provided (e.g. worker entrypoint)
+  if (opts.command) args.push(...opts.command);
 
   // Spawn the container process
   const proc = spawn("docker", args, {

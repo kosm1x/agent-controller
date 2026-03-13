@@ -14,6 +14,9 @@ services:
       - INFERENCE_FALLBACK_MODEL=${INFERENCE_FALLBACK_MODEL:-}
       - NANOCLAW_IMAGE=${NANOCLAW_IMAGE:-nanoclaw-agent:latest}
       - MAX_CONCURRENT_CONTAINERS=${MAX_CONCURRENT_CONTAINERS:-5}
+      - HEAVY_RUNNER_CONTAINERIZED=${HEAVY_RUNNER_CONTAINERIZED:-false}
+      - HEAVY_RUNNER_IMAGE=${HEAVY_RUNNER_IMAGE:-mission-control:latest}
+      - HEAVY_RUNNER_TIMEOUT_MS=${HEAVY_RUNNER_TIMEOUT_MS:-900000}
     volumes:
       - mc-data:/data
       - /var/run/docker.sock:/var/run/docker.sock

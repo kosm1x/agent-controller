@@ -1,9 +1,11 @@
 /**
- * Heavy runner tests — mock orchestrate() to verify RunnerOutput mapping.
+ * Heavy runner tests — mock orchestrate() and container infra to verify
+ * both in-process and containerized execution paths.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OrchestratorResult } from "../prometheus/types.js";
+import type { ContainerOutput, ContainerHandle } from "./container.js";
 
 vi.mock("../dispatch/dispatcher.js", () => ({
   registerRunner: vi.fn(),
@@ -13,14 +15,54 @@ vi.mock("../prometheus/orchestrator.js", () => ({
   orchestrate: vi.fn(),
 }));
 
+vi.mock("../config.js", () => ({
+  getConfig: vi.fn(),
+}));
+
+vi.mock("./container.js", () => ({
+  spawnContainer: vi.fn(),
+  killContainer: vi.fn(),
+  generateContainerName: vi.fn(() => "mc-heavy-test-123"),
+  OUTPUT_START_MARKER: "---NANOCLAW_OUTPUT_START---",
+  OUTPUT_END_MARKER: "---NANOCLAW_OUTPUT_END---",
+}));
+
 import { heavyRunner } from "./heavy-runner.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
+import { getConfig } from "../config.js";
+import { spawnContainer, killContainer } from "./container.js";
 
 const mockOrchestrate = vi.mocked(orchestrate);
+const mockGetConfig = vi.mocked(getConfig);
+const mockSpawnContainer = vi.mocked(spawnContainer);
+const mockKillContainer = vi.mocked(killContainer);
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+function makeConfig(containerized = false) {
+  return {
+    apiKey: "test-key",
+    port: 8080,
+    dbPath: "./data/mc.db",
+    inferencePrimaryUrl: "http://localhost:4000",
+    inferencePrimaryKey: "sk-test",
+    inferencePrimaryModel: "gpt-4",
+    inferenceFallbackUrl: undefined,
+    inferenceFallbackKey: undefined,
+    inferenceFallbackModel: undefined,
+    inferenceTimeoutMs: 30000,
+    inferenceMaxTokens: 4096,
+    inferenceMaxRetries: 3,
+    orchestratorTimeoutMs: 600_000,
+    orchestratorMaxIterations: 90,
+    goalTimeoutMs: 120_000,
+    inferenceContextLimit: 128_000,
+    compressionThreshold: 0.85,
+    nanoclawImage: "nanoclaw-agent:latest",
+    maxConcurrentContainers: 5,
+    heavyRunnerContainerized: containerized,
+    heavyRunnerImage: "mission-control:latest",
+    heavyRunnerTimeoutMs: 900_000,
+  };
+}
 
 function makeOrchestratorResult(
   overrides: Partial<OrchestratorResult> = {},
@@ -52,6 +94,11 @@ function makeOrchestratorResult(
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetConfig.mockReturnValue(makeConfig(false));
+});
 
 describe("heavyRunner", () => {
   it("should have type heavy", () => {
@@ -139,5 +186,127 @@ describe("heavyRunner", () => {
       undefined,
       ["shell", "file"],
     );
+  });
+
+  it("should NOT call spawnContainer when not containerized", async () => {
+    mockOrchestrate.mockResolvedValueOnce(makeOrchestratorResult());
+
+    await heavyRunner.execute({
+      taskId: "task-5",
+      runId: "run-5",
+      title: "In-process",
+      description: "Default mode",
+    });
+
+    expect(mockSpawnContainer).not.toHaveBeenCalled();
+    expect(mockOrchestrate).toHaveBeenCalled();
+  });
+});
+
+describe("heavyRunner container mode", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(makeConfig(true));
+  });
+
+  it("should call spawnContainer when containerized", async () => {
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({
+        success: true,
+        content: "Container result",
+        score: 0.85,
+        learnings: ["Containerized learning"],
+        tokenUsage: { promptTokens: 200, completionTokens: 100 },
+        goalGraph: { goals: {} },
+        trace: [],
+        durationMs: 3000,
+      }),
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-test-123",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    const result = await heavyRunner.execute({
+      taskId: "task-c1",
+      runId: "run-c1",
+      title: "Container task",
+      description: "Run in container",
+    });
+
+    expect(mockSpawnContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: "mission-control:latest",
+        command: ["node", "dist/runners/heavy-worker.js"],
+        envVars: expect.objectContaining({
+          INFERENCE_PRIMARY_URL: "http://localhost:4000",
+          INFERENCE_PRIMARY_KEY: "sk-test",
+          INFERENCE_PRIMARY_MODEL: "gpt-4",
+          MC_API_KEY: "test-key",
+          MC_DB_PATH: "/tmp/mc.db",
+        }),
+        timeoutMs: 900_000,
+      }),
+    );
+    expect(mockOrchestrate).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.output).toEqual({
+      content: "Container result",
+      score: 0.85,
+      learnings: ["Containerized learning"],
+    });
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 200,
+      completionTokens: 100,
+    });
+  });
+
+  it("should return error on container failure", async () => {
+    const containerOutput: ContainerOutput = {
+      status: "error",
+      result: null,
+      error: "Container OOMKilled",
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-test-456",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    const result = await heavyRunner.execute({
+      taskId: "task-c2",
+      runId: "run-c2",
+      title: "OOM task",
+      description: "Will OOM",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Container OOMKilled");
+  });
+
+  it("should kill container on exception and return failure", async () => {
+    const killFn = vi.fn();
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-test-789",
+      process: {} as ContainerHandle["process"],
+      result: Promise.reject(new Error("Docker daemon unreachable")),
+      kill: killFn,
+    });
+
+    const result = await heavyRunner.execute({
+      taskId: "task-c3",
+      runId: "run-c3",
+      title: "Docker down",
+      description: "Daemon dead",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Docker daemon unreachable");
+    expect(mockKillContainer).toHaveBeenCalled();
   });
 });
