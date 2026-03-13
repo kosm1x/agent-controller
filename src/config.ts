@@ -30,6 +30,18 @@ export interface Config {
   /** Max tokens per LLM response. */
   inferenceMaxTokens: number;
 
+  /** Global orchestration timeout in milliseconds. */
+  orchestratorTimeoutMs: number;
+  /** Max LLM iterations per orchestration run. */
+  orchestratorMaxIterations: number;
+  /** Per-goal timeout in milliseconds. */
+  goalTimeoutMs: number;
+
+  /** Context window size for compression decisions. */
+  inferenceContextLimit: number;
+  /** Fraction of context window that triggers compression (0.0–1.0). */
+  compressionThreshold: number;
+
   /** NanoClaw Docker image name. */
   nanoclawImage: string;
   /** Max simultaneous containers. */
@@ -77,6 +89,15 @@ export function loadConfig(): Config {
 
     inferenceTimeoutMs: int("INFERENCE_TIMEOUT_MS", 30000),
     inferenceMaxTokens: int("INFERENCE_MAX_TOKENS", 4096),
+
+    orchestratorTimeoutMs: int("ORCHESTRATOR_TIMEOUT_MS", 600_000),
+    orchestratorMaxIterations: int("ORCHESTRATOR_MAX_ITERATIONS", 90),
+    goalTimeoutMs: int("GOAL_TIMEOUT_MS", 120_000),
+
+    inferenceContextLimit: int("INFERENCE_CONTEXT_LIMIT", 128_000),
+    compressionThreshold: parseFloat(
+      process.env.COMPRESSION_THRESHOLD ?? "0.85",
+    ),
 
     nanoclawImage: process.env.NANOCLAW_IMAGE ?? "nanoclaw-agent:latest",
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),

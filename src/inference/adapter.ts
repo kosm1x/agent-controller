@@ -14,6 +14,8 @@
  */
 
 import { getConfig } from "../config.js";
+import { toolRegistry } from "../tools/registry.js";
+import { shouldCompress, compress } from "../prometheus/context-compressor.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,6 +139,7 @@ async function callProvider(
   provider: InferenceProvider,
   request: InferenceRequest,
   onTextChunk?: OnTextChunk,
+  externalSignal?: AbortSignal,
 ): Promise<InferenceResponse> {
   const config = getConfig();
   const url = `${provider.baseUrl}/chat/completions`;
@@ -174,12 +177,17 @@ async function callProvider(
     config.inferenceTimeoutMs,
   );
 
+  // Compose external abort signal with timeout controller
+  const combinedSignal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
+
   try {
     const response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: combinedSignal,
     });
 
     if (!response.ok) {
@@ -320,6 +328,7 @@ async function parseSSEStream(
 export async function infer(
   request: InferenceRequest,
   onTextChunk?: OnTextChunk,
+  signal?: AbortSignal,
 ): Promise<InferenceResponse> {
   const providers = loadProviders();
   if (providers.length === 0) {
@@ -333,7 +342,7 @@ export async function infer(
   for (const provider of providers) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        return await callProvider(provider, request, onTextChunk);
+        return await callProvider(provider, request, onTextChunk, signal);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const statusMatch = lastError.message.match(/HTTP (\d+)/);
@@ -371,19 +380,54 @@ export async function inferWithTools(
   executor: ToolExecutor,
   maxRounds = 10,
   onTextChunk?: OnTextChunk,
+  signal?: AbortSignal,
 ): Promise<{
   content: string;
   messages: ChatMessage[];
   totalUsage: { prompt_tokens: number; completion_tokens: number };
 }> {
-  const conversation = [...messages];
+  let conversation = [...messages];
   let totalPrompt = 0;
   let totalCompletion = 0;
 
   for (let round = 0; round < maxRounds; round++) {
+    // Compress context if approaching limit
+    const config = getConfig();
+    if (
+      shouldCompress(
+        conversation,
+        config.inferenceContextLimit,
+        config.compressionThreshold,
+      )
+    ) {
+      console.log(
+        `[inference] Context compression triggered at round ${round} (${conversation.length} messages)`,
+      );
+      conversation = await compress(conversation);
+    }
+
+    // Check abort before each round
+    if (signal?.aborted) {
+      const lastContent = [...conversation]
+        .reverse()
+        .find((m) => m.role === "assistant" && typeof m.content === "string");
+      return {
+        content:
+          (typeof lastContent?.content === "string"
+            ? lastContent.content
+            : null) ?? "[aborted]",
+        messages: conversation,
+        totalUsage: {
+          prompt_tokens: totalPrompt,
+          completion_tokens: totalCompletion,
+        },
+      };
+    }
+
     const response = await infer(
       { messages: conversation, tools },
       onTextChunk,
+      signal,
     );
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;
@@ -428,7 +472,18 @@ export async function inferWithTools(
             );
           } else {
             const args = JSON.parse(rawArgs) as Record<string, unknown>;
-            result = await executor(toolCall.function.name, args);
+            // Attempt tool call repair if name not in registry
+            let toolName = toolCall.function.name;
+            if (!toolRegistry.has(toolName)) {
+              const closest = toolRegistry.findClosest(toolName);
+              if (closest) {
+                console.log(
+                  `[inference] Tool call repaired: "${toolName}" → "${closest}"`,
+                );
+                toolName = closest;
+              }
+            }
+            result = await executor(toolName, args);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

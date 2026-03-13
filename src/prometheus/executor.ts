@@ -10,8 +10,10 @@ import { inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { GoalGraph } from "./goal-graph.js";
+import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult } from "./types.js";
+import { getDatabase } from "../db/index.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,17 +55,37 @@ function classifyError(
 // Prompt building
 // ---------------------------------------------------------------------------
 
+function queryPriorLearnings(limit: number): string[] {
+  try {
+    const db = getDatabase();
+    const rows = db
+      .prepare("SELECT content FROM learnings ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as Array<{ content: string }>;
+    return rows.map((r) => r.content);
+  } catch {
+    return [];
+  }
+}
+
 function buildGoalPrompt(goal: Goal, context: string): string {
   const criteria =
     goal.completionCriteria.length > 0
       ? goal.completionCriteria.map((c, i) => `  ${i + 1}. ${c}`).join("\n")
       : "  (no specific criteria — use best judgment)";
 
+  // Inject prior learnings if available
+  const learnings = queryPriorLearnings(10);
+  const learningsSection =
+    learnings.length > 0
+      ? `## Prior learnings\n${learnings.map((l, i) => `  ${i + 1}. ${l}`).join("\n")}\n\n`
+      : "";
+
   return (
     `You are executing a single goal as part of a larger plan. Use the available tools to achieve the goal.\n\n` +
     `## Goal\n${goal.description}\n\n` +
     `## Completion Criteria\n${criteria}\n\n` +
     (context ? `## Context from completed goals\n${context}\n\n` : "") +
+    learningsSection +
     `## Instructions\n` +
     `- Use tools to accomplish the goal.\n` +
     `- When all completion criteria are met, respond with a summary of what you achieved.\n` +
@@ -101,10 +123,39 @@ export async function executeGoal(
   goal: Goal,
   context: string,
   toolNames?: string[],
+  budget?: IterationBudget,
+  goalTimeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<GoalResult> {
   const start = Date.now();
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Check abort signal
+    if (signal?.aborted) {
+      return {
+        goalId: goal.id,
+        ok: false,
+        error: "Aborted",
+        durationMs: Date.now() - start,
+        toolCalls: 0,
+        toolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      };
+    }
+
+    // Check budget before each attempt
+    if (budget && !budget.consume()) {
+      return {
+        goalId: goal.id,
+        ok: false,
+        error: "Iteration budget exhausted",
+        durationMs: Date.now() - start,
+        toolCalls: 0,
+        toolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      };
+    }
+
     try {
       const systemPrompt = buildGoalPrompt(goal, context);
       const messages: ChatMessage[] = [
@@ -113,12 +164,37 @@ export async function executeGoal(
       ];
 
       const definitions = toolRegistry.getDefinitions(toolNames);
-      const result = await inferWithTools(
+
+      const inferPromise = inferWithTools(
         messages,
         definitions,
         (name, args) => toolRegistry.execute(name, args),
         MAX_ROUNDS_PER_GOAL,
+        undefined, // onTextChunk
+        signal,
       );
+
+      // Apply per-goal timeout if configured
+      let result: Awaited<typeof inferPromise>;
+      if (goalTimeoutMs && goalTimeoutMs > 0) {
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(`Goal ${goal.id} timed out after ${goalTimeoutMs}ms`),
+              ),
+            goalTimeoutMs,
+          );
+        });
+        try {
+          result = await Promise.race([inferPromise, timeout]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      } else {
+        result = await inferPromise;
+      }
 
       // Count tool calls from the conversation
       const tcCount = result.messages.filter((m) => m.role === "tool").length;
@@ -130,6 +206,10 @@ export async function executeGoal(
         durationMs: Date.now() - start,
         toolCalls: tcCount,
         toolFailures: 0,
+        tokenUsage: {
+          promptTokens: result.totalUsage.prompt_tokens,
+          completionTokens: result.totalUsage.completion_tokens,
+        },
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -151,6 +231,7 @@ export async function executeGoal(
         durationMs: Date.now() - start,
         toolCalls: 0,
         toolFailures: 1,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
       };
     }
   }
@@ -162,6 +243,7 @@ export async function executeGoal(
     durationMs: Date.now() - start,
     toolCalls: 0,
     toolFailures: 1,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };
 }
 
@@ -176,10 +258,15 @@ export async function executeGoal(
 export async function executeGraph(
   graph: GoalGraph,
   toolNames?: string[],
+  budget?: IterationBudget,
+  goalTimeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const results: Record<string, GoalResult> = {};
   let totalToolCalls = 0;
   let totalToolFailures = 0;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
   const maxIterations = graph.size * 4 + 1;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -197,9 +284,15 @@ export async function executeGraph(
     // Build context from completed goals
     const contextStr = buildContextFromResults(results);
 
+    // Check budget or abort before executing batch
+    if (budget && budget.remaining === 0) break;
+    if (signal?.aborted) break;
+
     // Execute concurrently
     const settled = await Promise.allSettled(
-      ready.map((goal) => executeGoal(goal, contextStr, toolNames)),
+      ready.map((goal) =>
+        executeGoal(goal, contextStr, toolNames, budget, goalTimeoutMs, signal),
+      ),
     );
 
     for (let j = 0; j < ready.length; j++) {
@@ -216,17 +309,19 @@ export async function executeGraph(
               durationMs: 0,
               toolCalls: 0,
               toolFailures: 1,
+              tokenUsage: { promptTokens: 0, completionTokens: 0 },
             };
 
       results[goal.id] = goalResult;
       totalToolCalls += goalResult.toolCalls;
       totalToolFailures += goalResult.toolFailures;
+      totalPromptTokens += goalResult.tokenUsage.promptTokens;
+      totalCompletionTokens += goalResult.tokenUsage.completionTokens;
 
       if (goalResult.ok) {
         graph.updateStatus(goal.id, GoalStatus.COMPLETED);
       } else {
         graph.updateStatus(goal.id, GoalStatus.FAILED);
-        totalToolFailures++;
       }
     }
   }
@@ -236,5 +331,9 @@ export async function executeGraph(
     summary: graph.summary(),
     totalToolCalls,
     totalToolFailures,
+    tokenUsage: {
+      promptTokens: totalPromptTokens,
+      completionTokens: totalCompletionTokens,
+    },
   };
 }

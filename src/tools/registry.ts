@@ -5,6 +5,25 @@
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool } from "./types.js";
 
+/** Compute Levenshtein distance between two strings. */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i);
+
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] =
+        a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
 
@@ -21,6 +40,28 @@ export class ToolRegistry {
   /** Check if a tool is registered. */
   has(name: string): boolean {
     return this.tools.has(name);
+  }
+
+  /**
+   * Find the closest matching tool name via normalization + fuzzy match.
+   * Returns null if no match within 30% edit distance.
+   */
+  findClosest(name: string): string | null {
+    const normalized = name.toLowerCase().replace(/[-\s]/g, "_");
+    if (this.tools.has(normalized)) return normalized;
+
+    let best: string | null = null;
+    let bestDist = Infinity;
+    const maxDist = Math.ceil(normalized.length * 0.3);
+
+    for (const registered of this.tools.keys()) {
+      const dist = levenshtein(normalized, registered);
+      if (dist < bestDist && dist <= maxDist) {
+        bestDist = dist;
+        best = registered;
+      }
+    }
+    return best;
   }
 
   /** Get tool definitions for LLM function calling. Optionally filter by name list. */

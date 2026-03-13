@@ -9,7 +9,8 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
-import type { ReflectionResult, ExecutionResult } from "./types.js";
+import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
+import { getDatabase } from "../db/index.js";
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -54,7 +55,8 @@ export async function reflect(
   taskDescription: string,
   graph: GoalGraph,
   executionResults: ExecutionResult,
-): Promise<ReflectionResult> {
+  taskId?: string,
+): Promise<{ result: ReflectionResult; usage: TokenUsage }> {
   const userContent = buildReflectPrompt(
     taskDescription,
     graph,
@@ -66,11 +68,16 @@ export async function reflect(
   ];
 
   let assessment: ReflectionAssessment;
+  let usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
 
   try {
     const response = await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";
     assessment = parseLLMJson<ReflectionAssessment>(content);
+    usage = {
+      promptTokens: response.usage.prompt_tokens,
+      completionTokens: response.usage.completion_tokens,
+    };
   } catch (err) {
     console.warn(
       `[reflector] Failed to get LLM reflection: ${err instanceof Error ? err.message : err}; using heuristic`,
@@ -90,11 +97,31 @@ export async function reflect(
     assessment.success = heuristicScore >= 0.8 && !hasFailedGoals;
   }
 
+  const learnings = assessment.learnings ?? [];
+
+  // Persist learnings to DB if taskId provided
+  if (taskId && learnings.length > 0) {
+    try {
+      const db = getDatabase();
+      const stmt = db.prepare(
+        "INSERT INTO learnings (task_id, content, source) VALUES (?, ?, 'reflection')",
+      );
+      for (const learning of learnings) {
+        stmt.run(taskId, learning);
+      }
+    } catch {
+      // DB may not be initialized in tests — best-effort persistence
+    }
+  }
+
   return {
-    success: assessment.success,
-    score: assessment.score,
-    learnings: assessment.learnings ?? [],
-    summary: assessment.summary ?? "",
+    result: {
+      success: assessment.success,
+      score: assessment.score,
+      learnings,
+      summary: assessment.summary ?? "",
+    },
+    usage,
   };
 }
 

@@ -161,6 +161,7 @@ function buildExecutionResults(
       durationMs: 0, // Not tracked per sub-task
       toolCalls: 0,
       toolFailures: ok ? 0 : 1,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
     if (ok) totalToolCalls++;
   }
@@ -170,6 +171,7 @@ function buildExecutionResults(
     summary: graph.summary(),
     totalToolCalls,
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };
 }
 
@@ -224,7 +226,8 @@ export const swarmRunner: Runner = {
     // --- PHASE 1: PLAN ---
     let graph: GoalGraph;
     try {
-      graph = await plan(taskDescription);
+      const planResult = await plan(taskDescription);
+      graph = planResult.graph;
     } catch (err) {
       return {
         success: false,
@@ -346,11 +349,12 @@ export const swarmRunner: Runner = {
 
     let reflectionResult;
     try {
-      reflectionResult = await reflect(
+      const { result } = await reflect(
         taskDescription,
         graph,
         executionResults,
       );
+      reflectionResult = result;
     } catch (err) {
       console.warn(
         `[swarm] Task ${input.taskId}: reflection failed: ${err instanceof Error ? err.message : err}`,

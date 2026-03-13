@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GoalStatus } from "./types.js";
-import type { ExecutionResult } from "./types.js";
+import type { ExecutionResult, GoalResult } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
 
 vi.mock("../inference/adapter.js", () => ({
@@ -41,18 +41,7 @@ function makeGraph(completed: number, failed: number): GoalGraph {
 }
 
 function makeExecResult(graph: GoalGraph): ExecutionResult {
-  const goalResults: Record<
-    string,
-    {
-      goalId: string;
-      ok: boolean;
-      result?: string;
-      error?: string;
-      durationMs: number;
-      toolCalls: number;
-      toolFailures: number;
-    }
-  > = {};
+  const goalResults: Record<string, GoalResult> = {};
   const json = graph.toJSON();
   for (const [id, goal] of Object.entries(json.goals)) {
     goalResults[id] = {
@@ -63,6 +52,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
       durationMs: 100,
       toolCalls: 1,
       toolFailures: goal.status === GoalStatus.FAILED ? 1 : 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
   }
   return {
@@ -70,6 +60,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
     summary: graph.summary(),
     totalToolCalls: Object.keys(goalResults).length,
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };
 }
 
@@ -90,12 +81,14 @@ describe("reflect", () => {
 
     const graph = makeGraph(9, 1);
     const execResult = makeExecResult(graph);
-    const result = await reflect("Test task", graph, execResult);
+    const { result, usage } = await reflect("Test task", graph, execResult);
 
     expect(result.success).toBe(true);
     expect(result.score).toBe(0.9);
     expect(result.learnings).toContain("Lesson 1");
     expect(result.summary).toBe("Good execution");
+    expect(usage.promptTokens).toBe(200);
+    expect(usage.completionTokens).toBe(100);
   });
 
   it("should fall back to heuristic on invalid LLM JSON", async () => {
@@ -109,7 +102,7 @@ describe("reflect", () => {
 
     const graph = makeGraph(8, 2);
     const execResult = makeExecResult(graph);
-    const result = await reflect("Test task", graph, execResult);
+    const { result } = await reflect("Test task", graph, execResult);
 
     expect(result.score).toBe(0.8); // 8/10
     expect(result.learnings).toContain(
@@ -122,7 +115,7 @@ describe("reflect", () => {
 
     const graph = makeGraph(5, 5);
     const execResult = makeExecResult(graph);
-    const result = await reflect("Test task", graph, execResult);
+    const { result } = await reflect("Test task", graph, execResult);
 
     expect(result.score).toBe(0.5); // 5/10
     expect(result.success).toBe(false);
@@ -145,7 +138,7 @@ describe("reflect", () => {
 
     const graph = makeGraph(5, 5);
     const execResult = makeExecResult(graph);
-    const result = await reflect("Test task", graph, execResult);
+    const { result } = await reflect("Test task", graph, execResult);
 
     // Heuristic override: 5/10 = 0.5, divergence = 0.5 > 0.3
     expect(result.score).toBe(0.5);
@@ -169,7 +162,7 @@ describe("reflect", () => {
 
     const graph = makeGraph(8, 2);
     const execResult = makeExecResult(graph);
-    const result = await reflect("Test task", graph, execResult);
+    const { result } = await reflect("Test task", graph, execResult);
 
     expect(result.score).toBe(0.85); // LLM score accepted
   });

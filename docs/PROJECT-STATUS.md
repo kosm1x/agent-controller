@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-12
+> Last updated: 2026-03-13
 
 ## Overview
 
@@ -12,9 +12,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | 51 |
-| Test files | 14 |
-| Tests passing | 130 |
+| Source files | 53 |
+| Test files | 17 |
+| Tests passing | 148 |
 | Type errors | 0 |
 | Dependencies | 4 (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk) |
 
@@ -29,7 +29,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v1.5-6 | NanoClaw + Swarm + SSE + Docker — container runner, swarm fan-out, SSE stream | Done | `ae71bda` |
 | v2.1 | MCP Integration — external tool servers, bridge, namespaced tools, graceful degradation | Done | `60688d8` |
 | v2.2 | A2A Protocol — agent discovery, JSON-RPC server/client, streaming, a2a-runner | Done | `c3239d3` |
-| v2.3 | Frontend Dashboard — real-time web UI for tasks/agents/events | Planned | — |
+| v2.3 | Frontend Dashboard — real-time web UI for tasks/agents/events | Done | — |
+| v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
 | v2.4 | LiteLLM Backend — sidecar proxy for 100+ LLM providers | Planned | — |
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Planned | — |
 | v2.6 | Classifier Evolution — ML-based classification from task history | Planned | — |
@@ -50,6 +51,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/health` | No | Health check |
+| GET | `/dashboard/` | No | Web dashboard |
 | GET | `/.well-known/agent.json` | No | A2A agent card |
 | POST | `/api/tasks` | Yes | Submit task |
 | GET | `/api/tasks` | Yes | List tasks |
@@ -65,6 +67,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-13 | — | v2.3.1: Prometheus core improvements — token tracking, budget/timeouts, context compression, tool repair, learnings persistence, abort signals |
+| 2026-03-13 | — | v2.3: Frontend dashboard — real-time web UI, SSE events, goal graph visualization |
 | 2026-03-12 | `c3239d3` | v2.2: A2A protocol — agent discovery, JSON-RPC interop, bidirectional delegation |
 | 2026-03-12 | `60688d8` | v2.1: MCP integration — external tool servers via Model Context Protocol |
 | 2026-03-12 | `ae71bda` | Phases 5-6: Complete v1 — NanoClaw, Swarm, SSE, Docker, tests |
@@ -80,14 +84,15 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - 4 built-in tools (shell_exec, http_fetch, file_read, file_write) + MCP external tools
 - A2A interop: MC acts as both A2A server (receives tasks) and client (delegates tasks)
 - SSE real-time event stream with replay and filtering
-- Prometheus Plan-Execute-Reflect with auto-replan on failure
+- Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
 - Swarm parallel decomposition with sub-task fan-out
+- Real-time web dashboard at `/dashboard/` with task management, agent fleet view, event log, goal graph SVG
 
 ## Blocked / Dependencies
 
 | Item | Blocked by | Notes |
 |------|-----------|-------|
-| v2.3 Frontend Dashboard | Nothing | Can start anytime — uses existing SSE + REST API |
+| v2.3 Frontend Dashboard | — | Done |
 | v2.4 LiteLLM | Docker deployment | Sidecar container, ~50 lines config |
 | v2.5 Container Heavy Runner | v1.4 + Docker | Heavy runner inside Docker container |
 | v2.6 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |

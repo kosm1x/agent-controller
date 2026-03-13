@@ -8,6 +8,7 @@
 
 import { randomUUID } from "crypto";
 import { GoalGraph } from "./goal-graph.js";
+import { IterationBudget } from "./budget.js";
 import { Phase, defaultConfig } from "./types.js";
 import type {
   OrchestratorConfig,
@@ -35,7 +36,17 @@ export async function orchestrate(
 ): Promise<OrchestratorResult> {
   const cfg = defaultConfig(config);
   const trace = createTrace();
+  const budget = new IterationBudget(cfg.maxIterations);
   let replanCount = 0;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+
+  // Global timeout — abort the entire orchestration
+  const timeoutController = new AbortController();
+  const globalTimer = setTimeout(
+    () => timeoutController.abort(),
+    cfg.timeoutMs,
+  );
 
   // --- PLAN ---
   emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
@@ -43,7 +54,10 @@ export async function orchestrate(
 
   let graph: GoalGraph;
   try {
-    graph = await plan(taskDescription);
+    const { graph: g, usage: planUsage } = await plan(taskDescription);
+    graph = g;
+    totalPromptTokens += planUsage.promptTokens;
+    totalCompletionTokens += planUsage.completionTokens;
   } catch (err) {
     traceRecord(trace, "phase_error", {
       phase: Phase.PLAN,
@@ -63,16 +77,36 @@ export async function orchestrate(
   console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
 
   // --- EXECUTE + REPLAN LOOP ---
-  let executionResults: ExecutionResult;
+  let executionResults: ExecutionResult = {
+    goalResults: {},
+    summary: graph.summary(),
+    totalToolCalls: 0,
+    totalToolFailures: 0,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
+  };
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     emitProgress(taskId, Phase.EXECUTE, 30, "Executing goals");
     traceRecord(trace, "phase_start", { phase: Phase.EXECUTE });
 
-    executionResults = await executeGraph(graph, toolNames);
+    // Check for global timeout before execution
+    if (timeoutController.signal.aborted) {
+      console.warn(`[orchestrator] Task ${taskId}: global timeout reached`);
+      break;
+    }
+
+    executionResults = await executeGraph(
+      graph,
+      toolNames,
+      budget,
+      cfg.goalTimeoutMs,
+      timeoutController.signal,
+    );
     trace.totalToolCalls += executionResults.totalToolCalls;
     trace.totalToolFailures += executionResults.totalToolFailures;
+    totalPromptTokens += executionResults.tokenUsage.promptTokens;
+    totalCompletionTokens += executionResults.tokenUsage.completionTokens;
 
     traceRecord(trace, "phase_end", {
       phase: Phase.EXECUTE,
@@ -111,7 +145,14 @@ export async function orchestrate(
       );
 
       try {
-        graph = await replan(taskDescription, graph, replanReason);
+        const { graph: rg, usage: replanUsage } = await replan(
+          taskDescription,
+          graph,
+          replanReason,
+        );
+        graph = rg;
+        totalPromptTokens += replanUsage.promptTokens;
+        totalCompletionTokens += replanUsage.completionTokens;
       } catch (err) {
         console.warn(
           `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
@@ -127,7 +168,14 @@ export async function orchestrate(
   emitProgress(taskId, Phase.REFLECT, 85, "Reflecting on execution");
   traceRecord(trace, "phase_start", { phase: Phase.REFLECT });
 
-  const reflection = await reflect(taskDescription, graph, executionResults);
+  const { result: reflection, usage: reflectUsage } = await reflect(
+    taskDescription,
+    graph,
+    executionResults,
+    taskId,
+  );
+  totalPromptTokens += reflectUsage.promptTokens;
+  totalCompletionTokens += reflectUsage.completionTokens;
 
   traceRecord(trace, "phase_end", {
     phase: Phase.REFLECT,
@@ -136,10 +184,11 @@ export async function orchestrate(
   });
 
   trace.endTime = Date.now();
+  clearTimeout(globalTimer);
   emitProgress(taskId, Phase.REFLECT, 100, "Complete");
 
   console.log(
-    `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)}`,
+    `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,
   );
 
   return {
@@ -151,9 +200,10 @@ export async function orchestrate(
     traceId: trace.traceId,
     durationMs: trace.endTime - trace.startTime,
     tokenUsage: {
-      promptTokens: 0,
-      completionTokens: 0,
+      promptTokens: totalPromptTokens,
+      completionTokens: totalCompletionTokens,
     },
+    iterationsUsed: budget.consumed,
   };
 }
 

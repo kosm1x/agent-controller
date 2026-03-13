@@ -43,6 +43,9 @@ describe("defaultConfig", () => {
     const config = defaultConfig();
     expect(config.maxTurns).toBe(50);
     expect(config.maxReplans).toBe(3);
+    expect(config.maxIterations).toBe(90);
+    expect(config.timeoutMs).toBe(600_000);
+    expect(config.goalTimeoutMs).toBe(120_000);
     expect(config.replanThresholds.toolFailureRate).toBe(0.5);
     expect(config.replanThresholds.goalBlocked).toBe(true);
   });

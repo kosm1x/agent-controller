@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_agents_type ON agents(type);
 
+-- Learnings from Prometheus reflection phase (persistent across runs)
+CREATE TABLE IF NOT EXISTS learnings (
+  id         INTEGER PRIMARY KEY,
+  task_id    TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  source     TEXT DEFAULT 'reflection',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_learnings_created ON learnings(created_at DESC);
+
 -- A2A context-to-task mapping (for multi-turn conversations)
 CREATE TABLE IF NOT EXISTS a2a_contexts (
   context_id  TEXT PRIMARY KEY,

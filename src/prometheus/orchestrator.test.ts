@@ -71,6 +71,7 @@ function makeExecResult(): ExecutionResult {
         durationMs: 100,
         toolCalls: 2,
         toolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
       },
       "g-2": {
         goalId: "g-2",
@@ -79,6 +80,7 @@ function makeExecResult(): ExecutionResult {
         durationMs: 100,
         toolCalls: 1,
         toolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
       },
     },
     summary: {
@@ -91,6 +93,7 @@ function makeExecResult(): ExecutionResult {
     },
     totalToolCalls: 3,
     totalToolFailures: 0,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };
 }
 
@@ -106,9 +109,15 @@ function makeReflection(): ReflectionResult {
 describe("orchestrate", () => {
   it("should run plan→execute→reflect successfully", async () => {
     const graph = makeGraph();
-    mockPlan.mockResolvedValueOnce(graph);
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
     mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
-    mockReflect.mockResolvedValueOnce(makeReflection());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 200, completionTokens: 100 },
+    });
 
     const result = await orchestrate("task-1", "Test task");
 
@@ -119,6 +128,8 @@ describe("orchestrate", () => {
     expect(result.goalGraph.goals).toHaveProperty("g-2");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(result.traceId).toBeDefined();
+    expect(result.tokenUsage.promptTokens).toBe(300); // 100 plan + 200 reflect
+    expect(result.tokenUsage.completionTokens).toBe(150); // 50 plan + 100 reflect
 
     // Verify phase ordering
     expect(mockPlan).toHaveBeenCalledTimes(1);
@@ -127,9 +138,15 @@ describe("orchestrate", () => {
   });
 
   it("should emit progress events", async () => {
-    mockPlan.mockResolvedValueOnce(makeGraph());
+    mockPlan.mockResolvedValueOnce({
+      graph: makeGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
     mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
-    mockReflect.mockResolvedValueOnce(makeReflection());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     await orchestrate("task-2", "Test task");
 
@@ -150,7 +167,10 @@ describe("orchestrate", () => {
 
   it("should trigger replan when tool failure rate exceeds threshold", async () => {
     const graph = makeGraph();
-    mockPlan.mockResolvedValueOnce(graph);
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     // First execution: high failure rate
     const highFailExec: ExecutionResult = {
@@ -162,6 +182,7 @@ describe("orchestrate", () => {
           durationMs: 100,
           toolCalls: 5,
           toolFailures: 4,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
         },
       },
       summary: {
@@ -174,16 +195,23 @@ describe("orchestrate", () => {
       },
       totalToolCalls: 5,
       totalToolFailures: 4,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
     mockExecuteGraph.mockResolvedValueOnce(highFailExec);
 
     // Replan returns new graph
     const replanGraph = makeGraph();
-    mockReplan.mockResolvedValueOnce(replanGraph);
+    mockReplan.mockResolvedValueOnce({
+      graph: replanGraph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     // Second execution: clean
     mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
-    mockReflect.mockResolvedValueOnce(makeReflection());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     const result = await orchestrate("task-4", "Replanning task");
 
@@ -194,7 +222,10 @@ describe("orchestrate", () => {
 
   it("should respect maxReplans config", async () => {
     const graph = makeGraph();
-    mockPlan.mockResolvedValueOnce(graph);
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     const highFailExec: ExecutionResult = {
       goalResults: {},
@@ -208,12 +239,19 @@ describe("orchestrate", () => {
       },
       totalToolCalls: 10,
       totalToolFailures: 8,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
 
     // All executions fail with high failure rate
     mockExecuteGraph.mockResolvedValue(highFailExec);
-    mockReplan.mockResolvedValue(makeGraph());
-    mockReflect.mockResolvedValueOnce(makeReflection());
+    mockReplan.mockResolvedValue({
+      graph: makeGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     await orchestrate("task-5", "Many replans", { maxReplans: 2 });
 
@@ -222,9 +260,15 @@ describe("orchestrate", () => {
   });
 
   it("should collect trace events", async () => {
-    mockPlan.mockResolvedValueOnce(makeGraph());
+    mockPlan.mockResolvedValueOnce({
+      graph: makeGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
     mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
-    mockReflect.mockResolvedValueOnce(makeReflection());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
 
     const result = await orchestrate("task-6", "Traced task");
 

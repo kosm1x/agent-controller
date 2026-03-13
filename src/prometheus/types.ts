@@ -49,6 +49,11 @@ export interface Goal {
 // Execution types
 // ---------------------------------------------------------------------------
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export interface GoalResult {
   goalId: string;
   ok: boolean;
@@ -57,6 +62,7 @@ export interface GoalResult {
   durationMs: number;
   toolCalls: number;
   toolFailures: number;
+  tokenUsage: TokenUsage;
 }
 
 export interface ExecutionResult {
@@ -64,6 +70,7 @@ export interface ExecutionResult {
   summary: Record<string, number>;
   totalToolCalls: number;
   totalToolFailures: number;
+  tokenUsage: TokenUsage;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +91,9 @@ export interface ReflectionResult {
 export interface OrchestratorConfig {
   maxTurns: number;
   maxReplans: number;
+  maxIterations: number;
+  timeoutMs: number;
+  goalTimeoutMs: number;
   replanThresholds: {
     toolFailureRate: number;
     goalBlocked: boolean;
@@ -113,10 +123,8 @@ export interface OrchestratorResult {
   trace: TraceEvent[];
   traceId: string;
   durationMs: number;
-  tokenUsage: {
-    promptTokens: number;
-    completionTokens: number;
-  };
+  tokenUsage: TokenUsage;
+  iterationsUsed: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +138,9 @@ export function defaultConfig(
   return {
     maxTurns: 50,
     maxReplans: 3,
+    maxIterations: 90,
+    timeoutMs: 600_000,
+    goalTimeoutMs: 120_000,
     replanThresholds: {
       toolFailureRate: 0.5,
       goalBlocked: true,

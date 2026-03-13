@@ -73,6 +73,8 @@ describe("executeGoal", () => {
     expect(result.result).toBe("Goal achieved successfully");
     expect(result.goalId).toBe("g-1");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.tokenUsage.promptTokens).toBe(100);
+    expect(result.tokenUsage.completionTokens).toBe(50);
   });
 
   it("should count tool calls from messages", async () => {

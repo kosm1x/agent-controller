@@ -47,10 +47,12 @@ describe("plan", () => {
       latency_ms: 100,
     });
 
-    const graph = await plan("Test task");
+    const { graph, usage } = await plan("Test task");
     expect(graph.size).toBe(2);
     expect(graph.getGoal("g-1").description).toBe("First goal");
     expect(graph.getGoal("g-2").dependsOn).toEqual(["g-1"]);
+    expect(usage.promptTokens).toBe(100);
+    expect(usage.completionTokens).toBe(50);
   });
 
   it("should strip markdown fences from LLM output", async () => {
@@ -63,7 +65,7 @@ describe("plan", () => {
       latency_ms: 50,
     });
 
-    const graph = await plan("Fenced test");
+    const { graph } = await plan("Fenced test");
     expect(graph.size).toBe(1);
     expect(graph.getGoal("g-1").description).toBe("Fenced goal");
   });
@@ -94,7 +96,7 @@ describe("plan", () => {
       latency_ms: 50,
     });
 
-    const graph = await plan("Parent-child test");
+    const { graph } = await plan("Parent-child test");
     expect(graph.getGoal("g-2").parentId).toBe("g-1");
     expect(graph.getGoal("g-1").children).toContain("g-2");
   });
@@ -118,7 +120,7 @@ describe("plan", () => {
       latency_ms: 50,
     });
 
-    const graph = await plan("Bad dep test");
+    const { graph } = await plan("Bad dep test");
     expect(graph.size).toBe(1);
     // The unresolvable dep should be dropped
     expect(graph.getGoal("g-1").dependsOn).toEqual([]);
@@ -170,7 +172,7 @@ describe("replan", () => {
       latency_ms: 50,
     });
 
-    const originalGraph = await plan("Task");
+    const { graph: originalGraph } = await plan("Task");
     originalGraph.updateStatus("g-1", GoalStatus.COMPLETED);
 
     // Replan with completed status preserved
@@ -200,7 +202,11 @@ describe("replan", () => {
       latency_ms: 50,
     });
 
-    const newGraph = await replan("Task", originalGraph, "Goal blocked");
+    const { graph: newGraph } = await replan(
+      "Task",
+      originalGraph,
+      "Goal blocked",
+    );
     expect(newGraph.size).toBe(2);
     expect(newGraph.getGoal("g-1").status).toBe(GoalStatus.COMPLETED);
     expect(newGraph.getGoal("g-2").status).toBe(GoalStatus.PENDING);

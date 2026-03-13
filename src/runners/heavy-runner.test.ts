@@ -33,6 +33,7 @@ function makeOrchestratorResult(
       summary: { completed: 1, total: 1 },
       totalToolCalls: 2,
       totalToolFailures: 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
     },
     reflection: {
       success: true,
@@ -47,6 +48,7 @@ function makeOrchestratorResult(
       promptTokens: 1000,
       completionTokens: 500,
     },
+    iterationsUsed: 5,
     ...overrides,
   };
 }
