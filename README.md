@@ -52,6 +52,8 @@ Agent Controller doesn't replace either pattern. It routes to the right one — 
 
 6. **Protocol-aware.** REST API for task management. MCP for external tool servers. A2A for agent-to-agent interoperability. All protocol endpoints coexist on a single Hono server.
 
+7. **Dashboard included.** Real-time web UI at `/dashboard/` — task management, agent fleet monitoring, live event stream, goal graph visualization. No build pipeline, no extra dependencies.
+
 ---
 
 ## How it works
@@ -192,6 +194,7 @@ All endpoints require `X-Api-Key` header except health check.
 | `GET` | `/api/agents` | List agents |
 | `GET` | `/api/events/stream` | SSE real-time event stream |
 | `GET` | `/health` | Health check (no auth) |
+| `GET` | `/dashboard/` | Web dashboard (no auth, JS handles API key) |
 | `GET` | `/.well-known/agent.json` | A2A agent card (no auth) |
 | `POST` | `/a2a` | A2A JSON-RPC endpoint |
 
@@ -306,6 +309,14 @@ agent-controller/
       events/                # Persistent event bus (SQLite-backed)
       dispatch/
         idempotency.ts       # Content-hash deduplication
+
+  public/
+    dashboard/
+      index.html             # SPA shell, CSS, layout
+      app.js                 # State management, SSE, init flow
+      api.js                 # REST + SSE client (fetch-based)
+      components.js          # All UI rendering components
+      graph.js               # Goal graph SVG renderer
 ```
 
 ---
@@ -368,6 +379,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v1: SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
 | v2: MCP Integration | Done | MCP client, external tool servers, namespaced tools, graceful degradation |
 | v2: A2A Protocol | Done | Agent discovery, JSON-RPC server/client, bidirectional interop, streaming, a2a-runner |
+| v2: Frontend Dashboard | Done | Real-time web UI — tasks, agents, events, goal graphs, SSE updates |
 
 ---
 

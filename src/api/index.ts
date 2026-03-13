@@ -4,6 +4,7 @@
  */
 
 import { Hono } from "hono";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { apiKeyAuth } from "./auth.js";
 import { health } from "./routes/health.js";
 import { tasks } from "./routes/tasks.js";
@@ -36,6 +37,10 @@ export function createApp(): Hono {
   api.route("/events", events);
 
   app.route("/api", api);
+
+  // Dashboard static files — no auth (JS handles API key itself)
+  app.get("/dashboard", (c) => c.redirect("/dashboard/"));
+  app.use("/dashboard/*", serveStatic({ root: "./public" }));
 
   return app;
 }
