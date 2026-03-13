@@ -10,6 +10,10 @@ import { initDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
 import { initMcp, shutdownMcp } from "./mcp/index.js";
+import {
+  startRitualScheduler,
+  stopRitualScheduler,
+} from "./rituals/scheduler.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -60,9 +64,15 @@ async function main(): Promise<void> {
     },
   );
 
+  // Start ritual scheduler if enabled
+  if (process.env.RITUALS_ENABLED === "true") {
+    startRitualScheduler();
+  }
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log("[mc] Shutting down...");
+    stopRitualScheduler();
     await shutdownMcp();
     process.exit(0);
   };
