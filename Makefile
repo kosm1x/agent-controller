@@ -39,3 +39,13 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f mission-control
+
+# LiteLLM sidecar
+litellm-up:
+	docker compose --profile litellm up -d
+
+litellm-down:
+	docker compose --profile litellm down
+
+litellm-logs:
+	docker compose logs -f litellm

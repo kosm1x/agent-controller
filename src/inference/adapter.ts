@@ -330,6 +330,7 @@ export async function infer(
   onTextChunk?: OnTextChunk,
   signal?: AbortSignal,
 ): Promise<InferenceResponse> {
+  const config = getConfig();
   const providers = loadProviders();
   if (providers.length === 0) {
     throw new Error(
@@ -340,7 +341,7 @@ export async function infer(
   let lastError: Error | undefined;
 
   for (const provider of providers) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < config.inferenceMaxRetries; attempt++) {
       try {
         return await callProvider(provider, request, onTextChunk, signal);
       } catch (err) {

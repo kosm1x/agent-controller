@@ -1,0 +1,39 @@
+# LiteLLM Proxy Configuration — Example
+# Copy to litellm-config.yaml and set API keys in .env
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # "default" — primary model alias, used as INFERENCE_PRIMARY_MODEL
+  - model_name: default
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Same alias = automatic load-balanced fallback
+  - model_name: default
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # "heavy" — stronger model for complex tasks
+  - model_name: heavy
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Local / self-hosted (uncomment to use)
+  # - model_name: local
+  #   litellm_params:
+  #     model: openai/qwen3-235b
+  #     api_base: http://host.docker.internal:8000/v1
+  #     api_key: none
+
+router_settings:
+  routing_strategy: "usage-based-routing"
+  num_retries: 2
+  request_timeout: 60
+  allowed_fails: 3
+  cooldown_time: 30
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

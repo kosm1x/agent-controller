@@ -31,7 +31,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.2 | A2A Protocol — agent discovery, JSON-RPC server/client, streaming, a2a-runner | Done | `c3239d3` |
 | v2.3 | Frontend Dashboard — real-time web UI for tasks/agents/events | Done | — |
 | v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
-| v2.4 | LiteLLM Backend — sidecar proxy for 100+ LLM providers | Planned | — |
+| v2.4 | LiteLLM Backend — sidecar proxy, configurable retries, inference health probe | Done | — |
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Planned | — |
 | v2.6 | Classifier Evolution — ML-based classification from task history | Planned | — |
 | v2.7 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
@@ -50,7 +50,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/health` | No | Health check |
+| GET | `/health` | No | Health check (db + inference reachability) |
 | GET | `/dashboard/` | No | Web dashboard |
 | GET | `/.well-known/agent.json` | No | A2A agent card |
 | POST | `/api/tasks` | Yes | Submit task |
@@ -67,6 +67,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-13 | — | v2.4: LiteLLM sidecar — Docker Compose profile, configurable retries, inference health probe, env.example |
 | 2026-03-13 | — | v2.3.1: Prometheus core improvements — token tracking, budget/timeouts, context compression, tool repair, learnings persistence, abort signals |
 | 2026-03-13 | — | v2.3: Frontend dashboard — real-time web UI, SSE events, goal graph visualization |
 | 2026-03-12 | `c3239d3` | v2.2: A2A protocol — agent discovery, JSON-RPC interop, bidirectional delegation |
@@ -87,13 +88,14 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
 - Swarm parallel decomposition with sub-task fan-out
 - Real-time web dashboard at `/dashboard/` with task management, agent fleet view, event log, goal graph SVG
+- LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
 
 ## Blocked / Dependencies
 
 | Item | Blocked by | Notes |
 |------|-----------|-------|
 | v2.3 Frontend Dashboard | — | Done |
-| v2.4 LiteLLM | Docker deployment | Sidecar container, ~50 lines config |
+| v2.4 LiteLLM | — | Done |
 | v2.5 Container Heavy Runner | v1.4 + Docker | Heavy runner inside Docker container |
 | v2.6 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
 | v2.7 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |

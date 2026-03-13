@@ -37,6 +37,9 @@ export interface Config {
   /** Per-goal timeout in milliseconds. */
   goalTimeoutMs: number;
 
+  /** Max retries per inference provider (reduce to 1 behind LiteLLM). */
+  inferenceMaxRetries: number;
+
   /** Context window size for compression decisions. */
   inferenceContextLimit: number;
   /** Fraction of context window that triggers compression (0.0–1.0). */
@@ -89,6 +92,7 @@ export function loadConfig(): Config {
 
     inferenceTimeoutMs: int("INFERENCE_TIMEOUT_MS", 30000),
     inferenceMaxTokens: int("INFERENCE_MAX_TOKENS", 4096),
+    inferenceMaxRetries: int("INFERENCE_MAX_RETRIES", 3),
 
     orchestratorTimeoutMs: int("ORCHESTRATOR_TIMEOUT_MS", 600_000),
     orchestratorMaxIterations: int("ORCHESTRATOR_MAX_ITERATIONS", 90),
