@@ -472,7 +472,47 @@ export function registerReadTools(server: McpServer): void {
     },
   );
 
-  // 5. search_journal
+  // 5. list_objectives
+  server.registerTool(
+    "list_objectives",
+    {
+      description:
+        "List objectives with optional filters, includes parent goal title",
+      inputSchema: {
+        goal_id: z.string().optional().describe("Filter by parent goal UUID"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "on_hold"])
+          .optional()
+          .describe("Filter by status"),
+        priority: z
+          .enum(["high", "medium", "low"])
+          .optional()
+          .describe("Filter by priority"),
+        limit: z.number().optional().describe("Max results (default 50)"),
+      },
+    },
+    async ({ goal_id, status, priority, limit }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      let q = supabase
+        .from("objectives")
+        .select("*, goals(title)")
+        .eq("user_id", uid);
+      if (goal_id) q = q.eq("goal_id", goal_id);
+      if (status) q = q.eq("status", status);
+      if (priority) q = q.eq("priority", priority);
+      q = q.order("order", { ascending: true }).limit(limit ?? 50);
+
+      const result = await q;
+      const objectives = unwrap(result, "list_objectives");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(objectives) }],
+      };
+    },
+  );
+
+  // 6. search_journal
   server.registerTool(
     "search_journal",
     {

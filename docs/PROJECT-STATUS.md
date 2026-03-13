@@ -12,11 +12,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | 58 (+5 in commit-bridge) |
-| Test files | 18 |
-| Tests passing | 159 |
+| Source files | 66 (+5 in commit-bridge) |
+| Test files | 20 |
+| Tests passing | 190 |
 | Type errors | 0 |
-| Dependencies | 5 (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron) |
+| Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
 
@@ -33,8 +33,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
 | v2.4 | LiteLLM Backend — sidecar proxy, configurable retries, inference health probe | Done | — |
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Done | — |
-| v2.6 | JARVIS Integration — commit-bridge MCP server (11 tools), ritual scheduler (morning/nightly) | Done | — |
-| v2.7 | Classifier Evolution — ML-based classification from task history | Planned | — |
+| v2.6 | JARVIS Integration — commit-bridge MCP server (15 tools), ritual scheduler (morning/nightly) | Done | — |
+| v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
+| v2.8 | Classifier Evolution — ML-based classification from task history | Planned | — |
 | v2.8 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
 ## Runners
@@ -68,7 +69,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-13 | — | v2.6: JARVIS integration — commit-bridge MCP server (11 Supabase tools), ritual scheduler (morning briefing + nightly close), validated with live data |
+| 2026-03-13 | — | v2.7: Messaging layer — WhatsApp (Baileys) + Telegram (Grammy) adapters, message router, ritual broadcast, formatter, 31 new tests |
+| 2026-03-13 | — | v2.6: JARVIS integration — commit-bridge MCP server (15 Supabase tools), ritual scheduler (morning briefing + nightly close), validated with live data |
 | 2026-03-13 | — | v2.5: Container heavy runner — optional Docker isolation for heavy tasks, worker entrypoint, container slot sharing |
 | 2026-03-13 | — | v2.4: LiteLLM sidecar — Docker Compose profile, configurable retries, inference health probe, env.example |
 | 2026-03-13 | — | v2.3.1: Prometheus core improvements — token tracking, budget/timeouts, context compression, tool repair, learnings persistence, abort signals |
@@ -85,7 +87,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 - Full task lifecycle: submit → classify → dispatch → execute → stream results
 - 5 runner types with automatic complexity-based routing
-- 4 built-in tools (shell_exec, http_fetch, file_read, file_write) + 11 MCP tools (commit-bridge: Supabase read/write for COMMIT-AI)
+- 4 built-in tools (shell_exec, http_fetch, file_read, file_write) + 15 MCP tools (commit-bridge: Supabase read/write for COMMIT-AI)
 - A2A interop: MC acts as both A2A server (receives tasks) and client (delegates tasks)
 - SSE real-time event stream with replay and filtering
 - Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
@@ -94,7 +96,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
 - Optional Docker isolation for heavy tasks (`HEAVY_RUNNER_CONTAINERIZED=true`) — same MC image, container slot sharing
 - JARVIS daily rituals: morning briefing (7 AM) and nightly close (10 PM) via node-cron scheduler with idempotency guard
-- commit-bridge MCP server: 11 Supabase tools for COMMIT-AI (visions, goals, objectives, tasks, journal, ideas)
+- commit-bridge MCP server: 15 Supabase tools for COMMIT-AI (visions, goals, objectives, tasks, journal, ideas)
+- Bidirectional messaging: WhatsApp (Baileys) + Telegram (Grammy), owner-only, every inbound message becomes a task
+- Ritual broadcast: morning briefing and nightly close results delivered to all active messaging channels
+- Message formatting: markdown dialect conversion (WA/TG), auto-splitting for Telegram 4096-char limit
 
 ## Blocked / Dependencies
 
@@ -104,8 +109,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.4 LiteLLM | — | Done |
 | v2.5 Container Heavy Runner | — | Done |
 | v2.6 JARVIS Integration | — | Done |
-| v2.7 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
-| v2.8 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
+| v2.7 Messaging Layer | — | Done |
+| v2.8 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
+| v2.9 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
 
 ## Known Issues
 

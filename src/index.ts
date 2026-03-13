@@ -14,6 +14,7 @@ import {
   startRitualScheduler,
   stopRitualScheduler,
 } from "./rituals/scheduler.js";
+import { initMessaging, shutdownMessaging } from "./messaging/index.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -69,10 +70,14 @@ async function main(): Promise<void> {
     startRitualScheduler();
   }
 
+  // Start messaging channels (WhatsApp/Telegram) if enabled
+  await initMessaging();
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log("[mc] Shutting down...");
     stopRitualScheduler();
+    await shutdownMessaging();
     await shutdownMcp();
     process.exit(0);
   };

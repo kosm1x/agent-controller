@@ -8,6 +8,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { getDatabase } from "../db/index.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
+import { getRouter } from "../messaging/index.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
@@ -65,6 +66,12 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
     console.log(
       `[rituals] ${ritual.id}: submitted task ${result.taskId} (agent: ${result.agentType}) at ${new Date().toISOString()}`,
     );
+
+    // Notify messaging router to broadcast ritual result on completion
+    const router = getRouter();
+    if (router) {
+      router.watchRitualTask(result.taskId, ritual.id);
+    }
   } catch (err) {
     console.error(`[rituals] ${ritual.id}: failed to submit —`, err);
   }

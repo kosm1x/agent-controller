@@ -238,7 +238,167 @@ export function registerWriteTools(server: McpServer): void {
     },
   );
 
-  // 11. bulk_reprioritize
+  // 11. create_goal
+  server.registerTool(
+    "create_goal",
+    {
+      description: "Create a new goal, optionally linked to a vision",
+      inputSchema: {
+        title: z.string().describe("Goal title"),
+        description: z.string().optional().describe("Goal description"),
+        vision_id: z.string().optional().describe("Parent vision UUID"),
+        target_date: z.string().optional().describe("Target date (YYYY-MM-DD)"),
+      },
+    },
+    async ({ title, description, vision_id, target_date }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const result = await supabase
+        .from("goals")
+        .insert({
+          user_id: uid,
+          title,
+          description: description ?? "",
+          vision_id: vision_id ?? null,
+          target_date: target_date ?? null,
+          status: "not_started",
+        })
+        .select()
+        .single();
+
+      const goal = unwrap(result, "create_goal");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(goal) }],
+      };
+    },
+  );
+
+  // 12. create_objective
+  server.registerTool(
+    "create_objective",
+    {
+      description: "Create a new objective, optionally linked to a goal",
+      inputSchema: {
+        title: z.string().describe("Objective title"),
+        description: z.string().optional().describe("Objective description"),
+        goal_id: z.string().optional().describe("Parent goal UUID"),
+        priority: z
+          .enum(["high", "medium", "low"])
+          .optional()
+          .describe("Priority (default: medium)"),
+        target_date: z.string().optional().describe("Target date (YYYY-MM-DD)"),
+      },
+    },
+    async ({ title, description, goal_id, priority, target_date }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const result = await supabase
+        .from("objectives")
+        .insert({
+          user_id: uid,
+          title,
+          description: description ?? "",
+          goal_id: goal_id ?? null,
+          priority: priority ?? "medium",
+          target_date: target_date ?? null,
+          status: "not_started",
+        })
+        .select()
+        .single();
+
+      const objective = unwrap(result, "create_objective");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(objective) }],
+      };
+    },
+  );
+
+  // 13. update_task
+  server.registerTool(
+    "update_task",
+    {
+      description: "Update any field on a task (partial update)",
+      inputSchema: {
+        id: z.string().describe("Task UUID"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        priority: z.enum(["high", "medium", "low"]).optional(),
+        due_date: z
+          .string()
+          .optional()
+          .describe("Due date (YYYY-MM-DD), use empty string to clear"),
+        is_recurring: z.boolean().optional(),
+        objective_id: z
+          .string()
+          .optional()
+          .describe("Parent objective UUID, use empty string to unlink"),
+        notes: z.string().optional(),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "on_hold"])
+          .optional(),
+      },
+    },
+    async (args) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const updates: Record<string, unknown> = {};
+
+      if (args.title !== undefined) updates.title = args.title;
+      if (args.description !== undefined)
+        updates.description = args.description;
+      if (args.priority !== undefined) updates.priority = args.priority;
+      if (args.is_recurring !== undefined)
+        updates.is_recurring = args.is_recurring;
+      if (args.notes !== undefined) updates.notes = args.notes;
+
+      // Empty string → null for nullable foreign keys / dates
+      if (args.due_date !== undefined)
+        updates.due_date = args.due_date === "" ? null : args.due_date;
+      if (args.objective_id !== undefined)
+        updates.objective_id =
+          args.objective_id === "" ? null : args.objective_id;
+
+      // Handle completed_at based on status changes
+      if (args.status !== undefined) {
+        updates.status = args.status;
+        if (args.status === "completed") {
+          updates.completed_at = new Date().toISOString();
+        } else {
+          updates.completed_at = null;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No fields to update" }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await supabase
+        .from("tasks")
+        .update(updates)
+        .eq("id", args.id)
+        .eq("user_id", uid)
+        .select()
+        .single();
+
+      const task = unwrap(result, "update_task");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(task) }],
+      };
+    },
+  );
+
+  // 14. bulk_reprioritize
   server.registerTool(
     "bulk_reprioritize",
     {
