@@ -50,7 +50,7 @@ export function registerReadTools(server: McpServer): void {
     "get_daily_snapshot",
     {
       description:
-        "Get daily snapshot: pending tasks, recurring status, deadlines, streaks, vision context",
+        "Get daily snapshot: pending tasks, recurring status, deadlines, streaks. COMMIT hierarchy: Vision (life direction) > Goal (measurable outcome) > Objective (milestone) > Task (action item). Returns the active vision for context, counts of goals/objectives, and detailed pending tasks. When the user asks about 'goals', report data from the goals count — do NOT present the vision as a goal.",
       inputSchema: {
         date: z
           .string()
@@ -205,7 +205,8 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     "get_hierarchy",
     {
-      description: "Get full vision > goal > objective > task hierarchy tree",
+      description:
+        "Get the full COMMIT hierarchy tree. Visions (long-term life directions) are the root. Goals (measurable outcomes) belong to a vision. Objectives (milestones) belong to a goal. Tasks (action items) belong to an objective. Returns nested JSON: vision → goals[] → objectives[] → tasks[]. When user asks for 'goals', extract only the goal-level items — do NOT present visions as goals.",
       inputSchema: {
         include_completed: z
           .boolean()
@@ -444,7 +445,7 @@ export function registerReadTools(server: McpServer): void {
     "list_goals",
     {
       description:
-        "List goals with optional status filter, includes parent vision title",
+        "List GOALS only (not visions, not objectives, not tasks). A goal is a measurable outcome that belongs to a vision. Use this tool when the user asks for 'metas' or 'goals'. Do NOT use get_hierarchy or get_daily_snapshot to answer goal-related questions — this tool returns goals directly with their parent vision title for context.",
       inputSchema: {
         status: z
           .enum(["not_started", "in_progress", "completed", "on_hold"])

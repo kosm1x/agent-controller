@@ -69,6 +69,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-13 | — | Fix: ACI tool descriptions for COMMIT hierarchy — LLM no longer confuses visions with goals in Telegram chat |
 | 2026-03-13 | — | v2.7: Messaging layer — WhatsApp (Baileys) + Telegram (Grammy) adapters, message router, ritual broadcast, formatter, 31 new tests |
 | 2026-03-13 | — | v2.6: JARVIS integration — commit-bridge MCP server (15 Supabase tools), ritual scheduler (morning briefing + nightly close), validated with live data |
 | 2026-03-13 | — | v2.5: Container heavy runner — optional Docker isolation for heavy tasks, worker entrypoint, container slot sharing |
@@ -96,7 +97,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
 - Optional Docker isolation for heavy tasks (`HEAVY_RUNNER_CONTAINERIZED=true`) — same MC image, container slot sharing
 - JARVIS daily rituals: morning briefing (7 AM) and nightly close (10 PM) via node-cron scheduler with idempotency guard
-- commit-bridge MCP server: 15 Supabase tools for COMMIT-AI (visions, goals, objectives, tasks, journal, ideas)
+- commit-bridge MCP server: 15 Supabase tools for COMMIT-AI (visions, goals, objectives, tasks, journal, ideas) with ACI-quality descriptions that teach the LLM the hierarchy
 - Bidirectional messaging: WhatsApp (Baileys) + Telegram (Grammy), owner-only, every inbound message becomes a task
 - Ritual broadcast: morning briefing and nightly close results delivered to all active messaging channels
 - Message formatting: markdown dialect conversion (WA/TG), auto-splitting for Telegram 4096-char limit
