@@ -13,8 +13,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | 76 (+5 in commit-bridge) |
-| Test files | 26 |
-| Tests passing | 232 |
+| Test files | 27 |
+| Tests passing | 237 |
 | Type errors | 0 |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
@@ -36,11 +36,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.6 | JARVIS Integration — commit-bridge MCP server (20 tools), ritual scheduler (morning/nightly) | Done | — |
 | v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
 | v2.8 | Hindsight Memory — semantic long-term memory via Hindsight sidecar, memory service abstraction, agent memory tools | Done | — |
-| v2.9 | Adaptive Intelligence — learning, adaptation, prediction | In Progress | — |
+| v2.9 | Adaptive Intelligence — learning, adaptation, prediction | Done | — |
 | v2.9.1 | Foundation — outcome tracking (SQLite), 4 Hindsight mental models, feedback windows | Done | — |
 | v2.9.2 | Enrichment — adaptive prompts, context injection from mental models | Done | — |
 | v2.9.3 | Adaptation — smart classifier from outcomes, feedback loop | Done | — |
-| v2.9.4 | Prediction — proactive scheduler, deadline/staleness alerts | Planned | — |
+| v2.9.4 | Prediction — proactive scheduler, deadline/staleness alerts | Done | — |
 | v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
 ## Runners
@@ -74,6 +74,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-16 | — | v2.9.4: Prediction — proactive scheduler (every 4h during waking hours), deadline/staleness scanning, max 2 nudges/day, suppressed during active chat |
 | 2026-03-16 | — | v2.9.3: Adaptation — outcome-based classifier hints, feedback signal detection (positive/negative/rephrase), pure feedback interception (skips task creation for "gracias"/"no") |
 | 2026-03-16 | — | v2.9.2: Enrichment — adaptive prompts with mental model context injection (user-behavior, active-projects, tool effectiveness), 5-min cache, graceful degradation |
 | 2026-03-16 | — | v2.9.1: Adaptive Intelligence foundation — task_outcomes table, outcome tracker with feedback windows, 4 Hindsight mental models (user-behavior, active-projects, task-effectiveness, conversation-themes), mental model CRUD in Hindsight client |
@@ -134,7 +135,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.9.1 Foundation | — | Done |
 | v2.9.2 Enrichment | — | Done |
 | v2.9.3 Adaptation | — | Done |
-| v2.9.4 Prediction | v2.9.2 | Needs enrichment service for proactive context |
+| v2.9.4 Prediction | — | Done |
 | v2.10 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
 
 ## Known Issues

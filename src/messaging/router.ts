@@ -31,6 +31,10 @@ import {
   detectFeedbackSignal,
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
+import {
+  isProactiveTask,
+  handleProactiveResult,
+} from "../intelligence/proactive.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -301,6 +305,13 @@ ${msg.text}`,
           console.error(`[router] Ritual broadcast failed:`, err);
         });
       }
+      return;
+    }
+
+    // Check if it's a proactive scan → conditionally broadcast
+    if (isProactiveTask(taskId)) {
+      const resultText = this.extractResultText(data.result);
+      handleProactiveResult(taskId, resultText ?? "");
       return;
     }
 

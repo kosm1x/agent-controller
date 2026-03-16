@@ -18,6 +18,10 @@ import { initMessaging, shutdownMessaging } from "./messaging/index.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
 import { seedMentalModels } from "./intelligence/mental-models.js";
+import {
+  startProactiveScheduler,
+  stopProactiveScheduler,
+} from "./intelligence/proactive.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -95,11 +99,17 @@ async function main(): Promise<void> {
   }
 
   // Start messaging channels (WhatsApp/Telegram) if enabled
-  await initMessaging();
+  const router = await initMessaging();
+
+  // Start proactive intelligence scheduler (after messaging is ready)
+  if (router) {
+    startProactiveScheduler(router);
+  }
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("[mc] Shutting down...");
+    stopProactiveScheduler();
     stopRitualScheduler();
     await shutdownMessaging();
     await shutdownMcp();
