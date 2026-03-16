@@ -77,6 +77,18 @@ export async function seedMentalModels(
 ): Promise<void> {
   const client = new HindsightClient(baseUrl, apiKey);
 
+  // Ensure banks exist before creating mental models (FK constraint)
+  const banks = new Set(MODELS.map((m) => m.bank));
+  for (const bankId of banks) {
+    try {
+      await client.upsertBank(bankId, {
+        reflect_mission: `Memory bank ${bankId}`,
+      });
+    } catch {
+      // Bank may already exist — non-fatal
+    }
+  }
+
   for (const { bank, ...model } of MODELS) {
     try {
       await client.createMentalModel(bank, model);
