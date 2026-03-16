@@ -142,7 +142,7 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(22);
+      expect(call.tools).toHaveLength(23);
       expect(call.tools).toContain("commit__get_daily_snapshot");
       expect(call.tools).toContain("commit__complete_recurring");
       expect(call.tools).toContain("commit__update_objective");

@@ -39,7 +39,7 @@ import {
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
-/** All 22 tools available for chat tasks (20 commit-bridge + 2 skill management). */
+/** All 23 tools available for chat tasks (20 commit-bridge + 2 skill + 1 web search). */
 const COMMIT_TOOLS = [
   "commit__get_daily_snapshot",
   "commit__get_hierarchy",
@@ -63,6 +63,7 @@ const COMMIT_TOOLS = [
   "commit__bulk_reprioritize",
   "skill_save",
   "skill_list",
+  "web_search",
 ];
 
 interface PendingReply {
@@ -191,17 +192,28 @@ export class MessageRouter {
 
     const result = await submitTask({
       title: `Chat: ${titleText}`,
-      description: `Eres Jarvis, el asistente estratégico personal de Fede. Responde al siguiente mensaje de manera concisa, orientada a la acción, en español mexicano. Si se relaciona con tareas, metas u objetivos, usa las herramientas commit__ disponibles para consultar o modificar datos reales antes de responder.
+      description: `Eres Jarvis, el asistente estratégico personal de Fede. Tu rol va más allá de gestionar tareas — eres un aliado inteligente que ayuda en TODO: investigación, decisiones, análisis, aprendizaje, productividad, y lo que Fede necesite. Responde de manera concisa, orientada a la acción, en español mexicano.
 
-Jerarquía COMMIT (NO confundas niveles):
-- Visión = dirección de vida a largo plazo (ej: "Ser un líder en tecnología")
-- Meta/Goal = resultado medible bajo una visión (ej: "Lanzar producto X para julio")
-- Objetivo = hito específico bajo una meta (ej: "Completar MVP")
-- Tarea = acción concreta bajo un objetivo (ej: "Diseñar API de auth")
+## Tus capacidades
+- **COMMIT (productividad)**: Gestiona visiones, metas, objetivos y tareas con las herramientas commit__
+- **Internet**: Usa web_search para buscar información actual, noticias, datos, investigación — SIEMPRE busca antes de adivinar
+- **Memoria**: Recuerda conversaciones pasadas, aprende patrones, y guarda procedimientos como skills
+- **Análisis**: Ayuda a tomar decisiones, evaluar opciones, analizar información
+
+## Jerarquía COMMIT (NO confundas niveles)
+- Visión = dirección de vida a largo plazo
+- Meta/Goal = resultado medible bajo una visión
+- Objetivo = hito específico bajo una meta
+- Tarea = acción concreta bajo un objetivo
 
 Cuando el usuario pregunte por "metas" o "goals", usa list_goals. NO presentes visiones como metas.
+Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.
 
-Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.${enrichment.contextBlock}${memoriesBlock}
+## Principios
+- Si no sabes algo, BUSCA con web_search antes de responder
+- Si completaste un proceso multi-paso útil, ofrece guardarlo como skill
+- Sé proactivo: si notas algo relevante en los datos, menciónalo
+- COMMIT es la base, pero el usuario puede pedir CUALQUIER cosa${enrichment.contextBlock}${memoriesBlock}
 
 Mensaje del usuario:
 ${msg.text}`,
