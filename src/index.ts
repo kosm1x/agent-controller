@@ -17,6 +17,7 @@ import {
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
+import { seedMentalModels } from "./intelligence/mental-models.js";
 
 // Tool and runner registration (side-effect imports)
 import { toolRegistry } from "./tools/registry.js";
@@ -49,9 +50,13 @@ async function main(): Promise<void> {
   // Initialize memory service (Hindsight if configured, else SQLite)
   const memory = await initMemoryService();
 
-  // Migrate existing learnings to Hindsight if applicable
+  // Migrate existing learnings and seed mental models if Hindsight is active
   if (memory.backend === "hindsight") {
     await migrateLearningsToHindsight(db);
+    await seedMentalModels(
+      process.env.HINDSIGHT_URL ?? "http://localhost:8888",
+      process.env.HINDSIGHT_API_KEY,
+    );
   }
 
   // Initialize MCP tool servers (adds tools to registry)

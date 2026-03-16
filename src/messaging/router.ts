@@ -20,6 +20,12 @@ import type {
   OutgoingMessage,
 } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
+import {
+  trackTaskOutcome,
+  checkFeedbackWindow,
+  recordTaskFeedback,
+  clearAllFeedbackWindows,
+} from "../intelligence/outcome-tracker.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -56,14 +62,34 @@ interface PendingReply {
   finalTimer: ReturnType<typeof setTimeout>;
 }
 
+/** Detect simple positive/negative feedback from short messages. */
+function detectSimpleFeedback(
+  text: string,
+): "positive" | "negative" | "neutral" {
+  const t = text.toLowerCase().trim();
+  if (
+    /^(gracias|perfecto|exacto|excelente|bien hecho|genial|ok|listo)\b/.test(t)
+  )
+    return "positive";
+  if (/^(no[, ]|incorrecto|mal\b|error\b|otra vez|no es\b)/.test(t))
+    return "negative";
+  return "neutral";
+}
+
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
   private pendingReplies = new Map<string, PendingReply>();
   private subscriptions: Array<{ unsubscribe: () => void }> = [];
   private ritualWatches = new Map<string, string>(); // taskId → ritualId
+  private lastMessageTime = 0;
 
   get channelCount(): number {
     return this.channels.size;
+  }
+
+  /** Timestamp of the last inbound message (for proactive throttle). */
+  getLastMessageTime(): number {
+    return this.lastMessageTime;
   }
 
   registerChannel(adapter: ChannelAdapter): void {
@@ -102,6 +128,17 @@ export class MessageRouter {
 
   /** Handle an inbound message from any channel → create task. */
   async handleInbound(msg: IncomingMessage): Promise<void> {
+    this.lastMessageTime = Date.now();
+
+    // Check if this message is feedback for a recently completed task
+    const feedbackTaskId = checkFeedbackWindow(msg.channel);
+    if (feedbackTaskId) {
+      const signal = detectSimpleFeedback(msg.text);
+      if (signal !== "neutral") {
+        recordTaskFeedback(feedbackTaskId, signal);
+      }
+    }
+
     // Immediate acknowledgment so the user knows the agent is listening
     this.sendToChannel(
       msg.channel,
@@ -213,6 +250,9 @@ ${msg.text}`,
   }
 
   async stopAll(): Promise<void> {
+    // Clear feedback windows
+    clearAllFeedbackWindows();
+
     // Clear event subscriptions
     for (const sub of this.subscriptions) {
       sub.unsubscribe();
@@ -278,6 +318,9 @@ ${msg.text}`,
       } catch {
         // Non-fatal
       }
+
+      // Track outcome for adaptive intelligence
+      trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
     }
   }
 
@@ -299,6 +342,9 @@ ${msg.text}`,
       pending.to,
       "No pude completar eso. Revisa el dashboard para más detalles.",
     );
+
+    // Track failed outcome
+    trackTaskOutcome(taskId, 0, false, pending.channel);
   }
 
   private sendToChannel(channel: ChannelName, to: string, text: string): void {

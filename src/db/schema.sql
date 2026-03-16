@@ -77,6 +77,22 @@ CREATE TABLE IF NOT EXISTS learnings (
 );
 CREATE INDEX IF NOT EXISTS idx_learnings_created ON learnings(created_at DESC);
 
+-- Task outcome tracking (feeds adaptive classifier + enrichment)
+CREATE TABLE IF NOT EXISTS task_outcomes (
+  id              INTEGER PRIMARY KEY,
+  task_id         TEXT NOT NULL,
+  classified_as   TEXT NOT NULL,
+  ran_on          TEXT NOT NULL,
+  tools_used      TEXT DEFAULT '[]',
+  duration_ms     INTEGER,
+  success         INTEGER DEFAULT 1,
+  feedback_signal TEXT DEFAULT 'none',
+  tags            TEXT DEFAULT '[]',
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_outcomes_runner ON task_outcomes(ran_on);
+CREATE INDEX IF NOT EXISTS idx_outcomes_created ON task_outcomes(created_at DESC);
+
 -- Conversation memory (works with any memory backend)
 CREATE TABLE IF NOT EXISTS conversations (
   id         INTEGER PRIMARY KEY,

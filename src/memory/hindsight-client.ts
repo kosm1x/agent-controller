@@ -56,6 +56,24 @@ export interface HindsightHealthResponse {
   status: string;
 }
 
+export interface MentalModelCreateRequest {
+  id?: string;
+  name: string;
+  source_query: string;
+  tags?: string[];
+  max_tokens?: number;
+  trigger?: { refresh_after_consolidation?: boolean };
+}
+
+export interface MentalModelResponse {
+  id: string;
+  bank_id: string;
+  name: string;
+  source_query: string;
+  content: string;
+  tags: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -141,6 +159,43 @@ export class HindsightClient {
   /** Create or update a memory bank. */
   async upsertBank(bankId: string, config: HindsightBankConfig): Promise<void> {
     await this.request("PUT", `/v1/default/banks/${bankId}`, config);
+  }
+
+  // -------------------------------------------------------------------------
+  // Mental Models
+  // -------------------------------------------------------------------------
+
+  /** Create a mental model in a bank. Idempotent if ID already exists. */
+  async createMentalModel(
+    bankId: string,
+    model: MentalModelCreateRequest,
+  ): Promise<MentalModelResponse> {
+    return this.request<MentalModelResponse>(
+      "POST",
+      `/v1/default/banks/${bankId}/mental-models`,
+      model,
+    );
+  }
+
+  /** Get a mental model's current content. */
+  async getMentalModel(
+    bankId: string,
+    modelId: string,
+  ): Promise<MentalModelResponse> {
+    return this.request<MentalModelResponse>(
+      "GET",
+      `/v1/default/banks/${bankId}/mental-models/${modelId}`,
+      undefined,
+      3000,
+    );
+  }
+
+  /** Trigger a refresh of a mental model's content. */
+  async refreshMentalModel(bankId: string, modelId: string): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/default/banks/${bankId}/mental-models/${modelId}/refresh`,
+    );
   }
 
   /** Health check. */

@@ -13,8 +13,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | 76 (+5 in commit-bridge) |
-| Test files | 22 |
-| Tests passing | 208 |
+| Test files | 24 |
+| Tests passing | 220 |
 | Type errors | 0 |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
@@ -36,7 +36,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.6 | JARVIS Integration — commit-bridge MCP server (20 tools), ritual scheduler (morning/nightly) | Done | — |
 | v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
 | v2.8 | Hindsight Memory — semantic long-term memory via Hindsight sidecar, memory service abstraction, agent memory tools | Done | — |
-| v2.9 | Classifier Evolution — ML-based classification from task history | Planned | — |
+| v2.9 | Adaptive Intelligence — learning, adaptation, prediction | In Progress | — |
+| v2.9.1 | Foundation — outcome tracking (SQLite), 4 Hindsight mental models, feedback windows | Done | — |
+| v2.9.2 | Enrichment — adaptive prompts, context injection from mental models | Planned | — |
+| v2.9.3 | Adaptation — smart classifier from outcomes, feedback loop | Planned | — |
+| v2.9.4 | Prediction — proactive scheduler, deadline/staleness alerts | Planned | — |
 | v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
 ## Runners
@@ -70,6 +74,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-16 | — | v2.9.1: Adaptive Intelligence foundation — task_outcomes table, outcome tracker with feedback windows, 4 Hindsight mental models (user-behavior, active-projects, task-effectiveness, conversation-themes), mental model CRUD in Hindsight client |
 | 2026-03-16 | — | Full CRUD for hierarchy parents — update_objective, update_goal, update_vision, create_vision, delete_item (title-verified) — 20 MCP tools total |
 | 2026-03-16 | — | Fix: Classifier misrouting chat messages as nanoclaw — messaging tag now forces fast runner |
 | 2026-03-16 | — | Fix: Immediate ack on inbound messages — "Recibido, trabajando en ello..." sent before task creation |
@@ -124,7 +129,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.6 JARVIS Integration | — | Done |
 | v2.7 Messaging Layer | — | Done |
 | v2.8 Hindsight Memory | — | Done |
-| v2.9 Classifier Evolution | ~100+ tasks with outcomes | Needs training data from production usage |
+| v2.9.1 Foundation | — | Done |
+| v2.9.2 Enrichment | v2.9.1 | Mental models need data from outcome tracking |
+| v2.9.3 Adaptation | v2.9.1 | Needs ~50+ outcomes for meaningful classifier hints |
+| v2.9.4 Prediction | v2.9.2 | Needs enrichment service for proactive context |
 | v2.10 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
 
 ## Known Issues
