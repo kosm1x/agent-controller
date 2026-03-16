@@ -24,7 +24,7 @@ import { getMemoryService } from "../memory/index.js";
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
-/** All 15 commit-bridge tools available for chat tasks. */
+/** All 20 commit-bridge tools available for chat tasks. */
 const COMMIT_TOOLS = [
   "commit__get_daily_snapshot",
   "commit__get_hierarchy",
@@ -39,7 +39,12 @@ const COMMIT_TOOLS = [
   "commit__create_task",
   "commit__create_goal",
   "commit__create_objective",
+  "commit__create_vision",
   "commit__update_task",
+  "commit__update_objective",
+  "commit__update_goal",
+  "commit__update_vision",
+  "commit__delete_item",
   "commit__bulk_reprioritize",
 ];
 
@@ -97,6 +102,13 @@ export class MessageRouter {
 
   /** Handle an inbound message from any channel → create task. */
   async handleInbound(msg: IncomingMessage): Promise<void> {
+    // Immediate acknowledgment so the user knows the agent is listening
+    this.sendToChannel(
+      msg.channel,
+      msg.from,
+      "Recibido, trabajando en ello...",
+    );
+
     const titleText =
       msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
 
@@ -104,25 +116,22 @@ export class MessageRouter {
     let memoriesBlock = "";
     try {
       const memory = getMemoryService();
-      if (memory.backend === "hindsight") {
-        const memories = await memory.recall(msg.text, {
-          bank: "mc-jarvis",
-          tags: [msg.channel],
-          maxResults: 5,
-        });
-        if (memories.length > 0) {
-          memoriesBlock =
-            "\n\n## Relevant memories\n" +
-            memories.map((m) => `- ${m.content}`).join("\n");
-        }
+      const memories = await memory.recall(msg.text, {
+        bank: "mc-jarvis",
+        tags: [msg.channel, "conversation"],
+        maxResults: 10,
+      });
+      if (memories.length > 0) {
+        memoriesBlock =
+          "\n\n## Conversación reciente\n" +
+          memories.map((m) => `- ${m.content}`).join("\n");
       }
     } catch {
       // Non-fatal — proceed without memory context
     }
 
     const tools = [...COMMIT_TOOLS];
-    const memory = getMemoryService();
-    if (memory.backend === "hindsight") {
+    if (getMemoryService().backend === "hindsight") {
       tools.push("memory_search", "memory_store");
     }
 
@@ -256,19 +265,16 @@ ${msg.text}`,
     if (resultText) {
       this.sendToChannel(pending.channel, pending.to, resultText);
 
-      // Retain the exchange in conversation memory
+      // Retain the exchange in conversation memory (works with any backend)
       try {
-        const memory = getMemoryService();
-        if (memory.backend === "hindsight") {
-          const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
-          memory
-            .retain(exchange, {
-              bank: "mc-jarvis",
-              tags: [pending.channel, "conversation"],
-              async: true,
-            })
-            .catch(() => {});
-        }
+        const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
+        getMemoryService()
+          .retain(exchange, {
+            bank: "mc-jarvis",
+            tags: [pending.channel, "conversation"],
+            async: true,
+          })
+          .catch(() => {});
       } catch {
         // Non-fatal
       }

@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS learnings (
 );
 CREATE INDEX IF NOT EXISTS idx_learnings_created ON learnings(created_at DESC);
 
+-- Conversation memory (works with any memory backend)
+CREATE TABLE IF NOT EXISTS conversations (
+  id         INTEGER PRIMARY KEY,
+  bank       TEXT NOT NULL DEFAULT 'mc-jarvis',
+  tags       TEXT DEFAULT '[]',
+  content    TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_bank ON conversations(bank);
+CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC);
+
 -- A2A context-to-task mapping (for multi-turn conversations)
 CREATE TABLE IF NOT EXISTS a2a_contexts (
   context_id  TEXT PRIMARY KEY,

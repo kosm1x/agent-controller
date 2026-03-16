@@ -142,9 +142,13 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(15);
+      expect(call.tools).toHaveLength(20);
       expect(call.tools).toContain("commit__get_daily_snapshot");
       expect(call.tools).toContain("commit__complete_recurring");
+      expect(call.tools).toContain("commit__update_objective");
+      expect(call.tools).toContain("commit__update_goal");
+      expect(call.tools).toContain("commit__update_vision");
+      expect(call.tools).toContain("commit__create_vision");
     });
 
     it("should include Jarvis persona in description", async () => {
@@ -187,9 +191,11 @@ describe("MessageRouter", () => {
         },
       });
 
-      expect(waAdapter.sentMessages).toHaveLength(1);
-      expect(waAdapter.sentMessages[0].text).toBe("Aquí están tus tareas...");
-      expect(waAdapter.sentMessages[0].to).toBe("owner@s.whatsapp.net");
+      // [0] = ack, [1] = result
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+      expect(waAdapter.sentMessages[1].text).toBe("Aquí están tus tareas...");
+      expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
     });
 
     it("should send error message on task.failed event", async () => {
@@ -216,8 +222,9 @@ describe("MessageRouter", () => {
         },
       });
 
-      expect(waAdapter.sentMessages).toHaveLength(1);
-      expect(waAdapter.sentMessages[0].text).toContain("No pude completar eso");
+      // [0] = ack, [1] = failure notice
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toContain("No pude completar eso");
     });
   });
 
@@ -233,8 +240,9 @@ describe("MessageRouter", () => {
 
       vi.advanceTimersByTime(120_001);
 
-      expect(waAdapter.sentMessages).toHaveLength(1);
-      expect(waAdapter.sentMessages[0].text).toContain(
+      // [0] = ack, [1] = interim
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toContain(
         "Sigo trabajando en eso",
       );
     });
@@ -250,8 +258,9 @@ describe("MessageRouter", () => {
 
       vi.advanceTimersByTime(300_001);
 
-      expect(waAdapter.sentMessages).toHaveLength(2);
-      expect(waAdapter.sentMessages[1].text).toContain("Se agotó el tiempo");
+      // [0] = ack, [1] = interim (120s), [2] = timeout (300s)
+      expect(waAdapter.sentMessages).toHaveLength(3);
+      expect(waAdapter.sentMessages[2].text).toContain("Se agotó el tiempo");
     });
   });
 

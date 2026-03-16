@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-13
+> Last updated: 2026-03-16
 
 ## Overview
 
@@ -33,7 +33,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
 | v2.4 | LiteLLM Backend — sidecar proxy, configurable retries, inference health probe | Done | — |
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Done | — |
-| v2.6 | JARVIS Integration — commit-bridge MCP server (15 tools), ritual scheduler (morning/nightly) | Done | — |
+| v2.6 | JARVIS Integration — commit-bridge MCP server (20 tools), ritual scheduler (morning/nightly) | Done | — |
 | v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
 | v2.8 | Hindsight Memory — semantic long-term memory via Hindsight sidecar, memory service abstraction, agent memory tools | Done | — |
 | v2.9 | Classifier Evolution — ML-based classification from task history | Planned | — |
@@ -70,6 +70,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-16 | — | Full CRUD for hierarchy parents — update_objective, update_goal, update_vision, create_vision, delete_item (title-verified) — 20 MCP tools total |
+| 2026-03-16 | — | Fix: Classifier misrouting chat messages as nanoclaw — messaging tag now forces fast runner |
+| 2026-03-16 | — | Fix: Immediate ack on inbound messages — "Recibido, trabajando en ello..." sent before task creation |
+| 2026-03-16 | — | Fix: Conversation memory works without Hindsight — new `conversations` table, SQLite backend supports bank/tags, router no longer gated on hindsight-only for recall/retain |
 | 2026-03-13 | — | v2.8: Hindsight memory integration — MemoryService abstraction, Hindsight HTTP client + backend with circuit breaker, 3 agent memory tools, Jarvis conversation memory, learnings migration, Docker Compose sidecar |
 | 2026-03-13 | — | Fix: COMMIT_TOOLS list in router — 8/15 tool names were stale and didn't match actual commit-bridge MCP tools |
 | 2026-03-13 | — | Fix: ACI tool descriptions for COMMIT hierarchy — LLM no longer confuses visions with goals in Telegram chat |
@@ -91,7 +95,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 - Full task lifecycle: submit → classify → dispatch → execute → stream results
 - 5 runner types with automatic complexity-based routing
-- 4-7 built-in tools (shell_exec, http_fetch, file_read, file_write + memory_search, memory_store, memory_reflect when Hindsight enabled) + 15 MCP tools (commit-bridge)
+- 4-7 built-in tools (shell_exec, http_fetch, file_read, file_write + memory_search, memory_store, memory_reflect when Hindsight enabled) + 20 MCP tools (commit-bridge)
 - A2A interop: MC acts as both A2A server (receives tasks) and client (delegates tasks)
 - SSE real-time event stream with replay and filtering
 - Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
@@ -100,14 +104,15 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
 - Optional Docker isolation for heavy tasks (`HEAVY_RUNNER_CONTAINERIZED=true`) — same MC image, container slot sharing
 - JARVIS daily rituals: morning briefing (7 AM) and nightly close (10 PM) via node-cron scheduler with idempotency guard
-- commit-bridge MCP server: 15 Supabase tools for COMMIT-AI (visions, goals, objectives, tasks, journal, ideas) with ACI-quality descriptions that teach the LLM the hierarchy
+- commit-bridge MCP server: 20 Supabase tools for COMMIT-AI — full CRUD on all hierarchy levels (visions, goals, objectives, tasks), journal, ideas, with title-verified delete and ACI-quality descriptions
 - Bidirectional messaging: WhatsApp (Baileys) + Telegram (Grammy), owner-only, every inbound message becomes a task
 - Ritual broadcast: morning briefing and nightly close results delivered to all active messaging channels
 - Message formatting: markdown dialect conversion (WA/TG), auto-splitting for Telegram 4096-char limit
+- Conversation memory: SQLite-backed by default (last N exchanges per channel), Hindsight adds semantic search when enabled
 - Hindsight long-term memory: semantic+keyword+graph+temporal retrieval via Docker sidecar (`docker compose --profile hindsight up -d`)
-- Memory service abstraction: pluggable backends (SQLite fallback, Hindsight for semantic), circuit breaker (3 failures → 60s cooldown)
-- Agent memory tools: memory_search, memory_store, memory_reflect — LLMs can explicitly search/store memories during execution
-- Jarvis conversation memory: recalls past conversations before responding, retains exchanges after completion
+- Memory service abstraction: pluggable backends (SQLite with bank/tags, Hindsight for semantic), circuit breaker (3 failures → 60s cooldown)
+- Agent memory tools: memory_search, memory_store, memory_reflect — LLMs can explicitly search/store memories during execution (Hindsight only)
+- Jarvis conversation memory: recalls past conversations before responding, retains exchanges after completion (works with any backend)
 
 ## Blocked / Dependencies
 

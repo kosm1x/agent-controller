@@ -398,7 +398,233 @@ export function registerWriteTools(server: McpServer): void {
     },
   );
 
-  // 14. bulk_reprioritize
+  // 14. update_objective
+  server.registerTool(
+    "update_objective",
+    {
+      description:
+        "Update any field on an objective (partial update). An objective is a milestone under a goal.",
+      inputSchema: {
+        id: z.string().describe("Objective UUID"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        priority: z.enum(["high", "medium", "low"]).optional(),
+        target_date: z
+          .string()
+          .optional()
+          .describe("Target date (YYYY-MM-DD), use empty string to clear"),
+        goal_id: z
+          .string()
+          .optional()
+          .describe("Parent goal UUID, use empty string to unlink"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "on_hold"])
+          .optional(),
+      },
+    },
+    async (args) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const updates: Record<string, unknown> = {};
+
+      if (args.title !== undefined) updates.title = args.title;
+      if (args.description !== undefined)
+        updates.description = args.description;
+      if (args.priority !== undefined) updates.priority = args.priority;
+      if (args.status !== undefined) updates.status = args.status;
+      if (args.target_date !== undefined)
+        updates.target_date = args.target_date === "" ? null : args.target_date;
+      if (args.goal_id !== undefined)
+        updates.goal_id = args.goal_id === "" ? null : args.goal_id;
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No fields to update" }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await supabase
+        .from("objectives")
+        .update(updates)
+        .eq("id", args.id)
+        .eq("user_id", uid)
+        .select()
+        .single();
+
+      const objective = unwrap(result, "update_objective");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(objective) }],
+      };
+    },
+  );
+
+  // 15. update_goal
+  server.registerTool(
+    "update_goal",
+    {
+      description:
+        "Update any field on a goal (partial update). A goal is a measurable outcome under a vision.",
+      inputSchema: {
+        id: z.string().describe("Goal UUID"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        target_date: z
+          .string()
+          .optional()
+          .describe("Target date (YYYY-MM-DD), use empty string to clear"),
+        vision_id: z
+          .string()
+          .optional()
+          .describe("Parent vision UUID, use empty string to unlink"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "on_hold"])
+          .optional(),
+      },
+    },
+    async (args) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const updates: Record<string, unknown> = {};
+
+      if (args.title !== undefined) updates.title = args.title;
+      if (args.description !== undefined)
+        updates.description = args.description;
+      if (args.status !== undefined) updates.status = args.status;
+      if (args.target_date !== undefined)
+        updates.target_date = args.target_date === "" ? null : args.target_date;
+      if (args.vision_id !== undefined)
+        updates.vision_id = args.vision_id === "" ? null : args.vision_id;
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No fields to update" }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await supabase
+        .from("goals")
+        .update(updates)
+        .eq("id", args.id)
+        .eq("user_id", uid)
+        .select()
+        .single();
+
+      const goal = unwrap(result, "update_goal");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(goal) }],
+      };
+    },
+  );
+
+  // 16. update_vision
+  server.registerTool(
+    "update_vision",
+    {
+      description:
+        "Update any field on a vision (partial update). A vision is a long-term life direction — the top of the COMMIT hierarchy.",
+      inputSchema: {
+        id: z.string().describe("Vision UUID"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        target_date: z
+          .string()
+          .optional()
+          .describe("Target date (YYYY-MM-DD), use empty string to clear"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "on_hold"])
+          .optional(),
+      },
+    },
+    async (args) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const updates: Record<string, unknown> = {};
+
+      if (args.title !== undefined) updates.title = args.title;
+      if (args.description !== undefined)
+        updates.description = args.description;
+      if (args.status !== undefined) updates.status = args.status;
+      if (args.target_date !== undefined)
+        updates.target_date = args.target_date === "" ? null : args.target_date;
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No fields to update" }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await supabase
+        .from("visions")
+        .update(updates)
+        .eq("id", args.id)
+        .eq("user_id", uid)
+        .select()
+        .single();
+
+      const vision = unwrap(result, "update_vision");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(vision) }],
+      };
+    },
+  );
+
+  // 17. create_vision
+  server.registerTool(
+    "create_vision",
+    {
+      description:
+        "Create a new vision — a long-term life direction at the top of the COMMIT hierarchy",
+      inputSchema: {
+        title: z.string().describe("Vision title"),
+        description: z.string().optional().describe("Vision description"),
+        target_date: z.string().optional().describe("Target date (YYYY-MM-DD)"),
+      },
+    },
+    async ({ title, description, target_date }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const result = await supabase
+        .from("visions")
+        .insert({
+          user_id: uid,
+          title,
+          description: description ?? "",
+          target_date: target_date ?? null,
+          status: "not_started",
+        })
+        .select()
+        .single();
+
+      const vision = unwrap(result, "create_vision");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(vision) }],
+      };
+    },
+  );
+
+  // 18. bulk_reprioritize
   server.registerTool(
     "bulk_reprioritize",
     {
@@ -446,6 +672,96 @@ export function registerWriteTools(server: McpServer): void {
               updated: succeeded,
               total: updates.length,
               errors: errors.length > 0 ? errors : undefined,
+            }),
+          },
+        ],
+      };
+    },
+  );
+
+  // 19. delete_item
+  server.registerTool(
+    "delete_item",
+    {
+      description: `Permanently delete a vision, goal, objective, or task.
+
+DOUBLE-VERIFICATION REQUIRED: You must pass confirm_title matching the item's exact title. This prevents accidental deletions.
+
+Workflow:
+1. Look up the item first (list_tasks, list_goals, list_objectives, or get_hierarchy) to get its id and exact title.
+2. Ask the user to confirm they want to delete it — state the title and level clearly.
+3. Only after user confirms, call this tool with both id and confirm_title.
+
+NEVER call this tool without explicit user confirmation. Cascade behavior: deleting a goal does NOT delete its child objectives/tasks — they become unlinked.`,
+      inputSchema: {
+        table: z
+          .enum(HIERARCHY_TABLES)
+          .describe("Which level: visions, goals, objectives, or tasks"),
+        id: z.string().describe("Item UUID to delete"),
+        confirm_title: z
+          .string()
+          .describe(
+            "Must match the item's exact title — prevents accidental deletion",
+          ),
+      },
+    },
+    async ({ table, id, confirm_title }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      // Phase 1: Fetch the item and verify title matches
+      const lookupResult = await supabase
+        .from(table)
+        .select("id, title, status")
+        .eq("id", id)
+        .eq("user_id", uid)
+        .single();
+
+      const item = unwrap(lookupResult, `delete_item(${table}): lookup`) as {
+        id: string;
+        title: string;
+        status: string;
+      };
+
+      if (item.title !== confirm_title) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error:
+                  "Title mismatch — confirm_title must match the item's exact title",
+                expected: item.title,
+                received: confirm_title,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Phase 2: Delete
+      const deleteResult = await supabase
+        .from(table)
+        .delete()
+        .eq("id", id)
+        .eq("user_id", uid);
+
+      if (deleteResult.error) {
+        throw new Error(
+          `delete_item(${table}): ${JSON.stringify(deleteResult.error)}`,
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              deleted: true,
+              table,
+              id,
+              title: item.title,
             }),
           },
         ],

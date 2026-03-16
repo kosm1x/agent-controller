@@ -74,6 +74,19 @@ export function classify(input: ClassificationInput): ClassificationResult {
     }
   }
 
+  // Messaging tasks always route to fast — they use MCP tools, not containers.
+  // The description is inflated by persona + conversation memories, which would
+  // cause false-positive complexity scoring.
+  const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
+  if (tags.has("messaging")) {
+    return {
+      agentType: "fast",
+      score: 0,
+      reason: "messaging task → fast",
+      explicit: false,
+    };
+  }
+
   let score = 0;
   const reasons: string[] = [];
   const text = `${input.title} ${input.description}`;
@@ -116,7 +129,6 @@ export function classify(input: ClassificationInput): ClassificationResult {
   }
 
   // Tag-based scoring
-  const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
   if (tags.has("complex") || tags.has("research")) {
     score += 2;
     reasons.push("tag: complex/research (+2)");
