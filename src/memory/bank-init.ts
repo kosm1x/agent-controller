@@ -2,14 +2,14 @@
  * Bank initialization — creates memory banks with tailored configurations.
  *
  * Called at startup when Hindsight is active. Idempotent (PUT = upsert).
- * Bank configs are defined in hindsight-backend.ts (lazy init handles this
- * automatically, but explicit init ensures banks + mental models exist early).
+ * Bank configs are also defined in hindsight-backend.ts (lazy init handles this
+ * automatically, but explicit init ensures banks exist early).
  */
 
 import { HindsightClient } from "./hindsight-client.js";
 
 /**
- * Initialize all memory banks and their mental models.
+ * Initialize all memory banks.
  * Called from index.ts after Hindsight is confirmed healthy.
  */
 export async function initBanks(
@@ -18,38 +18,39 @@ export async function initBanks(
 ): Promise<void> {
   const client = new HindsightClient(baseUrl, apiKey);
 
-  // Banks are created lazily by hindsight-backend.ts on first use.
-  // This function exists for explicit early init + mental model setup.
-
   try {
-    // Create mc-jarvis mental models for conversation memory
-    // These are handled by Hindsight's auto-consolidation, but we
-    // seed the bank config to ensure the mission/disposition are set.
     await client.upsertBank("mc-jarvis", {
-      mission:
-        "Remember conversations with the user across messaging sessions. " +
-        "Track user preferences, active projects, schedule, and personal " +
-        "context for a strategic assistant named Jarvis.",
-      disposition:
+      reflect_mission:
+        "Recall and synthesize conversations with the user (Fede) across messaging sessions. " +
+        "Track preferences, active projects, schedule, and personal context.",
+      retain_mission:
+        "Extract user preferences, project updates, task changes, and conversation context. " +
+        "Always include who said what and any decisions made.",
+      observations_mission:
         "Prioritize user preferences and active project context. " +
-        "Auto-refresh when observations consolidate. Keep conversation " +
-        "context relevant and timely — decay old topics.",
+        "Keep conversation context relevant and timely — decay old topics.",
     });
 
     await client.upsertBank("mc-operational", {
-      mission:
-        "Store and retrieve learnings from task execution — planning patterns, " +
+      reflect_mission:
+        "Synthesize learnings from AI agent task execution — planning patterns, " +
         "tool failures, execution strategies, and reflection insights.",
-      disposition:
-        "Prioritize actionable, specific learnings over generic observations. " +
-        "Consolidate similar execution patterns.",
+      retain_mission:
+        "Extract actionable learnings from task execution. Focus on tool usage patterns, " +
+        "error recovery strategies, and planning decisions.",
+      observations_mission:
+        "Consolidate similar execution patterns. Discard learnings that become " +
+        "outdated as tools/APIs change.",
     });
 
     await client.upsertBank("mc-system", {
-      mission:
-        "Track infrastructure events, ritual outcomes, agent performance " +
-        "metrics, and system-level observations.",
-      disposition:
+      reflect_mission:
+        "Analyze infrastructure events, ritual outcomes, and agent performance " +
+        "for the Mission Control orchestrator.",
+      retain_mission:
+        "Extract infrastructure events, ritual results, and system anomalies. " +
+        "Include timestamps and error details.",
+      observations_mission:
         "Focus on patterns and anomalies. Consolidate routine metrics. " +
         "Retain infrastructure incidents and their resolutions long-term.",
     });

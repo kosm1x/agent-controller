@@ -1,5 +1,6 @@
 /**
  * Hindsight client tests — mock global fetch to verify REST calls.
+ * Aligned with Hindsight API v2 (2026-03).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,55 +30,62 @@ function mockFetch(status: number, body: unknown): void {
 describe("HindsightClient", () => {
   describe("health", () => {
     it("should return health status", async () => {
-      mockFetch(200, { status: "ok" });
+      mockFetch(200, { status: "healthy" });
       const result = await client.health();
-      expect(result.status).toBe("ok");
+      expect(result.status).toBe("healthy");
 
       const call = vi.mocked(fetch).mock.calls[0];
-      expect(call[0]).toBe(`${BASE_URL}/v1/default/health`);
+      expect(call[0]).toBe(`${BASE_URL}/health`);
       expect(call[1]?.method).toBe("GET");
     });
   });
 
   describe("retain", () => {
-    it("should POST observation to bank", async () => {
+    it("should POST items array to bank memories endpoint", async () => {
       mockFetch(200, {});
       await client.retain("test-bank", {
-        observation: "learned something",
+        content: "learned something",
         tags: ["test"],
         async: true,
       });
 
       const call = vi.mocked(fetch).mock.calls[0];
-      expect(call[0]).toBe(
-        `${BASE_URL}/v1/default/banks/test-bank/memories/retain`,
-      );
+      expect(call[0]).toBe(`${BASE_URL}/v1/default/banks/test-bank/memories`);
       expect(call[1]?.method).toBe("POST");
       const body = JSON.parse(call[1]?.body as string);
-      expect(body.observation).toBe("learned something");
-      expect(body.tags).toEqual(["test"]);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].content).toBe("learned something");
+      expect(body.items[0].tags).toEqual(["test"]);
+      expect(body.async).toBe(true);
+    });
+
+    it("should default async to true", async () => {
+      mockFetch(200, {});
+      await client.retain("test-bank", { content: "test" });
+
+      const body = JSON.parse(
+        vi.mocked(fetch).mock.calls[0][1]?.body as string,
+      );
       expect(body.async).toBe(true);
     });
   });
 
   describe("recall", () => {
-    it("should POST query and return memories", async () => {
+    it("should POST query and return results", async () => {
       mockFetch(200, {
-        memories: [
-          { content: "memory 1", relevance: 0.95 },
-          { content: "memory 2", relevance: 0.8 },
+        results: [
+          { id: "m1", text: "memory 1", type: "world" },
+          { id: "m2", text: "memory 2", type: "experience" },
         ],
       });
 
       const result = await client.recall("test-bank", {
         query: "what happened",
         budget: "low",
-        max_results: 5,
       });
 
-      expect(result.memories).toHaveLength(2);
-      expect(result.memories[0].content).toBe("memory 1");
-      expect(result.memories[0].relevance).toBe(0.95);
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0].text).toBe("memory 1");
 
       const call = vi.mocked(fetch).mock.calls[0];
       expect(call[0]).toBe(
@@ -90,13 +98,13 @@ describe("HindsightClient", () => {
   });
 
   describe("reflect", () => {
-    it("should POST query and return reflection", async () => {
-      mockFetch(200, { reflection: "synthesized insight" });
+    it("should POST query and return text", async () => {
+      mockFetch(200, { text: "synthesized insight" });
       const result = await client.reflect("test-bank", {
         query: "patterns in deployments",
         budget: "mid",
       });
-      expect(result.reflection).toBe("synthesized insight");
+      expect(result.text).toBe("synthesized insight");
     });
   });
 
@@ -104,8 +112,8 @@ describe("HindsightClient", () => {
     it("should PUT bank config", async () => {
       mockFetch(200, {});
       await client.upsertBank("my-bank", {
-        mission: "track stuff",
-        disposition: "be helpful",
+        reflect_mission: "track stuff",
+        retain_mission: "be helpful",
       });
 
       const call = vi.mocked(fetch).mock.calls[0];
@@ -121,7 +129,7 @@ describe("HindsightClient", () => {
     });
 
     it("should include auth header when API key provided", async () => {
-      mockFetch(200, { status: "ok" });
+      mockFetch(200, { status: "healthy" });
       await client.health();
 
       const call = vi.mocked(fetch).mock.calls[0];
@@ -131,7 +139,7 @@ describe("HindsightClient", () => {
 
     it("should not include auth header without API key", async () => {
       const noAuthClient = new HindsightClient(BASE_URL);
-      mockFetch(200, { status: "ok" });
+      mockFetch(200, { status: "healthy" });
       await noAuthClient.health();
 
       const call = vi.mocked(fetch).mock.calls[0];

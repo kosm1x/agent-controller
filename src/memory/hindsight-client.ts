@@ -7,16 +7,18 @@
  * - reflect (synthesize)
  * - bank CRUD (create/update)
  * - health check
+ *
+ * Aligned with Hindsight API v2 (ghcr.io/vectorize-io/hindsight:latest as of 2026-03).
  */
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (matching Hindsight API v2 schemas)
 // ---------------------------------------------------------------------------
 
 export interface HindsightRetainRequest {
-  observation: string;
+  content: string;
   tags?: string[];
   async?: boolean;
 }
@@ -25,14 +27,12 @@ export interface HindsightRecallRequest {
   query: string;
   budget?: "low" | "mid" | "high";
   tags?: string[];
-  max_results?: number;
 }
 
 export interface HindsightRecallResponse {
-  memories: Array<{
-    content: string;
-    relevance: number;
-    created_at?: string;
+  results: Array<{
+    id: string;
+    text: string;
     type?: string;
   }>;
 }
@@ -40,16 +40,16 @@ export interface HindsightRecallResponse {
 export interface HindsightReflectRequest {
   query: string;
   budget?: "low" | "mid" | "high";
-  tags?: string[];
 }
 
 export interface HindsightReflectResponse {
-  reflection: string;
+  text: string;
 }
 
 export interface HindsightBankConfig {
-  mission?: string;
-  disposition?: string;
+  reflect_mission?: string;
+  retain_mission?: string;
+  observations_mission?: string;
 }
 
 export interface HindsightHealthResponse {
@@ -108,11 +108,10 @@ export class HindsightClient {
 
   /** Store an observation in a memory bank. */
   async retain(bankId: string, req: HindsightRetainRequest): Promise<void> {
-    await this.request(
-      "POST",
-      `/v1/default/banks/${bankId}/memories/retain`,
-      req,
-    );
+    await this.request("POST", `/v1/default/banks/${bankId}/memories`, {
+      items: [{ content: req.content, tags: req.tags }],
+      async: req.async ?? true,
+    });
   }
 
   /** Search memories by semantic similarity. */
@@ -123,7 +122,7 @@ export class HindsightClient {
     return this.request<HindsightRecallResponse>(
       "POST",
       `/v1/default/banks/${bankId}/memories/recall`,
-      req,
+      { query: req.query, budget: req.budget, tags: req.tags },
     );
   }
 
@@ -135,7 +134,7 @@ export class HindsightClient {
     return this.request<HindsightReflectResponse>(
       "POST",
       `/v1/default/banks/${bankId}/reflect`,
-      req,
+      { query: req.query, budget: req.budget },
     );
   }
 
@@ -148,7 +147,7 @@ export class HindsightClient {
   async health(): Promise<HindsightHealthResponse> {
     return this.request<HindsightHealthResponse>(
       "GET",
-      "/v1/default/health",
+      "/health",
       undefined,
       3000,
     );

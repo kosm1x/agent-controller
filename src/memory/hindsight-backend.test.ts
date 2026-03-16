@@ -1,6 +1,7 @@
 /**
  * Hindsight backend tests — mock the client to verify circuit breaker,
  * bank init, and method delegation.
+ * Aligned with Hindsight API v2 (2026-03).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -12,13 +13,11 @@ vi.mock("./hindsight-client.js", () => {
     HindsightClient: vi.fn().mockImplementation(() => ({
       retain: vi.fn().mockResolvedValue(undefined),
       recall: vi.fn().mockResolvedValue({
-        memories: [
-          { content: "test memory", relevance: 0.9, created_at: "2026-01-01" },
-        ],
+        results: [{ id: "m1", text: "test memory", type: "world" }],
       }),
-      reflect: vi.fn().mockResolvedValue({ reflection: "test reflection" }),
+      reflect: vi.fn().mockResolvedValue({ text: "test reflection" }),
       upsertBank: vi.fn().mockResolvedValue(undefined),
-      health: vi.fn().mockResolvedValue({ status: "ok" }),
+      health: vi.fn().mockResolvedValue({ status: "healthy" }),
     })),
   };
 });
@@ -56,10 +55,10 @@ describe("HindsightMemoryBackend", () => {
 
       expect(mockClient.upsertBank).toHaveBeenCalledWith(
         "mc-operational",
-        expect.objectContaining({ mission: expect.any(String) }),
+        expect.objectContaining({ reflect_mission: expect.any(String) }),
       );
       expect(mockClient.retain).toHaveBeenCalledWith("mc-operational", {
-        observation: "learned something",
+        content: "learned something",
         tags: ["test"],
         async: true,
       });
@@ -96,12 +95,10 @@ describe("HindsightMemoryBackend", () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].content).toBe("test memory");
-      expect(results[0].relevance).toBe(0.9);
       expect(mockClient.recall).toHaveBeenCalledWith("mc-operational", {
         query: "what happened",
         budget: "low",
         tags: undefined,
-        max_results: 5,
       });
     });
   });
@@ -116,7 +113,6 @@ describe("HindsightMemoryBackend", () => {
       expect(mockClient.reflect).toHaveBeenCalledWith("mc-operational", {
         query: "patterns",
         budget: "mid",
-        tags: undefined,
       });
     });
   });
@@ -142,17 +138,14 @@ describe("HindsightMemoryBackend", () => {
       await backend.recall("q", { bank: "mc-operational" });
 
       // Reset mock to see if 4th call goes through
-      mockClient.recall.mockResolvedValue({ memories: [] });
+      mockClient.recall.mockResolvedValue({ results: [] });
 
       // Circuit is open — should return [] without calling client
       const result = await backend.recall("q", { bank: "mc-operational" });
       expect(result).toEqual([]);
 
-      // The 4th call should NOT have triggered upsertBank (circuit open)
-      // Client was called for bank init + 3 failures = multiple times
-      // After circuit opens, no more calls happen
-      const totalRecallCalls = mockClient.recall.mock.calls.length;
-      expect(totalRecallCalls).toBe(3); // Only the 3 failures, not the 4th
+      // Only the 3 failures, not the 4th
+      expect(mockClient.recall).toHaveBeenCalledTimes(3);
     });
 
     it("should not block retain when circuit is open", async () => {
@@ -182,7 +175,7 @@ describe("HindsightMemoryBackend", () => {
       expect(mockClient.upsertBank).toHaveBeenCalledWith(
         "mc-operational",
         expect.objectContaining({
-          mission: expect.stringContaining("task execution"),
+          reflect_mission: expect.stringContaining("task execution"),
         }),
       );
     });

@@ -55,12 +55,11 @@ export class HindsightMemoryBackend implements MemoryService {
 
     try {
       await this.ensureBank(options.bank);
-      const req = {
-        observation: content,
+      await this.client.retain(options.bank, {
+        content,
         tags: options.tags,
         async: options.async ?? true,
-      };
-      await this.client.retain(options.bank, req);
+      });
       this.recordSuccess();
     } catch (err) {
       this.recordFailure(err);
@@ -76,13 +75,10 @@ export class HindsightMemoryBackend implements MemoryService {
         query,
         budget: "low",
         tags: options.tags,
-        max_results: options.maxResults ?? 10,
       });
       this.recordSuccess();
-      return response.memories.map((m) => ({
-        content: m.content,
-        relevance: m.relevance,
-        createdAt: m.created_at,
+      return response.results.map((r) => ({
+        content: r.text,
       }));
     } catch (err) {
       this.recordFailure(err);
@@ -98,10 +94,9 @@ export class HindsightMemoryBackend implements MemoryService {
       const response = await this.client.reflect(options.bank, {
         query,
         budget: "mid",
-        tags: options.tags,
       });
       this.recordSuccess();
-      return response.reflection;
+      return response.text;
     } catch (err) {
       this.recordFailure(err);
       return "";
@@ -185,34 +180,42 @@ export class HindsightMemoryBackend implements MemoryService {
 
 const BANK_CONFIGS: Record<
   MemoryBank,
-  { mission: string; disposition: string }
+  {
+    reflect_mission: string;
+    retain_mission: string;
+    observations_mission: string;
+  }
 > = {
   "mc-operational": {
-    mission:
-      "Store and retrieve learnings from task execution — planning patterns, " +
-      "tool failures, execution strategies, and reflection insights for an " +
-      "autonomous AI agent orchestrator.",
-    disposition:
-      "Prioritize actionable, specific learnings over generic observations. " +
+    reflect_mission:
+      "Synthesize learnings from AI agent task execution — planning patterns, " +
+      "tool failures, execution strategies, and reflection insights.",
+    retain_mission:
+      "Extract actionable learnings from task execution. Focus on tool usage patterns, " +
+      "error recovery strategies, and planning decisions. Ignore generic status updates.",
+    observations_mission:
       "Consolidate similar execution patterns. Discard learnings that become " +
-      "outdated as tools/APIs change.",
+      "outdated as tools/APIs change. Prioritize specifics over generalities.",
   },
   "mc-jarvis": {
-    mission:
-      "Remember conversations with the user across messaging sessions " +
-      "(Telegram/WhatsApp). Track user preferences, active projects, " +
-      "schedule, and personal context for a strategic assistant named Jarvis.",
-    disposition:
+    reflect_mission:
+      "Recall and synthesize conversations with the user (Fede) across messaging sessions. " +
+      "Track preferences, active projects, schedule, and personal context.",
+    retain_mission:
+      "Extract user preferences, project updates, task changes, and conversation context. " +
+      "Always include who said what and any decisions made.",
+    observations_mission:
       "Prioritize user preferences and active project context. " +
-      "Auto-refresh when observations consolidate. Keep conversation " +
-      "context relevant and timely — decay old topics.",
+      "Keep conversation context relevant and timely — decay old topics.",
   },
   "mc-system": {
-    mission:
-      "Track infrastructure events, ritual outcomes, agent performance " +
-      "metrics, and system-level observations for the Mission Control " +
-      "orchestrator.",
-    disposition:
+    reflect_mission:
+      "Analyze infrastructure events, ritual outcomes, and agent performance " +
+      "for the Mission Control orchestrator.",
+    retain_mission:
+      "Extract infrastructure events, ritual results, and system anomalies. " +
+      "Include timestamps and error details.",
+    observations_mission:
       "Focus on patterns and anomalies. Consolidate routine metrics. " +
       "Retain infrastructure incidents and their resolutions long-term.",
   },
