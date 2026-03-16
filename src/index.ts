@@ -75,6 +75,12 @@ async function main(): Promise<void> {
     toolRegistry.register(memoryReflectTool);
   }
 
+  // Register skill tools (always available — SQLite-backed)
+  const { skillSaveTool, skillListTool } =
+    await import("./tools/builtin/skills.js");
+  toolRegistry.register(skillSaveTool);
+  toolRegistry.register(skillListTool);
+
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
 
   // Create and start HTTP server

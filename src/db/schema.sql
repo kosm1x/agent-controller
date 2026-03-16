@@ -93,6 +93,24 @@ CREATE TABLE IF NOT EXISTS task_outcomes (
 CREATE INDEX IF NOT EXISTS idx_outcomes_runner ON task_outcomes(ran_on);
 CREATE INDEX IF NOT EXISTS idx_outcomes_created ON task_outcomes(created_at DESC);
 
+-- Saved skills (reusable multi-step procedures)
+CREATE TABLE IF NOT EXISTS skills (
+  id            INTEGER PRIMARY KEY,
+  skill_id      TEXT UNIQUE NOT NULL,
+  name          TEXT UNIQUE NOT NULL,
+  description   TEXT NOT NULL,
+  trigger_text  TEXT NOT NULL,
+  steps         TEXT NOT NULL DEFAULT '[]',
+  tools         TEXT NOT NULL DEFAULT '[]',
+  use_count     INTEGER DEFAULT 0,
+  success_count INTEGER DEFAULT 0,
+  source        TEXT DEFAULT 'manual',
+  active        INTEGER DEFAULT 1,
+  created_at    TEXT DEFAULT (datetime('now')),
+  updated_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(active);
+
 -- Conversation memory (works with any memory backend)
 CREATE TABLE IF NOT EXISTS conversations (
   id         INTEGER PRIMARY KEY,

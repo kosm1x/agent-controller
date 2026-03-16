@@ -39,7 +39,7 @@ import {
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
-/** All 20 commit-bridge tools available for chat tasks. */
+/** All 22 tools available for chat tasks (20 commit-bridge + 2 skill management). */
 const COMMIT_TOOLS = [
   "commit__get_daily_snapshot",
   "commit__get_hierarchy",
@@ -61,6 +61,8 @@ const COMMIT_TOOLS = [
   "commit__update_vision",
   "commit__delete_item",
   "commit__bulk_reprioritize",
+  "skill_save",
+  "skill_list",
 ];
 
 interface PendingReply {
@@ -205,7 +207,11 @@ Mensaje del usuario:
 ${msg.text}`,
       agentType: "auto",
       tools,
-      tags: ["messaging", msg.channel],
+      tags: [
+        "messaging",
+        msg.channel,
+        ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
+      ],
     });
 
     // Track pending reply

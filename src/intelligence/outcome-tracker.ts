@@ -10,6 +10,7 @@
  */
 
 import { recordOutcome, updateFeedback } from "../db/task-outcomes.js";
+import { incrementSkillUsage } from "../db/skills.js";
 import { getTask } from "../dispatch/dispatcher.js";
 import { getMemoryService } from "../memory/index.js";
 
@@ -81,6 +82,12 @@ export function trackTaskOutcome(
         })
         .catch(() => {});
     }
+
+    // Update skill usage if skills were matched
+    updateSkillTracking(tags, success);
+
+    // Check for recurring patterns (may propose new skills)
+    detectRecurringPatternsAsync();
 
     // Start feedback window
     startFeedbackWindow(taskId, channel);
@@ -173,6 +180,27 @@ function extractToolsUsed(output: string | null): string[] {
     // Output not JSON — no tools
   }
   return [];
+}
+
+/** Update skill usage counters for any matched skills in tags. */
+function updateSkillTracking(tags: string[], success: boolean): void {
+  for (const tag of tags) {
+    if (tag.startsWith("skill:")) {
+      const skillId = tag.slice(6);
+      try {
+        incrementSkillUsage(skillId, success);
+      } catch {
+        // Non-fatal — skill may have been deleted
+      }
+    }
+  }
+}
+
+/** Fire-and-forget wrapper for skill discovery. */
+function detectRecurringPatternsAsync(): void {
+  import("./skill-discovery.js")
+    .then((mod) => mod.detectRecurringPatterns())
+    .catch(() => {});
 }
 
 /** Cleanup all timers (for shutdown). */

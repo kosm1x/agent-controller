@@ -13,8 +13,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | 76 (+5 in commit-bridge) |
-| Test files | 27 |
-| Tests passing | 237 |
+| Test files | 29 |
+| Tests passing | 250 |
 | Type errors | 0 |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
@@ -41,6 +41,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.9.2 | Enrichment — adaptive prompts, context injection from mental models | Done | — |
 | v2.9.3 | Adaptation — smart classifier from outcomes, feedback loop | Done | — |
 | v2.9.4 | Prediction — proactive scheduler, deadline/staleness alerts | Done | — |
+| v2.9.5 | Skill Memory — reusable procedures, skill discovery, self-assessment | Done | — |
 | v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
 ## Runners
@@ -74,6 +75,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-16 | — | v2.9.5: Skill Memory — skills table, skill_save/skill_list tools, enrichment skill matching (SQLite keyword + Hindsight semantic), usage tracking, auto-discovery (3+ recurring patterns) |
 | 2026-03-16 | — | v2.9.4: Prediction — proactive scheduler (every 4h during waking hours), deadline/staleness scanning, max 2 nudges/day, suppressed during active chat |
 | 2026-03-16 | — | v2.9.3: Adaptation — outcome-based classifier hints, feedback signal detection (positive/negative/rephrase), pure feedback interception (skips task creation for "gracias"/"no") |
 | 2026-03-16 | — | v2.9.2: Enrichment — adaptive prompts with mental model context injection (user-behavior, active-projects, tool effectiveness), 5-min cache, graceful degradation |
