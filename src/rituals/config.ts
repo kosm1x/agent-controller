@@ -27,4 +27,11 @@ export const rituals: RitualDefinition[] = [
     cron: "0 22 * * *",
     enabled: true,
   },
+  {
+    id: "evolution-log",
+    title: "Evolution log",
+    // 11:59 PM daily — captures full day of interactions
+    cron: "59 23 * * *",
+    enabled: true,
+  },
 ];

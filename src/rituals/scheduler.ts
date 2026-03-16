@@ -12,6 +12,7 @@ import { getRouter } from "../messaging/index.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
+import { createEvolutionLogEntry } from "./evolution-log.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
@@ -28,6 +29,8 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       return createMorningBriefing(date);
     case "nightly-close":
       return createNightlyClose(date);
+    case "evolution-log":
+      return createEvolutionLogEntry(date);
     default:
       throw new Error(`Unknown ritual: ${ritual.id}`);
   }
