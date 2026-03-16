@@ -27,6 +27,10 @@ import {
   clearAllFeedbackWindows,
 } from "../intelligence/outcome-tracker.js";
 import { enrichContext } from "../intelligence/enrichment.js";
+import {
+  detectFeedbackSignal,
+  isFeedbackMessage,
+} from "../intelligence/feedback.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -61,20 +65,6 @@ interface PendingReply {
   originalText: string;
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
-}
-
-/** Detect simple positive/negative feedback from short messages. */
-function detectSimpleFeedback(
-  text: string,
-): "positive" | "negative" | "neutral" {
-  const t = text.toLowerCase().trim();
-  if (
-    /^(gracias|perfecto|exacto|excelente|bien hecho|genial|ok|listo)\b/.test(t)
-  )
-    return "positive";
-  if (/^(no[, ]|incorrecto|mal\b|error\b|otra vez|no es\b)/.test(t))
-    return "negative";
-  return "neutral";
 }
 
 export class MessageRouter {
@@ -134,9 +124,26 @@ export class MessageRouter {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
-      const signal = detectSimpleFeedback(msg.text);
+      const signal = detectFeedbackSignal(msg.text);
       if (signal !== "neutral") {
         recordTaskFeedback(feedbackTaskId, signal);
+      }
+
+      // Pure feedback ("gracias", "perfecto", "no") → ack and skip task creation
+      if (isFeedbackMessage(msg.text)) {
+        if (signal === "positive") {
+          this.sendToChannel(msg.channel, msg.from, "👍");
+        } else if (signal === "negative") {
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
+          );
+        }
+        console.log(
+          `[router] Feedback intercepted from ${msg.channel}: ${signal}`,
+        );
+        return;
       }
     }
 

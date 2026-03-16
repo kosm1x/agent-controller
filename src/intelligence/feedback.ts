@@ -1,0 +1,80 @@
+/**
+ * Feedback signal detection — analyzes short follow-up messages
+ * to determine implicit user satisfaction signals.
+ *
+ * Signals:
+ * - positive: "gracias", "perfecto", "exacto", etc.
+ * - negative: "no", "incorrecto", "mal", "otra vez", etc.
+ * - rephrase: short message that overlaps significantly with previous (>40% words)
+ * - neutral: no detectable signal
+ *
+ * Short feedback-like messages (< 15 words with a signal) can be intercepted
+ * by the router to avoid spawning a full task for a simple "gracias".
+ */
+
+const POSITIVE_PATTERNS =
+  /^(gracias|perfecto|exacto|excelente|bien hecho|genial|ok|listo|va|sale|órale|chido|correcto|sí|si|👍|🙏|💪)\b/i;
+
+const NEGATIVE_PATTERNS =
+  /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;
+
+export type FeedbackSignal = "positive" | "negative" | "rephrase" | "neutral";
+
+/**
+ * Detect feedback signal from message text.
+ */
+export function detectFeedbackSignal(
+  text: string,
+  previousMessage?: string,
+): FeedbackSignal {
+  const trimmed = text.trim();
+
+  if (POSITIVE_PATTERNS.test(trimmed)) return "positive";
+  if (NEGATIVE_PATTERNS.test(trimmed)) return "negative";
+
+  // Check for rephrase: high word overlap with previous message
+  if (previousMessage && isRephrase(trimmed, previousMessage)) {
+    return "rephrase";
+  }
+
+  return "neutral";
+}
+
+/**
+ * Is this message short enough and signal-bearing to be pure feedback
+ * rather than a new command? If true, the router can skip task creation.
+ */
+export function isFeedbackMessage(text: string): boolean {
+  const trimmed = text.trim();
+  const wordCount = trimmed.split(/\s+/).length;
+
+  // Only intercept very short messages with clear signal
+  if (wordCount > 8) return false;
+
+  return POSITIVE_PATTERNS.test(trimmed) || NEGATIVE_PATTERNS.test(trimmed);
+}
+
+/** Check if text is a rephrase of previous (>40% word overlap, both short). */
+function isRephrase(current: string, previous: string): boolean {
+  const curWords = new Set(
+    current
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
+  );
+  const prevWords = new Set(
+    previous
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
+  );
+
+  if (curWords.size < 3 || prevWords.size < 3) return false;
+
+  let overlap = 0;
+  for (const w of curWords) {
+    if (prevWords.has(w)) overlap++;
+  }
+
+  return overlap / Math.min(curWords.size, prevWords.size) > 0.4;
+}

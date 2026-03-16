@@ -12,6 +12,7 @@
  */
 
 import type { AgentType } from "../runners/types.js";
+import { queryOutcomes } from "../db/task-outcomes.js";
 
 export interface ClassificationInput {
   title: string;
@@ -144,6 +145,13 @@ export function classify(input: ClassificationInput): ClassificationResult {
     reasons.push("priority: critical (+1)");
   }
 
+  // Outcome-based adjustment (learns from historical task results)
+  const outcomeHint = getOutcomeHint();
+  if (outcomeHint !== 0) {
+    score += outcomeHint;
+    reasons.push(`outcome hint (${outcomeHint > 0 ? "+" : ""}${outcomeHint})`);
+  }
+
   // Map score to agent type
   let agentType: AgentType;
   if (score >= 9) {
@@ -162,4 +170,35 @@ export function classify(input: ClassificationInput): ClassificationResult {
     reason: reasons.length > 0 ? reasons.join("; ") : "simple task (score 0)",
     explicit: false,
   };
+}
+
+/**
+ * Query task_outcomes for historical success rates by runner type.
+ * Returns a score adjustment: negative pulls toward simpler runners,
+ * positive pushes toward heavier ones.
+ *
+ * Guard: returns 0 if fewer than 10 outcomes (insufficient data).
+ */
+function getOutcomeHint(): number {
+  try {
+    const outcomes = queryOutcomes({ days: 30, limit: 100 });
+    if (outcomes.length < 10) return 0;
+
+    // Compute success rate on fast runner
+    const fastOutcomes = outcomes.filter((o) => o.ran_on === "fast");
+    if (fastOutcomes.length < 5) return 0;
+
+    const fastSuccess = fastOutcomes.filter((o) => o.success).length;
+    const fastRate = fastSuccess / fastOutcomes.length;
+
+    // High success on fast → pull score down (prefer fast)
+    if (fastRate > 0.85) return -1;
+
+    // High failure on fast → push score up (try heavier runner)
+    if (fastRate < 0.5) return 2;
+
+    return 0;
+  } catch {
+    return 0;
+  }
 }
