@@ -26,6 +26,7 @@ import {
   recordTaskFeedback,
   clearAllFeedbackWindows,
 } from "../intelligence/outcome-tracker.js";
+import { enrichContext } from "../intelligence/enrichment.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -167,6 +168,9 @@ export class MessageRouter {
       // Non-fatal — proceed without memory context
     }
 
+    // Enrich with adaptive intelligence (mental models + outcome data)
+    const enrichment = await enrichContext(msg.text, msg.channel);
+
     const tools = [...COMMIT_TOOLS];
     if (getMemoryService().backend === "hindsight") {
       tools.push("memory_search", "memory_store");
@@ -184,7 +188,7 @@ Jerarquía COMMIT (NO confundas niveles):
 
 Cuando el usuario pregunte por "metas" o "goals", usa list_goals. NO presentes visiones como metas.
 
-Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.${memoriesBlock}
+Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.${enrichment.contextBlock}${memoriesBlock}
 
 Mensaje del usuario:
 ${msg.text}`,
