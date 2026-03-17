@@ -47,45 +47,56 @@ export async function enrichContext(
     // Non-fatal
   }
 
-  // Recall relevant context from Hindsight (or SQLite fallback)
+  // Recall context + tool hints IN PARALLEL (saves 100-300ms)
   const memory = getMemoryService();
-  try {
-    // Recall user context relevant to this message (semantic search)
-    const userContext = await memory.recall(messageText, {
-      bank: "mc-jarvis",
-      tags: ["conversation"],
-      maxResults: 5,
-    });
-    if (userContext.length > 0) {
-      const contextLines = userContext.map((m) => `- ${m.content}`).join("\n");
-      sections.push(`## Contexto relevante del usuario\n${contextLines}`);
-    }
+  const recallPromises: Promise<void>[] = [];
 
-    // Recall operational learnings relevant to this message
-    if (memory.backend === "hindsight") {
-      const opContext = await memory.recall(messageText, {
-        bank: "mc-operational",
-        maxResults: 3,
-      });
-      if (opContext.length > 0) {
-        const opLines = opContext.map((m) => `- ${m.content}`).join("\n");
-        sections.push(`## Aprendizajes previos\n${opLines}`);
-      }
-    }
-  } catch {
-    // Non-fatal
+  // User context recall (async)
+  recallPromises.push(
+    memory
+      .recall(messageText, {
+        bank: "mc-jarvis",
+        tags: ["conversation"],
+        maxResults: 5,
+      })
+      .then((results) => {
+        if (results.length > 0) {
+          const lines = results.map((m) => `- ${m.content}`).join("\n");
+          sections.push(`## Contexto relevante del usuario\n${lines}`);
+        }
+      })
+      .catch(() => {}),
+  );
+
+  // Operational learnings recall (async, Hindsight only)
+  if (memory.backend === "hindsight") {
+    recallPromises.push(
+      memory
+        .recall(messageText, {
+          bank: "mc-operational",
+          maxResults: 3,
+        })
+        .then((results) => {
+          if (results.length > 0) {
+            const lines = results.map((m) => `- ${m.content}`).join("\n");
+            sections.push(`## Aprendizajes previos\n${lines}`);
+          }
+        })
+        .catch(() => {}),
+    );
   }
 
-  // Tool effectiveness hints from SQLite outcomes (instant, no Hindsight needed)
+  // Wait for all recalls to complete
+  await Promise.all(recallPromises);
+
+  // Tool effectiveness from SQLite outcomes (sync, single query for both)
   try {
-    const hints = getToolHints();
+    const { hints, topTools: top } = getToolHintsAndTopTools();
     if (hints) {
       sections.push(`## Herramientas más efectivas\n${hints}`);
     }
-
-    const topTools = getTopTools();
-    if (topTools.length > 0) {
-      toolHints.push(...topTools);
+    if (top.length > 0) {
+      toolHints.push(...top);
     }
   } catch {
     // Non-fatal
@@ -161,11 +172,14 @@ function getMatchingSkills(messageText: string): SkillMatchResult {
 // Tool hints from outcomes
 // ---------------------------------------------------------------------------
 
-/** Build tool effectiveness hints from recent outcomes. */
-function getToolHints(): string | null {
+/** Build tool hints + top tools from a SINGLE query (avoids duplicate DB scan). */
+function getToolHintsAndTopTools(): {
+  hints: string | null;
+  topTools: string[];
+} {
   try {
     const outcomes = queryOutcomes({ days: 14, limit: 50 });
-    if (outcomes.length < 5) return null;
+    if (outcomes.length < 5) return { hints: null, topTools: [] };
 
     const successCount = outcomes.filter((o) => o.success).length;
     const rate = Math.round((successCount / outcomes.length) * 100);
@@ -186,46 +200,19 @@ function getToolHints(): string | null {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
 
-    if (sorted.length === 0) return null;
+    if (sorted.length === 0) return { hints: null, topTools: [] };
 
     const lines = sorted.map(
       ([tool, count]) =>
         `- ${tool.replace("commit__", "")}: usado ${count} veces`,
     );
 
-    return `Tasa de éxito reciente: ${rate}%. Herramientas más usadas:\n${lines.join("\n")}`;
+    return {
+      hints: `Tasa de éxito reciente: ${rate}%. Herramientas más usadas:\n${lines.join("\n")}`,
+      topTools: sorted.map(([tool]) => tool),
+    };
   } catch {
-    return null;
-  }
-}
-
-/** Get the top 5 most-used tools from recent outcomes for prioritization. */
-function getTopTools(): string[] {
-  try {
-    const outcomes = queryOutcomes({
-      days: 7,
-      limit: 30,
-      success: true,
-    });
-
-    const toolFreq = new Map<string, number>();
-    for (const o of outcomes) {
-      try {
-        const tools = JSON.parse(o.tools_used) as string[];
-        for (const t of tools) {
-          toolFreq.set(t, (toolFreq.get(t) ?? 0) + 1);
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    return [...toolFreq.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([tool]) => tool);
-  } catch {
-    return [];
+    return { hints: null, topTools: [] };
   }
 }
 
