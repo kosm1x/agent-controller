@@ -444,8 +444,9 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     "list_goals",
     {
-      description:
-        "List GOALS only (not visions, not objectives, not tasks). A goal is a measurable outcome that belongs to a vision. Use this tool when the user asks for 'metas' or 'goals'. Do NOT use get_hierarchy or get_daily_snapshot to answer goal-related questions — this tool returns goals directly with their parent vision title for context.",
+      description: `List GOALS only (not visions, not objectives, not tasks). A goal is a measurable outcome that belongs to a vision. Use this tool when the user asks for 'metas' or 'goals'. Do NOT use get_hierarchy or get_daily_snapshot to answer goal-related questions — this tool returns goals directly with their parent vision title for context.
+
+ALSO USE FOR LOOKUPS: When you need to create an objective under a goal, call this first to find the goal's UUID by matching its title, then pass that UUID to create_objective's goal_id parameter.`,
       inputSchema: {
         status: z
           .enum(["not_started", "in_progress", "completed", "on_hold"])
@@ -477,8 +478,9 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     "list_objectives",
     {
-      description:
-        "List objectives with optional filters, includes parent goal title",
+      description: `List objectives with optional filters. Returns each objective's UUID (id field), title, status, priority, and parent goal title.
+
+ALSO USE FOR LOOKUPS: When you need to create a task under an objective, call this first to find the objective's UUID by matching its title, then pass that UUID to create_task's objective_id parameter.`,
       inputSchema: {
         goal_id: z.string().optional().describe("Filter by parent goal UUID"),
         status: z

@@ -189,11 +189,25 @@ export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     "create_task",
     {
-      description: "Create a new task, optionally linked to an objective",
+      description: `Create a new task linked to an objective in the COMMIT hierarchy.
+
+WORKFLOW when user mentions an objective by name:
+1. Call list_objectives to find the objective — match by title
+2. Extract the objective's "id" field (UUID)
+3. Pass that UUID as objective_id here
+
+ALWAYS link tasks to their parent objective when the user specifies one.
+If the user doesn't mention an objective, ask which objective this task belongs to.
+Only create unlinked tasks if the user explicitly says it's standalone.`,
       inputSchema: {
         title: z.string().describe("Task title"),
         description: z.string().optional().describe("Task description"),
-        objective_id: z.string().optional().describe("Parent objective UUID"),
+        objective_id: z
+          .string()
+          .optional()
+          .describe(
+            "Parent objective UUID — get this by calling list_objectives first and matching by title",
+          ),
         priority: z
           .enum(["high", "medium", "low"])
           .optional()
@@ -242,11 +256,23 @@ export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     "create_goal",
     {
-      description: "Create a new goal, optionally linked to a vision",
+      description: `Create a new goal linked to a vision in the COMMIT hierarchy.
+
+WORKFLOW when user mentions a vision by name:
+1. Call get_hierarchy to see all visions
+2. Find the matching vision by title, extract its "id" (UUID)
+3. Pass that UUID as vision_id here
+
+ALWAYS link goals to their parent vision when the user specifies one.`,
       inputSchema: {
         title: z.string().describe("Goal title"),
         description: z.string().optional().describe("Goal description"),
-        vision_id: z.string().optional().describe("Parent vision UUID"),
+        vision_id: z
+          .string()
+          .optional()
+          .describe(
+            "Parent vision UUID — get this from get_hierarchy and match by title",
+          ),
         target_date: z.string().optional().describe("Target date (YYYY-MM-DD)"),
       },
     },
@@ -278,11 +304,23 @@ export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     "create_objective",
     {
-      description: "Create a new objective, optionally linked to a goal",
+      description: `Create a new objective linked to a goal in the COMMIT hierarchy.
+
+WORKFLOW when user mentions a goal by name:
+1. Call list_goals to find the goal — match by title
+2. Extract the goal's "id" field (UUID)
+3. Pass that UUID as goal_id here
+
+ALWAYS link objectives to their parent goal when the user specifies one.`,
       inputSchema: {
         title: z.string().describe("Objective title"),
         description: z.string().optional().describe("Objective description"),
-        goal_id: z.string().optional().describe("Parent goal UUID"),
+        goal_id: z
+          .string()
+          .optional()
+          .describe(
+            "Parent goal UUID — get this by calling list_goals first and matching by title",
+          ),
         priority: z
           .enum(["high", "medium", "low"])
           .optional()
