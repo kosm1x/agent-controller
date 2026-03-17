@@ -15,6 +15,58 @@ import { formatForTelegram } from "../formatter.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
+const JINA_PREFIX = "https://r.jina.ai/";
+const MAX_FILE_CONTENT = 15_000; // chars
+
+/**
+ * Download a file from Telegram and extract readable content.
+ * For PDFs/HTML: routes through Jina Reader for Markdown conversion.
+ * For text files: downloads directly.
+ */
+async function extractFileContent(
+  telegramFileUrl: string,
+  mimeType?: string,
+): Promise<string> {
+  try {
+    const isPdf = mimeType?.includes("pdf") || telegramFileUrl.endsWith(".pdf");
+    const isHtml =
+      mimeType?.includes("html") || telegramFileUrl.endsWith(".html");
+
+    if (isPdf || isHtml) {
+      // Route through Jina Reader for structured extraction
+      const response = await fetch(`${JINA_PREFIX}${telegramFileUrl}`, {
+        headers: { Accept: "text/markdown" },
+        signal: AbortSignal.timeout(20_000),
+      });
+
+      if (!response.ok) {
+        // Fallback: download raw and return first chunk
+        return await downloadRawText(telegramFileUrl);
+      }
+
+      const content = await response.text();
+      return content.length > MAX_FILE_CONTENT
+        ? content.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
+        : content;
+    }
+
+    // For text-based files, download directly
+    return await downloadRawText(telegramFileUrl);
+  } catch (err) {
+    return `[Error al extraer contenido: ${err instanceof Error ? err.message : err}]`;
+  }
+}
+
+async function downloadRawText(url: string): Promise<string> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return `[Error HTTP ${response.status}]`;
+  const text = await response.text();
+  return text.length > MAX_FILE_CONTENT
+    ? text.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
+    : text;
+}
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly name = "telegram" as const;
@@ -94,22 +146,34 @@ export class TelegramAdapter implements ChannelAdapter {
         const doc = ctx.message.document;
         const photo = ctx.message.photo;
         const caption = ctx.message.caption ?? "";
-        let fileInfo = "";
+
+        let fileContent = "";
+        let fileLabel = "";
 
         if (doc) {
+          fileLabel = doc.file_name ?? "document";
           const file = await ctx.api.getFile(doc.file_id);
           const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-          fileInfo = `[Archivo adjunto: ${doc.file_name ?? "document"} (${doc.mime_type ?? "unknown"})]\nURL del archivo: ${fileUrl}`;
+
+          // Download and extract content server-side via Jina Reader
+          fileContent = await extractFileContent(fileUrl, doc.mime_type);
         } else if (photo && photo.length > 0) {
+          fileLabel = "imagen";
           const largest = photo[photo.length - 1];
           const file = await ctx.api.getFile(largest.file_id);
           const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-          fileInfo = `[Imagen adjunta]\nURL de la imagen: ${fileUrl}`;
+          fileContent = `[Imagen recibida — URL interna procesada. No se pudo extraer texto de la imagen.]`;
+          // Future: could use vision model or OCR here
+          void fileUrl; // suppress unused warning
         }
 
+        const contentBlock = fileContent
+          ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---`
+          : `\n\n[No se pudo extraer contenido del archivo "${fileLabel}"]`;
+
         const text = caption
-          ? `${caption}\n\n${fileInfo}`
-          : `El usuario envió un archivo. ${fileInfo}\n\nSi es un PDF o documento web, usa web_read con la URL para leer su contenido.`;
+          ? `${caption}${contentBlock}`
+          : `El usuario envió un archivo: "${fileLabel}".${contentBlock}\n\nAnaliza el contenido y responde.`;
 
         this.messageHandler({
           channel: "telegram",
