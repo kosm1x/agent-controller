@@ -31,6 +31,11 @@ import { httpTool } from "./tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "./tools/builtin/file.js";
 import { webSearchTool } from "./tools/builtin/web-search.js";
 import { webReadTool } from "./tools/builtin/web-read.js";
+import { weatherForecastTool } from "./tools/builtin/weather.js";
+import { currencyConvertTool } from "./tools/builtin/currency.js";
+import { geocodeAddressTool } from "./tools/builtin/geocoding.js";
+import { chartGenerateTool } from "./tools/builtin/chart.js";
+import { rssReadTool } from "./tools/builtin/rss.js";
 import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
@@ -74,6 +79,11 @@ async function main(): Promise<void> {
   toolRegistry.register(fileWriteTool);
   toolRegistry.register(webSearchTool);
   toolRegistry.register(webReadTool);
+  toolRegistry.register(weatherForecastTool);
+  toolRegistry.register(currencyConvertTool);
+  toolRegistry.register(geocodeAddressTool);
+  toolRegistry.register(chartGenerateTool);
+  toolRegistry.register(rssReadTool);
 
   // Initialize memory service (Hindsight if configured, else SQLite)
   const memory = await initMemoryService();
