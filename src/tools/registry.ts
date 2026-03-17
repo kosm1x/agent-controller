@@ -75,11 +75,24 @@ export class ToolRegistry {
     return Array.from(this.tools.values()).map((t) => t.definition);
   }
 
+  /** MCP tools that require confirmation (can't be tagged via interface). */
+  private static readonly DESTRUCTIVE_MCP_TOOLS = new Set([
+    "commit__delete_item",
+  ]);
+
   /** Execute a tool by name. */
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+    if (
+      tool.requiresConfirmation ||
+      ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)
+    ) {
+      console.warn(
+        `[tools] ⚠️ Destructive tool called: ${name} — args: ${JSON.stringify(args).slice(0, 200)}`,
+      );
     }
     return tool.execute(args);
   }

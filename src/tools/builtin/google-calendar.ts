@@ -92,6 +92,7 @@ USE WHEN:
 
 export const calendarCreateTool: Tool = {
   name: "calendar_create",
+  requiresConfirmation: true,
   definition: {
     type: "function",
     function: {
@@ -190,6 +191,7 @@ Use the current date/time from the prompt to calculate correct dates.`,
 
 export const calendarUpdateTool: Tool = {
   name: "calendar_update",
+  requiresConfirmation: true,
   definition: {
     type: "function",
     function: {

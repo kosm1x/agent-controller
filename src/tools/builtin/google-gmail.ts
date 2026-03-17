@@ -11,6 +11,7 @@ import { googleFetch } from "../../google/client.js";
 
 export const gmailSendTool: Tool = {
   name: "gmail_send",
+  requiresConfirmation: true,
   definition: {
     type: "function",
     function: {

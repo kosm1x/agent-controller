@@ -4,6 +4,7 @@
  * Initializes database, event bus, MCP servers, and starts the Hono HTTP server.
  */
 
+import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { getConfig } from "./config.js";
 import { initDatabase } from "./db/index.js";
@@ -35,6 +36,25 @@ import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
 import "./runners/swarm-runner.js";
 import "./runners/a2a-runner.js";
+
+/** Fail fast if the port is already in use (prevents silent 409 conflicts). */
+async function checkPort(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const s = createServer();
+    s.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE")
+        reject(
+          new Error(`Port ${port} already in use — kill the old process first`),
+        );
+      else reject(err);
+    });
+    s.once("listening", () => {
+      s.close();
+      resolve();
+    });
+    s.listen(port);
+  });
+}
 
 async function main(): Promise<void> {
   const config = getConfig();
@@ -120,6 +140,9 @@ async function main(): Promise<void> {
   }
 
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
+
+  // Check port availability before binding
+  await checkPort(config.port);
 
   // Create and start HTTP server
   const app = createApp();

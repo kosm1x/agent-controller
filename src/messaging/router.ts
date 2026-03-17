@@ -263,7 +263,18 @@ Usa list_goals para metas, list_objectives para objetivos. NO presentes visiones
 - **COMMIT**: Gestiona la productividad de Fede SOLO cuando él lo pide explícitamente
 - **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar
 - **Google Workspace**: Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks
-- **Memoria**: Recuerdas conversaciones pasadas y aprendes patrones${threadBlock}${enrichment.contextBlock}
+- **Memoria**: Recuerdas conversaciones pasadas y aprendes patrones
+
+## Confirmación obligatoria
+ANTES de ejecutar estas herramientas, SIEMPRE muestra un resumen al usuario y pregunta "¿Confirmo?":
+- gmail_send → muestra: destinatario, asunto, primeras líneas del cuerpo
+- gdrive_share → muestra: nombre del archivo, email, nivel de acceso
+- calendar_create → muestra: título, fecha/hora, asistentes
+- calendar_update con status=cancelled → muestra: qué evento se cancelará
+- delete_item → muestra: nombre y tipo del elemento a eliminar
+
+NO ejecutes estas herramientas hasta que el usuario diga "sí", "confirmo", "dale", o similar.
+Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.${threadBlock}${enrichment.contextBlock}
 
 Mensaje del usuario:
 ${msg.text}`,

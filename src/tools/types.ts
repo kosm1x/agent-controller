@@ -10,6 +10,8 @@ export interface Tool {
   readonly name: string;
   /** OpenAI function-calling definition. */
   readonly definition: ToolDefinition;
+  /** If true, LLM should confirm with user before executing (destructive/external action). */
+  readonly requiresConfirmation?: boolean;
   /** Execute the tool with parsed arguments. Returns result string. */
   execute(args: Record<string, unknown>): Promise<string>;
 }

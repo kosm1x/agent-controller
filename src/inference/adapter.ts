@@ -112,6 +112,16 @@ function loadProviders(): InferenceProvider[] {
     });
   }
 
+  if (config.inferenceTertiaryUrl && config.inferenceTertiaryModel) {
+    providers.push({
+      name: "tertiary",
+      baseUrl: config.inferenceTertiaryUrl.replace(/\/+$/, ""),
+      apiKey: config.inferenceTertiaryKey ?? "",
+      model: config.inferenceTertiaryModel,
+      priority: 2,
+    });
+  }
+
   return providers.sort((a, b) => a.priority - b.priority);
 }
 

@@ -169,6 +169,7 @@ Returns the file URL for sharing.`,
 
 export const gdriveShareTool: Tool = {
   name: "gdrive_share",
+  requiresConfirmation: true,
   definition: {
     type: "function",
     function: {

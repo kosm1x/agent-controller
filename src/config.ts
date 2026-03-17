@@ -25,6 +25,13 @@ export interface Config {
   /** Fallback inference model name (optional). */
   inferenceFallbackModel?: string;
 
+  /** Tertiary inference provider URL (optional, third-tier fallback). */
+  inferenceTertiaryUrl?: string;
+  /** Tertiary inference provider API key (optional). */
+  inferenceTertiaryKey?: string;
+  /** Tertiary inference model name (optional). */
+  inferenceTertiaryModel?: string;
+
   /** LLM call timeout in milliseconds. */
   inferenceTimeoutMs: number;
   /** Max tokens per LLM response. */
@@ -96,6 +103,10 @@ export function loadConfig(): Config {
     inferenceFallbackUrl: optional("INFERENCE_FALLBACK_URL"),
     inferenceFallbackKey: optional("INFERENCE_FALLBACK_KEY"),
     inferenceFallbackModel: optional("INFERENCE_FALLBACK_MODEL"),
+
+    inferenceTertiaryUrl: optional("INFERENCE_TERTIARY_URL"),
+    inferenceTertiaryKey: optional("INFERENCE_TERTIARY_KEY"),
+    inferenceTertiaryModel: optional("INFERENCE_TERTIARY_MODEL"),
 
     inferenceTimeoutMs: int("INFERENCE_TIMEOUT_MS", 30000),
     inferenceMaxTokens: int("INFERENCE_MAX_TOKENS", 4096),

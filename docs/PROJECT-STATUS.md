@@ -16,7 +16,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Test files | 29 |
 | Tests passing | 250 |
 | Type errors | 0 |
-| Total tools | 43 (20 commit-bridge + 6 builtin + 3 memory + 2 skill + 14 Google + web_search) |
+| Total tools | 44 (20 commit-bridge + 6 builtin + 3 memory + 2 skill + 14 Google) |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -41,13 +41,14 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.11 | Google Workspace — 14 tools across 7 APIs (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) | Done | `9e621da` |
 | v2.12 | Web Search — Brave Search API integration | Done | `6f5dcfc` |
 | v2.13 | Web Read — Jina Reader integration, Telegram PDF/file extraction | Done | `cbe1a4c` |
-| v3.0 | Production Hardening — guardrails, systemd, log rotation, LLM quality | Planned | — |
+| v2.14 | Production Guards — tertiary LLM fallback, port conflict check, destructive tool confirmation | Done | — |
+| v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (43 total)
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| Builtin | shell_exec, http_fetch, file_read, file_write, web_search | 5 |
+| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read | 6 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
 | COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |
@@ -74,6 +75,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-17 | — | v2.14: Tertiary LLM fallback, port conflict check, destructive tool confirmation guard |
+| 2026-03-17 | `e908be6` | Prune v2.10 (gVisor), add v3.0 Production Hardening roadmap |
+| 2026-03-17 | `cbe1a4c` | Web read tool (Jina Reader) + Telegram document/photo extraction |
 | 2026-03-17 | `95a3aa9` | Journal is user-only — rituals email reports via gmail_send instead of writing journal entries |
 | 2026-03-17 | `9e621da` | Google Workspace integration — 14 tools across 7 APIs (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) |
 | 2026-03-17 | `9a5e0a3` | ACI workflow guidance for create_task, create_goal, create_objective — explicit parent UUID lookup steps |
