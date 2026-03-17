@@ -83,6 +83,40 @@ async function main(): Promise<void> {
   toolRegistry.register(skillSaveTool);
   toolRegistry.register(skillListTool);
 
+  // Register Google Workspace tools if configured
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN) {
+    const { gmailSendTool, gmailSearchTool } =
+      await import("./tools/builtin/google-gmail.js");
+    const { gdriveListTool, gdriveCreateTool, gdriveShareTool } =
+      await import("./tools/builtin/google-drive.js");
+    const { calendarListTool, calendarCreateTool, calendarUpdateTool } =
+      await import("./tools/builtin/google-calendar.js");
+    const {
+      gsheetsReadTool,
+      gsheetsWriteTool,
+      gdocsReadTool,
+      gdocsWriteTool,
+      gslidesCreateTool,
+      gtasksCreateTool,
+    } = await import("./tools/builtin/google-docs.js");
+
+    toolRegistry.register(gmailSendTool);
+    toolRegistry.register(gmailSearchTool);
+    toolRegistry.register(gdriveListTool);
+    toolRegistry.register(gdriveCreateTool);
+    toolRegistry.register(gdriveShareTool);
+    toolRegistry.register(calendarListTool);
+    toolRegistry.register(calendarCreateTool);
+    toolRegistry.register(calendarUpdateTool);
+    toolRegistry.register(gsheetsReadTool);
+    toolRegistry.register(gsheetsWriteTool);
+    toolRegistry.register(gdocsReadTool);
+    toolRegistry.register(gdocsWriteTool);
+    toolRegistry.register(gslidesCreateTool);
+    toolRegistry.register(gtasksCreateTool);
+    console.log("[mc] Google Workspace tools registered (14 tools)");
+  }
+
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
 
   // Create and start HTTP server

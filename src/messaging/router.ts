@@ -39,7 +39,7 @@ import {
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
-/** All 23 tools available for chat tasks (20 commit-bridge + 2 skill + 1 web search). */
+/** Core tools always available for chat tasks. */
 const COMMIT_TOOLS = [
   "commit__get_daily_snapshot",
   "commit__get_hierarchy",
@@ -64,6 +64,24 @@ const COMMIT_TOOLS = [
   "skill_save",
   "skill_list",
   "web_search",
+];
+
+/** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
+const GOOGLE_TOOLS = [
+  "gmail_send",
+  "gmail_search",
+  "gdrive_list",
+  "gdrive_create",
+  "gdrive_share",
+  "calendar_list",
+  "calendar_create",
+  "calendar_update",
+  "gsheets_read",
+  "gsheets_write",
+  "gdocs_read",
+  "gdocs_write",
+  "gslides_create",
+  "gtasks_create",
 ];
 
 interface PendingReply {
@@ -190,6 +208,9 @@ export class MessageRouter {
     const tools = [...COMMIT_TOOLS];
     if (getMemoryService().backend === "hindsight") {
       tools.push("memory_search", "memory_store");
+    }
+    if (process.env.GOOGLE_CLIENT_ID) {
+      tools.push(...GOOGLE_TOOLS);
     }
 
     // Current date/time in Mexico City for the LLM
