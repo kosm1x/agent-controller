@@ -9,20 +9,9 @@
  * Mental model content is cached for 5 minutes to avoid re-querying on rapid messages.
  */
 
-import { HindsightClient } from "../memory/hindsight-client.js";
 import { getMemoryService } from "../memory/index.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 import { findSkillsByKeywords, type SkillRow } from "../db/skills.js";
-import { MODEL_IDS } from "./mental-models.js";
-
-const CACHE_TTL_MS = 300_000; // 5 minutes
-
-interface CacheEntry {
-  content: string;
-  fetchedAt: number;
-}
-
-const cache = new Map<string, CacheEntry>();
 
 export interface EnrichmentResult {
   contextBlock: string;
@@ -58,42 +47,48 @@ export async function enrichContext(
     // Non-fatal
   }
 
-  // Mental models + tool hints require Hindsight
+  // Recall relevant context from Hindsight (or SQLite fallback)
   const memory = getMemoryService();
-  if (memory.backend === "hindsight") {
-    try {
-      const baseUrl = process.env.HINDSIGHT_URL ?? "http://localhost:8888";
-      const apiKey = process.env.HINDSIGHT_API_KEY;
-      const client = new HindsightClient(baseUrl, apiKey);
-
-      // Query mental models in parallel (3s timeout each via client)
-      const [userBehavior, activeProjects] = await Promise.all([
-        getCachedModel(client, "mc-jarvis", MODEL_IDS.userBehavior),
-        getCachedModel(client, "mc-jarvis", MODEL_IDS.activeProjects),
-      ]);
-
-      if (userBehavior) {
-        sections.push(`## Tu conocimiento del usuario\n${userBehavior}`);
-      }
-
-      if (activeProjects) {
-        sections.push(`## Estado actual de proyectos\n${activeProjects}`);
-      }
-
-      // Query tool effectiveness from SQLite outcomes (instant)
-      const hints = getToolHints();
-      if (hints) {
-        sections.push(`## Herramientas más efectivas\n${hints}`);
-      }
-
-      // Extract top tools from recent outcomes for prioritization
-      const topTools = getTopTools();
-      if (topTools.length > 0) {
-        toolHints.push(...topTools);
-      }
-    } catch {
-      // Non-fatal — return whatever we have
+  try {
+    // Recall user context relevant to this message (semantic search)
+    const userContext = await memory.recall(messageText, {
+      bank: "mc-jarvis",
+      tags: ["conversation"],
+      maxResults: 5,
+    });
+    if (userContext.length > 0) {
+      const contextLines = userContext.map((m) => `- ${m.content}`).join("\n");
+      sections.push(`## Contexto relevante del usuario\n${contextLines}`);
     }
+
+    // Recall operational learnings relevant to this message
+    if (memory.backend === "hindsight") {
+      const opContext = await memory.recall(messageText, {
+        bank: "mc-operational",
+        maxResults: 3,
+      });
+      if (opContext.length > 0) {
+        const opLines = opContext.map((m) => `- ${m.content}`).join("\n");
+        sections.push(`## Aprendizajes previos\n${opLines}`);
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // Tool effectiveness hints from SQLite outcomes (instant, no Hindsight needed)
+  try {
+    const hints = getToolHints();
+    if (hints) {
+      sections.push(`## Herramientas más efectivas\n${hints}`);
+    }
+
+    const topTools = getTopTools();
+    if (topTools.length > 0) {
+      toolHints.push(...topTools);
+    }
+  } catch {
+    // Non-fatal
   }
 
   return {
@@ -163,31 +158,8 @@ function getMatchingSkills(messageText: string): SkillMatchResult {
 }
 
 // ---------------------------------------------------------------------------
-// Mental model cache + tool hints (unchanged)
+// Tool hints from outcomes
 // ---------------------------------------------------------------------------
-
-/** Get a mental model's content, using 5-min cache. */
-async function getCachedModel(
-  client: HindsightClient,
-  bankId: string,
-  modelId: string,
-): Promise<string | null> {
-  const cacheKey = `${bankId}:${modelId}`;
-  const cached = cache.get(cacheKey);
-
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-    return cached.content || null;
-  }
-
-  try {
-    const model = await client.getMentalModel(bankId, modelId);
-    const content = model.content?.trim() || "";
-    cache.set(cacheKey, { content, fetchedAt: Date.now() });
-    return content || null;
-  } catch {
-    return null;
-  }
-}
 
 /** Build tool effectiveness hints from recent outcomes. */
 function getToolHints(): string | null {
@@ -257,7 +229,7 @@ function getTopTools(): string[] {
   }
 }
 
-/** Clear the mental model cache (for testing). */
+/** Clear enrichment state (for testing). */
 export function clearEnrichmentCache(): void {
-  cache.clear();
+  // No cache to clear after switching from mental models to direct recall
 }

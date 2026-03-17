@@ -1,37 +1,27 @@
 /**
- * Enrichment service tests — mock Hindsight client and outcomes.
+ * Enrichment service tests — mock memory service and outcomes.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../memory/index.js", () => ({
-  getMemoryService: () => ({ backend: "hindsight" }),
-}));
-
-vi.mock("../memory/hindsight-client.js", () => ({
-  HindsightClient: vi.fn().mockImplementation(() => ({
-    getMentalModel: vi
+  getMemoryService: vi.fn().mockReturnValue({
+    backend: "hindsight",
+    recall: vi
       .fn()
-      .mockImplementation((_bank: string, modelId: string) => {
-        if (modelId === "user-behavior") {
-          return Promise.resolve({
-            id: "user-behavior",
-            content: "Fede prefers concise responses in Spanish",
-          });
-        }
-        if (modelId === "active-projects") {
-          return Promise.resolve({
-            id: "active-projects",
-            content: "Working on CRM Azteca and agent-controller",
-          });
-        }
-        return Promise.resolve({ id: modelId, content: "" });
-      }),
-  })),
+      .mockResolvedValue([
+        { content: "Fede prefiere respuestas concisas en español" },
+        { content: "Proyecto CRM Azteca en progreso" },
+      ]),
+  }),
 }));
 
 vi.mock("../db/task-outcomes.js", () => ({
   queryOutcomes: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock("../db/skills.js", () => ({
+  findSkillsByKeywords: vi.fn().mockReturnValue([]),
 }));
 
 import { enrichContext, clearEnrichmentCache } from "./enrichment.js";
@@ -43,19 +33,17 @@ describe("enrichment", () => {
     clearEnrichmentCache();
   });
 
-  it("should return context block with mental model content", async () => {
-    const result = await enrichContext("test message", "telegram");
+  it("should return context block with recalled user context", async () => {
+    const result = await enrichContext("muéstrame las tareas", "telegram");
 
-    expect(result.contextBlock).toContain("Tu conocimiento del usuario");
-    expect(result.contextBlock).toContain("concise responses");
-    expect(result.contextBlock).toContain("Estado actual de proyectos");
+    expect(result.contextBlock).toContain("Contexto relevante del usuario");
+    expect(result.contextBlock).toContain("concisas en español");
     expect(result.contextBlock).toContain("CRM Azteca");
   });
 
   it("should return context block starting with newlines", async () => {
     const result = await enrichContext("test", "telegram");
 
-    // Context block should start with double newline for prompt injection
     expect(result.contextBlock.startsWith("\n\n")).toBe(true);
   });
 
@@ -84,15 +72,10 @@ describe("enrichment", () => {
     expect(result.contextBlock).toContain("list_tasks");
   });
 
-  it("should cache mental model content for 5 minutes", async () => {
-    await enrichContext("first", "telegram");
-    await enrichContext("second", "telegram");
+  it("should return matchedSkillIds and confidence", async () => {
+    const result = await enrichContext("test", "telegram");
 
-    // HindsightClient constructor called once, getMentalModel called only for first call
-    const { HindsightClient } = await import("../memory/hindsight-client.js");
-    const instance = vi.mocked(HindsightClient).mock.results[0]?.value as any;
-
-    // First call: 2 models queried. Second call: cached — 0 additional queries
-    expect(instance.getMentalModel).toHaveBeenCalledTimes(2);
+    expect(result.matchedSkillIds).toEqual([]);
+    expect(result.confidence).toBe("low");
   });
 });
