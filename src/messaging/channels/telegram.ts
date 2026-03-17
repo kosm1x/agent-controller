@@ -84,6 +84,45 @@ export class TelegramAdapter implements ChannelAdapter {
       });
     });
 
+    // Handle document/file messages (PDFs, images, etc.)
+    this.bot.on(["message:document", "message:photo"], async (ctx) => {
+      if (!this.messageHandler) return;
+      const chatId = String(ctx.chat.id);
+      if (chatId !== OWNER_CHAT_ID) return;
+
+      try {
+        const doc = ctx.message.document;
+        const photo = ctx.message.photo;
+        const caption = ctx.message.caption ?? "";
+        let fileInfo = "";
+
+        if (doc) {
+          const file = await ctx.api.getFile(doc.file_id);
+          const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+          fileInfo = `[Archivo adjunto: ${doc.file_name ?? "document"} (${doc.mime_type ?? "unknown"})]\nURL del archivo: ${fileUrl}`;
+        } else if (photo && photo.length > 0) {
+          const largest = photo[photo.length - 1];
+          const file = await ctx.api.getFile(largest.file_id);
+          const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+          fileInfo = `[Imagen adjunta]\nURL de la imagen: ${fileUrl}`;
+        }
+
+        const text = caption
+          ? `${caption}\n\n${fileInfo}`
+          : `El usuario envió un archivo. ${fileInfo}\n\nSi es un PDF o documento web, usa web_read con la URL para leer su contenido.`;
+
+        this.messageHandler({
+          channel: "telegram",
+          from: chatId,
+          text,
+          timestamp: new Date(ctx.message.date * 1000),
+          replyTo: String(ctx.message.message_id),
+        });
+      } catch (err) {
+        console.error("[telegram] File handler error:", err);
+      }
+    });
+
     this.bot.catch((err) => {
       console.error("[telegram] Bot error:", err.message);
     });
