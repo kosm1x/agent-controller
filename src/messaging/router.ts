@@ -91,6 +91,26 @@ interface PendingReply {
   finalTimer: ReturnType<typeof setTimeout>;
 }
 
+/** In-memory ring buffer of recent exchanges per channel for thread continuity. */
+const THREAD_BUFFER_SIZE = 5;
+const conversationThreads = new Map<string, string[]>();
+
+function pushToThread(channel: string, exchange: string): void {
+  let thread = conversationThreads.get(channel);
+  if (!thread) {
+    thread = [];
+    conversationThreads.set(channel, thread);
+  }
+  thread.push(exchange);
+  if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
+}
+
+function getThread(channel: string): string {
+  const thread = conversationThreads.get(channel);
+  if (!thread || thread.length === 0) return "";
+  return "\n\n## Hilo actual de conversación\n" + thread.join("\n---\n");
+}
+
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
   private pendingReplies = new Map<string, PendingReply>();
@@ -181,28 +201,11 @@ export class MessageRouter {
     const titleText =
       msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
 
-    // Recall memories + enrich context IN PARALLEL (saves 200-400ms)
-    const [memoriesBlock, enrichment] = await Promise.all([
-      (async (): Promise<string> => {
-        try {
-          const memories = await getMemoryService().recall(msg.text, {
-            bank: "mc-jarvis",
-            tags: [msg.channel, "conversation"],
-            maxResults: 10,
-          });
-          if (memories.length > 0) {
-            return (
-              "\n\n## Conversación reciente\n" +
-              memories.map((m) => `- ${m.content}`).join("\n")
-            );
-          }
-        } catch {
-          // Non-fatal
-        }
-        return "";
-      })(),
-      enrichContext(msg.text, msg.channel),
-    ]);
+    // Current conversation thread (chronological, in-memory, instant)
+    const threadBlock = getThread(msg.channel);
+
+    // Recall semantic memories + enrich context IN PARALLEL
+    const enrichment = await enrichContext(msg.text, msg.channel);
 
     const tools = [...COMMIT_TOOLS];
     if (getMemoryService().backend === "hindsight") {
@@ -230,31 +233,36 @@ export class MessageRouter {
 
     const result = await submitTask({
       title: `Chat: ${titleText}`,
-      description: `Eres Jarvis, el asistente estratégico personal de Fede. Tu rol va más allá de gestionar tareas — eres un aliado inteligente que ayuda en TODO: investigación, decisiones, análisis, aprendizaje, productividad, y lo que Fede necesite. Responde de manera concisa, orientada a la acción, en español mexicano.
+      description: `Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en español mexicano, conciso y orientado a la acción.
 
 ## Fecha y hora actual
-Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa esta fecha y hora como referencia. NO inventes ni adivines la fecha.
+Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa esta fecha como referencia.
 
-## Tus capacidades
-- **COMMIT (productividad)**: Gestiona visiones, metas, objetivos y tareas con las herramientas commit__
-- **Internet**: Usa web_search para buscar información actual, noticias, datos, investigación — SIEMPRE busca antes de adivinar
-- **Memoria**: Recuerda conversaciones pasadas, aprende patrones, y guarda procedimientos como skills
-- **Análisis**: Ayuda a tomar decisiones, evaluar opciones, analizar información
+## REGLA CRÍTICA: HAZ las cosas, no las registres
+Cuando Fede te pida algo, HAZLO directamente con tus herramientas:
+- "Investiga X" → usa web_search y RESPONDE con lo que encontraste
+- "Mándame un email" → usa gmail_send y envía el email
+- "Crea un documento" → usa gdrive_create y crea el documento
+- "Búscame vuelos" → usa web_search y presenta opciones
+- "Qué hay en mi calendario" → usa calendar_list y muestra eventos
 
-## Jerarquía COMMIT (NO confundas niveles)
+NO crees una tarea en COMMIT a menos que Fede diga explícitamente: "crea una tarea", "agrega a mis pendientes", "pon esto en COMMIT", "trackea esto".
+
+COMMIT es el sistema de productividad de Fede (visiones → metas → objetivos → tareas). Solo interactúa con COMMIT cuando Fede quiere GESTIONAR su productividad.
+
+## Jerarquía COMMIT (cuando aplique)
 - Visión = dirección de vida a largo plazo
 - Meta/Goal = resultado medible bajo una visión
 - Objetivo = hito específico bajo una meta
 - Tarea = acción concreta bajo un objetivo
+Usa list_goals para metas, list_objectives para objetivos. NO presentes visiones como metas.
 
-Cuando el usuario pregunte por "metas" o "goals", usa list_goals. NO presentes visiones como metas.
-Usa el marco Eisenhower cuando priorices: Crítico (urgente+importante), Urgente, Importante, Delegable.
-
-## Principios
-- Si no sabes algo, BUSCA con web_search antes de responder
-- Si completaste un proceso multi-paso útil, ofrece guardarlo como skill
-- Sé proactivo: si notas algo relevante en los datos, menciónalo
-- COMMIT es la base, pero el usuario puede pedir CUALQUIER cosa${enrichment.contextBlock}${memoriesBlock}
+## Tus capacidades
+- **Acción directa**: Busca, investiga, envía emails, crea documentos, agenda eventos — HAZLO, no lo registres
+- **COMMIT**: Gestiona la productividad de Fede SOLO cuando él lo pide explícitamente
+- **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar
+- **Google Workspace**: Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks
+- **Memoria**: Recuerdas conversaciones pasadas y aprendes patrones${threadBlock}${enrichment.contextBlock}
 
 Mensaje del usuario:
 ${msg.text}`,
@@ -385,6 +393,14 @@ ${msg.text}`,
     const resultText = this.extractResultText(data.result);
     if (resultText) {
       this.sendToChannel(pending.channel, pending.to, resultText);
+
+      // Push to in-memory conversation thread (chronological, instant)
+      const shortResult =
+        resultText.length > 200 ? resultText.slice(0, 200) + "..." : resultText;
+      pushToThread(
+        pending.channel,
+        `User: ${pending.originalText}\nJarvis: ${shortResult}`,
+      );
 
       // Retain the exchange in conversation memory (works with any backend)
       try {
