@@ -40,7 +40,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.9 | Adaptive Intelligence — learning, adaptation, prediction, skills | Done | — |
 | v2.11 | Google Workspace — 14 tools across 7 APIs (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) | Done | `9e621da` |
 | v2.12 | Web Search — Brave Search API integration | Done | `6f5dcfc` |
-| v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
+| v2.13 | Web Read — Jina Reader integration, Telegram PDF/file extraction | Done | `cbe1a4c` |
+| v3.0 | Production Hardening — guardrails, systemd, log rotation, LLM quality | Planned | — |
 
 ## Tools (43 total)
 
