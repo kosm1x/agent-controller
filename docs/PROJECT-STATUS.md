@@ -1,10 +1,10 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-16
+> Last updated: 2026-03-17
 
 ## Overview
 
-Unified AI agent orchestrator. Routes tasks by complexity to the right runner type. Single TypeScript process, SQLite, Hono HTTP server.
+Unified AI agent orchestrator. Routes tasks by complexity to the right runner type. Single TypeScript process, SQLite, Hono HTTP server. Jarvis — a general-purpose strategic AI assistant with internet access, Google Workspace integration, adaptive intelligence, and long-term memory.
 
 **Repo**: `/root/claude/mission-control/` | GitHub: `kosm1x/agent-controller`
 
@@ -12,10 +12,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | 76 (+5 in commit-bridge) |
+| Source files | ~90 (+5 in commit-bridge) |
 | Test files | 29 |
 | Tests passing | 250 |
 | Type errors | 0 |
+| Total tools | 43 (20 commit-bridge + 6 builtin + 3 memory + 2 skill + 14 Google + web_search) |
 | Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -33,115 +34,63 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.3.1 | Prometheus Core Improvements — token tracking, budgets, compression, repair, learnings, abort | Done | — |
 | v2.4 | LiteLLM Backend — sidecar proxy, configurable retries, inference health probe | Done | — |
 | v2.5 | Container Heavy Runner — optional Docker isolation for heavy tasks | Done | — |
-| v2.6 | JARVIS Integration — commit-bridge MCP server (20 tools), ritual scheduler (morning/nightly) | Done | — |
+| v2.6 | JARVIS Integration — commit-bridge MCP server (20 tools), ritual scheduler | Done | — |
 | v2.7 | Messaging Layer — WhatsApp + Telegram bidirectional messaging, ritual broadcast | Done | — |
-| v2.8 | Hindsight Memory — semantic long-term memory via Hindsight sidecar, memory service abstraction, agent memory tools | Done | — |
-| v2.9 | Adaptive Intelligence — learning, adaptation, prediction | Done | — |
-| v2.9.1 | Foundation — outcome tracking (SQLite), 4 Hindsight mental models, feedback windows | Done | — |
-| v2.9.2 | Enrichment — adaptive prompts, context injection from mental models | Done | — |
-| v2.9.3 | Adaptation — smart classifier from outcomes, feedback loop | Done | — |
-| v2.9.4 | Prediction — proactive scheduler, deadline/staleness alerts | Done | — |
-| v2.9.5 | Skill Memory — reusable procedures, skill discovery, self-assessment | Done | — |
+| v2.8 | Hindsight Memory — semantic long-term memory, SQLite fallback, conversation memory | Done | — |
+| v2.9 | Adaptive Intelligence — learning, adaptation, prediction, skills | Done | — |
+| v2.11 | Google Workspace — 14 tools across 7 APIs (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) | Done | `9e621da` |
+| v2.12 | Web Search — Brave Search API integration | Done | `6f5dcfc` |
 | v2.10 | gVisor/Firecracker — kernel-level sandbox for containers | Planned | — |
 
-## Runners
+## Tools (43 total)
 
-| Runner | Type | Status | How it works |
-|--------|------|--------|--------------|
-| Fast | In-process | Live | LLM + tool loop, max 10 rounds |
-| NanoClaw | Docker container | Live | Sentinel stdin/stdout protocol, 5-min timeout |
-| Heavy | In-process or Docker | Live | Prometheus PER, optional container isolation via `HEAVY_RUNNER_CONTAINERIZED` |
-| Swarm | In-process + sub-tasks | Live | Goal decomposition, parallel fan-out, depth guard (3) |
-| A2A | Remote delegation | Live | JSON-RPC to external agents, exponential backoff polling |
+| Category | Tools | Count |
+|----------|-------|-------|
+| Builtin | shell_exec, http_fetch, file_read, file_write, web_search | 5 |
+| Memory | memory_search, memory_store, memory_reflect | 3 |
+| Skills | skill_save, skill_list | 2 |
+| COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |
+| COMMIT (write) | update_status, complete_recurring, create_task, create_goal, create_objective, create_vision, update_task, update_objective, update_goal, update_vision, delete_item, bulk_reprioritize | 12 |
+| COMMIT (journal) | search_journal (read-only — journal write is user-only) | 1 |
+| Gmail | gmail_send, gmail_search | 2 |
+| Drive | gdrive_list, gdrive_create, gdrive_share | 3 |
+| Calendar | calendar_list, calendar_create, calendar_update | 3 |
+| Sheets | gsheets_read, gsheets_write | 2 |
+| Docs | gdocs_read, gdocs_write | 2 |
+| Slides | gslides_create | 1 |
+| Tasks | gtasks_create | 1 |
 
-## Endpoints
+## Rituals
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| GET | `/health` | No | Health check (db + inference reachability) |
-| GET | `/dashboard/` | No | Web dashboard |
-| GET | `/.well-known/agent.json` | No | A2A agent card |
-| POST | `/api/tasks` | Yes | Submit task |
-| GET | `/api/tasks` | Yes | List tasks |
-| GET | `/api/tasks/:id` | Yes | Task detail + runs + subtasks |
-| POST | `/api/tasks/:id/cancel` | Yes | Cancel (cascades) |
-| POST | `/api/agents/register` | Yes | Agent self-registration |
-| POST | `/api/agents/heartbeat` | Yes | Agent heartbeat |
-| GET | `/api/agents` | Yes | List agents |
-| GET | `/api/events/stream` | Yes | SSE event stream |
-| POST | `/a2a` | Yes | A2A JSON-RPC (sendMessage, getTask, cancelTask, sendStreamingMessage) |
+| Ritual | Time | Delivery |
+|--------|------|----------|
+| Morning briefing | 7:00 AM Mexico City | Email (fede@eureka.md) + Telegram |
+| Nightly close | 10:00 PM Mexico City | Email (fede@eureka.md) + Telegram |
+| Evolution log | 11:59 PM Mexico City | Appends to docs/EVOLUTION-LOG.md |
+| Proactive scanner | 8AM, noon, 4PM, 8PM | Telegram (max 2 nudges/day) |
 
 ## Recent Changes
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-16 | — | v2.9.5: Skill Memory — skills table, skill_save/skill_list tools, enrichment skill matching (SQLite keyword + Hindsight semantic), usage tracking, auto-discovery (3+ recurring patterns) |
-| 2026-03-16 | — | v2.9.4: Prediction — proactive scheduler (every 4h during waking hours), deadline/staleness scanning, max 2 nudges/day, suppressed during active chat |
-| 2026-03-16 | — | v2.9.3: Adaptation — outcome-based classifier hints, feedback signal detection (positive/negative/rephrase), pure feedback interception (skips task creation for "gracias"/"no") |
-| 2026-03-16 | — | v2.9.2: Enrichment — adaptive prompts with mental model context injection (user-behavior, active-projects, tool effectiveness), 5-min cache, graceful degradation |
-| 2026-03-16 | — | v2.9.1: Adaptive Intelligence foundation — task_outcomes table, outcome tracker with feedback windows, 4 Hindsight mental models (user-behavior, active-projects, task-effectiveness, conversation-themes), mental model CRUD in Hindsight client |
-| 2026-03-16 | — | Full CRUD for hierarchy parents — update_objective, update_goal, update_vision, create_vision, delete_item (title-verified) — 20 MCP tools total |
-| 2026-03-16 | — | Fix: Classifier misrouting chat messages as nanoclaw — messaging tag now forces fast runner |
-| 2026-03-16 | — | Fix: Immediate ack on inbound messages — "Recibido, trabajando en ello..." sent before task creation |
-| 2026-03-16 | — | Fix: Conversation memory works without Hindsight — new `conversations` table, SQLite backend supports bank/tags, router no longer gated on hindsight-only for recall/retain |
-| 2026-03-13 | — | v2.8: Hindsight memory integration — MemoryService abstraction, Hindsight HTTP client + backend with circuit breaker, 3 agent memory tools, Jarvis conversation memory, learnings migration, Docker Compose sidecar |
-| 2026-03-13 | — | Fix: COMMIT_TOOLS list in router — 8/15 tool names were stale and didn't match actual commit-bridge MCP tools |
-| 2026-03-13 | — | Fix: ACI tool descriptions for COMMIT hierarchy — LLM no longer confuses visions with goals in Telegram chat |
-| 2026-03-13 | — | v2.7: Messaging layer — WhatsApp (Baileys) + Telegram (Grammy) adapters, message router, ritual broadcast, formatter, 31 new tests |
-| 2026-03-13 | — | v2.6: JARVIS integration — commit-bridge MCP server (15 Supabase tools), ritual scheduler (morning briefing + nightly close), validated with live data |
-| 2026-03-13 | — | v2.5: Container heavy runner — optional Docker isolation for heavy tasks, worker entrypoint, container slot sharing |
-| 2026-03-13 | — | v2.4: LiteLLM sidecar — Docker Compose profile, configurable retries, inference health probe, env.example |
-| 2026-03-13 | — | v2.3.1: Prometheus core improvements — token tracking, budget/timeouts, context compression, tool repair, learnings persistence, abort signals |
-| 2026-03-13 | — | v2.3: Frontend dashboard — real-time web UI, SSE events, goal graph visualization |
-| 2026-03-12 | `c3239d3` | v2.2: A2A protocol — agent discovery, JSON-RPC interop, bidirectional delegation |
-| 2026-03-12 | `60688d8` | v2.1: MCP integration — external tool servers via Model Context Protocol |
-| 2026-03-12 | `ae71bda` | Phases 5-6: Complete v1 — NanoClaw, Swarm, SSE, Docker, tests |
-| 2026-03-12 | `b9ade45` | Phase 4: Prometheus core — Plan-Execute-Reflect in TypeScript |
-| 2026-03-12 | `c2b7159` | Phase 3: Inference adapter + tool system + fast runner |
-| 2026-03-12 | `4ce2a16` | Phase 2: Core API + Dispatch — classifier, dispatcher, task/agent routes |
-| 2026-03-12 | `33c598f` | Phase 1: Foundation — Hono server, SQLite, auth, event bus |
-
-## Available Now
-
-- Full task lifecycle: submit → classify → dispatch → execute → stream results
-- 5 runner types with automatic complexity-based routing
-- 4-7 built-in tools (shell_exec, http_fetch, file_read, file_write + memory_search, memory_store, memory_reflect when Hindsight enabled) + 20 MCP tools (commit-bridge)
-- A2A interop: MC acts as both A2A server (receives tasks) and client (delegates tasks)
-- SSE real-time event stream with replay and filtering
-- Prometheus Plan-Execute-Reflect with auto-replan, token tracking, iteration budgets, context compression, and abort propagation
-- Swarm parallel decomposition with sub-task fan-out
-- Real-time web dashboard at `/dashboard/` with task management, agent fleet view, event log, goal graph SVG
-- LiteLLM sidecar proxy for 100+ LLM providers (`docker compose --profile litellm up -d`)
-- Optional Docker isolation for heavy tasks (`HEAVY_RUNNER_CONTAINERIZED=true`) — same MC image, container slot sharing
-- JARVIS daily rituals: morning briefing (7 AM) and nightly close (10 PM) via node-cron scheduler with idempotency guard
-- commit-bridge MCP server: 20 Supabase tools for COMMIT-AI — full CRUD on all hierarchy levels (visions, goals, objectives, tasks), journal, ideas, with title-verified delete and ACI-quality descriptions
-- Bidirectional messaging: WhatsApp (Baileys) + Telegram (Grammy), owner-only, every inbound message becomes a task
-- Ritual broadcast: morning briefing and nightly close results delivered to all active messaging channels
-- Message formatting: markdown dialect conversion (WA/TG), auto-splitting for Telegram 4096-char limit
-- Conversation memory: SQLite-backed by default (last N exchanges per channel), Hindsight adds semantic search when enabled
-- Hindsight long-term memory: semantic+keyword+graph+temporal retrieval via Docker sidecar (`docker compose --profile hindsight up -d`)
-- Memory service abstraction: pluggable backends (SQLite with bank/tags, Hindsight for semantic), circuit breaker (3 failures → 60s cooldown)
-- Agent memory tools: memory_search, memory_store, memory_reflect — LLMs can explicitly search/store memories during execution (Hindsight only)
-- Jarvis conversation memory: recalls past conversations before responding, retains exchanges after completion (works with any backend)
-
-## Blocked / Dependencies
-
-| Item | Blocked by | Notes |
-|------|-----------|-------|
-| v2.3 Frontend Dashboard | — | Done |
-| v2.4 LiteLLM | — | Done |
-| v2.5 Container Heavy Runner | — | Done |
-| v2.6 JARVIS Integration | — | Done |
-| v2.7 Messaging Layer | — | Done |
-| v2.8 Hindsight Memory | — | Done |
-| v2.9.1 Foundation | — | Done |
-| v2.9.2 Enrichment | — | Done |
-| v2.9.3 Adaptation | — | Done |
-| v2.9.4 Prediction | — | Done |
-| v2.10 gVisor/Firecracker | NanoClaw using Docker | Kernel-level sandbox, low priority |
+| 2026-03-17 | `95a3aa9` | Journal is user-only — rituals email reports via gmail_send instead of writing journal entries |
+| 2026-03-17 | `9e621da` | Google Workspace integration — 14 tools across 7 APIs (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) |
+| 2026-03-17 | `9a5e0a3` | ACI workflow guidance for create_task, create_goal, create_objective — explicit parent UUID lookup steps |
+| 2026-03-17 | `fc097cf` | Performance: parallelized memory recall + enrichment (65% faster pre-submission) |
+| 2026-03-17 | `8b6ef28` | Enrichment: switched from broken mental models to direct Hindsight recall |
+| 2026-03-17 | `da988cc` | Inject Mexico City date/time into every Jarvis prompt |
+| 2026-03-16 | `6f5dcfc` | Web search tool (Brave Search API) + expanded Jarvis persona to general-purpose |
+| 2026-03-16 | `959bfc1` | v2.9.5: Skill Memory — skills table, skill_save/skill_list tools, skill discovery |
+| 2026-03-16 | `29cb6bb` | v2.9.4: Proactive scheduler (4x/day during waking hours) |
+| 2026-03-16 | `0d64b39` | v2.9.3: Adaptive classifier + feedback loop |
+| 2026-03-16 | `deaef56` | v2.9.2: Enrichment — adaptive prompts with context injection |
+| 2026-03-16 | `d2fced5` | v2.9.1: Outcome tracking + mental model seeds |
+| 2026-03-16 | `8efb6b0` | SQLite conversation memory, classifier fix, ack, full CRUD, delete_item |
+| 2026-03-16 | `61b3ee7` | Hindsight API v2 alignment |
 
 ## Known Issues
 
 - SQLite CHECK constraints can't be altered in-place — schema changes require `rm ./data/mc.db`
 - SSH keys not configured on VPS — git push uses HTTPS via `gh` CLI
-- No push notifications in A2A (polling and SSE streaming only)
+- Hindsight mental model refresh slow with Qwen backend (~2min/model) — using direct recall instead
+- Multiple MC restarts can cause Telegram 409 polling conflicts — always kill all instances before restart
