@@ -29,6 +29,7 @@ import { shellTool } from "./tools/builtin/shell.js";
 import { httpTool } from "./tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "./tools/builtin/file.js";
 import { webSearchTool } from "./tools/builtin/web-search.js";
+import { webReadTool } from "./tools/builtin/web-read.js";
 import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
   toolRegistry.register(fileReadTool);
   toolRegistry.register(fileWriteTool);
   toolRegistry.register(webSearchTool);
+  toolRegistry.register(webReadTool);
 
   // Initialize memory service (Hindsight if configured, else SQLite)
   const memory = await initMemoryService();

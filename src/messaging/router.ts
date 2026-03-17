@@ -63,6 +63,7 @@ const COMMIT_TOOLS = [
   "skill_save",
   "skill_list",
   "web_search",
+  "web_read",
 ];
 
 /** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
