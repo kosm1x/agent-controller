@@ -122,8 +122,10 @@ describe("task templates", () => {
     expect(task.title).toBe("Nightly close — 2026-03-13");
     expect(task.agentType).toBe("heavy");
     expect(task.tools).toContain("commit__get_daily_snapshot");
-    expect(task.tools).toContain("commit__create_journal_entry");
+    expect(task.tools).toContain("gmail_send");
+    expect(task.tools).not.toContain("commit__create_journal_entry");
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Reflexión");
+    expect(task.description).toContain("Do NOT write to the journal");
   });
 });

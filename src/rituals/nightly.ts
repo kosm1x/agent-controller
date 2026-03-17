@@ -2,7 +2,8 @@
  * Nightly close task template.
  *
  * Submitted to the dispatcher as a Heavy runner task.
- * The LLM reviews the day, logs a journal entry, and prepares tomorrow.
+ * The LLM reviews the day, prepares tomorrow, and emails the report.
+ * Journal is user-only — the agent does NOT write there.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -18,14 +19,14 @@ export function createNightlyClose(dateLabel: string): TaskSubmission {
 2. Compare with what was planned (the morning briefing context): what got done, what didn't, what was added mid-day.
 3. For each incomplete critical/urgent task, assess: should it carry over to tomorrow, be reprioritized, or be dropped?
 4. If any tasks need rebalancing for tomorrow, call commit__update_status to adjust.
-5. Write a brief reflection and log it as a journal entry using commit__create_journal_entry.
-6. Prepare tomorrow's preliminary priority list.
+5. Prepare tomorrow's preliminary priority list.
+6. Send the report via gmail_send to fede@eureka.md with subject "Cierre del día — ${dateLabel}".
 
-## Output format
+IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 
-Structured WhatsApp message in Spanish (Mexican):
+## Email body format (Spanish, Mexican)
 
-**Cierre del día** 🌙 [Date]
+**Cierre del día** 🌙 ${dateLabel}
 
 **✅ Completado hoy** (X de Y tareas)
 - Task 1 ✓
@@ -50,7 +51,7 @@ Racha: X días. [motivational note if streak is growing]`,
       "commit__list_tasks",
       "commit__get_hierarchy",
       "commit__update_status",
-      "commit__create_journal_entry",
+      "gmail_send",
     ],
   };
 }

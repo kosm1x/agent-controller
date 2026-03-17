@@ -50,7 +50,6 @@ const COMMIT_TOOLS = [
   "commit__list_ideas",
   "commit__update_status",
   "commit__complete_recurring",
-  "commit__create_journal_entry",
   "commit__create_task",
   "commit__create_goal",
   "commit__create_objective",

@@ -2,7 +2,8 @@
  * Morning briefing task template.
  *
  * Submitted to the dispatcher as a Heavy runner task.
- * The LLM calls commit__* tools to build a structured daily briefing.
+ * The LLM calls commit__* tools to build a structured daily briefing,
+ * then emails it to the user.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -26,12 +27,13 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 5. Identify the top 3 tasks that would make today a win.
 6. If any tasks have overdue due_dates, flag them prominently.
 7. If any goals have no active objectives or tasks, flag the gap.
+8. Send the briefing via gmail_send to fede@eureka.md with subject "Buenos días — ${dateLabel}".
 
-## Output format
+IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 
-Produce a structured briefing message in Spanish (Mexican) suitable for WhatsApp delivery:
+## Email body format (Spanish, Mexican)
 
-**Buenos días, Fede.** 🗓️ [Date]
+**Buenos días, Fede.** 🗓️ ${dateLabel}
 
 **Tu visión**: [one-line reminder]
 
@@ -63,6 +65,7 @@ Racha actual: X días consecutivos.`,
       "commit__get_daily_snapshot",
       "commit__list_tasks",
       "commit__get_hierarchy",
+      "gmail_send",
     ],
   };
 }
