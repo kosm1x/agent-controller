@@ -75,7 +75,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-17 | — | v2.14: Tertiary LLM fallback, port conflict check, destructive tool confirmation guard |
+| 2026-03-17 | — | Switch fallback model from MiniMax-M2.5 to qwen3.5-flash (same provider, no cross-vendor quirks) |
+| 2026-03-17 | `c7ed74d` | v2.14: Tertiary LLM fallback, port conflict check, destructive tool confirmation guard |
 | 2026-03-17 | `e908be6` | Prune v2.10 (gVisor), add v3.0 Production Hardening roadmap |
 | 2026-03-17 | `cbe1a4c` | Web read tool (Jina Reader) + Telegram document/photo extraction |
 | 2026-03-17 | `95a3aa9` | Journal is user-only — rituals email reports via gmail_send instead of writing journal entries |
@@ -99,3 +100,4 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - SSH keys not configured on VPS — git push uses HTTPS via `gh` CLI
 - Hindsight mental model refresh slow with Qwen backend (~2min/model) — using direct recall instead
 - Multiple MC restarts can cause Telegram 409 polling conflicts — always kill all instances before restart
+- Health probe shows inference "unreachable" — cosmetic (DashScope /v1/models returns non-200 without auth; actual inference works fine)
