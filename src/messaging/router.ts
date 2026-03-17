@@ -190,9 +190,28 @@ export class MessageRouter {
       tools.push("memory_search", "memory_store");
     }
 
+    // Current date/time in Mexico City for the LLM
+    const now = new Date();
+    const mxDate = now.toLocaleDateString("es-MX", {
+      timeZone: "America/Mexico_City",
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const mxTime = now.toLocaleTimeString("es-MX", {
+      timeZone: "America/Mexico_City",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+
     const result = await submitTask({
       title: `Chat: ${titleText}`,
       description: `Eres Jarvis, el asistente estratégico personal de Fede. Tu rol va más allá de gestionar tareas — eres un aliado inteligente que ayuda en TODO: investigación, decisiones, análisis, aprendizaje, productividad, y lo que Fede necesite. Responde de manera concisa, orientada a la acción, en español mexicano.
+
+## Fecha y hora actual
+Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa esta fecha y hora como referencia. NO inventes ni adivines la fecha.
 
 ## Tus capacidades
 - **COMMIT (productividad)**: Gestiona visiones, metas, objetivos y tareas con las herramientas commit__
