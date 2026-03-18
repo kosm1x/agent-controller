@@ -53,7 +53,13 @@ export class ToolSourceManager {
     this.sources.set(source.manifest.name, source);
   }
 
-  /** Initialize all registered sources and register their tools. */
+  /**
+   * Initialize all registered sources and register their tools.
+   * Sources are initialized in parallel for faster startup — each source's
+   * initialize() + registerTools() runs concurrently. Registry.register()
+   * is synchronous and safe to call from multiple async chains since each
+   * source registers unique tool names.
+   */
   async initAll(
     registry: ToolRegistry,
   ): Promise<{ initialized: number; failed: number; totalTools: number }> {
@@ -61,19 +67,29 @@ export class ToolSourceManager {
     let failed = 0;
     let totalTools = 0;
 
-    for (const [name, source] of this.sources) {
-      try {
+    const entries = Array.from(this.sources.entries());
+    const results = await Promise.allSettled(
+      entries.map(async ([name, source]) => {
         await source.initialize();
         const tools = await source.registerTools(registry);
-        this.sourceTools.set(name, tools);
-        totalTools += tools.length;
+        return { name, tools };
+      }),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const name = entries[i][0];
+      if (result.status === "fulfilled") {
+        this.sourceTools.set(name, result.value.tools);
+        totalTools += result.value.tools.length;
         initialized++;
         console.log(
-          `[mc] Tool source "${name}" initialized (${tools.length} tools)`,
+          `[mc] Tool source "${name}" initialized (${result.value.tools.length} tools)`,
         );
-      } catch (err) {
+      } else {
         failed++;
         this.sourceTools.set(name, []);
+        const err = result.reason;
         console.error(
           `[mc] Tool source "${name}" failed to initialize:`,
           err instanceof Error ? err.message : err,

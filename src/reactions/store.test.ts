@@ -18,8 +18,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  ensureReactionsTable(db);
-  // Create task_outcomes table for countRecentClassificationFailures
+  // Create dependent tables BEFORE ensureReactionsTable (it adds indexes on these)
   db.exec(`
     CREATE TABLE IF NOT EXISTS task_outcomes (
       id INTEGER PRIMARY KEY,
@@ -34,6 +33,15 @@ beforeEach(() => {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY,
+      task_id TEXT UNIQUE,
+      status TEXT DEFAULT 'queued',
+      started_at TEXT
+    )
+  `);
+  ensureReactionsTable(db);
 });
 
 describe("reaction store", () => {

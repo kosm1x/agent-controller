@@ -268,6 +268,11 @@ export class GoalGraph {
     return errors;
   }
 
+  /** Get all goals (direct reference, no copy). Use for read-only iteration. */
+  getAll(): Goal[] {
+    return Array.from(this.goals.values());
+  }
+
   /** Serialize to plain object. */
   toJSON(): { goals: Record<string, Goal> } {
     const goals: Record<string, Goal> = {};

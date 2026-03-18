@@ -37,11 +37,26 @@ export class ReactionManager {
   private subscription: Subscription | null = null;
   private stuckCheckInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Cached prepared statements for hot-path queries
+  private stmtStuckTasks!: Database.Statement;
+  private stmtMarkStuck!: Database.Statement;
+
   constructor(private readonly db: Database.Database) {}
 
   /** Start the reaction engine: subscribe to events + start stuck-task polling. */
   start(): void {
     ensureReactionsTable(this.db);
+
+    // Cache prepared statements for polling queries (called every 60s)
+    this.stmtStuckTasks = this.db.prepare(
+      `SELECT task_id, title FROM tasks
+       WHERE status = 'running'
+       AND started_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')`,
+    );
+    this.stmtMarkStuck = this.db.prepare(
+      `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now')
+       WHERE task_id = ? AND status = 'running'`,
+    );
 
     this.subscription = getEventBus().subscribe<"task.failed">(
       "task.failed",
@@ -247,28 +262,20 @@ export class ReactionManager {
   /** Check for stuck tasks (running >15min with no progress). */
   private checkStuckTasks(): void {
     try {
-      const stuckTasks = this.db
-        .prepare(
-          `SELECT task_id, title FROM tasks
-           WHERE status = 'running'
-           AND started_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')`,
-        )
-        .all() as { task_id: string; title: string }[];
+      const stuckTasks = this.stmtStuckTasks.all() as {
+        task_id: string;
+        title: string;
+      }[];
 
       for (const stuck of stuckTasks) {
         console.log(
           `[reactions] Stuck task detected: ${stuck.task_id} ("${stuck.title}")`,
         );
         // Mark as failed — this triggers a task.failed event which handleTaskFailed picks up
-        this.db
-          .prepare(
-            `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now')
-             WHERE task_id = ? AND status = 'running'`,
-          )
-          .run(
-            `Stuck task detected (no progress for ${STUCK_THRESHOLD_MINUTES} minutes)`,
-            stuck.task_id,
-          );
+        this.stmtMarkStuck.run(
+          `Stuck task detected (no progress for ${STUCK_THRESHOLD_MINUTES} minutes)`,
+          stuck.task_id,
+        );
 
         try {
           getEventBus().emitEvent("task.failed", {

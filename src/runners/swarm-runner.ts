@@ -85,7 +85,7 @@ export function buildSubTaskDescription(
   }
 
   // Sibling context: other goals at same level (not dependencies)
-  const allGoals = Object.values(graph.toJSON().goals);
+  const allGoals = graph.getAll();
   const siblings = allGoals.filter(
     (g) =>
       g.id !== goal.id &&

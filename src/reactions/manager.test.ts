@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { ReactionManager } from "./manager.js";
-import { ensureReactionsTable, getReactionsBySourceTask } from "./store.js";
+import { getReactionsBySourceTask } from "./store.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -75,8 +75,7 @@ describe("ReactionManager", () => {
   beforeEach(() => {
     capturedHandlers = new Map();
     db = new Database(":memory:");
-    // Create required tables
-    ensureReactionsTable(db);
+    // Create dependent tables BEFORE ensureReactionsTable (it adds indexes on these)
     db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY,

@@ -51,13 +51,27 @@ CREATE TABLE IF NOT EXISTS reactions (
   created_at      TEXT DEFAULT (datetime('now')),
   completed_at    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_reactions_source ON reactions(source_task_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_source ON reactions(source_task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reactions_status ON reactions(status);
 `;
 
-/** Ensure the reactions table exists. Idempotent. */
+/**
+ * Ensure the reactions table and required indexes exist. Idempotent.
+ * Also adds indexes on existing tables needed by reaction queries
+ * (avoids schema.sql changes that require DB reset).
+ */
 export function ensureReactionsTable(db: Database.Database): void {
   db.exec(CREATE_TABLE_SQL);
+
+  // Indexes for reaction engine queries on existing tables.
+  // task_outcomes: countRecentClassificationFailures() filters on (classified_as, success, created_at)
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_outcomes_classified_date ON task_outcomes(classified_as, success, created_at DESC)`,
+  );
+  // tasks: checkStuckTasks() filters on (status, started_at) for running tasks
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_status_started ON tasks(status, started_at)`,
+  );
 }
 
 // ---------------------------------------------------------------------------
