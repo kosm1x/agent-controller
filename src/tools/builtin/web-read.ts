@@ -7,10 +7,33 @@
  */
 
 import type { Tool } from "../types.js";
+import { extractPdfFromUrl } from "../../lib/pdf.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
 const MAX_CONTENT = 30_000; // chars
+
+async function extractPdfLocally(url: string): Promise<string> {
+  try {
+    const content = await extractPdfFromUrl(url, {
+      maxChars: MAX_CONTENT,
+      timeoutMs: TIMEOUT_MS,
+    });
+    return JSON.stringify({
+      url,
+      content,
+      chars: content.length,
+      truncated: false,
+      source: "local-pdf",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({
+      error: `PDF extraction failed: ${message}`,
+      url,
+    });
+  }
+}
 
 export const webReadTool: Tool = {
   name: "web_read",
@@ -53,6 +76,11 @@ Works with: GitHub repos, news articles, documentation, blogs, PDFs.`,
       return JSON.stringify({ error: "url is required" });
     }
 
+    // PDF URLs: extract locally via OpenDataLoader (no Jina dependency)
+    if (url.toLowerCase().endsWith(".pdf")) {
+      return await extractPdfLocally(url);
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -71,6 +99,12 @@ Works with: GitHub repos, news articles, documentation, blogs, PDFs.`,
         headers,
         signal: controller.signal,
       });
+
+      // If Jina returns a PDF content-type, the URL was a PDF — extract locally
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/pdf")) {
+        return await extractPdfLocally(url);
+      }
 
       if (!response.ok) {
         return JSON.stringify({

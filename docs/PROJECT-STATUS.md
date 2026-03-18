@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-17
+> Last updated: 2026-03-18
 
 ## Overview
 
@@ -12,12 +12,12 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | ~90 (+5 in commit-bridge) |
-| Test files | 29 |
-| Tests passing | 250 |
+| Source files | ~97 (+5 in commit-bridge) |
+| Test files | 36 |
+| Tests passing | 295 |
 | Type errors | 0 |
 | Total tools | 44 (20 commit-bridge + 6 builtin + 3 memory + 2 skill + 14 Google) |
-| Dependencies | 5 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron + @whiskeysockets/baileys, grammy) |
+| Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
 
@@ -42,6 +42,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.12 | Web Search — Brave Search API integration | Done | `6f5dcfc` |
 | v2.13 | Web Read — Jina Reader integration, Telegram PDF/file extraction | Done | `cbe1a4c` |
 | v2.14 | Production Guards — tertiary LLM fallback, port conflict check, destructive tool confirmation | Done | — |
+| v2.15 | Local PDF — OpenDataLoader PDF replaces Jina for PDFs (local Java extraction, no rate limits) | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (43 total)
@@ -75,6 +76,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-18 | — | v2.15: Local PDF extraction via OpenDataLoader (replaces Jina for PDFs, Java 17 headless, unlimited local parsing) |
 | 2026-03-17 | — | Switch fallback model from MiniMax-M2.5 to qwen3.5-flash (same provider, no cross-vendor quirks) |
 | 2026-03-17 | `c7ed74d` | v2.14: Tertiary LLM fallback, port conflict check, destructive tool confirmation guard |
 | 2026-03-17 | `e908be6` | Prune v2.10 (gVisor), add v3.0 Production Hardening roadmap |

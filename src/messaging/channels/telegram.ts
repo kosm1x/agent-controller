@@ -12,6 +12,7 @@ import type {
   OutgoingMessage,
 } from "../types.js";
 import { formatForTelegram } from "../formatter.js";
+import { extractPdfFromUrl } from "../../lib/pdf.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -20,8 +21,9 @@ const MAX_FILE_CONTENT = 15_000; // chars
 
 /**
  * Download a file from Telegram and extract readable content.
- * For PDFs/HTML: routes through Jina Reader for Markdown conversion.
- * For text files: downloads directly.
+ * PDFs: local extraction via OpenDataLoader (no external API).
+ * HTML: routes through Jina Reader for Markdown conversion.
+ * Text files: downloads directly.
  */
 async function extractFileContent(
   telegramFileUrl: string,
@@ -32,15 +34,21 @@ async function extractFileContent(
     const isHtml =
       mimeType?.includes("html") || telegramFileUrl.endsWith(".html");
 
-    if (isPdf || isHtml) {
-      // Route through Jina Reader for structured extraction
+    if (isPdf) {
+      return await extractPdfFromUrl(telegramFileUrl, {
+        maxChars: MAX_FILE_CONTENT,
+        timeoutMs: 30_000,
+      });
+    }
+
+    if (isHtml) {
+      // HTML still uses Jina Reader for clean Markdown conversion
       const response = await fetch(`${JINA_PREFIX}${telegramFileUrl}`, {
         headers: { Accept: "text/markdown" },
         signal: AbortSignal.timeout(20_000),
       });
 
       if (!response.ok) {
-        // Fallback: download raw and return first chunk
         return await downloadRawText(telegramFileUrl);
       }
 
