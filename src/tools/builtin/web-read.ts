@@ -11,7 +11,7 @@ import { extractPdfFromUrl } from "../../lib/pdf.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
-const MAX_CONTENT = 30_000; // chars
+const MAX_CONTENT = 10_000; // chars — keep small to avoid prompt bloat in tool loops
 
 async function extractPdfLocally(url: string): Promise<string> {
   try {

@@ -395,6 +395,48 @@ export async function infer(
  * Loops: send messages → LLM returns tool_calls → execute tools → append results → repeat.
  * Stops when LLM returns a text response with no tool calls, or maxRounds is hit.
  */
+/** Max chars per tool result in conversation — prevents prompt bloat from web_read/web_search. */
+const MAX_TOOL_RESULT_CHARS = 6_000;
+
+/** Max chars per tool result in wrap-up context — more aggressive to fit in timeout. */
+const WRAPUP_TOOL_RESULT_CHARS = 1_500;
+
+/**
+ * Build a condensed conversation for wrap-up calls.
+ * Keeps system + first user message + last few tool exchanges (truncated) + wrap-up instruction.
+ */
+function buildWrapUpContext(
+  conversation: ChatMessage[],
+  instruction: string,
+): ChatMessage[] {
+  const system = conversation.find((m) => m.role === "system");
+  const firstUser = conversation.find((m) => m.role === "user");
+
+  // Take last 6 messages (3 tool exchanges) and aggressively truncate tool results
+  const recentMessages = conversation.slice(-6).map((m) => {
+    if (
+      m.role === "tool" &&
+      typeof m.content === "string" &&
+      m.content.length > WRAPUP_TOOL_RESULT_CHARS
+    ) {
+      return {
+        ...m,
+        content:
+          m.content.slice(0, WRAPUP_TOOL_RESULT_CHARS) +
+          "\n...(truncated for wrap-up)",
+      };
+    }
+    return m;
+  });
+
+  const condensed: ChatMessage[] = [];
+  if (system) condensed.push(system);
+  if (firstUser) condensed.push(firstUser);
+  condensed.push(...recentMessages);
+  condensed.push({ role: "user", content: instruction });
+  return condensed;
+}
+
 export async function inferWithTools(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -460,13 +502,12 @@ export async function inferWithTools(
         `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${err instanceof Error ? err.message : err}`,
       );
       try {
-        conversation.push({
-          role: "user",
-          content:
-            "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools.",
-        });
+        const leanContext = buildWrapUpContext(
+          conversation,
+          "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools.",
+        );
         const wrapUp = await infer(
-          { messages: conversation },
+          { messages: leanContext },
           onTextChunk,
           signal,
         );
@@ -550,6 +591,12 @@ export async function inferWithTools(
             `[inference] Tool ${toolCall.function.name} failed: ${message}`,
           );
         }
+        // Truncate large tool results to prevent prompt bloat
+        if (result.length > MAX_TOOL_RESULT_CHARS) {
+          result =
+            result.slice(0, MAX_TOOL_RESULT_CHARS) +
+            `\n...(truncated from ${result.length} chars)`;
+        }
         return {
           role: "tool" as const,
           content: result,
@@ -565,12 +612,11 @@ export async function inferWithTools(
     `[inference] Max rounds (${maxRounds}) reached, forcing wrap-up call`,
   );
   try {
-    conversation.push({
-      role: "user",
-      content:
-        "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools.",
-    });
-    const wrapUp = await infer({ messages: conversation }, onTextChunk, signal);
+    const leanContext = buildWrapUpContext(
+      conversation,
+      "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools.",
+    );
+    const wrapUp = await infer({ messages: leanContext }, onTextChunk, signal);
     totalPrompt += wrapUp.usage.prompt_tokens;
     totalCompletion += wrapUp.usage.completion_tokens;
     const content = wrapUp.content ?? "[max tool rounds reached]";
