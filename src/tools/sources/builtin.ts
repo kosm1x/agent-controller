@@ -18,6 +18,11 @@ import { currencyConvertTool } from "../builtin/currency.js";
 import { geocodeAddressTool } from "../builtin/geocoding.js";
 import { chartGenerateTool } from "../builtin/chart.js";
 import { rssReadTool } from "../builtin/rss.js";
+import {
+  scheduleTaskTool,
+  listSchedulesTool,
+  deleteScheduleTool,
+} from "../builtin/schedule.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -32,6 +37,9 @@ const BUILTIN_TOOLS: Tool[] = [
   geocodeAddressTool,
   chartGenerateTool,
   rssReadTool,
+  scheduleTaskTool,
+  listSchedulesTool,
+  deleteScheduleTool,
 ];
 
 export class BuiltinToolSource implements ToolSource {

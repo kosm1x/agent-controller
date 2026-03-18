@@ -14,6 +14,10 @@ import {
   startRitualScheduler,
   stopRitualScheduler,
 } from "./rituals/scheduler.js";
+import {
+  startDynamicScheduler,
+  stopDynamicScheduler,
+} from "./rituals/dynamic.js";
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
@@ -130,6 +134,9 @@ async function main(): Promise<void> {
     startRitualScheduler();
   }
 
+  // Start dynamic (user-defined) scheduled tasks
+  startDynamicScheduler();
+
   // Start messaging channels (WhatsApp/Telegram) if enabled
   const router = await initMessaging();
 
@@ -142,6 +149,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     console.log("[mc] Shutting down...");
     reactionManager.stop();
+    stopDynamicScheduler();
     stopProactiveScheduler();
     stopRitualScheduler();
     await shutdownMessaging();

@@ -16,7 +16,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Test files | 41 |
 | Tests passing | 345 |
 | Type errors | 0 |
-| Total tools | 44 (20 commit-bridge + 6 builtin + 3 memory + 2 skill + 14 Google) |
+| Total tools | 47 (20 commit-bridge + 14 builtin + 3 memory + 2 skill + 14 Google) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -50,7 +50,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read | 11 |
+| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule | 14 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
 | COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |

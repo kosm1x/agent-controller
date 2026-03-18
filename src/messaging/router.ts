@@ -35,6 +35,10 @@ import {
   isProactiveTask,
   handleProactiveResult,
 } from "../intelligence/proactive.js";
+import {
+  isScheduledTask,
+  handleScheduledTaskResult,
+} from "../rituals/dynamic.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -391,6 +395,13 @@ ${msg.text}`,
     if (isProactiveTask(taskId)) {
       const resultText = this.extractResultText(data.result);
       handleProactiveResult(taskId, resultText ?? "");
+      return;
+    }
+
+    // Check if it's a scheduled task → broadcast result
+    if (isScheduledTask(taskId)) {
+      const resultText = this.extractResultText(data.result);
+      handleScheduledTaskResult(taskId, resultText ?? "");
       return;
     }
 
