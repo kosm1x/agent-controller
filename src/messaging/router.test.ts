@@ -142,7 +142,7 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(26);
+      expect(call.tools).toHaveLength(29);
       expect(call.tools).toContain("commit__get_daily_snapshot");
       expect(call.tools).toContain("commit__complete_recurring");
       expect(call.tools).toContain("commit__update_objective");
@@ -152,6 +152,9 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("schedule_task");
       expect(call.tools).toContain("list_schedules");
       expect(call.tools).toContain("delete_schedule");
+      expect(call.tools).toContain("user_fact_set");
+      expect(call.tools).toContain("user_fact_list");
+      expect(call.tools).toContain("user_fact_delete");
     });
 
     it("should include Jarvis persona in description", async () => {

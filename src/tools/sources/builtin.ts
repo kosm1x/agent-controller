@@ -23,6 +23,11 @@ import {
   listSchedulesTool,
   deleteScheduleTool,
 } from "../builtin/schedule.js";
+import {
+  userFactSetTool,
+  userFactListTool,
+  userFactDeleteTool,
+} from "../builtin/user-facts.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -40,6 +45,9 @@ const BUILTIN_TOOLS: Tool[] = [
   scheduleTaskTool,
   listSchedulesTool,
   deleteScheduleTool,
+  userFactSetTool,
+  userFactListTool,
+  userFactDeleteTool,
 ];
 
 export class BuiltinToolSource implements ToolSource {

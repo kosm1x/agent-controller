@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_bank ON conversations(bank);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC);
 
+-- User facts — structured personal facts that persist across sessions
+CREATE TABLE IF NOT EXISTS user_facts (
+  id         INTEGER PRIMARY KEY,
+  category   TEXT NOT NULL,
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  source     TEXT DEFAULT 'conversation',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(category, key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category);
+
 -- A2A context-to-task mapping (for multi-turn conversations)
 CREATE TABLE IF NOT EXISTS a2a_contexts (
   context_id  TEXT PRIMARY KEY,

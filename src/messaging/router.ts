@@ -28,6 +28,7 @@ import {
   clearAllFeedbackWindows,
 } from "../intelligence/outcome-tracker.js";
 import { enrichContext } from "../intelligence/enrichment.js";
+import { formatUserFactsBlock } from "../db/user-facts.js";
 import {
   detectFeedbackSignal,
   isFeedbackMessage,
@@ -101,7 +102,7 @@ interface PendingReply {
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
-const THREAD_BUFFER_SIZE = 5;
+const THREAD_BUFFER_SIZE = 15;
 const conversationThreads = new Map<string, string[]>();
 const hydratedChannels = new Set<string>();
 
@@ -247,7 +248,20 @@ export class MessageRouter {
     // Recall semantic memories + enrich context IN PARALLEL
     const enrichment = await enrichContext(msg.text, msg.channel);
 
-    const tools = [...COMMIT_TOOLS];
+    // User profile facts — always injected so the LLM never forgets personal context
+    let userFactsBlock = "";
+    try {
+      userFactsBlock = formatUserFactsBlock();
+    } catch {
+      // Non-fatal — DB may not have the table yet
+    }
+
+    const tools = [
+      ...COMMIT_TOOLS,
+      "user_fact_set",
+      "user_fact_list",
+      "user_fact_delete",
+    ];
     if (getMemoryService().backend === "hindsight") {
       tools.push("memory_search", "memory_store");
     }
@@ -303,6 +317,10 @@ Usa list_goals para metas, list_objectives para objetivos. NO presentes visiones
 - **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar
 - **Google Workspace**: Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks
 - **Memoria**: Recuerdas conversaciones pasadas y aprendes patrones
+- **Perfil de usuario**: Guarda datos personales de Fede con user_fact_set para NUNCA olvidarlos
+
+## REGLA CRÍTICA: Guardar datos personales
+Cuando Fede te comparta información personal (edad, cumpleaños, familia, aspiraciones, valores, ética de trabajo, preferencias permanentes), SIEMPRE usa la herramienta user_fact_set para guardarla INMEDIATAMENTE. No preguntes si quiere que lo guardes — simplemente hazlo. Estos datos se inyectan automáticamente en cada conversación futura.
 
 ## Confirmación obligatoria
 ANTES de ejecutar estas herramientas, SIEMPRE muestra un resumen al usuario y pregunta "¿Confirmo?":
@@ -313,7 +331,7 @@ ANTES de ejecutar estas herramientas, SIEMPRE muestra un resumen al usuario y pr
 - delete_item → muestra: nombre y tipo del elemento a eliminar
 
 NO ejecutes estas herramientas hasta que el usuario diga "sí", "confirmo", "dale", o similar.
-Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.${threadBlock}${enrichment.contextBlock}
+Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.${userFactsBlock}${threadBlock}${enrichment.contextBlock}
 
 Mensaje del usuario:
 ${msg.text}`,
@@ -454,7 +472,7 @@ ${msg.text}`,
 
       // Push to in-memory conversation thread (chronological, instant)
       const shortResult =
-        resultText.length > 200 ? resultText.slice(0, 200) + "..." : resultText;
+        resultText.length > 500 ? resultText.slice(0, 500) + "..." : resultText;
       pushToThread(
         pending.channel,
         `User: ${pending.originalText}\nJarvis: ${shortResult}`,
