@@ -27,7 +27,7 @@ STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
 
-const MAX_ROUNDS = 10;
+const MAX_ROUNDS = 7;
 
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {

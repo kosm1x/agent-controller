@@ -446,12 +446,47 @@ export async function inferWithTools(
       };
     }
 
-    const response = await infer(
-      { messages: conversation, tools },
-      onTextChunk,
-      signal,
-      providerName,
-    );
+    let response: InferenceResponse;
+    try {
+      response = await infer(
+        { messages: conversation, tools },
+        onTextChunk,
+        signal,
+        providerName,
+      );
+    } catch (err) {
+      // Mid-loop inference failure — attempt toolless wrap-up instead of crashing
+      console.log(
+        `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${err instanceof Error ? err.message : err}`,
+      );
+      try {
+        conversation.push({
+          role: "user",
+          content:
+            "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools.",
+        });
+        const wrapUp = await infer(
+          { messages: conversation },
+          onTextChunk,
+          signal,
+        );
+        totalPrompt += wrapUp.usage.prompt_tokens;
+        totalCompletion += wrapUp.usage.completion_tokens;
+        const content = wrapUp.content ?? "[inference failed mid-loop]";
+        conversation.push({ role: "assistant", content });
+        return {
+          content,
+          messages: conversation,
+          totalUsage: {
+            prompt_tokens: totalPrompt,
+            completion_tokens: totalCompletion,
+          },
+        };
+      } catch {
+        // Wrap-up also failed — propagate original error
+        throw err;
+      }
+    }
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;
 
