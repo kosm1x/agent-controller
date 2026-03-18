@@ -68,11 +68,16 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ## Patterns
 
 ### Adding a new tool
-1. Create handler in `src/tools/builtins/`
-2. Register in `src/tools/registry.ts` — name, description, parameters schema, handler
+1. Create handler in `src/tools/builtin/`
+2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface)
 3. Write tool descriptions following ACI principles above (describe edge cases, use enums, add `.describe()` to all params)
 4. Test with a real model call to verify the description guides correct usage
 5. Add test in `src/tools/registry.test.ts`
+
+### Adding a new tool source
+1. Implement `ToolSource` interface in `src/tools/sources/<name>.ts` (initialize, registerTools, healthCheck, teardown)
+2. Add `sourceManager.addSource(new XyzSource())` in `src/index.ts` (with any env-var guards)
+3. `ToolSourceManager.initAll()` catches per-source errors — one failing source won't block others
 
 ### Adding a new runner
 1. Implement `Runner` interface in `src/runners/<name>-runner.ts`

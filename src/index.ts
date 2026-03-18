@@ -10,7 +10,6 @@ import { getConfig } from "./config.js";
 import { initDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
-import { initMcp, shutdownMcp } from "./mcp/index.js";
 import {
   startRitualScheduler,
   stopRitualScheduler,
@@ -24,18 +23,19 @@ import {
   stopProactiveScheduler,
 } from "./intelligence/proactive.js";
 
-// Tool and runner registration (side-effect imports)
+// Reaction engine
+import { ReactionManager } from "./reactions/manager.js";
+
+// Tool source plugin system
 import { toolRegistry } from "./tools/registry.js";
-import { shellTool } from "./tools/builtin/shell.js";
-import { httpTool } from "./tools/builtin/http.js";
-import { fileReadTool, fileWriteTool } from "./tools/builtin/file.js";
-import { webSearchTool } from "./tools/builtin/web-search.js";
-import { webReadTool } from "./tools/builtin/web-read.js";
-import { weatherForecastTool } from "./tools/builtin/weather.js";
-import { currencyConvertTool } from "./tools/builtin/currency.js";
-import { geocodeAddressTool } from "./tools/builtin/geocoding.js";
-import { chartGenerateTool } from "./tools/builtin/chart.js";
-import { rssReadTool } from "./tools/builtin/rss.js";
+import { ToolSourceManager } from "./tools/source.js";
+import { BuiltinToolSource } from "./tools/sources/builtin.js";
+import { McpToolSource } from "./tools/sources/mcp.js";
+import { GoogleToolSource } from "./tools/sources/google.js";
+import { MemoryToolSource } from "./tools/sources/memory.js";
+import { SkillsToolSource } from "./tools/sources/skills.js";
+
+// Runner registration (side-effect imports)
 import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
@@ -72,19 +72,6 @@ async function main(): Promise<void> {
   initEventBus(db);
   console.log("[mc] Event bus initialized");
 
-  // Register built-in tools
-  toolRegistry.register(shellTool);
-  toolRegistry.register(httpTool);
-  toolRegistry.register(fileReadTool);
-  toolRegistry.register(fileWriteTool);
-  toolRegistry.register(webSearchTool);
-  toolRegistry.register(webReadTool);
-  toolRegistry.register(weatherForecastTool);
-  toolRegistry.register(currencyConvertTool);
-  toolRegistry.register(geocodeAddressTool);
-  toolRegistry.register(chartGenerateTool);
-  toolRegistry.register(rssReadTool);
-
   // Initialize memory service (Hindsight if configured, else SQLite)
   const memory = await initMemoryService();
 
@@ -97,59 +84,27 @@ async function main(): Promise<void> {
     );
   }
 
-  // Initialize MCP tool servers (adds tools to registry)
-  await initMcp();
-
-  // Register memory tools if Hindsight is enabled
-  if (memory.backend === "hindsight") {
-    const { memorySearchTool, memoryStoreTool, memoryReflectTool } =
-      await import("./tools/builtin/memory.js");
-    toolRegistry.register(memorySearchTool);
-    toolRegistry.register(memoryStoreTool);
-    toolRegistry.register(memoryReflectTool);
-  }
-
-  // Register skill tools (always available — SQLite-backed)
-  const { skillSaveTool, skillListTool } =
-    await import("./tools/builtin/skills.js");
-  toolRegistry.register(skillSaveTool);
-  toolRegistry.register(skillListTool);
-
-  // Register Google Workspace tools if configured
+  // Initialize tool sources (plugin system)
+  const sourceManager = new ToolSourceManager();
+  sourceManager.addSource(new BuiltinToolSource());
+  sourceManager.addSource(new McpToolSource());
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN) {
-    const { gmailSendTool, gmailSearchTool } =
-      await import("./tools/builtin/google-gmail.js");
-    const { gdriveListTool, gdriveCreateTool, gdriveShareTool } =
-      await import("./tools/builtin/google-drive.js");
-    const { calendarListTool, calendarCreateTool, calendarUpdateTool } =
-      await import("./tools/builtin/google-calendar.js");
-    const {
-      gsheetsReadTool,
-      gsheetsWriteTool,
-      gdocsReadTool,
-      gdocsWriteTool,
-      gslidesCreateTool,
-      gtasksCreateTool,
-    } = await import("./tools/builtin/google-docs.js");
-
-    toolRegistry.register(gmailSendTool);
-    toolRegistry.register(gmailSearchTool);
-    toolRegistry.register(gdriveListTool);
-    toolRegistry.register(gdriveCreateTool);
-    toolRegistry.register(gdriveShareTool);
-    toolRegistry.register(calendarListTool);
-    toolRegistry.register(calendarCreateTool);
-    toolRegistry.register(calendarUpdateTool);
-    toolRegistry.register(gsheetsReadTool);
-    toolRegistry.register(gsheetsWriteTool);
-    toolRegistry.register(gdocsReadTool);
-    toolRegistry.register(gdocsWriteTool);
-    toolRegistry.register(gslidesCreateTool);
-    toolRegistry.register(gtasksCreateTool);
-    console.log("[mc] Google Workspace tools registered (14 tools)");
+    sourceManager.addSource(new GoogleToolSource());
   }
+  if (memory.backend === "hindsight") {
+    sourceManager.addSource(new MemoryToolSource());
+  }
+  sourceManager.addSource(new SkillsToolSource());
 
+  const initResult = await sourceManager.initAll(toolRegistry);
+  console.log(
+    `[mc] Tool sources: ${initResult.initialized} ok, ${initResult.failed} failed, ${initResult.totalTools} tools`,
+  );
   console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
+
+  // Start reaction engine
+  const reactionManager = new ReactionManager(db);
+  reactionManager.start();
 
   // Check port availability before binding
   await checkPort(config.port);
@@ -186,10 +141,11 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = async () => {
     console.log("[mc] Shutting down...");
+    reactionManager.stop();
     stopProactiveScheduler();
     stopRitualScheduler();
     await shutdownMessaging();
-    await shutdownMcp();
+    await sourceManager.teardownAll();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);

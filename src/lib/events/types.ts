@@ -27,7 +27,8 @@ export type EventCategory =
   | "activity"
   | "audit"
   | "security"
-  | "fleet";
+  | "fleet"
+  | "reaction";
 
 // ---------------------------------------------------------------------------
 // Event Types per Category
@@ -95,6 +96,13 @@ export type FleetEventType =
   | "fleet.health_check"
   | "fleet.capacity_warning";
 
+/** Reaction engine events. */
+export type ReactionEventType =
+  | "reaction.triggered"
+  | "reaction.completed"
+  | "reaction.suppressed"
+  | "reaction.escalated";
+
 /** Union of all event types. */
 export type EventType =
   | TaskEventType
@@ -104,7 +112,8 @@ export type EventType =
   | ActivityEventType
   | AuditEventType
   | SecurityEventType
-  | FleetEventType;
+  | FleetEventType
+  | ReactionEventType;
 
 // ---------------------------------------------------------------------------
 // Event Payloads
@@ -282,6 +291,17 @@ export interface FleetPayload {
   details: Record<string, unknown>;
 }
 
+/** Payload for reaction events. */
+export interface ReactionPayload {
+  reaction_id: string;
+  trigger: string;
+  source_task_id: string;
+  spawned_task_id: string | null;
+  action: string;
+  attempt: number;
+  reason: string;
+}
+
 // ---------------------------------------------------------------------------
 // Payload Type Map (for type-safe event creation)
 // ---------------------------------------------------------------------------
@@ -329,6 +349,10 @@ export interface EventPayloadMap {
   "fleet.rebalance": FleetPayload;
   "fleet.health_check": FleetPayload;
   "fleet.capacity_warning": FleetPayload;
+  "reaction.triggered": ReactionPayload;
+  "reaction.completed": ReactionPayload;
+  "reaction.suppressed": ReactionPayload;
+  "reaction.escalated": ReactionPayload;
 }
 
 // ---------------------------------------------------------------------------

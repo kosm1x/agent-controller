@@ -54,7 +54,12 @@ function sleep(ms: number): Promise<void> {
  * Build a sub-task description from a goal, including criteria and
  * context from completed dependency goals.
  */
-function buildSubTaskDescription(goal: Goal, graph: GoalGraph): string {
+/** @internal Exported for testing. */
+export function buildSubTaskDescription(
+  goal: Goal,
+  graph: GoalGraph,
+  trackers: Map<string, SubTaskTracker>,
+): string {
   const parts: string[] = [goal.description];
 
   if (goal.completionCriteria.length > 0) {
@@ -77,6 +82,33 @@ function buildSubTaskDescription(goal: Goal, graph: GoalGraph): string {
       parts.push("\n## Context from completed dependencies");
       parts.push(...depContext);
     }
+  }
+
+  // Sibling context: other goals at same level (not dependencies)
+  const allGoals = Object.values(graph.toJSON().goals);
+  const siblings = allGoals.filter(
+    (g) =>
+      g.id !== goal.id &&
+      g.parentId === goal.parentId &&
+      !goal.dependsOn.includes(g.id),
+  );
+
+  if (siblings.length > 0) {
+    const siblingLines: string[] = [];
+    for (const sib of siblings) {
+      const tracker = trackers.get(sib.id);
+      const status = tracker?.status ?? "pending";
+      let line = `- ${sib.description} [${status}]`;
+      if (tracker?.status === "completed" && tracker.output) {
+        const summary = tracker.output.slice(0, 200);
+        line += ` — Result: ${summary}`;
+      }
+      siblingLines.push(line);
+    }
+    parts.push(
+      "\n## Sibling goals (for coordination, not your responsibility)",
+    );
+    parts.push(...siblingLines);
   }
 
   return parts.join("\n");
@@ -299,7 +331,7 @@ export const swarmRunner: Runner = {
         try {
           const result = await submitTask({
             title: `[Swarm] ${goal.description.slice(0, 100)}`,
-            description: buildSubTaskDescription(goal, graph),
+            description: buildSubTaskDescription(goal, graph, trackers),
             parentTaskId: input.taskId,
             spawnType: "subtask",
             tools: input.tools,
