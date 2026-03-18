@@ -13,10 +13,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | ~107 (+5 in commit-bridge) |
-| Test files | 41 |
-| Tests passing | 345 |
+| Test files | 42 |
+| Tests passing | 352 |
 | Type errors | 0 |
-| Total tools | 47 (20 commit-bridge + 14 builtin + 3 memory + 2 skill + 14 Google) |
+| Total tools | 75 (20 commit-bridge + 17 builtin + 3 memory + 2 skill + 14 Google + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -45,13 +45,16 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.15 | Local PDF — OpenDataLoader PDF replaces Jina for PDFs (local Java extraction, no rate limits) | Done | — |
 | v2.16 | Agent-Orchestrator Integration — ToolSource plugin system, reaction engine, swarm sibling context | Done | — |
 | v2.17 | Admin CLI — mc-ctl bash tool (22 commands: service lifecycle, tasks, outcomes, schedules, tools, memory, hindsight, raw DB) | Done | — |
+| v2.17.1 | Dynamic Scheduled Tasks — cron-based task scheduling via LLM tools, timezone-aware | Done | — |
+| v2.18 | Context Retention — user_facts table, keyword recall, larger thread buffer | Done | `7c26dd1` |
+| v2.18.1 | Inference Resilience — max-rounds wrap-up call, mid-loop failure recovery, health check fix | Done | `b400ed5` |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (44 total, managed by 5 ToolSource plugins)
+## Tools (75 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule | 14 |
+| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete | 17 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
 | COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |
@@ -78,7 +81,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-18 | — | v2.17: mc-ctl admin CLI — 22 commands, bash script, same pattern as crm-ctl |
+| 2026-03-18 | `b400ed5` | v2.18.1: Mid-loop inference failure wrap-up, MAX_ROUNDS 10→7, timeout 30s→60s |
+| 2026-03-18 | `9075e2a` | v2.18.1: Max-rounds wrap-up call + health check resilience for DashScope |
+| 2026-03-18 | `7c26dd1` | v2.18: Context retention — user_facts table, keyword recall, thread buffer 5→15 |
+| 2026-03-18 | `6b3fc43` | v2.17: mc-ctl admin CLI — 22 commands, bash script, same pattern as crm-ctl |
 | 2026-03-18 | — | v2.16: ToolSource plugin system (5 adapters), reaction engine (auto-retry/escalate on task failures), swarm sibling context injection. Inspired by ComposioHQ/agent-orchestrator patterns |
 | 2026-03-18 | — | v2.15: Local PDF extraction via OpenDataLoader (replaces Jina for PDFs, Java 17 headless, unlimited local parsing) |
 | 2026-03-17 | — | Switch fallback model from MiniMax-M2.5 to qwen3.5-flash (same provider, no cross-vendor quirks) |
@@ -106,4 +112,5 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - SSH keys not configured on VPS — git push uses HTTPS via `gh` CLI
 - Hindsight mental model refresh slow with Qwen backend (~2min/model) — using direct recall instead
 - Multiple MC restarts can cause Telegram 409 polling conflicts — always kill all instances before restart
-- Health probe shows inference "unreachable" — cosmetic (DashScope /v1/models returns non-200 without auth; actual inference works fine)
+- deepseek-v3.2 never voluntarily stops calling tools on research tasks — mitigated by MAX_ROUNDS=7 + wrap-up call
+- Primary model (qwen3.5-plus) intermittently slow on DashScope — falls back to deepseek-v3.2
