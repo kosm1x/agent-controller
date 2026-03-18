@@ -47,7 +47,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.17 | Admin CLI — mc-ctl bash tool (22 commands: service lifecycle, tasks, outcomes, schedules, tools, memory, hindsight, raw DB) | Done | — |
 | v2.17.1 | Dynamic Scheduled Tasks — cron-based task scheduling via LLM tools, timezone-aware | Done | — |
 | v2.18 | Context Retention — user_facts table, keyword recall, larger thread buffer | Done | `7c26dd1` |
-| v2.18.1 | Inference Resilience — max-rounds wrap-up call, mid-loop failure recovery, health check fix | Done | `b400ed5` |
+| v2.18.1 | Inference Resilience — max-rounds wrap-up, mid-loop recovery, tool result truncation, lean wrap-up context | Done | `f58869c` |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (75 total, managed by 5 ToolSource plugins)
@@ -81,6 +81,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-18 | `f58869c` | v2.18.1: Tool result truncation (6K cap), lean wrap-up context, web_read 30K→10K |
 | 2026-03-18 | `b400ed5` | v2.18.1: Mid-loop inference failure wrap-up, MAX_ROUNDS 10→7, timeout 30s→60s |
 | 2026-03-18 | `9075e2a` | v2.18.1: Max-rounds wrap-up call + health check resilience for DashScope |
 | 2026-03-18 | `7c26dd1` | v2.18: Context retention — user_facts table, keyword recall, thread buffer 5→15 |
