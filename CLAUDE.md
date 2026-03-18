@@ -65,6 +65,19 @@ Every agent loop must have bounded iteration limits, token budgets, and timeouts
 ### Transparency
 Planning steps must be explicit and observable. The planner's goal graph, executor's per-goal logs, and reflector's scoring all serve this. When building new agent capabilities, ensure every decision point emits a trace event visible in the dashboard SSE stream.
 
+## Admin CLI
+
+`mc-ctl` — bash admin tool at project root. No npm deps, direct SQLite + systemctl + curl + docker.
+
+```bash
+./mc-ctl status             # Service health, API, Hindsight, key metrics
+./mc-ctl stats              # Full metrics dashboard (tasks, outcomes, events, reactions, schedules, skills)
+./mc-ctl tasks --status=X   # List tasks with optional filters
+./mc-ctl task <id>           # Task detail + runs + subtasks
+./mc-ctl logs 50             # journalctl last N lines
+./mc-ctl db "SELECT ..."    # Raw SQLite query or interactive shell
+```
+
 ## Patterns
 
 ### Adding a new tool

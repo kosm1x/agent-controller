@@ -1,0 +1,625 @@
+#!/usr/bin/env bash
+# mc-ctl — Mission Control admin CLI
+set -euo pipefail
+
+PROJECT_DIR="/root/claude/mission-control"
+SERVICE_NAME="mission-control"
+DB_PATH="${PROJECT_DIR}/data/mc.db"
+API_URL="http://localhost:8080"
+HINDSIGHT_URL="http://localhost:8888"
+HINDSIGHT_CONTAINER="mission-control-hindsight-1"
+LOG_LINES=50
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die() { echo -e "${RED}Error:${NC} $*" >&2; exit 1; }
+
+need_db() {
+  [ -f "$DB_PATH" ] || die "Database not found: ${DB_PATH}"
+}
+
+sql() {
+  sqlite3 -header -column "$DB_PATH" "$1"
+}
+
+sql_raw() {
+  sqlite3 "$DB_PATH" "$1"
+}
+
+api_key() {
+  local env_file="${PROJECT_DIR}/.env"
+  [ -f "$env_file" ] || die ".env not found"
+  grep -oP '(?<=MC_API_KEY=).*' "$env_file" | tr -d '"' | tr -d "'"
+}
+
+api() {
+  local method="$1" path="$2"
+  shift 2
+  local key
+  key=$(api_key)
+  curl -sf -X "$method" -H "X-Api-Key: ${key}" -H "Content-Type: application/json" \
+    "${API_URL}${path}" "$@"
+}
+
+color_status() {
+  local status="$1"
+  case "$status" in
+    completed)                echo -e "${GREEN}${status}${NC}" ;;
+    running|classifying)      echo -e "${CYAN}${status}${NC}" ;;
+    pending|queued)           echo -e "${YELLOW}${status}${NC}" ;;
+    failed|cancelled|blocked) echo -e "${RED}${status}${NC}" ;;
+    *)                        echo "$status" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Service lifecycle
+# ---------------------------------------------------------------------------
+
+cmd_status() {
+  echo -e "${BOLD}=== Mission Control Status ===${NC}"
+  echo ""
+
+  # Systemd status
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    echo -e "  Service:    ${GREEN}active${NC}"
+    local pid
+    pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo "?")
+    echo -e "  PID:        ${pid}"
+    local uptime
+    uptime=$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE_NAME" 2>/dev/null || echo "?")
+    echo -e "  Since:      ${uptime}"
+    if [ "$pid" != "?" ] && [ "$pid" != "0" ]; then
+      local mem
+      mem=$(ps -p "$pid" -o rss= 2>/dev/null || echo "0")
+      echo -e "  Memory:     $(( mem / 1024 )) MB"
+    fi
+  else
+    echo -e "  Service:    ${RED}inactive${NC}"
+  fi
+
+  # API health
+  echo ""
+  local health
+  if health=$(curl -sf --max-time 3 "${API_URL}/health" 2>/dev/null); then
+    local api_status db_status inf_status version
+    api_status=$(echo "$health" | grep -oP '"status"\s*:\s*"\K[^"]+' || echo "?")
+    db_status=$(echo "$health" | grep -oP '"db"\s*:\s*"\K[^"]+' || echo "?")
+    inf_status=$(echo "$health" | grep -oP '"inference"\s*:\s*"\K[^"]+' || echo "?")
+    version=$(echo "$health" | grep -oP '"version"\s*:\s*"\K[^"]+' || echo "?")
+    echo -e "  API:        ${GREEN}reachable${NC} (v${version})"
+    echo -e "  DB:         $([ "$db_status" = "ok" ] && echo -e "${GREEN}ok${NC}" || echo -e "${RED}${db_status}${NC}")"
+    echo -e "  Inference:  $([ "$inf_status" = "ok" ] && echo -e "${GREEN}ok${NC}" || echo -e "${YELLOW}${inf_status}${NC}")"
+  else
+    echo -e "  API:        ${RED}unreachable${NC}"
+  fi
+
+  # Hindsight
+  echo ""
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$HINDSIGHT_CONTAINER"; then
+    local hs_health
+    if hs_health=$(curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" 2>/dev/null); then
+      echo -e "  Hindsight:  ${GREEN}healthy${NC}"
+    else
+      echo -e "  Hindsight:  ${YELLOW}container up, API unhealthy${NC}"
+    fi
+  else
+    echo -e "  Hindsight:  ${DIM}not running${NC}"
+  fi
+
+  # DB size
+  if [ -f "$DB_PATH" ]; then
+    local size
+    size=$(du -sh "$DB_PATH" 2>/dev/null | cut -f1)
+    echo -e "  DB size:    ${size}"
+  fi
+
+  # Key metrics
+  if [ -f "$DB_PATH" ]; then
+    echo ""
+    echo -e "${BOLD}  Quick Metrics${NC}"
+    local total running completed failed
+    total=$(sql_raw "SELECT COUNT(*) FROM tasks;" 2>/dev/null || echo "0")
+    running=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'running';" 2>/dev/null || echo "0")
+    completed=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'completed';" 2>/dev/null || echo "0")
+    failed=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'failed';" 2>/dev/null || echo "0")
+    echo -e "  Tasks:      ${total} total, ${GREEN}${completed}${NC} completed, ${CYAN}${running}${NC} running, ${RED}${failed}${NC} failed"
+  fi
+
+  echo ""
+}
+
+cmd_start() {
+  systemctl start "$SERVICE_NAME"
+  sleep 2
+  systemctl --no-pager status "$SERVICE_NAME" | head -15
+}
+
+cmd_stop() {
+  systemctl stop "$SERVICE_NAME"
+  echo -e "${GREEN}Service stopped.${NC}"
+}
+
+cmd_restart() {
+  systemctl restart "$SERVICE_NAME"
+  sleep 2
+  systemctl --no-pager status "$SERVICE_NAME" | head -15
+}
+
+cmd_logs() {
+  local lines="${1:-$LOG_LINES}"
+  journalctl -u "$SERVICE_NAME" --no-pager -n "$lines"
+}
+
+cmd_follow() {
+  journalctl -fu "$SERVICE_NAME"
+}
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+
+cmd_tasks() {
+  need_db
+  local status_filter="" limit=20
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status=*) status_filter="${1#--status=}"; shift ;;
+      --limit=*)  limit="${1#--limit=}"; shift ;;
+      *)          shift ;;
+    esac
+  done
+
+  local where=""
+  if [ -n "$status_filter" ]; then
+    where="WHERE status = '${status_filter}'"
+  fi
+
+  echo -e "${BOLD}=== Tasks (newest first, limit ${limit}) ===${NC}"
+  echo ""
+  sql "SELECT task_id, substr(title,1,50) as title, status, agent_type,
+    ROUND(CAST(
+      (julianday(COALESCE(completed_at, datetime('now'))) - julianday(created_at)) * 86400
+    AS REAL), 0) as secs,
+    created_at
+  FROM tasks ${where}
+  ORDER BY created_at DESC LIMIT ${limit};"
+}
+
+cmd_task() {
+  need_db
+  local id="$1"
+  [ -n "$id" ] || die "Usage: mc-ctl task <task_id>"
+
+  echo -e "${BOLD}=== Task Detail ===${NC}"
+  echo ""
+  sql "SELECT task_id, title, status, priority, agent_type, classification,
+    progress, spawn_type, parent_task_id,
+    created_at, started_at, completed_at,
+    substr(COALESCE(error,''),1,200) as error
+  FROM tasks WHERE task_id = '${id}';"
+
+  echo ""
+  echo -e "${BOLD}--- Output ---${NC}"
+  sql_raw "SELECT COALESCE(output, '(none)') FROM tasks WHERE task_id = '${id}';" 2>/dev/null
+
+  echo ""
+  echo -e "${BOLD}--- Runs ---${NC}"
+  sql "SELECT run_id, agent_type, status, phase, duration_ms, created_at
+  FROM runs WHERE task_id = '${id}' ORDER BY created_at;"
+
+  echo ""
+  echo -e "${BOLD}--- Subtasks ---${NC}"
+  sql "SELECT task_id, substr(title,1,40) as title, status, agent_type
+  FROM tasks WHERE parent_task_id = '${id}';"
+}
+
+cmd_cancel() {
+  local id="$1"
+  [ -n "$id" ] || die "Usage: mc-ctl cancel <task_id>"
+
+  local result
+  if result=$(api POST "/api/tasks/${id}/cancel"); then
+    echo -e "${GREEN}Task ${id} cancelled.${NC}"
+    echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
+  else
+    die "Failed to cancel task ${id}. Is the API running?"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Outcomes
+# ---------------------------------------------------------------------------
+
+cmd_outcomes() {
+  need_db
+  local days=7
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days=*) days="${1#--days=}"; shift ;;
+      *)        shift ;;
+    esac
+  done
+
+  echo -e "${BOLD}=== Outcome Stats (last ${days} days) ===${NC}"
+  echo ""
+  echo -e "${BOLD}By Runner:${NC}"
+  sql "SELECT ran_on, COUNT(*) as total,
+    SUM(success) as ok,
+    ROUND(AVG(success)*100, 1) as success_pct,
+    ROUND(AVG(duration_ms)) as avg_ms
+  FROM task_outcomes
+  WHERE created_at >= datetime('now', '-${days} days')
+  GROUP BY ran_on
+  ORDER BY total DESC;"
+
+  echo ""
+  echo -e "${BOLD}By Classification:${NC}"
+  sql "SELECT classified_as, COUNT(*) as total,
+    SUM(success) as ok,
+    ROUND(AVG(success)*100, 1) as success_pct
+  FROM task_outcomes
+  WHERE created_at >= datetime('now', '-${days} days')
+  GROUP BY classified_as
+  ORDER BY total DESC
+  LIMIT 15;"
+}
+
+# ---------------------------------------------------------------------------
+# Reactions
+# ---------------------------------------------------------------------------
+
+cmd_reactions() {
+  need_db
+  echo -e "${BOLD}=== Reactions ===${NC}"
+  echo ""
+  sql "SELECT reaction_id, trigger_type, action, status, attempt, max_attempts,
+    source_task_id, created_at
+  FROM reactions
+  ORDER BY created_at DESC
+  LIMIT 20;"
+}
+
+# ---------------------------------------------------------------------------
+# Schedules
+# ---------------------------------------------------------------------------
+
+cmd_schedules() {
+  need_db
+  echo -e "${BOLD}=== Active Schedules ===${NC}"
+  echo ""
+  sql "SELECT schedule_id, name, cron_expr, delivery, active,
+    last_run_at, created_at
+  FROM scheduled_tasks
+  WHERE active = 1
+  ORDER BY created_at;" 2>/dev/null || echo -e "${DIM}No scheduled_tasks table yet.${NC}"
+}
+
+cmd_schedule_delete() {
+  local id="$1"
+  [ -n "$id" ] || die "Usage: mc-ctl schedule-delete <schedule_id>"
+
+  need_db
+  local changes
+  changes=$(sql_raw "DELETE FROM scheduled_tasks WHERE schedule_id = '${id}'; SELECT changes();" 2>/dev/null)
+  if [ "$changes" = "1" ]; then
+    echo -e "${GREEN}Schedule ${id} deleted.${NC}"
+  else
+    die "Schedule ${id} not found."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+cmd_tools() {
+  echo -e "${BOLD}=== Registered Tools ===${NC}"
+  echo ""
+  local result
+  if result=$(api GET "/api/tools/sources" 2>/dev/null); then
+    echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
+  else
+    # Fallback: try health endpoint for basic info
+    echo -e "${YELLOW}Tool sources API not available. Checking health...${NC}"
+    cmd_tool_health
+  fi
+}
+
+cmd_tool_health() {
+  echo -e "${BOLD}=== Tool Source Health ===${NC}"
+  echo ""
+  local health
+  if health=$(curl -sf --max-time 3 "${API_URL}/health" 2>/dev/null); then
+    echo -e "  API:        ${GREEN}reachable${NC}"
+    echo "$health" | python3 -m json.tool 2>/dev/null || echo "$health"
+  else
+    echo -e "  API:        ${RED}unreachable${NC}"
+  fi
+
+  echo ""
+  echo -e "${BOLD}Hindsight:${NC}"
+  if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+    echo -e "  Status:     ${GREEN}healthy${NC}"
+  else
+    echo -e "  Status:     ${RED}unreachable${NC}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Conversations & Memory
+# ---------------------------------------------------------------------------
+
+cmd_conversations() {
+  need_db
+  local limit="${1:-10}"
+
+  echo -e "${BOLD}=== Recent Conversations (limit ${limit}) ===${NC}"
+  echo ""
+  sql "SELECT id, bank, substr(content, 1, 80) as preview, created_at
+  FROM conversations
+  ORDER BY created_at DESC
+  LIMIT ${limit};"
+}
+
+cmd_memory() {
+  need_db
+  echo -e "${BOLD}=== Memory Status ===${NC}"
+  echo ""
+
+  local conv_count bank_count latest
+  conv_count=$(sql_raw "SELECT COUNT(*) FROM conversations;" 2>/dev/null || echo "0")
+  bank_count=$(sql_raw "SELECT COUNT(DISTINCT bank) FROM conversations;" 2>/dev/null || echo "0")
+  latest=$(sql_raw "SELECT MAX(created_at) FROM conversations;" 2>/dev/null || echo "none")
+
+  echo -e "  Backend:        SQLite (conversations table)"
+  echo -e "  Conversations:  ${conv_count}"
+  echo -e "  Banks:          ${bank_count}"
+  echo -e "  Latest:         ${latest}"
+
+  # Hindsight
+  echo ""
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$HINDSIGHT_CONTAINER"; then
+    if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+      echo -e "  Hindsight:      ${GREEN}healthy${NC} (${HINDSIGHT_URL})"
+    else
+      echo -e "  Hindsight:      ${YELLOW}container up, API unhealthy${NC}"
+    fi
+  else
+    echo -e "  Hindsight:      ${DIM}not running${NC}"
+  fi
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Hindsight
+# ---------------------------------------------------------------------------
+
+cmd_hindsight_status() {
+  echo -e "${BOLD}=== Hindsight Status ===${NC}"
+  echo ""
+
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$HINDSIGHT_CONTAINER"; then
+    echo -e "  Container:  ${GREEN}running${NC}"
+    docker ps --filter "name=${HINDSIGHT_CONTAINER}" --format "  Image:      {{.Image}}\n  Status:     {{.Status}}\n  Ports:      {{.Ports}}" 2>/dev/null
+  else
+    echo -e "  Container:  ${RED}not running${NC}"
+    echo ""
+    echo -e "  Start with: ${CYAN}cd ${PROJECT_DIR} && docker compose --profile hindsight up -d hindsight${NC}"
+    return
+  fi
+
+  echo ""
+  if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+    echo -e "  API:        ${GREEN}healthy${NC} (${HINDSIGHT_URL})"
+  else
+    echo -e "  API:        ${RED}unhealthy${NC}"
+  fi
+  echo ""
+}
+
+cmd_hindsight_restart() {
+  echo -e "${YELLOW}Restarting Hindsight container...${NC}"
+  docker restart "$HINDSIGHT_CONTAINER" 2>/dev/null || die "Failed to restart ${HINDSIGHT_CONTAINER}"
+  sleep 2
+  cmd_hindsight_status
+}
+
+cmd_hindsight_logs() {
+  local lines="${1:-$LOG_LINES}"
+  docker logs --tail "$lines" "$HINDSIGHT_CONTAINER" 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+cmd_db() {
+  need_db
+  if [ $# -eq 0 ]; then
+    echo -e "${CYAN}Opening interactive SQLite shell...${NC}"
+    echo -e "${DIM}DB: ${DB_PATH}${NC}"
+    sqlite3 -header -column "$DB_PATH"
+  else
+    sql "$*"
+  fi
+}
+
+cmd_stats() {
+  need_db
+  echo -e "${BOLD}=== Mission Control Stats ===${NC}"
+  echo ""
+
+  # Tasks
+  echo -e "${BOLD}Tasks:${NC}"
+  sql "SELECT status, COUNT(*) as count FROM tasks GROUP BY status ORDER BY count DESC;"
+
+  # Task outcomes (last 7 days)
+  echo ""
+  echo -e "${BOLD}Outcomes (last 7 days):${NC}"
+  sql "SELECT ran_on, COUNT(*) as total,
+    SUM(success) as ok,
+    ROUND(AVG(success)*100, 1) as success_pct,
+    ROUND(AVG(duration_ms)) as avg_ms
+  FROM task_outcomes
+  WHERE created_at >= datetime('now', '-7 days')
+  GROUP BY ran_on
+  ORDER BY total DESC;"
+
+  # Conversations
+  echo ""
+  echo -e "${BOLD}Conversations:${NC}"
+  sql "SELECT COUNT(*) as total, COUNT(DISTINCT bank) as banks, MAX(created_at) as latest
+  FROM conversations;"
+
+  # Events (top categories)
+  echo ""
+  echo -e "${BOLD}Events (top 10 categories):${NC}"
+  sql "SELECT category, COUNT(*) as count
+  FROM events
+  GROUP BY category
+  ORDER BY count DESC
+  LIMIT 10;" 2>/dev/null || echo -e "${DIM}No events table yet.${NC}"
+
+  # Reactions
+  echo ""
+  echo -e "${BOLD}Reactions:${NC}"
+  sql "SELECT action, status, COUNT(*) as count
+  FROM reactions
+  GROUP BY action, status
+  ORDER BY count DESC;" 2>/dev/null || echo -e "${DIM}No reactions table yet.${NC}"
+
+  # Schedules
+  echo ""
+  echo -e "${BOLD}Schedules:${NC}"
+  local active_schedules
+  active_schedules=$(sql_raw "SELECT COUNT(*) FROM scheduled_tasks WHERE active = 1;" 2>/dev/null || echo "0")
+  echo -e "  Active: ${active_schedules}"
+
+  # Skills
+  echo ""
+  echo -e "${BOLD}Skills:${NC}"
+  local active_skills
+  active_skills=$(sql_raw "SELECT COUNT(*) FROM skills WHERE active = 1;" 2>/dev/null || echo "0")
+  local total_skills
+  total_skills=$(sql_raw "SELECT COUNT(*) FROM skills;" 2>/dev/null || echo "0")
+  echo -e "  Active: ${active_skills} / ${total_skills} total"
+
+  # Learnings
+  echo ""
+  echo -e "${BOLD}Learnings:${NC}"
+  local learning_count
+  learning_count=$(sql_raw "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+  echo -e "  Total: ${learning_count}"
+
+  # DB size
+  echo ""
+  echo -e "${BOLD}Database:${NC}"
+  local size
+  size=$(du -sh "$DB_PATH" 2>/dev/null | cut -f1)
+  echo -e "  Size: ${size}"
+  echo -e "  Path: ${DB_PATH}"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Usage
+# ---------------------------------------------------------------------------
+
+usage() {
+  echo -e "${CYAN}mc-ctl${NC} — Mission Control Admin CLI"
+  echo ""
+  echo -e "  ${BOLD}Service${NC}"
+  echo -e "  ${GREEN}status${NC}              System status, health, key metrics"
+  echo -e "  ${GREEN}start${NC}               Start mission-control service"
+  echo -e "  ${GREEN}stop${NC}                Stop mission-control service"
+  echo -e "  ${GREEN}restart${NC}             Restart mission-control service"
+  echo -e "  ${GREEN}logs${NC} [N]            Last N log lines (default ${LOG_LINES})"
+  echo -e "  ${GREEN}follow${NC}              Follow logs in real-time"
+  echo ""
+  echo -e "  ${BOLD}Tasks${NC}"
+  echo -e "  ${GREEN}tasks${NC} [--status=X] [--limit=N]   List tasks (default 20)"
+  echo -e "  ${GREEN}task${NC} <id>           Full task detail + runs + subtasks"
+  echo -e "  ${GREEN}cancel${NC} <id>         Cancel task via API"
+  echo ""
+  echo -e "  ${BOLD}Analytics${NC}"
+  echo -e "  ${GREEN}outcomes${NC} [--days=N]  Outcome stats by runner (default 7 days)"
+  echo -e "  ${GREEN}reactions${NC}            Recent reactions"
+  echo -e "  ${GREEN}stats${NC}               Full metrics dashboard"
+  echo ""
+  echo -e "  ${BOLD}Schedules${NC}"
+  echo -e "  ${GREEN}schedules${NC}            Active scheduled tasks"
+  echo -e "  ${GREEN}schedule-delete${NC} <id> Delete a schedule"
+  echo ""
+  echo -e "  ${BOLD}Tools${NC}"
+  echo -e "  ${GREEN}tools${NC}               List registered tools"
+  echo -e "  ${GREEN}tool-health${NC}          Health check tool sources"
+  echo ""
+  echo -e "  ${BOLD}Memory${NC}"
+  echo -e "  ${GREEN}conversations${NC} [N]   Last N conversations (default 10)"
+  echo -e "  ${GREEN}memory${NC}              Memory backend status"
+  echo ""
+  echo -e "  ${BOLD}Hindsight${NC}"
+  echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
+  echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
+  echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
+  echo ""
+  echo -e "  ${BOLD}Database${NC}"
+  echo -e "  ${GREEN}db${NC} [query]          Interactive shell or run query"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+cmd="${1:-help}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+  status)            cmd_status ;;
+  start)             cmd_start ;;
+  stop)              cmd_stop ;;
+  restart)           cmd_restart ;;
+  logs)              cmd_logs "$@" ;;
+  follow)            cmd_follow ;;
+
+  tasks)             cmd_tasks "$@" ;;
+  task)              cmd_task "${1:-}" ;;
+  cancel)            cmd_cancel "${1:-}" ;;
+
+  outcomes)          cmd_outcomes "$@" ;;
+  reactions)         cmd_reactions ;;
+
+  schedules)         cmd_schedules ;;
+  schedule-delete)   cmd_schedule_delete "${1:-}" ;;
+
+  tools)             cmd_tools ;;
+  tool-health)       cmd_tool_health ;;
+
+  conversations)     cmd_conversations "${1:-}" ;;
+  memory)            cmd_memory ;;
+
+  hindsight-status)  cmd_hindsight_status ;;
+  hindsight-restart) cmd_hindsight_restart ;;
+  hindsight-logs)    cmd_hindsight_logs "$@" ;;
+
+  db)                cmd_db "$@" ;;
+  stats)             cmd_stats ;;
+
+  help|--help|-h)    usage ;;
+  *)                 echo -e "${RED}Unknown command:${NC} ${cmd}"; echo ""; usage; exit 1 ;;
+esac

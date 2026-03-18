@@ -44,6 +44,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.14 | Production Guards — tertiary LLM fallback, port conflict check, destructive tool confirmation | Done | — |
 | v2.15 | Local PDF — OpenDataLoader PDF replaces Jina for PDFs (local Java extraction, no rate limits) | Done | — |
 | v2.16 | Agent-Orchestrator Integration — ToolSource plugin system, reaction engine, swarm sibling context | Done | — |
+| v2.17 | Admin CLI — mc-ctl bash tool (22 commands: service lifecycle, tasks, outcomes, schedules, tools, memory, hindsight, raw DB) | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (44 total, managed by 5 ToolSource plugins)
@@ -77,6 +78,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-18 | — | v2.17: mc-ctl admin CLI — 22 commands, bash script, same pattern as crm-ctl |
 | 2026-03-18 | — | v2.16: ToolSource plugin system (5 adapters), reaction engine (auto-retry/escalate on task failures), swarm sibling context injection. Inspired by ComposioHQ/agent-orchestrator patterns |
 | 2026-03-18 | — | v2.15: Local PDF extraction via OpenDataLoader (replaces Jina for PDFs, Java 17 headless, unlimited local parsing) |
 | 2026-03-17 | — | Switch fallback model from MiniMax-M2.5 to qwen3.5-flash (same provider, no cross-vendor quirks) |
