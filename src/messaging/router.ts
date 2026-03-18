@@ -68,6 +68,9 @@ const COMMIT_TOOLS = [
   "skill_list",
   "web_search",
   "web_read",
+  "schedule_task",
+  "list_schedules",
+  "delete_schedule",
 ];
 
 /** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
