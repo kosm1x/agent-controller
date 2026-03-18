@@ -10,6 +10,7 @@
  */
 
 import { HindsightClient } from "./hindsight-client.js";
+import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -45,13 +46,21 @@ export class HindsightMemoryBackend implements MemoryService {
     open: false,
   };
   private readonly initializedBanks = new Set<string>();
+  private readonly sqliteFallback = new SqliteMemoryBackend();
 
   constructor(baseUrl: string, apiKey?: string) {
     this.client = new HindsightClient(baseUrl, apiKey);
   }
 
   async retain(content: string, options: RetainOptions): Promise<void> {
-    if (this.isCircuitOpen()) return;
+    if (this.isCircuitOpen()) {
+      // Hindsight down — write to SQLite so conversations aren't lost
+      console.log(
+        "[memory] Hindsight circuit open — retain falling back to SQLite",
+      );
+      await this.sqliteFallback.retain(content, options);
+      return;
+    }
 
     try {
       await this.ensureBank(options.bank);
@@ -63,11 +72,19 @@ export class HindsightMemoryBackend implements MemoryService {
       this.recordSuccess();
     } catch (err) {
       this.recordFailure(err);
+      // Write to SQLite on failure so the exchange is not lost
+      await this.sqliteFallback.retain(content, options);
     }
   }
 
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
-    if (this.isCircuitOpen()) return [];
+    if (this.isCircuitOpen()) {
+      // Hindsight down — fall back to SQLite keyword recall
+      console.log(
+        "[memory] Hindsight circuit open — recall falling back to SQLite",
+      );
+      return this.sqliteFallback.recall(query, options);
+    }
 
     try {
       await this.ensureBank(options.bank);
@@ -82,7 +99,8 @@ export class HindsightMemoryBackend implements MemoryService {
       }));
     } catch (err) {
       this.recordFailure(err);
-      return [];
+      // Fall back to SQLite on failure
+      return this.sqliteFallback.recall(query, options);
     }
   }
 
