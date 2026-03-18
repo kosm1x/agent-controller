@@ -14,6 +14,8 @@
 import type { AgentType } from "../runners/types.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 
+export type ModelTier = "flash" | "standard" | "capable";
+
 export interface ClassificationInput {
   title: string;
   description: string;
@@ -27,6 +29,8 @@ export interface ClassificationResult {
   score: number;
   reason: string;
   explicit: boolean;
+  /** Recommended model tier based on task complexity. */
+  modelTier: ModelTier;
 }
 
 const VALID_AGENT_TYPES = new Set<AgentType>([
@@ -71,6 +75,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
         score: -1,
         reason: `Explicit override: ${input.agentType}`,
         explicit: true,
+        modelTier: "standard",
       };
     }
   }
@@ -85,6 +90,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
       score: 0,
       reason: "messaging task → fast",
       explicit: false,
+      modelTier: "flash",
     };
   }
 
@@ -164,11 +170,31 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "fast";
   }
 
+  // Determine model tier based on task complexity signals
+  const ARCHITECTURE_PATTERNS = [
+    /\barchitect/i,
+    /\bredesign/i,
+    /\breview/i,
+    /\bdesign/i,
+    /\baudit/i,
+  ];
+  const hasArchSignal = ARCHITECTURE_PATTERNS.some((p) => p.test(text));
+
+  let modelTier: ModelTier;
+  if (hasArchSignal || agentType === "heavy" || agentType === "swarm") {
+    modelTier = "capable";
+  } else if (wordCount > 100 || score >= 3) {
+    modelTier = "standard";
+  } else {
+    modelTier = "flash";
+  }
+
   return {
     agentType,
     score,
     reason: reasons.length > 0 ? reasons.join("; ") : "simple task (score 0)",
     explicit: false,
+    modelTier,
   };
 }
 

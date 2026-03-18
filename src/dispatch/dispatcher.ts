@@ -308,6 +308,7 @@ async function dispatchWithSlot(
     tools: submission.tools,
     input: submission.input,
     parentTaskId: submission.parentTaskId,
+    modelTier: getModelTierFromTask(taskId),
   };
 
   try {
@@ -320,6 +321,7 @@ async function dispatchWithSlot(
       `
       UPDATE runs SET
         status = @status,
+        runner_status = @runnerStatus,
         output = @output,
         error = @error,
         token_usage = @tokenUsage,
@@ -332,6 +334,7 @@ async function dispatchWithSlot(
     ).run({
       runId,
       status: result.success ? "completed" : "failed",
+      runnerStatus: result.status ?? null,
       output: result.output ? JSON.stringify(result.output) : null,
       error: result.error ?? null,
       tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
@@ -340,8 +343,18 @@ async function dispatchWithSlot(
       durationMs,
     });
 
-    // Update task
-    const taskStatus = result.success ? "completed" : "failed";
+    // Map runner status to task status
+    let taskStatus: string;
+    if (result.success) {
+      taskStatus =
+        result.status === "DONE_WITH_CONCERNS"
+          ? "completed_with_concerns"
+          : "completed";
+    } else {
+      if (result.status === "NEEDS_CONTEXT") taskStatus = "needs_context";
+      else if (result.status === "BLOCKED") taskStatus = "blocked";
+      else taskStatus = "failed";
+    }
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
 
     // Emit completion event
@@ -383,6 +396,22 @@ async function dispatchWithSlot(
 }
 
 // ---------------------------------------------------------------------------
+// Model tier helper
+// ---------------------------------------------------------------------------
+
+/** Extract modelTier from the task's persisted classification JSON. */
+function getModelTierFromTask(taskId: string): string | undefined {
+  const task = getTask(taskId);
+  if (!task?.classification) return undefined;
+  try {
+    const parsed = JSON.parse(task.classification);
+    return parsed.modelTier;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Task status helpers
 // ---------------------------------------------------------------------------
 
@@ -402,6 +431,14 @@ function updateTaskStatus(
     db.prepare(
       `UPDATE tasks SET status = 'completed', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
     ).run(output ? JSON.stringify(output) : null, taskId);
+  } else if (status === "completed_with_concerns") {
+    db.prepare(
+      `UPDATE tasks SET status = 'completed_with_concerns', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
+    ).run(output ? JSON.stringify(output) : null, taskId);
+  } else if (status === "needs_context" || status === "blocked") {
+    db.prepare(
+      `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ?`,
+    ).run(status, error ?? null, taskId);
   } else if (status === "failed") {
     db.prepare(
       `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,

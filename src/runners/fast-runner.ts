@@ -10,6 +10,7 @@ import { inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
+import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 
 const SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
@@ -18,9 +19,22 @@ Instructions:
 - Use the available tools to complete the task.
 - Be thorough but efficient — use the minimum number of tool calls needed.
 - When you have enough information to answer, respond with a clear, concise result.
-- If a tool fails, try an alternative approach or explain what went wrong.`;
+- If a tool fails, try an alternative approach or explain what went wrong.
+
+When you finish, end your response with exactly one of these status lines:
+STATUS: DONE
+STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
+STATUS: NEEDS_CONTEXT — [what information is missing]
+STATUS: BLOCKED — [what is preventing completion]`;
 
 const MAX_ROUNDS = 10;
+
+/** Map classifier model tier to inference provider name. */
+function tierToProvider(tier?: string): string | undefined {
+  if (tier === "flash") return "fallback";
+  if (tier === "capable") return "primary";
+  return undefined; // use default provider ordering
+}
 
 export const fastRunner: Runner = {
   type: "fast",
@@ -52,11 +66,19 @@ export const fastRunner: Runner = {
         definitions,
         (name, args) => toolRegistry.execute(name, args),
         MAX_ROUNDS,
+        undefined, // onTextChunk
+        undefined, // signal
+        tierToProvider(input.modelTier),
       );
 
+      const parsed = parseRunnerStatus(result.content);
+
       return {
-        success: true,
-        output: result.content,
+        success:
+          parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
+        status: parsed.status,
+        concerns: parsed.concerns,
+        output: parsed.cleanContent,
         tokenUsage: {
           promptTokens: result.totalUsage.prompt_tokens,
           completionTokens: result.totalUsage.completion_tokens,

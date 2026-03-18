@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title          TEXT NOT NULL,
   description    TEXT NOT NULL,
   priority       TEXT DEFAULT 'medium' CHECK(priority IN ('critical','high','medium','low')),
-  status         TEXT DEFAULT 'pending' CHECK(status IN ('pending','classifying','queued','running','completed','failed','cancelled')),
+  status         TEXT DEFAULT 'pending' CHECK(status IN ('pending','classifying','queued','running','completed','completed_with_concerns','needs_context','blocked','failed','cancelled')),
   agent_type     TEXT CHECK(agent_type IN ('fast','nanoclaw','heavy','swarm','a2a')),
   classification TEXT,
   assigned_to    TEXT,
@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS runs (
   error          TEXT,
   token_usage    TEXT,
   duration_ms    INTEGER,
+  runner_status  TEXT,
   container_id   TEXT,
   created_at     TEXT DEFAULT (datetime('now')),
   completed_at   TEXT

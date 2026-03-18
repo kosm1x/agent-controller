@@ -106,4 +106,48 @@ describe("classifier", () => {
     });
     expect(longDesc.score).toBeGreaterThan(shortDesc.score);
   });
+
+  // Model tier tests
+  it("should recommend flash model for simple tasks", () => {
+    const result = classify({
+      title: "Disk usage",
+      description: "Show disk usage",
+    });
+    expect(result.modelTier).toBe("flash");
+  });
+
+  it("should recommend capable model for architecture tasks", () => {
+    const result = classify({
+      title: "Review auth",
+      description:
+        "Review the authentication architecture and suggest improvements",
+    });
+    expect(result.modelTier).toBe("capable");
+  });
+
+  it("should recommend standard model for medium complexity", () => {
+    const result = classify({
+      title: "Update config",
+      description: Array(101).fill("word").join(" "),
+    });
+    expect(result.modelTier).toBe("standard");
+  });
+
+  it("should set flash model tier for messaging tasks", () => {
+    const result = classify({
+      title: "Send greeting",
+      description: "Say hello to the user",
+      tags: ["messaging"],
+    });
+    expect(result.modelTier).toBe("flash");
+  });
+
+  it("should set standard model tier for explicit overrides", () => {
+    const result = classify({
+      title: "Simple task",
+      description: "Very short",
+      agentType: "heavy",
+    });
+    expect(result.modelTier).toBe("standard");
+  });
 });

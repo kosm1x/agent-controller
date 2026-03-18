@@ -339,9 +339,19 @@ export async function infer(
   request: InferenceRequest,
   onTextChunk?: OnTextChunk,
   signal?: AbortSignal,
+  providerName?: string, // TODO: refactor infer/inferWithTools to use options object
 ): Promise<InferenceResponse> {
   const config = getConfig();
   const providers = loadProviders();
+
+  // If providerName specified, try that provider first
+  if (providerName) {
+    const idx = providers.findIndex((p) => p.name === providerName);
+    if (idx > 0) {
+      const [preferred] = providers.splice(idx, 1);
+      providers.unshift(preferred);
+    }
+  }
   if (providers.length === 0) {
     throw new Error(
       "No inference providers configured. Set INFERENCE_PRIMARY_URL and INFERENCE_PRIMARY_MODEL.",
@@ -392,6 +402,7 @@ export async function inferWithTools(
   maxRounds = 10,
   onTextChunk?: OnTextChunk,
   signal?: AbortSignal,
+  providerName?: string, // TODO: refactor to options object
 ): Promise<{
   content: string;
   messages: ChatMessage[];
@@ -439,6 +450,7 @@ export async function inferWithTools(
       { messages: conversation, tools },
       onTextChunk,
       signal,
+      providerName,
     );
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;

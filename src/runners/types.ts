@@ -2,6 +2,8 @@
  * Shared types for all runner implementations.
  */
 
+import type { RunnerStatus } from "./status.js";
+
 /** Agent/runner type identifiers. */
 export type AgentType = "fast" | "nanoclaw" | "heavy" | "swarm" | "a2a";
 
@@ -21,12 +23,18 @@ export interface RunnerInput {
   input?: unknown;
   /** Parent task ID (for swarm sub-tasks). */
   parentTaskId?: string;
+  /** Recommended model tier from classifier. */
+  modelTier?: string;
 }
 
 /** Output returned by a runner after execution. */
 export interface RunnerOutput {
   /** Whether the task succeeded. */
   success: boolean;
+  /** Structured status providing nuance beyond success/failure. */
+  status?: RunnerStatus;
+  /** Concerns when status is DONE_WITH_CONCERNS. */
+  concerns?: string[];
   /** Result content (text, structured data). */
   output?: unknown;
   /** Error message if failed. */
