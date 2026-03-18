@@ -23,12 +23,23 @@ health.get("/health", async (c) => {
   let inferenceOk = false;
   try {
     const config = getConfig();
-    const healthUrl =
-      config.inferencePrimaryUrl.replace(/\/v1\/?$/, "") + "/health";
-    const res = await fetch(healthUrl, {
+    const baseUrl = config.inferencePrimaryUrl.replace(/\/v1\/?$/, "");
+    // Try /health first, fall back to /v1/models (DashScope has no /health)
+    const healthRes = await fetch(`${baseUrl}/health`, {
       signal: AbortSignal.timeout(3000),
-    });
-    inferenceOk = res.ok;
+    }).catch(() => null);
+    if (healthRes?.ok) {
+      inferenceOk = true;
+    } else {
+      const modelsRes = await fetch(
+        `${config.inferencePrimaryUrl.replace(/\/+$/, "")}/models`,
+        {
+          headers: { Authorization: `Bearer ${config.inferencePrimaryKey}` },
+          signal: AbortSignal.timeout(3000),
+        },
+      ).catch(() => null);
+      inferenceOk = modelsRes !== null && modelsRes.status < 500;
+    }
   } catch {
     // Inference provider unreachable
   }

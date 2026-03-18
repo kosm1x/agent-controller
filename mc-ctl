@@ -7,7 +7,7 @@ SERVICE_NAME="mission-control"
 DB_PATH="${PROJECT_DIR}/data/mc.db"
 API_URL="http://localhost:8080"
 HINDSIGHT_URL="http://localhost:8888"
-HINDSIGHT_CONTAINER="mission-control-hindsight-1"
+HINDSIGHT_CONTAINER="crm-hindsight"
 LOG_LINES=50
 
 # Colors
@@ -109,7 +109,7 @@ cmd_status() {
   echo ""
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$HINDSIGHT_CONTAINER"; then
     local hs_health
-    if hs_health=$(curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" 2>/dev/null); then
+    if hs_health=$(curl -sf --max-time 3 "${HINDSIGHT_URL}/health" 2>/dev/null); then
       echo -e "  Hindsight:  ${GREEN}healthy${NC}"
     else
       echo -e "  Hindsight:  ${YELLOW}container up, API unhealthy${NC}"
@@ -352,7 +352,7 @@ cmd_tool_health() {
 
   echo ""
   echo -e "${BOLD}Hindsight:${NC}"
-  if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+  if curl -sf --max-time 3 "${HINDSIGHT_URL}/health" >/dev/null 2>&1; then
     echo -e "  Status:     ${GREEN}healthy${NC}"
   else
     echo -e "  Status:     ${RED}unreachable${NC}"
@@ -393,7 +393,7 @@ cmd_memory() {
   # Hindsight
   echo ""
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$HINDSIGHT_CONTAINER"; then
-    if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+    if curl -sf --max-time 3 "${HINDSIGHT_URL}/health" >/dev/null 2>&1; then
       echo -e "  Hindsight:      ${GREEN}healthy${NC} (${HINDSIGHT_URL})"
     else
       echo -e "  Hindsight:      ${YELLOW}container up, API unhealthy${NC}"
@@ -423,7 +423,7 @@ cmd_hindsight_status() {
   fi
 
   echo ""
-  if curl -sf --max-time 3 "${HINDSIGHT_URL}/v1/default/health" >/dev/null 2>&1; then
+  if curl -sf --max-time 3 "${HINDSIGHT_URL}/health" >/dev/null 2>&1; then
     echo -e "  API:        ${GREEN}healthy${NC} (${HINDSIGHT_URL})"
   else
     echo -e "  API:        ${RED}unhealthy${NC}"

@@ -525,19 +525,44 @@ export async function inferWithTools(
     conversation.push(...toolResults);
   }
 
-  // Hit max rounds
-  const lastAssistant = [...conversation]
-    .reverse()
-    .find((m) => m.role === "assistant");
-  return {
-    content:
-      (typeof lastAssistant?.content === "string"
-        ? lastAssistant.content
-        : null) ?? "[max tool rounds reached]",
-    messages: conversation,
-    totalUsage: {
-      prompt_tokens: totalPrompt,
-      completion_tokens: totalCompletion,
-    },
-  };
+  // Hit max rounds — force one final toolless call to synthesize results
+  console.log(
+    `[inference] Max rounds (${maxRounds}) reached, forcing wrap-up call`,
+  );
+  try {
+    conversation.push({
+      role: "user",
+      content:
+        "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools.",
+    });
+    const wrapUp = await infer({ messages: conversation }, onTextChunk, signal);
+    totalPrompt += wrapUp.usage.prompt_tokens;
+    totalCompletion += wrapUp.usage.completion_tokens;
+    const content = wrapUp.content ?? "[max tool rounds reached]";
+    conversation.push({ role: "assistant", content });
+    return {
+      content,
+      messages: conversation,
+      totalUsage: {
+        prompt_tokens: totalPrompt,
+        completion_tokens: totalCompletion,
+      },
+    };
+  } catch {
+    // Wrap-up call failed — fall back to last assistant content
+    const lastAssistant = [...conversation]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    return {
+      content:
+        (typeof lastAssistant?.content === "string"
+          ? lastAssistant.content
+          : null) ?? "[max tool rounds reached]",
+      messages: conversation,
+      totalUsage: {
+        prompt_tokens: totalPrompt,
+        completion_tokens: totalCompletion,
+      },
+    };
+  }
 }

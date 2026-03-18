@@ -153,3 +153,45 @@ for model in user-behavior active-projects task-effectiveness conversation-theme
   curl -sf "http://localhost:8888/v1/default/banks/mc-operational/mental-models/$model" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('content','(empty)')[:300])" 2>/dev/null
 done
 ```
+
+---
+
+## 2026-03-18 — Day 3: First Data Accumulation
+
+### System state
+
+| Metric | Value |
+|--------|-------|
+| Tasks completed today | 2 |
+| Pending tasks | 24 |
+| Recurring tasks completed | 2 |
+| Streak days | 2 |
+| Conversations stored today | 5 |
+
+### Interactions summary
+
+Today marked continued engagement with the system. Key interactions included:
+- Test email sent successfully to fede@eureka.md and fmoctezuma@gmail.com; user corrected email address to fede@eurekmd.net
+- Multiple confirmations ("Adelante") to proceed with schedule updates
+- User consulted on tasks completed today and open tasks under Agentic CRM
+- File sharing activity: "Fundación México Necesario.pdf" sent
+- User reported ongoing issue with reading documents shared using Go
+
+### What Jarvis learned
+
+- **Email correction pattern**: User's Eurek email was initially recorded incorrectly; system now has corrected address (fede@eurekmd.net)
+- **Communication style**: User prefers Spanish for all rituals unless specified otherwise
+- **Task completion patterns**: "auto eliminación de tareas completadas" task executed; user values cleanup of completed items
+- **Project focus**: Continued attention on Very Light Media consolidation and Agentic CRM usage
+
+### Friction points
+
+- **Document reading issue**: User reports ongoing inability to read documents shared using Go — requires investigation
+- **Email encoding**: Previous issues with special characters in email headers; system should use ASCII-only characters in subject lines and headers
+
+### Research notes
+
+- **Early adoption signal**: User is actively engaging with multiple system features (email, task management, file sharing) within first 3 days
+- **Correction behavior**: User proactively corrects system errors (email address), indicating investment in system accuracy
+- **Language preference established**: Explicit request for Spanish rituals shows user wants culturally aligned interactions
+- **Streak building**: 2-day streak indicates habit formation beginning; consistent daily engagement is critical for cold-start data accumulation
