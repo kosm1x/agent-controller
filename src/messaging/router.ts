@@ -7,6 +7,7 @@
  */
 
 import { submitTask } from "../dispatch/dispatcher.js";
+import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import type { Event } from "../lib/events/types.js";
 import type {
@@ -102,21 +103,52 @@ interface PendingReply {
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
 const THREAD_BUFFER_SIZE = 5;
 const conversationThreads = new Map<string, string[]>();
+const hydratedChannels = new Set<string>();
 
 function pushToThread(channel: string, exchange: string): void {
-  let thread = conversationThreads.get(channel);
-  if (!thread) {
-    thread = [];
-    conversationThreads.set(channel, thread);
-  }
+  hydrateThreadIfNeeded(channel);
+  const thread = conversationThreads.get(channel)!;
   thread.push(exchange);
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
 }
 
 function getThread(channel: string): string {
+  hydrateThreadIfNeeded(channel);
   const thread = conversationThreads.get(channel);
   if (!thread || thread.length === 0) return "";
   return "\n\n## Hilo actual de conversación\n" + thread.join("\n---\n");
+}
+
+/**
+ * On first access per channel, hydrate the thread buffer from SQLite conversations.
+ * This ensures conversation continuity survives process restarts.
+ */
+function hydrateThreadIfNeeded(channel: string): void {
+  if (hydratedChannels.has(channel)) return;
+  hydratedChannels.add(channel);
+
+  try {
+    const db = getDatabase();
+    const rows = db
+      .prepare(
+        `SELECT content FROM conversations
+         WHERE bank = 'mc-jarvis'
+         AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = ?)
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(channel, THREAD_BUFFER_SIZE) as { content: string }[];
+
+    if (rows.length > 0) {
+      // Reverse to chronological order (query returns newest-first)
+      const thread = rows.reverse().map((r) => r.content);
+      conversationThreads.set(channel, thread);
+    } else {
+      conversationThreads.set(channel, []);
+    }
+  } catch {
+    conversationThreads.set(channel, []);
+  }
 }
 
 export class MessageRouter {

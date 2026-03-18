@@ -53,14 +53,12 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   async retain(content: string, options: RetainOptions): Promise<void> {
-    if (this.isCircuitOpen()) {
-      // Hindsight down — write to SQLite so conversations aren't lost
-      console.log(
-        "[memory] Hindsight circuit open — retain falling back to SQLite",
-      );
-      await this.sqliteFallback.retain(content, options);
-      return;
-    }
+    // ALWAYS dual-write to SQLite — it's the source of truth for conversation
+    // thread continuity. Hindsight async writes are fire-and-forget and can
+    // silently fail without triggering the circuit breaker.
+    await this.sqliteFallback.retain(content, options);
+
+    if (this.isCircuitOpen()) return;
 
     try {
       await this.ensureBank(options.bank);
@@ -72,8 +70,6 @@ export class HindsightMemoryBackend implements MemoryService {
       this.recordSuccess();
     } catch (err) {
       this.recordFailure(err);
-      // Write to SQLite on failure so the exchange is not lost
-      await this.sqliteFallback.retain(content, options);
     }
   }
 

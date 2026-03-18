@@ -131,7 +131,7 @@ describe("MessageRouter", () => {
       );
     });
 
-    it("should include all 15 commit tools", async () => {
+    it("should include all commit + schedule tools", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
         from: "owner@s.whatsapp.net",
@@ -142,13 +142,16 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(23);
+      expect(call.tools).toHaveLength(26);
       expect(call.tools).toContain("commit__get_daily_snapshot");
       expect(call.tools).toContain("commit__complete_recurring");
       expect(call.tools).toContain("commit__update_objective");
       expect(call.tools).toContain("commit__update_goal");
       expect(call.tools).toContain("commit__update_vision");
       expect(call.tools).toContain("commit__create_vision");
+      expect(call.tools).toContain("schedule_task");
+      expect(call.tools).toContain("list_schedules");
+      expect(call.tools).toContain("delete_schedule");
     });
 
     it("should include Jarvis persona in description", async () => {
