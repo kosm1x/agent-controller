@@ -16,7 +16,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Test files | 42 |
 | Tests passing | 353 |
 | Type errors | 0 |
-| Total tools | 77 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 19 other MCP) |
+| Total tools | 87 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -48,13 +48,15 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.17.1 | Dynamic Scheduled Tasks — cron-based task scheduling via LLM tools, timezone-aware | Done | — |
 | v2.18 | Context Retention — user_facts table, keyword recall, larger thread buffer | Done | `7c26dd1` |
 | v2.18.1 | Inference Resilience — max-rounds wrap-up, mid-loop recovery, tool result truncation, lean wrap-up context | Done | `f58869c` |
+| v2.19 | Browser Integration — Lightpanda headless browser via MCP (10 tools: goto, markdown, links, evaluate, semantic_tree, interactiveElements, structuredData, click, fill, scroll) | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (75 total, managed by 5 ToolSource plugins)
+## Tools (85 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
 | Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete | 17 |
+| Browser (Lightpanda) | browser__goto, browser__markdown, browser__links, browser__evaluate, browser__semantic_tree, browser__interactiveElements, browser__structuredData, browser__click, browser__fill, browser__scroll | 10 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
 | COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |

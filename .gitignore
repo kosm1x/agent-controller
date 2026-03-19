@@ -8,3 +8,4 @@ data/
 .env
 mcp-servers.json
 scripts/benchmark-*.json
+bin/

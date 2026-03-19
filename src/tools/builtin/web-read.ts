@@ -53,9 +53,12 @@ DO NOT USE WHEN:
 - You just need search results (use web_search instead)
 - The URL requires authentication (login-protected pages won't work)
 - You need to read the user's own Google Docs (use gdocs_read instead)
+- The page is JS-heavy / a single-page app that needs rendering (use browser__goto + browser__markdown instead)
+- You need to interact with the page: click buttons, fill forms, scroll (use browser__* tools)
 
 Returns clean Markdown with headings, code blocks, and links preserved.
-Works with: GitHub repos, news articles, documentation, blogs, PDFs.`,
+Works with: GitHub repos, news articles, documentation, blogs, PDFs.
+For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).`,
       parameters: {
         type: "object",
         properties: {
