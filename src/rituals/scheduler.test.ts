@@ -37,6 +37,7 @@ vi.mock("../dispatch/dispatcher.js", () => ({
 import { startRitualScheduler, stopRitualScheduler } from "./scheduler.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
+import { createEvolutionRitual } from "./evolution.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,8 +52,8 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Three rituals: morning + nightly + evolution-log
-    expect(mockSchedule).toHaveBeenCalledTimes(3);
+    // Four rituals: morning + nightly + skill-evolution + evolution-log
+    expect(mockSchedule).toHaveBeenCalledTimes(4);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -74,7 +75,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(3);
+    expect(mockStop).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -127,5 +128,15 @@ describe("task templates", () => {
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Reflexión");
     expect(task.description).toContain("Do NOT write to the journal");
+  });
+
+  it("evolution ritual has correct structure", () => {
+    const task = createEvolutionRitual("2026-03-18");
+    expect(task.title).toBe("Skill evolution — 2026-03-18");
+    expect(task.agentType).toBe("heavy");
+    expect(task.tools).toContain("evolution_get_data");
+    expect(task.tools).toContain("evolution_deactivate_skill");
+    expect(task.tools).toContain("memory_store");
+    expect(task.description).toContain("evolution mode");
   });
 });

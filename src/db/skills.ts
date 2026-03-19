@@ -103,6 +103,30 @@ export function incrementSkillUsage(skillId: string, success: boolean): void {
   }
 }
 
+/** Deactivate a skill by skill_id. */
+export function deactivateSkill(skillId: string): void {
+  const db = getDatabase();
+  db.prepare(
+    "UPDATE skills SET active = 0, updated_at = datetime('now') WHERE skill_id = ?",
+  ).run(skillId);
+}
+
+/** Get active skills with success rate below threshold (minimum N uses). */
+export function getUnderperformingSkills(
+  minUses: number,
+  maxSuccessRate: number,
+): SkillRow[] {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT * FROM skills
+       WHERE active = 1 AND use_count >= ?
+         AND CAST(success_count AS REAL) / CAST(use_count AS REAL) < ?
+       ORDER BY CAST(success_count AS REAL) / CAST(use_count AS REAL) ASC`,
+    )
+    .all(minUses, maxSuccessRate) as SkillRow[];
+}
+
 /** Find skills whose trigger_text or name match keywords in the input text. */
 export function findSkillsByKeywords(text: string): SkillRow[] {
   const db = getDatabase();

@@ -185,11 +185,18 @@ function getToolHintsAndTopTools(): {
     const rate = Math.round((successCount / outcomes.length) * 100);
 
     const toolFreq = new Map<string, number>();
+    const toolSuccess = new Map<string, number>();
+    const toolFail = new Map<string, number>();
     for (const o of outcomes) {
       try {
         const tools = JSON.parse(o.tools_used) as string[];
         for (const t of tools) {
           toolFreq.set(t, (toolFreq.get(t) ?? 0) + 1);
+          if (o.success) {
+            toolSuccess.set(t, (toolSuccess.get(t) ?? 0) + 1);
+          } else {
+            toolFail.set(t, (toolFail.get(t) ?? 0) + 1);
+          }
         }
       } catch {
         continue;
@@ -198,17 +205,22 @@ function getToolHintsAndTopTools(): {
 
     const sorted = [...toolFreq.entries()]
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
+      .slice(0, 7);
 
     if (sorted.length === 0) return { hints: null, topTools: [] };
 
-    const lines = sorted.map(
-      ([tool, count]) =>
-        `- ${tool.replace("commit__", "")}: usado ${count} veces`,
-    );
+    const lines = sorted.map(([tool, count]) => {
+      const succ = toolSuccess.get(tool) ?? 0;
+      const toolRate = Math.round((succ / count) * 100);
+      const label = tool.replace("commit__", "");
+      if (toolRate < 40 && count >= 5) {
+        return `- ${label}: ${count} usos, ${toolRate}% éxito (EVITAR para tareas simples)`;
+      }
+      return `- ${label}: ${count} usos, ${toolRate}% éxito`;
+    });
 
     return {
-      hints: `Tasa de éxito reciente: ${rate}%. Herramientas más usadas:\n${lines.join("\n")}`,
+      hints: `Tasa de éxito reciente: ${rate}%. Herramientas:\n${lines.join("\n")}`,
       topTools: sorted.map(([tool]) => tool),
     };
   } catch {

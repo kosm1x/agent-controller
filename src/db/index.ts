@@ -38,6 +38,14 @@ export function initDatabase(dbPath: string): Database.Database {
   const schema = readFileSync(schemaPath, "utf-8");
   _db.exec(schema);
 
+  // Additive migrations (safe to re-run)
+  const skillCols = _db.prepare("PRAGMA table_info(skills)").all() as Array<{
+    name: string;
+  }>;
+  if (!skillCols.some((c) => c.name === "last_used")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN last_used TEXT");
+  }
+
   return _db;
 }
 

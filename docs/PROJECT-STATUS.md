@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-18
+> Last updated: 2026-03-19
 
 ## Overview
 
@@ -14,9 +14,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 |--------|-------|
 | Source files | ~107 (+5 in commit-bridge) |
 | Test files | 42 |
-| Tests passing | 352 |
+| Tests passing | 353 |
 | Type errors | 0 |
-| Total tools | 75 (20 commit-bridge + 17 builtin + 3 memory + 2 skill + 14 Google + 19 other MCP) |
+| Total tools | 77 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status

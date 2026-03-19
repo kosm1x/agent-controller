@@ -395,8 +395,14 @@ export function registerReadTools(server: McpServer): void {
     "list_tasks",
     {
       description:
-        "List tasks with optional filters (status, priority, due date range)",
+        "List tasks with optional filters. Use objective_id to get all tasks (including recurring) under a specific objective. Use is_recurring to filter recurring/non-recurring tasks specifically.",
       inputSchema: {
+        objective_id: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by parent objective UUID — use list_objectives first to find the UUID",
+          ),
         status: z
           .enum(["not_started", "in_progress", "completed", "on_hold"])
           .optional()
@@ -405,6 +411,10 @@ export function registerReadTools(server: McpServer): void {
           .enum(["high", "medium", "low"])
           .optional()
           .describe("Filter by priority"),
+        is_recurring: z
+          .boolean()
+          .optional()
+          .describe("Filter recurring (true) or non-recurring (false) tasks"),
         due_before: z
           .string()
           .optional()
@@ -416,7 +426,15 @@ export function registerReadTools(server: McpServer): void {
         limit: z.number().optional().describe("Max results (default 50)"),
       },
     },
-    async ({ status, priority, due_before, due_after, limit }) => {
+    async ({
+      objective_id,
+      status,
+      priority,
+      is_recurring,
+      due_before,
+      due_after,
+      limit,
+    }) => {
       const supabase = getSupabase();
       const uid = getUserId();
 
@@ -424,8 +442,10 @@ export function registerReadTools(server: McpServer): void {
         .from("tasks")
         .select("*, objectives(title)")
         .eq("user_id", uid);
+      if (objective_id) q = q.eq("objective_id", objective_id);
       if (status) q = q.eq("status", status);
       if (priority) q = q.eq("priority", priority);
+      if (is_recurring !== undefined) q = q.eq("is_recurring", is_recurring);
       if (due_before) q = q.lte("due_date", due_before);
       if (due_after) q = q.gte("due_date", due_after);
       q = q

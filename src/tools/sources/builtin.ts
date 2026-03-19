@@ -28,6 +28,10 @@ import {
   userFactListTool,
   userFactDeleteTool,
 } from "../builtin/user-facts.js";
+import {
+  evolutionGetDataTool,
+  evolutionDeactivateSkillTool,
+} from "../builtin/evolution-data.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -48,6 +52,8 @@ const BUILTIN_TOOLS: Tool[] = [
   userFactSetTool,
   userFactListTool,
   userFactDeleteTool,
+  evolutionGetDataTool,
+  evolutionDeactivateSkillTool,
 ];
 
 export class BuiltinToolSource implements ToolSource {

@@ -27,7 +27,8 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 5. Identify the top 3 tasks that would make today a win.
 6. If any tasks have overdue due_dates, flag them prominently.
 7. If any goals have no active objectives or tasks, flag the gap.
-8. Send the briefing via gmail_send to fede@eureka.md with subject "Buenos días — ${dateLabel}".
+8. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
+9. Send the briefing via gmail_send to fede@eureka.md with subject "Buenos días — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 
@@ -65,6 +66,7 @@ Racha actual: X días consecutivos.`,
       "commit__get_daily_snapshot",
       "commit__list_tasks",
       "commit__get_hierarchy",
+      "memory_search",
       "gmail_send",
     ],
   };

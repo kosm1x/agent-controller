@@ -89,6 +89,65 @@ export function queryOutcomes(filter: OutcomeFilter = {}): OutcomeRow[] {
     .all(...params) as OutcomeRow[];
 }
 
+// ---------------------------------------------------------------------------
+// Aggregation queries (feeds evolution ritual)
+// ---------------------------------------------------------------------------
+
+export interface ToolEffectiveness {
+  tool: string;
+  classified_as: string;
+  total_uses: number;
+  success_count: number;
+  success_rate: number;
+}
+
+/** Per-tool success rate grouped by classification. Uses json_each() on tools_used. */
+export function aggregateToolEffectiveness(days: number): ToolEffectiveness[] {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT
+         j.value AS tool,
+         classified_as,
+         COUNT(*) AS total_uses,
+         SUM(success) AS success_count,
+         ROUND(CAST(SUM(success) AS REAL) / COUNT(*) * 100, 1) AS success_rate
+       FROM task_outcomes, json_each(tools_used) AS j
+       WHERE created_at >= datetime('now', '-' || ? || ' days')
+       GROUP BY j.value, classified_as
+       ORDER BY total_uses DESC
+       LIMIT 30`,
+    )
+    .all(days) as ToolEffectiveness[];
+}
+
+export interface RunnerPerformance {
+  ran_on: string;
+  total: number;
+  successes: number;
+  avg_duration_ms: number;
+  success_rate: number;
+}
+
+/** Daily runner performance summary over the last N days. */
+export function aggregateRunnerPerformance(days: number): RunnerPerformance[] {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT
+         ran_on,
+         COUNT(*) AS total,
+         SUM(success) AS successes,
+         ROUND(AVG(duration_ms)) AS avg_duration_ms,
+         ROUND(CAST(SUM(success) AS REAL) / COUNT(*) * 100, 1) AS success_rate
+       FROM task_outcomes
+       WHERE created_at >= datetime('now', '-' || ? || ' days')
+       GROUP BY ran_on
+       ORDER BY ran_on DESC`,
+    )
+    .all(days) as RunnerPerformance[];
+}
+
 /** Update feedback signal for a task outcome. */
 export function updateFeedback(
   taskId: string,

@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS skills (
   source        TEXT DEFAULT 'manual',
   active        INTEGER DEFAULT 1,
   created_at    TEXT DEFAULT (datetime('now')),
-  updated_at    TEXT DEFAULT (datetime('now'))
+  updated_at    TEXT DEFAULT (datetime('now')),
+  last_used     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(active);
 

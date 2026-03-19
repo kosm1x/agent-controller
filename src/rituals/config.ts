@@ -28,6 +28,13 @@ export const rituals: RitualDefinition[] = [
     enabled: true,
   },
   {
+    id: "skill-evolution",
+    title: "Skill evolution",
+    // 11:00 PM daily — analyze outcomes and evolve skills before evolution-log
+    cron: "0 23 * * *",
+    enabled: true,
+  },
+  {
     id: "evolution-log",
     title: "Evolution log",
     // 11:59 PM daily — captures full day of interactions
