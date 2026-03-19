@@ -81,6 +81,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-19 | — | fix: timezone — TZ=America/Mexico_City in systemd service, proactive.ts daily counter uses MX time not UTC |
 | 2026-03-18 | `f58869c` | v2.18.1: Tool result truncation (6K cap), lean wrap-up context, web_read 30K→10K |
 | 2026-03-18 | `b400ed5` | v2.18.1: Mid-loop inference failure wrap-up, MAX_ROUNDS 10→7, timeout 30s→60s |
 | 2026-03-18 | `9075e2a` | v2.18.1: Max-rounds wrap-up call + health check resilience for DashScope |
@@ -115,3 +116,4 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Multiple MC restarts can cause Telegram 409 polling conflicts — always kill all instances before restart
 - deepseek-v3.2 never voluntarily stops calling tools on research tasks — mitigated by MAX_ROUNDS=7 + wrap-up call
 - Primary model (qwen3.5-plus) intermittently slow on DashScope — falls back to deepseek-v3.2
+- ~~Proactive daily counter reset used UTC instead of Mexico City time~~ (fixed 2026-03-19)
