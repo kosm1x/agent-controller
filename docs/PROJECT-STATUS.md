@@ -14,7 +14,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 |--------|-------|
 | Source files | ~107 (+5 in commit-bridge) |
 | Test files | 43 |
-| Tests passing | 395 |
+| Tests passing | 399 |
 | Type errors | 0 |
 | Total tools | 87 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
@@ -49,7 +49,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.18 | Context Retention — user_facts table, keyword recall, larger thread buffer | Done | `7c26dd1` |
 | v2.18.1 | Inference Resilience — max-rounds wrap-up, mid-loop recovery, tool result truncation, lean wrap-up context | Done | `f58869c` |
 | v2.19 | Browser Integration — Lightpanda headless browser via MCP (10 tools: goto, markdown, links, evaluate, semantic_tree, interactiveElements, structuredData, click, fill, scroll) | Done | — |
-| v2.20 | Jarvis Chat Enhancements — sandboxed shell_exec, expanded chat tool whitelist (+5 utility +10 browser), tools_used tracking fix, system prompt behavioral directives (verification, proactive memory, skill auto-save), skill-discovery auto-save | Done | — |
+| v2.20 | Jarvis Chat Enhancements — sandboxed shell_exec, expanded chat tool whitelist (+5 utility +10 browser), tools_used tracking fix, system prompt behavioral directives (verification, proactive memory, skill auto-save), skill-discovery auto-save, tool-first guard against cognitive laziness | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (85 total, managed by 5 ToolSource plugins)
@@ -84,7 +84,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-20 | — | v2.20: Jarvis chat enhancements — sandboxed shell, expanded tool whitelist (29→44 tools), tools_used tracking fix, behavioral directives (auto-verify, proactive memory, skill auto-save) |
+| 2026-03-20 | — | v2.20: Jarvis chat enhancements — sandboxed shell, expanded tool whitelist (29→44 tools), tools_used tracking fix, behavioral directives (auto-verify, proactive memory, skill auto-save), tool-first guard (enrichment-level pattern matching against cognitive laziness) |
 | 2026-03-19 | — | fix: timezone — TZ=America/Mexico_City in systemd service, proactive.ts daily counter uses MX time not UTC |
 | 2026-03-18 | `f58869c` | v2.18.1: Tool result truncation (6K cap), lean wrap-up context, web_read 30K→10K |
 | 2026-03-18 | `b400ed5` | v2.18.1: Mid-loop inference failure wrap-up, MAX_ROUNDS 10→7, timeout 30s→60s |
