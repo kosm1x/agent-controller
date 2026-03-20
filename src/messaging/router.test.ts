@@ -142,7 +142,7 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(29);
+      expect(call.tools).toHaveLength(44); // 26 COMMIT + 3 user_fact + 5 utility + 10 browser
       expect(call.tools).toContain("commit__get_daily_snapshot");
       expect(call.tools).toContain("commit__complete_recurring");
       expect(call.tools).toContain("commit__update_objective");
@@ -155,9 +155,18 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("user_fact_set");
       expect(call.tools).toContain("user_fact_list");
       expect(call.tools).toContain("user_fact_delete");
+      // Utility tools
+      expect(call.tools).toContain("shell_exec");
+      expect(call.tools).toContain("http");
+      expect(call.tools).toContain("file_read");
+      expect(call.tools).toContain("chart_generate");
+      // Browser tools
+      expect(call.tools).toContain("browser__goto");
+      expect(call.tools).toContain("browser__markdown");
+      expect(call.tools).toContain("browser__click");
     });
 
-    it("should include Jarvis persona in description", async () => {
+    it("should include Jarvis persona in description and user message in conversationHistory", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
         from: "owner@s.whatsapp.net",
@@ -169,7 +178,11 @@ describe("MessageRouter", () => {
 
       const call = (submitTask as any).mock.calls[0][0];
       expect(call.description).toContain("Jarvis");
-      expect(call.description).toContain("Hola");
+      // User message is now the last turn in conversationHistory, not in description
+      expect(call.conversationHistory).toBeDefined();
+      const lastTurn =
+        call.conversationHistory[call.conversationHistory.length - 1];
+      expect(lastTurn).toEqual({ role: "user", content: "Hola" });
     });
   });
 

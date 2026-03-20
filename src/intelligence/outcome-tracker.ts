@@ -159,10 +159,10 @@ function extractToolsUsed(output: string | null): string[] {
   if (!output) return [];
   try {
     const parsed = JSON.parse(output);
-    // Fast runner stores tool calls in trace
+    // Fast runner stores tool calls as string[] or { name }[]
     if (Array.isArray(parsed.toolCalls)) {
-      const names = parsed.toolCalls.map(
-        (t: { name: string }) => t.name,
+      const names = parsed.toolCalls.map((t: string | { name: string }) =>
+        typeof t === "string" ? t : t.name,
       ) as string[];
       return [...new Set(names)];
     }

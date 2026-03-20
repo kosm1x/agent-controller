@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-19
+> Last updated: 2026-03-20
 
 ## Overview
 
@@ -13,8 +13,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | ~107 (+5 in commit-bridge) |
-| Test files | 42 |
-| Tests passing | 353 |
+| Test files | 43 |
+| Tests passing | 395 |
 | Type errors | 0 |
 | Total tools | 87 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
@@ -49,6 +49,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.18 | Context Retention — user_facts table, keyword recall, larger thread buffer | Done | `7c26dd1` |
 | v2.18.1 | Inference Resilience — max-rounds wrap-up, mid-loop recovery, tool result truncation, lean wrap-up context | Done | `f58869c` |
 | v2.19 | Browser Integration — Lightpanda headless browser via MCP (10 tools: goto, markdown, links, evaluate, semantic_tree, interactiveElements, structuredData, click, fill, scroll) | Done | — |
+| v2.20 | Jarvis Chat Enhancements — sandboxed shell_exec, expanded chat tool whitelist (+5 utility +10 browser), tools_used tracking fix, system prompt behavioral directives (verification, proactive memory, skill auto-save), skill-discovery auto-save | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (85 total, managed by 5 ToolSource plugins)
@@ -83,6 +84,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-20 | — | v2.20: Jarvis chat enhancements — sandboxed shell, expanded tool whitelist (29→44 tools), tools_used tracking fix, behavioral directives (auto-verify, proactive memory, skill auto-save) |
 | 2026-03-19 | — | fix: timezone — TZ=America/Mexico_City in systemd service, proactive.ts daily counter uses MX time not UTC |
 | 2026-03-18 | `f58869c` | v2.18.1: Tool result truncation (6K cap), lean wrap-up context, web_read 30K→10K |
 | 2026-03-18 | `b400ed5` | v2.18.1: Mid-loop inference failure wrap-up, MAX_ROUNDS 10→7, timeout 30s→60s |
@@ -119,3 +121,4 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - deepseek-v3.2 never voluntarily stops calling tools on research tasks — mitigated by MAX_ROUNDS=7 + wrap-up call
 - Primary model (qwen3.5-plus) intermittently slow on DashScope — falls back to deepseek-v3.2
 - ~~Proactive daily counter reset used UTC instead of Mexico City time~~ (fixed 2026-03-19)
+- ~~tools_used always empty in task_outcomes (fast-runner returned plain string instead of structured output)~~ (fixed 2026-03-20)

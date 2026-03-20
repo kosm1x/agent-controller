@@ -1,7 +1,8 @@
 /**
- * Shell execution tool.
+ * Shell execution tool with command validation guard.
  *
- * Executes a shell command with timeout and output limits.
+ * Executes a shell command with timeout, output limits, and safety checks.
+ * The guard prevents accidental destructive commands — not an adversarial sandbox.
  */
 
 import { execSync } from "child_process";
@@ -10,14 +11,129 @@ import type { Tool } from "../types.js";
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds
 
+// ---------------------------------------------------------------------------
+// Command validation guard
+// ---------------------------------------------------------------------------
+
+/** Commands blocked as the base command (first token) of any pipe/chain segment. */
+const DENY_COMMANDS = new Set([
+  "rm",
+  "mkfs",
+  "dd",
+  "shutdown",
+  "reboot",
+  "poweroff",
+  "halt",
+  "kill",
+  "killall",
+  "pkill",
+  "iptables",
+  "ip6tables",
+  "nft",
+  "useradd",
+  "userdel",
+  "passwd",
+  "chown",
+  "systemctl",
+  "mount",
+  "umount",
+  "fdisk",
+  "parted",
+  "crontab",
+]);
+
+/** Patterns checked against the full command string. */
+const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
+  {
+    pattern: /rm\s+(-[a-zA-Z]*\s+)*\//,
+    reason: "rm with absolute path",
+  },
+  {
+    pattern: />\s*\/(etc|boot|usr|proc|sys|dev)\//,
+    reason: "redirect to system directory",
+  },
+  {
+    pattern: /chmod\s+[67]77/,
+    reason: "overly permissive chmod",
+  },
+  { pattern: /\bmkfs\b/, reason: "filesystem format" },
+  { pattern: /\bdd\s+/, reason: "disk destroyer" },
+];
+
+/** Safe path prefixes for write operations. */
+const ALLOW_WRITE_PREFIXES = ["/root/claude/", "/tmp/", "/workspace/"];
+
+/** Heuristic tokens that indicate a write to a path. */
+const WRITE_INDICATORS =
+  /(?:>\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/[^\s]+)/g;
+
+/**
+ * Validate a shell command before execution.
+ * Returns { allowed: true } or { allowed: false, reason }.
+ */
+export function validateShellCommand(command: string): {
+  allowed: boolean;
+  reason?: string;
+} {
+  // Split on shell separators to check each segment
+  const segments = command.split(/\s*(?:\||\|\||&&|;)\s*/);
+
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
+
+    // Extract base command (first token), strip any path prefix
+    const firstToken = trimmed.split(/\s/)[0];
+    const baseName = firstToken.replace(/^.*\//, ""); // /usr/bin/rm → rm
+
+    if (DENY_COMMANDS.has(baseName)) {
+      return { allowed: false, reason: `command '${baseName}' is blocked` };
+    }
+  }
+
+  // Check full command against deny patterns
+  for (const { pattern, reason } of DENY_PATTERNS) {
+    if (pattern.test(command)) {
+      return { allowed: false, reason };
+    }
+  }
+
+  // Check write paths — if command writes to absolute paths, verify they're safe
+  let match: RegExpExecArray | null;
+  WRITE_INDICATORS.lastIndex = 0;
+  while ((match = WRITE_INDICATORS.exec(command)) !== null) {
+    const targetPath = match[1];
+    const isSafe = ALLOW_WRITE_PREFIXES.some((prefix) =>
+      targetPath.startsWith(prefix),
+    );
+    if (!isSafe) {
+      return {
+        allowed: false,
+        reason: `write to '${targetPath}' outside allowed paths`,
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+// ---------------------------------------------------------------------------
+// Tool definition
+// ---------------------------------------------------------------------------
+
 export const shellTool: Tool = {
   name: "shell_exec",
   definition: {
     type: "function",
     function: {
       name: "shell_exec",
-      description:
-        "Execute a shell command and return its output. Use for running system commands, scripts, or CLI tools.",
+      description: `Execute a shell command and return its output. Use for running system queries, scripts, or CLI tools.
+
+RESTRICTIONS:
+- Destructive commands are blocked (rm, mkfs, dd, kill, shutdown, systemctl, etc.)
+- File writes are restricted to project directories (/root/claude/, /tmp/, /workspace/)
+- Writes to system directories (/etc, /boot, /usr, /proc, /sys, /dev) are blocked
+- Max execution time: 60 seconds. Max output: 10,000 characters.`,
       parameters: {
         type: "object",
         properties: {
@@ -40,6 +156,18 @@ export const shellTool: Tool = {
     if (!command) {
       return JSON.stringify({ error: "command is required" });
     }
+
+    // Validate command before execution
+    const validation = validateShellCommand(command);
+    if (!validation.allowed) {
+      console.log(`[shell-guard] BLOCKED: ${command}`);
+      return JSON.stringify({
+        error: `Command blocked by security policy: ${validation.reason}`,
+      });
+    }
+    console.log(
+      `[shell-guard] OK: ${command.length > 120 ? command.slice(0, 120) + "..." : command}`,
+    );
 
     const timeout = Math.min(
       typeof args.timeout_ms === "number" ? args.timeout_ms : TIMEOUT_MS,

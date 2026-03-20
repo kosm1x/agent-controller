@@ -13,13 +13,22 @@ import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 
-const SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
+const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
 Instructions:
 - Use the available tools to complete the task.
 - Be thorough but efficient — use the minimum number of tool calls needed.
 - When you have enough information to answer, respond with a clear, concise result.
 - If a tool fails, try an alternative approach or explain what went wrong.
+
+When you finish, end your response with exactly one of these status lines:
+STATUS: DONE
+STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
+STATUS: NEEDS_CONTEXT — [what information is missing]
+STATUS: BLOCKED — [what is preventing completion]`;
+
+/** Status suffix appended to chat system prompts. */
+const STATUS_SUFFIX = `
 
 When you finish, end your response with exactly one of these status lines:
 STATUS: DONE
@@ -52,13 +61,31 @@ export const fastRunner: Runner = {
       };
     }
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
+    // Build messages: if conversation history is provided, use it as proper
+    // user/assistant turns so the LLM participates in the conversation rather
+    // than reading a transcript embedded in a single message.
+    const messages: ChatMessage[] = [];
+
+    if (input.conversationHistory && input.conversationHistory.length > 0) {
+      // Chat task: description IS the system prompt (Jarvis persona + context).
+      // conversationHistory includes prior turns + current user message as the
+      // last entry, so we inject them all as proper message turns.
+      messages.push({
+        role: "system",
+        content: input.description + STATUS_SUFFIX,
+      });
+
+      for (const turn of input.conversationHistory) {
+        messages.push({ role: turn.role, content: turn.content });
+      }
+    } else {
+      // Non-chat task: generic system prompt + description as user message
+      messages.push({ role: "system", content: GENERIC_SYSTEM_PROMPT });
+      messages.push({
         role: "user",
         content: `Task: ${input.title}\n\n${input.description}`,
-      },
-    ];
+      });
+    }
 
     try {
       const result = await inferWithTools(
@@ -73,12 +100,27 @@ export const fastRunner: Runner = {
 
       const parsed = parseRunnerStatus(result.content);
 
+      // Extract tool names actually called during execution
+      const toolsCalled: string[] = [];
+      for (const msg of result.messages) {
+        if (msg.role === "assistant" && msg.tool_calls) {
+          for (const tc of msg.tool_calls) {
+            if (tc.function?.name && !toolsCalled.includes(tc.function.name)) {
+              toolsCalled.push(tc.function.name);
+            }
+          }
+        }
+      }
+
       return {
         success:
           parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
         status: parsed.status,
         concerns: parsed.concerns,
-        output: parsed.cleanContent,
+        output: {
+          text: parsed.cleanContent,
+          toolCalls: toolsCalled,
+        },
         tokenUsage: {
           promptTokens: result.totalUsage.prompt_tokens,
           completionTokens: result.totalUsage.completion_tokens,

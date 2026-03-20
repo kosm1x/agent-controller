@@ -81,7 +81,7 @@ export async function detectRecurringPatterns(): Promise<void> {
       const tools = key.split("|");
       const name = generateSkillName(tools);
 
-      await proposeSkill(name, tools, data.count);
+      await proposeSkill(name, tools, data.count, data.titles);
       lastProposalTime = Date.now();
       return; // One proposal per invocation
     }
@@ -98,11 +98,12 @@ function generateSkillName(tools: string[]): string {
   return simplified.join(" + ");
 }
 
-/** Propose a skill — log it and store in Hindsight for later review. */
+/** Propose a skill — log it, store in Hindsight, and submit a task to auto-save. */
 async function proposeSkill(
   name: string,
   tools: string[],
   occurrences: number,
+  titles: string[],
 ): Promise<void> {
   console.log(
     `[skill-discovery] Proposing skill "${name}" (${occurrences} occurrences, tools: ${tools.join(", ")})`,
@@ -122,6 +123,33 @@ async function proposeSkill(
     );
   } catch {
     // Best-effort
+  }
+
+  // Submit a task to evaluate and auto-save the skill
+  try {
+    const { submitTask } = await import("../dispatch/dispatcher.js");
+    await submitTask({
+      title: `Auto-skill: ${name}`,
+      description: `A recurring tool pattern was detected (${occurrences}x in 14 days).
+Tools: ${tools.join(", ")}
+Related tasks: ${titles.join(", ") || "N/A"}
+
+Instructions:
+1. Use skill_list to check if a similar skill already exists
+2. If no similar skill exists, use skill_save with:
+   - name: a descriptive Spanish name for this workflow
+   - trigger_text: keywords that would trigger this skill
+   - steps: describe the logical steps of the workflow
+   - tools: ${JSON.stringify(tools)}
+3. If a similar skill already exists, do nothing
+
+Be conservative — only save genuinely reusable workflows.`,
+      agentType: "auto",
+      tools: ["skill_save", "skill_list"],
+      tags: ["internal", "skill-suggestion"],
+    });
+  } catch {
+    // Best-effort — skill proposal still logged to Hindsight above
   }
 }
 

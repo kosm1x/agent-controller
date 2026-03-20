@@ -41,6 +41,7 @@ import {
   isScheduledTask,
   handleScheduledTaskResult,
 } from "../rituals/dynamic.js";
+import type { ConversationTurn } from "../runners/types.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -93,6 +94,29 @@ const GOOGLE_TOOLS = [
   "gtasks_create",
 ];
 
+/** Extra utility tools available in chat. */
+const UTILITY_TOOLS = [
+  "shell_exec",
+  "http",
+  "file_read",
+  "chart_generate",
+  "rss_read",
+];
+
+/** Lightpanda browser tools — registered dynamically by MCP, silently skipped if unavailable. */
+const BROWSER_TOOLS = [
+  "browser__goto",
+  "browser__markdown",
+  "browser__links",
+  "browser__evaluate",
+  "browser__semantic_tree",
+  "browser__interactiveElements",
+  "browser__structuredData",
+  "browser__click",
+  "browser__fill",
+  "browser__scroll",
+];
+
 interface PendingReply {
   channel: ChannelName;
   to: string;
@@ -103,6 +127,8 @@ interface PendingReply {
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
 const THREAD_BUFFER_SIZE = 15;
+/** Max chars per Jarvis response stored in the thread buffer. */
+const THREAD_RESPONSE_CAP = 2000;
 const conversationThreads = new Map<string, string[]>();
 const hydratedChannels = new Set<string>();
 
@@ -113,11 +139,29 @@ function pushToThread(channel: string, exchange: string): void {
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
 }
 
-function getThread(channel: string): string {
+/**
+ * Parse stored exchanges ("User: ...\nJarvis: ...") into structured turns.
+ * Returns ConversationTurn[] for injection as proper message turns in inference.
+ */
+function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
   const thread = conversationThreads.get(channel);
-  if (!thread || thread.length === 0) return "";
-  return "\n\n## Hilo actual de conversación\n" + thread.join("\n---\n");
+  if (!thread || thread.length === 0) return [];
+
+  const turns: ConversationTurn[] = [];
+  for (const exchange of thread) {
+    const jarvisIdx = exchange.indexOf("\nJarvis: ");
+    if (jarvisIdx === -1) continue;
+
+    const userText = exchange.slice("User: ".length, jarvisIdx).trim();
+    const assistantText = exchange
+      .slice(jarvisIdx + "\nJarvis: ".length)
+      .trim();
+    if (userText) turns.push({ role: "user", content: userText });
+    if (assistantText)
+      turns.push({ role: "assistant", content: assistantText });
+  }
+  return turns;
 }
 
 /**
@@ -242,8 +286,11 @@ export class MessageRouter {
     const titleText =
       msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
 
-    // Current conversation thread (chronological, in-memory, instant)
-    const threadBlock = getThread(msg.channel);
+    // Build structured conversation turns from in-memory thread buffer.
+    // The current user message is appended as the final turn so the fast runner
+    // can send it as a proper user message rather than embedding it in the description.
+    const conversationHistory = getThreadTurns(msg.channel);
+    conversationHistory.push({ role: "user", content: msg.text });
 
     // Recall semantic memories + enrich context IN PARALLEL
     const enrichment = await enrichContext(msg.text, msg.channel);
@@ -261,6 +308,8 @@ export class MessageRouter {
       "user_fact_set",
       "user_fact_list",
       "user_fact_delete",
+      ...UTILITY_TOOLS,
+      ...BROWSER_TOOLS,
     ];
     if (getMemoryService().backend === "hindsight") {
       tools.push("memory_search", "memory_store");
@@ -331,12 +380,30 @@ ANTES de ejecutar estas herramientas, SIEMPRE muestra un resumen al usuario y pr
 - delete_item → muestra: nombre y tipo del elemento a eliminar
 
 NO ejecutes estas herramientas hasta que el usuario diga "sí", "confirmo", "dale", o similar.
-Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.${userFactsBlock}${threadBlock}${enrichment.contextBlock}
+Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.
 
-Mensaje del usuario:
-${msg.text}`,
+## Verificación autónoma
+Después de completar un deploy, subir archivos, o modificar código en producción:
+1. Usa browser__goto para navegar al sitio afectado
+2. Usa browser__markdown para extraer el contenido y verificar los cambios
+3. Reporta el resultado — nunca digas "listo" sin verificar primero
+Si browser__goto no está disponible, usa web_read como alternativa.
+
+## Memoria activa
+- ANTES de preguntar algo que podrías saber, usa memory_search para buscar en tu memoria
+- Si Fede menciona un proyecto, persona, o contexto, busca información previa antes de responder
+- NO hagas preguntas redundantes — revisa el historial y tu memoria primero
+- Después de completar un flujo de 3+ pasos, evalúa si es un patrón repetible y usa skill_save para guardarlo
+
+## Navegación web avanzada
+Tienes un navegador completo (browser__*) para:
+- Verificar sitios web después de cambios (browser__goto + browser__markdown)
+- Interactuar con páginas: clic, formularios, scroll (browser__click, browser__fill, browser__scroll)
+- Extraer datos estructurados (browser__structuredData)
+Para lectura simple, web_read es más rápido. Usa browser__* cuando necesites JavaScript o interacción.${userFactsBlock}${enrichment.contextBlock}`,
       agentType: "auto",
       tools,
+      conversationHistory,
       tags: [
         "messaging",
         msg.channel,
@@ -471,11 +538,13 @@ ${msg.text}`,
       this.sendToChannel(pending.channel, pending.to, resultText);
 
       // Push to in-memory conversation thread (chronological, instant)
-      const shortResult =
-        resultText.length > 500 ? resultText.slice(0, 500) + "..." : resultText;
+      const cappedResult =
+        resultText.length > THREAD_RESPONSE_CAP
+          ? resultText.slice(0, THREAD_RESPONSE_CAP) + "..."
+          : resultText;
       pushToThread(
         pending.channel,
-        `User: ${pending.originalText}\nJarvis: ${shortResult}`,
+        `User: ${pending.originalText}\nJarvis: ${cappedResult}`,
       );
 
       // Retain the exchange in conversation memory (works with any backend)
@@ -531,7 +600,18 @@ ${msg.text}`,
   }
 
   private extractResultText(result: unknown): string | null {
-    if (typeof result === "string") return result;
+    if (typeof result === "string") {
+      // Try to parse JSON strings that wrap a { text } object (fast-runner output)
+      if (result.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(result);
+          if (typeof parsed.text === "string") return parsed.text;
+        } catch {
+          // Not JSON — return as-is
+        }
+      }
+      return result;
+    }
     if (result && typeof result === "object") {
       const obj = result as Record<string, unknown>;
       if (typeof obj.text === "string") return obj.text;

@@ -7,6 +7,12 @@ import type { RunnerStatus } from "./status.js";
 /** Agent/runner type identifiers. */
 export type AgentType = "fast" | "nanoclaw" | "heavy" | "swarm" | "a2a";
 
+/** A prior conversation exchange for thread continuity. */
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /** Input passed to a runner when executing a task. */
 export interface RunnerInput {
   /** Unique task identifier. */
@@ -25,6 +31,8 @@ export interface RunnerInput {
   parentTaskId?: string;
   /** Recommended model tier from classifier. */
   modelTier?: string;
+  /** Prior conversation turns for thread continuity. */
+  conversationHistory?: ConversationTurn[];
 }
 
 /** Output returned by a runner after execution. */

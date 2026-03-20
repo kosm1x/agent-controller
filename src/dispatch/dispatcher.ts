@@ -26,6 +26,8 @@ export interface TaskSubmission {
   input?: unknown;
   parentTaskId?: string;
   spawnType?: "root" | "subtask";
+  /** Prior conversation turns for thread continuity (chat tasks). */
+  conversationHistory?: import("../runners/types.js").ConversationTurn[];
 }
 
 export interface TaskRow {
@@ -309,6 +311,7 @@ async function dispatchWithSlot(
     input: submission.input,
     parentTaskId: submission.parentTaskId,
     modelTier: getModelTierFromTask(taskId),
+    conversationHistory: submission.conversationHistory,
   };
 
   try {
