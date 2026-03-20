@@ -108,8 +108,20 @@ export async function enrichContext(
     sections.unshift(toolFirstReminder);
   }
 
+  // Cap total enrichment to prevent prompt bloat — each recalled memory can be
+  // 1-2K chars, and with 8 recalls + skills + tool hints, this can hit 10K+.
+  // The DashScope ceiling is ~30K tokens total; we need headroom for the actual
+  // conversation, so cap enrichment at 3K chars (~1K tokens).
+  const MAX_ENRICHMENT_CHARS = 3_000;
+  let contextBlock = sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
+  if (contextBlock.length > MAX_ENRICHMENT_CHARS) {
+    contextBlock =
+      contextBlock.slice(0, MAX_ENRICHMENT_CHARS) +
+      "\n...(contexto adicional omitido para conservar espacio)";
+  }
+
   return {
-    contextBlock: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "",
+    contextBlock,
     toolHints,
     matchedSkillIds,
     confidence,

@@ -71,6 +71,13 @@ export interface Config {
   a2aName?: string;
   /** A2A agent base URL for discovery card (optional). */
   a2aUrl?: string;
+
+  /** Enable budget enforcement (default: false). */
+  budgetEnabled: boolean;
+  /** Daily spend limit in USD (default: 10.0). */
+  budgetDailyLimitUsd: number;
+  /** Custom model pricing JSON (optional override). */
+  budgetPricingJson?: string;
 }
 
 function required(key: string): string {
@@ -87,6 +94,13 @@ function int(key: string, fallback: number): number {
   const raw = process.env[key];
   if (!raw) return fallback;
   const parsed = parseInt(raw, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function float(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const parsed = parseFloat(raw);
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
@@ -133,6 +147,10 @@ export function loadConfig(): Config {
 
     a2aName: optional("A2A_AGENT_NAME"),
     a2aUrl: optional("A2A_AGENT_URL"),
+
+    budgetEnabled: process.env.BUDGET_ENABLED === "true",
+    budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 10.0),
+    budgetPricingJson: optional("BUDGET_PRICING_JSON"),
   };
 }
 

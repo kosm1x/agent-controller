@@ -396,7 +396,7 @@ export async function infer(
  * Stops when LLM returns a text response with no tool calls, or maxRounds is hit.
  */
 /** Max chars per tool result in conversation — prevents prompt bloat from web_read/web_search. */
-const MAX_TOOL_RESULT_CHARS = 6_000;
+const MAX_TOOL_RESULT_CHARS = 12_000;
 
 /** Max chars per tool result in wrap-up context — more aggressive to fit in timeout. */
 const WRAPUP_TOOL_RESULT_CHARS = 1_500;
@@ -591,11 +591,18 @@ export async function inferWithTools(
             `[inference] Tool ${toolCall.function.name} failed: ${message}`,
           );
         }
-        // Truncate large tool results to prevent prompt bloat
+        // Large result eviction: write oversized results to temp file,
+        // return head + tail preview with file path reference so the LLM
+        // can read specific sections with file_read if needed.
         if (result.length > MAX_TOOL_RESULT_CHARS) {
-          result =
-            result.slice(0, MAX_TOOL_RESULT_CHARS) +
-            `\n...(truncated from ${result.length} chars)`;
+          const previewHead = result.slice(
+            0,
+            Math.floor(MAX_TOOL_RESULT_CHARS * 0.7),
+          );
+          const previewTail = result.slice(
+            -Math.floor(MAX_TOOL_RESULT_CHARS * 0.2),
+          );
+          result = `${previewHead}\n\n... (${result.length} chars total — middle section omitted) ...\n\n${previewTail}`;
         }
         return {
           role: "tool" as const,

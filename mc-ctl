@@ -444,6 +444,52 @@ cmd_hindsight_logs() {
 }
 
 # ---------------------------------------------------------------------------
+# Budget
+# ---------------------------------------------------------------------------
+
+cmd_budget() {
+  need_db
+  echo -e "${BOLD}=== Budget Status ===${NC}"
+  echo ""
+
+  # Check if cost_ledger table exists
+  local has_ledger
+  has_ledger=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cost_ledger';" 2>/dev/null)
+  if [[ "$has_ledger" != "1" ]]; then
+    echo -e "${YELLOW}cost_ledger table not found — budget tracking not yet initialized.${NC}"
+    return
+  fi
+
+  echo -e "${BOLD}Daily Spend (last 24h):${NC}"
+  sql "SELECT ROUND(COALESCE(SUM(cost_usd), 0), 4) as spend_usd,
+    COUNT(*) as runs
+  FROM cost_ledger WHERE created_at >= datetime('now', '-1 day');"
+
+  echo ""
+  echo -e "${BOLD}By Runner:${NC}"
+  sql "SELECT agent_type,
+    COUNT(*) as runs,
+    ROUND(SUM(cost_usd), 4) as cost_usd,
+    SUM(prompt_tokens) as prompt_tok,
+    SUM(completion_tokens) as completion_tok
+  FROM cost_ledger
+  WHERE created_at >= datetime('now', '-1 day')
+  GROUP BY agent_type
+  ORDER BY cost_usd DESC;"
+
+  echo ""
+  echo -e "${BOLD}By Model:${NC}"
+  sql "SELECT model,
+    COUNT(*) as runs,
+    ROUND(SUM(cost_usd), 4) as cost_usd,
+    ROUND(AVG(cost_usd), 4) as avg_cost
+  FROM cost_ledger
+  WHERE created_at >= datetime('now', '-1 day')
+  GROUP BY model
+  ORDER BY cost_usd DESC;"
+}
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
@@ -616,6 +662,8 @@ case "$cmd" in
   hindsight-status)  cmd_hindsight_status ;;
   hindsight-restart) cmd_hindsight_restart ;;
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
+
+  budget)            cmd_budget ;;
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;

@@ -46,6 +46,25 @@ export function initDatabase(dbPath: string): Database.Database {
     _db.exec("ALTER TABLE skills ADD COLUMN last_used TEXT");
   }
 
+  // Cost ledger for budget enforcement (v2.21)
+  _db.exec(`CREATE TABLE IF NOT EXISTS cost_ledger (
+    id                INTEGER PRIMARY KEY,
+    run_id            TEXT NOT NULL,
+    task_id           TEXT NOT NULL,
+    agent_type        TEXT NOT NULL,
+    model             TEXT NOT NULL DEFAULT 'unknown',
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd          REAL NOT NULL DEFAULT 0.0,
+    created_at        TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_cost_ledger_created ON cost_ledger(created_at)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_cost_ledger_task ON cost_ledger(task_id)",
+  );
+
   return _db;
 }
 

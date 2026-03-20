@@ -10,6 +10,8 @@ import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { classify } from "./classifier.js";
 import { getConfig } from "../config.js";
+import { checkoutTask } from "./checkout.js";
+import { isBudgetExceeded, recordCost } from "../budget/service.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 
 // ---------------------------------------------------------------------------
@@ -249,6 +251,22 @@ async function dispatchTask(
     return;
   }
 
+  // Budget enforcement — block new tasks if daily limit exceeded
+  const config = getConfig();
+  if (config.budgetEnabled && isBudgetExceeded()) {
+    const limit = config.budgetDailyLimitUsd;
+    console.log(
+      `[dispatch] Task ${taskId} blocked: budget exceeded ($${limit}/day)`,
+    );
+    updateTaskStatus(
+      taskId,
+      "blocked",
+      undefined,
+      `Budget exceeded: daily limit of $${limit.toFixed(2)} reached`,
+    );
+    return;
+  }
+
   // Container concurrency check
   if (needsContainer(agentType)) {
     if (!acquireContainerSlot()) {
@@ -299,8 +317,18 @@ async function dispatchWithSlot(
     }),
   });
 
-  // Update task to running
-  updateTaskStatus(taskId, "running");
+  // Atomic checkout: queued → running (CAS prevents double-dispatch)
+  const claimId = `runner:${agentType}:${runId}`;
+  const checkout = checkoutTask(taskId, claimId);
+  if (!checkout.success) {
+    console.log(
+      `[dispatch] Task ${taskId} checkout failed: ${checkout.reason}`,
+    );
+    // Roll back the run row we just created
+    db.prepare("DELETE FROM runs WHERE run_id = ?").run(runId);
+    if (needsContainer(agentType)) releaseContainerSlot();
+    return;
+  }
 
   const input: RunnerInput = {
     taskId,
@@ -360,6 +388,23 @@ async function dispatchWithSlot(
     }
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
 
+    // Record cost in ledger (if budget feature is available and we have token data)
+    if (result.tokenUsage) {
+      try {
+        const model = getModelFromTask(taskId);
+        recordCost({
+          runId,
+          taskId,
+          agentType,
+          model,
+          promptTokens: result.tokenUsage.promptTokens,
+          completionTokens: result.tokenUsage.completionTokens,
+        });
+      } catch {
+        // Cost recording should never block task completion
+      }
+    }
+
     // Emit completion event
     try {
       if (result.success) {
@@ -412,6 +457,17 @@ function getModelTierFromTask(taskId: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Extract the inference model name used for a task (for cost tracking). */
+function getModelFromTask(taskId: string): string {
+  const tier = getModelTierFromTask(taskId);
+  const cfg = getConfig();
+  if (tier === "capable" || tier === "standard")
+    return cfg.inferencePrimaryModel;
+  if (tier === "flash" && cfg.inferenceFallbackModel)
+    return cfg.inferenceFallbackModel;
+  return cfg.inferencePrimaryModel;
 }
 
 // ---------------------------------------------------------------------------

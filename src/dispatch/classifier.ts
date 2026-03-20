@@ -12,7 +12,11 @@
  */
 
 import type { AgentType } from "../runners/types.js";
-import { queryOutcomes } from "../db/task-outcomes.js";
+import {
+  queryRunnerStats,
+  queryOutcomesByKeywords,
+} from "../db/task-outcomes.js";
+import { extractKeywords } from "./keywords.js";
 
 export type ModelTier = "flash" | "standard" | "capable";
 
@@ -151,11 +155,11 @@ export function classify(input: ClassificationInput): ClassificationResult {
     reasons.push("priority: critical (+1)");
   }
 
-  // Outcome-based adjustment (learns from historical task results)
-  const outcomeHint = getOutcomeHint();
-  if (outcomeHint !== 0) {
-    score += outcomeHint;
-    reasons.push(`outcome hint (${outcomeHint > 0 ? "+" : ""}${outcomeHint})`);
+  // Outcome-based adjustment (multi-signal feedback from historical results)
+  const outcomeAdj = getOutcomeAdjustments(input);
+  if (outcomeAdj.score !== 0) {
+    score += outcomeAdj.score;
+    reasons.push(...outcomeAdj.reasons);
   }
 
   // Map score to agent type
@@ -199,32 +203,139 @@ export function classify(input: ClassificationInput): ClassificationResult {
 }
 
 /**
- * Query task_outcomes for historical success rates by runner type.
- * Returns a score adjustment: negative pulls toward simpler runners,
- * positive pushes toward heavier ones.
+ * Multi-signal outcome-based adjustment for the classifier.
  *
- * Guard: returns 0 if fewer than 10 outcomes (insufficient data).
+ * Signals:
+ *   1. Per-runner success rates (not just fast)
+ *   2. Duration anomaly (heavy finishing too fast → over-classified)
+ *   3. Cost-efficiency (expensive + low success → penalize)
+ *   4. Keyword similarity (similar tasks that succeeded on a specific runner)
+ *
+ * Guard: returns 0 with <10 total outcomes (insufficient data).
+ * Clamped to [-3, +4] to prevent wild swings.
  */
-function getOutcomeHint(): number {
+interface OutcomeAdjustment {
+  score: number;
+  reasons: string[];
+}
+
+function getOutcomeAdjustments(input: ClassificationInput): OutcomeAdjustment {
+  const ZERO: OutcomeAdjustment = { score: 0, reasons: [] };
   try {
-    const outcomes = queryOutcomes({ days: 30, limit: 100 });
-    if (outcomes.length < 10) return 0;
+    const stats = queryRunnerStats(30);
+    const totalOutcomes = stats.reduce((sum, s) => sum + s.total, 0);
+    if (totalOutcomes < 10) return ZERO;
 
-    // Compute success rate on fast runner
-    const fastOutcomes = outcomes.filter((o) => o.ran_on === "fast");
-    if (fastOutcomes.length < 5) return 0;
+    let adj = 0;
+    const reasons: string[] = [];
 
-    const fastSuccess = fastOutcomes.filter((o) => o.success).length;
-    const fastRate = fastSuccess / fastOutcomes.length;
+    // Signal 1: Per-runner success rates
+    for (const s of stats) {
+      if (s.total < 5) continue;
 
-    // High success on fast → pull score down (prefer fast)
-    if (fastRate > 0.85) return -1;
+      if (s.ran_on === "fast") {
+        if (s.success_rate > 0.85) {
+          adj -= 1;
+          reasons.push(
+            `fast success ${(s.success_rate * 100).toFixed(0)}% → prefer fast (-1)`,
+          );
+        } else if (s.success_rate < 0.5) {
+          adj += 2;
+          reasons.push(
+            `fast success ${(s.success_rate * 100).toFixed(0)}% → try heavier (+2)`,
+          );
+        }
+      }
+      if (s.ran_on === "heavy") {
+        if (s.success_rate > 0.9) {
+          adj += 1;
+          reasons.push(
+            `heavy success ${(s.success_rate * 100).toFixed(0)}% → heavy works well (+1)`,
+          );
+        } else if (s.success_rate < 0.4) {
+          adj -= 1;
+          reasons.push(
+            `heavy success ${(s.success_rate * 100).toFixed(0)}% → heavy struggling (-1)`,
+          );
+        }
+      }
+    }
 
-    // High failure on fast → push score up (try heavier runner)
-    if (fastRate < 0.5) return 2;
+    // Signal 2: Duration anomaly — heavy tasks finishing very fast may be over-classified
+    const heavyStats = stats.find((s) => s.ran_on === "heavy");
+    if (
+      heavyStats &&
+      heavyStats.total >= 5 &&
+      heavyStats.avg_duration_ms < 15000
+    ) {
+      adj -= 1;
+      reasons.push(
+        `heavy avg ${Math.round(heavyStats.avg_duration_ms)}ms → may be over-classified (-1)`,
+      );
+    }
 
-    return 0;
+    // Signal 3: Cost-efficiency — expensive AND low success = penalize that direction
+    for (const s of stats) {
+      if (s.total < 5 || s.avg_cost_usd === 0) continue;
+      if (s.success_rate < 0.5 && s.avg_cost_usd > 0.05) {
+        const direction = s.ran_on === "fast" ? 1 : -1;
+        adj += direction;
+        reasons.push(
+          `${s.ran_on} costly ($${s.avg_cost_usd.toFixed(3)}/task) + low success (${direction > 0 ? "+" : ""}${direction})`,
+        );
+      }
+    }
+
+    // Signal 4: Keyword similarity — bias toward runner that historically succeeds on similar tasks
+    const keywords = extractKeywords(input.title, input.description);
+    if (keywords.length > 0) {
+      const similar = queryOutcomesByKeywords(keywords, 30, 20);
+      if (similar.length >= 3) {
+        const runnerHits = new Map<string, { ok: number; total: number }>();
+        for (const o of similar) {
+          const entry = runnerHits.get(o.ran_on) ?? { ok: 0, total: 0 };
+          entry.total++;
+          if (o.success) entry.ok++;
+          runnerHits.set(o.ran_on, entry);
+        }
+        // If a runner dominates success for similar tasks, gentle nudge
+        for (const [runner, { ok, total }] of runnerHits) {
+          if (total >= 3 && ok / total > 0.8) {
+            const target = runnerScoreCenter(runner);
+            if (target !== null) {
+              // Nudge +-1 toward that runner's score range
+              const nudge = target > 4 ? 1 : -1;
+              adj += nudge;
+              reasons.push(
+                `similar tasks succeed on ${runner} (${ok}/${total}) (${nudge > 0 ? "+" : ""}${nudge})`,
+              );
+              break; // Only one keyword nudge
+            }
+          }
+        }
+      }
+    }
+
+    // Clamp to prevent wild swings
+    const clamped = Math.max(-3, Math.min(4, adj));
+    return { score: clamped, reasons };
   } catch {
-    return 0;
+    return ZERO;
+  }
+}
+
+/** Map runner type to the center of its score range. */
+function runnerScoreCenter(runner: string): number | null {
+  switch (runner) {
+    case "fast":
+      return 1;
+    case "nanoclaw":
+      return 4;
+    case "heavy":
+      return 7;
+    case "swarm":
+      return 10;
+    default:
+      return null;
   }
 }
