@@ -102,6 +102,12 @@ export async function enrichContext(
     // Non-fatal
   }
 
+  // Tool-first guard: inject mandatory tool reminder for data queries
+  const toolFirstReminder = getToolFirstReminder(messageText);
+  if (toolFirstReminder) {
+    sections.unshift(toolFirstReminder);
+  }
+
   return {
     contextBlock: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "",
     toolHints,
@@ -226,6 +232,101 @@ function getToolHintsAndTopTools(): {
   } catch {
     return { hints: null, topTools: [] };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tool-first guard — prevents "cognitive laziness" on data queries
+// ---------------------------------------------------------------------------
+
+/**
+ * Mapping of query patterns to mandatory tools.
+ * When the user's message matches a pattern, we inject a reminder
+ * telling the LLM to call the tool BEFORE generating any text.
+ */
+const TOOL_FIRST_RULES: { pattern: RegExp; tools: string[]; label: string }[] =
+  [
+    {
+      pattern:
+        /\b(qu[eé]\s+(reportes?|schedules?|programad|agendad|automatizaci))/i,
+      tools: ["list_schedules"],
+      label: "reportes programados",
+    },
+    {
+      pattern: /\b(qu[eé]\s+(tareas?|pendientes?|tasks?))\b/i,
+      tools: ["commit__list_tasks"],
+      label: "tareas",
+    },
+    {
+      pattern: /\b(qu[eé]\s+(metas?|goals?))\b/i,
+      tools: ["commit__list_goals"],
+      label: "metas",
+    },
+    {
+      pattern: /\b(qu[eé]\s+(objetivos?|objectives?))\b/i,
+      tools: ["commit__list_objectives"],
+      label: "objetivos",
+    },
+    {
+      pattern:
+        /\b(qu[eé]\s+(hay|tengo|tienes?).*(calendario|agenda|calendar))/i,
+      tools: ["calendar_list"],
+      label: "eventos del calendario",
+    },
+    {
+      pattern: /\b(qu[eé]\s+(skills?|habilidades?|procedimientos?))\b/i,
+      tools: ["skill_list"],
+      label: "skills guardados",
+    },
+    {
+      pattern:
+        /\b(cu[aá]ntos?|lista(r|me)?|mu[eé]stra(me)?|dame)\b.*\b(reportes?|tareas?|schedules?|metas?|objetivos?|skills?)\b/i,
+      tools: ["list_schedules", "commit__list_tasks"],
+      label: "datos del sistema",
+    },
+    {
+      pattern: /\b(olvidaste|falta|te equivocaste|incompleto|falt[oó])\b/i,
+      tools: [],
+      label: "CORRECCIÓN",
+    },
+  ];
+
+/**
+ * If the user's message matches a data-query pattern, return a mandatory
+ * tool-first reminder to inject into the prompt context.
+ */
+function getToolFirstReminder(messageText: string): string | null {
+  const matched: { tools: string[]; label: string }[] = [];
+
+  for (const rule of TOOL_FIRST_RULES) {
+    if (rule.pattern.test(messageText)) {
+      matched.push(rule);
+    }
+  }
+
+  if (matched.length === 0) return null;
+
+  const isCorrection = matched.some((m) => m.label === "CORRECCIÓN");
+  const tools = [...new Set(matched.flatMap((m) => m.tools))];
+  const labels = [
+    ...new Set(matched.map((m) => m.label).filter((l) => l !== "CORRECCIÓN")),
+  ];
+
+  if (isCorrection) {
+    return (
+      `## ⚠️ OBLIGATORIO: Protocolo de corrección activado\n` +
+      `El usuario indica que tu respuesta anterior fue incompleta o incorrecta.\n` +
+      `1. NO agregues solo lo faltante — regenera desde CERO usando la herramienta correspondiente\n` +
+      `2. Presenta la lista COMPLETA de la fuente de la verdad\n` +
+      `3. Compara con tu respuesta anterior y reconoce TODAS las discrepancias`
+    );
+  }
+
+  return (
+    `## ⚠️ OBLIGATORIO: Consulta herramienta antes de responder\n` +
+    `Esta pregunta es sobre ${labels.join(", ")}.\n` +
+    `DEBES llamar a ${tools.join(", ")} ANTES de generar cualquier texto de respuesta.\n` +
+    `NO respondas basándote en tu memoria conversacional — la fuente de la verdad es la herramienta.`
+  );
 }
 
 /** Clear enrichment state (for testing). */

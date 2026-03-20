@@ -78,4 +78,43 @@ describe("enrichment", () => {
     expect(result.matchedSkillIds).toEqual([]);
     expect(result.confidence).toBe("low");
   });
+
+  describe("tool-first guard", () => {
+    it("should inject reminder for schedule queries", async () => {
+      const result = await enrichContext(
+        "Qué reportes tienes programados?",
+        "telegram",
+      );
+
+      expect(result.contextBlock).toContain("OBLIGATORIO");
+      expect(result.contextBlock).toContain("list_schedules");
+    });
+
+    it("should inject reminder for task queries", async () => {
+      const result = await enrichContext(
+        "Qué tareas pendientes hay?",
+        "telegram",
+      );
+
+      expect(result.contextBlock).toContain("OBLIGATORIO");
+      expect(result.contextBlock).toContain("commit__list_tasks");
+    });
+
+    it("should inject correction protocol when user says olvidaste", async () => {
+      const result = await enrichContext(
+        "Olvidaste incluir el reporte de SMCI",
+        "telegram",
+      );
+
+      expect(result.contextBlock).toContain("Protocolo de corrección");
+      expect(result.contextBlock).toContain("regenera desde CERO");
+    });
+
+    it("should not inject reminder for generic messages", async () => {
+      const result = await enrichContext("Hola, cómo estás?", "telegram");
+
+      expect(result.contextBlock).not.toContain("OBLIGATORIO");
+      expect(result.contextBlock).not.toContain("Protocolo de corrección");
+    });
+  });
 });
