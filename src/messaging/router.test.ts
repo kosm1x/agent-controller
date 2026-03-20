@@ -131,39 +131,54 @@ describe("MessageRouter", () => {
       );
     });
 
-    it("should include all commit + schedule tools", async () => {
+    it("should include core tools for a generic message (dynamic scoping)", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
         from: "owner@s.whatsapp.net",
-        text: "test",
+        text: "hola, qué tal",
         timestamp: new Date(),
       };
 
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      expect(call.tools).toHaveLength(44); // 26 COMMIT + 3 user_fact + 5 utility + 10 browser
-      expect(call.tools).toContain("commit__get_daily_snapshot");
-      expect(call.tools).toContain("commit__complete_recurring");
-      expect(call.tools).toContain("commit__update_objective");
-      expect(call.tools).toContain("commit__update_goal");
-      expect(call.tools).toContain("commit__update_vision");
-      expect(call.tools).toContain("commit__create_vision");
-      expect(call.tools).toContain("schedule_task");
-      expect(call.tools).toContain("list_schedules");
-      expect(call.tools).toContain("delete_schedule");
+      // Core tools always present
       expect(call.tools).toContain("user_fact_set");
       expect(call.tools).toContain("user_fact_list");
-      expect(call.tools).toContain("user_fact_delete");
-      // Utility tools
-      expect(call.tools).toContain("shell_exec");
-      expect(call.tools).toContain("http");
-      expect(call.tools).toContain("file_read");
+      expect(call.tools).toContain("web_search");
+      expect(call.tools).toContain("web_read");
+      expect(call.tools).toContain("skill_list");
+      // COMMIT read tools always present
+      expect(call.tools).toContain("commit__get_daily_snapshot");
+      expect(call.tools).toContain("commit__list_tasks");
+      // Misc always present
+      expect(call.tools).toContain("http_fetch");
       expect(call.tools).toContain("chart_generate");
-      // Browser tools
-      expect(call.tools).toContain("browser__goto");
-      expect(call.tools).toContain("browser__markdown");
-      expect(call.tools).toContain("browser__click");
+      // Should NOT include heavy groups for a simple greeting
+      expect(call.tools).not.toContain("browser__goto");
+      expect(call.tools).not.toContain("shell_exec");
+      expect(call.tools).not.toContain("gmail_send");
+      expect(call.tools).not.toContain("commit__create_task");
+    });
+
+    it("should activate COMMIT write + coding tools when keywords present", async () => {
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "crea una tarea para hacer deploy del servidor",
+        timestamp: new Date(),
+      };
+
+      await router.handleInbound(msg);
+
+      const call = (submitTask as any).mock.calls[0][0];
+      // COMMIT write tools activated by "crea una tarea"
+      expect(call.tools).toContain("commit__create_task");
+      expect(call.tools).toContain("commit__update_task");
+      // Coding tools activated by "deploy" and "servidor"
+      expect(call.tools).toContain("shell_exec");
+      expect(call.tools).toContain("file_read");
+      expect(call.tools).toContain("grep");
     });
 
     it("should include Jarvis persona in description and user message in conversationHistory", async () => {

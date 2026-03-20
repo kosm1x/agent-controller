@@ -1,7 +1,7 @@
 /**
  * Markdown dialect converter for messaging channels.
  *
- * Converts standard markdown (from ritual/task output) to WhatsApp
+ * Converts standard markdown (from LLM output) to WhatsApp
  * and Telegram-specific formatting, with message splitting for limits.
  */
 
@@ -31,45 +31,44 @@ export function formatForWhatsApp(text: string): string {
 }
 
 /**
- * Convert standard markdown to Telegram MarkdownV2 formatting.
+ * Convert standard markdown to Telegram HTML formatting.
  * Returns array of strings (split at 4096 char limit).
  *
- * - `**bold**` → `*bold*`
- * - `## Header` → `*Header*\n`
- * - Escapes special chars outside format markers
+ * Uses HTML parse mode instead of MarkdownV2 to avoid escaping nightmares.
+ * HTML only needs &, <, > escaped — no backslashes for . - ! ( ) etc.
  */
 export function formatForTelegram(text: string): string[] {
   if (!text) return [""];
 
-  let result = text;
+  // Strip spurious backslash escapes from LLM output (Qwen/GLM artifact)
+  let result = text.replace(/\\([_*\[\]()~>#+\-=|{}.!`])/g, "$1");
 
-  // Headers: ## Header → *Header*
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
+  // Escape HTML entities first (before adding our own tags)
+  result = result.replace(/&/g, "&amp;");
+  result = result.replace(/</g, "&lt;");
+  result = result.replace(/>/g, "&gt;");
 
-  // Extract bold markers, escape content, then restore
-  // Step 1: Temporarily protect bold markers
-  const boldSegments: string[] = [];
-  result = result.replace(/\*\*(.+?)\*\*/g, (_match, content) => {
-    boldSegments.push(content);
-    return `\x00BOLD${boldSegments.length - 1}\x00`;
+  // Headers: ## Header → <b>Header</b>
+  // Strip any **bold** markers inside the header to avoid double-bolding
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, (_match, content) => {
+    const clean = content.replace(/\*\*(.+?)\*\*/g, "$1");
+    return `<b>${clean}</b>`;
   });
 
-  // Step 2: Escape special chars for MarkdownV2
-  result = escapeTelegramChars(result);
+  // Bold: **text** → <b>text</b>
+  result = result.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Step 3: Restore bold markers with escaped content
-  result = result.replace(/\x00BOLD(\d+)\x00/g, (_match, idx) => {
-    return `*${escapeTelegramChars(boldSegments[Number(idx)])}*`;
-  });
+  // Italic: *text* (single asterisk, not inside bold tags)
+  // Only match single * that aren't part of <b> tags or bullet points
+  result = result.replace(/(?<![<\/b])\*(?!\*|  )(.+?)\*(?!\*)/g, "<i>$1</i>");
+
+  // Inline code: `code` → <code>code</code>
+  result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  // Strikethrough: ~~text~~ → <s>text</s>
+  result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
 
   return splitMessage(result, TG_MAX_LENGTH);
-}
-
-/**
- * Escape Telegram MarkdownV2 special characters.
- */
-function escapeTelegramChars(text: string): string {
-  return text.replace(/([_\[\]()~>#+\-=|{}.!\\])/g, "\\$1");
 }
 
 /**

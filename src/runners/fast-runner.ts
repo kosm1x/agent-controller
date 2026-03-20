@@ -36,7 +36,39 @@ STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
 
-const MAX_ROUNDS = 7;
+const MAX_ROUNDS_DEFAULT = 7;
+const MAX_ROUNDS_CODING = 15;
+
+/**
+ * Detect hallucinated tool execution — LLM narrates actions without calling tools.
+ * Returns true if the response looks like it's simulating execution.
+ */
+function detectsHallucinatedExecution(
+  text: string,
+  toolsCalled: string[],
+): boolean {
+  if (toolsCalled.length > 0) return false; // Tools were actually called
+
+  const hallucinationPatterns = [
+    /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando)[^)]*\.\.\.\)\*?/i,
+    /✅\s*(?:ÉXITO|Listo|Publicado|Completado|Subido|Creado|Enviado)/i,
+    /🚀\s*(?:PUBLICADO|ENVIADO|EJECUTADO)/i,
+    /(?:Archivo|Post|Imagen|Documento)\s+(?:creado|subido|publicado|generado)\s+(?:exitosamente|correctamente|con éxito)/i,
+    /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
+    /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
+  ];
+
+  return hallucinationPatterns.some((p) => p.test(text));
+}
+
+/** Correction message injected when hallucination is detected. */
+const HALLUCINATION_CORRECTION = `SYSTEM OVERRIDE: Your previous response narrated tool execution WITHOUT actually calling any tools. This is FORBIDDEN.
+
+You MUST use your available tools (function calls) to perform actions. Do NOT describe or narrate execution. Either:
+1. Call the appropriate tool NOW, or
+2. Explain honestly that you cannot perform the action and what is needed.
+
+Respond again to the user's last message. USE TOOLS, do not narrate.`;
 
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {
@@ -87,18 +119,25 @@ export const fastRunner: Runner = {
       });
     }
 
+    // Use higher round limit when coding tools are available (file_edit, grep, glob)
+    const codingTools = ["file_edit", "grep", "glob"];
+    const hasCodingTools = input.tools
+      ? input.tools.some((t) => codingTools.includes(t))
+      : false;
+    const maxRounds = hasCodingTools ? MAX_ROUNDS_CODING : MAX_ROUNDS_DEFAULT;
+
     try {
       const result = await inferWithTools(
         messages,
         definitions,
         (name, args) => toolRegistry.execute(name, args),
-        MAX_ROUNDS,
+        maxRounds,
         undefined, // onTextChunk
         undefined, // signal
         tierToProvider(input.modelTier),
       );
 
-      const parsed = parseRunnerStatus(result.content);
+      let parsed = parseRunnerStatus(result.content);
 
       // Extract tool names actually called during execution
       const toolsCalled: string[] = [];
@@ -110,6 +149,54 @@ export const fastRunner: Runner = {
             }
           }
         }
+      }
+
+      // Hallucination guard: if the LLM narrated tool execution without calling
+      // any tools, inject a correction and retry ONCE. This prevents the model from
+      // claiming it "uploaded", "published", or "connected" when it didn't.
+      if (
+        detectsHallucinatedExecution(parsed.cleanContent, toolsCalled) &&
+        input.conversationHistory
+      ) {
+        console.log(
+          "[fast-runner] Hallucination detected — narrated execution without tool calls. Retrying with correction.",
+        );
+
+        // Append the hallucinated response + correction, then re-run
+        const retryMessages: ChatMessage[] = [
+          ...result.messages,
+          { role: "user", content: HALLUCINATION_CORRECTION },
+        ];
+
+        const retryResult = await inferWithTools(
+          retryMessages,
+          definitions,
+          (name, args) => toolRegistry.execute(name, args),
+          maxRounds,
+          undefined,
+          undefined,
+          tierToProvider(input.modelTier),
+        );
+
+        parsed = parseRunnerStatus(retryResult.content);
+
+        // Collect tools from retry
+        for (const msg of retryResult.messages) {
+          if (msg.role === "assistant" && msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+              if (
+                tc.function?.name &&
+                !toolsCalled.includes(tc.function.name)
+              ) {
+                toolsCalled.push(tc.function.name);
+              }
+            }
+          }
+        }
+
+        result.totalUsage.prompt_tokens += retryResult.totalUsage.prompt_tokens;
+        result.totalUsage.completion_tokens +=
+          retryResult.totalUsage.completion_tokens;
       }
 
       return {

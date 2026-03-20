@@ -32,6 +32,13 @@ import {
   evolutionGetDataTool,
   evolutionDeactivateSkillTool,
 } from "../builtin/evolution-data.js";
+import { fileEditTool } from "../builtin/code-editing.js";
+import { grepTool, globTool, listDirTool } from "../builtin/code-search.js";
+import {
+  wpPublishTool,
+  wpMediaUploadTool,
+  wpCategoriesTool,
+} from "../builtin/wordpress.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -39,6 +46,10 @@ const BUILTIN_TOOLS: Tool[] = [
   httpTool,
   fileReadTool,
   fileWriteTool,
+  fileEditTool,
+  grepTool,
+  globTool,
+  listDirTool,
   webSearchTool,
   webReadTool,
   weatherForecastTool,
@@ -56,6 +67,9 @@ const BUILTIN_TOOLS: Tool[] = [
   evolutionDeactivateSkillTool,
 ];
 
+// WordPress tools — conditionally registered when WP_URL is configured
+const WP_TOOLS: Tool[] = [wpPublishTool, wpMediaUploadTool, wpCategoriesTool];
+
 export class BuiltinToolSource implements ToolSource {
   readonly manifest: ToolSourceManifest = {
     name: "builtin",
@@ -71,7 +85,17 @@ export class BuiltinToolSource implements ToolSource {
     for (const tool of BUILTIN_TOOLS) {
       registry.register(tool);
     }
-    return BUILTIN_TOOLS.map((t) => t.name);
+    const registered = BUILTIN_TOOLS.map((t) => t.name);
+
+    // Register WordPress tools only when configured
+    if (process.env.WP_SITES) {
+      for (const tool of WP_TOOLS) {
+        registry.register(tool);
+      }
+      registered.push(...WP_TOOLS.map((t) => t.name));
+    }
+
+    return registered;
   }
 
   async healthCheck(): Promise<ToolSourceHealth> {

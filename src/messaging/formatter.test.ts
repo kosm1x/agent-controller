@@ -50,29 +50,48 @@ describe("formatForWhatsApp", () => {
 });
 
 describe("formatForTelegram", () => {
-  it("should convert **bold** to *bold*", () => {
+  it("should convert **bold** to <b>bold</b>", () => {
     const result = formatForTelegram("This is **bold** text");
     expect(result).toHaveLength(1);
-    expect(result[0]).toContain("*bold*");
+    expect(result[0]).toContain("<b>bold</b>");
   });
 
-  it("should convert ## Header to *Header*", () => {
+  it("should convert ## Header to <b>Header</b>", () => {
     const result = formatForTelegram("## My Header");
     expect(result).toHaveLength(1);
-    expect(result[0]).toContain("*");
-    expect(result[0]).toContain("My Header");
+    expect(result[0]).toContain("<b>My Header</b>");
   });
 
-  it("should escape special chars outside format markers", () => {
+  it("should not escape dots and exclamation marks", () => {
     const result = formatForTelegram("Price is $10.00!");
-    expect(result[0]).toContain("\\.");
-    expect(result[0]).toContain("\\!");
+    expect(result[0]).not.toContain("\\.");
+    expect(result[0]).not.toContain("\\!");
+    expect(result[0]).toContain("10.00!");
   });
 
-  it("should escape parentheses", () => {
+  it("should not escape parentheses", () => {
     const result = formatForTelegram("Hello (world)");
-    expect(result[0]).toContain("\\(");
-    expect(result[0]).toContain("\\)");
+    expect(result[0]).not.toContain("\\(");
+    expect(result[0]).toContain("(world)");
+  });
+
+  it("should escape HTML entities", () => {
+    const result = formatForTelegram("A < B & C > D");
+    expect(result[0]).toContain("&lt;");
+    expect(result[0]).toContain("&amp;");
+    expect(result[0]).toContain("&gt;");
+  });
+
+  it("should strip LLM backslash artifacts", () => {
+    const result = formatForTelegram("Hello \\*world\\* and \\(test\\)");
+    expect(result[0]).not.toContain("\\*");
+    expect(result[0]).not.toContain("\\(");
+  });
+
+  it("should handle header with nested bold", () => {
+    const result = formatForTelegram("### 📧 **REPORTES ACTIVOS**");
+    expect(result[0]).toContain("<b>");
+    expect(result[0]).not.toContain("**");
   });
 
   it("should return array with single element for short text", () => {
@@ -86,7 +105,6 @@ describe("formatForTelegram", () => {
   });
 
   it("should split text over 4096 chars", () => {
-    // Build a text with multiple paragraphs totaling >4096 chars
     const paragraph = "A".repeat(2000);
     const longText = `**Bold header**\n\n${paragraph}\n\n${paragraph}\n\n${paragraph}`;
     const result = formatForTelegram(longText);

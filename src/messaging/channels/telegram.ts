@@ -211,11 +211,12 @@ export class TelegramAdapter implements ChannelAdapter {
 
     for (let i = 0; i < chunks.length; i++) {
       try {
-        // Try MarkdownV2 first, fall back to plain text on parse error
+        // Try HTML first, fall back to plain text (strip tags) on parse error
         const result = await this.bot.api
-          .sendMessage(msg.to, chunks[i], { parse_mode: "MarkdownV2" })
+          .sendMessage(msg.to, chunks[i], { parse_mode: "HTML" })
           .catch(async () => {
-            return this.bot!.api.sendMessage(msg.to, chunks[i]);
+            const plain = chunks[i].replace(/<[^>]+>/g, "");
+            return this.bot!.api.sendMessage(msg.to, plain);
           });
         lastMessageId = String(result.message_id);
 

@@ -120,6 +120,7 @@ async function main(): Promise<void> {
     {
       fetch: app.fetch,
       port: config.port,
+      hostname: "127.0.0.1",
     },
     (info) => {
       console.log(

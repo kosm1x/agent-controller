@@ -12,11 +12,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric | Value |
 |--------|-------|
-| Source files | ~107 (+5 in commit-bridge) |
-| Test files | 43 |
-| Tests passing | 399 |
+| Source files | ~120 |
+| Test files | 49 |
+| Tests passing | 460 |
 | Type errors | 0 |
-| Total tools | 87 (20 commit-bridge + 19 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
+| Total tools | 94 (20 commit-bridge + 26 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -50,13 +50,16 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.18.1 | Inference Resilience — max-rounds wrap-up, mid-loop recovery, tool result truncation, lean wrap-up context | Done | `f58869c` |
 | v2.19 | Browser Integration — Lightpanda headless browser via MCP (10 tools: goto, markdown, links, evaluate, semantic_tree, interactiveElements, structuredData, click, fill, scroll) | Done | — |
 | v2.20 | Jarvis Chat Enhancements — sandboxed shell_exec, expanded chat tool whitelist (+5 utility +10 browser), tools_used tracking fix, system prompt behavioral directives (verification, proactive memory, skill auto-save), skill-discovery auto-save, tool-first guard against cognitive laziness | Done | — |
+| v2.21 | Coding Toolkit — file_edit, grep, glob, list_dir tools (open-swe inspired) | Done | — |
+| v2.22 | WordPress + Anti-Hallucination — wp_publish/wp_media_upload/wp_categories (multi-site), hallucination detector in fast-runner, HTML Telegram formatter, scope pattern inflection fix | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (85 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| Builtin | shell_exec, http_fetch, file_read, file_write, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete | 17 |
+| Builtin | shell_exec, http_fetch, file_read, file_write, file_edit, grep, glob, list_dir, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete, evolution_get_data, evolution_deactivate_skill | 23 |
+| WordPress | wp_publish, wp_media_upload, wp_categories | 3 |
 | Browser (Lightpanda) | browser__goto, browser__markdown, browser__links, browser__evaluate, browser__semantic_tree, browser__interactiveElements, browser__structuredData, browser__click, browser__fill, browser__scroll | 10 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
@@ -84,6 +87,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-20 | — | v2.22: WordPress multi-site tools (wp_publish, wp_media_upload, wp_categories), hallucination detector (narrated execution → retry with correction), HTML Telegram formatter (replaces broken MarkdownV2), scope pattern inflection fix (Spanish plural/conjugation), list_schedules promoted to always-available, anti-hallucination system prompt directive |
+| 2026-03-20 | — | v2.21: Coding toolkit — file_edit, grep, glob, list_dir (open-swe inspired) |
 | 2026-03-20 | — | v2.20: Jarvis chat enhancements — sandboxed shell, expanded tool whitelist (29→44 tools), tools_used tracking fix, behavioral directives (auto-verify, proactive memory, skill auto-save), tool-first guard (enrichment-level pattern matching against cognitive laziness) |
 | 2026-03-19 | — | fix: timezone — TZ=America/Mexico_City in systemd service, proactive.ts daily counter uses MX time not UTC |
 | 2026-03-18 | `f58869c` | v2.18.1: Tool result truncation (6K cap), lean wrap-up context, web_read 30K→10K |

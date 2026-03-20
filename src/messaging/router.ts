@@ -46,8 +46,23 @@ import type { ConversationTurn } from "../runners/types.js";
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
-/** Core tools always available for chat tasks. */
-const COMMIT_TOOLS = [
+// ---------------------------------------------------------------------------
+// Tool groups — organized for dynamic scoping
+// ---------------------------------------------------------------------------
+
+/** Always included: essential tools for every conversation. */
+const CORE_TOOLS = [
+  "user_fact_set",
+  "user_fact_list",
+  "user_fact_delete",
+  "web_search",
+  "web_read",
+  "skill_save",
+  "skill_list",
+];
+
+/** COMMIT read tools — included by default for quick lookups. */
+const COMMIT_READ_TOOLS = [
   "commit__get_daily_snapshot",
   "commit__get_hierarchy",
   "commit__list_tasks",
@@ -55,6 +70,10 @@ const COMMIT_TOOLS = [
   "commit__list_objectives",
   "commit__search_journal",
   "commit__list_ideas",
+];
+
+/** COMMIT write tools — only when productivity management is the topic. */
+const COMMIT_WRITE_TOOLS = [
   "commit__update_status",
   "commit__complete_recurring",
   "commit__create_task",
@@ -67,14 +86,10 @@ const COMMIT_TOOLS = [
   "commit__update_vision",
   "commit__delete_item",
   "commit__bulk_reprioritize",
-  "skill_save",
-  "skill_list",
-  "web_search",
-  "web_read",
-  "schedule_task",
-  "list_schedules",
-  "delete_schedule",
 ];
+
+/** Scheduling tools — only when reports/automation discussed. */
+const SCHEDULE_TOOLS = ["schedule_task", "list_schedules", "delete_schedule"];
 
 /** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
 const GOOGLE_TOOLS = [
@@ -94,16 +109,29 @@ const GOOGLE_TOOLS = [
   "gtasks_create",
 ];
 
-/** Extra utility tools available in chat. */
-const UTILITY_TOOLS = [
+/** Coding/file tools — only when code/files are the topic. */
+const CODING_TOOLS = [
   "shell_exec",
-  "http",
   "file_read",
-  "chart_generate",
-  "rss_read",
+  "file_write",
+  "file_edit",
+  "grep",
+  "glob",
+  "list_dir",
 ];
 
-/** Lightpanda browser tools — registered dynamically by MCP, silently skipped if unavailable. */
+/** WordPress publishing tools — only when blog/content creation discussed. */
+const WORDPRESS_TOOLS = ["wp_publish", "wp_media_upload", "wp_categories"];
+
+/** Other utility tools — always included (lightweight definitions). */
+const MISC_TOOLS = [
+  "http_fetch",
+  "chart_generate",
+  "rss_read",
+  "list_schedules",
+];
+
+/** Lightpanda browser tools — only when web interaction needed. */
 const BROWSER_TOOLS = [
   "browser__goto",
   "browser__markdown",
@@ -116,6 +144,120 @@ const BROWSER_TOOLS = [
   "browser__fill",
   "browser__scroll",
 ];
+
+// ---------------------------------------------------------------------------
+// Dynamic tool scoping — reduces prompt bloat by ~40-50%
+// ---------------------------------------------------------------------------
+
+/** Keyword patterns that activate tool groups. Scans current + recent messages. */
+const SCOPE_PATTERNS: { pattern: RegExp; group: string }[] = [
+  // COMMIT write tools
+  {
+    pattern:
+      /\b(crea(r|me)?|actualiz|complet|elimina|borra|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto)/i,
+    group: "commit_write",
+  },
+  // Google tools
+  {
+    pattern:
+      /\b(emails?|correos?|mails?|gmail|calendar|agenda|eventos?|citas?|reuni[oó]n|drive|document|hojas?|sheets?|slides?|present|google)/i,
+    group: "google",
+  },
+  // Browser tools
+  {
+    pattern:
+      /\b(naveg|browse|sitio|p[aá]gina|verific|click|login|form|scrape|interact|render|javascript)/i,
+    group: "browser",
+  },
+  // Coding tools
+  {
+    pattern:
+      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git|npm|build|test|lint|bug|error|fix|debug)/i,
+    group: "coding",
+  },
+  // Schedule tools
+  {
+    pattern:
+      /\b(schedules?|reportes?|programa(r|dos?|ción)?|cron|diarios?|semanal|automat\w*|recurrent)/i,
+    group: "schedule",
+  },
+  // WordPress tools
+  {
+    pattern:
+      /\b(wordpress|wp|blogs?|posts?|art[ií]culos?|publi(ca|car|que)|drafts?|borrador|featured\s*image|hero\s*image|categor[iy]|tags?)/i,
+    group: "wordpress",
+  },
+];
+
+/**
+ * Scope tools to only groups relevant to the current conversation context.
+ * Scans the current message + last 3 conversation turns for keyword signals.
+ * Always includes core + COMMIT read + misc. Activates other groups on demand.
+ *
+ * Typical reduction: 49 → 15-25 tools = ~5-8K fewer tokens.
+ */
+function scopeToolsForMessage(
+  currentMessage: string,
+  _conversationHistory: ConversationTurn[],
+): string[] {
+  // Only scan the CURRENT message for scoping — not conversation history.
+  // History is there for the LLM's context, but tool scoping should reflect
+  // what the user is asking NOW, not what was discussed 5 messages ago.
+  const contextText = currentMessage;
+
+  // Detect which groups are needed
+  const activeGroups = new Set<string>();
+  for (const { pattern, group } of SCOPE_PATTERNS) {
+    if (pattern.test(contextText)) {
+      activeGroups.add(group);
+    }
+  }
+
+  // Assemble scoped tool list
+  const tools = [...CORE_TOOLS, ...COMMIT_READ_TOOLS, ...MISC_TOOLS];
+
+  if (activeGroups.has("commit_write")) {
+    tools.push(...COMMIT_WRITE_TOOLS);
+  }
+  if (activeGroups.has("schedule")) {
+    tools.push(...SCHEDULE_TOOLS);
+  }
+  if (activeGroups.has("google") && process.env.GOOGLE_CLIENT_ID) {
+    tools.push(...GOOGLE_TOOLS);
+  }
+  if (activeGroups.has("browser")) {
+    tools.push(...BROWSER_TOOLS);
+  }
+  if (activeGroups.has("coding")) {
+    tools.push(...CODING_TOOLS);
+  }
+  if (activeGroups.has("wordpress") && process.env.WP_SITES) {
+    tools.push(...WORDPRESS_TOOLS);
+  }
+
+  // Memory tools (always if available — lightweight)
+  if (getMemoryService().backend === "hindsight") {
+    tools.push("memory_search", "memory_store");
+  }
+
+  const scopedCount = tools.length;
+  const fullCount =
+    CORE_TOOLS.length +
+    COMMIT_READ_TOOLS.length +
+    COMMIT_WRITE_TOOLS.length +
+    SCHEDULE_TOOLS.length +
+    MISC_TOOLS.length +
+    BROWSER_TOOLS.length +
+    CODING_TOOLS.length +
+    (process.env.GOOGLE_CLIENT_ID ? GOOGLE_TOOLS.length : 0) +
+    (process.env.WP_SITES ? WORDPRESS_TOOLS.length : 0) +
+    2; // memory
+  console.log(
+    `[router] Tool scope: ${scopedCount}/${fullCount} tools (groups: ${[...activeGroups].join(", ") || "core-only"})`,
+  );
+
+  return tools;
+}
 
 interface PendingReply {
   channel: ChannelName;
@@ -303,20 +445,8 @@ export class MessageRouter {
       // Non-fatal — DB may not have the table yet
     }
 
-    const tools = [
-      ...COMMIT_TOOLS,
-      "user_fact_set",
-      "user_fact_list",
-      "user_fact_delete",
-      ...UTILITY_TOOLS,
-      ...BROWSER_TOOLS,
-    ];
-    if (getMemoryService().backend === "hindsight") {
-      tools.push("memory_search", "memory_store");
-    }
-    if (process.env.GOOGLE_CLIENT_ID) {
-      tools.push(...GOOGLE_TOOLS);
-    }
+    // Dynamic tool scoping — only include tool groups relevant to the conversation
+    const tools = scopeToolsForMessage(msg.text, conversationHistory);
 
     // Current date/time in Mexico City for the LLM
     const now = new Date();
@@ -397,7 +527,15 @@ NUNCA respondas preguntas sobre estado del sistema, listas, o datos estructurado
 - "Qué metas/objetivos tengo?" → commit__list_goals / commit__list_objectives PRIMERO
 - "Qué skills tienes?" → skill_list PRIMERO
 - "Cuánto llevo de cuota?" → consultar la herramienta correspondiente PRIMERO
+- "Publica en WordPress" → wp_publish PRIMERO, luego reporta el resultado
 La fuente de la verdad es la herramienta, NUNCA tu contexto conversacional. Si "recuerdas" la respuesta pero no llamaste a la herramienta, tu respuesta es SOSPECHOSA. Llama a la herramienta.
+
+## REGLA CRÍTICA: NUNCA simules ejecución
+NUNCA narres pasos como si los estuvieras ejecutando sin realmente llamar a una herramienta. Ejemplos PROHIBIDOS:
+- "*(Procesando conexión...)*" sin llamar a http_fetch o wp_publish
+- "✅ Éxito. El archivo fue creado." sin llamar a file_write
+- "Subí la imagen a WordPress." sin llamar a wp_media_upload
+Si no tienes la herramienta disponible para hacer algo, DILO CLARAMENTE: "No tengo herramienta para hacer X" o "Necesito que actives X". NUNCA finjas que algo funcionó. Esto destruye la confianza.
 
 ## Protocolo de corrección
 Cuando Fede diga "olvidaste X", "falta X", "te equivocaste en X":
@@ -412,6 +550,30 @@ Nunca hagas "parches sobre parches". Regenera desde la fuente.
 - Si Fede menciona un proyecto, persona, o contexto, busca información previa antes de responder
 - NO hagas preguntas redundantes — revisa el historial y tu memoria primero
 - Después de completar un flujo de 3+ pasos, evalúa si es un patrón repetible y usa skill_save para guardarlo
+
+## Capacidades de código
+Tienes herramientas completas para leer, buscar, editar y ejecutar código:
+- **grep**: Busca texto en archivos — usa esto ANTES de editar para entender el código existente
+- **glob**: Encuentra archivos por patrón (e.g. "**/*.ts", "src/**/*.py")
+- **list_dir**: Explora la estructura de directorios
+- **file_read**: Lee el contenido de archivos
+- **file_edit**: Edita archivos con reemplazos exactos de texto — PREFERIDO sobre file_write para cambios
+- **file_write**: Crea archivos nuevos o reescribe completos
+- **shell_exec**: Ejecuta comandos de terminal (npm, git, tests, builds, etc.)
+
+FLUJO DE TRABAJO para cambios de código:
+1. **Entiende primero**: Usa grep/glob/list_dir para explorar el codebase
+2. **Lee antes de editar**: SIEMPRE usa file_read antes de file_edit (necesitas el texto exacto)
+3. **Edita con file_edit**: Cambios quirúrgicos, no reescrituras completas
+4. **Verifica**: Ejecuta tests/linters con shell_exec después de cambios
+5. **Reporta**: Muestra qué cambió y el resultado de la verificación
+
+REGLAS de código:
+- NUNCA adivines el contenido de un archivo — léelo primero
+- Usa file_edit para cambios en archivos existentes (no file_write)
+- Ejecuta tests después de cambios: shell_exec con el comando de test del proyecto
+- Si un test falla, analiza el error y corrige — no te rindas
+- Haz cambios mínimos y enfocados — no refactorices código que no se pidió cambiar
 
 ## Navegación web avanzada
 Tienes un navegador completo (browser__*) para:
