@@ -159,6 +159,22 @@ export const fastRunner: Runner = {
 
       let parsed = parseRunnerStatus(result.content);
 
+      // Safety net: if the LLM returned substantial content but reported BLOCKED/NEEDS_CONTEXT,
+      // override to DONE_WITH_CONCERNS. This prevents infinite retry loops when the wrap-up
+      // call honestly reports limitations but DID produce a useful response.
+      if (
+        (parsed.status === "BLOCKED" || parsed.status === "NEEDS_CONTEXT") &&
+        parsed.cleanContent.length > 100
+      ) {
+        parsed = {
+          ...parsed,
+          status: "DONE_WITH_CONCERNS",
+          concerns: [
+            `Original status: ${parsed.status}. ${parsed.concerns?.[0] ?? "Response promoted to success because content was produced."}`,
+          ],
+        };
+      }
+
       // Extract tool names actually called during execution
       const toolsCalled: string[] = [];
       for (const msg of result.messages) {

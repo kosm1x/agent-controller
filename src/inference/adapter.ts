@@ -504,7 +504,7 @@ export async function inferWithTools(
       try {
         const leanContext = buildWrapUpContext(
           conversation,
-          "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools.",
+          "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what went wrong]",
         );
         const wrapUp = await infer(
           { messages: leanContext },
@@ -621,7 +621,7 @@ export async function inferWithTools(
   try {
     const leanContext = buildWrapUpContext(
       conversation,
-      "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools.",
+      "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what was incomplete]",
     );
     const wrapUp = await infer({ messages: leanContext }, onTextChunk, signal);
     totalPrompt += wrapUp.usage.prompt_tokens;

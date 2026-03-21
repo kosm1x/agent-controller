@@ -95,6 +95,17 @@ export class ReactionManager {
     // Skip swarm subtasks — the swarm runner manages its own children
     if (task.spawn_type === "subtask") return;
 
+    // Skip messaging/chat tasks — the user already received a response (or error message)
+    // and can simply re-ask. Retrying chat tasks creates confusing duplicate replies.
+    try {
+      if (task.metadata) {
+        const meta = JSON.parse(task.metadata);
+        if (Array.isArray(meta.tags) && meta.tags.includes("messaging")) return;
+      }
+    } catch {
+      // Non-fatal — proceed with reaction evaluation
+    }
+
     // Cooldown check: don't react if we just reacted to this task
     const latest = getLatestReaction(this.db, taskId);
     if (latest) {
