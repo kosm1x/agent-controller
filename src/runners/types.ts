@@ -11,6 +11,7 @@ export type AgentType = "fast" | "nanoclaw" | "heavy" | "swarm" | "a2a";
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string; // Base64 data URL for vision (user turns only)
 }
 
 /** Input passed to a runner when executing a task. */

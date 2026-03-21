@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-20
+> Last updated: 2026-03-21
 
 ## Overview
 
@@ -53,6 +53,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.21 | Coding Toolkit — file_edit, grep, glob, list_dir tools (open-swe inspired) | Done | — |
 | v2.22 | WordPress + Anti-Hallucination — wp_list_posts/wp_read_post/wp_publish/wp_media_upload/wp_categories (5 tools, multi-site), content destruction safeguard, hallucination detector in fast-runner (EN+ES patterns), HTML Telegram formatter, scope pattern inflection fix | Done | — |
 | v2.22.1 | WordPress Content Protection — file-based read/write pipeline (bypasses 12K tool result truncation), 3-layer destruction safeguard (80% text + 70% HTML + 30% structure), read-before-write enforcement, status-only vs content-edit protocol split | Done | — |
+| v2.23 | Telegram Vision — Jarvis can see images sent via Telegram (base64 download → multimodal content array → LLM) | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (87 total, managed by 5 ToolSource plugins)
@@ -88,6 +89,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-21 | — | feat: v2.23 Telegram vision — Jarvis can see images. Pipeline: Telegram photo → base64 download → imageUrl on IncomingMessage/ConversationTurn → multimodal content array in fast-runner → LLM vision. qwen3.5-plus on DashScope coding-intl natively supports vision (discovered via API probing). New file: src/inference/vision.ts (unused but retained for future dedicated VL model calls) |
 | 2026-03-21 | — | fix: WordPress content protection v2 — file-based content pipeline (wp_read_post saves to /tmp, wp_publish reads via content_file param), 3-layer destruction safeguard (80% text/70% HTML/30% structure), read-before-write enforcement (module-level tracking), status-only protocol for republish (prevents prompt bloat), 19 new tests |
 | 2026-03-20 | — | v2.22: WordPress multi-site tools (wp_publish, wp_media_upload, wp_categories), hallucination detector (narrated execution → retry with correction), HTML Telegram formatter (replaces broken MarkdownV2), scope pattern inflection fix (Spanish plural/conjugation), list_schedules promoted to always-available, anti-hallucination system prompt directive |
 | 2026-03-20 | — | v2.21: Coding toolkit — file_edit, grep, glob, list_dir (open-swe inspired) |
@@ -126,7 +128,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Hindsight mental model refresh slow with Qwen backend (~2min/model) — using direct recall instead
 - Multiple MC restarts can cause Telegram 409 polling conflicts — always kill all instances before restart
 - deepseek-v3.2 never voluntarily stops calling tools on research tasks — mitigated by MAX_ROUNDS=7 + wrap-up call
-- Primary model (qwen3.5-plus) intermittently slow on DashScope — falls back to deepseek-v3.2
+- Primary model (glm-5) intermittently slow on DashScope coding-intl — falls back to qwen3.5-plus
+- DashScope coding-intl endpoint has no `/models` listing and no dedicated VL models — but qwen3.5-plus natively supports vision via multimodal content arrays
 - ~~Proactive daily counter reset used UTC instead of Mexico City time~~ (fixed 2026-03-19)
 - ~~tools_used always empty in task_outcomes (fast-runner returned plain string instead of structured output)~~ (fixed 2026-03-20)
 - ~~WordPress content destruction: wp_publish with post_id + partial content replaced entire articles; root cause was 12K tool result truncation in inference adapter stripping article middles~~ (fixed 2026-03-21, file-based pipeline)

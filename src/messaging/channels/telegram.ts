@@ -76,6 +76,24 @@ async function downloadRawText(url: string): Promise<string> {
     : text;
 }
 
+/**
+ * Download an image from Telegram and return as a base64 data URL
+ * suitable for OpenAI-compatible vision APIs.
+ */
+async function downloadImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    return `data:${contentType};base64,${base64}`;
+  } catch (err) {
+    console.error("[telegram] Image download failed:", err);
+    return null;
+  }
+}
+
 export class TelegramAdapter implements ChannelAdapter {
   readonly name = "telegram" as const;
 
@@ -157,6 +175,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
         let fileContent = "";
         let fileLabel = "";
+        let imageUrl: string | undefined;
 
         if (doc) {
           fileLabel = doc.file_name ?? "document";
@@ -170,23 +189,39 @@ export class TelegramAdapter implements ChannelAdapter {
           const largest = photo[photo.length - 1];
           const file = await ctx.api.getFile(largest.file_id);
           const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-          fileContent = `[Imagen recibida — URL interna procesada. No se pudo extraer texto de la imagen.]`;
-          // Future: could use vision model or OCR here
-          void fileUrl; // suppress unused warning
+
+          // Download image as base64 — passed directly to LLM via multimodal content
+          const base64Url = await downloadImageAsBase64(fileUrl);
+          if (base64Url) {
+            imageUrl = base64Url;
+            console.log(
+              `[telegram] Image downloaded: ${Math.round(base64Url.length / 1024)}KB base64`,
+            );
+          } else {
+            fileContent =
+              "[Imagen recibida pero no se pudo descargar para análisis.]";
+          }
         }
 
-        const contentBlock = fileContent
-          ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---`
-          : `\n\n[No se pudo extraer contenido del archivo "${fileLabel}"]`;
-
-        const text = caption
-          ? `${caption}${contentBlock}`
-          : `El usuario envió un archivo: "${fileLabel}".${contentBlock}\n\nAnaliza el contenido y responde.`;
+        let text: string;
+        if (imageUrl) {
+          // Vision path: image goes as imageUrl, text is just the caption/prompt
+          text =
+            caption || "El usuario envió una imagen. Descríbela y responde.";
+        } else {
+          const contentBlock = fileContent
+            ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---`
+            : `\n\n[No se pudo extraer contenido del archivo "${fileLabel}"]`;
+          text = caption
+            ? `${caption}${contentBlock}`
+            : `El usuario envió un archivo: "${fileLabel}".${contentBlock}\n\nAnaliza el contenido y responde.`;
+        }
 
         this.messageHandler({
           channel: "telegram",
           from: chatId,
           text,
+          imageUrl,
           timestamp: new Date(ctx.message.date * 1000),
           replyTo: String(ctx.message.message_id),
         });

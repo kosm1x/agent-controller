@@ -117,7 +117,18 @@ export const fastRunner: Runner = {
       });
 
       for (const turn of input.conversationHistory) {
-        messages.push({ role: turn.role, content: turn.content });
+        if (turn.imageUrl && turn.role === "user") {
+          // Multimodal: text + image as content array for vision-capable models
+          messages.push({
+            role: "user",
+            content: [
+              { type: "text", text: turn.content },
+              { type: "image_url", image_url: { url: turn.imageUrl } },
+            ],
+          });
+        } else {
+          messages.push({ role: turn.role, content: turn.content });
+        }
       }
     } else {
       // Non-chat task: generic system prompt + description as user message

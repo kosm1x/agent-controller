@@ -13,6 +13,7 @@ export interface IncomingMessage {
   text: string;
   timestamp: Date;
   replyTo?: string; // Message ID for threading
+  imageUrl?: string; // Base64 data URL for vision (from photos)
   metadata?: Record<string, unknown>;
 }
 

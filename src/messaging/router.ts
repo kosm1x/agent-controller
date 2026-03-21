@@ -439,7 +439,11 @@ export class MessageRouter {
     // The current user message is appended as the final turn so the fast runner
     // can send it as a proper user message rather than embedding it in the description.
     const conversationHistory = getThreadTurns(msg.channel);
-    conversationHistory.push({ role: "user", content: msg.text });
+    conversationHistory.push({
+      role: "user",
+      content: msg.text,
+      ...(msg.imageUrl && { imageUrl: msg.imageUrl }),
+    });
 
     // Recall semantic memories + enrich context IN PARALLEL
     const enrichment = await enrichContext(msg.text, msg.channel);
