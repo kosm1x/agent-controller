@@ -38,6 +38,8 @@ import {
   wpPublishTool,
   wpMediaUploadTool,
   wpCategoriesTool,
+  wpListPostsTool,
+  wpReadPostTool,
 } from "../builtin/wordpress.js";
 import type { Tool } from "../types.js";
 
@@ -68,7 +70,13 @@ const BUILTIN_TOOLS: Tool[] = [
 ];
 
 // WordPress tools — conditionally registered when WP_URL is configured
-const WP_TOOLS: Tool[] = [wpPublishTool, wpMediaUploadTool, wpCategoriesTool];
+const WP_TOOLS: Tool[] = [
+  wpListPostsTool,
+  wpReadPostTool,
+  wpPublishTool,
+  wpMediaUploadTool,
+  wpCategoriesTool,
+];
 
 export class BuiltinToolSource implements ToolSource {
   readonly manifest: ToolSourceManifest = {

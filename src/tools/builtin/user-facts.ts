@@ -12,6 +12,7 @@ import {
   getUserFacts,
   deleteUserFact,
 } from "../../db/user-facts.js";
+import { toMexTime } from "../../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // user_fact_set
@@ -122,7 +123,7 @@ USE WHEN:
     return facts
       .map(
         (f) =>
-          `[${f.category}] ${f.key}: ${f.value} (updated: ${f.updated_at})`,
+          `[${f.category}] ${f.key}: ${f.value} (updated: ${toMexTime(f.updated_at)})`,
       )
       .join("\n");
   },

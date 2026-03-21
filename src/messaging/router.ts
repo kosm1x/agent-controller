@@ -42,6 +42,7 @@ import {
   handleScheduledTaskResult,
 } from "../rituals/dynamic.js";
 import type { ConversationTurn } from "../runners/types.js";
+import { nowMexDate, nowMexTime } from "../lib/timezone.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -121,7 +122,13 @@ const CODING_TOOLS = [
 ];
 
 /** WordPress publishing tools — only when blog/content creation discussed. */
-const WORDPRESS_TOOLS = ["wp_publish", "wp_media_upload", "wp_categories"];
+const WORDPRESS_TOOLS = [
+  "wp_list_posts",
+  "wp_read_post",
+  "wp_publish",
+  "wp_media_upload",
+  "wp_categories",
+];
 
 /** Other utility tools — always included (lightweight definitions). */
 const MISC_TOOLS = [
@@ -449,20 +456,8 @@ export class MessageRouter {
     const tools = scopeToolsForMessage(msg.text, conversationHistory);
 
     // Current date/time in Mexico City for the LLM
-    const now = new Date();
-    const mxDate = now.toLocaleDateString("es-MX", {
-      timeZone: "America/Mexico_City",
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const mxTime = now.toLocaleTimeString("es-MX", {
-      timeZone: "America/Mexico_City",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
+    const mxDate = nowMexDate();
+    const mxTime = nowMexTime();
 
     const result = await submitTask({
       title: `Chat: ${titleText}`,
@@ -528,13 +523,33 @@ NUNCA respondas preguntas sobre estado del sistema, listas, o datos estructurado
 - "Qué skills tienes?" → skill_list PRIMERO
 - "Cuánto llevo de cuota?" → consultar la herramienta correspondiente PRIMERO
 - "Publica en WordPress" → wp_publish PRIMERO, luego reporta el resultado
+- "Republica/cambia estado" → wp_list_posts → wp_publish con post_id y status (SIN content) — NO necesitas wp_read_post
+- "Actualiza/modifica un artículo" → wp_list_posts → wp_read_post → wp_publish (los 3, en ese orden)
 La fuente de la verdad es la herramienta, NUNCA tu contexto conversacional. Si "recuerdas" la respuesta pero no llamaste a la herramienta, tu respuesta es SOSPECHOSA. Llama a la herramienta.
+
+## PROTOCOLO OBLIGATORIO: WordPress
+
+### Cambio de estado (publicar, despublicar, republicar):
+Solo necesitas post_id + status. NO envíes content. NO necesitas wp_read_post.
+1. wp_list_posts para encontrar el post_id
+2. wp_publish con post_id y status (ej: "publish", "draft") — SIN campo content
+Esto cambia el estado sin tocar el contenido del artículo.
+
+### Modificación de contenido (editar texto, agregar sección, etc.):
+1. PRIMERO: wp_list_posts para encontrar el post_id correcto
+2. SEGUNDO: wp_read_post → guarda el HTML completo en un archivo temporal, te devuelve content_file
+3. TERCERO: file_edit para hacer los cambios necesarios EN EL ARCHIVO (no en tu contexto)
+4. CUARTO: wp_publish con post_id y content_file=<ruta del archivo>
+NUNCA envíes "content" inline al editar artículos existentes — usa content_file para evitar truncamiento.
+El campo "content" REEMPLAZA todo el cuerpo del artículo.
 
 ## REGLA CRÍTICA: NUNCA simules ejecución
 NUNCA narres pasos como si los estuvieras ejecutando sin realmente llamar a una herramienta. Ejemplos PROHIBIDOS:
 - "*(Procesando conexión...)*" sin llamar a http_fetch o wp_publish
 - "✅ Éxito. El archivo fue creado." sin llamar a file_write
 - "Subí la imagen a WordPress." sin llamar a wp_media_upload
+- "Ya está LIVE" o "Corregido y verificado" sin haber llamado wp_publish
+- "Acabo de ejecutar la publicación real" sin tool_calls en tu respuesta
 Si no tienes la herramienta disponible para hacer algo, DILO CLARAMENTE: "No tengo herramienta para hacer X" o "Necesito que actives X". NUNCA finjas que algo funcionó. Esto destruye la confianza.
 
 ## Protocolo de corrección

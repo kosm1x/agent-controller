@@ -10,6 +10,7 @@ import {
   deleteSchedule,
   type ScheduledTaskRow,
 } from "../../rituals/dynamic.js";
+import { toMexTime } from "../../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // schedule_task
@@ -180,8 +181,8 @@ export const listSchedulesTool: Tool = {
         delivery: s.delivery,
         email_to: s.email_to,
         active: s.active === 1,
-        last_run_at: s.last_run_at,
-        created_at: s.created_at,
+        last_run_at: toMexTime(s.last_run_at),
+        created_at: toMexTime(s.created_at),
       })),
       count: schedules.length,
     });

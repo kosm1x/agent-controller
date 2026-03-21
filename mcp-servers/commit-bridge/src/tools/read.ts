@@ -14,6 +14,13 @@ import type {
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
+const USER_TIMEZONE = "America/Mexico_City";
+
+/** Get today's date in Mexico City timezone (YYYY-MM-DD). */
+function todayMx(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+}
+
 function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
   return items.sort(
     (a, b) =>
@@ -22,18 +29,20 @@ function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
 }
 
 function toISODate(date?: string): string {
-  return date ?? new Date().toISOString().split("T")[0];
+  return date ?? todayMx();
 }
 
 function calculateStreak(dates: string[]): number {
   if (dates.length === 0) return 0;
   const unique = [...new Set(dates)].sort().reverse();
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayMx();
   let streak = 0;
-  const cursor = new Date(today);
+  const cursor = new Date(today + "T12:00:00"); // noon to avoid DST edge cases
 
   for (const d of unique) {
-    const expected = cursor.toISOString().split("T")[0];
+    const expected = cursor.toLocaleDateString("en-CA", {
+      timeZone: USER_TIMEZONE,
+    });
     if (d === expected) {
       streak++;
       cursor.setDate(cursor.getDate() - 1);

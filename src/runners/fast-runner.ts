@@ -50,12 +50,21 @@ function detectsHallucinatedExecution(
   if (toolsCalled.length > 0) return false; // Tools were actually called
 
   const hallucinationPatterns = [
-    /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando)[^)]*\.\.\.\)\*?/i,
-    /✅\s*(?:ÉXITO|Listo|Publicado|Completado|Subido|Creado|Enviado)/i,
+    // Spanish narrated execution
+    /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando|Publicando|Guardando)[^)]*\.\.\.\)\*?/i,
+    /✅\s*(?:ÉXITO|Listo|Publicado|Completado|Subido|Creado|Enviado|Guardado|LIVE)/i,
     /🚀\s*(?:PUBLICADO|ENVIADO|EJECUTADO)/i,
-    /(?:Archivo|Post|Imagen|Documento)\s+(?:creado|subido|publicado|generado)\s+(?:exitosamente|correctamente|con éxito)/i,
+    /(?:Archivo|Post|Imagen|Documento|Artículo)\s+(?:creado|subido|publicado|generado|guardado|actualizado)\s+(?:exitosamente|correctamente|con éxito)/i,
     /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
     /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
+    /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar)/i,
+    /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
+    // English narrated execution
+    /\*?\((?:Processing|Executing|Connecting|Uploading|Downloading|Verifying|Generating|Scanning|Publishing|Saving)[^)]*\.\.\.\)\*?/i,
+    /✅\s*(?:SUCCESS|Done|Published|Completed|Uploaded|Created|Sent|Saved|LIVE)/i,
+    /(?:File|Post|Image|Document|Article)\s+(?:created|uploaded|published|generated|saved|updated)\s+(?:successfully|correctly)/i,
+    /(?:just (?:executed|published|uploaded|created|saved|updated|verified))/i,
+    /(?:is now live|is now published|has been published)/i,
   ];
 
   return hallucinationPatterns.some((p) => p.test(text));

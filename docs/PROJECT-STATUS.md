@@ -13,10 +13,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric | Value |
 |--------|-------|
 | Source files | ~120 |
-| Test files | 49 |
-| Tests passing | 460 |
+| Test files | 50 |
+| Tests passing | 479 |
 | Type errors | 0 |
-| Total tools | 94 (20 commit-bridge + 26 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
+| Total tools | 96 (20 commit-bridge + 28 builtin + 3 memory + 2 skill + 14 Google + 10 browser + 19 other MCP) |
 | Dependencies | 6 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
@@ -51,15 +51,16 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.19 | Browser Integration — Lightpanda headless browser via MCP (10 tools: goto, markdown, links, evaluate, semantic_tree, interactiveElements, structuredData, click, fill, scroll) | Done | — |
 | v2.20 | Jarvis Chat Enhancements — sandboxed shell_exec, expanded chat tool whitelist (+5 utility +10 browser), tools_used tracking fix, system prompt behavioral directives (verification, proactive memory, skill auto-save), skill-discovery auto-save, tool-first guard against cognitive laziness | Done | — |
 | v2.21 | Coding Toolkit — file_edit, grep, glob, list_dir tools (open-swe inspired) | Done | — |
-| v2.22 | WordPress + Anti-Hallucination — wp_publish/wp_media_upload/wp_categories (multi-site), hallucination detector in fast-runner, HTML Telegram formatter, scope pattern inflection fix | Done | — |
+| v2.22 | WordPress + Anti-Hallucination — wp_list_posts/wp_read_post/wp_publish/wp_media_upload/wp_categories (5 tools, multi-site), content destruction safeguard, hallucination detector in fast-runner (EN+ES patterns), HTML Telegram formatter, scope pattern inflection fix | Done | — |
+| v2.22.1 | WordPress Content Protection — file-based read/write pipeline (bypasses 12K tool result truncation), 3-layer destruction safeguard (80% text + 70% HTML + 30% structure), read-before-write enforcement, status-only vs content-edit protocol split | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (85 total, managed by 5 ToolSource plugins)
+## Tools (87 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
 | Builtin | shell_exec, http_fetch, file_read, file_write, file_edit, grep, glob, list_dir, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete, evolution_get_data, evolution_deactivate_skill | 23 |
-| WordPress | wp_publish, wp_media_upload, wp_categories | 3 |
+| WordPress | wp_list_posts, wp_read_post, wp_publish, wp_media_upload, wp_categories | 5 |
 | Browser (Lightpanda) | browser__goto, browser__markdown, browser__links, browser__evaluate, browser__semantic_tree, browser__interactiveElements, browser__structuredData, browser__click, browser__fill, browser__scroll | 10 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
@@ -87,6 +88,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-21 | — | fix: WordPress content protection v2 — file-based content pipeline (wp_read_post saves to /tmp, wp_publish reads via content_file param), 3-layer destruction safeguard (80% text/70% HTML/30% structure), read-before-write enforcement (module-level tracking), status-only protocol for republish (prevents prompt bloat), 19 new tests |
 | 2026-03-20 | — | v2.22: WordPress multi-site tools (wp_publish, wp_media_upload, wp_categories), hallucination detector (narrated execution → retry with correction), HTML Telegram formatter (replaces broken MarkdownV2), scope pattern inflection fix (Spanish plural/conjugation), list_schedules promoted to always-available, anti-hallucination system prompt directive |
 | 2026-03-20 | — | v2.21: Coding toolkit — file_edit, grep, glob, list_dir (open-swe inspired) |
 | 2026-03-20 | — | v2.20: Jarvis chat enhancements — sandboxed shell, expanded tool whitelist (29→44 tools), tools_used tracking fix, behavioral directives (auto-verify, proactive memory, skill auto-save), tool-first guard (enrichment-level pattern matching against cognitive laziness) |
@@ -127,3 +129,4 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - Primary model (qwen3.5-plus) intermittently slow on DashScope — falls back to deepseek-v3.2
 - ~~Proactive daily counter reset used UTC instead of Mexico City time~~ (fixed 2026-03-19)
 - ~~tools_used always empty in task_outcomes (fast-runner returned plain string instead of structured output)~~ (fixed 2026-03-20)
+- ~~WordPress content destruction: wp_publish with post_id + partial content replaced entire articles; root cause was 12K tool result truncation in inference adapter stripping article middles~~ (fixed 2026-03-21, file-based pipeline)
