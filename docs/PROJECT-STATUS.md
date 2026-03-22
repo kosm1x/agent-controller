@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-21
+> Last updated: 2026-03-22
 
 ## Overview
 
@@ -54,9 +54,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.22 | WordPress + Anti-Hallucination — wp_list_posts/wp_read_post/wp_publish/wp_media_upload/wp_categories (5 tools, multi-site), content destruction safeguard, hallucination detector in fast-runner (EN+ES patterns), HTML Telegram formatter, scope pattern inflection fix | Done | — |
 | v2.22.1 | WordPress Content Protection — file-based read/write pipeline (bypasses 12K tool result truncation), 3-layer destruction safeguard (80% text + 70% HTML + 30% structure), read-before-write enforcement, status-only vs content-edit protocol split | Done | — |
 | v2.23 | Telegram Vision — Jarvis can see images sent via Telegram (base64 download → multimodal content array → LLM) | Done | — |
+| v2.24 | Email Header Fix + Scheduled Task Delivery Alerts + Hallucination Hardening + Critical Data Auto-Persistence | Done | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (87 total, managed by 5 ToolSource plugins)
+## Tools (96 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
@@ -89,6 +90,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-22 | — | feat: v2.24 — (1) Gmail RFC 2047 header encoding (MIME-Version, base64 Subject for non-ASCII, Content-Transfer-Encoding). (2) Scheduled task delivery alerts: watchScheduledTask tracks delivery metadata, handleScheduledTaskResult verifies gmail_send was called for email tasks, handleScheduledTaskFailure alerts on failures — all via Telegram. (3) Hallucination detector hardened: removed chat-only gate (now fires on all task types), added FTP/SSH/SFTP connection narration patterns. (4) Critical data auto-persistence: "projects" category in user_fact_set, mechanical safety net in router (regex detects Google API keys, GA4 IDs, labeled secrets post-execution and auto-stores if LLM skipped user_fact_set). (5) Recovered lost GA4 (G-9CJ1K3E7RG) + Gemini API key into user_facts |
 | 2026-03-21 | — | fix: prevent infinite retry loops on max-rounds chat tasks. 3-layer fix: wrap-up instructions include STATUS: DONE_WITH_CONCERNS guidance, fast-runner promotes BLOCKED/NEEDS_CONTEXT with >100 chars to success, reaction engine skips messaging tasks entirely. Root cause: LLM exhausted rounds on failing browser tools → wrap-up STATUS: BLOCKED → task failed → reaction engine spawned new task (fresh previousAttempts=0) → unbounded chain |
 | 2026-03-21 | — | feat: v2.23 Telegram vision — Jarvis can see images. Pipeline: Telegram photo → base64 download → imageUrl on IncomingMessage/ConversationTurn → multimodal content array in fast-runner → LLM vision. qwen3.5-plus on DashScope coding-intl natively supports vision (discovered via API probing). New file: src/inference/vision.ts (unused but retained for future dedicated VL model calls) |
 | 2026-03-21 | — | fix: WordPress content protection v2 — file-based content pipeline (wp_read_post saves to /tmp, wp_publish reads via content_file param), 3-layer destruction safeguard (80% text/70% HTML/30% structure), read-before-write enforcement (module-level tracking), status-only protocol for republish (prevents prompt bloat), 19 new tests |
@@ -131,6 +133,10 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 - deepseek-v3.2 never voluntarily stops calling tools on research tasks — mitigated by MAX_ROUNDS=7 + wrap-up call
 - Primary model (glm-5) intermittently slow on DashScope coding-intl — falls back to qwen3.5-plus
 - DashScope coding-intl endpoint has no `/models` listing and no dedicated VL models — but qwen3.5-plus natively supports vision via multimodal content arrays
+- ~~Gmail headers garbled for non-ASCII subjects (emojis, em dashes, accented chars)~~ (fixed 2026-03-22, RFC 2047 encoding)
+- ~~Scheduled email tasks that fail via wrap-up recovery silently skip gmail_send with no notification~~ (fixed 2026-03-22, delivery verification + Telegram alerts)
+- ~~Hallucination detector only ran on chat tasks (conversationHistory gate)~~ (fixed 2026-03-22, removed gate)
+- ~~LLM-provided API keys/GA4 IDs/credentials lost between sessions — user_fact_set had no "projects" category and no system prompt directive for technical data~~ (fixed 2026-03-22, projects category + auto-detection safety net)
 - ~~Proactive daily counter reset used UTC instead of Mexico City time~~ (fixed 2026-03-19)
 - ~~tools_used always empty in task_outcomes (fast-runner returned plain string instead of structured output)~~ (fixed 2026-03-20)
 - ~~WordPress content destruction: wp_publish with post_id + partial content replaced entire articles; root cause was 12K tool result truncation in inference adapter stripping article middles~~ (fixed 2026-03-21, file-based pipeline)

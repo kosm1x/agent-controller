@@ -59,6 +59,11 @@ function detectsHallucinatedExecution(
     /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
     /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar)/i,
     /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
+    // FTP/SSH/connection narration (the GA4 incident pattern)
+    /(?:Conexión\s+FTP|Conexión\s+SSH|Conexión\s+SFTP).*(?:exitosa|establecida|OK)/i,
+    /(?:Archivo\s+modificado|Script\s+inyectado|Código\s+insertado|Header\s+actualizado)/i,
+    /(?:FTP\s+connection|SSH\s+connection|SFTP\s+connection).*(?:successful|established|OK)/i,
+    /(?:File\s+modified|Script\s+injected|Code\s+inserted|Header\s+updated)/i,
     // English narrated execution
     /\*?\((?:Processing|Executing|Connecting|Uploading|Downloading|Verifying|Generating|Scanning|Publishing|Saving)[^)]*\.\.\.\)\*?/i,
     /✅\s*(?:SUCCESS|Done|Published|Completed|Uploaded|Created|Sent|Saved|LIVE)/i,
@@ -190,10 +195,8 @@ export const fastRunner: Runner = {
       // Hallucination guard: if the LLM narrated tool execution without calling
       // any tools, inject a correction and retry ONCE. This prevents the model from
       // claiming it "uploaded", "published", or "connected" when it didn't.
-      if (
-        detectsHallucinatedExecution(parsed.cleanContent, toolsCalled) &&
-        input.conversationHistory
-      ) {
+      // Applies to ALL task types — hallucinations happen in both chat and non-chat.
+      if (detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
         console.log(
           "[fast-runner] Hallucination detected — narrated execution without tool calls. Retrying with correction.",
         );

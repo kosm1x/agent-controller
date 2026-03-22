@@ -56,15 +56,26 @@ DO NOT USE WHEN:
     const cc = args.cc as string | undefined;
 
     try {
+      // Encode subject per RFC 2047 if it contains non-ASCII characters
+      const needsEncoding = /[^\x20-\x7E]/.test(subject);
+      const encodedSubject = needsEncoding
+        ? `=?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`
+        : subject;
+
       // Build RFC 2822 email
       const headers = [
+        "MIME-Version: 1.0",
         `To: ${to}`,
-        `Subject: ${subject}`,
+        `Subject: ${encodedSubject}`,
         "Content-Type: text/plain; charset=utf-8",
+        "Content-Transfer-Encoding: base64",
       ];
       if (cc) headers.push(`Cc: ${cc}`);
 
-      const raw = [...headers, "", body].join("\r\n");
+      // Base64-encode the body separately (Content-Transfer-Encoding: base64)
+      // to safely handle UTF-8 characters in the body
+      const bodyBase64 = Buffer.from(body).toString("base64");
+      const raw = [...headers, "", bodyBase64].join("\r\n");
       const encoded = Buffer.from(raw)
         .toString("base64")
         .replace(/\+/g, "-")

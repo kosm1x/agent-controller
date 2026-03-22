@@ -221,10 +221,8 @@ async function checkAndExecuteSchedules(): Promise<void> {
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
       });
 
-      // Watch for result to broadcast via Telegram
-      if (schedule.delivery === "telegram" || schedule.delivery === "both") {
-        watchScheduledTask(result.taskId);
-      }
+      // Watch for result to verify delivery and broadcast
+      watchScheduledTask(result.taskId, schedule);
     } catch (err) {
       console.error(
         `[schedules] Failed to submit "${schedule.name}": ${err instanceof Error ? err.message : err}`,
@@ -317,33 +315,96 @@ function fieldMatches(
 }
 
 // ---------------------------------------------------------------------------
-// Task watching (for Telegram broadcast)
+// Task watching (for Telegram broadcast + delivery verification)
 // ---------------------------------------------------------------------------
 
-const pendingScheduled = new Set<string>();
+interface PendingSchedule {
+  name: string;
+  delivery: string;
+  emailTo: string | null;
+}
 
-function watchScheduledTask(taskId: string): void {
-  pendingScheduled.add(taskId);
+const pendingScheduled = new Map<string, PendingSchedule>();
+
+function watchScheduledTask(taskId: string, schedule: ScheduledTaskRow): void {
+  pendingScheduled.set(taskId, {
+    name: schedule.name,
+    delivery: schedule.delivery,
+    emailTo: schedule.email_to,
+  });
 }
 
 /**
  * Handle a completed scheduled task. Broadcasts result via Telegram.
+ * Verifies email delivery actually happened (gmail_send was called).
  * Called from the messaging router on task completion.
  */
 export function handleScheduledTaskResult(
   taskId: string,
   result: string,
+  status?: string,
+  toolCalls?: string[],
 ): void {
-  if (!pendingScheduled.has(taskId)) return;
+  const meta = pendingScheduled.get(taskId);
+  if (!meta) return;
   pendingScheduled.delete(taskId);
 
   const router = getRouter();
-  if (!router || !result) return;
 
-  router.broadcastToAll(result).catch((err) => {
-    console.error(`[schedules] Broadcast failed: ${err}`);
-  });
-  console.log(`[schedules] Broadcast scheduled task result: ${taskId}`);
+  // Verify email delivery: if the schedule required email, check gmail_send was called
+  const expectsEmail = meta.delivery === "email" || meta.delivery === "both";
+  const emailSent = toolCalls?.includes("gmail_send") ?? false;
+
+  if (expectsEmail && !emailSent) {
+    const alert =
+      `⚠️ Scheduled task "${meta.name}" completed but email was NOT sent` +
+      (meta.emailTo ? ` (to: ${meta.emailTo})` : "") +
+      (status === "completed_with_concerns"
+        ? ". Task had inference issues (wrap-up recovery)."
+        : ". gmail_send was never called.");
+    console.warn(`[schedules] DELIVERY MISS: ${alert}`);
+    if (router) {
+      router.broadcastToAll(alert).catch((err) => {
+        console.error(`[schedules] Delivery alert broadcast failed: ${err}`);
+      });
+    }
+    return;
+  }
+
+  // Broadcast result via Telegram if needed
+  if (
+    (meta.delivery === "telegram" || meta.delivery === "both") &&
+    router &&
+    result
+  ) {
+    router.broadcastToAll(result).catch((err) => {
+      console.error(`[schedules] Broadcast failed: ${err}`);
+    });
+    console.log(`[schedules] Broadcast scheduled task result: ${taskId}`);
+  }
+}
+
+/**
+ * Handle a failed scheduled task. Alerts via Telegram.
+ * Called from the messaging router on task failure.
+ */
+export function handleScheduledTaskFailure(
+  taskId: string,
+  error: string,
+): void {
+  const meta = pendingScheduled.get(taskId);
+  if (!meta) return;
+  pendingScheduled.delete(taskId);
+
+  const alert = `⚠️ Scheduled task "${meta.name}" FAILED: ${error}`;
+  console.error(`[schedules] ${alert}`);
+
+  const router = getRouter();
+  if (router) {
+    router.broadcastToAll(alert).catch((err) => {
+      console.error(`[schedules] Failure alert broadcast failed: ${err}`);
+    });
+  }
 }
 
 /**

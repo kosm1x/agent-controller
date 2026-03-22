@@ -32,6 +32,8 @@ USE WHEN:
 - The user corrects a previous fact ("actually I'm 32, not 30")
 - The user shares preferences that should persist forever (language, communication style)
 - The user shares health data, routines, or habits they want tracked
+- The user provides technical data: API keys, measurement IDs, credentials, configuration values, URLs, access tokens
+- The user provides project-specific data: site names, domains, account IDs, service configurations
 
 CATEGORIES (use these exact strings):
 - "personal" — age, birthday, full name, location, family, nationality
@@ -39,18 +41,27 @@ CATEGORIES (use these exact strings):
 - "work" — job role, company, projects, professional goals, work ethic
 - "health" — health goals, routines, metrics, dietary preferences
 - "philosophy" — life values, aspirations, mindset, mottos, beliefs
+- "projects" — technical config per project: API keys, GA4 IDs, credentials, domains, URLs, service accounts, measurement IDs, FTP/SSH access, third-party integrations
 
 TIPS:
-- Use specific keys: "age", "birthday", "work_ethic", "main_aspiration"
+- Use specific keys: "age", "birthday", "work_ethic", "main_aspiration", "livingjoyfully_ga4_id"
 - Keep values concise but complete
 - If the user corrects a fact, update it (same category+key overwrites)
-- PROACTIVELY save facts — don't wait for the user to ask you to remember`,
+- PROACTIVELY save facts — don't wait for the user to ask you to remember
+- When the user provides ANY technical ID, key, token, or credential → IMMEDIATELY store it. These are easy to lose and hard to recover.`,
       parameters: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            enum: ["personal", "preferences", "work", "health", "philosophy"],
+            enum: [
+              "personal",
+              "preferences",
+              "work",
+              "health",
+              "philosophy",
+              "projects",
+            ],
             description: "Fact category.",
           },
           key: {
@@ -101,7 +112,14 @@ USE WHEN:
         properties: {
           category: {
             type: "string",
-            enum: ["personal", "preferences", "work", "health", "philosophy"],
+            enum: [
+              "personal",
+              "preferences",
+              "work",
+              "health",
+              "philosophy",
+              "projects",
+            ],
             description: "Optional category filter. Omit to list all facts.",
           },
         },
@@ -145,7 +163,14 @@ export const userFactDeleteTool: Tool = {
         properties: {
           category: {
             type: "string",
-            enum: ["personal", "preferences", "work", "health", "philosophy"],
+            enum: [
+              "personal",
+              "preferences",
+              "work",
+              "health",
+              "philosophy",
+              "projects",
+            ],
             description: "Fact category.",
           },
           key: {
