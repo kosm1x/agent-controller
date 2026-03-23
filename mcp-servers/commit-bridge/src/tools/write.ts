@@ -23,7 +23,10 @@ export function registerWriteTools(server: McpServer): void {
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = { status };
+      const updates: Record<string, unknown> = {
+        status,
+        modified_by: "jarvis",
+      };
 
       // Set completed_at when marking a task as completed
       if (table === "tasks" && status === "completed") {
@@ -123,6 +126,7 @@ export function registerWriteTools(server: McpServer): void {
           .update({
             status: "completed",
             completed_at: new Date().toISOString(),
+            modified_by: "jarvis",
           })
           .eq("id", task_id)
           .eq("user_id", uid);
@@ -174,6 +178,7 @@ export function registerWriteTools(server: McpServer): void {
           content,
           entry_date: date ?? new Date().toISOString().split("T")[0],
           primary_emotion: primary_emotion ?? null,
+          modified_by: "jarvis",
         })
         .select()
         .single();
@@ -241,6 +246,7 @@ Only create unlinked tasks if the user explicitly says it's standalone.`,
           due_date: due_date ?? null,
           is_recurring: is_recurring ?? false,
           status: "not_started",
+          modified_by: "jarvis",
         })
         .select()
         .single();
@@ -289,6 +295,7 @@ ALWAYS link goals to their parent vision when the user specifies one.`,
           vision_id: vision_id ?? null,
           target_date: target_date ?? null,
           status: "not_started",
+          modified_by: "jarvis",
         })
         .select()
         .single();
@@ -342,6 +349,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
           priority: priority ?? "medium",
           target_date: target_date ?? null,
           status: "not_started",
+          modified_by: "jarvis",
         })
         .select()
         .single();
@@ -382,7 +390,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = {};
+      const updates: Record<string, unknown> = { modified_by: "jarvis" };
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -464,7 +472,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = {};
+      const updates: Record<string, unknown> = { modified_by: "jarvis" };
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -530,7 +538,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = {};
+      const updates: Record<string, unknown> = { modified_by: "jarvis" };
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -591,7 +599,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = {};
+      const updates: Record<string, unknown> = { modified_by: "jarvis" };
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -651,6 +659,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
           description: description ?? "",
           target_date: target_date ?? null,
           status: "not_started",
+          modified_by: "jarvis",
         })
         .select()
         .single();
@@ -691,7 +700,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       for (const { id, priority } of updates) {
         const result = await supabase
           .from("tasks")
-          .update({ priority })
+          .update({ priority, modified_by: "jarvis" })
           .eq("id", id)
           .eq("user_id", uid);
 
@@ -803,6 +812,102 @@ NEVER call this tool without explicit user confirmation. Cascade behavior: delet
             }),
           },
         ],
+      };
+    },
+  );
+
+  // 20. create_suggestion
+  server.registerTool(
+    "create_suggestion",
+    {
+      description: `Propose a change to COMMIT that the user can accept or reject.
+
+USE WHEN:
+- You want to suggest creating a task, goal, or objective but want user approval first
+- Proactive scans detect an improvement (stale goal, missing task, alignment gap)
+- Journal analysis reveals an actionable insight
+- A conversation implies a task the user might want to track
+
+DO NOT USE WHEN:
+- The user explicitly asks you to create/update something (use the direct tools instead)
+- Urgent changes that shouldn't wait for approval
+
+The suggestion appears in the COMMIT UI as an actionable card. The user can accept (executes the change) or reject (Jarvis learns from the rejection).`,
+      inputSchema: {
+        type: z
+          .enum([
+            "create_task",
+            "create_goal",
+            "create_objective",
+            "update_status",
+            "complete_objective",
+            "reorder",
+            "archive",
+          ])
+          .describe("Type of change being suggested"),
+        target_table: z
+          .enum(["visions", "goals", "objectives", "tasks"])
+          .optional()
+          .describe("Target table (for updates, not needed for creates)"),
+        target_id: z
+          .string()
+          .optional()
+          .describe("Target item UUID (for updates)"),
+        title: z
+          .string()
+          .describe(
+            'Human-readable summary of the suggestion (e.g. "Crear tarea: Revisar métricas GA4")',
+          ),
+        suggestion: z
+          .record(z.unknown())
+          .describe(
+            "Full payload — the data that would be passed to the create/update tool if accepted",
+          ),
+        reasoning: z
+          .string()
+          .describe("Why Jarvis is suggesting this — helps the user decide"),
+        source: z
+          .enum([
+            "proactive_scan",
+            "journal_analysis",
+            "conversation",
+            "weekly_review",
+            "event_reactor",
+          ])
+          .describe("What triggered this suggestion"),
+      },
+    },
+    async ({
+      type,
+      target_table,
+      target_id,
+      title,
+      suggestion,
+      reasoning,
+      source,
+    }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const result = await supabase
+        .from("agent_suggestions")
+        .insert({
+          user_id: uid,
+          type,
+          target_table: target_table ?? null,
+          target_id: target_id ?? null,
+          title,
+          suggestion,
+          reasoning,
+          source,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      const row = unwrap(result, "create_suggestion");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(row) }],
       };
     },
   );

@@ -10,6 +10,7 @@ import { health } from "./routes/health.js";
 import { tasks } from "./routes/tasks.js";
 import { agents } from "./routes/agents.js";
 import { events } from "./routes/events.js";
+import { commitEvents } from "./routes/commit-events.js";
 import { buildAgentCard } from "../a2a/agent-card.js";
 import { a2a } from "../a2a/server.js";
 
@@ -35,6 +36,7 @@ export function createApp(): Hono {
   api.route("/tasks", tasks);
   api.route("/agents", agents);
   api.route("/events", events);
+  api.route("/commit-events", commitEvents);
 
   app.route("/api", api);
 

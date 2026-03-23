@@ -137,6 +137,20 @@ CREATE TABLE IF NOT EXISTS user_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category);
 
+-- COMMIT event log — received from COMMIT webhook for reactive processing
+CREATE TABLE IF NOT EXISTS commit_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type  TEXT NOT NULL,  -- INSERT, UPDATE, DELETE
+  table_name  TEXT NOT NULL,  -- tasks, goals, objectives, journal_entries
+  row_id      TEXT NOT NULL,  -- UUID of the changed row
+  user_id     TEXT,
+  modified_by TEXT DEFAULT 'user',  -- user, jarvis, system
+  changes     TEXT,           -- JSON of changed fields
+  processed   INTEGER DEFAULT 0,
+  created_at  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_commit_events_processed ON commit_events(processed) WHERE processed = 0;
+
 -- A2A context-to-task mapping (for multi-turn conversations)
 CREATE TABLE IF NOT EXISTS a2a_contexts (
   context_id  TEXT PRIMARY KEY,
