@@ -120,13 +120,16 @@ async function main(): Promise<void> {
     {
       fetch: app.fetch,
       port: config.port,
-      hostname: "127.0.0.1",
+      hostname: process.env.MC_BIND_HOST ?? "0.0.0.0",
     },
     (info) => {
       console.log(
         `[mc] Mission Control listening on http://localhost:${info.port}`,
       );
       console.log(`[mc] Health check: http://localhost:${info.port}/health`);
+      console.log(
+        `[mc] Inference timeout=${config.inferenceTimeoutMs}ms, maxRetries=${config.inferenceMaxRetries}`,
+      );
     },
   );
 
