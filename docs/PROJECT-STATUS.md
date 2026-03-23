@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-22
+> Last updated: 2026-03-23
 
 ## Overview
 
@@ -55,7 +55,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.22.1 | WordPress Content Protection — file-based read/write pipeline (bypasses 12K tool result truncation), 3-layer destruction safeguard (80% text + 70% HTML + 30% structure), read-before-write enforcement, status-only vs content-edit protocol split | Done | — |
 | v2.23 | Telegram Vision — Jarvis can see images sent via Telegram (base64 download → multimodal content array → LLM) | Done | — |
 | v2.24 | Email Header Fix + Scheduled Task Delivery Alerts + Hallucination Hardening + Critical Data Auto-Persistence | Done | `448fa58` |
-| v2.25 | WordPress Admin + Gemini Image Generation + Structural Hallucination Detector + Tool Scope History | Done | — |
+| v2.25 | WordPress Admin + Gemini Image Generation + Structural Hallucination Detector + Tool Scope History | Done | `f04a0c6` |
+| v2.26 | Unification: COMMIT + Jarvis → One Brain, One Flow, One System. 6 sessions: unified data layer, one brain (COMMIT AI → Jarvis), project entity + COMMIT linking, strategic autonomy (event reactor + proactive), reliability + performance, COMMIT UI polish | **In Progress** | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
 ## Tools (102 total, managed by 5 ToolSource plugins)
