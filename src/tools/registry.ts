@@ -80,11 +80,45 @@ export class ToolRegistry {
     "commit__delete_item",
   ]);
 
+  /**
+   * Tracks whether destructive tools have been "unlocked" for the current
+   * execution cycle. Call `unlockDestructive(name)` after verifying user
+   * confirmation in the conversation history.
+   */
+  private destructiveUnlocked = new Set<string>();
+
+  /** Unlock a destructive tool for execution (call after confirming with user). */
+  unlockDestructive(name: string): void {
+    this.destructiveUnlocked.add(name);
+  }
+
+  /** Reset destructive locks — call at the start of each task/chat turn. */
+  resetDestructiveLocks(): void {
+    this.destructiveUnlocked.clear();
+  }
+
   /** Execute a tool by name. */
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+    // Mechanical gate: block destructive MCP tools unless explicitly unlocked.
+    // The LLM must ask for user confirmation first; the runner unlocks after
+    // seeing the confirmation in conversation history.
+    if (
+      ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name) &&
+      !this.destructiveUnlocked.has(name)
+    ) {
+      console.warn(
+        `[tools] 🛑 Destructive tool BLOCKED (no confirmation): ${name} — args: ${JSON.stringify(args).slice(0, 200)}`,
+      );
+      return JSON.stringify({
+        error: "CONFIRMATION_REQUIRED",
+        message:
+          "This is a destructive action. You MUST show the user what will be affected and ask for explicit confirmation BEFORE calling this tool. Present the item name, type, and consequences, then wait for user approval.",
+        tool: name,
+      });
     }
     if (
       tool.requiresConfirmation ||

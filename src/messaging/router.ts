@@ -86,9 +86,11 @@ const COMMIT_WRITE_TOOLS = [
   "commit__update_objective",
   "commit__update_goal",
   "commit__update_vision",
-  "commit__delete_item",
   "commit__bulk_reprioritize",
 ];
+
+/** Destructive COMMIT tools — only when user explicitly mentions deletion. */
+const COMMIT_DESTRUCTIVE_TOOLS = ["commit__delete_item"];
 
 /** Scheduling tools — only when reports/automation discussed. */
 const SCHEDULE_TOOLS = ["schedule_task", "list_schedules", "delete_schedule"];
@@ -165,11 +167,17 @@ const BROWSER_TOOLS = [
 
 /** Keyword patterns that activate tool groups. Scans current + recent messages. */
 const SCOPE_PATTERNS: { pattern: RegExp; group: string }[] = [
-  // COMMIT write tools
+  // COMMIT write tools (excludes delete — see commit_destructive below)
   {
     pattern:
-      /\b(crea(r|me)?|actualiz|complet|elimina|borra|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto)/i,
+      /\b(crea(r|me)?|actualiz|complet|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto)/i,
     group: "commit_write",
+  },
+  // COMMIT destructive tools — only on explicit deletion keywords
+  {
+    pattern:
+      /\b(elimina(r|la|las|lo|los)?|borra(r|la|las|lo|los)?|delete|quita(r)?|remove)\b/i,
+    group: "commit_destructive",
   },
   // Google tools
   {
@@ -493,6 +501,9 @@ function scopeToolsForMessage(
   if (activeGroups.has("commit_write")) {
     tools.push(...COMMIT_WRITE_TOOLS);
   }
+  if (activeGroups.has("commit_destructive")) {
+    tools.push(...COMMIT_DESTRUCTIVE_TOOLS);
+  }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);
   }
@@ -519,6 +530,7 @@ function scopeToolsForMessage(
     CORE_TOOLS.length +
     COMMIT_READ_TOOLS.length +
     COMMIT_WRITE_TOOLS.length +
+    COMMIT_DESTRUCTIVE_TOOLS.length +
     SCHEDULE_TOOLS.length +
     MISC_TOOLS.length +
     BROWSER_TOOLS.length +

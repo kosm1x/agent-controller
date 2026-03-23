@@ -39,11 +39,41 @@ STATUS: BLOCKED — [what is preventing completion]`;
 const MAX_ROUNDS_DEFAULT = 7;
 const MAX_ROUNDS_CODING = 15;
 
+/** Confirmation words from the user (Spanish + English). */
+const CONFIRM_PATTERN =
+  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead)(\s|$|[.,!?])/i;
+/** Pattern in assistant messages that indicates a deletion confirmation was requested. */
+const DELETION_ASK_PATTERN =
+  /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que (?:elimine|borre)|want me to delete)/i;
+
+/**
+ * Check conversation history for a confirmed deletion request.
+ * Returns true if an assistant asked about deletion AND the user confirmed after.
+ */
+export function hasUserConfirmedDeletion(
+  history: { role: string; content: string }[],
+): boolean {
+  let assistantAskedDeletion = false;
+  for (const turn of history) {
+    if (turn.role === "assistant" && DELETION_ASK_PATTERN.test(turn.content)) {
+      assistantAskedDeletion = true;
+    }
+    if (
+      assistantAskedDeletion &&
+      turn.role === "user" &&
+      CONFIRM_PATTERN.test(turn.content.trim())
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Detect hallucinated tool execution — LLM narrates actions without calling tools.
  * Returns true if the response looks like it's simulating execution.
  */
-function detectsHallucinatedExecution(
+export function detectsHallucinatedExecution(
   text: string,
   toolsCalled: string[],
 ): boolean {
@@ -92,10 +122,12 @@ function detectsHallucinatedExecution(
 const HALLUCINATION_CORRECTION = `SYSTEM OVERRIDE: Your previous response narrated tool execution WITHOUT actually calling any tools. This is FORBIDDEN.
 
 You MUST use your available tools (function calls) to perform actions. Do NOT describe or narrate execution. Either:
-1. Call the appropriate tool NOW, or
+1. Call the appropriate tool to perform the action, or
 2. Explain honestly that you cannot perform the action and what is needed.
 
-Respond again to the user's last message. USE TOOLS, do not narrate.`;
+IMPORTANT: Confirmation rules STILL APPLY. For destructive tools (delete_item, gmail_send, gdrive_share, calendar_update with cancellation), you MUST still ask the user for confirmation BEFORE calling them. Do NOT skip the confirmation step just because this is a retry.
+
+Respond again to the user's last message. USE TOOLS when appropriate, do not narrate.`;
 
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {
@@ -163,6 +195,18 @@ export const fastRunner: Runner = {
       ? input.tools.some((t) => codingTools.includes(t))
       : false;
     const maxRounds = hasCodingTools ? MAX_ROUNDS_CODING : MAX_ROUNDS_DEFAULT;
+
+    // Reset destructive locks, then unlock if user already confirmed in history.
+    toolRegistry.resetDestructiveLocks();
+    if (
+      input.conversationHistory &&
+      hasUserConfirmedDeletion(input.conversationHistory)
+    ) {
+      toolRegistry.unlockDestructive("commit__delete_item");
+      console.log(
+        "[fast-runner] Destructive tool unlocked: commit__delete_item (user confirmed in history)",
+      );
+    }
 
     try {
       const result = await inferWithTools(
