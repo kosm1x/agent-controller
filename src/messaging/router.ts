@@ -122,13 +122,18 @@ const CODING_TOOLS = [
   "list_dir",
 ];
 
-/** WordPress publishing tools — only when blog/content creation discussed. */
+/** WordPress tools — content + admin, only when blog/site management discussed. */
 const WORDPRESS_TOOLS = [
   "wp_list_posts",
   "wp_read_post",
   "wp_publish",
   "wp_media_upload",
   "wp_categories",
+  "wp_pages",
+  "wp_plugins",
+  "wp_settings",
+  "wp_delete",
+  "wp_raw_api",
 ];
 
 /** Other utility tools — always included (lightweight definitions). */
@@ -137,6 +142,7 @@ const MISC_TOOLS = [
   "chart_generate",
   "rss_read",
   "list_schedules",
+  "gemini_image",
 ];
 
 /** Lightpanda browser tools — only when web interaction needed. */
@@ -189,10 +195,10 @@ const SCOPE_PATTERNS: { pattern: RegExp; group: string }[] = [
       /\b(schedules?|reportes?|programa(r|dos?|ción)?|cron|diarios?|semanal|automat\w*|recurrent)/i,
     group: "schedule",
   },
-  // WordPress tools
+  // WordPress tools — content, admin, plugins, site management
   {
     pattern:
-      /\b(wordpress|wp|blogs?|posts?|art[ií]culos?|publi(ca|car|que)|drafts?|borrador|featured\s*image|hero\s*image|categor[iy]|tags?)/i,
+      /\b(wordpress|wp|blogs?|posts?|art[ií]culos?|publi(ca|car|que)|drafts?|borrador|featured\s*image|hero\s*image|categor[iy]|tags?|plugin|theme|tema|sitio\s+web|header|footer|inyect|inject|tracker|tracking|GA4|analytics|widget|snippet|livingjoyfully|redlightinsider|genera.*imagen|image.*genera|gemini.*imag|imag.*blog|sube.*imagen|upload.*image|media.*upload)/i,
     group: "wordpress",
   },
 ];
@@ -364,7 +370,23 @@ Esto cambia el estado sin tocar el contenido del artículo.
 3. TERCERO: file_edit para hacer los cambios necesarios EN EL ARCHIVO (no en tu contexto)
 4. CUARTO: wp_publish con post_id y content_file=<ruta del archivo>
 NUNCA envíes "content" inline al editar artículos existentes — usa content_file para evitar truncamiento.
-El campo "content" REEMPLAZA todo el cuerpo del artículo.`);
+El campo "content" REEMPLAZA todo el cuerpo del artículo.
+
+### Administración del sitio (plugins, scripts, configuración):
+- wp_plugins para listar, instalar, activar o desactivar plugins
+- wp_settings para leer/actualizar título, tagline, timezone del sitio
+- wp_delete para eliminar posts, páginas o medios
+- wp_pages para listar páginas del sitio
+- wp_raw_api para llamar CUALQUIER endpoint REST de WordPress (plugins custom, widgets, etc.)
+
+### Inyección de código (GA4, tracking, scripts en head):
+Las herramientas wp_* tienen autenticación integrada — SIEMPRE úsalas en vez de http_fetch.
+Si necesitas configurar un plugin que no expone REST API (como WPCode Lite):
+1. Usa browser__goto para navegar al panel de admin del plugin
+2. Usa browser__fill para llenar los campos de configuración
+3. Usa browser__click para guardar los cambios
+4. Usa browser__evaluate para verificar que el código aparece en el <head> del sitio
+Las credenciales de WordPress ya están guardadas en WP_SITES — NO necesitas pedirlas al usuario.`);
   }
 
   // --- No hallucinated execution ---
@@ -445,12 +467,17 @@ Para lectura simple, web_read es más rápido. Usa browser__* cuando necesites J
  */
 function scopeToolsForMessage(
   currentMessage: string,
-  _conversationHistory: ConversationTurn[],
+  conversationHistory: ConversationTurn[],
 ): string[] {
-  // Only scan the CURRENT message for scoping — not conversation history.
-  // History is there for the LLM's context, but tool scoping should reflect
-  // what the user is asking NOW, not what was discussed 5 messages ago.
-  const contextText = currentMessage;
+  // Scan current message + last 3 user turns for scoping keywords.
+  // This ensures follow-up commands ("Hazlo", "Adelante", "Sí") inherit
+  // tool scope from the conversation context they refer to.
+  const recentUserTurns = conversationHistory
+    .filter((t) => t.role === "user")
+    .slice(-3)
+    .map((t) => t.content)
+    .join(" ");
+  const contextText = `${currentMessage} ${recentUserTurns}`;
 
   // Detect which groups are needed
   const activeGroups = new Set<string>();
@@ -569,10 +596,42 @@ function detectCriticalData(text: string): DetectedCredential[] {
 
   // Generic API keys/tokens: explicit label + value patterns
   const labeledSecret = text.match(
-    /(?:api[_ ]?key|token|secret|password|contraseña|clave)\s*[:\s=]+\s*["']?([A-Za-z0-9_\-.]{20,})/i,
+    /(?:api[_ ]?key|token|secret)\s*[:\s=]+\s*["']?([A-Za-z0-9_\-.]{20,})/i,
   );
   if (labeledSecret && !googleApiKey) {
     results.push({ key: "api_credential", value: labeledSecret[1] });
+  }
+
+  // Passwords: label + value (allows special chars)
+  const labeledPassword = text.match(
+    /(?:password|contraseña|pswd|pwd|pass)\s*[:\s=]+\s*["']?(\S{8,})/i,
+  );
+  if (labeledPassword) {
+    results.push({ key: "password", value: labeledPassword[1] });
+  }
+
+  // Login/username: label + value
+  const labeledLogin = text.match(
+    /(?:login|user(?:name)?|usuario)\s*[:\s=]+\s*["']?(\S{3,})/i,
+  );
+  if (labeledLogin) {
+    results.push({ key: "login", value: labeledLogin[1] });
+  }
+
+  // WP Application Passwords: 4-char groups separated by spaces (e.g. "BtZU tFsT EUhC l2z5 No4B F4aU")
+  const wpAppPass = text.match(
+    /(?:app(?:lication)?\s*pass(?:word)?|contraseña\s*de\s*aplicación)[^:=\n]*[:\s=]+\s*["']?([A-Za-z0-9]{4}(?:\s+[A-Za-z0-9]{4}){4,})/i,
+  );
+  if (wpAppPass) {
+    results.push({ key: "wp_app_password", value: wpAppPass[1] });
+  }
+
+  // FTP host: ftp://... or sftp://...
+  const ftpHost = text.match(
+    /(?:ftp|sftp)\s*(?:host)?\s*[:\s=]*\s*((?:s?ftp:\/\/)?[\d.]+|(?:s?ftp:\/\/)?[\w.-]+\.\w{2,})/i,
+  );
+  if (ftpHost) {
+    results.push({ key: "ftp_host", value: ftpHost[1] });
   }
 
   return results;

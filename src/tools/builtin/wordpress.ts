@@ -741,94 +741,113 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
     const caption = args.caption as string | undefined;
     const title = (args.title as string) ?? filename.replace(/\.[^.]+$/, "");
 
-    // Download the image
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    // Support local file paths (from gemini_image) and HTTP URLs
+    const isLocalFile =
+      imageUrl.startsWith("file://") || imageUrl.startsWith("/");
+    let imageBuffer: Buffer;
+    let contentType: string;
 
-    try {
-      const imgResponse = await fetch(imageUrl, {
-        signal: controller.signal,
-      });
-      if (!imgResponse.ok) {
+    if (isLocalFile) {
+      const filePath = imageUrl.startsWith("file://")
+        ? imageUrl.slice(7)
+        : imageUrl;
+      if (!existsSync(filePath)) {
         return JSON.stringify({
           success: false,
-          error: `Failed to download image: ${imgResponse.status} ${imgResponse.statusText}`,
+          error: `Local file not found: ${filePath}`,
         });
       }
-
-      const contentType =
-        imgResponse.headers.get("content-type") ?? "image/jpeg";
-      const imageBuffer = Buffer.from(await imgResponse.arrayBuffer());
-
-      clearTimeout(timeout);
-
-      // Upload to WordPress
-      const uploadController = new AbortController();
-      const uploadTimeout = setTimeout(
-        () => uploadController.abort(),
-        TIMEOUT_MS,
-      );
-
+      imageBuffer = readFileSync(filePath) as Buffer;
+      contentType = filename.endsWith(".png")
+        ? "image/png"
+        : filename.endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg";
+    } else {
+      // Download from URL
+      const controller = new AbortController();
+      const dlTimeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
       try {
-        const uploadResponse = await fetch(`${resolved.baseUrl}/media`, {
-          method: "POST",
-          headers: {
-            Authorization: resolved.authHeader,
-            "Content-Type": contentType,
-            "Content-Disposition": `attachment; filename="${filename}"`,
-          },
-          body: imageBuffer,
-          signal: uploadController.signal,
+        const imgResponse = await fetch(imageUrl, {
+          signal: controller.signal,
         });
-
-        const text = await uploadResponse.text();
-        let data: unknown;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = text;
-        }
-
-        if (uploadResponse.status >= 200 && uploadResponse.status < 300) {
-          const d = data as Record<string, unknown>;
-          const mediaId = d.id as number;
-
-          // Set alt text / caption if provided
-          if (altText || caption) {
-            const meta: Record<string, unknown> = {};
-            if (altText) meta.alt_text = altText;
-            if (caption) meta.caption = caption;
-            if (title) meta.title = title;
-            await wpFetch(resolved, `/media/${mediaId}`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(meta),
-            });
-          }
-
+        if (!imgResponse.ok) {
           return JSON.stringify({
-            success: true,
-            site: resolved.name,
-            media_id: mediaId,
-            source_url: (d.source_url as string) ?? "",
-            title,
+            success: false,
+            error: `Failed to download image: ${imgResponse.status} ${imgResponse.statusText}`,
+          });
+        }
+        contentType = imgResponse.headers.get("content-type") ?? "image/jpeg";
+        imageBuffer = Buffer.from(await imgResponse.arrayBuffer());
+      } finally {
+        clearTimeout(dlTimeout);
+      }
+    }
+
+    // Upload to WordPress
+    const uploadController = new AbortController();
+    const uploadTimeout = setTimeout(
+      () => uploadController.abort(),
+      TIMEOUT_MS,
+    );
+
+    try {
+      const uploadResponse = await fetch(`${resolved.baseUrl}/media`, {
+        method: "POST",
+        headers: {
+          Authorization: resolved.authHeader,
+          "Content-Type": contentType,
+          "Content-Disposition": `attachment; filename="${filename}"`,
+        },
+        body: imageBuffer,
+        signal: uploadController.signal,
+      });
+
+      const text = await uploadResponse.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+
+      if (uploadResponse.status >= 200 && uploadResponse.status < 300) {
+        const d = data as Record<string, unknown>;
+        const mediaId = d.id as number;
+
+        // Set alt text / caption if provided
+        if (altText || caption) {
+          const meta: Record<string, unknown> = {};
+          if (altText) meta.alt_text = altText;
+          if (caption) meta.caption = caption;
+          if (title) meta.title = title;
+          await wpFetch(resolved, `/media/${mediaId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(meta),
           });
         }
 
         return JSON.stringify({
-          success: false,
+          success: true,
           site: resolved.name,
-          http_status: uploadResponse.status,
-          error: data,
+          media_id: mediaId,
+          source_url: (d.source_url as string) ?? "",
+          title,
         });
-      } finally {
-        clearTimeout(uploadTimeout);
       }
+
+      return JSON.stringify({
+        success: false,
+        site: resolved.name,
+        http_status: uploadResponse.status,
+        error: data,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return JSON.stringify({ success: false, error: message });
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(uploadTimeout);
     }
   },
 };

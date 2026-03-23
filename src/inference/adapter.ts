@@ -410,7 +410,24 @@ function buildWrapUpContext(
   instruction: string,
 ): ChatMessage[] {
   const system = conversation.find((m) => m.role === "system");
-  const firstUser = conversation.find((m) => m.role === "user");
+
+  // Find the LAST user message before tool calls started — this is the actual
+  // current question. In chat tasks, firstUser may be from thread history and
+  // completely unrelated to the current request.
+  let lastUserBeforeTools: ChatMessage | undefined;
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    if (
+      conversation[i].role === "user" &&
+      typeof conversation[i].content === "string"
+    ) {
+      lastUserBeforeTools = conversation[i];
+      break;
+    }
+  }
+  // Fallback to first user message if no user message found (shouldn't happen)
+  if (!lastUserBeforeTools) {
+    lastUserBeforeTools = conversation.find((m) => m.role === "user");
+  }
 
   // Take last 6 messages (3 tool exchanges) and aggressively truncate tool results
   const recentMessages = conversation.slice(-6).map((m) => {
@@ -431,7 +448,7 @@ function buildWrapUpContext(
 
   const condensed: ChatMessage[] = [];
   if (system) condensed.push(system);
-  if (firstUser) condensed.push(firstUser);
+  if (lastUserBeforeTools) condensed.push(lastUserBeforeTools);
   condensed.push(...recentMessages);
   condensed.push({ role: "user", content: instruction });
   return condensed;

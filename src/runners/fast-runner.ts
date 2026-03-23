@@ -49,25 +49,38 @@ function detectsHallucinatedExecution(
 ): boolean {
   if (toolsCalled.length > 0) return false; // Tools were actually called
 
+  // --- Layer 1: Structural detection ---
+  // If response has a success indicator AND claims a concrete outcome (URL, file, ID)
+  // but no tools were called, it's almost certainly hallucinated.
+  const hasSuccessMarker =
+    /✅|🚀|EXITOSAMENTE|SUCCESSFULLY|COMPLETADO|STATUS:\s*DONE\b/i.test(text);
+  const claimsConcrete =
+    // Claims a URL was created/uploaded
+    /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp|html|php)/i.test(text) ||
+    // Claims a file path
+    /\/(?:wp-content|tmp|var|home|workspace)\//i.test(text) ||
+    // Claims FTP/SSH action
+    /(?:vía|via|through)\s+(?:FTP|SSH|SFTP)/i.test(text) ||
+    // Narrates processing steps with ellipsis (*(Procesando...)*)
+    /\*[^*]*\.\.\.\*/.test(text) ||
+    // Claims a completed action with EXITOSAMENTE/correctamente
+    /(?:EXITOSAMENTE|correctamente|con éxito|successfully)/i.test(text);
+  if (hasSuccessMarker && claimsConcrete) return true;
+
+  // --- Layer 2: Specific narration patterns (legacy, still useful) ---
   const hallucinationPatterns = [
-    // Spanish narrated execution
+    // Narrated processing steps
     /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando|Publicando|Guardando)[^)]*\.\.\.\)\*?/i,
-    /✅\s*(?:ÉXITO|Listo|Publicado|Completado|Subido|Creado|Enviado|Guardado|LIVE)/i,
-    /🚀\s*(?:PUBLICADO|ENVIADO|EJECUTADO)/i,
-    /(?:Archivo|Post|Imagen|Documento|Artículo)\s+(?:creado|subido|publicado|generado|guardado|actualizado)\s+(?:exitosamente|correctamente|con éxito)/i,
-    /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
-    /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
-    /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar)/i,
-    /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
-    // FTP/SSH/connection narration (the GA4 incident pattern)
-    /(?:Conexión\s+FTP|Conexión\s+SSH|Conexión\s+SFTP).*(?:exitosa|establecida|OK)/i,
-    /(?:Archivo\s+modificado|Script\s+inyectado|Código\s+insertado|Header\s+actualizado)/i,
-    /(?:FTP\s+connection|SSH\s+connection|SFTP\s+connection).*(?:successful|established|OK)/i,
-    /(?:File\s+modified|Script\s+injected|Code\s+inserted|Header\s+updated)/i,
-    // English narrated execution
     /\*?\((?:Processing|Executing|Connecting|Uploading|Downloading|Verifying|Generating|Scanning|Publishing|Saving)[^)]*\.\.\.\)\*?/i,
-    /✅\s*(?:SUCCESS|Done|Published|Completed|Uploaded|Created|Sent|Saved|LIVE)/i,
-    /(?:File|Post|Image|Document|Article)\s+(?:created|uploaded|published|generated|saved|updated)\s+(?:successfully|correctly)/i,
+    // Spanish narrated completion
+    /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
+    /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
+    /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar|inyectar|instalar|configurar)/i,
+    /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
+    // Connection narration
+    /(?:Conexión\s+(?:FTP|SSH|SFTP)).*(?:exitosa|establecida|OK)/i,
+    /(?:FTP\s+connection|SSH\s+connection|SFTP\s+connection).*(?:successful|established|OK)/i,
+    // English narrated completion
     /(?:just (?:executed|published|uploaded|created|saved|updated|verified))/i,
     /(?:is now live|is now published|has been published)/i,
   ];

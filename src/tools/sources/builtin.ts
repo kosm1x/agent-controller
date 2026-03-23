@@ -41,6 +41,14 @@ import {
   wpListPostsTool,
   wpReadPostTool,
 } from "../builtin/wordpress.js";
+import {
+  wpPagesTool,
+  wpPluginsTool,
+  wpSettingsTool,
+  wpDeleteTool,
+  wpRawApiTool,
+} from "../builtin/wordpress-admin.js";
+import { geminiImageTool } from "../builtin/gemini-image.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -67,15 +75,21 @@ const BUILTIN_TOOLS: Tool[] = [
   userFactDeleteTool,
   evolutionGetDataTool,
   evolutionDeactivateSkillTool,
+  geminiImageTool,
 ];
 
-// WordPress tools — conditionally registered when WP_URL is configured
+// WordPress tools — conditionally registered when WP_SITES is configured
 const WP_TOOLS: Tool[] = [
   wpListPostsTool,
   wpReadPostTool,
   wpPublishTool,
   wpMediaUploadTool,
   wpCategoriesTool,
+  wpPagesTool,
+  wpPluginsTool,
+  wpSettingsTool,
+  wpDeleteTool,
+  wpRawApiTool,
 ];
 
 export class BuiltinToolSource implements ToolSource {
