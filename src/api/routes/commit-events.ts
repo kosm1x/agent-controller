@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getEventBus } from "../../lib/event-bus.js";
+import { analyzeJournalDeep } from "../../commit-ai/journal-analysis.js";
 
 interface CommitEvent {
   event: "INSERT" | "UPDATE" | "DELETE";
@@ -95,7 +96,13 @@ commitEvents.post("/", async (c) => {
 
   if (table === "journal_entries" && event === "INSERT") {
     reactions.push("journal_created");
-    // Future (Session 2C): trigger deep journal analysis via Jarvis
+    // Deep journal analysis — async, fire-and-forget
+    analyzeJournalDeep(row_id, user_id, changes ?? {}).catch((err) =>
+      console.error(
+        `[commit-events] Journal analysis failed for ${row_id}:`,
+        err,
+      ),
+    );
   }
 
   if (table === "goals" && event === "UPDATE") {

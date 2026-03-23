@@ -911,4 +911,72 @@ The suggestion appears in the COMMIT UI as an actionable card. The user can acce
       };
     },
   );
+
+  // 21. upsert_ai_analysis
+  server.registerTool(
+    "upsert_ai_analysis",
+    {
+      description:
+        "Write or update AI analysis for a journal entry. Used by the deep journal analysis pipeline.",
+      inputSchema: {
+        journal_entry_id: z.string().describe("Journal entry UUID"),
+        emotions: z
+          .array(
+            z.object({
+              name: z.string(),
+              intensity: z.number(),
+              color: z.string().optional(),
+            }),
+          )
+          .describe("Detected emotions with intensity (0-100)"),
+        patterns: z.array(z.string()).describe("Behavioral patterns observed"),
+        coping_strategies: z
+          .array(z.string())
+          .describe("Suggested coping strategies"),
+        primary_emotion: z.string().describe("The dominant emotion"),
+      },
+    },
+    async ({
+      journal_entry_id,
+      emotions,
+      patterns,
+      coping_strategies,
+      primary_emotion,
+    }) => {
+      const supabase = getSupabase();
+      const uid = getUserId();
+
+      const result = await supabase
+        .from("ai_analysis")
+        .upsert(
+          {
+            entry_id: journal_entry_id,
+            user_id: uid,
+            emotions,
+            patterns,
+            coping_strategies,
+            primary_emotion,
+          },
+          { onConflict: "entry_id" },
+        )
+        .select()
+        .single();
+
+      if (result.error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: result.error.message }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result.data) }],
+      };
+    },
+  );
 }
