@@ -59,11 +59,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.26 | Unification: COMMIT + Jarvis → One Brain, One Flow, One System. 6 sessions: unified data layer, one brain (COMMIT AI → Jarvis), project entity + COMMIT linking, strategic autonomy (event reactor + proactive), reliability + performance, COMMIT UI polish | **In Progress** | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (104 total, managed by 5 ToolSource plugins)
+## Tools (107 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| Builtin | shell_exec, http_fetch, file_read, file_write, file_edit, grep, glob, list_dir, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete, evolution_get_data, evolution_deactivate_skill, gemini_image | 24 |
+| Builtin | shell_exec, http_fetch, file_read, file_write, file_edit, grep, glob, list_dir, web_search, web_read, weather_forecast, currency_convert, geocode_address, chart_generate, rss_read, schedule_task, list_schedules, delete_schedule, user_fact_set, user_fact_list, user_fact_delete, evolution_get_data, evolution_deactivate_skill, gemini_image, project_list, project_get, project_update | 27 |
 | WordPress | wp_list_posts, wp_read_post, wp_publish, wp_media_upload, wp_categories, wp_pages, wp_plugins, wp_settings, wp_delete, wp_raw_api | 10 |
 | Browser (Lightpanda) | browser__goto, browser__markdown, browser__links, browser__evaluate, browser__semantic_tree, browser__interactiveElements, browser__structuredData, browser__click, browser__fill, browser__scroll | 10 |
 | Memory | memory_search, memory_store, memory_reflect | 3 |
@@ -92,6 +92,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-24 | `ea0cf84` | feat: v2.26 Session 3 — Project Entity. projects + project_log tables (SQLite), 3 tools (project_list/get/update), auto-migration from user_facts (LivingJoyfully: 9 credentials), formatProjectsBlock prompt injection, morning/nightly ritual integration, COMMIT goal linking via commit_goal_id. 107 tools. |
 | 2026-03-23 | `16c697a` | feat: v2.26 Session 2 — One Brain. COMMIT AI routes through Jarvis (POST /api/commit-ai). Enrichment layer loads COMMIT snapshot + goals + Hindsight memories in parallel (3s cap). 12 COMMIT AI functions dispatched via single dispatcher with per-function enrichment flags. Journal deep analysis: webhook-triggered async pipeline (analyzeJournalDeep → upsert_ai_analysis → create_suggestion → Hindsight retain). Sub-second user-facing latency. COMMIT-side: ai-proxy Jarvis-first routing, callLLM function_name threading. 104 tools (22 COMMIT). |
 | 2026-03-23 | `0b1a5d7` | feat: v2.26 Session 1 — Unified Data Layer. modified_by provenance (5 COMMIT tables), agent_suggestions table, commit-events webhook endpoint + Edge Function + pg_net triggers, create_suggestion MCP tool. Echo loop prevention. |
 | 2026-03-23 | `f04a0c6` | feat: v2.25 — (1) WordPress admin tools: wp_pages, wp_plugins, wp_settings, wp_delete, wp_raw_api (full site management). (2) Gemini image generation: gemini_image tool (dual-model: Gemini native + Imagen 4.0 fallback), saves PNG to /tmp, API key from user_facts. (3) wp_media_upload supports local file paths (file:// and absolute paths) for gemini_image → WP upload pipeline. (4) Structural hallucination detector: 2-layer (success marker + concrete claim = hallucination; legacy patterns as backup). Replaces pattern whack-a-mole. (5) Tool scope checks conversation history (last 3 user turns) for follow-up commands like "Hazlo", "Adelante". (6) WP scope expanded with image/plugin/admin keywords. (7) Wrap-up context uses lastUserBeforeTools instead of firstUser to prevent out-of-scope responses |
