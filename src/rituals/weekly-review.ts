@@ -73,7 +73,7 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 **💡 Sugerencia estratégica**
 [una recomendación concreta basada en los patrones observados]
 
-7. Envía el reporte via gmail_send a fede@eureka.md con asunto "Revisión Semanal — ${dateLabel}".
+7. Envía el reporte via gmail_send a fede@eurekamd.net con asunto "Revisión Semanal — ${dateLabel}".
 
 IMPORTANTE: Do NOT write to the journal. The journal is exclusively for the user's personal input.`,
     agentType: "heavy",

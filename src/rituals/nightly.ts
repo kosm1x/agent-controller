@@ -20,7 +20,7 @@ export function createNightlyClose(dateLabel: string): TaskSubmission {
 3. For each incomplete critical/urgent task, assess: should it carry over to tomorrow, be reprioritized, or be dropped?
 4. If any tasks need rebalancing for tomorrow, call commit__update_status to adjust.
 5. Prepare tomorrow's preliminary priority list.
-6. Send the report via gmail_send to fede@eureka.md with subject "Cierre del día — ${dateLabel}".
+6. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 

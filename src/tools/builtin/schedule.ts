@@ -72,7 +72,7 @@ All times are in the user's timezone (Mexico City).`,
           email_to: {
             type: "string",
             description:
-              "Email recipient (required if delivery is 'email' or 'both'). Default: fede@eureka.md",
+              "Email recipient (required if delivery is 'email' or 'both'). Default: fede@eurekamd.net",
           },
           email_subject: {
             type: "string",

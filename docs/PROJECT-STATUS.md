@@ -81,13 +81,13 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 ## Rituals
 
-| Ritual            | Time                       | Delivery                          |
-| ----------------- | -------------------------- | --------------------------------- |
-| Morning briefing  | 7:00 AM Mexico City        | Email (fede@eureka.md) + Telegram |
-| Nightly close     | 10:00 PM Mexico City       | Email (fede@eureka.md) + Telegram |
-| Evolution log     | 11:59 PM Mexico City       | Appends to docs/EVOLUTION-LOG.md  |
-| Proactive scanner | 8AM, noon, 4PM, 8PM        | Telegram (max 2 nudges/day)       |
-| Weekly review     | Sunday 8:00 PM Mexico City | Email (fede@eureka.md) + Telegram |
+| Ritual            | Time                       | Delivery                             |
+| ----------------- | -------------------------- | ------------------------------------ |
+| Morning briefing  | 7:00 AM Mexico City        | Email (fede@eurekamd.net) + Telegram |
+| Nightly close     | 10:00 PM Mexico City       | Email (fede@eurekamd.net) + Telegram |
+| Evolution log     | 11:59 PM Mexico City       | Appends to docs/EVOLUTION-LOG.md     |
+| Proactive scanner | 8AM, noon, 4PM, 8PM        | Telegram (max 2 nudges/day)          |
+| Weekly review     | Sunday 8:00 PM Mexico City | Email (fede@eurekamd.net) + Telegram |
 
 ## Recent Changes
 

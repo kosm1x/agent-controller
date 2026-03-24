@@ -28,7 +28,7 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 6. If any tasks have overdue due_dates, flag them prominently.
 7. If any goals have no active objectives or tasks, flag the gap.
 8. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
-9. Send the briefing via gmail_send to fede@eureka.md with subject "Buenos días — ${dateLabel}".
+9. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 

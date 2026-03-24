@@ -205,7 +205,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       // Build task description with delivery instructions
       let deliveryInstructions = "";
       if (schedule.delivery === "email" || schedule.delivery === "both") {
-        deliveryInstructions += `\n\nEnvía el resultado por email usando gmail_send a ${schedule.email_to ?? "fede@eureka.md"} con asunto "${schedule.email_subject ?? schedule.name} — ${todayLabel}".`;
+        deliveryInstructions += `\n\nEnvía el resultado por email usando gmail_send a ${schedule.email_to ?? "fede@eurekamd.net"} con asunto "${schedule.email_subject ?? schedule.name} — ${todayLabel}".`;
         if (!tools.includes("gmail_send")) tools.push("gmail_send");
       }
       if (schedule.delivery === "telegram" || schedule.delivery === "both") {
