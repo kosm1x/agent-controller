@@ -277,6 +277,93 @@ describe("orchestrate", () => {
     expect(mockReplan.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
+  it("should trigger replan when tool-call-per-goal ratio exceeds threshold", async () => {
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    // Execution with very high tool call count: 25 calls for 2 goals (ratio 12.5 > 10.0)
+    const loopyExec: ExecutionResult = {
+      goalResults: {
+        "g-1": {
+          goalId: "g-1",
+          ok: true,
+          result: "done",
+          durationMs: 5000,
+          toolCalls: 15,
+          toolNames: Array(15).fill("web_search"),
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+        "g-2": {
+          goalId: "g-2",
+          ok: true,
+          result: "done",
+          durationMs: 3000,
+          toolCalls: 10,
+          toolNames: Array(10).fill("file_read"),
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+      },
+      summary: {
+        completed: 2,
+        failed: 0,
+        pending: 0,
+        blocked: 0,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 25,
+      totalToolNames: [
+        ...Array(15).fill("web_search"),
+        ...Array(10).fill("file_read"),
+      ],
+      totalToolFailures: 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    };
+    mockExecuteGraph.mockResolvedValueOnce(loopyExec);
+
+    // Replan returns new graph, second execution is clean
+    mockReplan.mockResolvedValueOnce({
+      graph: makeGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-convergence", "Looping task", {
+      maxReplans: 1,
+    });
+
+    // Should have triggered exactly one replan due to convergence
+    expect(mockReplan).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+  });
+
+  it("should not trigger convergence replan when ratio is below threshold", async () => {
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    // 3 tool calls for 2 goals (ratio 1.5) — well below threshold
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    await orchestrate("task-no-convergence", "Normal task");
+
+    expect(mockReplan).not.toHaveBeenCalled();
+  });
+
   it("should collect trace events", async () => {
     mockPlan.mockResolvedValueOnce({
       graph: makeGraph(),

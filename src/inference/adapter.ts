@@ -550,6 +550,64 @@ const MAX_TOOL_RESULT_CHARS = 12_000;
 const WRAPUP_TOOL_RESULT_CHARS = 1_500;
 
 /**
+ * Attempt lenient parse of malformed JSON from LLM tool calls.
+ * Tries common repairs: trailing commas, trailing garbage, unquoted keys.
+ * Returns parsed object on success, null on failure. Logs repairs.
+ */
+export function tryRepairJson(
+  raw: string,
+  toolName: string,
+): Record<string, unknown> | null {
+  let cleaned = raw;
+
+  // Fix 1: trailing commas before } or ]
+  cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (typeof parsed === "object" && parsed !== null) {
+      console.log(
+        `[inference] Repaired JSON for ${toolName}: removed trailing commas`,
+      );
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* next */
+  }
+
+  // Fix 2: trailing garbage after last }
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (lastBrace > 0) {
+    try {
+      const parsed = JSON.parse(cleaned.slice(0, lastBrace + 1));
+      if (typeof parsed === "object" && parsed !== null) {
+        console.log(
+          `[inference] Repaired JSON for ${toolName}: truncated trailing garbage`,
+        );
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* next */
+    }
+  }
+
+  // Fix 3: unquoted keys
+  const quoted = cleaned.replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
+  try {
+    const parsed = JSON.parse(quoted);
+    if (typeof parsed === "object" && parsed !== null) {
+      console.log(
+        `[inference] Repaired JSON for ${toolName}: quoted bare keys`,
+      );
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* all failed */
+  }
+
+  return null;
+}
+
+/**
  * Build a condensed conversation for wrap-up calls.
  * Keeps system + first user message + last few tool exchanges (truncated) + wrap-up instruction.
  */
@@ -617,6 +675,12 @@ export interface InferWithToolsOptions {
    * (system prompt + history are repeated every round).
    */
   tokenBudget?: number;
+  /**
+   * Context injected into compression summaries when context compression fires.
+   * Use to preserve critical state (e.g. active goal description) across compressions.
+   * Keeps the compressor generic — callers define what matters.
+   */
+  compressionContext?: string;
 }
 
 export async function inferWithTools(
@@ -639,6 +703,10 @@ export async function inferWithTools(
   let totalPrompt = 0;
   let totalCompletion = 0;
   let exitReason = "max_rounds";
+  let has413Retried = false;
+  let lastToolSig = "";
+  let consecutiveRepeats = 0;
+  const MAX_CONSECUTIVE_REPEATS = 2;
 
   for (let round = 0; round < maxRounds; round++) {
     // Compress context if approaching limit
@@ -653,7 +721,12 @@ export async function inferWithTools(
       console.log(
         `[inference] Context compression triggered at round ${round} (${conversation.length} messages)`,
       );
-      conversation = await compress(conversation);
+      conversation = await compress(
+        conversation,
+        3,
+        4,
+        options?.compressionContext,
+      );
     }
 
     // Check abort before each round
@@ -683,9 +756,26 @@ export async function inferWithTools(
         providerName,
       );
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+
+      // 413 auto-compression: force-compress and retry once
+      if (errMsg.includes("413") && !has413Retried) {
+        has413Retried = true;
+        console.log(
+          `[inference] 413 payload too large at round ${round}, force-compressing`,
+        );
+        conversation = await compress(
+          conversation,
+          3,
+          4,
+          options?.compressionContext,
+        );
+        continue;
+      }
+
       // Mid-loop inference failure — attempt toolless wrap-up instead of crashing
       console.log(
-        `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${err instanceof Error ? err.message : err}`,
+        `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${errMsg}`,
       );
       try {
         const leanContext = buildWrapUpContext(
@@ -756,7 +846,19 @@ export async function inferWithTools(
               `[inference] Tool ${toolCall.function.name} args truncated (${rawArgs.length} chars)`,
             );
           } else {
-            const args = JSON.parse(rawArgs) as Record<string, unknown>;
+            let args: Record<string, unknown>;
+            try {
+              args = JSON.parse(rawArgs) as Record<string, unknown>;
+            } catch {
+              const repaired = tryRepairJson(rawArgs, toolCall.function.name);
+              if (repaired) {
+                args = repaired;
+              } else {
+                throw new Error(
+                  `Invalid JSON in tool arguments: ${rawArgs.slice(0, 200)}`,
+                );
+              }
+            }
             // Attempt tool call repair if name not in registry
             let toolName = toolCall.function.name;
             if (!toolRegistry.has(toolName)) {
@@ -798,6 +900,25 @@ export async function inferWithTools(
       }),
     );
     conversation.push(...toolResults);
+
+    // Loop detection: break if the same tool calls repeat consecutively
+    const currentToolSig = response.tool_calls
+      .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
+      .sort()
+      .join("|");
+    if (currentToolSig === lastToolSig) {
+      consecutiveRepeats++;
+      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
+        console.warn(
+          `[inference] Loop detected: identical tool calls repeated ${consecutiveRepeats + 1}x`,
+        );
+        exitReason = "loop_detected";
+        break;
+      }
+    } else {
+      consecutiveRepeats = 0;
+    }
+    lastToolSig = currentToolSig;
 
     // Token budget check — if this round's prompt exceeded the ceiling,
     // the next round will be even larger (more tool results). Wrap up now.

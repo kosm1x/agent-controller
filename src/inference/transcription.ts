@@ -5,22 +5,43 @@
  * Works with OpenAI, Groq, or any Whisper-compatible endpoint.
  * Sends audio as multipart/form-data, returns { text, confidence }.
  *
- * Configured via WHISPER_API_URL, WHISPER_API_KEY, WHISPER_MODEL env vars.
+ * Configured via WHISPER_API_URL, WHISPER_API_KEY, WHISPER_MODEL, WHISPER_LANGUAGE env vars.
  * Gracefully disabled when env vars are missing.
  */
 
 import fs from "fs";
 import path from "path";
 
+export interface TranscriptionSegment {
+  /** Start time in seconds */
+  start: number;
+  /** End time in seconds */
+  end: number;
+  text: string;
+}
+
 export interface TranscriptionResult {
   text: string;
   /** 0.0–1.0 confidence score (estimated from avg_logprob when available) */
   confidence: number;
+  /** Time-aligned segments from verbose_json (empty if unavailable) */
+  segments: TranscriptionSegment[];
+  /** Detected or specified language code (e.g. "es", "en") */
+  language: string;
+  /** Audio duration in seconds (0 if unavailable) */
+  duration: number;
 }
 
 interface WhisperVerboseResponse {
   text: string;
-  segments?: Array<{ avg_logprob?: number }>;
+  language?: string;
+  duration?: number;
+  segments?: Array<{
+    start?: number;
+    end?: number;
+    text?: string;
+    avg_logprob?: number;
+  }>;
 }
 
 const WHISPER_TIMEOUT_MS = 30_000;
@@ -88,10 +109,11 @@ export async function transcribe(
     ),
   );
 
-  // language hint (Spanish)
+  // language hint (configurable, defaults to Spanish)
+  const lang = process.env.WHISPER_LANGUAGE ?? "es";
   parts.push(
     Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nes\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${lang}\r\n`,
     ),
   );
 
@@ -129,18 +151,32 @@ export async function transcribe(
     const data = (await response.json()) as WhisperVerboseResponse;
 
     let confidence = 0.8;
+    const segments: TranscriptionSegment[] = [];
     if (data.segments?.length) {
       const avgLogprob =
         data.segments.reduce((sum, s) => sum + (s.avg_logprob ?? -0.3), 0) /
         data.segments.length;
       confidence = Math.max(0, Math.min(1, 1 + avgLogprob));
+
+      for (const seg of data.segments) {
+        if (seg.start != null && seg.end != null && seg.text) {
+          segments.push({
+            start: seg.start,
+            end: seg.end,
+            text: seg.text.trim(),
+          });
+        }
+      }
     }
 
+    const duration = data.duration ?? 0;
+    const language = data.language ?? lang;
+
     console.log(
-      `[transcription] ${path.basename(filepath)} → ${data.text.length} chars, confidence=${(confidence * 100).toFixed(0)}%`,
+      `[transcription] ${path.basename(filepath)} → ${data.text.length} chars, ${segments.length} segments, ${duration.toFixed(1)}s, lang=${language}, confidence=${(confidence * 100).toFixed(0)}%`,
     );
 
-    return { text: data.text.trim(), confidence };
+    return { text: data.text.trim(), confidence, segments, language, duration };
   } finally {
     clearTimeout(timer);
   }

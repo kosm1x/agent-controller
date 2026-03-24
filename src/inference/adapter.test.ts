@@ -40,7 +40,7 @@ vi.mock("../prometheus/context-compressor.js", () => ({
   compress: vi.fn((msgs: unknown[]) => msgs),
 }));
 
-import { providerMetrics } from "./adapter.js";
+import { providerMetrics, tryRepairJson } from "./adapter.js";
 
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
@@ -165,5 +165,46 @@ describe("ProviderMetrics", () => {
     const all = providerMetrics.getAllStats();
     expect(all[name1]).toBeDefined();
     expect(all[name2]).toBeDefined();
+  });
+});
+
+describe("tryRepairJson", () => {
+  it("should fix trailing commas", () => {
+    const result = tryRepairJson('{"key": "value",}', "test_tool");
+    expect(result).toEqual({ key: "value" });
+  });
+
+  it("should fix trailing commas in arrays", () => {
+    const result = tryRepairJson('{"items": [1, 2, 3,]}', "test_tool");
+    expect(result).toEqual({ items: [1, 2, 3] });
+  });
+
+  it("should fix trailing garbage after closing brace", () => {
+    const result = tryRepairJson(
+      '{"key": "value"} some extra text',
+      "test_tool",
+    );
+    expect(result).toEqual({ key: "value" });
+  });
+
+  it("should fix unquoted keys", () => {
+    const result = tryRepairJson('{key: "value", other: 42}', "test_tool");
+    expect(result).toEqual({ key: "value", other: 42 });
+  });
+
+  it("should return null for completely unfixable JSON", () => {
+    const result = tryRepairJson("not json at all", "test_tool");
+    expect(result).toBeNull();
+  });
+
+  it("should return null for empty string", () => {
+    const result = tryRepairJson("", "test_tool");
+    expect(result).toBeNull();
+  });
+
+  it("should not modify already-valid JSON", () => {
+    // Valid JSON should parse on the first attempt (trailing comma fix is a no-op)
+    const result = tryRepairJson('{"key": "value"}', "test_tool");
+    expect(result).toEqual({ key: "value" });
   });
 });

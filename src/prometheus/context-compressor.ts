@@ -10,6 +10,13 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Prefix marker for compression summaries — enables PRESERVE+ADD on subsequent compressions. */
+export const SUMMARY_PREFIX = "[CONTEXT SUMMARY]";
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -41,11 +48,19 @@ export function shouldCompress(
  * Compress a conversation by summarizing the middle portion.
  * Protects the first `keepHead` and last `keepTail` messages.
  * Falls back to dropping without summary if summarization fails.
+ *
+ * PRESERVE+ADD: If the middle contains an existing compression summary
+ * (marked with SUMMARY_PREFIX), updates it incrementally instead of
+ * regenerating from scratch. Prevents information decay across cycles.
+ *
+ * @param contextInjection Optional context appended to the summary (e.g. active goal).
+ *                         Keeps the compressor generic — callers define what to preserve.
  */
 export async function compress(
   messages: ChatMessage[],
   keepHead = 3,
   keepTail = 4,
+  contextInjection?: string,
 ): Promise<ChatMessage[]> {
   const total = messages.length;
   if (total <= keepHead + keepTail) return messages;
@@ -56,27 +71,43 @@ export async function compress(
 
   if (middle.length === 0) return messages;
 
-  // Try to summarize the middle
+  // PRESERVE+ADD: extract existing summary from middle if present
+  let existingSummary: string | null = null;
+  const newMiddle: ChatMessage[] = [];
+  for (const m of middle) {
+    if (
+      !existingSummary &&
+      m.role === "system" &&
+      typeof m.content === "string" &&
+      m.content.startsWith(SUMMARY_PREFIX)
+    ) {
+      existingSummary = m.content.slice(SUMMARY_PREFIX.length).trim();
+    } else {
+      newMiddle.push(m);
+    }
+  }
+
+  // Build text from non-summary middle messages
+  const middleText = newMiddle
+    .map((m) => {
+      const role = m.role;
+      const content =
+        typeof m.content === "string"
+          ? m.content
+          : (JSON.stringify(m.content) ?? "");
+      return `[${role}]: ${content?.slice(0, 300) ?? ""}`;
+    })
+    .join("\n");
+
+  // Try to summarize (or update existing summary)
   let summaryContent: string;
   try {
-    const middleText = middle
-      .map((m) => {
-        const role = m.role;
-        const content =
-          typeof m.content === "string"
-            ? m.content
-            : (JSON.stringify(m.content) ?? "");
-        return `[${role}]: ${content?.slice(0, 300) ?? ""}`;
-      })
-      .join("\n");
+    const prompt = existingSummary
+      ? `Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions.\n\nExisting summary:\n${existingSummary}\n\nNew messages:\n${middleText}`
+      : `Summarize the following tool conversation concisely, preserving key results and decisions:\n\n${middleText}`;
 
     const summaryResponse = await infer({
-      messages: [
-        {
-          role: "user",
-          content: `Summarize the following tool conversation concisely, preserving key results and decisions:\n\n${middleText}`,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
       max_tokens: 500,
     });
@@ -89,9 +120,15 @@ export async function compress(
     summaryContent = `[Earlier conversation compressed — ${middle.length} messages removed]`;
   }
 
+  // Build final summary with prefix marker + optional context injection
+  let fullSummary = `${SUMMARY_PREFIX} ${summaryContent}`;
+  if (contextInjection) {
+    fullSummary += `\n\n---\n[ACTIVE CONTEXT]\n${contextInjection}`;
+  }
+
   const compressed: ChatMessage[] = [
     ...head,
-    { role: "system", content: summaryContent },
+    { role: "system", content: fullSummary },
     ...sanitizeToolPairs([...tail]),
   ];
 

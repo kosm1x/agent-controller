@@ -99,6 +99,8 @@ export interface OrchestratorConfig {
   replanThresholds: {
     toolFailureRate: number;
     goalBlocked: boolean;
+    /** Max tool calls / graph size ratio before triggering convergence replan. */
+    toolCallsPerGoal: number;
   };
 }
 
@@ -146,6 +148,7 @@ export function defaultConfig(
     replanThresholds: {
       toolFailureRate: 0.5,
       goalBlocked: true,
+      toolCallsPerGoal: 10.0,
     },
     ...overrides,
   };

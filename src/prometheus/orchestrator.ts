@@ -252,6 +252,17 @@ function checkReplan(
     }
   }
 
+  // Convergence check: too many tool calls relative to goals — possible looping
+  if (config.replanThresholds.toolCallsPerGoal > 0 && graph.size > 0) {
+    const ratio = trace.totalToolCalls / graph.size;
+    if (ratio > config.replanThresholds.toolCallsPerGoal) {
+      return (
+        `Tool call ratio ${ratio.toFixed(1)}/goal exceeds ` +
+        `${config.replanThresholds.toolCallsPerGoal} threshold — possible looping`
+      );
+    }
+  }
+
   // Blocked goals with no ready alternatives
   if (config.replanThresholds.goalBlocked) {
     const blocked = graph.getBlocked();

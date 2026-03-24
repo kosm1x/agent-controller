@@ -48,6 +48,7 @@ describe("defaultConfig", () => {
     expect(config.goalTimeoutMs).toBe(120_000);
     expect(config.replanThresholds.toolFailureRate).toBe(0.5);
     expect(config.replanThresholds.goalBlocked).toBe(true);
+    expect(config.replanThresholds.toolCallsPerGoal).toBe(10.0);
   });
 
   it("should accept overrides", () => {

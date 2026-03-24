@@ -13,6 +13,7 @@ import {
   shouldCompress,
   compress,
   sanitizeToolPairs,
+  SUMMARY_PREFIX,
 } from "./context-compressor.js";
 import { infer } from "../inference/adapter.js";
 
@@ -94,7 +95,8 @@ describe("compress", () => {
     expect(result[0].content).toBe("sys");
     expect(result[1].content).toBe("hello");
     expect(result[2].role).toBe("system");
-    expect(result[2].content).toBe("Summary of middle conversation");
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
+    expect(result[2].content).toContain("Summary of middle conversation");
     expect(result[3].content).toBe("follow up");
     expect(result[4].content).toBe("answer");
   });
@@ -115,9 +117,108 @@ describe("compress", () => {
     const result = await compress(messages, 2, 2);
 
     expect(result.length).toBe(5);
-    // Summary should contain fallback marker
+    // Summary should contain SUMMARY_PREFIX + fallback marker
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
     expect(result[2].content).toContain("compressed");
     expect(result[2].content).toContain("3 messages removed");
+  });
+
+  it("should detect existing summary and use update prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Updated summary with new info",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 80, completion_tokens: 30, total_tokens: 110 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" }, // head
+      { role: "user", content: "hello" }, // head
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} Previous summary of events`,
+      }, // middle — existing summary
+      { role: "assistant", content: "new response" }, // middle — new message
+      { role: "user", content: "new question" }, // middle — new message
+      { role: "user", content: "recent1" }, // tail
+      { role: "assistant", content: "recent2" }, // tail
+    ];
+
+    const result = await compress(messages, 2, 2);
+
+    // Should use update prompt with existing summary
+    const inferCall = mockInfer.mock.calls[0][0];
+    const prompt =
+      typeof inferCall.messages[0].content === "string"
+        ? inferCall.messages[0].content
+        : "";
+    expect(prompt).toContain("Update this existing summary");
+    expect(prompt).toContain("Previous summary of events");
+
+    // Existing summary should NOT appear in the "New messages" section
+    expect(prompt).not.toContain(`[system]: ${SUMMARY_PREFIX}`);
+
+    // Output should have SUMMARY_PREFIX
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
+    expect(result[2].content).toContain("Updated summary with new info");
+  });
+
+  it("should append contextInjection to summary", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Summary text",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "mid1" },
+      { role: "user", content: "mid2" },
+      { role: "assistant", content: "mid3" },
+      { role: "user", content: "recent1" },
+      { role: "assistant", content: "recent2" },
+    ];
+
+    const result = await compress(
+      messages,
+      2,
+      2,
+      "Current goal: Do the thing\nCriteria: pass tests",
+    );
+
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
+    expect(result[2].content).toContain("[ACTIVE CONTEXT]");
+    expect(result[2].content).toContain("Current goal: Do the thing");
+    expect(result[2].content).toContain("Criteria: pass tests");
+  });
+
+  it("should work without contextInjection (backward compat)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Summary text",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "mid1" },
+      { role: "user", content: "mid2" },
+      { role: "assistant", content: "mid3" },
+      { role: "user", content: "recent1" },
+      { role: "assistant", content: "recent2" },
+    ];
+
+    const result = await compress(messages, 2, 2);
+
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
+    expect(result[2].content).not.toContain("[ACTIVE CONTEXT]");
   });
 });
 

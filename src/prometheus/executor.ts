@@ -172,6 +172,10 @@ export async function executeGoal(
       const definitions = toolRegistry.getDefinitions(toolNames);
 
       const TOKEN_BUDGET_HEAVY = 80_000;
+      const compressionContext = [
+        `Current goal: ${goal.description}`,
+        `Criteria: ${goal.completionCriteria.join("; ")}`,
+      ].join("\n");
       const inferPromise = inferWithTools(
         messages,
         definitions,
@@ -180,6 +184,7 @@ export async function executeGoal(
           maxRounds: MAX_ROUNDS_PER_GOAL,
           signal,
           tokenBudget: TOKEN_BUDGET_HEAVY,
+          compressionContext,
         },
       );
 
