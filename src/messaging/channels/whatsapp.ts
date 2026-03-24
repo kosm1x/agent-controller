@@ -7,12 +7,17 @@
 
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import fs from "fs";
+import {
+  isTranscriptionConfigured,
+  transcribeBuffer,
+} from "../../inference/transcription.js";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -117,10 +122,49 @@ export class WhatsAppAdapter implements ChannelAdapter {
         // Owner-only: ignore messages from non-owner JIDs
         if (jid !== OWNER_JID) continue;
 
-        const text =
+        let text =
           msg.message.conversation ||
           msg.message.extendedTextMessage?.text ||
           null;
+
+        // Voice/audio message → transcribe via Whisper
+        if (!text && msg.message.audioMessage) {
+          if (isTranscriptionConfigured()) {
+            try {
+              const buffer = (await downloadMediaMessage(
+                msg,
+                "buffer",
+                {},
+              )) as Buffer;
+              const mimetype = msg.message.audioMessage.mimetype || "audio/ogg";
+              const ext = (mimetype.split("/")[1] || "ogg")
+                .split(";")[0]
+                .trim();
+              const duration = msg.message.audioMessage.seconds || 0;
+              const sizeKB = Math.round(buffer.length / 1024);
+
+              console.log(
+                `[whatsapp] Voice message: ${sizeKB}KB, ${duration}s`,
+              );
+
+              const result = await transcribeBuffer(buffer, ext);
+              if (result?.text) {
+                text = `[Audio: ${duration}s, ${sizeKB}KB, confianza ${(result.confidence * 100).toFixed(0)}%]\n\nTranscripción:\n${result.text}`;
+              } else {
+                text = `[Audio: ${duration}s — no se pudo transcribir]`;
+              }
+            } catch (err) {
+              console.warn(
+                `[whatsapp] Voice transcription failed: ${err instanceof Error ? err.message : err}`,
+              );
+              text = `[Audio recibido — transcripción falló]`;
+            }
+          } else {
+            console.warn(
+              "[whatsapp] Voice message received but WHISPER not configured",
+            );
+          }
+        }
 
         if (!text) continue;
 

@@ -13,6 +13,10 @@ import type {
 } from "../types.js";
 import { formatForTelegram } from "../formatter.js";
 import { extractPdfFromUrl } from "../../lib/pdf.js";
+import {
+  isTranscriptionConfigured,
+  transcribeBuffer,
+} from "../../inference/transcription.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -227,6 +231,76 @@ export class TelegramAdapter implements ChannelAdapter {
         });
       } catch (err) {
         console.error("[telegram] File handler error:", err);
+      }
+    });
+
+    // Handle voice notes and audio messages → transcribe via Whisper
+    this.bot.on(["message:voice", "message:audio"], async (ctx) => {
+      if (!this.messageHandler) return;
+      const chatId = String(ctx.chat.id);
+      if (chatId !== OWNER_CHAT_ID) return;
+
+      if (!isTranscriptionConfigured()) {
+        console.warn(
+          "[telegram] Voice message received but WHISPER_API_URL/KEY not configured",
+        );
+        return;
+      }
+
+      try {
+        const voice = ctx.message.voice;
+        const audio = ctx.message.audio;
+        const caption = ctx.message.caption ?? "";
+        const duration = voice?.duration ?? audio?.duration ?? 0;
+        const fileId = voice?.file_id ?? audio?.file_id;
+
+        if (!fileId) return;
+
+        const file = await ctx.api.getFile(fileId);
+        const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+
+        // Download audio
+        const response = await fetch(fileUrl, {
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) {
+          console.error(
+            `[telegram] Voice download failed: HTTP ${response.status}`,
+          );
+          return;
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const sizeKB = Math.round(buffer.length / 1024);
+
+        console.log(`[telegram] Voice message: ${sizeKB}KB, ${duration}s`);
+
+        // Transcribe
+        const ext = voice
+          ? "ogg"
+          : (audio?.mime_type?.split("/")[1]?.split(";")[0] ?? "ogg");
+        const result = await transcribeBuffer(buffer, ext);
+
+        let text: string;
+        if (result?.text) {
+          const header = `[Audio: ${duration}s, ${sizeKB}KB, confianza ${(result.confidence * 100).toFixed(0)}%]`;
+          text = caption
+            ? `${caption}\n\n${header}\n\nTranscripción:\n${result.text}`
+            : `${header}\n\nTranscripción:\n${result.text}`;
+        } else {
+          text = caption
+            ? `${caption}\n\n[Audio: ${duration}s — no se pudo transcribir]`
+            : `[Audio: ${duration}s — no se pudo transcribir]`;
+        }
+
+        this.messageHandler({
+          channel: "telegram",
+          from: chatId,
+          text,
+          timestamp: new Date(ctx.message.date * 1000),
+          replyTo: String(ctx.message.message_id),
+        });
+      } catch (err) {
+        console.error("[telegram] Voice handler error:", err);
       }
     });
 
