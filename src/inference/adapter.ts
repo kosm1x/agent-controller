@@ -586,7 +586,15 @@ export interface InferWithToolsOptions {
   onTextChunk?: OnTextChunk;
   signal?: AbortSignal;
   providerName?: string;
-  /** Total token budget (prompt + completion). Triggers wrap-up when exceeded. */
+  /**
+   * Per-round prompt token ceiling. If any single round's prompt_tokens
+   * exceeds this, the loop wraps up before the next round. This prevents
+   * individual requests from hitting the DashScope ~30K token ceiling.
+   *
+   * Note: this checks the LAST round's prompt_tokens, not the cumulative
+   * total, because prompt_tokens includes the full conversation each time
+   * (system prompt + history are repeated every round).
+   */
   tokenBudget?: number;
 }
 
@@ -770,11 +778,12 @@ export async function inferWithTools(
     );
     conversation.push(...toolResults);
 
-    // Token budget check — wrap up early if exceeded
-    if (totalPrompt + totalCompletion >= tokenBudget) {
+    // Token budget check — if this round's prompt exceeded the ceiling,
+    // the next round will be even larger (more tool results). Wrap up now.
+    if (response.usage.prompt_tokens >= tokenBudget) {
       exitReason = "token_budget";
       console.log(
-        `[inference] Token budget exhausted (${totalPrompt + totalCompletion} >= ${tokenBudget}), forcing wrap-up`,
+        `[inference] Token budget exceeded (round prompt=${response.usage.prompt_tokens} >= ${tokenBudget}), forcing wrap-up`,
       );
       break;
     }
@@ -782,7 +791,7 @@ export async function inferWithTools(
 
   // Force one final toolless call to synthesize results
   console.log(
-    `[inference] Wrap-up triggered: ${exitReason} (rounds=${maxRounds}, tokens=${totalPrompt + totalCompletion}${tokenBudget < Infinity ? `/${tokenBudget}` : ""})`,
+    `[inference] Wrap-up triggered: ${exitReason} (totalTokens=${totalPrompt + totalCompletion}${tokenBudget < Infinity ? `, ceiling=${tokenBudget}` : ""})`,
   );
   try {
     const leanContext = buildWrapUpContext(

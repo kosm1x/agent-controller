@@ -39,9 +39,13 @@ STATUS: BLOCKED — [what is preventing completion]`;
 const MAX_ROUNDS_DEFAULT = 7;
 const MAX_ROUNDS_CODING = 15;
 
-/** Token budgets — triggers wrap-up before DashScope ~30K ceiling causes timeout. */
-const TOKEN_BUDGET_FAST = 20_000;
-const TOKEN_BUDGET_CODING = 40_000;
+/**
+ * Per-round prompt token ceiling — wraps up before next round would exceed
+ * the DashScope ~30K token ceiling. Checked against each round's prompt_tokens
+ * (not cumulative), since prompt_tokens includes the full conversation each time.
+ */
+const TOKEN_BUDGET_FAST = 25_000;
+const TOKEN_BUDGET_CODING = 28_000;
 
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
