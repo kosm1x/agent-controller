@@ -132,13 +132,15 @@ export function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   }
 
   // For assistant messages with tool_calls where results are missing,
-  // add stub tool responses (collect separately to avoid mutation during iteration)
-  const stubs: ChatMessage[] = [];
+  // insert stub tool responses immediately after their parent assistant message.
+  // OpenAI-compatible APIs require tool results to follow their tool_call message.
+  const result: ChatMessage[] = [];
   for (const msg of sanitized) {
+    result.push(msg);
     if (msg.role === "assistant" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (!resultIds.has(tc.id)) {
-          stubs.push({
+          result.push({
             role: "tool",
             content: "[Result compressed]",
             tool_call_id: tc.id,
@@ -148,5 +150,5 @@ export function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
     }
   }
 
-  return [...sanitized, ...stubs];
+  return result;
 }

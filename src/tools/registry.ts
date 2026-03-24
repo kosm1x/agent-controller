@@ -55,6 +55,8 @@ export class ToolRegistry {
     const maxDist = Math.ceil(normalized.length * 0.3);
 
     for (const registered of this.tools.keys()) {
+      // Never fuzzy-match to destructive tools — defense in depth
+      if (ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(registered)) continue;
       const dist = levenshtein(normalized, registered);
       if (dist < bestDist && dist <= maxDist) {
         bestDist = dist;

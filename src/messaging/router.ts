@@ -37,6 +37,7 @@ import {
 import {
   isProactiveTask,
   handleProactiveResult,
+  handleProactiveFailure,
 } from "../intelligence/proactive.js";
 import {
   isScheduledTask,
@@ -94,7 +95,8 @@ const COMMIT_WRITE_TOOLS = [
 const COMMIT_DESTRUCTIVE_TOOLS = ["commit__delete_item"];
 
 /** Scheduling tools — only when reports/automation discussed. */
-const SCHEDULE_TOOLS = ["schedule_task", "list_schedules", "delete_schedule"];
+// list_schedules is in MISC_TOOLS (always available), so only scope-gated tools here
+const SCHEDULE_TOOLS = ["schedule_task", "delete_schedule"];
 
 /** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
 const GOOGLE_TOOLS = [
@@ -1141,6 +1143,11 @@ export class MessageRouter {
 
     // Clean up ritual watches
     this.ritualWatches.delete(taskId);
+
+    // Clean up proactive scan tracking (prevents Set leak)
+    if (isProactiveTask(taskId)) {
+      handleProactiveFailure(taskId);
+    }
 
     // Alert on scheduled task failures
     if (isScheduledTask(taskId)) {

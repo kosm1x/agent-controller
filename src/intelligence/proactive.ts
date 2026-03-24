@@ -170,6 +170,14 @@ export function handleProactiveResult(taskId: string, result: string): void {
 }
 
 /**
+ * Clean up a failed proactive task from the pending set.
+ * Called from the router's task.failed handler.
+ */
+export function handleProactiveFailure(taskId: string): void {
+  pendingProactive.delete(taskId);
+}
+
+/**
  * Check if a task ID is a proactive scan (for router integration).
  */
 export function isProactiveTask(taskId: string): boolean {
