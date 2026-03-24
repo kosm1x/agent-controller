@@ -181,11 +181,14 @@ async function callProvider(
     body.enable_thinking = false;
   }
 
+  // Dynamic timeout: scale with tool count. Base timeout is insufficient for
+  // large prompts with many tools — LLM providers need more time to process
+  // 20K+ token tool-augmented prompts. Add 1s per tool definition.
+  const toolCount = request.tools?.length ?? 0;
+  const effectiveTimeout = config.inferenceTimeoutMs + toolCount * 1000;
+
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    config.inferenceTimeoutMs,
-  );
+  const timeout = setTimeout(() => controller.abort(), effectiveTimeout);
 
   // Compose external abort signal with timeout controller
   const combinedSignal = externalSignal
@@ -360,30 +363,46 @@ export async function infer(
 
   let lastError: Error | undefined;
 
-  for (const provider of providers) {
+  for (let pi = 0; pi < providers.length; pi++) {
+    const provider = providers[pi];
     for (let attempt = 0; attempt < config.inferenceMaxRetries; attempt++) {
       try {
+        const toolCount = request.tools?.length ?? 0;
+        const effectiveTimeoutLog =
+          config.inferenceTimeoutMs + toolCount * 1000;
+        console.log(
+          `[inference] Attempting ${provider.name}/${provider.model} (provider ${pi + 1}/${providers.length}, attempt ${attempt + 1}/${config.inferenceMaxRetries}, timeout=${effectiveTimeoutLog}ms, tools=${toolCount})`,
+        );
         return await callProvider(provider, request, onTextChunk, signal);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const statusMatch = lastError.message.match(/HTTP (\d+)/);
         const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+        const isAbort =
+          lastError.name === "AbortError" ||
+          lastError.message.includes("aborted");
+        console.warn(
+          `[inference] ${provider.name} attempt ${attempt + 1} failed: ${lastError.message}${isAbort ? " (timeout)" : ""} status=${status}`,
+        );
         if (status === 429 || (status >= 500 && status < 600)) {
           const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
           console.warn(
-            `[inference] ${provider.name} attempt ${attempt} HTTP ${status}, backoff ${delay}ms`,
+            `[inference] ${provider.name} backoff ${delay}ms before retry`,
           );
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
-        break;
+        break; // non-retryable → skip to next provider
       }
     }
     console.warn(
-      `[inference] ${provider.name} failed: ${lastError?.message}, trying next`,
+      `[inference] ${provider.name} exhausted: ${lastError?.message}, trying next provider`,
     );
   }
 
+  console.error(
+    `[inference] All ${providers.length} providers failed. Last: ${lastError?.message}`,
+  );
   throw new Error(
     `All inference providers failed. Last error: ${lastError?.message}`,
   );

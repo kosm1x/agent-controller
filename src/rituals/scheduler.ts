@@ -14,6 +14,7 @@ import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { createEvolutionRitual } from "./evolution.js";
+import { createWeeklyReview } from "./weekly-review.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
@@ -34,6 +35,8 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       return createEvolutionRitual(date);
     case "evolution-log":
       return createEvolutionLogEntry(date);
+    case "weekly-review":
+      return createWeeklyReview(date);
     default:
       throw new Error(`Unknown ritual: ${ritual.id}`);
   }

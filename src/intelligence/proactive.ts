@@ -83,21 +83,37 @@ async function runProactiveScan(): Promise<void> {
     return;
   }
 
+  // Determine current hour in MX timezone for context-aware scanning
+  const mxHour = new Date().toLocaleString("en-US", {
+    timeZone: "America/Mexico_City",
+    hour: "numeric",
+    hour12: false,
+  });
+  const currentHour = parseInt(mxHour, 10);
+  const isEvening = currentHour >= 18; // 6PM+
+
   // Submit a proactive scan task — the LLM will use commit tools
-  // to check deadlines, overdue tasks, and stale objectives
+  // to check deadlines, overdue tasks, stale goals, and project-goal sync
   try {
     const result = await submitTask({
       title: `Proactive scan — ${today}`,
       description: `Eres Jarvis. Realiza un escaneo proactivo de la situación del usuario:
 
-1. Usa get_daily_snapshot para ver tareas pendientes, vencidas, y próximos deadlines.
-2. Usa list_objectives con status "in_progress" para detectar objetivos estancados.
+1. Usa commit__get_daily_snapshot para ver tareas pendientes, vencidas, y próximos deadlines.
+2. Usa commit__list_objectives con status "in_progress" para detectar objetivos estancados.
+3. Usa commit__list_goals con status "in_progress" para detectar metas sin actividad en 14+ días.
+4. Usa project_list para ver proyectos activos y verificar que los que tienen commit_goal_id vinculado tengan progreso reciente.
 
-Genera un mensaje BREVE (máximo 3-4 líneas) SOLO si encuentras algo importante:
-- Tareas vencidas (overdue)
-- Deadlines en los próximos 2 días
-- Objetivos sin actividad reciente
+## Qué buscar
 
+- **Tareas vencidas** (overdue) → alerta inmediata
+- **Deadlines en los próximos 2 días** → recordatorio
+- **Metas estancadas** (14+ días sin movimiento en objetivos/tareas) → "Tu meta X lleva 2+ semanas sin movimiento. ¿La replanteamos?"
+- **Objetivos completables** → si todas las tareas de un objetivo están completadas, sugiere marcar el objetivo como completado
+- **Proyecto-meta desincronizado** → si un proyecto tiene actividad reciente pero su meta COMMIT vinculada no se mueve (o viceversa)
+${isEvening ? `- **Protección de racha**: Son las ${currentHour}h. Si no hay completaciones hoy, sugiere la tarea pendiente más fácil para mantener la racha.` : ""}
+
+Genera un mensaje BREVE (máximo 4-5 líneas) SOLO si encuentras algo importante.
 Si todo está en orden, responde exactamente: "NOTHING_TO_REPORT"
 
 No saludes. No agregues contexto innecesario. Ve directo al punto.`,
@@ -106,6 +122,8 @@ No saludes. No agregues contexto innecesario. Ve directo al punto.`,
         "commit__get_daily_snapshot",
         "commit__list_objectives",
         "commit__list_tasks",
+        "commit__list_goals",
+        "project_list",
       ],
       tags: ["proactive"],
     });

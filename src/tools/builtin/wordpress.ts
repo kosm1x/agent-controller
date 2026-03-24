@@ -651,17 +651,27 @@ DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, 
 
     if (status >= 200 && status < 300) {
       const d = data as Record<string, unknown>;
+      const postStatus = d.status as string;
       const link =
         (d.link as string) ??
         ((d.guid as Record<string, string>)?.rendered || "");
-      return JSON.stringify({
+      const result: Record<string, unknown> = {
         success: true,
         site: resolved.name,
         post_id: d.id,
-        status: d.status,
-        link,
+        status: postStatus,
         title: (d.title as Record<string, string>)?.rendered ?? "",
-      });
+      };
+      // Only include the link if the post is published — draft links return 404
+      // for unauthenticated visitors and confuse users.
+      if (postStatus === "publish") {
+        result.link = link;
+      } else {
+        result.note =
+          `Post saved as ${postStatus}. The link will only work after publishing. ` +
+          `To publish: call wp_publish with post_id=${d.id} and status="publish".`;
+      }
+      return JSON.stringify(result);
     }
 
     return JSON.stringify({

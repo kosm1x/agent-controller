@@ -59,6 +59,8 @@ export interface RunnerOutput {
   goalGraph?: unknown;
   /** Execution trace entries. */
   trace?: unknown[];
+  /** Tool names called during execution (for requiredTools validation). */
+  toolCalls?: string[];
 }
 
 /** Interface that all runners implement. */

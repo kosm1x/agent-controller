@@ -12,6 +12,12 @@ import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getEventBus } from "../../lib/event-bus.js";
 import { analyzeJournalDeep } from "../../commit-ai/journal-analysis.js";
+import {
+  onTaskCompleted,
+  onRecurringTaskCompleted,
+  onGoalCompleted,
+  onObjectiveCompleted,
+} from "../../commit-ai/event-reactions.js";
 
 interface CommitEvent {
   event: "INSERT" | "UPDATE" | "DELETE";
@@ -90,7 +96,20 @@ commitEvents.post("/", async (c) => {
     const newStatus = changes?.status as string | undefined;
     if (newStatus === "completed") {
       reactions.push("task_completed");
-      // Future: check if all tasks under objective are done → suggest completion
+      // Check if all tasks under objective are done → suggest completion
+      onTaskCompleted(row_id, changes ?? {}).catch((err) =>
+        console.error(
+          `[commit-events] Task completion reaction failed for ${row_id}:`,
+          err,
+        ),
+      );
+      // Celebrate streak milestones for recurring tasks
+      onRecurringTaskCompleted(changes ?? {}).catch((err) =>
+        console.error(
+          `[commit-events] Recurring task reaction failed for ${row_id}:`,
+          err,
+        ),
+      );
     }
   }
 
@@ -109,7 +128,13 @@ commitEvents.post("/", async (c) => {
     const newStatus = changes?.status as string | undefined;
     if (newStatus === "completed") {
       reactions.push("goal_completed");
-      // Future: celebrate via Telegram, suggest archiving linked project
+      // Celebrate via Telegram + suggest archiving linked project
+      onGoalCompleted(row_id, changes ?? {}).catch((err) =>
+        console.error(
+          `[commit-events] Goal completion reaction failed for ${row_id}:`,
+          err,
+        ),
+      );
     }
   }
 
@@ -117,7 +142,13 @@ commitEvents.post("/", async (c) => {
     const newStatus = changes?.status as string | undefined;
     if (newStatus === "completed") {
       reactions.push("objective_completed");
-      // Future: suggest next objective, update project progress
+      // Suggest next objective or goal promotion
+      onObjectiveCompleted(row_id, changes ?? {}).catch((err) =>
+        console.error(
+          `[commit-events] Objective completion reaction failed for ${row_id}:`,
+          err,
+        ),
+      );
     }
   }
 

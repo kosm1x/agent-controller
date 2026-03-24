@@ -77,13 +77,28 @@ describe("executeGoal", () => {
     expect(result.tokenUsage.completionTokens).toBe(50);
   });
 
-  it("should count tool calls from messages", async () => {
+  it("should count tool calls and extract names from messages", async () => {
     mockInferWithTools.mockResolvedValueOnce({
       content: "Done with tools",
       messages: [
         { role: "system", content: "..." },
         { role: "user", content: "..." },
-        { role: "assistant", content: null, tool_calls: [] },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: { name: "web_search", arguments: "{}" },
+            },
+            {
+              id: "tc-2",
+              type: "function",
+              function: { name: "gmail_send", arguments: "{}" },
+            },
+          ],
+        },
         { role: "tool", content: "result 1", tool_call_id: "tc-1" },
         { role: "tool", content: "result 2", tool_call_id: "tc-2" },
         { role: "assistant", content: "Done with tools" },
@@ -94,6 +109,7 @@ describe("executeGoal", () => {
     const result = await executeGoal(makeGoal(), "");
     expect(result.ok).toBe(true);
     expect(result.toolCalls).toBe(2);
+    expect(result.toolNames).toEqual(["web_search", "gmail_send"]);
   });
 
   it("should retry on transient errors then succeed", async () => {

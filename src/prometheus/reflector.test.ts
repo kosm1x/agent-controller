@@ -51,6 +51,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
       error: goal.status === GoalStatus.FAILED ? "failed" : undefined,
       durationMs: 100,
       toolCalls: 1,
+      toolNames: ["test_tool"],
       toolFailures: goal.status === GoalStatus.FAILED ? 1 : 0,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
@@ -59,6 +60,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
     goalResults,
     summary: graph.summary(),
     totalToolCalls: Object.keys(goalResults).length,
+    totalToolNames: Object.keys(goalResults).map(() => "test_tool"),
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };

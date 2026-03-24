@@ -172,9 +172,10 @@ const BROWSER_TOOLS = [
 /** Keyword patterns that activate tool groups. Scans current + recent messages. */
 const SCOPE_PATTERNS: { pattern: RegExp; group: string }[] = [
   // COMMIT write tools (excludes delete — see commit_destructive below)
+  // Includes intent phrases that may imply creating tasks/goals
   {
     pattern:
-      /\b(crea(r|me)?|actualiz|complet|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto)/i,
+      /\b(crea(r|me)?|actualiz|complet|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto|necesito|tengo que|hay que|deber[ií]a|recu[eé]rdame|no olvides|quiero lograr|me propongo)/i,
     group: "commit_write",
   },
   // COMMIT destructive tools — only on explicit deletion keywords
@@ -267,7 +268,7 @@ Cuando Fede te pida algo, HAZLO directamente con tus herramientas:
 - "Búscame vuelos" → usa web_search y presenta opciones
 - "Qué hay en mi calendario" → usa calendar_list y muestra eventos
 
-NO crees una tarea en COMMIT a menos que Fede diga explícitamente: "crea una tarea", "agrega a mis pendientes", "pon esto en COMMIT", "trackea esto".
+NO crees una tarea en COMMIT directamente a menos que Fede diga explícitamente: "crea una tarea", "agrega a mis pendientes", "pon esto en COMMIT", "trackea esto".
 
 COMMIT es el sistema de productividad de Fede (visiones → metas → objetivos → tareas). Solo interactúa con COMMIT cuando Fede quiere GESTIONAR su productividad.
 
@@ -277,6 +278,11 @@ COMMIT es el sistema de productividad de Fede (visiones → metas → objetivos 
 - Objetivo = hito específico bajo una meta
 - Tarea = acción concreta bajo un objetivo
 Usa list_goals para metas, list_objectives para objetivos. NO presentes visiones como metas.
+
+## Detección de intenciones COMMIT
+Si Fede dice algo que implica una acción futura pero NO pide explícitamente crear una tarea ("necesito revisar...", "tengo que hablar con...", "hay que preparar...", "debería investigar...", "recuérdame...", "no olvides..."), OFRECE crear una sugerencia en COMMIT usando commit__create_suggestion.
+Ejemplo: "Escuché lo que dices. ¿Quieres que lo registre como tarea en COMMIT bajo [objetivo más relevante]?"
+NO la crees directamente — solo sugiere. Si Fede dice que sí, usa commit__create_suggestion con type "create_task" y el reasoning correspondiente.
 
 ## REGLA CRÍTICA: Reporta lo que hiciste
 Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`);

@@ -61,6 +61,7 @@ export interface GoalResult {
   error?: string;
   durationMs: number;
   toolCalls: number;
+  toolNames: string[];
   toolFailures: number;
   tokenUsage: TokenUsage;
 }
@@ -69,6 +70,7 @@ export interface ExecutionResult {
   goalResults: Record<string, GoalResult>;
   summary: Record<string, number>;
   totalToolCalls: number;
+  totalToolNames: string[];
   totalToolFailures: number;
   tokenUsage: TokenUsage;
 }

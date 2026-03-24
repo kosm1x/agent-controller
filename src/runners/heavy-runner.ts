@@ -34,6 +34,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         score: result.reflection.score,
         learnings: result.reflection.learnings,
       },
+      toolCalls: result.executionResults.totalToolNames,
       tokenUsage: {
         promptTokens: result.tokenUsage.promptTokens,
         completionTokens: result.tokenUsage.completionTokens,

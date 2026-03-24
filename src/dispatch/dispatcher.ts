@@ -30,6 +30,10 @@ export interface TaskSubmission {
   spawnType?: "root" | "subtask";
   /** Prior conversation turns for thread continuity (chat tasks). */
   conversationHistory?: import("../runners/types.js").ConversationTurn[];
+  /** Tools that MUST appear in toolCalls for the task to be considered successful. */
+  requiredTools?: string[];
+  /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
+  _isRequiredToolRetry?: boolean;
 }
 
 export interface TaskRow {
@@ -386,6 +390,64 @@ async function dispatchWithSlot(
       else if (result.status === "BLOCKED") taskStatus = "blocked";
       else taskStatus = "failed";
     }
+
+    // Required tool validation: check that critical tools were actually called
+    if (submission.requiredTools?.length && result.success) {
+      const calledTools = result.toolCalls ?? [];
+      const missing = submission.requiredTools.filter(
+        (t) => !calledTools.includes(t),
+      );
+      if (missing.length > 0) {
+        if (submission._isRequiredToolRetry) {
+          // Retry also failed — alert and give up
+          console.error(
+            `[dispatch] Task ${taskId}: required tools still missing after retry: ${missing.join(", ")}`,
+          );
+          try {
+            getEventBus().emitEvent("notification.warning", {
+              title: "Required tools not called",
+              message: `Task "${submission.title}" completed without calling: ${missing.join(", ")} (even after retry)`,
+              source: "dispatcher",
+              context: { taskId, missing },
+            });
+          } catch {
+            /* event emission should not block */
+          }
+          updateTaskStatus(
+            taskId,
+            "failed",
+            result.output,
+            `Required tools not called after retry: ${missing.join(", ")}`,
+          );
+          return;
+        }
+
+        // First attempt — auto-retry once with explicit instruction
+        console.warn(
+          `[dispatch] Task ${taskId}: required tools missing: ${missing.join(", ")}. Auto-retrying once.`,
+        );
+        const retrySubmission: TaskSubmission = {
+          ...submission,
+          description: `${submission.description}\n\nCRITICAL: You MUST call the following tools before completing this task: ${missing.join(", ")}. The previous attempt completed without calling them. Do not skip these tools.`,
+          _isRequiredToolRetry: true,
+        };
+        submitTask(retrySubmission).catch((err) => {
+          console.error(
+            `[dispatch] Required-tool retry failed for ${taskId}:`,
+            err,
+          );
+        });
+        // Mark original as failed with clear reason
+        updateTaskStatus(
+          taskId,
+          "failed",
+          result.output,
+          `Required tools not called: ${missing.join(", ")}`,
+        );
+        return;
+      }
+    }
+
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
 
     // Record cost in ledger (if budget feature is available and we have token data)

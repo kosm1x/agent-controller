@@ -142,6 +142,7 @@ export async function executeGoal(
         error: "Aborted",
         durationMs: Date.now() - start,
         toolCalls: 0,
+        toolNames: [],
         toolFailures: 0,
         tokenUsage: { promptTokens: 0, completionTokens: 0 },
       };
@@ -155,6 +156,7 @@ export async function executeGoal(
         error: "Iteration budget exhausted",
         durationMs: Date.now() - start,
         toolCalls: 0,
+        toolNames: [],
         toolFailures: 0,
         tokenUsage: { promptTokens: 0, completionTokens: 0 },
       };
@@ -200,15 +202,23 @@ export async function executeGoal(
         result = await inferPromise;
       }
 
-      // Count tool calls from the conversation
-      const tcCount = result.messages.filter((m) => m.role === "tool").length;
+      // Extract tool call names and count from the conversation
+      const tcNames: string[] = [];
+      for (const m of result.messages) {
+        if (m.role === "assistant" && m.tool_calls) {
+          for (const tc of m.tool_calls) {
+            tcNames.push(tc.function.name);
+          }
+        }
+      }
 
       return {
         goalId: goal.id,
         ok: true,
         result: result.content,
         durationMs: Date.now() - start,
-        toolCalls: tcCount,
+        toolCalls: tcNames.length,
+        toolNames: tcNames,
         toolFailures: 0,
         tokenUsage: {
           promptTokens: result.totalUsage.prompt_tokens,
@@ -234,6 +244,7 @@ export async function executeGoal(
         error: errorMsg,
         durationMs: Date.now() - start,
         toolCalls: 0,
+        toolNames: [],
         toolFailures: 1,
         tokenUsage: { promptTokens: 0, completionTokens: 0 },
       };
@@ -246,6 +257,7 @@ export async function executeGoal(
     error: "Max retries exceeded",
     durationMs: Date.now() - start,
     toolCalls: 0,
+    toolNames: [],
     toolFailures: 1,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };
@@ -268,6 +280,7 @@ export async function executeGraph(
 ): Promise<ExecutionResult> {
   const results: Record<string, GoalResult> = {};
   let totalToolCalls = 0;
+  const allToolNames: string[] = [];
   let totalToolFailures = 0;
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
@@ -312,12 +325,14 @@ export async function executeGraph(
               error: String(outcome.reason),
               durationMs: 0,
               toolCalls: 0,
+              toolNames: [],
               toolFailures: 1,
               tokenUsage: { promptTokens: 0, completionTokens: 0 },
             };
 
       results[goal.id] = goalResult;
       totalToolCalls += goalResult.toolCalls;
+      allToolNames.push(...goalResult.toolNames);
       totalToolFailures += goalResult.toolFailures;
       totalPromptTokens += goalResult.tokenUsage.promptTokens;
       totalCompletionTokens += goalResult.tokenUsage.completionTokens;
@@ -334,6 +349,7 @@ export async function executeGraph(
     goalResults: results,
     summary: graph.summary(),
     totalToolCalls,
+    totalToolNames: allToolNames,
     totalToolFailures,
     tokenUsage: {
       promptTokens: totalPromptTokens,

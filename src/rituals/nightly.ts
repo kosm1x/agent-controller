@@ -54,5 +54,6 @@ Racha: X días. [motivational note if streak is growing]`,
       "gmail_send",
       "project_list",
     ],
+    requiredTools: ["commit__get_daily_snapshot", "gmail_send"],
   };
 }

@@ -81,6 +81,7 @@ export async function orchestrate(
     goalResults: {},
     summary: graph.summary(),
     totalToolCalls: 0,
+    totalToolNames: [],
     totalToolFailures: 0,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };

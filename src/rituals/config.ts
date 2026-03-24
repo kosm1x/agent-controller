@@ -41,4 +41,11 @@ export const rituals: RitualDefinition[] = [
     cron: "59 23 * * *",
     enabled: true,
   },
+  {
+    id: "weekly-review",
+    title: "Weekly review",
+    // Sunday 8:00 PM — comprehensive weekly strategic review
+    cron: "0 20 * * 0",
+    enabled: true,
+  },
 ];

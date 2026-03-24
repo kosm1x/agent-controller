@@ -70,5 +70,6 @@ Racha actual: X días consecutivos.`,
       "gmail_send",
       "project_list",
     ],
+    requiredTools: ["commit__get_daily_snapshot", "gmail_send"],
   };
 }

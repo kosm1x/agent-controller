@@ -55,6 +55,79 @@ describe("detectsHallucinatedExecution", () => {
       ),
     ).toBe(true);
   });
+
+  // --- Layer 2: Partial hallucination (WP-specific) ---
+  it("detects partial hallucination: claims WP publish but only called wp_list_posts", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El artículo fue publicado exitosamente en el blog.",
+        ["wp_list_posts"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects partial hallucination: claims image uploaded but no wp_media_upload", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "La imagen fue subida correctamente al sitio.",
+        ["wp_list_posts", "wp_read_post"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects partial hallucination: claims article updated without wp_publish", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Artículo actualizado con éxito. Los cambios están en línea.",
+        ["wp_list_posts", "wp_read_post", "file_edit"],
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when wp_publish was actually called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El artículo fue publicado exitosamente en el blog.",
+        ["wp_list_posts", "wp_publish"],
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when wp_media_upload was actually called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "La imagen fue subida correctamente al sitio.",
+        ["wp_media_upload"],
+      ),
+    ).toBe(false);
+  });
+
+  it("detects partial hallucination in English", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "The article was published successfully to the blog.",
+        ["wp_list_posts"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects narrated processing even when some tools were called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "*(Publicando artículo en WordPress...)*\n\nListo, el artículo está publicado.",
+        ["wp_list_posts"],
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for non-WP text even with no WP write tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Aquí están los artículos del blog. ¿Cuál quieres editar?",
+        ["wp_list_posts"],
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("hasUserConfirmedDeletion", () => {

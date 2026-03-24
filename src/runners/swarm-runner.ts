@@ -192,6 +192,7 @@ function buildExecutionResults(
       error: tracker.error,
       durationMs: 0, // Not tracked per sub-task
       toolCalls: 0,
+      toolNames: [],
       toolFailures: ok ? 0 : 1,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
     };
@@ -202,6 +203,7 @@ function buildExecutionResults(
     goalResults,
     summary: graph.summary(),
     totalToolCalls,
+    totalToolNames: [],
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
   };

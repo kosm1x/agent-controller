@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-23
+> Last updated: 2026-03-24
 
 ## Overview
 
@@ -87,11 +87,13 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Nightly close | 10:00 PM Mexico City | Email (fede@eureka.md) + Telegram |
 | Evolution log | 11:59 PM Mexico City | Appends to docs/EVOLUTION-LOG.md |
 | Proactive scanner | 8AM, noon, 4PM, 8PM | Telegram (max 2 nudges/day) |
+| Weekly review | Sunday 8:00 PM Mexico City | Email (fede@eureka.md) + Telegram |
 
 ## Recent Changes
 
 | Date | Commit | Description |
 |------|--------|-------------|
+| 2026-03-24 | — | feat: v2.26 Session 4 — Strategic Autonomy. (4E) requiredTools validation on TaskSubmission — post-execution check, auto-retry once, Telegram alert on double-miss. Applied to morning/nightly rituals. toolCalls propagated through RunnerOutput for both fast and heavy runners. (4A) Event reactor: task.completed → objective completion suggestion, recurring streak milestones (7/30/50/100/200/365), goal.completed → Telegram celebration + project archive suggestion, objective.completed → next objective or goal promotion suggestion. (4B) COMMIT-aware proactive scanner: stale goal detection (14d), streak protection (6PM nudge), project-goal sync, objective completion detection. (4C) Conversation-to-COMMIT pipeline: intent detection in system prompt ("necesito/tengo que/hay que/debería"), scope pattern expansion for intent phrases. (4D) Weekly review ritual: Sunday 8PM, heavy runner, full hierarchy scan + project health + accomplishments + next week focus. 500 tests, 51 files. |
 | 2026-03-24 | `ea0cf84` | feat: v2.26 Session 3 — Project Entity. projects + project_log tables (SQLite), 3 tools (project_list/get/update), auto-migration from user_facts (LivingJoyfully: 9 credentials), formatProjectsBlock prompt injection, morning/nightly ritual integration, COMMIT goal linking via commit_goal_id. 107 tools. |
 | 2026-03-23 | `16c697a` | feat: v2.26 Session 2 — One Brain. COMMIT AI routes through Jarvis (POST /api/commit-ai). Enrichment layer loads COMMIT snapshot + goals + Hindsight memories in parallel (3s cap). 12 COMMIT AI functions dispatched via single dispatcher with per-function enrichment flags. Journal deep analysis: webhook-triggered async pipeline (analyzeJournalDeep → upsert_ai_analysis → create_suggestion → Hindsight retain). Sub-second user-facing latency. COMMIT-side: ai-proxy Jarvis-first routing, callLLM function_name threading. 104 tools (22 COMMIT). |
 | 2026-03-23 | `0b1a5d7` | feat: v2.26 Session 1 — Unified Data Layer. modified_by provenance (5 COMMIT tables), agent_suggestions table, commit-events webhook endpoint + Edge Function + pg_net triggers, create_suggestion MCP tool. Echo loop prevention. |
