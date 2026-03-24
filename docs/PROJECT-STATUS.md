@@ -59,7 +59,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v2.26 | Unification: COMMIT + Jarvis → One Brain, One Flow, One System. 6 sessions: unified data layer, one brain (COMMIT AI → Jarvis), project entity + COMMIT linking, strategic autonomy (event reactor + proactive), reliability + performance, COMMIT UI polish | **In Progress** | — |
 | v3.0 | Production Hardening — systemd, log rotation, monitoring, LLM quality | Planned | — |
 
-## Tools (102 total, managed by 5 ToolSource plugins)
+## Tools (104 total, managed by 5 ToolSource plugins)
 
 | Category | Tools | Count |
 |----------|-------|-------|
@@ -69,8 +69,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Memory | memory_search, memory_store, memory_reflect | 3 |
 | Skills | skill_save, skill_list | 2 |
 | COMMIT (read) | get_daily_snapshot, get_hierarchy, list_tasks, list_goals, list_objectives, search_journal, list_ideas | 7 |
-| COMMIT (write) | update_status, complete_recurring, create_task, create_goal, create_objective, create_vision, update_task, update_objective, update_goal, update_vision, delete_item, bulk_reprioritize | 12 |
-| COMMIT (journal) | search_journal (read-only — journal write is user-only) | 1 |
+| COMMIT (write) | update_status, complete_recurring, create_task, create_goal, create_objective, create_vision, update_task, update_objective, update_goal, update_vision, delete_item, bulk_reprioritize, create_suggestion, upsert_ai_analysis | 14 |
+| COMMIT (journal) | create_journal_entry (agent use), search_journal (read-only) | 1 |
 | Gmail | gmail_send, gmail_search | 2 |
 | Drive | gdrive_list, gdrive_create, gdrive_share | 3 |
 | Calendar | calendar_list, calendar_create, calendar_update | 3 |
@@ -92,7 +92,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Date | Commit | Description |
 |------|--------|-------------|
-| 2026-03-23 | — | feat: v2.25 — (1) WordPress admin tools: wp_pages, wp_plugins, wp_settings, wp_delete, wp_raw_api (full site management). (2) Gemini image generation: gemini_image tool (dual-model: Gemini native + Imagen 4.0 fallback), saves PNG to /tmp, API key from user_facts. (3) wp_media_upload supports local file paths (file:// and absolute paths) for gemini_image → WP upload pipeline. (4) Structural hallucination detector: 2-layer (success marker + concrete claim = hallucination; legacy patterns as backup). Replaces pattern whack-a-mole. (5) Tool scope checks conversation history (last 3 user turns) for follow-up commands like "Hazlo", "Adelante". (6) WP scope expanded with image/plugin/admin keywords. (7) Wrap-up context uses lastUserBeforeTools instead of firstUser to prevent out-of-scope responses |
+| 2026-03-23 | `16c697a` | feat: v2.26 Session 2 — One Brain. COMMIT AI routes through Jarvis (POST /api/commit-ai). Enrichment layer loads COMMIT snapshot + goals + Hindsight memories in parallel (3s cap). 12 COMMIT AI functions dispatched via single dispatcher with per-function enrichment flags. Journal deep analysis: webhook-triggered async pipeline (analyzeJournalDeep → upsert_ai_analysis → create_suggestion → Hindsight retain). Sub-second user-facing latency. COMMIT-side: ai-proxy Jarvis-first routing, callLLM function_name threading. 104 tools (22 COMMIT). |
+| 2026-03-23 | `0b1a5d7` | feat: v2.26 Session 1 — Unified Data Layer. modified_by provenance (5 COMMIT tables), agent_suggestions table, commit-events webhook endpoint + Edge Function + pg_net triggers, create_suggestion MCP tool. Echo loop prevention. |
+| 2026-03-23 | `f04a0c6` | feat: v2.25 — (1) WordPress admin tools: wp_pages, wp_plugins, wp_settings, wp_delete, wp_raw_api (full site management). (2) Gemini image generation: gemini_image tool (dual-model: Gemini native + Imagen 4.0 fallback), saves PNG to /tmp, API key from user_facts. (3) wp_media_upload supports local file paths (file:// and absolute paths) for gemini_image → WP upload pipeline. (4) Structural hallucination detector: 2-layer (success marker + concrete claim = hallucination; legacy patterns as backup). Replaces pattern whack-a-mole. (5) Tool scope checks conversation history (last 3 user turns) for follow-up commands like "Hazlo", "Adelante". (6) WP scope expanded with image/plugin/admin keywords. (7) Wrap-up context uses lastUserBeforeTools instead of firstUser to prevent out-of-scope responses |
 | 2026-03-22 | `448fa58` | feat: v2.24 — (1) Gmail RFC 2047 header encoding (MIME-Version, base64 Subject for non-ASCII, Content-Transfer-Encoding). (2) Scheduled task delivery alerts: watchScheduledTask tracks delivery metadata, handleScheduledTaskResult verifies gmail_send was called for email tasks, handleScheduledTaskFailure alerts on failures — all via Telegram. (3) Hallucination detector hardened: removed chat-only gate (now fires on all task types), added FTP/SSH/SFTP connection narration patterns. (4) Critical data auto-persistence: "projects" category in user_fact_set, mechanical safety net in router (regex detects Google API keys, GA4 IDs, labeled secrets post-execution and auto-stores if LLM skipped user_fact_set). (5) Recovered lost GA4 (G-9CJ1K3E7RG) + Gemini API key into user_facts |
 | 2026-03-21 | — | fix: prevent infinite retry loops on max-rounds chat tasks. 3-layer fix: wrap-up instructions include STATUS: DONE_WITH_CONCERNS guidance, fast-runner promotes BLOCKED/NEEDS_CONTEXT with >100 chars to success, reaction engine skips messaging tasks entirely. Root cause: LLM exhausted rounds on failing browser tools → wrap-up STATUS: BLOCKED → task failed → reaction engine spawned new task (fresh previousAttempts=0) → unbounded chain |
 | 2026-03-21 | — | feat: v2.23 Telegram vision — Jarvis can see images. Pipeline: Telegram photo → base64 download → imageUrl on IncomingMessage/ConversationTurn → multimodal content array in fast-runner → LLM vision. qwen3.5-plus on DashScope coding-intl natively supports vision (discovered via API probing). New file: src/inference/vision.ts (unused but retained for future dedicated VL model calls) |
