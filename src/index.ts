@@ -76,6 +76,14 @@ async function main(): Promise<void> {
   initEventBus(db);
   console.log("[mc] Event bus initialized");
 
+  // Migrate user_facts (category=projects) into projects table if needed
+  try {
+    const { migrateUserFactsToProjects } = await import("./db/projects.js");
+    migrateUserFactsToProjects();
+  } catch {
+    // Non-fatal — migration is best-effort
+  }
+
   // Initialize memory service (Hindsight if configured, else SQLite)
   const memory = await initMemoryService();
 

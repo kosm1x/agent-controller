@@ -137,6 +137,33 @@ CREATE TABLE IF NOT EXISTS user_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category);
 
+-- Projects — first-class project entity with credentials, config, and COMMIT goal linking
+CREATE TABLE IF NOT EXISTS projects (
+  id              TEXT PRIMARY KEY,
+  slug            TEXT UNIQUE NOT NULL,
+  name            TEXT NOT NULL,
+  description     TEXT DEFAULT '',
+  status          TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed', 'archived')),
+  urls            TEXT DEFAULT '{}',   -- JSON: { site, admin, repo, dashboard }
+  credentials     TEXT DEFAULT '{}',   -- JSON: { wp_user, wp_pass, ftp_host, api_keys }
+  config          TEXT DEFAULT '{}',   -- JSON: arbitrary project config
+  commit_goal_id  TEXT,                -- COMMIT goal UUID (links project to a strategic goal)
+  created_at      TEXT DEFAULT (datetime('now')),
+  updated_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+-- Project activity log — changelog of everything Jarvis does on a project
+CREATE TABLE IF NOT EXISTS project_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  action      TEXT NOT NULL,
+  details     TEXT,
+  created_at  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_project_log_project ON project_log(project_id);
+
 -- COMMIT event log — received from COMMIT webhook for reactive processing
 CREATE TABLE IF NOT EXISTS commit_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -49,6 +49,11 @@ import {
   wpRawApiTool,
 } from "../builtin/wordpress-admin.js";
 import { geminiImageTool } from "../builtin/gemini-image.js";
+import {
+  projectListTool,
+  projectGetTool,
+  projectUpdateTool,
+} from "../builtin/projects.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -76,6 +81,9 @@ const BUILTIN_TOOLS: Tool[] = [
   evolutionGetDataTool,
   evolutionDeactivateSkillTool,
   geminiImageTool,
+  projectListTool,
+  projectGetTool,
+  projectUpdateTool,
 ];
 
 // WordPress tools — conditionally registered when WP_SITES is configured

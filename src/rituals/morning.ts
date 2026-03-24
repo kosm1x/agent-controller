@@ -68,6 +68,7 @@ Racha actual: X días consecutivos.`,
       "commit__get_hierarchy",
       "memory_search",
       "gmail_send",
+      "project_list",
     ],
   };
 }

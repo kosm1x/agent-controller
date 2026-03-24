@@ -29,6 +29,7 @@ import {
 } from "../intelligence/outcome-tracker.js";
 import { enrichContext } from "../intelligence/enrichment.js";
 import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
+import { formatProjectsBlock } from "../db/projects.js";
 import {
   detectFeedbackSignal,
   isFeedbackMessage,
@@ -145,6 +146,9 @@ const MISC_TOOLS = [
   "rss_read",
   "list_schedules",
   "gemini_image",
+  "project_list",
+  "project_get",
+  "project_update",
 ];
 
 /** Lightpanda browser tools — only when web interaction needed. */
@@ -397,13 +401,22 @@ Si necesitas configurar un plugin que no expone REST API (como WPCode Lite):
 Las credenciales de WordPress ya están guardadas en WP_SITES — NO necesitas pedirlas al usuario.`);
   }
 
-  // --- No hallucinated execution ---
-  sections.push(`## REGLA CRÍTICA: NUNCA simules ejecución
-NUNCA narres pasos como si los estuvieras ejecutando sin realmente llamar a una herramienta. Ejemplos PROHIBIDOS:
-- "*(Procesando conexión...)*" sin llamar a http_fetch o wp_publish
-- "✅ Éxito. El archivo fue creado." sin llamar a file_write
-- "Acabo de ejecutar la publicación real" sin tool_calls en tu respuesta
-Si no tienes la herramienta disponible para hacer algo, DILO CLARAMENTE: "No tengo herramienta para hacer X" o "Necesito que actives X". NUNCA finjas que algo funcionó. Esto destruye la confianza.`);
+  // --- No hallucinated execution (hardened) ---
+  sections.push(`## REGLA CRÍTICA: NUNCA simules ejecución (VERIFICACIÓN MECÁNICA)
+NUNCA narres pasos como si los estuvieras ejecutando sin realmente llamar a una herramienta.
+
+⚠️ ADVERTENCIA: Tu respuesta es VERIFICADA MECÁNICAMENTE después de cada turno. El sistema compara tus claims textuales contra tu lista real de tool_calls. Si dices "publicado", "subido", "actualizado", "creado" pero NO llamaste la herramienta correspondiente (wp_publish, wp_media_upload, etc.), tu respuesta será RECHAZADA automáticamente y se te pedirá un reintento. No puedes engañar a esta verificación.
+
+Ejemplos PROHIBIDOS (se detectan y rechazan automáticamente):
+- "Artículo publicado exitosamente" sin haber llamado wp_publish → RECHAZADO
+- "Imagen subida correctamente" sin haber llamado wp_media_upload → RECHAZADO
+- "*(Procesando conexión...)*" sin llamar a ninguna herramienta → RECHAZADO
+- "✅ Éxito. El archivo fue creado." sin llamar a file_write → RECHAZADO
+- Llamar solo wp_list_posts y luego NARRAR que wp_publish funcionó → RECHAZADO
+
+La ÚNICA forma de reportar éxito es haber llamado la herramienta Y recibido una respuesta exitosa de ella.
+
+Si no tienes la herramienta disponible para hacer algo, DILO CLARAMENTE: "No tengo herramienta para hacer X" o "Necesito que actives X". NUNCA finjas que algo funcionó.`);
 
   // --- Correction protocol ---
   sections.push(`## Protocolo de corrección
@@ -697,8 +710,37 @@ function pushToThread(channel: string, exchange: string): void {
 }
 
 /**
+ * Detect poisoned exchanges — hallucinated success, system errors, or
+ * refusals that teach the LLM learned helplessness if kept in context.
+ */
+const POISONED_RESPONSE_PATTERNS = [
+  // Hallucinated success without tool calls
+  /estoy alucinando/i,
+  /est[aá]s alucinando/i,
+  /narr(?:ando|é) acciones sin ejecutar/i,
+  // System errors
+  /🔴 ERROR DE SISTEMA/i,
+  /el sistema encontr[oó] un error/i,
+  /herramientas? no est[aá](?:n)? respondiendo/i,
+  // Tool refusals (LLM claims it can't use available tools)
+  /no tengo (?:acceso|la herramienta|herramienta)/i,
+  /no tengo.*wp_publish/i,
+  /no pude completar la acci[oó]n/i,
+  // Inference cascade failures
+  /inference.*failed/i,
+  /timeout.*inference/i,
+];
+
+function isPoisonedExchange(jarvisResponse: string): boolean {
+  return POISONED_RESPONSE_PATTERNS.some((p) => p.test(jarvisResponse));
+}
+
+/**
  * Parse stored exchanges ("User: ...\nJarvis: ...") into structured turns.
  * Returns ConversationTurn[] for injection as proper message turns in inference.
+ *
+ * Filters out poisoned exchanges (hallucinated success, system errors, refusals)
+ * that would teach the LLM to repeat failures or refuse to use tools.
  */
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
@@ -706,6 +748,7 @@ function getThreadTurns(channel: string): ConversationTurn[] {
   if (!thread || thread.length === 0) return [];
 
   const turns: ConversationTurn[] = [];
+  let poisonedCount = 0;
   for (const exchange of thread) {
     const jarvisIdx = exchange.indexOf("\nJarvis: ");
     if (jarvisIdx === -1) continue;
@@ -714,9 +757,21 @@ function getThreadTurns(channel: string): ConversationTurn[] {
     const assistantText = exchange
       .slice(jarvisIdx + "\nJarvis: ".length)
       .trim();
+
+    // Skip poisoned exchanges — they teach learned helplessness
+    if (isPoisonedExchange(assistantText)) {
+      poisonedCount++;
+      continue;
+    }
+
     if (userText) turns.push({ role: "user", content: userText });
     if (assistantText)
       turns.push({ role: "assistant", content: assistantText });
+  }
+  if (poisonedCount > 0) {
+    console.log(
+      `[router] Stripped ${poisonedCount} poisoned exchange(s) from thread (hallucinations/errors/refusals)`,
+    );
   }
   return turns;
 }
@@ -856,12 +911,12 @@ export class MessageRouter {
     // Recall semantic memories + enrich context IN PARALLEL
     const enrichment = await enrichContext(msg.text, msg.channel);
 
-    // User profile facts — always injected so the LLM never forgets personal context
+    // User profile facts + projects — always injected so the LLM never forgets context
     let userFactsBlock = "";
     try {
-      userFactsBlock = formatUserFactsBlock();
+      userFactsBlock = formatUserFactsBlock() + formatProjectsBlock();
     } catch {
-      // Non-fatal — DB may not have the table yet
+      // Non-fatal — DB may not have the tables yet
     }
 
     // Dynamic tool scoping — only include tool groups relevant to the conversation

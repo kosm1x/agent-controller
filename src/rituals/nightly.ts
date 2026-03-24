@@ -52,6 +52,7 @@ Racha: X días. [motivational note if streak is growing]`,
       "commit__get_hierarchy",
       "commit__update_status",
       "gmail_send",
+      "project_list",
     ],
   };
 }
