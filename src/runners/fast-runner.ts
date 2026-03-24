@@ -39,6 +39,10 @@ STATUS: BLOCKED — [what is preventing completion]`;
 const MAX_ROUNDS_DEFAULT = 7;
 const MAX_ROUNDS_CODING = 15;
 
+/** Token budgets — triggers wrap-up before DashScope ~30K ceiling causes timeout. */
+const TOKEN_BUDGET_FAST = 20_000;
+const TOKEN_BUDGET_CODING = 40_000;
+
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
   /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead)(\s|$|[.,!?])/i;
@@ -260,14 +264,18 @@ export const fastRunner: Runner = {
     }
 
     try {
+      const tokenBudget = hasCodingTools
+        ? TOKEN_BUDGET_CODING
+        : TOKEN_BUDGET_FAST;
       const result = await inferWithTools(
         messages,
         definitions,
         (name, args) => toolRegistry.execute(name, args),
-        maxRounds,
-        undefined, // onTextChunk
-        undefined, // signal
-        tierToProvider(input.modelTier),
+        {
+          maxRounds,
+          providerName: tierToProvider(input.modelTier),
+          tokenBudget,
+        },
       );
 
       let parsed = parseRunnerStatus(result.content);
@@ -324,10 +332,11 @@ export const fastRunner: Runner = {
           cleanMessages,
           definitions,
           (name, args) => toolRegistry.execute(name, args),
-          maxRounds,
-          undefined,
-          undefined,
-          tierToProvider(input.modelTier),
+          {
+            maxRounds,
+            providerName: tierToProvider(input.modelTier),
+            tokenBudget,
+          },
         );
 
         const retryParsed = parseRunnerStatus(retryResult.content);

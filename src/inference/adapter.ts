@@ -85,6 +85,82 @@ export interface ToolExecutor {
 export type OnTextChunk = (text: string) => void;
 
 // ---------------------------------------------------------------------------
+// Provider latency tracking — rolling window for health + preemptive failover
+// ---------------------------------------------------------------------------
+
+interface LatencyEntry {
+  timestamp: number;
+  latencyMs: number;
+  success: boolean;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+interface ProviderStats {
+  count: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  successRate: number;
+}
+
+class ProviderMetrics {
+  private entries = new Map<string, LatencyEntry[]>();
+  private readonly windowSize = 50;
+
+  record(provider: string, entry: LatencyEntry): void {
+    let list = this.entries.get(provider);
+    if (!list) {
+      list = [];
+      this.entries.set(provider, list);
+    }
+    list.push(entry);
+    // Evict oldest when window exceeded
+    if (list.length > this.windowSize) {
+      list.splice(0, list.length - this.windowSize);
+    }
+  }
+
+  getStats(provider: string): ProviderStats | null {
+    const list = this.entries.get(provider);
+    if (!list || list.length === 0) return null;
+
+    const latencies = list.map((e) => e.latencyMs).sort((a, b) => a - b);
+    const successes = list.filter((e) => e.success).length;
+    const p95Idx = Math.min(
+      Math.floor(latencies.length * 0.95),
+      latencies.length - 1,
+    );
+
+    return {
+      count: list.length,
+      avgLatencyMs: Math.round(
+        latencies.reduce((a, b) => a + b, 0) / latencies.length,
+      ),
+      p95LatencyMs: latencies[p95Idx],
+      successRate: successes / list.length,
+    };
+  }
+
+  getAllStats(): Record<string, ProviderStats> {
+    const result: Record<string, ProviderStats> = {};
+    for (const [name] of this.entries) {
+      const stats = this.getStats(name);
+      if (stats) result[name] = stats;
+    }
+    return result;
+  }
+
+  /** True if provider avg latency exceeds threshold AND has enough samples. */
+  isDegraded(provider: string, thresholdMs = 15_000, minSamples = 10): boolean {
+    const stats = this.getStats(provider);
+    if (!stats || stats.count < minSamples) return false;
+    return stats.avgLatencyMs > thresholdMs || stats.successRate < 0.5;
+  }
+}
+
+export const providerMetrics = new ProviderMetrics();
+
+// ---------------------------------------------------------------------------
 // Provider configuration
 // ---------------------------------------------------------------------------
 
@@ -238,6 +314,15 @@ async function callProvider(
       `[inference] ${provider.name}/${provider.model} ${result.latency_ms}ms prompt=${result.usage.prompt_tokens} completion=${result.usage.completion_tokens} tools=${result.tool_calls?.length ?? 0}`,
     );
 
+    // Record success metrics
+    providerMetrics.record(provider.name, {
+      timestamp: Date.now(),
+      latencyMs: result.latency_ms,
+      success: true,
+      promptTokens: result.usage.prompt_tokens,
+      completionTokens: result.usage.completion_tokens,
+    });
+
     return result;
   } finally {
     clearTimeout(timeout);
@@ -365,7 +450,20 @@ export async function infer(
 
   for (let pi = 0; pi < providers.length; pi++) {
     const provider = providers[pi];
+
+    // Preemptive failover: skip degraded providers if alternatives remain
+    if (
+      pi < providers.length - 1 &&
+      providerMetrics.isDegraded(provider.name)
+    ) {
+      console.warn(
+        `[inference] Skipping degraded provider ${provider.name}, trying next`,
+      );
+      continue;
+    }
+
     for (let attempt = 0; attempt < config.inferenceMaxRetries; attempt++) {
+      const attemptStart = Date.now();
       try {
         const toolCount = request.tools?.length ?? 0;
         const effectiveTimeoutLog =
@@ -384,6 +482,16 @@ export async function infer(
         console.warn(
           `[inference] ${provider.name} attempt ${attempt + 1} failed: ${lastError.message}${isAbort ? " (timeout)" : ""} status=${status}`,
         );
+
+        // Record failure metrics
+        providerMetrics.record(provider.name, {
+          timestamp: Date.now(),
+          latencyMs: Date.now() - attemptStart,
+          success: false,
+          promptTokens: 0,
+          completionTokens: 0,
+        });
+
         if (status === 429 || (status >= 500 && status < 600)) {
           const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
           console.warn(
@@ -473,22 +581,35 @@ function buildWrapUpContext(
   return condensed;
 }
 
+export interface InferWithToolsOptions {
+  maxRounds?: number;
+  onTextChunk?: OnTextChunk;
+  signal?: AbortSignal;
+  providerName?: string;
+  /** Total token budget (prompt + completion). Triggers wrap-up when exceeded. */
+  tokenBudget?: number;
+}
+
 export async function inferWithTools(
   messages: ChatMessage[],
   tools: ToolDefinition[],
   executor: ToolExecutor,
-  maxRounds = 10,
-  onTextChunk?: OnTextChunk,
-  signal?: AbortSignal,
-  providerName?: string, // TODO: refactor to options object
+  options?: InferWithToolsOptions,
 ): Promise<{
   content: string;
   messages: ChatMessage[];
   totalUsage: { prompt_tokens: number; completion_tokens: number };
 }> {
+  const maxRounds = options?.maxRounds ?? 10;
+  const onTextChunk = options?.onTextChunk;
+  const signal = options?.signal;
+  const providerName = options?.providerName;
+  const tokenBudget = options?.tokenBudget ?? Infinity;
+
   let conversation = [...messages];
   let totalPrompt = 0;
   let totalCompletion = 0;
+  let exitReason = "max_rounds";
 
   for (let round = 0; round < maxRounds; round++) {
     // Compress context if approaching limit
@@ -648,11 +769,20 @@ export async function inferWithTools(
       }),
     );
     conversation.push(...toolResults);
+
+    // Token budget check — wrap up early if exceeded
+    if (totalPrompt + totalCompletion >= tokenBudget) {
+      exitReason = "token_budget";
+      console.log(
+        `[inference] Token budget exhausted (${totalPrompt + totalCompletion} >= ${tokenBudget}), forcing wrap-up`,
+      );
+      break;
+    }
   }
 
-  // Hit max rounds — force one final toolless call to synthesize results
+  // Force one final toolless call to synthesize results
   console.log(
-    `[inference] Max rounds (${maxRounds}) reached, forcing wrap-up call`,
+    `[inference] Wrap-up triggered: ${exitReason} (rounds=${maxRounds}, tokens=${totalPrompt + totalCompletion}${tokenBudget < Infinity ? `/${tokenBudget}` : ""})`,
   );
   try {
     const leanContext = buildWrapUpContext(

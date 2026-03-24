@@ -5,6 +5,8 @@
 import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getConfig } from "../../config.js";
+import { providerMetrics } from "../../inference/adapter.js";
+import { getBudgetStatus } from "../../budget/service.js";
 
 const health = new Hono();
 
@@ -47,6 +49,9 @@ health.get("/health", async (c) => {
   const status = dbOk ? "healthy" : "degraded";
   const code = dbOk ? 200 : 503;
 
+  const providers = providerMetrics.getAllStats();
+  const budget = getBudgetStatus();
+
   return c.json(
     {
       status,
@@ -54,6 +59,12 @@ health.get("/health", async (c) => {
       version: "0.1.0",
       db: dbOk ? "ok" : "error",
       inference: inferenceOk ? "ok" : "unreachable",
+      providers,
+      budget: {
+        dailySpend: +budget.dailySpend.toFixed(4),
+        dailyLimit: budget.dailyLimit,
+        remaining: +budget.remaining.toFixed(4),
+      },
     },
     code,
   );

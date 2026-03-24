@@ -23,6 +23,8 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "qwen3.5-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "qwen-turbo": { promptCostPer1k: 0.0003, completionCostPer1k: 0.0006 },
   "qwen-max": { promptCostPer1k: 0.002, completionCostPer1k: 0.006 },
+  // GLM series (ZhipuAI via DashScope)
+  "glm-5": { promptCostPer1k: 0.001, completionCostPer1k: 0.003 },
   // DeepSeek series
   "deepseek-v3": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-v3.2": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },

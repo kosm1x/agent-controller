@@ -171,13 +171,16 @@ export async function executeGoal(
 
       const definitions = toolRegistry.getDefinitions(toolNames);
 
+      const TOKEN_BUDGET_HEAVY = 80_000;
       const inferPromise = inferWithTools(
         messages,
         definitions,
         (name, args) => toolRegistry.execute(name, args),
-        MAX_ROUNDS_PER_GOAL,
-        undefined, // onTextChunk
-        signal,
+        {
+          maxRounds: MAX_ROUNDS_PER_GOAL,
+          signal,
+          tokenBudget: TOKEN_BUDGET_HEAVY,
+        },
       );
 
       // Apply per-goal timeout if configured
