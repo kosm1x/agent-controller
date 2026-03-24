@@ -150,11 +150,32 @@ class ProviderMetrics {
     return result;
   }
 
-  /** True if provider avg latency exceeds threshold AND has enough samples. */
-  isDegraded(provider: string, thresholdMs = 15_000, minSamples = 10): boolean {
-    const stats = this.getStats(provider);
-    if (!stats || stats.count < minSamples) return false;
-    return stats.avgLatencyMs > thresholdMs || stats.successRate < 0.5;
+  /**
+   * True if provider avg latency exceeds threshold AND has enough recent samples.
+   * Only considers entries within `windowMs` (default 10 min) so degraded providers
+   * automatically get retried after the window expires — prevents permanent death spiral.
+   */
+  isDegraded(
+    provider: string,
+    thresholdMs = 15_000,
+    minSamples = 10,
+    windowMs = 600_000,
+  ): boolean {
+    const list = this.entries.get(provider);
+    if (!list || list.length === 0) return false;
+
+    const cutoff = Date.now() - windowMs;
+    const recent = list.filter((e) => e.timestamp >= cutoff);
+    if (recent.length < minSamples) return false;
+
+    const latencies = recent.map((e) => e.latencyMs).sort((a, b) => a - b);
+    const successes = recent.filter((e) => e.success).length;
+    const avgLatencyMs = Math.round(
+      latencies.reduce((a, b) => a + b, 0) / latencies.length,
+    );
+    const successRate = successes / recent.length;
+
+    return avgLatencyMs > thresholdMs || successRate < 0.5;
   }
 }
 
