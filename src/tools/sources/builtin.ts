@@ -54,6 +54,7 @@ import {
   projectGetTool,
   projectUpdateTool,
 } from "../builtin/projects.js";
+import { exaSearchTool } from "../builtin/exa-search.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -84,6 +85,7 @@ const BUILTIN_TOOLS: Tool[] = [
   projectListTool,
   projectGetTool,
   projectUpdateTool,
+  exaSearchTool,
 ];
 
 // WordPress tools — conditionally registered when WP_SITES is configured

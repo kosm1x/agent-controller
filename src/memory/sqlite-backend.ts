@@ -12,6 +12,7 @@ import { getDatabase } from "../db/index.js";
 import type {
   MemoryService,
   MemoryItem,
+  TrustTier,
   RetainOptions,
   RecallOptions,
   ReflectOptions,
@@ -87,6 +88,39 @@ function extractKeywords(query: string): string[] {
     .slice(0, 6); // Cap at 6 keywords to keep queries fast
 }
 
+// ---------------------------------------------------------------------------
+// Trust tier decay — exponential confidence decay by tier
+// ---------------------------------------------------------------------------
+
+/** Half-life in days per trust tier. */
+const HALF_LIFE: Record<TrustTier, number> = {
+  1: 365, // verified — decays slowly over a year
+  2: 180, // inferred — 6 months
+  3: 90, // provisional — 3 months
+  4: 30, // unverified — 1 month
+};
+
+/** Base weight per tier (higher tier = higher base). */
+const BASE_WEIGHT: Record<TrustTier, number> = {
+  1: 1.0,
+  2: 0.8,
+  3: 0.6,
+  4: 0.4,
+};
+
+/**
+ * Compute decay-weighted score for a memory item.
+ * Returns a value between 0 and BASE_WEIGHT[tier].
+ */
+export function computeDecayWeight(
+  trustTier: TrustTier,
+  ageDays: number,
+): number {
+  const halfLife = HALF_LIFE[trustTier];
+  const base = BASE_WEIGHT[trustTier];
+  return base * Math.pow(0.5, ageDays / halfLife);
+}
+
 export class SqliteMemoryBackend implements MemoryService {
   readonly backend = "sqlite" as const;
 
@@ -94,9 +128,11 @@ export class SqliteMemoryBackend implements MemoryService {
     try {
       const db = getDatabase();
       const tags = JSON.stringify(options.tags ?? []);
+      const trustTier = options.trustTier ?? 3;
+      const source = options.source ?? "agent";
       db.prepare(
-        "INSERT INTO conversations (bank, tags, content) VALUES (?, ?, ?)",
-      ).run(options.bank, tags, content);
+        "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
+      ).run(options.bank, tags, content, trustTier, source);
     } catch {
       // DB may not be initialized in tests — best-effort
     }
@@ -106,6 +142,7 @@ export class SqliteMemoryBackend implements MemoryService {
     try {
       const db = getDatabase();
       const limit = options.maxResults ?? 10;
+      const now = Date.now();
 
       // Extract keywords from query for relevance matching
       const keywords = extractKeywords(query);
@@ -120,22 +157,50 @@ export class SqliteMemoryBackend implements MemoryService {
         tagParams.push(...options.tags);
       }
 
+      // Helper: compute decay-weighted score for ranking
+      const rankWithDecay = (
+        rows: Array<{
+          content: string;
+          created_at: string;
+          trust_tier: number;
+          keyword_score?: number;
+        }>,
+      ): MemoryItem[] => {
+        const scored = rows.map((r) => {
+          const ageDays =
+            (now - new Date(r.created_at + "Z").getTime()) / 86_400_000;
+          const tier = (
+            [1, 2, 3, 4].includes(r.trust_tier) ? r.trust_tier : 3
+          ) as TrustTier;
+          const decayWeight = computeDecayWeight(tier, Math.max(0, ageDays));
+          const keywordBoost = r.keyword_score ?? 0;
+          return {
+            content: r.content,
+            createdAt: r.created_at,
+            trustTier: tier,
+            _score: keywordBoost + decayWeight,
+          };
+        });
+        scored.sort((a, b) => b._score - a._score);
+        return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+      };
+
       if (hasKeywords) {
-        // Keyword-matched recall: prioritize rows that match query terms,
-        // then fall back to recent rows to fill the limit.
+        // Keyword-matched recall with decay weighting.
+        // Fetch more candidates than needed, then re-rank with decay.
+        const fetchLimit = limit * 3;
         const likeConditions = keywords
           .map(() => "content LIKE ?")
           .join(" OR ");
         const likeParams = keywords.map((k) => `%${k}%`);
 
-        // First: rows matching keywords (scored by match count, then recency)
         const matchSql = `
-          SELECT content, created_at,
-            (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS score
+          SELECT content, created_at, trust_tier,
+            (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS keyword_score
           FROM conversations
           WHERE bank = ? ${tagClause}
             AND (${likeConditions})
-          ORDER BY score DESC, created_at DESC
+          ORDER BY keyword_score DESC, created_at DESC
           LIMIT ?
         `;
         const matchParams = [
@@ -143,74 +208,57 @@ export class SqliteMemoryBackend implements MemoryService {
           options.bank,
           ...tagParams,
           ...likeParams, // for WHERE filter
-          limit,
+          fetchLimit,
         ];
         const matched = db.prepare(matchSql).all(...matchParams) as Array<{
           content: string;
           created_at: string;
-          score: number;
+          trust_tier: number;
+          keyword_score: number;
         }>;
 
-        if (matched.length >= limit) {
-          return matched.map((r) => ({
-            content: r.content,
-            createdAt: r.created_at,
-          }));
+        if (matched.length > 0) {
+          // Fill with recent rows if needed
+          const matchedContents = new Set(matched.map((r) => r.content));
+          const recentSql = `
+            SELECT content, created_at, trust_tier FROM conversations
+            WHERE bank = ? ${tagClause}
+            ORDER BY created_at DESC
+            LIMIT ?
+          `;
+          const recentRows = db
+            .prepare(recentSql)
+            .all(options.bank, ...tagParams, fetchLimit) as Array<{
+            content: string;
+            created_at: string;
+            trust_tier: number;
+          }>;
+          const filler = recentRows.filter(
+            (r) => !matchedContents.has(r.content),
+          );
+          const combined = [
+            ...matched,
+            ...filler.map((r) => ({ ...r, keyword_score: 0 })),
+          ];
+          return rankWithDecay(combined);
         }
-
-        // Fill remaining slots with most recent (non-duplicate)
-        const remaining = limit - matched.length;
-        const matchedContents = new Set(matched.map((r) => r.content));
-        const recentSql = `
-          SELECT content, created_at FROM conversations
-          WHERE bank = ? ${tagClause}
-          ORDER BY created_at DESC
-          LIMIT ?
-        `;
-        const recentRows = db
-          .prepare(recentSql)
-          .all(
-            options.bank,
-            ...tagParams,
-            remaining + matched.length,
-          ) as Array<{
-          content: string;
-          created_at: string;
-        }>;
-
-        const filler = recentRows
-          .filter((r) => !matchedContents.has(r.content))
-          .slice(0, remaining);
-
-        const combined = [...matched, ...filler];
-        // Sort chronologically for natural reading order
-        combined.sort(
-          (a, b) =>
-            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-        );
-        return combined.map((r) => ({
-          content: r.content,
-          createdAt: r.created_at,
-        }));
       }
 
-      // No keywords — fall back to recency-only
+      // No keywords or no matches — recency + decay scoring
       const sql = `
-        SELECT content, created_at FROM conversations
+        SELECT content, created_at, trust_tier FROM conversations
         WHERE bank = ? ${tagClause}
         ORDER BY created_at DESC
         LIMIT ?
       `;
       const rows = db
         .prepare(sql)
-        .all(options.bank, ...tagParams, limit) as Array<{
+        .all(options.bank, ...tagParams, limit * 3) as Array<{
         content: string;
         created_at: string;
+        trust_tier: number;
       }>;
-      return rows.reverse().map((r) => ({
-        content: r.content,
-        createdAt: r.created_at,
-      }));
+      return rankWithDecay(rows);
     } catch {
       return [];
     }

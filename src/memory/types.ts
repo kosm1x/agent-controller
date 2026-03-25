@@ -8,12 +8,24 @@
 /** Memory bank identifiers. */
 export type MemoryBank = "mc-operational" | "mc-jarvis" | "mc-system";
 
+/**
+ * Trust tiers — confidence level of a memory observation.
+ * Higher tiers decay slower; lower tiers fade over weeks.
+ *
+ * Inspired by Memoria (matrixorigin/Memoria) trust model.
+ */
+export type TrustTier = 1 | 2 | 3 | 4;
+
 /** Options for storing a memory. */
 export interface RetainOptions {
   bank: MemoryBank;
   tags?: string[];
   taskId?: string;
   async?: boolean;
+  /** Trust tier (1=verified, 2=inferred, 3=provisional, 4=unverified). Default: 3 */
+  trustTier?: TrustTier;
+  /** Who stored this memory (agent, user, ritual, system). Default: 'agent' */
+  source?: string;
 }
 
 /** Options for searching memories. */
@@ -34,6 +46,7 @@ export interface MemoryItem {
   content: string;
   relevance?: number;
   createdAt?: string;
+  trustTier?: TrustTier;
 }
 
 /** Pluggable memory service interface. */

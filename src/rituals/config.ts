@@ -14,6 +14,13 @@ export interface RitualDefinition {
 
 export const rituals: RitualDefinition[] = [
   {
+    id: "signal-intelligence",
+    title: "Signal intelligence",
+    // 6:00 AM daily — runs before morning briefing to have digest ready
+    cron: "0 6 * * *",
+    enabled: true,
+  },
+  {
     id: "morning-briefing",
     title: "Morning briefing",
     // Production: '0 7 * * *' (7:00 AM daily)

@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 import { plan, replan } from "./planner.js";
 import { executeGraph } from "./executor.js";
+import { setMemoryTaskContext } from "../tools/builtin/memory.js";
 import { reflect } from "./reflector.js";
 import { eventBus } from "../lib/event-bus.js";
 
@@ -37,6 +38,9 @@ export async function orchestrate(
   const cfg = defaultConfig(config);
   const trace = createTrace();
   const budget = new IterationBudget(cfg.maxIterations);
+
+  // Governance: set task context for memory store rate limiting
+  setMemoryTaskContext(taskId);
   let replanCount = 0;
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
@@ -191,6 +195,8 @@ export async function orchestrate(
   console.log(
     `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,
   );
+
+  setMemoryTaskContext(null); // Governance: clear rate limit state
 
   return {
     success: reflection.success,

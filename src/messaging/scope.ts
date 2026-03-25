@@ -107,6 +107,7 @@ export const MISC_TOOLS = [
   "project_list",
   "project_get",
   "project_update",
+  "exa_search",
 ];
 
 /** Lightpanda browser tools — only when web interaction needed. */

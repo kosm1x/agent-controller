@@ -15,6 +15,7 @@ import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
+import { createSignalIntelligence } from "./signal-intelligence.js";
 import { executeOvernightTuning } from "./overnight-tuning.js";
 import { getConfig } from "../config.js";
 
@@ -29,6 +30,8 @@ function todayLabel(): string {
 function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
   const date = todayLabel();
   switch (ritual.id) {
+    case "signal-intelligence":
+      return createSignalIntelligence(date);
     case "morning-briefing":
       return createMorningBriefing(date);
     case "nightly-close":

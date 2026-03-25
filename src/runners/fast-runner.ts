@@ -12,6 +12,7 @@ import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
+import { setMemoryTaskContext } from "../tools/builtin/memory.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -267,6 +268,9 @@ export const fastRunner: Runner = {
       );
     }
 
+    // Governance: set task context for memory store rate limiting
+    setMemoryTaskContext(input.taskId);
+
     try {
       const tokenBudget = hasCodingTools
         ? TOKEN_BUDGET_CODING
@@ -422,6 +426,8 @@ export const fastRunner: Runner = {
         error: err instanceof Error ? err.message : String(err),
         durationMs: Date.now() - start,
       };
+    } finally {
+      setMemoryTaskContext(null); // Governance: clear rate limit state
     }
   },
 };

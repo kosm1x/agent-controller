@@ -79,6 +79,8 @@ export function trackTaskOutcome(
           bank: "mc-operational",
           tags: ["outcome", task.agent_type ?? "unknown"],
           async: true,
+          trustTier: 4, // unverified — mechanical task summary
+          source: "system",
         })
         .catch(() => {});
     }

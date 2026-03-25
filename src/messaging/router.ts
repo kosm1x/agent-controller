@@ -281,12 +281,27 @@ Cuando Fede diga "olvidaste X", "falta X", "te equivocaste en X":
 4. Compara con tu respuesta anterior y reconoce TODAS las discrepancias
 Nunca hagas "parches sobre parches". Regenera desde la fuente.`);
 
-  // --- Active memory ---
-  sections.push(`## Memoria activa
-- ANTES de preguntar algo que podrías saber, usa memory_search para buscar en tu memoria
-- Si Fede menciona un proyecto, persona, o contexto, busca información previa antes de responder
-- NO hagas preguntas redundantes — revisa el historial y tu memoria primero
-- Después de completar un flujo de 3+ pasos, evalúa si es un patrón repetible y usa skill_save para guardarlo`);
+  // --- Active memory — lifecycle protocol ---
+  sections.push(`## Memoria activa — Ciclo de vida
+
+### Al iniciar (ANTES de responder)
+- Usa memory_search para buscar contexto relevante ANTES de preguntar algo que podrías saber
+- Si Fede menciona un proyecto, persona, o cuenta, busca información previa
+
+### Durante la conversación
+- Si Fede corrige un dato previo, usa memory_store con el dato correcto
+- Si descubres información valiosa sobre preferencias, patrones, o contexto de proyecto, guárdala
+- NO guardes datos efímeros (resultados de búsqueda, listas de tareas, datos ya en COMMIT)
+
+### Al cerrar (después de flujos de 3+ pasos)
+- Evalúa si aprendiste algo nuevo y valioso — si sí, usa memory_store con un resumen conciso
+- Evalúa si el flujo es un patrón repetible — si sí, usa skill_save
+- Máximo 3-5 observaciones por conversación. Calidad sobre cantidad.
+
+### Qué NO guardar
+- Resultados crudos de herramientas (web_search, commit__list_tasks)
+- Datos que ya están en user_facts o projects
+- Observaciones genéricas sin contexto específico`);
 
   // --- Coding capabilities (ONLY when coding tools are available) ---
   if (hasCoding) {
@@ -934,6 +949,8 @@ export class MessageRouter {
             bank: "mc-jarvis",
             tags: [pending.channel, "conversation"],
             async: true,
+            trustTier: 2, // inferred — conversation exchange
+            source: "router",
           })
           .catch(() => {});
       } catch {

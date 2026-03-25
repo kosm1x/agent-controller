@@ -114,11 +114,15 @@ CREATE TABLE IF NOT EXISTS skills (
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(active);
 
 -- Conversation memory (works with any memory backend)
+-- trust_tier: 1=verified (user confirmed), 2=inferred (reflector/ritual),
+--             3=provisional (LLM during task), 4=unverified (tool results)
 CREATE TABLE IF NOT EXISTS conversations (
   id         INTEGER PRIMARY KEY,
   bank       TEXT NOT NULL DEFAULT 'mc-jarvis',
   tags       TEXT DEFAULT '[]',
   content    TEXT NOT NULL,
+  trust_tier INTEGER NOT NULL DEFAULT 3,
+  source     TEXT DEFAULT 'agent',
   created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_bank ON conversations(bank);

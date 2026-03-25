@@ -3,6 +3,9 @@
  *
  * 3 native builtin tools exposed to LLMs during goal execution.
  * Only registered when Hindsight is enabled (semantic memory available).
+ *
+ * Governance: Per-task store counter caps memory_store at MAX_STORES_PER_TASK
+ * to prevent memory pollution from runaway tool loops.
  */
 
 import type { Tool } from "../types.js";
@@ -17,6 +20,23 @@ const BANK_MAP: Record<string, MemoryBank> = {
 
 function resolveBank(bank: string): MemoryBank {
   return BANK_MAP[bank] ?? "mc-operational";
+}
+
+// ---------------------------------------------------------------------------
+// Governance: per-task memory store rate limiting
+// ---------------------------------------------------------------------------
+
+const MAX_STORES_PER_TASK = 5;
+const storeCountByTask = new Map<string, number>();
+let _currentTaskId: string | null = null;
+
+/**
+ * Set the current task context for governance tracking.
+ * Call with taskId before tool execution, null after completion.
+ */
+export function setMemoryTaskContext(taskId: string | null): void {
+  _currentTaskId = taskId;
+  if (!taskId) storeCountByTask.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +167,17 @@ TIPS:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    // Governance: enforce per-task store limit
+    if (_currentTaskId) {
+      const count = storeCountByTask.get(_currentTaskId) ?? 0;
+      if (count >= MAX_STORES_PER_TASK) {
+        return JSON.stringify({
+          warning: `Memory store limit reached (${MAX_STORES_PER_TASK}/task). Prioritize quality over quantity — store only the most valuable observation.`,
+        });
+      }
+      storeCountByTask.set(_currentTaskId, count + 1);
+    }
+
     const content = args.content as string;
     const bank = resolveBank((args.bank as string) ?? "operational");
     const tags = (args.tags as string[]) ?? [];
@@ -155,6 +186,8 @@ TIPS:
       bank,
       tags,
       async: true,
+      trustTier: 3, // provisional — LLM-originated during task execution
+      source: "agent",
     });
 
     return `Memory stored in ${bank} bank.`;

@@ -109,6 +109,8 @@ export async function reflect(
           tags: ["reflection"],
           taskId,
           async: true,
+          trustTier: 2, // inferred — reflector synthesis
+          source: "reflector",
         })
         .catch(() => {
           // Best-effort persistence

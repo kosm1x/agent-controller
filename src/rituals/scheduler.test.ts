@@ -44,6 +44,7 @@ import { startRitualScheduler, stopRitualScheduler } from "./scheduler.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionRitual } from "./evolution.js";
+import { createSignalIntelligence } from "./signal-intelligence.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -58,8 +59,8 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Five rituals: morning + nightly + skill-evolution + evolution-log + weekly-review
-    expect(mockSchedule).toHaveBeenCalledTimes(5);
+    // Six rituals: signal-intelligence + morning + nightly + skill-evolution + evolution-log + weekly-review
+    expect(mockSchedule).toHaveBeenCalledTimes(6);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -81,7 +82,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(5);
+    expect(mockStop).toHaveBeenCalledTimes(6);
   });
 });
 
@@ -134,6 +135,18 @@ describe("task templates", () => {
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Reflexión");
     expect(task.description).toContain("Do NOT write to the journal");
+  });
+
+  it("signal intelligence has correct structure", () => {
+    const task = createSignalIntelligence("2026-03-25");
+    expect(task.title).toBe("Signal intelligence — 2026-03-25");
+    expect(task.agentType).toBe("heavy");
+    expect(task.tools).toContain("exa_search");
+    expect(task.tools).toContain("web_search");
+    expect(task.tools).toContain("user_fact_set");
+    expect(task.tools).toContain("gmail_send");
+    expect(task.requiredTools).toContain("exa_search");
+    expect(task.description).toContain("signal");
   });
 
   it("evolution ritual has correct structure", () => {
