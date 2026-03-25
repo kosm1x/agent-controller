@@ -265,6 +265,9 @@ async function callProvider(
     messages: request.messages,
     max_tokens: request.max_tokens ?? config.inferenceMaxTokens,
     stream: streaming,
+    // Request usage stats in the final SSE chunk (OpenAI-compatible standard).
+    // Without this, streaming responses report 0 prompt/completion tokens.
+    ...(streaming && { stream_options: { include_usage: true } }),
   };
   if (request.temperature !== undefined) {
     body.temperature = request.temperature;
