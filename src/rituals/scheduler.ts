@@ -15,6 +15,8 @@ import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
+import { executeOvernightTuning } from "./overnight-tuning.js";
+import { getConfig } from "../config.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
@@ -68,6 +70,13 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
     return;
   }
 
+  // Overnight tuning runs its own async loop instead of submitting a task.
+  // It needs 25+ cycles with state carried across them, exceeding fast-runner limits.
+  if (ritual.id === "overnight-tuning") {
+    await executeOvernightTuning();
+    return;
+  }
+
   const template = getTaskTemplate(ritual);
 
   try {
@@ -87,8 +96,14 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
 }
 
 export function startRitualScheduler(): void {
+  const config = getConfig();
+
   for (const ritual of rituals) {
-    if (!ritual.enabled) {
+    // Overnight tuning is gated by TUNING_ENABLED env var, not static config
+    const isEnabled =
+      ritual.id === "overnight-tuning" ? config.tuningEnabled : ritual.enabled;
+
+    if (!isEnabled) {
       console.log(`[rituals] ${ritual.id}: disabled, skipping`);
       continue;
     }

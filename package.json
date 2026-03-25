@@ -9,7 +9,11 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tune:baseline": "tsx src/tuning/baseline.ts --seed",
+    "tune:baseline:dry": "tsx src/tuning/baseline.ts --seed --dry-run",
+    "tune:run": "tsx src/tuning/run.ts --seed",
+    "tune:run:dry": "tsx src/tuning/run.ts --seed --dry-run"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

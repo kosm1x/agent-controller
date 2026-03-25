@@ -11,6 +11,8 @@ npm run typecheck    # tsc --noEmit — must be zero errors
 npm test             # vitest run — all tests must pass
 npm run dev          # tsx watch (hot reload)
 npm run build        # tsc → dist/
+npm run tune:baseline:dry  # run free eval (scope + classification)
+npm run tune:run:dry       # mock overnight loop (3 experiments)
 ```
 
 Always run `typecheck` + `test` after changes before reporting completion.
@@ -37,19 +39,22 @@ Source: [Building Effective Agents](https://www.anthropic.com/engineering/buildi
 
 Our architecture maps to five workflow patterns from this guide. Name them explicitly so contributors recognize the design intent:
 
-| Pattern | Our implementation | Where |
-|---------|-------------------|-------|
-| Routing | Classifier → dispatcher routes by complexity | `classifier.ts` → `dispatcher.ts` |
-| Prompt chaining | Sequential tool calls in fast runner | `fast-runner.ts` |
-| Orchestrator-Workers | Swarm decomposes → parallel fan-out | `swarm-runner.ts` (was called `orchestrator-workers` by Anthropic) |
-| Evaluator-Optimizer | Plan-Execute-Reflect loop with auto-replan | `planner.ts` → `executor.ts` → `reflector.ts` |
-| Parallelization | Swarm sectioning + guardrail parallel checks | `swarm-runner.ts`, goal graph DAG |
+| Pattern              | Our implementation                           | Where                                                              |
+| -------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
+| Routing              | Classifier → dispatcher routes by complexity | `classifier.ts` → `dispatcher.ts`                                  |
+| Prompt chaining      | Sequential tool calls in fast runner         | `fast-runner.ts`                                                   |
+| Orchestrator-Workers | Swarm decomposes → parallel fan-out          | `swarm-runner.ts` (was called `orchestrator-workers` by Anthropic) |
+| Evaluator-Optimizer  | Plan-Execute-Reflect loop with auto-replan   | `planner.ts` → `executor.ts` → `reflector.ts`                      |
+| Parallelization      | Swarm sectioning + guardrail parallel checks | `swarm-runner.ts`, goal graph DAG                                  |
 
 ### Complexity gradient
+
 Always prefer the simplest runner that can solve the task. The classifier enforces this: fast → heavy → swarm. Never default to Prometheus when a single LLM call with tools suffices. Add orchestration layers only when measurably better outcomes justify the latency/cost tradeoff.
 
 ### ACI (Agent-Computer Interface) design
+
 Tool definitions are prompts — they deserve more engineering than the handler code. Models read descriptions to decide which tool to call and how. Principles:
+
 - **Write descriptions for a capable but literal junior dev** — include when to use, when NOT to use, edge cases, and boundaries with similar tools
 - **Parameter names are documentation** — `due_date` > `date`, `objective_id` > `parent_id`. Add `.describe()` on every Zod field
 - **Use enums over free strings** — `z.enum(["high","medium","low"])` not `z.string()`. Constrain the model's output space
@@ -57,12 +62,15 @@ Tool definitions are prompts — they deserve more engineering than the handler 
 - **Test tools with the model** — run real calls, observe mistakes, iterate on descriptions. Tool optimization often matters more than system prompt tuning
 
 ### Ground truth at every step
+
 Agent progress must be validated through concrete tool results, not LLM self-assessment. The Prometheus reflector scores based on goal outcomes, not the model's opinion of itself. When adding new agent loops, always feed real environment state (DB results, file contents, API responses) back into the next step.
 
 ### Stopping conditions
+
 Every agent loop must have bounded iteration limits, token budgets, and timeouts. No unbounded loops — ever. Prometheus enforces this via `maxIterations`, `budgetTokens`, and `maxReplans`. New runners must implement equivalent guards.
 
 ### Transparency
+
 Planning steps must be explicit and observable. The planner's goal graph, executor's per-goal logs, and reflector's scoring all serve this. When building new agent capabilities, ensure every decision point emits a trace event visible in the dashboard SSE stream.
 
 ## Admin CLI
@@ -81,6 +89,7 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ## Patterns
 
 ### Adding a new tool
+
 1. Create handler in `src/tools/builtin/`
 2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface)
 3. Write tool descriptions following ACI principles above (describe edge cases, use enums, add `.describe()` to all params)
@@ -88,17 +97,20 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 5. Add test in `src/tools/registry.test.ts`
 
 ### Adding a new tool source
+
 1. Implement `ToolSource` interface in `src/tools/sources/<name>.ts` (initialize, registerTools, healthCheck, teardown)
 2. Add `sourceManager.addSource(new XyzSource())` in `src/index.ts` (with any env-var guards)
 3. `ToolSourceManager.initAll()` catches per-source errors — one failing source won't block others
 
 ### Adding a new runner
+
 1. Implement `Runner` interface in `src/runners/<name>-runner.ts`
 2. Register in `src/dispatch/dispatcher.ts`
 3. Add classification case in `src/dispatch/classifier.ts`
 4. Add tests
 
 ### Prometheus (heavy runner) changes
+
 - PER loop: planner → executor → reflector → orchestrator coordinates
 - `plan()` and `replan()` return `{ graph, usage }` — always destructure
 - `reflect()` returns `{ result, usage }` — always destructure

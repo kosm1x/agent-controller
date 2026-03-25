@@ -1,0 +1,453 @@
+[
+  {
+    "case_id": "ts-web-search-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Busca cuánto cuesta un vuelo a Madrid la próxima semana"
+    },
+    "expected": { "tools": ["web_search"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-web-search-02",
+    "category": "tool_selection",
+    "input": {
+      "message": "What's the latest news about AI regulation in the EU?"
+    },
+    "expected": { "tools": ["web_search"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-web-read-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Lee este artículo y dame un resumen: https://example.com/article"
+    },
+    "expected": { "tools": ["web_read"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-gmail-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Mándame un email a juan@empresa.com con el resumen del proyecto"
+    },
+    "expected": { "tools": ["gmail_send"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-calendar-01",
+    "category": "tool_selection",
+    "input": { "message": "Qué tengo en mi agenda para mañana?" },
+    "expected": { "tools": ["calendar_list"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-commit-create-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Crea una tarea para revisar el contrato de Televisa"
+    },
+    "expected": { "tools": ["commit__create_task"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-commit-list-01",
+    "category": "tool_selection",
+    "input": { "message": "Qué tareas pendientes tengo?" },
+    "expected": { "tools": ["commit__list_tasks"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-commit-no-create-01",
+    "category": "tool_selection",
+    "input": { "message": "Investiga cuánto cuesta un dominio .ai" },
+    "expected": {
+      "tools": ["web_search"],
+      "not_tools": ["commit__create_task"]
+    },
+    "weight": 1.5,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-user-fact-01",
+    "category": "tool_selection",
+    "input": { "message": "Mi cumpleaños es el 15 de octubre" },
+    "expected": { "tools": ["user_fact_set"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-wp-publish-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Publica un nuevo artículo en el blog sobre tendencias 2026"
+    },
+    "expected": { "tools": ["wp_publish"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-wp-status-01",
+    "category": "tool_selection",
+    "input": { "message": "Cambia a borrador el post más reciente del blog" },
+    "expected": {
+      "tools": ["wp_list_posts", "wp_publish"],
+      "not_tools": ["wp_read_post"]
+    },
+    "weight": 1.5,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-shell-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Revisa cuánto espacio en disco queda en el servidor"
+    },
+    "expected": { "tools": ["shell_exec"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-file-read-01",
+    "category": "tool_selection",
+    "input": { "message": "Lee el archivo package.json del proyecto" },
+    "expected": { "tools": ["file_read"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-schedule-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Programa un reporte semanal de ventas cada lunes a las 9am"
+    },
+    "expected": { "tools": ["schedule_task"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-project-01",
+    "category": "tool_selection",
+    "input": { "message": "Cuáles son mis proyectos activos?" },
+    "expected": { "tools": ["project_list"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-skill-01",
+    "category": "tool_selection",
+    "input": { "message": "Qué skills tienes disponibles?" },
+    "expected": { "tools": ["skill_list"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-gdrive-01",
+    "category": "tool_selection",
+    "input": { "message": "Lista los archivos en mi Google Drive" },
+    "expected": { "tools": ["gdrive_list"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-chart-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Genera una gráfica de barras con las ventas del trimestre"
+    },
+    "expected": { "tools": ["chart_generate"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-multi-tool-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Busca el precio actual de Bitcoin y guárdalo como dato"
+    },
+    "expected": { "tools": ["web_search", "user_fact_set"] },
+    "weight": 1.5,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-greeting-01",
+    "category": "tool_selection",
+    "input": { "message": "Buenos días Jarvis, cómo estás?" },
+    "expected": {
+      "tools": [],
+      "not_tools": ["web_search", "commit__create_task"]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-http-01",
+    "category": "tool_selection",
+    "input": { "message": "Haz un GET a https://api.example.com/health" },
+    "expected": { "tools": ["http_fetch"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-rss-01",
+    "category": "tool_selection",
+    "input": { "message": "Lee el feed RSS de TechCrunch" },
+    "expected": { "tools": ["rss_read"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-delete-01",
+    "category": "tool_selection",
+    "input": { "message": "Elimina la tarea de revisar el contrato" },
+    "expected": { "tools": ["commit__delete_item"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-followup-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Sí, hazlo",
+      "conversationHistory": [
+        { "role": "user", "content": "Busca cuánto cuesta un vuelo a Madrid" },
+        {
+          "role": "assistant",
+          "content": "¿Quieres que busque precios específicos?"
+        }
+      ]
+    },
+    "expected": { "tools": ["web_search"] },
+    "weight": 1.5,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-image-gen-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Genera una imagen para el blog de un atardecer en la playa"
+    },
+    "expected": { "tools": ["gemini_image"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+
+  {
+    "case_id": "sc-coding-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Revisa el código del módulo de autenticación" },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-coding-02",
+    "category": "scope_accuracy",
+    "input": { "message": "Hay un bug en el deploy, revisa los logs" },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-wordpress-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Publica el artículo sobre tendencias de marketing" },
+    "expected": { "scope_groups": ["wordpress"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-google-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Revisa mi correo y busca emails de Juan" },
+    "expected": { "scope_groups": ["google"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-commit-write-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Crea una meta para mejorar la retención de clientes"
+    },
+    "expected": { "scope_groups": ["commit_write"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-commit-destructive-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Elimina la meta de Q1 que ya no aplica" },
+    "expected": { "scope_groups": ["commit_destructive", "commit_write"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-browser-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Navega al sitio web y verifica que el tracking funciona"
+    },
+    "expected": { "scope_groups": ["browser"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-schedule-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Programa un reporte automático semanal" },
+    "expected": { "scope_groups": ["schedule"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-no-scope-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Hola, cómo te va?" },
+    "expected": {
+      "scope_groups": [],
+      "not_scope_groups": ["coding", "wordpress", "google", "browser"]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-multi-scope-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Revisa el código y luego publica el cambio en WordPress"
+    },
+    "expected": { "scope_groups": ["coding", "wordpress"] },
+    "weight": 1.5,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-docker-scope-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Revisa los containers de Docker que están corriendo"
+    },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-server-scope-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Cuánta RAM tiene el servidor?" },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-ga4-scope-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Instala el tracking de GA4 en el sitio" },
+    "expected": { "scope_groups": ["wordpress"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-followup-scope-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Adelante",
+      "conversationHistory": [
+        { "role": "user", "content": "Edita el archivo config.ts" },
+        { "role": "assistant", "content": "¿Qué cambios quieres hacer?" }
+      ]
+    },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.5,
+    "source": "manual"
+  },
+
+  {
+    "case_id": "cl-fast-01",
+    "category": "classification",
+    "input": { "message": "Busca el clima en CDMX" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-02",
+    "category": "classification",
+    "input": { "message": "Manda un email a Pedro" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-03",
+    "category": "classification",
+    "input": { "message": "Qué tareas tengo pendientes hoy?" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-04",
+    "category": "classification",
+    "input": { "message": "Buenos días" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-05",
+    "category": "classification",
+    "input": { "message": "Crea una tarea para llamar al proveedor" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-06",
+    "category": "classification",
+    "input": { "message": "Genera una imagen de un gato programador" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-07",
+    "category": "classification",
+    "input": { "message": "Lee el feed RSS de Hacker News" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-08",
+    "category": "classification",
+    "input": { "message": "Cuáles son mis proyectos activos?" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-09",
+    "category": "classification",
+    "input": { "message": "Search for the best restaurants near Polanco" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-fast-10",
+    "category": "classification",
+    "input": { "message": "Revisa el espacio en disco del servidor" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  }
+]

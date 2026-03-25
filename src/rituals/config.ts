@@ -48,4 +48,11 @@ export const rituals: RitualDefinition[] = [
     cron: "0 20 * * 0",
     enabled: true,
   },
+  {
+    id: "overnight-tuning",
+    title: "Overnight tuning",
+    // 1:00 AM MX, Tue/Thu/Sat — off-peak self-improvement
+    cron: "0 1 * * 2,4,6",
+    enabled: false, // controlled by TUNING_ENABLED env var at runtime
+  },
 ];

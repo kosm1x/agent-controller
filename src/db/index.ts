@@ -10,6 +10,7 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
+import { ensureTuningTables } from "../tuning/schema.js";
 
 let _db: Database.Database | null = null;
 
@@ -64,6 +65,9 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_cost_ledger_task ON cost_ledger(task_id)",
   );
+
+  // Self-tuning tables (v2.27)
+  ensureTuningTables();
 
   return _db;
 }

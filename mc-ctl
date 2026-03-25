@@ -623,9 +623,113 @@ usage() {
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
   echo ""
+  echo -e "  ${BOLD}Self-Tuning${NC}"
+  echo -e "  ${GREEN}tuning${NC} status         Latest tuning run summary"
+  echo -e "  ${GREEN}tuning${NC} report [id]    Full tuning report"
+  echo -e "  ${GREEN}tuning${NC} promote [id]   Show winning mutations as diffs"
+  echo ""
   echo -e "  ${BOLD}Database${NC}"
   echo -e "  ${GREEN}db${NC} [query]          Interactive shell or run query"
   echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Self-Tuning
+# ---------------------------------------------------------------------------
+
+cmd_tuning() {
+  need_db
+  local subcmd="${1:-status}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    status)
+      echo -e "\n${BOLD}TUNING STATUS${NC}\n"
+      local row
+      row=$(sqlite3 -separator '|' "$DB_PATH" \
+        "SELECT run_id, status, baseline_score, best_score, experiments_run, experiments_won, total_cost_usd, started_at, completed_at FROM tune_runs ORDER BY started_at DESC LIMIT 1" 2>/dev/null || echo "")
+      if [ -z "$row" ]; then
+        echo "No tuning runs found."
+        return
+      fi
+      IFS='|' read -r run_id status baseline best exp_run exp_won cost started completed <<< "$row"
+      echo -e "  Run ID:       ${CYAN}${run_id}${NC}"
+      echo -e "  Status:       ${status}"
+      echo -e "  Baseline:     ${baseline:-N/A}"
+      echo -e "  Best Score:   ${GREEN}${best:-N/A}${NC}"
+      echo -e "  Experiments:  ${exp_run} run, ${GREEN}${exp_won} wins${NC}"
+      echo -e "  Cost:         \$${cost}"
+      echo -e "  Started:      ${started}"
+      echo -e "  Completed:    ${completed:-running}"
+      echo ""
+
+      # Show recent experiments
+      echo -e "${BOLD}Recent experiments:${NC}"
+      sqlite3 -column -header "$DB_PATH" \
+        "SELECT experiment_id, surface, target, status,
+                ROUND(baseline_score, 1) as baseline,
+                ROUND(mutated_score, 1) as mutated,
+                SUBSTR(hypothesis, 1, 60) as hypothesis
+         FROM tune_experiments
+         WHERE run_id = '${run_id}'
+         ORDER BY created_at DESC LIMIT 10" 2>/dev/null || echo "No experiments found."
+      echo ""
+      ;;
+
+    report)
+      local run_id="${1:-}"
+      local query
+      if [ -n "$run_id" ]; then
+        query="SELECT report FROM tune_runs WHERE run_id = '${run_id}'"
+      else
+        query="SELECT report FROM tune_runs ORDER BY started_at DESC LIMIT 1"
+      fi
+      local report
+      report=$(sqlite3 "$DB_PATH" "$query" 2>/dev/null || echo "")
+      if [ -z "$report" ]; then
+        echo "No report found."
+      else
+        echo "$report"
+      fi
+      ;;
+
+    promote)
+      local run_id="${1:-}"
+      local query
+      if [ -n "$run_id" ]; then
+        query="SELECT surface, target, mutation_type, original_value, mutated_value, hypothesis FROM tune_experiments WHERE run_id = '${run_id}' AND status = 'passed' ORDER BY created_at"
+      else
+        query="SELECT e.surface, e.target, e.mutation_type, e.original_value, e.mutated_value, e.hypothesis FROM tune_experiments e INNER JOIN (SELECT run_id FROM tune_runs ORDER BY started_at DESC LIMIT 1) r ON e.run_id = r.run_id WHERE e.status = 'passed' ORDER BY e.created_at"
+      fi
+
+      echo -e "\n${BOLD}WINNING MUTATIONS TO PROMOTE${NC}\n"
+      local found=0
+      while IFS='|' read -r surface target mtype orig_val mut_val hyp; do
+        found=1
+        echo -e "${GREEN}─── ${surface}/${target} (${mtype}) ───${NC}"
+        echo -e "${DIM}Hypothesis: ${hyp}${NC}"
+        echo ""
+        echo -e "${RED}--- Original:${NC}"
+        echo "$orig_val" | head -10
+        echo ""
+        echo -e "${GREEN}+++ Mutation:${NC}"
+        echo "$mut_val" | head -20
+        echo ""
+      done < <(sqlite3 -separator '|' "$DB_PATH" "$query" 2>/dev/null)
+
+      if [ "$found" -eq 0 ]; then
+        echo "No winning mutations to promote."
+      else
+        echo -e "${YELLOW}Review the mutations above. Apply manually or via Claude Code.${NC}"
+      fi
+      echo ""
+      ;;
+
+    *)
+      echo -e "${RED}Unknown tuning subcommand:${NC} ${subcmd}"
+      echo "Usage: mc-ctl tuning [status|report|promote] [run_id]"
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -664,6 +768,8 @@ case "$cmd" in
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
 
   budget)            cmd_budget ;;
+
+  tuning)            cmd_tuning "$@" ;;
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;

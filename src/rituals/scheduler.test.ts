@@ -34,6 +34,12 @@ vi.mock("../dispatch/dispatcher.js", () => ({
   submitTask: mockSubmitTask,
 }));
 
+vi.mock("../config.js", () => ({
+  getConfig: () => ({
+    tuningEnabled: false,
+  }),
+}));
+
 import { startRitualScheduler, stopRitualScheduler } from "./scheduler.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";

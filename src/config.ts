@@ -78,6 +78,13 @@ export interface Config {
   budgetDailyLimitUsd: number;
   /** Custom model pricing JSON (optional override). */
   budgetPricingJson?: string;
+
+  /** Enable overnight self-tuning ritual (default: false). */
+  tuningEnabled: boolean;
+  /** Max cost per tuning run in USD (default: 25.0). */
+  tuningMaxCostUsd: number;
+  /** Max experiments per tuning run (default: 25). */
+  tuningMaxExperiments: number;
 }
 
 function required(key: string): string {
@@ -151,6 +158,10 @@ export function loadConfig(): Config {
     budgetEnabled: process.env.BUDGET_ENABLED === "true",
     budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 10.0),
     budgetPricingJson: optional("BUDGET_PRICING_JSON"),
+
+    tuningEnabled: process.env.TUNING_ENABLED === "true",
+    tuningMaxCostUsd: float("TUNING_MAX_COST_USD", 25.0),
+    tuningMaxExperiments: int("TUNING_MAX_EXPERIMENTS", 25),
   };
 }
 
