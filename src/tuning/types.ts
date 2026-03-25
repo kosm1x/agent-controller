@@ -159,3 +159,22 @@ export const METRIC_WEIGHTS = {
 
 /** Estimated cost per LLM inference call in USD (DashScope). */
 export const EST_COST_PER_INFERENCE_USD = 0.03;
+
+// ---------------------------------------------------------------------------
+// Variant archive (HyperAgents evolutionary pattern)
+// ---------------------------------------------------------------------------
+
+export interface TuneVariant {
+  variant_id: string;
+  parent_id: string | null;
+  run_id: string;
+  generation: number;
+  config_json: string;
+  composite_score: number;
+  subscores_json: string | null;
+  valid: boolean;
+  activated_at: string | null;
+  created_at: string;
+}
+
+export type ParentSelectionStrategy = "best" | "latest" | "score_prop";

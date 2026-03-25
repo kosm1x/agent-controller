@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
 import { ensureTuningTables } from "../tuning/schema.js";
+import { activateBestVariant } from "../tuning/activation.js";
 
 let _db: Database.Database | null = null;
 
@@ -68,6 +69,9 @@ export function initDatabase(dbPath: string): Database.Database {
 
   // Self-tuning tables (v2.27)
   ensureTuningTables();
+
+  // Activate best variant from archive (v2.28 — HyperAgents pattern)
+  activateBestVariant();
 
   return _db;
 }

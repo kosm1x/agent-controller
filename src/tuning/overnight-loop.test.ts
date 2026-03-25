@@ -4,10 +4,13 @@ import { initDatabase, closeDatabase } from "../db/index.js";
 import {
   ensureTuningTables,
   insertTestCase,
+  insertVariant,
   getLatestRun,
   getExperimentsByRun,
+  getValidVariants,
 } from "./schema.js";
 import type { TestCase, TuningSurface } from "./types.js";
+import { serializeSandbox } from "./variant-store.js";
 import type { InferFunction } from "./eval-runner.js";
 import type { MetaInferFunction } from "./meta-agent.js";
 
@@ -169,5 +172,81 @@ describe("runOvernightTuning", () => {
     // Should complete with 0 wins (all parse failures count as regressions)
     expect(result.experiments_won).toBe(0);
     expect(result.experiments_run).toBe(0); // parse failures don't count as experiments
+  });
+
+  it("loads parent variant from archive when available", async () => {
+    // Seed a parent variant
+    const parentConfig = serializeSandbox({
+      scopePatternOverrides: [
+        { pattern: /\b(docker|code)\b/i, group: "coding" },
+      ],
+    });
+    insertVariant({
+      variant_id: "var-parent",
+      parent_id: null,
+      run_id: "old-run",
+      generation: 0,
+      config_json: parentConfig,
+      composite_score: 75,
+      subscores_json: null,
+      valid: true,
+      activated_at: null,
+      created_at: new Date().toISOString(),
+    });
+
+    const result = await runOvernightTuning({
+      maxExperiments: 1,
+      maxCostUsd: 10,
+      surfaces: ["scope_rule"] as TuningSurface[],
+      parentSelection: "best",
+      stagedGate: false,
+      evalInferFn: makeMockEvalInfer(),
+      metaInferFn: makeMockMetaInfer([
+        {
+          surface: "scope_rule",
+          target: "coding",
+          mutation_type: "adjust",
+          mutated_value: "\\b(docker|code|git)",
+          hypothesis: "extend coding scope from parent",
+        },
+      ]),
+    });
+
+    expect(result.experiments_run).toBe(1);
+    // Run completed, meaning parent was loaded successfully
+    expect(result.status).toBe("completed");
+  });
+
+  it("persists winning variant to archive", async () => {
+    // Start with no variants
+    expect(getValidVariants()).toHaveLength(0);
+
+    // Use a meta-agent that produces a genuinely different scope pattern
+    // that will score differently from baseline
+    await runOvernightTuning({
+      maxExperiments: 3,
+      maxCostUsd: 10,
+      stalledAfterN: 10,
+      minDeltaToKeep: -100, // Accept any mutation (for testing)
+      surfaces: ["scope_rule"] as TuningSurface[],
+      parentSelection: "best",
+      stagedGate: false,
+      evalInferFn: makeMockEvalInfer(),
+      metaInferFn: makeMockMetaInfer([
+        {
+          surface: "scope_rule",
+          target: "coding",
+          mutation_type: "adjust",
+          mutated_value: "\\b(docker|code|git)",
+          hypothesis: "should persist",
+        },
+      ]),
+    });
+
+    // Since minDeltaToKeep is -100, all mutations are "wins"
+    const variants = getValidVariants();
+    expect(variants.length).toBeGreaterThanOrEqual(1);
+    expect(variants[0].variant_id).toMatch(/^var-tune-/);
+    expect(variants[0].generation).toBe(0); // First generation (no parent)
   });
 });

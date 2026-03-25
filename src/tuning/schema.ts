@@ -13,6 +13,7 @@ import type {
   Experiment,
   ExperimentStatus,
   TuneRun,
+  TuneVariant,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,24 @@ export function ensureTuningTables(): void {
       started_at      TEXT DEFAULT (datetime('now')),
       completed_at    TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS tune_variants (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      variant_id      TEXT UNIQUE NOT NULL,
+      parent_id       TEXT,
+      run_id          TEXT NOT NULL,
+      generation      INTEGER DEFAULT 0,
+      config_json     TEXT NOT NULL,
+      composite_score REAL NOT NULL,
+      subscores_json  TEXT,
+      valid           INTEGER DEFAULT 1,
+      activated_at    TEXT,
+      created_at      TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_tune_variants_score
+      ON tune_variants(composite_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_tune_variants_valid
+      ON tune_variants(valid);
   `);
 }
 
@@ -290,4 +309,90 @@ export function getRunById(runId: string): TuneRun | null {
     .prepare("SELECT * FROM tune_runs WHERE run_id = ?")
     .get(runId) as TuneRun | undefined;
   return row ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Variant archive CRUD
+// ---------------------------------------------------------------------------
+
+export function insertVariant(v: TuneVariant): void {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT INTO tune_variants
+       (variant_id, parent_id, run_id, generation, config_json,
+        composite_score, subscores_json, valid, activated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    v.variant_id,
+    v.parent_id,
+    v.run_id,
+    v.generation,
+    v.config_json,
+    v.composite_score,
+    v.subscores_json,
+    v.valid ? 1 : 0,
+    v.activated_at,
+  );
+}
+
+export function getBestVariant(): TuneVariant | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT * FROM tune_variants WHERE valid = 1
+       ORDER BY composite_score DESC LIMIT 1`,
+    )
+    .get() as (Omit<TuneVariant, "valid"> & { valid: number }) | undefined;
+  if (!row) return null;
+  return { ...row, valid: row.valid === 1 };
+}
+
+export function getLatestVariant(): TuneVariant | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT * FROM tune_variants WHERE valid = 1
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get() as (Omit<TuneVariant, "valid"> & { valid: number }) | undefined;
+  if (!row) return null;
+  return { ...row, valid: row.valid === 1 };
+}
+
+export function getValidVariants(limit = 50): TuneVariant[] {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT * FROM tune_variants WHERE valid = 1
+       ORDER BY composite_score DESC LIMIT ?`,
+    )
+    .all(limit) as Array<Omit<TuneVariant, "valid"> & { valid: number }>;
+  return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
+}
+
+export function markVariantActivated(variantId: string): void {
+  const db = getDatabase();
+  // Clear any previous activation
+  db.prepare(`UPDATE tune_variants SET activated_at = NULL`).run();
+  db.prepare(
+    `UPDATE tune_variants SET activated_at = datetime('now') WHERE variant_id = ?`,
+  ).run(variantId);
+}
+
+export function getActiveVariant(): TuneVariant | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT * FROM tune_variants WHERE activated_at IS NOT NULL LIMIT 1`,
+    )
+    .get() as (Omit<TuneVariant, "valid"> & { valid: number }) | undefined;
+  if (!row) return null;
+  return { ...row, valid: row.valid === 1 };
+}
+
+export function invalidateVariant(variantId: string): void {
+  const db = getDatabase();
+  db.prepare(`UPDATE tune_variants SET valid = 0 WHERE variant_id = ?`).run(
+    variantId,
+  );
 }

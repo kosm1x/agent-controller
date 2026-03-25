@@ -12,13 +12,16 @@ import type {
   EvalResult,
   TuneRun,
   CaseScore,
+  ParentSelectionStrategy,
 } from "./types.js";
 import {
   insertRun,
   updateRun,
   insertExperiment,
+  insertVariant,
   getExperimentsByRun,
   getRecentExperiments,
+  getValidVariants,
 } from "./schema.js";
 import { runEvaluation, type InferFunction } from "./eval-runner.js";
 import {
@@ -31,6 +34,8 @@ import { generateReport } from "./report.js";
 import { computeCompositeScore } from "./scorer.js";
 import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { toolRegistry } from "../tools/registry.js";
+import { selectParent } from "./parent-selection.js";
+import { serializeSandbox, deserializeSandbox } from "./variant-store.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -43,6 +48,10 @@ export interface TuningConfig {
   minDeltaToKeep: number;
   stalledAfterN: number;
   surfaces: TuningSurface[];
+  /** Parent selection strategy for variant archive (HyperAgents pattern). */
+  parentSelection: ParentSelectionStrategy;
+  /** Enable cheap scope+classification gate before expensive tool_selection eval. */
+  stagedGate: boolean;
   /** Injectable inference for tool_selection evals (testing). */
   evalInferFn?: InferFunction;
   /** Injectable inference for meta-agent (testing). */
@@ -56,6 +65,8 @@ const DEFAULT_CONFIG: TuningConfig = {
   minDeltaToKeep: 0.5,
   stalledAfterN: 5,
   surfaces: ["tool_description", "scope_rule"],
+  parentSelection: "best",
+  stagedGate: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -219,6 +230,19 @@ export async function runOvernightTuning(
   };
   insertRun(run);
 
+  // --- Step 0: Load parent variant from archive ---
+  const parentVariant = selectParent(cfg.parentSelection, getValidVariants(50));
+  const parentId = parentVariant?.variant_id ?? null;
+  const generation = (parentVariant?.generation ?? -1) + 1;
+
+  if (parentVariant) {
+    console.log(
+      `[tuning] Parent variant: ${parentVariant.variant_id} (gen ${parentVariant.generation}, score ${parentVariant.composite_score.toFixed(1)})`,
+    );
+  } else {
+    console.log("[tuning] No parent variant — starting from scratch");
+  }
+
   // --- Step 1: Baseline evaluation ---
   console.log("[tuning] Running baseline evaluation...");
   const baseline = await runEvaluation({}, undefined, cfg.evalInferFn);
@@ -236,7 +260,9 @@ export async function runOvernightTuning(
 
   // --- Step 2: Experiment loop ---
   let bestScore = baseline.compositeScore;
-  let bestSandbox: SandboxConfig = {};
+  let bestSandbox: SandboxConfig = parentVariant
+    ? deserializeSandbox(parentVariant.config_json)
+    : {};
   let consecutiveRegressions = 0;
   let experimentsRun = 0;
   let experimentsWon = 0;
@@ -303,6 +329,51 @@ export async function runOvernightTuning(
     console.log(
       `[tuning] Re-evaluating ${affectedCaseIds.length} affected cases`,
     );
+
+    // Staged eval gate: run free scope+classification checks first
+    if (cfg.stagedGate) {
+      try {
+        const cheapScope = await runEvaluation(
+          sandbox,
+          { category: "scope_accuracy" },
+          cfg.evalInferFn,
+        );
+        const cheapClass = await runEvaluation(
+          sandbox,
+          { category: "classification" },
+          cfg.evalInferFn,
+        );
+        const cheapCases = [...cheapScope.perCase, ...cheapClass.perCase];
+        const cheapMerged = mergeResults(baseline, {
+          ...cheapScope,
+          perCase: cheapCases,
+        });
+        if (cheapMerged.compositeScore < bestScore - 1.0) {
+          console.log(
+            `[tuning] ✗ STAGED GATE: cheap eval ${cheapMerged.compositeScore.toFixed(1)} < ${(bestScore - 1.0).toFixed(1)} — skipping expensive eval`,
+          );
+          const expId = `${runId}-exp-${i}`;
+          insertExperiment({
+            experiment_id: expId,
+            run_id: runId,
+            surface: mutation.surface,
+            target: mutation.target,
+            mutation_type: mutation.mutation_type,
+            original_value: originalValue,
+            mutated_value: mutation.mutated_value,
+            hypothesis: mutation.hypothesis,
+            baseline_score: bestScore,
+            mutated_score: cheapMerged.compositeScore,
+            status: "regressed",
+          });
+          experimentsRun++;
+          consecutiveRegressions++;
+          continue;
+        }
+      } catch {
+        // Staged gate failure is non-fatal — proceed to full eval
+      }
+    }
 
     // Run targeted evaluation
     let targeted: EvalResult;
@@ -383,6 +454,26 @@ export async function runOvernightTuning(
       experiments_won: experimentsWon,
       total_cost_usd: cost.getTotalCost(),
     });
+  }
+
+  // --- Step 2b: Persist winning variant to archive ---
+  if (experimentsWon > 0) {
+    const variantId = `var-${runId}`;
+    insertVariant({
+      variant_id: variantId,
+      parent_id: parentId,
+      run_id: runId,
+      generation,
+      config_json: serializeSandbox(bestSandbox),
+      composite_score: bestScore,
+      subscores_json: null,
+      valid: true,
+      activated_at: null,
+      created_at: new Date().toISOString(),
+    });
+    console.log(
+      `[tuning] Persisted variant ${variantId} (gen ${generation}, score ${bestScore.toFixed(1)})`,
+    );
   }
 
   // --- Step 3: Generate report ---
