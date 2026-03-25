@@ -41,177 +41,180 @@ export async function orchestrate(
 
   // Governance: set task context for memory store rate limiting
   setMemoryTaskContext(taskId);
-  let replanCount = 0;
-  let totalPromptTokens = 0;
-  let totalCompletionTokens = 0;
 
-  // Global timeout — abort the entire orchestration
-  const timeoutController = new AbortController();
-  const globalTimer = setTimeout(
-    () => timeoutController.abort(),
-    cfg.timeoutMs,
-  );
-
-  // --- PLAN ---
-  emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
-  traceRecord(trace, "phase_start", { phase: Phase.PLAN });
-
-  let graph: GoalGraph;
   try {
-    const { graph: g, usage: planUsage } = await plan(taskDescription);
-    graph = g;
-    totalPromptTokens += planUsage.promptTokens;
-    totalCompletionTokens += planUsage.completionTokens;
-  } catch (err) {
-    traceRecord(trace, "phase_error", {
-      phase: Phase.PLAN,
-      error: String(err),
-    });
-    throw new Error(
-      `Planning failed: ${err instanceof Error ? err.message : err}`,
+    let replanCount = 0;
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+
+    // Global timeout — abort the entire orchestration
+    const timeoutController = new AbortController();
+    const globalTimer = setTimeout(
+      () => timeoutController.abort(),
+      cfg.timeoutMs,
     );
-  }
 
-  traceRecord(trace, "phase_end", {
-    phase: Phase.PLAN,
-    goalCount: graph.size,
-  });
-  emitProgress(taskId, Phase.PLAN, 25, `Planned ${graph.size} goals`);
+    // --- PLAN ---
+    emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
+    traceRecord(trace, "phase_start", { phase: Phase.PLAN });
 
-  console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
-
-  // --- EXECUTE + REPLAN LOOP ---
-  let executionResults: ExecutionResult = {
-    goalResults: {},
-    summary: graph.summary(),
-    totalToolCalls: 0,
-    totalToolNames: [],
-    totalToolFailures: 0,
-    tokenUsage: { promptTokens: 0, completionTokens: 0 },
-  };
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    emitProgress(taskId, Phase.EXECUTE, 30, "Executing goals");
-    traceRecord(trace, "phase_start", { phase: Phase.EXECUTE });
-
-    // Check for global timeout before execution
-    if (timeoutController.signal.aborted) {
-      console.warn(`[orchestrator] Task ${taskId}: global timeout reached`);
-      break;
+    let graph: GoalGraph;
+    try {
+      const { graph: g, usage: planUsage } = await plan(taskDescription);
+      graph = g;
+      totalPromptTokens += planUsage.promptTokens;
+      totalCompletionTokens += planUsage.completionTokens;
+    } catch (err) {
+      traceRecord(trace, "phase_error", {
+        phase: Phase.PLAN,
+        error: String(err),
+      });
+      throw new Error(
+        `Planning failed: ${err instanceof Error ? err.message : err}`,
+      );
     }
 
-    executionResults = await executeGraph(
-      graph,
-      toolNames,
-      budget,
-      cfg.goalTimeoutMs,
-      timeoutController.signal,
-    );
-    trace.totalToolCalls += executionResults.totalToolCalls;
-    trace.totalToolFailures += executionResults.totalToolFailures;
-    totalPromptTokens += executionResults.tokenUsage.promptTokens;
-    totalCompletionTokens += executionResults.tokenUsage.completionTokens;
-
     traceRecord(trace, "phase_end", {
-      phase: Phase.EXECUTE,
-      summary: graph.summary(),
+      phase: Phase.PLAN,
+      goalCount: graph.size,
     });
+    emitProgress(taskId, Phase.PLAN, 25, `Planned ${graph.size} goals`);
 
-    const summary = graph.summary();
-    emitProgress(
-      taskId,
-      Phase.EXECUTE,
-      70,
-      `Executed: ${summary.completed}/${summary.total} completed, ${summary.failed} failed`,
-    );
+    console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
 
-    console.log(
-      `[orchestrator] Task ${taskId}: execution done — ${JSON.stringify(summary)}`,
-    );
+    // --- EXECUTE + REPLAN LOOP ---
+    let executionResults: ExecutionResult = {
+      goalResults: {},
+      summary: graph.summary(),
+      totalToolCalls: 0,
+      totalToolNames: [],
+      totalToolFailures: 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    };
 
-    // Check replan triggers
-    const replanReason = checkReplan(graph, trace, executionResults, cfg);
-    if (replanReason && replanCount < cfg.maxReplans) {
-      replanCount++;
-      traceRecord(trace, "replan", {
-        reason: replanReason,
-        attempt: replanCount,
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      emitProgress(taskId, Phase.EXECUTE, 30, "Executing goals");
+      traceRecord(trace, "phase_start", { phase: Phase.EXECUTE });
+
+      // Check for global timeout before execution
+      if (timeoutController.signal.aborted) {
+        console.warn(`[orchestrator] Task ${taskId}: global timeout reached`);
+        break;
+      }
+
+      executionResults = await executeGraph(
+        graph,
+        toolNames,
+        budget,
+        cfg.goalTimeoutMs,
+        timeoutController.signal,
+      );
+      trace.totalToolCalls += executionResults.totalToolCalls;
+      trace.totalToolFailures += executionResults.totalToolFailures;
+      totalPromptTokens += executionResults.tokenUsage.promptTokens;
+      totalCompletionTokens += executionResults.tokenUsage.completionTokens;
+
+      traceRecord(trace, "phase_end", {
+        phase: Phase.EXECUTE,
+        summary: graph.summary(),
       });
+
+      const summary = graph.summary();
       emitProgress(
         taskId,
-        Phase.PLAN,
-        30,
-        `Replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
+        Phase.EXECUTE,
+        70,
+        `Executed: ${summary.completed}/${summary.total} completed, ${summary.failed} failed`,
       );
 
       console.log(
-        `[orchestrator] Task ${taskId}: replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
+        `[orchestrator] Task ${taskId}: execution done — ${JSON.stringify(summary)}`,
       );
 
-      try {
-        const { graph: rg, usage: replanUsage } = await replan(
-          taskDescription,
-          graph,
-          replanReason,
+      // Check replan triggers
+      const replanReason = checkReplan(graph, trace, executionResults, cfg);
+      if (replanReason && replanCount < cfg.maxReplans) {
+        replanCount++;
+        traceRecord(trace, "replan", {
+          reason: replanReason,
+          attempt: replanCount,
+        });
+        emitProgress(
+          taskId,
+          Phase.PLAN,
+          30,
+          `Replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
         );
-        graph = rg;
-        totalPromptTokens += replanUsage.promptTokens;
-        totalCompletionTokens += replanUsage.completionTokens;
-      } catch (err) {
-        console.warn(
-          `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
+
+        console.log(
+          `[orchestrator] Task ${taskId}: replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
         );
-        break;
+
+        try {
+          const { graph: rg, usage: replanUsage } = await replan(
+            taskDescription,
+            graph,
+            replanReason,
+          );
+          graph = rg;
+          totalPromptTokens += replanUsage.promptTokens;
+          totalCompletionTokens += replanUsage.completionTokens;
+        } catch (err) {
+          console.warn(
+            `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
+          );
+          break;
+        }
+        continue;
       }
-      continue;
+      break;
     }
-    break;
+
+    // --- REFLECT ---
+    emitProgress(taskId, Phase.REFLECT, 85, "Reflecting on execution");
+    traceRecord(trace, "phase_start", { phase: Phase.REFLECT });
+
+    const { result: reflection, usage: reflectUsage } = await reflect(
+      taskDescription,
+      graph,
+      executionResults,
+      taskId,
+    );
+    totalPromptTokens += reflectUsage.promptTokens;
+    totalCompletionTokens += reflectUsage.completionTokens;
+
+    traceRecord(trace, "phase_end", {
+      phase: Phase.REFLECT,
+      success: reflection.success,
+      score: reflection.score,
+    });
+
+    trace.endTime = Date.now();
+    clearTimeout(globalTimer);
+    emitProgress(taskId, Phase.REFLECT, 100, "Complete");
+
+    console.log(
+      `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,
+    );
+
+    return {
+      success: reflection.success,
+      goalGraph: graph.toJSON(),
+      executionResults,
+      reflection,
+      trace: trace.events,
+      traceId: trace.traceId,
+      durationMs: trace.endTime - trace.startTime,
+      tokenUsage: {
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+      },
+      iterationsUsed: budget.consumed,
+    };
+  } finally {
+    setMemoryTaskContext(null); // Governance: clear rate limit state on all paths
   }
-
-  // --- REFLECT ---
-  emitProgress(taskId, Phase.REFLECT, 85, "Reflecting on execution");
-  traceRecord(trace, "phase_start", { phase: Phase.REFLECT });
-
-  const { result: reflection, usage: reflectUsage } = await reflect(
-    taskDescription,
-    graph,
-    executionResults,
-    taskId,
-  );
-  totalPromptTokens += reflectUsage.promptTokens;
-  totalCompletionTokens += reflectUsage.completionTokens;
-
-  traceRecord(trace, "phase_end", {
-    phase: Phase.REFLECT,
-    success: reflection.success,
-    score: reflection.score,
-  });
-
-  trace.endTime = Date.now();
-  clearTimeout(globalTimer);
-  emitProgress(taskId, Phase.REFLECT, 100, "Complete");
-
-  console.log(
-    `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,
-  );
-
-  setMemoryTaskContext(null); // Governance: clear rate limit state
-
-  return {
-    success: reflection.success,
-    goalGraph: graph.toJSON(),
-    executionResults,
-    reflection,
-    trace: trace.events,
-    traceId: trace.traceId,
-    durationMs: trace.endTime - trace.startTime,
-    tokenUsage: {
-      promptTokens: totalPromptTokens,
-      completionTokens: totalCompletionTokens,
-    },
-    iterationsUsed: budget.consumed,
-  };
 }
 
 // ---------------------------------------------------------------------------
