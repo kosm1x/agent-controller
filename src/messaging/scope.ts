@@ -161,7 +161,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(naveg|browse|sitio web|p[aá]gina web|click|login|form|scrape|interact|render|javascript)/i,
+      /\b(naveg|browse|sitio web|p[aá]gina web|click|login|formulario|scrape|render|javascript)\b/i,
     group: "browser",
   },
   {
