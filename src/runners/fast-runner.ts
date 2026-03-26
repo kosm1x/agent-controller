@@ -384,50 +384,88 @@ export const fastRunner: Runner = {
       }
 
       // Hallucination guard: if the LLM narrated tool execution without calling
-      // the right tools, mechanically replace the response with an honest one.
-      //
-      // Previous approach (retry with inferWithTools) was futile: the retry starts
-      // with the same ~25K token prompt, immediately hits the budget ceiling, and
-      // wraps up with the same hallucination. Instead, we build a truthful response
-      // from the actual tool call data — zero LLM involvement, zero hallucination risk.
+      // the right tools, retry once if budget has headroom, else replace.
       if (detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
-        console.log(
-          `[fast-runner] Hallucination detected — tools claimed but not called. Actual tools: [${toolsCalled.join(", ")}]. Replacing with honest response.`,
-        );
+        const lastPromptTokens = result.totalUsage.prompt_tokens;
+        const hasHeadroom = lastPromptTokens < tokenBudget * 0.85;
 
-        // Build mechanical honest response from tool call data
-        const toolList =
-          toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
+        if (hasHeadroom) {
+          // Budget has room — retry with correction instead of giving up.
+          console.log(
+            `[fast-runner] Hallucination detected (prompt=${lastPromptTokens}, budget=${tokenBudget}). Retrying with correction.`,
+          );
+          const retryMessages: ChatMessage[] = [...messages];
+          retryMessages.push({
+            role: "user",
+            content:
+              "ALTO: Narraste la acción sin llamar herramientas. Llama a la herramienta de escritura AHORA (gsheets_write con append=false para correcciones, append=true para nuevas filas).",
+          });
 
-        // Collect brief summaries of tool results from the conversation
-        const toolSummaries: string[] = [];
-        for (const msg of result.messages) {
-          if (msg.role === "tool" && typeof msg.content === "string") {
-            // Find the tool name from the preceding assistant message
-            const preview = msg.content.slice(0, 150).replace(/\n/g, " ");
-            toolSummaries.push(preview);
+          const retryResult = await inferWithTools(
+            retryMessages,
+            definitions,
+            (name, args) => toolRegistry.execute(name, args),
+            {
+              maxRounds: 5,
+              providerName: tierToProvider(input.modelTier),
+              tokenBudget,
+            },
+          );
+          const retryParsed = parseRunnerStatus(retryResult.content);
+
+          // Collect retry tools
+          const retryToolsCalled: string[] = [];
+          for (const msg of retryResult.messages) {
+            if (msg.role === "assistant" && msg.tool_calls) {
+              for (const tc of msg.tool_calls) {
+                if (
+                  tc.function?.name &&
+                  !retryToolsCalled.includes(tc.function.name)
+                ) {
+                  retryToolsCalled.push(tc.function.name);
+                }
+              }
+            }
           }
-        }
-        const dataSummary =
-          toolSummaries.length > 0
-            ? `\n\nDatos recopilados:\n${toolSummaries
-                .slice(0, 3)
-                .map((s) => `- ${s}`)
-                .join("\n")}`
-            : "";
 
-        parsed = {
-          cleanContent:
-            `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
-            `**Herramientas que SÍ llamé**: ${toolList}\n` +
-            `**Herramientas de escritura necesarias**: gsheets_write (append=false para correcciones)` +
-            dataSummary +
-            `\n\nIntenta de nuevo con una solicitud más específica o divídela en pasos más pequeños.`,
-          status: "DONE_WITH_CONCERNS",
-          concerns: [
-            "Hallucination detected — response mechanically replaced with honest tool inventory",
-          ],
-        };
+          const retryCalledWrite = retryToolsCalled.some((t) =>
+            WRITE_TOOLS.has(t),
+          );
+          if (retryCalledWrite) {
+            // Retry succeeded — use its results
+            parsed = retryParsed;
+            toolsCalled.length = 0;
+            toolsCalled.push(...retryToolsCalled);
+          }
+          // If retry also failed, fall through to mechanical replacement below
+
+          result.totalUsage.prompt_tokens +=
+            retryResult.totalUsage.prompt_tokens;
+          result.totalUsage.completion_tokens +=
+            retryResult.totalUsage.completion_tokens;
+        }
+
+        // If no headroom or retry didn't call write tools — mechanical replacement
+        if (!detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
+          // Retry fixed it — skip replacement
+        } else {
+          console.log(
+            `[fast-runner] Hallucination persists. Replacing with honest response. Tools: [${toolsCalled.join(", ")}]`,
+          );
+          const toolList =
+            toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
+          parsed = {
+            cleanContent:
+              `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
+              `**Herramientas que SÍ llamé**: ${toolList}\n` +
+              `**Herramientas de escritura necesarias**: gsheets_write (append=false para correcciones)` +
+              `\n\nIntenta de nuevo con una solicitud más específica.`,
+            status: "DONE_WITH_CONCERNS",
+            concerns: [
+              "Hallucination detected — response mechanically replaced with honest tool inventory",
+            ],
+          };
+        }
       }
 
       return {
