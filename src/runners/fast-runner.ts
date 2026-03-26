@@ -399,15 +399,6 @@ export const fastRunner: Runner = {
         const toolList =
           toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
 
-        // Extract what the user last asked for (from the last user message)
-        const lastUserMsg = [...messages]
-          .reverse()
-          .find((m) => m.role === "user");
-        const userRequest =
-          typeof lastUserMsg?.content === "string"
-            ? lastUserMsg.content.slice(0, 200)
-            : "la solicitud";
-
         // Collect brief summaries of tool results from the conversation
         const toolSummaries: string[] = [];
         for (const msg of result.messages) {
@@ -427,11 +418,11 @@ export const fastRunner: Runner = {
 
         parsed = {
           cleanContent:
-            `⚠️ No completé la acción solicitada.\n\n` +
+            `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
             `**Herramientas que SÍ llamé**: ${toolList}\n` +
-            `**Herramientas que NO llamé** (se agotaron las rondas): las de escritura/acción necesarias para completar "${userRequest}"` +
+            `**Herramientas de escritura necesarias**: gsheets_write (append=false para correcciones)` +
             dataSummary +
-            `\n\nPor favor, intenta de nuevo con una solicitud más específica o divídela en pasos más pequeños.`,
+            `\n\nIntenta de nuevo con una solicitud más específica o divídela en pasos más pequeños.`,
           status: "DONE_WITH_CONCERNS",
           concerns: [
             "Hallucination detected — response mechanically replaced with honest tool inventory",
