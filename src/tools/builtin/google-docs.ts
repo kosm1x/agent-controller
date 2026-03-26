@@ -170,6 +170,45 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
 
     try {
       if (useAppend) {
+        // Dedup check: read column A to find existing IDs, skip duplicates.
+        // The first cell of each row is treated as a unique key.
+        let dedupedValues = values;
+        try {
+          // Extract the sheet name from range (e.g., "Sheet1!A:J" → "Sheet1")
+          const sheetName = range.includes("!")
+            ? range.split("!")[0]
+            : "Sheet1";
+          const existingCol = await googleFetch<{
+            values?: string[][];
+          }>(
+            `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(sheetName + "!A:A")}`,
+          );
+          const existingIds = new Set(
+            (existingCol.values ?? []).flat().map((v) => String(v).trim()),
+          );
+          const before = dedupedValues.length;
+          dedupedValues = dedupedValues.filter(
+            (row) => !existingIds.has(String(row[0]).trim()),
+          );
+          if (dedupedValues.length < before) {
+            console.log(
+              `[gsheets_write] Dedup: ${before - dedupedValues.length} duplicate row(s) skipped (IDs already in column A)`,
+            );
+          }
+        } catch {
+          // Dedup check failed — proceed without it
+        }
+
+        if (dedupedValues.length === 0) {
+          return JSON.stringify({
+            written: false,
+            mode: "append",
+            skipped: values.length,
+            reason:
+              "All rows already exist in the sheet (duplicate IDs in column A)",
+          });
+        }
+
         // Append: POST to .../values/{range}:append — auto-finds next empty row
         const result = await googleFetch<{
           updates: {
@@ -179,15 +218,17 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
           };
         }>(
           `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-          { method: "POST", body: { values } },
+          { method: "POST", body: { values: dedupedValues } },
         );
 
+        const skipped = values.length - dedupedValues.length;
         return JSON.stringify({
           written: true,
           mode: "append",
           range: result.updates.updatedRange,
           rows: result.updates.updatedRows,
           cells: result.updates.updatedCells,
+          ...(skipped > 0 ? { skipped_duplicates: skipped } : {}),
         });
       } else {
         // Overwrite: PUT to exact range — for corrections only
