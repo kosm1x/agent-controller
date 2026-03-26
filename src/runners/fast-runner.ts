@@ -194,12 +194,44 @@ export function detectsHallucinatedExecution(
   // --- Layer 2: Partial hallucination (generic — all write tools) ---
   // LLM called SOME tools (e.g. gsheets_read, wp_list_posts) but narrated write
   // actions (gsheets_write, wp_publish, gmail_send) without calling them.
+  // EXCEPTION: if ALL tools called are read-only, the LLM is DESCRIBING observed
+  // state from tool results (e.g., "filas actualizadas" after gsheets_read).
+  // This is reporting, not hallucination.
+  // Only fire on FIRST-PERSON write claims ("escribí", "actualicé", "I wrote").
+  // Passive descriptions ("filas actualizadas", "was updated") are allowed — the
+  // LLM may be REPORTING observed state from read tool results, not hallucinating.
   const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
-  if (!calledAnyWriteTool && claimsWrite) {
-    console.log(
-      `[fast-runner] Partial hallucination: response claims write action but no write tool called. Tools: [${toolsCalled.join(", ")}]`,
-    );
-    return true;
+  if (!calledAnyWriteTool && toolsCalled.length > 0) {
+    const claimsAction =
+      // First-person past tense (always hallucination)
+      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé)\s/i.test(
+        text,
+      ) ||
+      /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited)\s/i.test(
+        text,
+      ) ||
+      // Passive + success adverb (claim, not observation)
+      /(?:fue|fueron|ha sido|han sido)\s+\w+\s*(?:exitosamente|correctamente|con éxito|successfully)/i.test(
+        text,
+      ) ||
+      /(?:was|were|has been|have been)\s+\w+\s*(?:successfully|correctly)/i.test(
+        text,
+      ) ||
+      /(?:publicad[oa]|enviad[oa]|subid[oa]|creada?|eliminad[oa])\s+(?:exitosamente|correctamente|con éxito|successfully)/i.test(
+        text,
+      ) ||
+      // Quantity claims ("50 celdas actualizadas")
+      /\d+\s+(?:celdas?|filas?|rows?|cells?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated)/i.test(
+        text,
+      ) ||
+      // "Acciones realizadas" opener
+      /accione?s?\s+realizada?s?/i.test(text);
+    if (claimsAction) {
+      console.log(
+        `[fast-runner] Partial hallucination: write claim but no write tool called. Tools: [${toolsCalled.join(", ")}]`,
+      );
+      return true;
+    }
   }
 
   // --- Layer 3: Specific narration patterns (always fire) ---

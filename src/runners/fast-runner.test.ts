@@ -85,7 +85,7 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims WP publish but only called wp_list_posts", () => {
+  it("detects partial hallucination: claims WP publish with success adverb", () => {
     expect(
       detectsHallucinatedExecution(
         "El artículo fue publicado exitosamente en el blog.",
@@ -94,7 +94,7 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims image uploaded without wp_media_upload", () => {
+  it("detects partial hallucination: claims image uploaded with success adverb", () => {
     expect(
       detectsHallucinatedExecution(
         "La imagen fue subida correctamente al sitio.",
@@ -103,22 +103,31 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims email sent without gmail_send", () => {
+  it("detects partial hallucination: first-person email claim", () => {
     expect(
       detectsHallucinatedExecution(
-        "Email enviado a fede@eurekamd.net con el reporte.",
+        "Envié el reporte a fede@eurekamd.net con los datos.",
         ["web_search"],
       ),
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims task created without commit tool", () => {
+  it("detects partial hallucination: first-person task creation", () => {
     expect(
       detectsHallucinatedExecution(
-        "Tarea creada bajo el objetivo de optimización.",
+        "Creé una tarea bajo el objetivo de optimización.",
         ["commit__list_tasks"],
       ),
     ).toBe(true);
+  });
+
+  it("allows passive observation from read tools (not hallucination)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Las filas 40-42 están actualizadas con datos de los artículos 324, 330.",
+        ["gsheets_read"],
+      ),
+    ).toBe(false);
   });
 
   it("detects partial hallucination: quantity + action (50 celdas actualizadas)", () => {

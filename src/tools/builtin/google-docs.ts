@@ -76,6 +76,10 @@ export const gsheetsWriteTool: Tool = {
 CORRECT: values: [["Name","Score"],["Alice","95"]]
 WRONG:   values: ["Name","Score","Alice","95"]
 
+MODES:
+- append=true (DEFAULT): Adds rows AFTER the last row with data. Use this when adding new entries. The range only needs the sheet name and columns (e.g., "Sheet1!A:J"). Row numbers are ignored — data goes to the next empty row automatically.
+- append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells.
+
 WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.`,
       parameters: {
         type: "object",
@@ -86,13 +90,19 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
           },
           range: {
             type: "string",
-            description: "A1 notation range to write to (e.g., 'Sheet1!A1')",
+            description:
+              "A1 notation range. For append mode: 'Sheet1!A:J' (columns only). For overwrite: 'Sheet1!A10:J10' (exact cells).",
           },
           values: {
             type: "array",
             items: { type: "array", items: { type: "string" } },
             description:
               'Rows of data as 2D array (e.g., [["Name","Score"],["Alice","95"]])',
+          },
+          append: {
+            type: "boolean",
+            description:
+              "true (default): append after last row. false: overwrite exact range.",
           },
         },
         required: ["spreadsheet_id", "range", "values"],
@@ -155,22 +165,49 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
       );
     }
 
-    try {
-      const result = await googleFetch<{
-        updatedRange: string;
-        updatedRows: number;
-        updatedCells: number;
-      }>(
-        `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-        { method: "PUT", body: { values } },
-      );
+    // Default to append mode — prevents overwriting existing data
+    const useAppend = args.append !== false;
 
-      return JSON.stringify({
-        written: true,
-        range: result.updatedRange,
-        rows: result.updatedRows,
-        cells: result.updatedCells,
-      });
+    try {
+      if (useAppend) {
+        // Append: POST to .../values/{range}:append — auto-finds next empty row
+        const result = await googleFetch<{
+          updates: {
+            updatedRange: string;
+            updatedRows: number;
+            updatedCells: number;
+          };
+        }>(
+          `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+          { method: "POST", body: { values } },
+        );
+
+        return JSON.stringify({
+          written: true,
+          mode: "append",
+          range: result.updates.updatedRange,
+          rows: result.updates.updatedRows,
+          cells: result.updates.updatedCells,
+        });
+      } else {
+        // Overwrite: PUT to exact range — for corrections only
+        const result = await googleFetch<{
+          updatedRange: string;
+          updatedRows: number;
+          updatedCells: number;
+        }>(
+          `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+          { method: "PUT", body: { values } },
+        );
+
+        return JSON.stringify({
+          written: true,
+          mode: "overwrite",
+          range: result.updatedRange,
+          rows: result.updatedRows,
+          cells: result.updatedCells,
+        });
+      }
     } catch (err) {
       return JSON.stringify({
         error: `Sheets write failed: ${err instanceof Error ? err.message : err}`,
