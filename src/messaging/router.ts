@@ -122,7 +122,7 @@ Después de llamar herramientas que crean, modifican, o eliminan elementos (COMM
   const caps = [
     `- **Acción directa**: Busca, investiga — HAZLO, no lo registres`,
     `- **COMMIT**: Gestiona la productividad de Fede SOLO cuando él lo pide explícitamente`,
-    `- **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar`,
+    `- **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar. exa_search para búsquedas avanzadas (semánticas, por dominio, contenido)`,
   ];
   if (hasGoogle)
     caps.push(
@@ -134,10 +134,11 @@ Después de llamar herramientas que crean, modifican, o eliminan elementos (COMM
   caps.push(
     `- **Perfil de usuario**: Guarda datos personales de Fede con user_fact_set para NUNCA olvidarlos`,
   );
-  if (hasBrowser)
-    caps.push(
-      `- **Navegador**: Interactúa con sitios web (browser__goto, browser__click, browser__fill)`,
-    );
+  caps.push(
+    hasBrowser
+      ? `- **Navegador**: Navega e interactúa con sitios web (browser__goto, browser__markdown, browser__click, browser__fill)`
+      : `- **Navegador**: Lee contenido de sitios web (browser__goto, browser__markdown)`,
+  );
   if (hasCoding)
     caps.push(
       `- **Código**: Lee, edita, ejecuta archivos (file_read, file_edit, shell_exec, grep, glob)`,

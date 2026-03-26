@@ -18,6 +18,7 @@ export const CORE_TOOLS = [
   "user_fact_delete",
   "web_search",
   "web_read",
+  "exa_search",
   "skill_save",
   "skill_list",
 ];
@@ -103,6 +104,8 @@ export const MISC_TOOLS = [
   "list_schedules",
   "project_list",
   "project_get",
+  "browser__goto",
+  "browser__markdown",
 ];
 
 /** Specialty tools — keyword-gated to save tokens. */
@@ -111,13 +114,11 @@ export const SPECIALTY_TOOLS = [
   "rss_read",
   "gemini_image",
   "project_update",
-  "exa_search",
 ];
 
-/** Lightpanda browser tools — only when web interaction needed. */
+/** Lightpanda interactive browser tools — only when web interaction needed.
+ *  browser__goto and browser__markdown are always available via MISC_TOOLS. */
 export const BROWSER_TOOLS = [
-  "browser__goto",
-  "browser__markdown",
   "browser__links",
   "browser__evaluate",
   "browser__semantic_tree",

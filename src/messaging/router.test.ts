@@ -155,8 +155,13 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("http_fetch");
       // Specialty tools now keyword-gated
       expect(call.tools).not.toContain("chart_generate");
+      // Basic browser tools always present (goto + markdown)
+      expect(call.tools).toContain("browser__goto");
+      expect(call.tools).toContain("browser__markdown");
+      // exa_search always present
+      expect(call.tools).toContain("exa_search");
       // Should NOT include heavy groups for a simple greeting
-      expect(call.tools).not.toContain("browser__goto");
+      expect(call.tools).not.toContain("browser__click");
       expect(call.tools).not.toContain("shell_exec");
       expect(call.tools).not.toContain("gmail_send");
       expect(call.tools).not.toContain("commit__create_task");
