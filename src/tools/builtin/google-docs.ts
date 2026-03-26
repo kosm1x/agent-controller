@@ -76,9 +76,11 @@ export const gsheetsWriteTool: Tool = {
 CORRECT: values: [["Name","Score"],["Alice","95"]]
 WRONG:   values: ["Name","Score","Alice","95"]
 
+DEDUP: The tool automatically skips rows whose first column value (ID) already exists in the sheet. You do NOT need to check for duplicates manually.
+
 MODES:
 - append=true (DEFAULT): Adds rows AFTER the last row with data. Use this when adding new entries. The range only needs the sheet name and columns (e.g., "Sheet1!A:J"). Row numbers are ignored — data goes to the next empty row automatically.
-- append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells.
+- append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells (e.g., "Sheet1!J55").
 
 WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.`,
       parameters: {
@@ -165,50 +167,45 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
       );
     }
 
-    // Default to append mode — prevents overwriting existing data
     const useAppend = args.append !== false;
+
+    // Dedup: ALWAYS check column A for existing IDs, regardless of mode.
+    // Prevents duplicates whether the LLM uses append or overwrite.
+    let dedupedValues = values;
+    try {
+      const sheetName = range.includes("!") ? range.split("!")[0] : "Sheet1";
+      const existingCol = await googleFetch<{ values?: string[][] }>(
+        `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(sheetName + "!A:A")}`,
+      );
+      const existingIds = new Set(
+        (existingCol.values ?? []).flat().map((v) => String(v).trim()),
+      );
+      const before = dedupedValues.length;
+      dedupedValues = dedupedValues.filter(
+        (row) => !existingIds.has(String(row[0]).trim()),
+      );
+      if (dedupedValues.length < before) {
+        console.log(
+          `[gsheets_write] Dedup: ${before - dedupedValues.length} duplicate row(s) skipped (IDs already in column A)`,
+        );
+      }
+    } catch (dedupErr) {
+      console.error(
+        `[gsheets_write] Dedup check failed: ${dedupErr instanceof Error ? dedupErr.message : dedupErr}`,
+      );
+    }
+
+    if (dedupedValues.length === 0) {
+      return JSON.stringify({
+        written: false,
+        skipped: values.length,
+        reason:
+          "All rows already exist in the sheet (duplicate IDs in column A)",
+      });
+    }
 
     try {
       if (useAppend) {
-        // Dedup check: read column A to find existing IDs, skip duplicates.
-        // The first cell of each row is treated as a unique key.
-        let dedupedValues = values;
-        try {
-          // Extract the sheet name from range (e.g., "Sheet1!A:J" → "Sheet1")
-          const sheetName = range.includes("!")
-            ? range.split("!")[0]
-            : "Sheet1";
-          const existingCol = await googleFetch<{
-            values?: string[][];
-          }>(
-            `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(sheetName + "!A:A")}`,
-          );
-          const existingIds = new Set(
-            (existingCol.values ?? []).flat().map((v) => String(v).trim()),
-          );
-          const before = dedupedValues.length;
-          dedupedValues = dedupedValues.filter(
-            (row) => !existingIds.has(String(row[0]).trim()),
-          );
-          if (dedupedValues.length < before) {
-            console.log(
-              `[gsheets_write] Dedup: ${before - dedupedValues.length} duplicate row(s) skipped (IDs already in column A)`,
-            );
-          }
-        } catch {
-          // Dedup check failed — proceed without it
-        }
-
-        if (dedupedValues.length === 0) {
-          return JSON.stringify({
-            written: false,
-            mode: "append",
-            skipped: values.length,
-            reason:
-              "All rows already exist in the sheet (duplicate IDs in column A)",
-          });
-        }
-
         // Append: POST to .../values/{range}:append — auto-finds next empty row
         const result = await googleFetch<{
           updates: {
@@ -238,15 +235,17 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
           updatedCells: number;
         }>(
           `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-          { method: "PUT", body: { values } },
+          { method: "PUT", body: { values: dedupedValues } },
         );
 
+        const skipped = values.length - dedupedValues.length;
         return JSON.stringify({
           written: true,
           mode: "overwrite",
           range: result.updatedRange,
           rows: result.updatedRows,
           cells: result.updatedCells,
+          ...(skipped > 0 ? { skipped_duplicates: skipped } : {}),
         });
       }
     } catch (err) {
@@ -267,15 +266,13 @@ export const gdocsReadTool: Tool = {
     type: "function",
     function: {
       name: "gdocs_read",
-      description: `Read the text content of a Google Doc.
-
-WORKFLOW: If user mentions a document by name, call gdrive_list first to find the file ID.`,
+      description: "Read the text content of a Google Doc.",
       parameters: {
         type: "object",
         properties: {
           document_id: {
             type: "string",
-            description: "Document ID (from gdrive_list or URL)",
+            description: "Google Doc ID",
           },
         },
         required: ["document_id"],
@@ -283,8 +280,7 @@ WORKFLOW: If user mentions a document by name, call gdrive_list first to find th
     },
   },
   async execute(args: Record<string, unknown>): Promise<string> {
-    const id = args.document_id as string;
-
+    const docId = args.document_id as string;
     try {
       const doc = await googleFetch<{
         title: string;
@@ -297,24 +293,17 @@ WORKFLOW: If user mentions a document by name, call gdrive_list first to find th
             };
           }>;
         };
-      }>(`https://docs.googleapis.com/v1/documents/${id}`);
+      }>(`https://docs.googleapis.com/v1/documents/${docId}`);
 
-      // Extract text content
       const text = doc.body.content
-        .map(
-          (block) =>
-            block.paragraph?.elements
-              ?.map((el) => el.textRun?.content ?? "")
-              .join("") ?? "",
+        .map((block) =>
+          (block.paragraph?.elements ?? [])
+            .map((e) => e.textRun?.content ?? "")
+            .join(""),
         )
-        .join("")
-        .trim();
+        .join("");
 
-      return JSON.stringify({
-        title: doc.title,
-        content: text.slice(0, 10000),
-        truncated: text.length > 10000,
-      });
+      return JSON.stringify({ title: doc.title, text: text.slice(0, 8000) });
     } catch (err) {
       return JSON.stringify({
         error: `Docs read failed: ${err instanceof Error ? err.message : err}`,
@@ -333,26 +322,18 @@ export const gdocsWriteTool: Tool = {
     type: "function",
     function: {
       name: "gdocs_write",
-      description: `Write/append text to a Google Doc.
-
-WORKFLOW:
-1. To create a new doc: call gdrive_create(type: doc) first, then write here
-2. To append to existing: call gdocs_read first to get current length, then insert at end`,
+      description:
+        "Append text to a Google Doc. Inserts at the end of the document.",
       parameters: {
         type: "object",
         properties: {
           document_id: {
             type: "string",
-            description: "Document ID",
+            description: "Google Doc ID",
           },
           text: {
             type: "string",
-            description: "Text to insert (plain text, newlines supported)",
-          },
-          index: {
-            type: "number",
-            description:
-              "Character index to insert at (1 = beginning, omit to append at end)",
+            description: "Text to append to the document",
           },
         },
         required: ["document_id", "text"],
@@ -360,36 +341,39 @@ WORKFLOW:
     },
   },
   async execute(args: Record<string, unknown>): Promise<string> {
-    const id = args.document_id as string;
+    const docId = args.document_id as string;
     const text = args.text as string;
-    let index = args.index as number | undefined;
 
     try {
-      // If no index, get document length to append at end
-      if (!index) {
-        const doc = await googleFetch<{
-          body: { content: Array<{ endIndex: number }> };
-        }>(`https://docs.googleapis.com/v1/documents/${id}`);
+      // First get the doc to find the end index
+      const doc = await googleFetch<{
+        body: { content: Array<{ endIndex: number }> };
+      }>(`https://docs.googleapis.com/v1/documents/${docId}`);
 
-        const lastElement = doc.body.content[doc.body.content.length - 1];
-        index = Math.max((lastElement?.endIndex ?? 2) - 1, 1);
-      }
+      const endIndex =
+        doc.body.content[doc.body.content.length - 1]?.endIndex ?? 1;
 
       await googleFetch(
-        `https://docs.googleapis.com/v1/documents/${id}:batchUpdate`,
+        `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
         {
           method: "POST",
           body: {
-            requests: [{ insertText: { location: { index }, text } }],
+            requests: [
+              {
+                insertText: {
+                  location: { index: endIndex - 1 },
+                  text,
+                },
+              },
+            ],
           },
         },
       );
 
       return JSON.stringify({
         written: true,
-        document_id: id,
+        document_id: docId,
         chars: text.length,
-        at_index: index,
       });
     } catch (err) {
       return JSON.stringify({
@@ -409,9 +393,8 @@ export const gslidesCreateTool: Tool = {
     type: "function",
     function: {
       name: "gslides_create",
-      description: `Create a Google Slides presentation with slides.
-
-WORKFLOW: Creates the presentation via Drive, then adds slides with titles and content.`,
+      description:
+        "Create a new Google Slides presentation with initial slides.",
       parameters: {
         type: "object",
         properties: {
@@ -427,9 +410,8 @@ WORKFLOW: Creates the presentation via Drive, then adds slides with titles and c
                 title: { type: "string", description: "Slide title" },
                 body: { type: "string", description: "Slide body text" },
               },
-              required: ["title"],
             },
-            description: "Array of slides with title and optional body",
+            description: "Array of slides with title and body",
           },
         },
         required: ["title", "slides"],
@@ -438,25 +420,26 @@ WORKFLOW: Creates the presentation via Drive, then adds slides with titles and c
   },
   async execute(args: Record<string, unknown>): Promise<string> {
     const title = args.title as string;
-    const slides = args.slides as Array<{ title: string; body?: string }>;
+    const slides = args.slides as Array<{ title: string; body: string }>;
 
     try {
       // Create presentation
       const pres = await googleFetch<{
         presentationId: string;
-        slides: Array<{ objectId: string }>;
+        slides: Array<{
+          objectId: string;
+          pageElements: Array<{ objectId: string }>;
+        }>;
       }>("https://slides.googleapis.com/v1/presentations", {
         method: "POST",
         body: { title },
       });
 
-      const presId = pres.presentationId;
-
-      // Build batch requests for slides
+      // Build requests to add slides
       const requests: unknown[] = [];
 
       // Delete the default blank slide
-      if (pres.slides?.length > 0) {
+      if (pres.slides.length > 0) {
         requests.push({
           deleteObject: { objectId: pres.slides[0].objectId },
         });
@@ -494,33 +477,28 @@ WORKFLOW: Creates the presentation via Drive, then adds slides with titles and c
           },
         });
 
-        if (slides[i].body) {
-          requests.push({
-            insertText: {
-              objectId: bodyId,
-              text: slides[i].body,
-            },
-          });
-        }
+        requests.push({
+          insertText: {
+            objectId: bodyId,
+            text: slides[i].body,
+          },
+        });
       }
 
-      if (requests.length > 0) {
-        await googleFetch(
-          `https://slides.googleapis.com/v1/presentations/${presId}:batchUpdate`,
-          { method: "POST", body: { requests } },
-        );
-      }
+      await googleFetch(
+        `https://slides.googleapis.com/v1/presentations/${pres.presentationId}:batchUpdate`,
+        { method: "POST", body: { requests } },
+      );
 
       return JSON.stringify({
         created: true,
-        presentation_id: presId,
-        url: `https://docs.google.com/presentation/d/${presId}/edit`,
-        slides_count: slides.length,
-        title,
+        presentationId: pres.presentationId,
+        url: `https://docs.google.com/presentation/d/${pres.presentationId}/edit`,
+        slides: slides.length,
       });
     } catch (err) {
       return JSON.stringify({
-        error: `Slides create failed: ${err instanceof Error ? err.message : err}`,
+        error: `Slides creation failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },
@@ -536,11 +514,8 @@ export const gtasksCreateTool: Tool = {
     type: "function",
     function: {
       name: "gtasks_create",
-      description: `Create a Google Task.
-
-USE WHEN:
-- The user wants to add something to Google Tasks (separate from COMMIT tasks)
-- For quick reminders or items that don't belong in the COMMIT hierarchy`,
+      description:
+        'Create a Google Task in the default task list ("My Tasks").',
       parameters: {
         type: "object",
         properties: {
@@ -550,11 +525,12 @@ USE WHEN:
           },
           notes: {
             type: "string",
-            description: "Task notes/details (optional)",
+            description: "Task notes/description",
           },
           due: {
             type: "string",
-            description: "Due date (YYYY-MM-DD, optional)",
+            description:
+              "Due date in RFC 3339 format (e.g., 2026-04-01T00:00:00Z)",
           },
         },
         required: ["title"],
@@ -567,37 +543,34 @@ USE WHEN:
     const due = args.due as string | undefined;
 
     try {
-      // Get default task list
+      // Get the default task list
       const lists = await googleFetch<{
         items: Array<{ id: string; title: string }>;
       }>("https://tasks.googleapis.com/tasks/v1/users/@me/lists");
 
-      const listId = lists.items?.[0]?.id;
-      if (!listId) {
+      const defaultList = lists.items?.[0];
+      if (!defaultList) {
         return JSON.stringify({ error: "No task lists found" });
       }
 
-      const task: Record<string, unknown> = { title };
-      if (notes) task.notes = notes;
-      if (due) task.due = `${due}T00:00:00.000Z`;
+      const body: Record<string, unknown> = { title };
+      if (notes) body.notes = notes;
+      if (due) body.due = due;
 
-      const result = await googleFetch<{
-        id: string;
-        title: string;
-        selfLink: string;
-      }>(`https://tasks.googleapis.com/tasks/v1/lists/${listId}/tasks`, {
-        method: "POST",
-        body: task,
-      });
+      const task = await googleFetch<{ id: string; title: string }>(
+        `https://tasks.googleapis.com/tasks/v1/lists/${defaultList.id}/tasks`,
+        { method: "POST", body },
+      );
 
       return JSON.stringify({
         created: true,
-        id: result.id,
-        title: result.title,
+        taskId: task.id,
+        title: task.title,
+        list: defaultList.title,
       });
     } catch (err) {
       return JSON.stringify({
-        error: `Tasks create failed: ${err instanceof Error ? err.message : err}`,
+        error: `Task creation failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },
