@@ -309,18 +309,32 @@ function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
 ): string[] {
-  // Scan ALL user messages (intent continuity across continuation commands)
-  // + last 2 assistant messages (tool/target references like "Google Sheet").
-  // Limiting assistant scan prevents scope creep from old conversations
-  // triggering coding/browser groups unnecessarily.
+  // Scope from user messages: ALL patterns (intent continuity).
+  // Scope from assistant messages: ONLY google/wordpress patterns.
+  // Assistant text contains article titles with generic words ("Goals",
+  // "Retirement") that falsely trigger COMMIT/coding. Only google/wordpress
+  // keywords in assistant text carry real task context forward.
   const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
     .map((t) => t.content);
-  const recentAssistantMsgs = conversationHistory
+
+  // For assistant messages, extract only google/wp keywords to avoid false triggers
+  const assistantContext = conversationHistory
     .filter((t) => t.role === "assistant")
     .slice(-2)
-    .map((t) => t.content);
-  const recentUserMessages = [...userMsgs, ...recentAssistantMsgs];
+    .map((t) => {
+      // Only pass through words that match google or wordpress patterns
+      const googleMatch = t.content.match(
+        /\b(emails?|correos?|gmail|calendar|drive|hojas?|sheets?|google|gsheets)/gi,
+      );
+      const wpMatch = t.content.match(
+        /\b(wordpress|wp|posts?|art[ií]culos?|livingjoyfully)/gi,
+      );
+      return [...(googleMatch ?? []), ...(wpMatch ?? [])].join(" ");
+    })
+    .filter((s) => s.length > 0);
+
+  const recentUserMessages = [...userMsgs, ...assistantContext];
 
   const tools = scopeToolsPure(
     currentMessage,
