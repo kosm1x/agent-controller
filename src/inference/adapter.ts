@@ -709,6 +709,7 @@ export async function inferWithTools(
   let has413Retried = false;
   let lastToolSig = "";
   let consecutiveRepeats = 0;
+  let consecutiveSmallResults = 0;
   const MAX_CONSECUTIVE_REPEATS = 2;
 
   for (let round = 0; round < maxRounds; round++) {
@@ -955,6 +956,26 @@ export async function inferWithTools(
       consecutiveRepeats = 0;
     }
     lastToolSig = currentToolSig;
+
+    // Stale-loop detection: if all tool results in this round are small
+    // error-sized responses (< 300 chars each), count consecutive error rounds.
+    // The LLM may be trying different args (so tool sig differs) but getting
+    // the same error every time (e.g., 404s on sequential IDs).
+    const allResultsSmall = toolResults.every(
+      (r) => typeof r.content === "string" && r.content.length < 300,
+    );
+    if (allResultsSmall && response.tool_calls.length === 1) {
+      consecutiveSmallResults = (consecutiveSmallResults ?? 0) + 1;
+      if (consecutiveSmallResults >= 5) {
+        console.warn(
+          `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive rounds with small/error tool results. Breaking.`,
+        );
+        exitReason = "stale_loop";
+        break;
+      }
+    } else {
+      consecutiveSmallResults = 0;
+    }
 
     // Token budget check — if this round's prompt exceeded the ceiling,
     // the next round will be even larger (more tool results). Wrap up now.

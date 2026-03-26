@@ -242,23 +242,23 @@ ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, d
     );
 
     if (httpStatus >= 200 && httpStatus < 300 && Array.isArray(data)) {
+      // Compact response: id, title, date, status, link, categories, tags.
+      // Omit slug/modified/excerpt to stay under truncation limit (12K chars)
+      // for large sites. The LLM can use wp_read_post for full content.
       const items = data.map((post: Record<string, unknown>) => ({
         id: post.id,
         title: (post.title as Record<string, string>)?.rendered ?? "",
         status: post.status,
-        date: post.date,
-        modified: post.modified,
-        slug: post.slug,
+        date: (post.date as string)?.slice(0, 10) ?? "",
         link: post.link,
-        excerpt:
-          stripHtml(
-            (post.excerpt as Record<string, string>)?.rendered ?? "",
-          ).slice(0, 120) + "…",
+        categories: post.categories,
+        tags: post.tags,
       }));
       return JSON.stringify({
         success: true,
         site: resolved.name,
         count: items.length,
+        note: "Post IDs are NOT sequential. Use ONLY the IDs listed here for wp_read_post.",
         posts: items,
       });
     }
