@@ -161,12 +161,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(naveg|browse|sitio|p[aá]gina|verific|click|login|form|scrape|interact|render|javascript)/i,
+      /\b(naveg|browse|sitio web|p[aá]gina web|click|login|form|scrape|interact|render|javascript)/i,
     group: "browser",
   },
   {
     pattern:
-      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git|npm|build|test|lint|bug|error|fix|debug)/i,
+      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita(r)?\s+(el\s+)?(archivo|código|script)|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git\b|npm\b|build\b|test\b|lint\b|bug\b|debug)/i,
     group: "coding",
   },
   {
