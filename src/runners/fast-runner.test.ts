@@ -5,19 +5,38 @@ import {
 } from "./fast-runner.js";
 
 describe("detectsHallucinatedExecution", () => {
-  it("returns false when tools were called", () => {
+  // --- Layer 1: Full hallucination (zero tools) ---
+  it("returns false when write tools were called", () => {
     expect(
       detectsHallucinatedExecution(
-        "✅ EXITOSAMENTE publicado en /wp-content/uploads/img.png",
-        ["wp_publish"],
+        "✅ Escribí 5 filas en la Google Sheet exitosamente",
+        ["gsheets_write"],
       ),
     ).toBe(false);
   });
 
-  it("detects structural hallucination (success + concrete claim + no tools)", () => {
+  it("detects full hallucination: success + write claim + zero tools", () => {
     expect(
       detectsHallucinatedExecution(
-        "✅ Imagen subida exitosamente a https://example.com/wp-content/uploads/img.png",
+        "✅ Escribí 5 filas completas en la Google Sheet de auditoría.",
+        [],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects full hallucination: claims Sheet update with zero tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ Sheet Actualizada - Filas 10-12 Escritas\n\nAcción realizada: Escribí directamente en la Google Sheet.",
+        [],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects legacy concrete claim (URL + success marker + zero tools)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ Imagen subida a https://example.com/wp-content/uploads/img.png",
         [],
       ),
     ).toBe(true);
@@ -56,7 +75,16 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  // --- Layer 2: Partial hallucination (WP-specific) ---
+  // --- Layer 2: Partial hallucination (generic write tools) ---
+  it("detects partial hallucination: claims Sheet write but only called gsheets_read", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Actualicé la Sheet con los datos de los 5 artículos.",
+        ["gsheets_read", "wp_list_posts"],
+      ),
+    ).toBe(true);
+  });
+
   it("detects partial hallucination: claims WP publish but only called wp_list_posts", () => {
     expect(
       detectsHallucinatedExecution(
@@ -66,7 +94,7 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims image uploaded but no wp_media_upload", () => {
+  it("detects partial hallucination: claims image uploaded without wp_media_upload", () => {
     expect(
       detectsHallucinatedExecution(
         "La imagen fue subida correctamente al sitio.",
@@ -75,11 +103,37 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("detects partial hallucination: claims article updated without wp_publish", () => {
+  it("detects partial hallucination: claims email sent without gmail_send", () => {
     expect(
       detectsHallucinatedExecution(
-        "Artículo actualizado con éxito. Los cambios están en línea.",
-        ["wp_list_posts", "wp_read_post", "file_edit"],
+        "Email enviado a fede@eurekamd.net con el reporte.",
+        ["web_search"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects partial hallucination: claims task created without commit tool", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Tarea creada bajo el objetivo de optimización.",
+        ["commit__list_tasks"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects partial hallucination: quantity + action (50 celdas actualizadas)", () => {
+    expect(
+      detectsHallucinatedExecution("50 celdas actualizadas con datos reales.", [
+        "gsheets_read",
+      ]),
+    ).toBe(true);
+  });
+
+  it("detects 'Acciones realizadas' opener without write tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Acciones realizadas:\n1. Limpié las filas\n2. Escribí los datos",
+        ["gsheets_read"],
       ),
     ).toBe(true);
   });
@@ -93,12 +147,20 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(false);
   });
 
-  it("returns false when wp_media_upload was actually called", () => {
+  it("returns false when gsheets_write was actually called", () => {
     expect(
       detectsHallucinatedExecution(
-        "La imagen fue subida correctamente al sitio.",
-        ["wp_media_upload"],
+        "Escribí 5 filas en la Sheet de auditoría.",
+        ["gsheets_read", "gsheets_write"],
       ),
+    ).toBe(false);
+  });
+
+  it("returns false when gmail_send was actually called", () => {
+    expect(
+      detectsHallucinatedExecution("Email enviado exitosamente.", [
+        "gmail_send",
+      ]),
     ).toBe(false);
   });
 
@@ -111,6 +173,14 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
+  it("detects English first-person write claim", () => {
+    expect(
+      detectsHallucinatedExecution("I wrote the data to the spreadsheet.", [
+        "gsheets_read",
+      ]),
+    ).toBe(true);
+  });
+
   it("detects narrated processing even when some tools were called", () => {
     expect(
       detectsHallucinatedExecution(
@@ -120,11 +190,20 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(true);
   });
 
-  it("returns false for non-WP text even with no WP write tools", () => {
+  it("returns false for non-write text even with only read tools", () => {
     expect(
       detectsHallucinatedExecution(
         "Aquí están los artículos del blog. ¿Cuál quieres editar?",
         ["wp_list_posts"],
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false for read-only summary without write claims", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Encontré 5 artículos publicados. Aquí están los títulos y URLs.",
+        ["wp_list_posts", "gsheets_read"],
       ),
     ).toBe(false);
   });

@@ -46,9 +46,29 @@ export class ToolRegistry {
    * Find the closest matching tool name via normalization + fuzzy match.
    * Returns null if no match within 30% edit distance.
    */
+  /** Common LLM misnaming patterns → correct tool name. */
+  private static readonly TOOL_ALIASES: Record<string, string> = {
+    gsheets_update: "gsheets_write",
+    sheets_write: "gsheets_write",
+    sheets_update: "gsheets_write",
+    sheets_read: "gsheets_read",
+    google_sheets_write: "gsheets_write",
+    google_sheets_read: "gsheets_read",
+    send_email: "gmail_send",
+    email_send: "gmail_send",
+    search_web: "web_search",
+    read_file: "file_read",
+    write_file: "file_write",
+    edit_file: "file_edit",
+  };
+
   findClosest(name: string): string | null {
     const normalized = name.toLowerCase().replace(/[-\s]/g, "_");
     if (this.tools.has(normalized)) return normalized;
+
+    // Check common aliases before fuzzy matching
+    const alias = ToolRegistry.TOOL_ALIASES[normalized];
+    if (alias && this.tools.has(alias)) return alias;
 
     let best: string | null = null;
     let bestDist = Infinity;

@@ -148,12 +148,13 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("web_search");
       expect(call.tools).toContain("web_read");
       expect(call.tools).toContain("skill_list");
-      // COMMIT read tools always present
-      expect(call.tools).toContain("commit__get_daily_snapshot");
-      expect(call.tools).toContain("commit__list_tasks");
+      // COMMIT read tools now keyword-gated (not in generic greetings)
+      expect(call.tools).not.toContain("commit__get_daily_snapshot");
+      expect(call.tools).not.toContain("commit__list_tasks");
       // Misc always present
       expect(call.tools).toContain("http_fetch");
-      expect(call.tools).toContain("chart_generate");
+      // Specialty tools now keyword-gated
+      expect(call.tools).not.toContain("chart_generate");
       // Should NOT include heavy groups for a simple greeting
       expect(call.tools).not.toContain("browser__goto");
       expect(call.tools).not.toContain("shell_exec");

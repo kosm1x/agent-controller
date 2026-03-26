@@ -97,15 +97,19 @@ export const WORDPRESS_TOOLS = [
   "wp_raw_api",
 ];
 
-/** Other utility tools — always included (lightweight definitions). */
+/** Other utility tools — always included (keep minimal for token budget). */
 export const MISC_TOOLS = [
   "http_fetch",
-  "chart_generate",
-  "rss_read",
   "list_schedules",
-  "gemini_image",
   "project_list",
   "project_get",
+];
+
+/** Specialty tools — keyword-gated to save tokens. */
+export const SPECIALTY_TOOLS = [
+  "chart_generate",
+  "rss_read",
+  "gemini_image",
   "project_update",
   "exa_search",
 ];
@@ -132,8 +136,18 @@ export const BROWSER_TOOLS = [
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(crea(r|me)?|actualiz|complet|tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|haz una|agrega|trackea|pon esto|necesito|tengo que|hay que|deber[ií]a|recu[eé]rdame|no olvides|quiero lograr|me propongo)/i,
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|COMMIT|diario|journal|briefing|resumen del d[ií]a)/i,
+    group: "commit_read",
+  },
+  {
+    pattern:
+      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?\s+(la\s+)?(tarea|meta|objetivo|status)|complet(a|ar)\s+(la\s+)?(tarea|meta|objetivo|recurring))/i,
     group: "commit_write",
+  },
+  {
+    pattern:
+      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini)/i,
+    group: "specialty",
   },
   {
     pattern:
@@ -201,11 +215,18 @@ export function scopeToolsForMessage(
     }
   }
 
-  // Assemble scoped tool list
-  const tools = [...CORE_TOOLS, ...COMMIT_READ_TOOLS, ...MISC_TOOLS];
+  // Assemble scoped tool list — start with minimal core
+  const tools = [...CORE_TOOLS, ...MISC_TOOLS];
 
+  // COMMIT tools (read + write) only when productivity context is present
+  if (activeGroups.has("commit_write") || activeGroups.has("commit_read")) {
+    tools.push(...COMMIT_READ_TOOLS);
+  }
   if (activeGroups.has("commit_write")) {
     tools.push(...COMMIT_WRITE_TOOLS);
+  }
+  if (activeGroups.has("specialty")) {
+    tools.push(...SPECIALTY_TOOLS);
   }
   if (activeGroups.has("commit_destructive")) {
     tools.push(...COMMIT_DESTRUCTIVE_TOOLS);

@@ -71,7 +71,10 @@ export const gsheetsWriteTool: Tool = {
     type: "function",
     function: {
       name: "gsheets_write",
-      description: `Write data to a Google Spreadsheet.
+      description: `Write data to a Google Spreadsheet. Values MUST be a 2D array (array of rows, each row is an array of cell values).
+
+CORRECT: values: [["Name","Score"],["Alice","95"]]
+WRONG:   values: ["Name","Score","Alice","95"]
 
 WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.`,
       parameters: {
@@ -99,7 +102,58 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
   async execute(args: Record<string, unknown>): Promise<string> {
     const id = args.spreadsheet_id as string;
     const range = args.range as string;
-    const values = args.values as string[][];
+    const rawValues = args.values;
+
+    // Normalize values: LLM commonly sends wrong formats.
+    // Google Sheets API requires values to be Array<Array<primitive>>.
+    let values: unknown[][];
+    let parsedValues = rawValues;
+
+    // Handle string values (LLM sends JSON string instead of array)
+    if (typeof parsedValues === "string") {
+      try {
+        parsedValues = JSON.parse(parsedValues);
+      } catch {
+        return JSON.stringify({
+          error: `values is a string but not valid JSON. Send a 2D array like [["a","b"],["c","d"]]`,
+        });
+      }
+    }
+
+    console.log(
+      `[gsheets_write] range=${range} type=${typeof parsedValues} isArray=${Array.isArray(parsedValues)} len=${Array.isArray(parsedValues) ? parsedValues.length : "N/A"}`,
+    );
+
+    if (!Array.isArray(parsedValues) || parsedValues.length === 0) {
+      return JSON.stringify({
+        error: `values must be a non-empty 2D array like [["a","b"],["c","d"]]. Received: ${typeof parsedValues}`,
+      });
+    }
+    if (!Array.isArray(parsedValues[0])) {
+      // Flat array like ["a","b","c"] → wrap as single row [["a","b","c"]]
+      values = [
+        (parsedValues as unknown[]).map((v) =>
+          v === null || v === undefined
+            ? ""
+            : typeof v === "object"
+              ? JSON.stringify(v)
+              : v,
+        ),
+      ];
+    } else {
+      // Already 2D — normalize cell values (objects → strings, null → "")
+      values = (parsedValues as unknown[][]).map((row) =>
+        Array.isArray(row)
+          ? row.map((v) =>
+              v === null || v === undefined
+                ? ""
+                : typeof v === "object"
+                  ? JSON.stringify(v)
+                  : v,
+            )
+          : [String(row)],
+      );
+    }
 
     try {
       const result = await googleFetch<{

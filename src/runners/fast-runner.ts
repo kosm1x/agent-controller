@@ -37,16 +37,16 @@ STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
 
-const MAX_ROUNDS_DEFAULT = 7;
-const MAX_ROUNDS_CODING = 15;
+const MAX_ROUNDS_DEFAULT = 20;
+const MAX_ROUNDS_CODING = 22;
 
 /**
  * Per-round prompt token ceiling — wraps up before next round would exceed
  * the DashScope ~30K token ceiling. Checked against each round's prompt_tokens
  * (not cumulative), since prompt_tokens includes the full conversation each time.
  */
-const TOKEN_BUDGET_FAST = 25_000;
-const TOKEN_BUDGET_CODING = 28_000;
+const TOKEN_BUDGET_FAST = 28_000;
+const TOKEN_BUDGET_CODING = 30_000;
 
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
@@ -79,40 +79,93 @@ export function hasUserConfirmedDeletion(
 }
 
 /**
- * WordPress tools that perform write actions — if the response claims WP success
- * but none of these were called, it's a partial hallucination.
+ * Tools that perform write/mutate actions — if the response claims success
+ * for any of these categories but the tool was never called, it's hallucinated.
  */
-const WP_WRITE_TOOLS = [
+const WRITE_TOOLS = new Set([
+  // WordPress
   "wp_publish",
   "wp_media_upload",
   "wp_delete",
   "wp_raw_api",
   "wp_plugins",
   "wp_settings",
-];
+  // Google Sheets
+  "gsheets_write",
+  // Gmail
+  "gmail_send",
+  "gmail_reply",
+  "gmail_draft",
+  // Google Calendar
+  "gcalendar_create",
+  "gcalendar_update",
+  "gcalendar_delete",
+  // Google Drive
+  "gdrive_create",
+  "gdrive_upload",
+  "gdrive_share",
+  // Google Docs/Slides
+  "gdocs_create",
+  "gdocs_update",
+  "gslides_create",
+  "gslides_update",
+  // Google Tasks
+  "gtasks_create",
+  "gtasks_update",
+  "gtasks_complete",
+  // COMMIT
+  "commit__create_task",
+  "commit__update_task",
+  "commit__delete_item",
+  "commit__create_goal",
+  "commit__update_goal",
+  "commit__create_objective",
+  "commit__update_objective",
+  "commit__create_suggestion",
+  "commit__create_journal",
+  // File system
+  "file_write",
+  "file_edit",
+  // Other
+  "schedule_task",
+  "delete_schedule",
+  "user_fact_set",
+  "user_fact_delete",
+  "skill_save",
+  "memory_store",
+  "shell_exec",
+]);
 
-/** Patterns that indicate the response claims a WP write action happened. */
-const WP_SUCCESS_CLAIMS = [
-  // Spanish
-  /(?:publicad[oa]|republicad[oa]|actualizado|subid[oa]|eliminad[oa]|configurad[oa]|instalad[oa]|activad[oa]|desactivad[oa])\s+(?:en|el|la|los|las|exitosamente|correctamente|con éxito)/i,
-  /art[ií]culo.*(?:publicad[oa]|actualizado|creado)/i,
-  /(?:imagen|media|archivo).*(?:subid[oa]|upload)/i,
-  /(?:plugin|tema|theme).*(?:instalad[oa]|activad[oa]|desactivad[oa])/i,
-  /(?:post|entrada|artículo).*(?:status|estado).*(?:cambiad[oa]|actualizado|publish)/i,
-  // English
-  /(?:published|updated|uploaded|deleted|installed|activated|deactivated)\s+(?:successfully|to|on|the|in)/i,
-  /article.*(?:published|updated|created)/i,
-  /(?:image|media|file).*(?:uploaded|created)/i,
-  /post.*(?:status|state).*(?:changed|updated|set to)/i,
+/**
+ * Patterns that indicate the response claims a write/mutate action was performed.
+ * Generic — covers all tool categories, not just WordPress.
+ */
+const WRITE_CLAIM_PATTERNS = [
+  // Spanish first-person past tense write verbs
+  /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé)\s/i,
+  // Tool-mediated subjects (unambiguous — these can't be "state descriptions")
+  /(?:sheet|hoja|filas?|celdas?|email|correo|tarea|meta|goal|objetivo|evento|calendario).*(?:actualizada?s?|escrit[oa]s?|completad[oa]s?|enviad[oa]s?|eliminad[oa]s?|creada?s?|publicada?s?|guardada?s?|modificada?s?|subida?s?)/i,
+  // Passive voice with explicit verb (catches "artículo fue publicado", "imagen fue subida")
+  /(?:fue|fueron|ha sido|han sido)\s+(?:actualizada?s?|escrit[oa]s?|completad[oa]s?|enviad[oa]s?|eliminad[oa]s?|creada?s?|publicada?s?|guardada?s?|modificada?s?|subida?s?)/i,
+  // Past participle + success adverb (catches "subida correctamente", "publicado exitosamente")
+  /(?:actualizada?|escrit[oa]|completad[oa]|enviad[oa]|eliminad[oa]|creada?|publicada?|guardada?|modificada?|subida?)\s+(?:exitosamente|correctamente|con éxito|successfully)/i,
+  // Quantity + action claims ("50 celdas actualizadas", "5 filas escritas")
+  /\d+\s+(?:celdas?|filas?|rows?|cells?|entries?|registros?|artículos?|archivos?|eventos?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated|created|deleted|sent|saved)/i,
+  // English first-person claims
+  /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|configured|installed|scheduled|cleaned|modified)\s/i,
+  // English passive claims
+  /(?:has been|was|were)\s+(?:written|updated|published|uploaded|deleted|sent|created|saved|edited|configured|installed|scheduled)/i,
+  // "Acción realizada" / "Acciones realizadas" (common hallucination opener)
+  /accione?s?\s+realizada?s?/i,
 ];
 
 /**
  * Detect hallucinated tool execution — LLM narrates actions without calling tools.
  *
  * Three detection layers:
- * 1. Full hallucination: success marker + concrete claim + zero tools
- * 2. Partial hallucination: claims WP write success but no WP write tool was called
- * 3. Legacy narration patterns (processing steps, FTP claims, etc.)
+ * 1. Full hallucination: success marker + write claim + zero tools
+ * 2. Partial hallucination: claims write success but no write tool was called
+ * 3. Narration patterns (processing steps, FTP claims, etc.)
  *
  * Returns true if the response looks like it's simulating execution.
  */
@@ -120,43 +173,38 @@ export function detectsHallucinatedExecution(
   text: string,
   toolsCalled: string[],
 ): boolean {
-  // --- Layer 1: Structural detection (zero tools) ---
-  // If response has a success indicator AND claims a concrete outcome (URL, file, ID)
-  // but no tools were called, it's almost certainly hallucinated.
+  const claimsWrite = WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
+
+  // --- Layer 1: Full hallucination (zero tools + write claim) ---
+  // If no tools called at all and response claims a write action, it's hallucinated.
   if (toolsCalled.length === 0) {
     const hasSuccessMarker =
       /✅|🚀|EXITOSAMENTE|SUCCESSFULLY|COMPLETADO|STATUS:\s*DONE\b/i.test(text);
-    const claimsConcrete =
-      // Claims a URL was created/uploaded
+    if (hasSuccessMarker && claimsWrite) return true;
+
+    // Also catch legacy concrete claims (URLs, file paths, FTP)
+    const claimsLegacyConcrete =
       /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp|html|php)/i.test(text) ||
-      // Claims a file path
       /\/(?:wp-content|tmp|var|home|workspace)\//i.test(text) ||
-      // Claims FTP/SSH action
       /(?:vía|via|through)\s+(?:FTP|SSH|SFTP)/i.test(text) ||
-      // Narrates processing steps with ellipsis (*(Procesando...)*)
-      /\*[^*]*\.\.\.\*/.test(text) ||
-      // Claims a completed action with EXITOSAMENTE/correctamente
-      /(?:EXITOSAMENTE|correctamente|con éxito|successfully)/i.test(text);
-    if (hasSuccessMarker && claimsConcrete) return true;
+      /\*[^*]*\.\.\.\*/.test(text);
+    if (hasSuccessMarker && claimsLegacyConcrete) return true;
   }
 
-  // --- Layer 2: Partial hallucination (WP-specific) ---
-  // LLM called SOME tools (e.g. wp_list_posts) but narrated WP write actions
-  // (publish, upload) without actually calling the corresponding write tool.
-  const calledWpWrite = toolsCalled.some((t) => WP_WRITE_TOOLS.includes(t));
-  if (!calledWpWrite) {
-    const claimsWpSuccess = WP_SUCCESS_CLAIMS.some((p) => p.test(text));
-    if (claimsWpSuccess) {
-      console.log(
-        `[fast-runner] Partial hallucination: response claims WP write success but no WP write tool called. Tools: [${toolsCalled.join(", ")}]`,
-      );
-      return true;
-    }
+  // --- Layer 2: Partial hallucination (generic — all write tools) ---
+  // LLM called SOME tools (e.g. gsheets_read, wp_list_posts) but narrated write
+  // actions (gsheets_write, wp_publish, gmail_send) without calling them.
+  const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
+  if (!calledAnyWriteTool && claimsWrite) {
+    console.log(
+      `[fast-runner] Partial hallucination: response claims write action but no write tool called. Tools: [${toolsCalled.join(", ")}]`,
+    );
+    return true;
   }
 
-  // --- Layer 3: Specific narration patterns (legacy, still useful) ---
-  // These fire regardless of toolsCalled — narrating processing steps is always wrong.
-  const hallucinationPatterns = [
+  // --- Layer 3: Specific narration patterns (always fire) ---
+  // Narrating processing steps is always wrong regardless of tools called.
+  const narrationPatterns = [
     // Narrated processing steps
     /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando|Publicando|Guardando)[^)]*\.\.\.\)\*?/i,
     /\*?\((?:Processing|Executing|Connecting|Uploading|Downloading|Verifying|Generating|Scanning|Publishing|Saving)[^)]*\.\.\.\)\*?/i,
@@ -173,21 +221,8 @@ export function detectsHallucinatedExecution(
     /(?:is now live|is now published|has been published)/i,
   ];
 
-  return hallucinationPatterns.some((p) => p.test(text));
+  return narrationPatterns.some((p) => p.test(text));
 }
-
-/** Correction message injected when hallucination is detected. */
-const HALLUCINATION_CORRECTION = `SYSTEM OVERRIDE: Your previous response was REJECTED because you narrated tool execution without actually calling tools. This is a critical violation.
-
-WHAT WENT WRONG: You claimed to have performed an action (publish, upload, update, etc.) but your response contained ZERO tool_calls for that action. The system mechanically verifies every response — narrating success without calling tools is always detected and rejected.
-
-RULES FOR THIS RETRY:
-1. You MUST call the actual tools (wp_publish, wp_media_upload, etc.) to perform actions
-2. If you cannot perform an action, say "No puedo hacer X porque..." — do NOT pretend it worked
-3. Confirmation rules STILL APPLY for destructive tools (delete_item, gmail_send, gdrive_share)
-4. Your response will be verified AGAIN — do not narrate execution
-
-Respond to the user's request NOW using real tool calls.`;
 
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {
@@ -317,91 +352,59 @@ export const fastRunner: Runner = {
       }
 
       // Hallucination guard: if the LLM narrated tool execution without calling
-      // the right tools, inject a correction and retry with CLEAN context.
-      // Uses clean context (not poisoned history) to prevent the LLM from
-      // repeating its own hallucinated output.
-      // Applies to ALL task types — hallucinations happen in both chat and non-chat.
+      // the right tools, mechanically replace the response with an honest one.
+      //
+      // Previous approach (retry with inferWithTools) was futile: the retry starts
+      // with the same ~25K token prompt, immediately hits the budget ceiling, and
+      // wraps up with the same hallucination. Instead, we build a truthful response
+      // from the actual tool call data — zero LLM involvement, zero hallucination risk.
       if (detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
         console.log(
-          `[fast-runner] Hallucination detected — tools claimed but not called. Actual tools: [${toolsCalled.join(", ")}]. Retrying with clean context.`,
+          `[fast-runner] Hallucination detected — tools claimed but not called. Actual tools: [${toolsCalled.join(", ")}]. Replacing with honest response.`,
         );
 
-        // Build CLEAN retry context: strip the hallucinated assistant response
-        // and all its tool results. Keep system + conversation history + last
-        // user message, then inject the correction as a fresh user message.
-        // This prevents the LLM from pattern-matching on its own hallucination.
-        const cleanMessages: ChatMessage[] = [];
-        for (const msg of messages) {
-          cleanMessages.push(msg);
-        }
-        cleanMessages.push({ role: "user", content: HALLUCINATION_CORRECTION });
+        // Build mechanical honest response from tool call data
+        const toolList =
+          toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
 
-        const retryResult = await inferWithTools(
-          cleanMessages,
-          definitions,
-          (name, args) => toolRegistry.execute(name, args),
-          {
-            maxRounds,
-            providerName: tierToProvider(input.modelTier),
-            tokenBudget,
-          },
-        );
+        // Extract what the user last asked for (from the last user message)
+        const lastUserMsg = [...messages]
+          .reverse()
+          .find((m) => m.role === "user");
+        const userRequest =
+          typeof lastUserMsg?.content === "string"
+            ? lastUserMsg.content.slice(0, 200)
+            : "la solicitud";
 
-        const retryParsed = parseRunnerStatus(retryResult.content);
-
-        // Collect tools from retry
-        const retryToolsCalled: string[] = [];
-        for (const msg of retryResult.messages) {
-          if (msg.role === "assistant" && msg.tool_calls) {
-            for (const tc of msg.tool_calls) {
-              if (
-                tc.function?.name &&
-                !retryToolsCalled.includes(tc.function.name)
-              ) {
-                retryToolsCalled.push(tc.function.name);
-              }
-            }
+        // Collect brief summaries of tool results from the conversation
+        const toolSummaries: string[] = [];
+        for (const msg of result.messages) {
+          if (msg.role === "tool" && typeof msg.content === "string") {
+            // Find the tool name from the preceding assistant message
+            const preview = msg.content.slice(0, 150).replace(/\n/g, " ");
+            toolSummaries.push(preview);
           }
         }
+        const dataSummary =
+          toolSummaries.length > 0
+            ? `\n\nDatos recopilados:\n${toolSummaries
+                .slice(0, 3)
+                .map((s) => `- ${s}`)
+                .join("\n")}`
+            : "";
 
-        // Check if retry ALSO hallucinated.
-        // BUT: if the retry actually called tools (even read-only ones like
-        // wp_list_posts), it wasn't hallucinating — it just ran out of rounds.
-        // The wrap-up response (which has tools=0) shouldn't be penalized for
-        // mentioning WP success when it's summarizing what tools accomplished.
-        const retryCalledTools = retryToolsCalled.length > 0;
-        const retryAlsoHallucinated =
-          !retryCalledTools &&
-          detectsHallucinatedExecution(
-            retryParsed.cleanContent,
-            retryToolsCalled,
-          );
-
-        if (retryAlsoHallucinated) {
-          console.log(
-            `[fast-runner] Retry also hallucinated (zero tools called). Returning error.`,
-          );
-          // Return an explicit failure instead of the hallucinated content
-          parsed = {
-            cleanContent:
-              "No pude completar la acción solicitada. El sistema detectó que la ejecución no se realizó correctamente. Por favor intenta de nuevo o verifica que las herramientas necesarias estén disponibles.",
-            status: "DONE_WITH_CONCERNS",
-            concerns: [
-              "Hallucination detected on both attempts — action was NOT performed",
-            ],
-          };
-          toolsCalled.length = 0;
-          toolsCalled.push(...retryToolsCalled);
-        } else {
-          // Retry succeeded — use its results
-          parsed = retryParsed;
-          toolsCalled.length = 0;
-          toolsCalled.push(...retryToolsCalled);
-        }
-
-        result.totalUsage.prompt_tokens += retryResult.totalUsage.prompt_tokens;
-        result.totalUsage.completion_tokens +=
-          retryResult.totalUsage.completion_tokens;
+        parsed = {
+          cleanContent:
+            `⚠️ No completé la acción solicitada.\n\n` +
+            `**Herramientas que SÍ llamé**: ${toolList}\n` +
+            `**Herramientas que NO llamé** (se agotaron las rondas): las de escritura/acción necesarias para completar "${userRequest}"` +
+            dataSummary +
+            `\n\nPor favor, intenta de nuevo con una solicitud más específica o divídela en pasos más pequeños.`,
+          status: "DONE_WITH_CONCERNS",
+          concerns: [
+            "Hallucination detected — response mechanically replaced with honest tool inventory",
+          ],
+        };
       }
 
       return {

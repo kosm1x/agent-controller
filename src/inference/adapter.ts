@@ -781,9 +781,21 @@ export async function inferWithTools(
         `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${errMsg}`,
       );
       try {
+        // Collect tools called so far for honest wrap-up
+        const midLoopTools = new Set<string>();
+        for (const msg of conversation) {
+          if (msg.role === "assistant" && msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+              midLoopTools.add(tc.function.name);
+            }
+          }
+        }
+        const midToolList =
+          midLoopTools.size > 0 ? [...midLoopTools].join(", ") : "NINGUNA";
+
         const leanContext = buildWrapUpContext(
           conversation,
-          "The system encountered an error continuing tool execution. Based on the information gathered so far, provide your final response now. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what went wrong]",
+          `The system encountered an error continuing tool execution. Tools you called before the error: [${midToolList}]. Do NOT claim success for any action whose tool is NOT in that list. Provide your final response based ONLY on actual tool results. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what went wrong]`,
         );
         const wrapUp = await infer(
           { messages: leanContext },
@@ -810,9 +822,27 @@ export async function inferWithTools(
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;
 
-    // No tool calls — final text response
+    // No tool calls — check for first-round tool-skip before exiting.
     if (!response.tool_calls || response.tool_calls.length === 0) {
       const content = response.content ?? "";
+
+      // First-round tool-skip guard: if the LLM claims success (✅) without
+      // calling ANY tools on the very first round, it's lazily responding from
+      // conversation context instead of executing. Nudge it to use tools.
+      // Only fires once (round === 0) to avoid infinite loops.
+      if (round === 0 && tools.length > 0 && content.includes("✅")) {
+        console.log(
+          "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
+        );
+        conversation.push({ role: "assistant", content });
+        conversation.push({
+          role: "user",
+          content:
+            "ALTO: Respondiste con texto pero NO llamaste ninguna herramienta. Si la solicitud requiere una acción (escribir, actualizar, crear, enviar, buscar, leer), DEBES llamar a la herramienta correspondiente AHORA. No narres — EJECUTA.",
+        });
+        continue;
+      }
+
       conversation.push({ role: "assistant", content });
       return {
         content,
@@ -871,6 +901,9 @@ export async function inferWithTools(
                   `[inference] Tool call repaired: "${toolName}" → "${closest}"`,
                 );
                 toolName = closest;
+                // Update the tool_call object so downstream code (hallucination
+                // detector, tools_used tracking) sees the correct name.
+                toolCall.function.name = closest;
               }
             }
             result = await executor(toolName, args);
@@ -939,9 +972,27 @@ export async function inferWithTools(
     `[inference] Wrap-up triggered: ${exitReason} (totalTokens=${totalPrompt + totalCompletion}${tokenBudget < Infinity ? `, ceiling=${tokenBudget}` : ""})`,
   );
   try {
+    // Collect tools actually called so the LLM knows what it did vs didn't do
+    const calledToolNames = new Set<string>();
+    for (const msg of conversation) {
+      if (msg.role === "assistant" && msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          calledToolNames.add(tc.function.name);
+        }
+      }
+    }
+    const toolInventory =
+      calledToolNames.size > 0
+        ? [...calledToolNames].join(", ")
+        : "NINGUNA — no llamaste ninguna herramienta";
+
     const leanContext = buildWrapUpContext(
       conversation,
-      "You have used all available tool rounds. Based on the information gathered so far, provide your final comprehensive response now. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what was incomplete]",
+      `You have used all available tool rounds.
+
+CRITICAL: You ONLY called these tools: [${toolInventory}]. Do NOT claim to have performed any action whose tool is NOT in that list. If the user asked you to write/update/create/send/delete something but you did NOT call the corresponding tool (gsheets_write, wp_publish, gmail_send, file_write, etc.), you MUST say: "No alcancé a ejecutar [acción] — se agotaron las rondas de herramientas."
+
+Provide your final response based ONLY on actual tool results. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [what was incomplete]`,
     );
     const wrapUp = await infer({ messages: leanContext }, onTextChunk, signal);
     totalPrompt += wrapUp.usage.prompt_tokens;

@@ -108,29 +108,12 @@ Solo puedes usar las herramientas que aparecen en tu lista de funciones disponib
 ## Fecha y hora actual
 Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa esta fecha como referencia.
 
-## REGLA CRÍTICA: HAZ las cosas, no las registres
-Cuando Fede te pida algo, HAZLO directamente con tus herramientas:
-- "Investiga X" → usa web_search y RESPONDE con lo que encontraste
-- "Mándame un email" → usa gmail_send y envía el email
-- "Crea un documento" → usa gdrive_create y crea el documento
-- "Búscame vuelos" → usa web_search y presenta opciones
-- "Qué hay en mi calendario" → usa calendar_list y muestra eventos
+## REGLA CRÍTICA: EJECUTA con herramientas — NO narres
+Cuando Fede pida algo, HAZLO con tool calls. "Adelante"/"Dale"/"Hazlo" = EJECUTA, no respondas con texto.
+Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las rondas son LIMITADAS — si ya tienes datos de la conversación, ESCRIBE directo sin releer.
 
-NO crees una tarea en COMMIT directamente a menos que Fede diga explícitamente: "crea una tarea", "agrega a mis pendientes", "pon esto en COMMIT", "trackea esto".
-
-COMMIT es el sistema de productividad de Fede (visiones → metas → objetivos → tareas). Solo interactúa con COMMIT cuando Fede quiere GESTIONAR su productividad.
-
-## Jerarquía COMMIT (cuando aplique)
-- Visión = dirección de vida a largo plazo
-- Meta/Goal = resultado medible bajo una visión
-- Objetivo = hito específico bajo una meta
-- Tarea = acción concreta bajo un objetivo
-Usa list_goals para metas, list_objectives para objetivos. NO presentes visiones como metas.
-
-## Detección de intenciones COMMIT
-Si Fede dice algo que implica una acción futura pero NO pide explícitamente crear una tarea ("necesito revisar...", "tengo que hablar con...", "hay que preparar...", "debería investigar...", "recuérdame...", "no olvides..."), OFRECE crear una sugerencia en COMMIT usando commit__create_suggestion.
-Ejemplo: "Escuché lo que dices. ¿Quieres que lo registre como tarea en COMMIT bajo [objetivo más relevante]?"
-NO la crees directamente — solo sugiere. Si Fede dice que sí, usa commit__create_suggestion con type "create_task" y el reasoning correspondiente.
+## COMMIT (sistema de productividad)
+Solo interactúa con COMMIT cuando Fede lo pide explícitamente. Si Fede implica una acción futura ("necesito...", "recuérdame..."), OFRECE crear sugerencia con commit__create_suggestion — no la crees directamente.
 
 ## REGLA CRÍTICA: Reporta lo que hiciste
 Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`);
@@ -256,47 +239,14 @@ Las credenciales de WordPress ya están guardadas en WP_SITES — NO necesitas p
   }
 
   // --- No hallucinated execution (hardened) ---
-  sections.push(`## REGLA CRÍTICA: NUNCA simules ejecución (VERIFICACIÓN MECÁNICA)
-NUNCA narres pasos como si los estuvieras ejecutando sin realmente llamar a una herramienta.
+  sections.push(`## VERIFICACIÓN MECÁNICA
+Tu respuesta es verificada automáticamente. Si dices "escribí/actualicé/publiqué/envié" pero NO llamaste la herramienta, tu respuesta será REEMPLAZADA con lo que realmente hiciste. Si se agotan las rondas, di honestamente qué faltó.`);
 
-⚠️ ADVERTENCIA: Tu respuesta es VERIFICADA MECÁNICAMENTE después de cada turno. El sistema compara tus claims textuales contra tu lista real de tool_calls. Si dices "publicado", "subido", "actualizado", "creado" pero NO llamaste la herramienta correspondiente (wp_publish, wp_media_upload, etc.), tu respuesta será RECHAZADA automáticamente y se te pedirá un reintento. No puedes engañar a esta verificación.
-
-Ejemplos PROHIBIDOS (se detectan y rechazan automáticamente):
-- "Artículo publicado exitosamente" sin haber llamado wp_publish → RECHAZADO
-- "Imagen subida correctamente" sin haber llamado wp_media_upload → RECHAZADO
-- "*(Procesando conexión...)*" sin llamar a ninguna herramienta → RECHAZADO
-- "✅ Éxito. El archivo fue creado." sin llamar a file_write → RECHAZADO
-- Llamar solo wp_list_posts y luego NARRAR que wp_publish funcionó → RECHAZADO
-
-La ÚNICA forma de reportar éxito es haber llamado la herramienta Y recibido una respuesta exitosa de ella.
-
-Si no tienes la herramienta disponible para hacer algo, DILO CLARAMENTE: "No tengo herramienta para hacer X" o "Necesito que actives X". NUNCA finjas que algo funcionó.`);
-
-  // --- Correction protocol ---
-  sections.push(`## Protocolo de corrección
-Cuando Fede diga "olvidaste X", "falta X", "te equivocaste en X":
-1. NO agregues solo el dato faltante a tu respuesta anterior
-2. Vuelve a consultar la herramienta desde CERO (list_schedules, commit__list_tasks, etc.)
-3. Presenta la lista COMPLETA regenerada de la fuente de la verdad
-4. Compara con tu respuesta anterior y reconoce TODAS las discrepancias
-Nunca hagas "parches sobre parches". Regenera desde la fuente.`);
-
-  // --- Active memory — lifecycle protocol ---
-  sections.push(`## Memoria activa — Ciclo de vida
-
-### Al iniciar (ANTES de responder)
-- Usa memory_search para buscar contexto relevante ANTES de preguntar algo que podrías saber
-- Si Fede menciona un proyecto, persona, o cuenta, busca información previa
-
-### Durante la conversación
-- Si Fede corrige un dato previo, usa memory_store con el dato correcto
-- Si descubres información valiosa sobre preferencias, patrones, o contexto de proyecto, guárdala
-- NO guardes datos efímeros (resultados de búsqueda, listas de tareas, datos ya en COMMIT)
-
-### Al cerrar (después de flujos de 3+ pasos)
-- Evalúa si aprendiste algo nuevo y valioso — si sí, usa memory_store con un resumen conciso
-- Evalúa si el flujo es un patrón repetible — si sí, usa skill_save
-- Máximo 3-5 observaciones por conversación. Calidad sobre cantidad.
+  // --- Correction + Memory (merged) ---
+  sections.push(`## Corrección y memoria
+- Si Fede dice "olvidaste/falta/te equivocaste" → regenera desde la herramienta, no parches
+- Usa memory_search antes de preguntar algo que podrías saber
+- Guarda datos valiosos (preferencias, contexto) con memory_store. No guardes datos efímeros.
 
 ### Qué NO guardar
 - Resultados crudos de herramientas (web_search, commit__list_tasks)
@@ -359,13 +309,18 @@ function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
 ): string[] {
-  // Scan current message + last 3 user turns for scoping keywords.
-  // This ensures follow-up commands ("Hazlo", "Adelante", "Sí") inherit
-  // tool scope from the conversation context they refer to.
-  const recentUserMessages = conversationHistory
+  // Scan ALL user messages (intent continuity across continuation commands)
+  // + last 2 assistant messages (tool/target references like "Google Sheet").
+  // Limiting assistant scan prevents scope creep from old conversations
+  // triggering coding/browser groups unnecessarily.
+  const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
-    .slice(-3)
     .map((t) => t.content);
+  const recentAssistantMsgs = conversationHistory
+    .filter((t) => t.role === "assistant")
+    .slice(-2)
+    .map((t) => t.content);
+  const recentUserMessages = [...userMsgs, ...recentAssistantMsgs];
 
   const tools = scopeToolsPure(
     currentMessage,
@@ -404,9 +359,9 @@ interface PendingReply {
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
-const THREAD_BUFFER_SIZE = 15;
+const THREAD_BUFFER_SIZE = 8;
 /** Max chars per Jarvis response stored in the thread buffer. */
-const THREAD_RESPONSE_CAP = 2000;
+const THREAD_RESPONSE_CAP = 800;
 const conversationThreads = new Map<string, string[]>();
 const hydratedChannels = new Set<string>();
 
@@ -555,6 +510,13 @@ const POISONED_RESPONSE_PATTERNS = [
   /estoy alucinando/i,
   /est[aá]s alucinando/i,
   /narr(?:ando|é) acciones sin ejecutar/i,
+  // Lazy acknowledgments — claimed action "in process" without executing
+  // These teach the LLM to plan instead of execute
+  /✅.*(?:en proceso|en curso|en progreso|iniciando|comenzando)/i,
+  /✅.*(?:Entendido|Recibido|Confirmado).*(?:proceso|homolog|reescritura)/i,
+  // Mechanical hallucination replacement (from our detector)
+  /⚠️ No completé la acción solicitada/i,
+  /Herramientas que SÍ llamé/i,
   // System errors
   /🔴 ERROR DE SISTEMA/i,
   /el sistema encontr[oó] un error/i,

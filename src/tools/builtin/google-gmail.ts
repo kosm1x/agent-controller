@@ -50,8 +50,17 @@ DO NOT USE WHEN:
     },
   },
   async execute(args: Record<string, unknown>): Promise<string> {
-    const to = args.to as string;
+    let to = args.to as string;
     const subject = args.subject as string;
+
+    // Poka-yoke: LLM consistently mistypes the owner email (eurekamd → eurekadb,
+    // eurekand, etc.). Correct any close variant mechanically.
+    if (/fede@eureka\w+\.net/i.test(to) && to !== "fede@eurekamd.net") {
+      console.log(
+        `[gmail_send] Email corrected: "${to}" → "fede@eurekamd.net"`,
+      );
+      to = "fede@eurekamd.net";
+    }
     const body = args.body as string;
     const cc = args.cc as string | undefined;
 
