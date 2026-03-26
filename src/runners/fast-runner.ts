@@ -394,11 +394,21 @@ export const fastRunner: Runner = {
           console.log(
             `[fast-runner] Hallucination detected (prompt=${lastPromptTokens}, budget=${tokenBudget}). Retrying with correction.`,
           );
-          const retryMessages: ChatMessage[] = [...messages];
+          // Use result.messages (includes tool results from reads) — NOT the
+          // original messages. The LLM needs to see gsheets_read data to act on it.
+          // Strip the hallucinated text response (last assistant message).
+          const retryMessages: ChatMessage[] = result.messages.filter(
+            (m, i) =>
+              !(
+                i === result.messages.length - 1 &&
+                m.role === "assistant" &&
+                !m.tool_calls
+              ),
+          );
           retryMessages.push({
             role: "user",
             content:
-              "ALTO: Narraste la acción sin llamar herramientas. Llama a la herramienta de escritura AHORA (gsheets_write con append=false para correcciones, append=true para nuevas filas).",
+              "ALTO: Narraste la acción sin llamar herramientas. Llama a gsheets_write AHORA (append=false para correcciones a celdas específicas).",
           });
 
           const retryResult = await inferWithTools(
