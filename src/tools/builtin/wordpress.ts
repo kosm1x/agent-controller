@@ -339,8 +339,10 @@ This approach prevents content truncation and article destruction.`,
       const contentFile = join(WP_TEMP_DIR, `${resolved.name}_${postId}.html`);
       writeFileSync(contentFile, content, "utf-8");
 
-      // Return metadata + file path + short preview (not the full content)
-      const textPreview = stripHtml(content).slice(0, 300);
+      // Compact response: only audit-relevant fields + file path for editing.
+      // Full content is saved to content_file — use file_read to inspect.
+      const plainText = stripHtml(content);
+      const wordCount = plainText.split(/\s+/).filter(Boolean).length;
 
       return JSON.stringify({
         success: true,
@@ -348,19 +350,12 @@ This approach prevents content truncation and article destruction.`,
         post_id: d.id,
         title: (d.title as Record<string, string>)?.rendered ?? "",
         status: d.status,
-        date: d.date,
-        modified: d.modified,
-        slug: d.slug,
+        date: (d.date as string)?.slice(0, 10) ?? "",
         link: d.link,
-        content_file: contentFile,
-        content_length: content.length,
-        content_preview:
-          textPreview + (stripHtml(content).length > 300 ? "..." : ""),
-        excerpt: (d.excerpt as Record<string, string>)?.rendered ?? "",
+        word_count: wordCount,
         categories: d.categories,
         tags: d.tags,
-        featured_media: d.featured_media,
-        format: d.format,
+        content_file: contentFile,
       });
     }
 
