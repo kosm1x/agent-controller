@@ -856,10 +856,13 @@ export async function inferWithTools(
       };
     }
 
-    // Append assistant message with tool calls
+    // Append assistant message with tool calls.
+    // Strip narration text — only tool_calls matter for the loop.
+    // The LLM often generates verbose reasoning alongside tool calls
+    // (1000-2000 tokens), which inflates every subsequent round's prompt.
     conversation.push({
       role: "assistant",
-      content: response.content,
+      content: null,
       tool_calls: response.tool_calls,
     });
 
