@@ -835,11 +835,12 @@ export async function inferWithTools(
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );
-        conversation.push({ role: "assistant", content });
+        // Don't add the LLM's planning text — it wastes tokens in all
+        // subsequent rounds. Just inject the correction as a user message.
         conversation.push({
           role: "user",
           content:
-            "ALTO: Respondiste con texto pero NO llamaste ninguna herramienta. Si la solicitud requiere una acción (escribir, actualizar, crear, enviar, buscar, leer), DEBES llamar a la herramienta correspondiente AHORA. No narres — EJECUTA.",
+            "ALTO: Respondiste sin llamar herramientas. EJECUTA con tool calls AHORA.",
         });
         continue;
       }
