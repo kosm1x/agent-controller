@@ -560,6 +560,13 @@ const POISONED_RESPONSE_PATTERNS = [
   /no tengo (?:acceso|la herramienta|herramienta)/i,
   /no tengo.*wp_publish/i,
   /no pude completar la acci[oó]n/i,
+  // Learned helplessness — LLM gives up or reports inability to continue
+  /no puedo (?:continuar|completar|ejecutar|hacer(?:lo)?)/i,
+  /problema t[eé]cnico (?:cr[ií]tico|grave)/i,
+  /error de configuraci[oó]n/i,
+  // Tool configuration errors (stale from prior session)
+  /(?:wordpress|wp).{0,20}not configured/i,
+  /falla con.*(?:not configured|no configurad)/i,
   // Inference cascade failures
   /inference.*failed/i,
   /timeout.*inference/i,
