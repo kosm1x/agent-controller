@@ -342,13 +342,25 @@ export const fastRunner: Runner = {
       const tokenBudget = hasCodingTools
         ? TOKEN_BUDGET_CODING
         : TOKEN_BUDGET_FAST;
+      // Vision override: route to primary (vision-capable) when conversation
+      // contains images, regardless of classifier-assigned tier.
+      const hasVision = input.conversationHistory?.some((t) => t.imageUrl);
+      const providerName = hasVision
+        ? "primary"
+        : tierToProvider(input.modelTier);
+      if (hasVision) {
+        console.log(
+          "[fast-runner] Vision content detected, routing to primary provider",
+        );
+      }
+
       const result = await inferWithTools(
         messages,
         definitions,
         (name, args) => toolRegistry.execute(name, args),
         {
           maxRounds,
-          providerName: tierToProvider(input.modelTier),
+          providerName,
           tokenBudget,
         },
       );

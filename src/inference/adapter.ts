@@ -831,7 +831,14 @@ export async function inferWithTools(
       // calling ANY tools on the very first round, it's lazily responding from
       // conversation context instead of executing. Nudge it to use tools.
       // Only fires once (round === 0) to avoid infinite loops.
-      if (round === 0 && tools.length > 0 && content.includes("✅")) {
+      // Skip for short replies (<500 chars) — those are genuine conversational
+      // responses that don't need tool execution.
+      if (
+        round === 0 &&
+        tools.length > 0 &&
+        content.includes("✅") &&
+        content.length > 500
+      ) {
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );

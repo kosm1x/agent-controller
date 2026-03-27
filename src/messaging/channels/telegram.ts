@@ -186,8 +186,23 @@ export class TelegramAdapter implements ChannelAdapter {
           const file = await ctx.api.getFile(doc.file_id);
           const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 
-          // Download and extract content server-side via Jina Reader
-          fileContent = await extractFileContent(fileUrl, doc.mime_type);
+          // Image documents (sent as file) → vision path, same as photos
+          const isImage = doc.mime_type?.startsWith("image/");
+          if (isImage) {
+            const base64Url = await downloadImageAsBase64(fileUrl);
+            if (base64Url) {
+              imageUrl = base64Url;
+              console.log(
+                `[telegram] Image document downloaded: ${Math.round(base64Url.length / 1024)}KB base64`,
+              );
+            } else {
+              fileContent =
+                "[Imagen recibida pero no se pudo descargar para análisis.]";
+            }
+          } else {
+            // Non-image documents: extract text content
+            fileContent = await extractFileContent(fileUrl, doc.mime_type);
+          }
         } else if (photo && photo.length > 0) {
           fileLabel = "imagen";
           const largest = photo[photo.length - 1];

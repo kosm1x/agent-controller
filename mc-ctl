@@ -71,9 +71,9 @@ cmd_status() {
   echo -e "${BOLD}=== Mission Control Status ===${NC}"
   echo ""
 
-  # Systemd status
+  # Service status: check systemd first, then fall back to process detection
   if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo -e "  Service:    ${GREEN}active${NC}"
+    echo -e "  Service:    ${GREEN}active${NC} (systemd)"
     local pid
     pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo "?")
     echo -e "  PID:        ${pid}"
@@ -85,6 +85,14 @@ cmd_status() {
       mem=$(ps -p "$pid" -o rss= 2>/dev/null || echo "0")
       echo -e "  Memory:     $(( mem / 1024 )) MB"
     fi
+  elif pid=$(pgrep -f 'tsx.*src/index\.ts' 2>/dev/null | tail -1) && [ -n "$pid" ]; then
+    echo -e "  Service:    ${GREEN}active${NC} (manual tsx, PID ${pid})"
+    local mem
+    mem=$(ps -p "$pid" -o rss= 2>/dev/null || echo "0")
+    echo -e "  Memory:     $(( mem / 1024 )) MB"
+    local started
+    started=$(ps -p "$pid" -o lstart= 2>/dev/null || echo "?")
+    echo -e "  Since:      ${started}"
   else
     echo -e "  Service:    ${RED}inactive${NC}"
   fi
