@@ -320,13 +320,12 @@ function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
 ): string[] {
-  // Scope from user messages: ALL patterns (intent continuity).
-  // Scope from assistant messages: ONLY google/wordpress patterns.
-  // Assistant text contains article titles with generic words ("Goals",
-  // "Retirement") that falsely trigger COMMIT/coding. Only google/wordpress
-  // keywords in assistant text carry real task context forward.
+  // Scope from RECENT user messages only (last 2) — older messages cause scope
+  // accumulation where every past topic stays active, bloating the tool list.
+  // The current message (first param) is always scanned separately.
   const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
+    .slice(-2)
     .map((t) => t.content);
 
   // For assistant messages, extract only google/wp keywords to avoid false triggers
