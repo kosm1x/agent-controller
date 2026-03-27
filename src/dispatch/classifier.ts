@@ -94,7 +94,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
       score: 0,
       reason: "messaging task → fast",
       explicit: false,
-      modelTier: "flash",
+      modelTier: "standard",
     };
   }
 

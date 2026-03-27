@@ -134,13 +134,13 @@ describe("classifier", () => {
     expect(result.modelTier).toBe("standard");
   });
 
-  it("should set flash model tier for messaging tasks", () => {
+  it("should set standard model tier for messaging tasks", () => {
     const result = classify({
       title: "Send greeting",
       description: "Say hello to the user",
       tags: ["messaging"],
     });
-    expect(result.modelTier).toBe("flash");
+    expect(result.modelTier).toBe("standard");
   });
 
   it("should set standard model tier for explicit overrides", () => {
