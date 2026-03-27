@@ -283,6 +283,30 @@
     "source": "manual"
   },
   {
+    "case_id": "sc-commit-write-02",
+    "category": "scope_accuracy",
+    "input": { "message": "Marca la tarea de revisar docs como completada" },
+    "expected": { "scope_groups": ["commit_write"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-commit-write-03",
+    "category": "scope_accuracy",
+    "input": { "message": "Cambia el status de la tarea a in_progress" },
+    "expected": { "scope_groups": ["commit_write"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-commit-write-04",
+    "category": "scope_accuracy",
+    "input": { "message": "Completé la tarea del reporte" },
+    "expected": { "scope_groups": ["commit_write"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
     "case_id": "sc-commit-destructive-01",
     "category": "scope_accuracy",
     "input": { "message": "Elimina la meta de Q1 que ya no aplica" },

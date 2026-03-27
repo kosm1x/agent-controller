@@ -48,10 +48,12 @@ import type { ConversationTurn } from "../runners/types.js";
 import { nowMexDate, nowMexTime } from "../lib/timezone.js";
 import {
   scopeToolsForMessage as scopeToolsPure,
+  detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
   COMMIT_READ_TOOLS,
   COMMIT_WRITE_TOOLS,
+  COMMIT_JOURNAL_TOOLS,
   COMMIT_DESTRUCTIVE_TOOLS,
   SCHEDULE_TOOLS,
   GOOGLE_TOOLS,
@@ -115,6 +117,10 @@ Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las ro
 ## COMMIT (sistema de productividad)
 Solo interactúa con COMMIT cuando Fede lo pide explícitamente. Si Fede implica una acción futura ("necesito...", "recuérdame..."), OFRECE crear sugerencia con commit__create_suggestion — no la crees directamente.
 
+## Diario (journal) — espacio sagrado del usuario
+El diario es EXCLUSIVAMENTE para las reflexiones personales de Fede. SOLO escribe en el diario cuando Fede te lo pida EXPLÍCITAMENTE (ej: "escribe en mi diario", "anota esto en el journal").
+NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como reporte, ni como cierre de día, ni como registro de lo que hiciste. Si necesitas reportar acciones, responde en texto. El diario NO es un log.
+
 ## REGLA CRÍTICA: Reporta lo que hiciste
 Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`);
 
@@ -157,17 +163,21 @@ Cuando Fede te proporcione CUALQUIER dato técnico o de proyecto — IDs de GA4,
     confirmTools.push(
       `- gmail_send → muestra: destinatario, asunto, primeras líneas del cuerpo`,
       `- gdrive_share → muestra: nombre del archivo, email, nivel de acceso`,
-      `- calendar_create → muestra: título, fecha/hora, asistentes`,
-      `- calendar_update con status=cancelled → muestra: qué evento se cancelará`,
     );
   confirmTools.push(
     `- delete_item → muestra: nombre y tipo del elemento a eliminar`,
   );
   sections.push(`## Confirmación obligatoria
-ANTES de ejecutar estas herramientas, SIEMPRE muestra un resumen al usuario y pregunta "¿Confirmo?":\n${confirmTools.join("\n")}
+ANTES de ejecutar SOLO estas herramientas, muestra un resumen y pregunta "¿Confirmo?":\n${confirmTools.join("\n")}
 
-NO ejecutes estas herramientas hasta que el usuario diga "sí", "confirmo", "dale", o similar.
-Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.`);
+Una vez que el usuario diga "sí", "confirmo", "dale" o similar → EJECUTA inmediatamente. No vuelvas a preguntar.
+Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.
+
+**SIN confirmación** — ejecuta directo cuando Fede lo pida:
+- commit__update_task, commit__update_status, commit__complete_recurring (actualizar/completar tareas, metas, objetivos)
+- commit__create_task, commit__create_goal, commit__create_objective, commit__create_suggestion
+- calendar_create, calendar_update
+Estas operaciones NO son destructivas. Si Fede dice "completa la tarea" o "márcala como hecha", HAZLO sin preguntar.`);
 
   // --- Autonomous verification (ONLY when browser tools are available) ---
   if (hasBrowser) {
@@ -337,6 +347,16 @@ function scopeToolsForMessage(
 
   const recentUserMessages = [...userMsgs, ...assistantContext];
 
+  // Log which scope groups activated (diagnostic — critical for debugging scope misses)
+  const activeGroups = detectActiveGroups(
+    currentMessage,
+    recentUserMessages,
+    DEFAULT_SCOPE_PATTERNS,
+  );
+  if (activeGroups.size > 0) {
+    console.log(`[router] Scope groups: ${[...activeGroups].join(", ")}`);
+  }
+
   const tools = scopeToolsPure(
     currentMessage,
     recentUserMessages,
@@ -352,6 +372,7 @@ function scopeToolsForMessage(
     CORE_TOOLS.length +
     COMMIT_READ_TOOLS.length +
     COMMIT_WRITE_TOOLS.length +
+    COMMIT_JOURNAL_TOOLS.length +
     COMMIT_DESTRUCTIVE_TOOLS.length +
     SCHEDULE_TOOLS.length +
     MISC_TOOLS.length +

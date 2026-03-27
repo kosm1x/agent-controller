@@ -49,6 +49,9 @@ export const COMMIT_WRITE_TOOLS = [
   "commit__bulk_reprioritize",
 ];
 
+/** COMMIT journal — only when user explicitly asks to write a journal entry. */
+export const COMMIT_JOURNAL_TOOLS = ["commit__create_journal"];
+
 /** Destructive COMMIT tools — only on explicit deletion keywords. */
 export const COMMIT_DESTRUCTIVE_TOOLS = ["commit__delete_item"];
 
@@ -142,13 +145,18 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?\s+(la\s+)?(tarea|meta|objetivo|status)|complet(a|ar)\s+(la\s+)?(tarea|meta|objetivo|recurring))/i,
+      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?\s+(la\s+)?(tarea|meta|objetivo|status)|complet(?:a|ar|ada|ado)\b|completé|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|cambia(?:r)?\s+(?:el\s+)?(?:status|estado)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|termin[aé]|hecha|hecho\b|\bdone\b|m[aá]rcal[ao])/i,
     group: "commit_write",
   },
   {
     pattern:
       /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini)/i,
     group: "specialty",
+  },
+  {
+    pattern:
+      /\b(escrib[eiao]\w*\s.*(diario|journal)|anota\w*\s.*(diario|journal)|registra\w*\s.*(diario|journal)|agrega\w*\s.*(diario|journal)|pon\w*\s.*(diario|journal)|crea\w*\s.*(entrada|entry).*(diario|journal)|journal\s*entry|diario.*escrib|write.*journal)/i,
+    group: "commit_journal",
   },
   {
     pattern:
@@ -228,6 +236,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
+  }
+  if (activeGroups.has("commit_journal")) {
+    tools.push(...COMMIT_JOURNAL_TOOLS);
   }
   if (activeGroups.has("commit_destructive")) {
     tools.push(...COMMIT_DESTRUCTIVE_TOOLS);
