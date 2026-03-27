@@ -395,8 +395,10 @@ interface PendingReply {
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
 const THREAD_BUFFER_SIZE = 8;
-/** Max chars per Jarvis response stored in the thread buffer. */
-const THREAD_RESPONSE_CAP = 800;
+/** Max chars per Jarvis response stored in the thread buffer.
+ *  Recent cap is higher to preserve state for multi-step workflows
+ *  (e.g. "Continúa" chains where the LLM needs to know what it just did). */
+const THREAD_RESPONSE_CAP = 1600;
 const conversationThreads = new Map<string, string[]>();
 const hydratedChannels = new Set<string>();
 
