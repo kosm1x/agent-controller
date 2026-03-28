@@ -32,17 +32,11 @@ commitAI.post("/", async (c) => {
     );
   }
 
-  // 25-second timeout (Edge Function has 30s, this leaves 5s buffer)
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
-
   try {
     const result = await dispatchCommitAI(body);
     return c.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ content: null, enriched: false, error: message }, 500);
-  } finally {
-    clearTimeout(timeout);
   }
 });

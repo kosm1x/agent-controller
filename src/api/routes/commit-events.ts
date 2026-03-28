@@ -72,19 +72,23 @@ commitEvents.post("/", async (c) => {
       modified_by ?? "user",
       JSON.stringify(changes ?? {}),
     );
-  } catch {
-    // Table may not exist yet — non-fatal
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("no such table")) {
+      console.error("[commit-events] Failed to store event:", msg);
+    }
   }
 
   // Emit to internal event bus for reactive processing
   try {
     const bus = getEventBus();
     const eventName = `commit.${table}.${event.toLowerCase()}`;
-    bus.emitEvent(eventName as "task.completed", {
-      task_id: row_id, // reuse the standard payload shape
-      agent_id: "commit-webhook",
-      result: changes,
-      duration_ms: 0,
+    bus.emit(eventName, {
+      source: "commit-webhook",
+      table,
+      row_id,
+      event: event.toLowerCase(),
+      changes,
     });
   } catch {
     // Event bus emission should not block
