@@ -6,6 +6,7 @@
 
 import { createServer } from "net";
 import { serve } from "@hono/node-server";
+import { createLogger } from "./lib/logger.js";
 import { getConfig } from "./config.js";
 import { initDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
@@ -65,16 +66,18 @@ async function checkPort(port: number): Promise<void> {
   });
 }
 
+const log = createLogger("mc");
+
 async function main(): Promise<void> {
   const config = getConfig();
 
   // Initialize database
   const db = initDatabase(config.dbPath);
-  console.log(`[mc] Database initialized at ${config.dbPath}`);
+  log.info({ path: config.dbPath }, "database initialized");
 
   // Initialize event bus
   initEventBus(db);
-  console.log("[mc] Event bus initialized");
+  log.info("event bus initialized");
 
   // Migrate user_facts (category=projects) into projects table if needed
   try {
@@ -109,10 +112,15 @@ async function main(): Promise<void> {
   sourceManager.addSource(new SkillsToolSource());
 
   const initResult = await sourceManager.initAll(toolRegistry);
-  console.log(
-    `[mc] Tool sources: ${initResult.initialized} ok, ${initResult.failed} failed, ${initResult.totalTools} tools`,
+  log.info(
+    {
+      initialized: initResult.initialized,
+      failed: initResult.failed,
+      totalTools: initResult.totalTools,
+    },
+    "tool sources loaded",
   );
-  console.log(`[mc] Tools registered: ${toolRegistry.list().join(", ")}`);
+  log.debug({ tools: toolRegistry.list() }, "tools registered");
 
   // Start reaction engine
   const reactionManager = new ReactionManager(db);
@@ -131,12 +139,13 @@ async function main(): Promise<void> {
       hostname: process.env.MC_BIND_HOST ?? "0.0.0.0",
     },
     (info) => {
-      console.log(
-        `[mc] Mission Control listening on http://localhost:${info.port}`,
-      );
-      console.log(`[mc] Health check: http://localhost:${info.port}/health`);
-      console.log(
-        `[mc] Inference timeout=${config.inferenceTimeoutMs}ms, maxRetries=${config.inferenceMaxRetries}`,
+      log.info({ port: info.port }, "Mission Control listening");
+      log.info(
+        {
+          timeoutMs: config.inferenceTimeoutMs,
+          maxRetries: config.inferenceMaxRetries,
+        },
+        "inference config",
       );
     },
   );
@@ -159,7 +168,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log("[mc] Shutting down...");
+    log.info("shutting down...");
     reactionManager.stop();
     stopDynamicScheduler();
     stopProactiveScheduler();
@@ -173,6 +182,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("[mc] Fatal:", err);
+  log.fatal({ err }, "fatal error");
   process.exit(1);
 });

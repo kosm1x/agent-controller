@@ -11,6 +11,9 @@
 import cron, { type ScheduledTask } from "node-cron";
 import type { MessageRouter } from "../messaging/router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("proactive");
 
 const NUDGE_CRON = "0 8,12,16,20 * * *"; // 8AM, noon, 4PM, 8PM
 const MAX_NUDGES_PER_DAY = 2;
@@ -32,15 +35,16 @@ export function startProactiveScheduler(router: MessageRouter): void {
     NUDGE_CRON,
     () => {
       runProactiveScan().catch((err) => {
-        console.warn(
-          `[proactive] Scan failed: ${err instanceof Error ? err.message : err}`,
+        log.warn(
+          { err: err instanceof Error ? err.message : err },
+          "scan failed",
         );
       });
     },
     { timezone: TIMEZONE },
   );
 
-  console.log(`[proactive] Scheduled (${NUDGE_CRON}, tz=${TIMEZONE})`);
+  log.info({ cron: NUDGE_CRON, timezone: TIMEZONE }, "scheduled");
 }
 
 /**
@@ -52,7 +56,7 @@ export function stopProactiveScheduler(): void {
     job = null;
   }
   routerRef = null;
-  console.log("[proactive] Stopped");
+  log.info("stopped");
 }
 
 /**
@@ -72,14 +76,14 @@ async function runProactiveScan(): Promise<void> {
 
   // Throttle: max nudges per day
   if (nudgeCountToday >= MAX_NUDGES_PER_DAY) {
-    console.log("[proactive] Daily nudge limit reached, skipping");
+    log.info("daily nudge limit reached, skipping");
     return;
   }
 
   // Suppress if user was active recently
   const lastMsg = routerRef.getLastMessageTime();
   if (lastMsg && Date.now() - lastMsg < SUPPRESS_IF_ACTIVE_MS) {
-    console.log("[proactive] User active recently, skipping");
+    log.info("user active recently, skipping");
     return;
   }
 
@@ -132,8 +136,9 @@ No saludes. No agregues contexto innecesario. Ve directo al punto.`,
     // and the event handler below will broadcast if warranted
     watchProactiveTask(result.taskId);
   } catch (err) {
-    console.warn(
-      `[proactive] Failed to submit scan: ${err instanceof Error ? err.message : err}`,
+    log.warn(
+      { err: err instanceof Error ? err.message : err },
+      "failed to submit scan",
     );
   }
 }
@@ -155,17 +160,18 @@ export function handleProactiveResult(taskId: string, result: string): void {
 
   if (!routerRef) return;
   if (!result || result.includes("NOTHING_TO_REPORT")) {
-    console.log("[proactive] Scan found nothing to report");
+    log.info("scan found nothing to report");
     return;
   }
 
   // Broadcast the nudge
   nudgeCountToday++;
   routerRef.broadcastToAll(result).catch((err) => {
-    console.error(`[proactive] Broadcast failed: ${err}`);
+    log.error({ err }, "broadcast failed");
   });
-  console.log(
-    `[proactive] Nudge sent (${nudgeCountToday}/${MAX_NUDGES_PER_DAY} today)`,
+  log.info(
+    { nudgeCount: nudgeCountToday, maxNudges: MAX_NUDGES_PER_DAY },
+    "nudge sent",
   );
 }
 

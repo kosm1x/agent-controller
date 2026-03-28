@@ -11,6 +11,9 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { getMemoryService } from "../memory/index.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("journal-analysis");
 
 const JournalAnalysisSchema = z.object({
   emotions: z
@@ -40,15 +43,11 @@ export async function analyzeJournalDeep(
 ): Promise<void> {
   const content = (changes.content as string) ?? (changes.text as string) ?? "";
   if (!content || content.length < 20) {
-    console.log(
-      `[journal-analysis] Skipping short entry ${journalId} (${content.length} chars)`,
-    );
+    log.info({ journalId, chars: content.length }, "skipping short entry");
     return;
   }
 
-  console.log(
-    `[journal-analysis] Starting deep analysis for ${journalId} (${content.length} chars)`,
-  );
+  log.info({ journalId, chars: content.length }, "starting deep analysis");
 
   // Load context in parallel (all fire-and-forget, failures return defaults)
   const [snapshotRaw, goalsRaw, memoryItems] = await Promise.allSettled([
@@ -127,19 +126,14 @@ Respond in the same language as the journal entry.`;
     const text = response.content ?? "";
     const jsonStr = extractJSON(text);
     if (!jsonStr) {
-      console.warn(
-        `[journal-analysis] Failed to extract JSON for ${journalId}`,
-      );
+      log.warn({ journalId }, "failed to extract JSON");
       return;
     }
 
     const raw = JSON.parse(jsonStr);
     const parsed = JournalAnalysisSchema.safeParse(raw);
     if (!parsed.success) {
-      console.warn(
-        `[journal-analysis] Invalid schema for ${journalId}:`,
-        parsed.error.message,
-      );
+      log.warn({ journalId, zodError: parsed.error.message }, "invalid schema");
       return;
     }
 
@@ -155,14 +149,12 @@ Respond in the same language as the journal entry.`;
           coping_strategies: analysis.coping_strategies,
           primary_emotion: analysis.primary_emotion,
         });
-        console.log(
-          `[journal-analysis] Analysis written for ${journalId} (primary: ${analysis.primary_emotion})`,
+        log.info(
+          { journalId, primaryEmotion: analysis.primary_emotion },
+          "analysis written",
         );
       } catch (err) {
-        console.warn(
-          `[journal-analysis] Failed to write analysis for ${journalId}:`,
-          err,
-        );
+        log.warn({ err, journalId }, "failed to write analysis");
       }
     }
 
@@ -179,14 +171,12 @@ Respond in the same language as the journal entry.`;
           reasoning: `Based on journal analysis: ${analysis.primary_emotion}. ${(analysis.patterns ?? []).slice(0, 2).join(". ")}`,
           source: "journal_analysis",
         });
-        console.log(
-          `[journal-analysis] Suggestion created from ${journalId}: ${analysis.suggested_action.slice(0, 60)}`,
+        log.info(
+          { journalId, action: analysis.suggested_action.slice(0, 60) },
+          "suggestion created from journal",
         );
       } catch (err) {
-        console.warn(
-          `[journal-analysis] Failed to create suggestion for ${journalId}:`,
-          err,
-        );
+        log.warn({ err, journalId }, "failed to create suggestion");
       }
     }
 
@@ -204,13 +194,19 @@ Respond in the same language as the journal entry.`;
       // Memory storage is best-effort
     }
 
-    console.log(
-      `[journal-analysis] Complete for ${journalId} (${response.latency_ms}ms, ${response.usage.prompt_tokens}p/${response.usage.completion_tokens}c)`,
+    log.info(
+      {
+        journalId,
+        latencyMs: response.latency_ms,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      },
+      "analysis complete",
     );
   } catch (err) {
-    console.error(
-      `[journal-analysis] Failed for ${journalId}:`,
-      err instanceof Error ? err.message : err,
+    log.error(
+      { err: err instanceof Error ? err.message : err, journalId },
+      "analysis failed",
     );
   }
 }

@@ -9,6 +9,9 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { enrichCommitContext } from "./enrichment.js";
 import { buildEnrichedPrompt } from "./prompts.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("commit-ai");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -212,9 +215,9 @@ export async function dispatchCommitAI(
         !!context.goalsSummary ||
         !!context.memorySummary;
     } catch (err) {
-      console.warn(
-        `[commit-ai] Enrichment failed for ${req.function}, proceeding without:`,
-        err,
+      log.warn(
+        { err, function: req.function },
+        "enrichment failed, proceeding without",
       );
     }
   } else {
@@ -256,20 +259,28 @@ export async function dispatchCommitAI(
     // Extract JSON from response
     const json = extractJSON(text);
     if (!json) {
-      console.warn(
-        `[commit-ai] Failed to extract JSON for ${req.function}. Response: ${text.slice(0, 200)}`,
+      log.warn(
+        { function: req.function, response: text.slice(0, 200) },
+        "failed to extract JSON",
       );
       return { content: null, enriched, error: "JSON extraction failed" };
     }
 
-    console.log(
-      `[commit-ai] ${req.function}: ${enriched ? "enriched" : "plain"}, ${response.latency_ms}ms, ${response.usage.prompt_tokens}p/${response.usage.completion_tokens}c`,
+    log.info(
+      {
+        function: req.function,
+        enriched,
+        latencyMs: response.latency_ms,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      },
+      "inference complete",
     );
 
     return { content: json, enriched };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[commit-ai] Inference failed for ${req.function}:`, message);
+    log.error({ err: message, function: req.function }, "inference failed");
     return { content: null, enriched, error: message };
   }
 }

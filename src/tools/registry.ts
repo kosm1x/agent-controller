@@ -5,6 +5,9 @@
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool } from "./types.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("tools");
 
 /** Compute Levenshtein distance between two strings. */
 function levenshtein(a: string, b: string): number {
@@ -133,8 +136,9 @@ export class ToolRegistry {
       ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name) &&
       !this.destructiveUnlocked.has(name)
     ) {
-      console.warn(
-        `[tools] 🛑 Destructive tool BLOCKED (no confirmation): ${name} — args: ${JSON.stringify(args).slice(0, 200)}`,
+      log.warn(
+        { tool: name, args: JSON.stringify(args).slice(0, 200) },
+        "destructive tool BLOCKED (no confirmation)",
       );
       return JSON.stringify({
         error: "CONFIRMATION_REQUIRED",
@@ -147,8 +151,9 @@ export class ToolRegistry {
       tool.requiresConfirmation ||
       ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)
     ) {
-      console.warn(
-        `[tools] ⚠️ Destructive tool called: ${name} — args: ${JSON.stringify(args).slice(0, 200)}`,
+      log.warn(
+        { tool: name, args: JSON.stringify(args).slice(0, 200) },
+        "destructive tool called",
       );
     }
     const start = Date.now();

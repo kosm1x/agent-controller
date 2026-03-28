@@ -13,6 +13,9 @@ import { getConfig } from "../config.js";
 import { checkoutTask } from "./checkout.js";
 import { isBudgetExceeded, recordCost } from "../budget/service.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("dispatch");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,8 +139,9 @@ function enqueueContainerTask(
   submission: TaskSubmission,
 ): void {
   containerQueue.push({ taskId, agentType, submission });
-  console.log(
-    `[dispatch] Task ${taskId} queued for container slot (${containerQueue.length} in queue)`,
+  log.info(
+    { taskId, queueLength: containerQueue.length },
+    "task queued for container slot",
   );
 }
 
@@ -146,12 +150,13 @@ function drainContainerQueue(): void {
     const next = containerQueue[0];
     if (!acquireContainerSlot()) break;
     containerQueue.shift();
-    console.log(
-      `[dispatch] Dequeued task ${next.taskId} — container slot acquired`,
+    log.info(
+      { taskId: next.taskId },
+      "dequeued task — container slot acquired",
     );
     dispatchWithSlot(next.taskId, next.agentType, next.submission).catch(
       (err) => {
-        console.error(`[dispatch] Queued task ${next.taskId} failed:`, err);
+        log.error({ err, taskId: next.taskId }, "queued task failed");
         updateTaskStatus(next.taskId, "failed", undefined, String(err));
         releaseContainerSlot();
       },
@@ -221,7 +226,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
 
   // Dispatch asynchronously
   dispatchTask(taskId, classification.agentType, submission).catch((err) => {
-    console.error(`[dispatch] Failed to dispatch task ${taskId}:`, err);
+    log.error({ err, taskId }, "failed to dispatch task");
     updateTaskStatus(taskId, "failed", undefined, String(err));
   });
 
@@ -259,9 +264,7 @@ async function dispatchTask(
   const config = getConfig();
   if (config.budgetEnabled && isBudgetExceeded()) {
     const limit = config.budgetDailyLimitUsd;
-    console.log(
-      `[dispatch] Task ${taskId} blocked: budget exceeded ($${limit}/day)`,
-    );
+    log.info({ taskId, dailyLimitUsd: limit }, "task blocked: budget exceeded");
     updateTaskStatus(
       taskId,
       "blocked",
@@ -325,9 +328,7 @@ async function dispatchWithSlot(
   const claimId = `runner:${agentType}:${runId}`;
   const checkout = checkoutTask(taskId, claimId);
   if (!checkout.success) {
-    console.log(
-      `[dispatch] Task ${taskId} checkout failed: ${checkout.reason}`,
-    );
+    log.info({ taskId, reason: checkout.reason }, "task checkout failed");
     // Roll back the run row we just created
     db.prepare("DELETE FROM runs WHERE run_id = ?").run(runId);
     if (needsContainer(agentType)) releaseContainerSlot();
@@ -400,8 +401,9 @@ async function dispatchWithSlot(
       if (missing.length > 0) {
         if (submission._isRequiredToolRetry) {
           // Retry also failed — alert and give up
-          console.error(
-            `[dispatch] Task ${taskId}: required tools still missing after retry: ${missing.join(", ")}`,
+          log.error(
+            { taskId, missingTools: missing },
+            "required tools still missing after retry",
           );
           try {
             getEventBus().emitEvent("notification.warning", {
@@ -423,8 +425,9 @@ async function dispatchWithSlot(
         }
 
         // First attempt — auto-retry once with explicit instruction
-        console.warn(
-          `[dispatch] Task ${taskId}: required tools missing: ${missing.join(", ")}. Auto-retrying once.`,
+        log.warn(
+          { taskId, missingTools: missing },
+          "required tools missing, auto-retrying once",
         );
         const retrySubmission: TaskSubmission = {
           ...submission,
@@ -432,10 +435,7 @@ async function dispatchWithSlot(
           _isRequiredToolRetry: true,
         };
         submitTask(retrySubmission).catch((err) => {
-          console.error(
-            `[dispatch] Required-tool retry failed for ${taskId}:`,
-            err,
-          );
+          log.error({ err, taskId }, "required-tool retry failed");
         });
         // Mark original as failed with clear reason
         updateTaskStatus(

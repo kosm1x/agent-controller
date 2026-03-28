@@ -8,6 +8,9 @@
 import { toolRegistry } from "../tools/registry.js";
 import { getProjectByGoalId } from "../db/projects.js";
 import { getRouter } from "../messaging/index.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("event-reactions");
 
 // ---------------------------------------------------------------------------
 // task.created — verify alignment with active goals (flag orphan tasks)
@@ -23,9 +26,7 @@ export async function onTaskCreated(
 
   const title = (changes.title as string) ?? "Sin título";
 
-  console.log(
-    `[event-reactions] Orphan task created: "${title}" (${rowId}) — no objective linked`,
-  );
+  log.info({ rowId, title }, "orphan task created — no objective linked");
 
   try {
     await toolRegistry.execute("commit__create_suggestion", {
@@ -38,10 +39,7 @@ export async function onTaskCreated(
       source: "event_reactor",
     });
   } catch (err) {
-    console.error(
-      `[event-reactions] Failed to create orphan task suggestion:`,
-      err,
-    );
+    log.error({ err }, "failed to create orphan task suggestion");
   }
 }
 
@@ -63,10 +61,7 @@ export async function onTaskCompleted(
       objective_id: objectiveId,
     });
   } catch (err) {
-    console.error(
-      `[event-reactions] Failed to list tasks for objective ${objectiveId}:`,
-      err,
-    );
+    log.error({ err, objectiveId }, "failed to list tasks for objective");
     return;
   }
 
@@ -86,8 +81,9 @@ export async function onTaskCompleted(
     tasks.every((t) => t.status === "completed" || t.status === "archived");
 
   if (allDone) {
-    console.log(
-      `[event-reactions] All tasks under objective ${objectiveId} are done — suggesting completion`,
+    log.info(
+      { objectiveId },
+      "all tasks under objective are done — suggesting completion",
     );
     try {
       await toolRegistry.execute("commit__create_suggestion", {
@@ -100,10 +96,7 @@ export async function onTaskCompleted(
         source: "event_reactor",
       });
     } catch (err) {
-      console.error(
-        `[event-reactions] Failed to create objective completion suggestion:`,
-        err,
-      );
+      log.error({ err }, "failed to create objective completion suggestion");
     }
   }
 }
@@ -147,12 +140,12 @@ export async function onRecurringTaskCompleted(
   };
 
   const message = messages[streak] ?? `🔥 ¡${streak} días de racha!`;
-  console.log(`[event-reactions] Streak milestone: ${streak} days`);
+  log.info({ streak }, "streak milestone reached");
 
   const router = getRouter();
   if (router) {
     router.broadcastToAll(message).catch((err) => {
-      console.error(`[event-reactions] Streak broadcast failed:`, err);
+      log.error({ err }, "streak broadcast failed");
     });
   }
 }
@@ -173,18 +166,16 @@ export async function onGoalCompleted(
   const router = getRouter();
   if (router) {
     router.broadcastToAll(message).catch((err) => {
-      console.error(
-        `[event-reactions] Goal celebration broadcast failed:`,
-        err,
-      );
+      log.error({ err }, "goal celebration broadcast failed");
     });
   }
 
   // Check if there's a linked project
   const project = getProjectByGoalId(rowId);
   if (project) {
-    console.log(
-      `[event-reactions] Goal ${rowId} linked to project ${project.slug} — suggesting archive`,
+    log.info(
+      { rowId, projectSlug: project.slug },
+      "goal linked to project — suggesting archive",
     );
     try {
       await toolRegistry.execute("commit__create_suggestion", {
@@ -200,10 +191,7 @@ export async function onGoalCompleted(
         source: "event_reactor",
       });
     } catch (err) {
-      console.error(
-        `[event-reactions] Failed to create archive project suggestion:`,
-        err,
-      );
+      log.error({ err }, "failed to create archive project suggestion");
     }
   }
 }
@@ -226,10 +214,7 @@ export async function onObjectiveCompleted(
       goal_id: goalId,
     });
   } catch (err) {
-    console.error(
-      `[event-reactions] Failed to list objectives for goal ${goalId}:`,
-      err,
-    );
+    log.error({ err, goalId }, "failed to list objectives for goal");
     return;
   }
 
@@ -250,8 +235,9 @@ export async function onObjectiveCompleted(
 
   if (allDone) {
     // All objectives done — suggest completing the goal
-    console.log(
-      `[event-reactions] All objectives under goal ${goalId} are done — suggesting goal completion`,
+    log.info(
+      { goalId },
+      "all objectives under goal are done — suggesting goal completion",
     );
     try {
       await toolRegistry.execute("commit__create_suggestion", {
@@ -264,15 +250,13 @@ export async function onObjectiveCompleted(
         source: "event_reactor",
       });
     } catch (err) {
-      console.error(
-        `[event-reactions] Failed to create goal completion suggestion:`,
-        err,
-      );
+      log.error({ err }, "failed to create goal completion suggestion");
     }
   } else if (pendingObjectives.length > 0) {
     // There are more objectives — suggest focusing on the next one
-    console.log(
-      `[event-reactions] Objective completed, ${pendingObjectives.length} remaining under goal ${goalId}`,
+    log.info(
+      { goalId, remaining: pendingObjectives.length },
+      "objective completed, remaining under goal",
     );
     try {
       await toolRegistry.execute("commit__create_suggestion", {
@@ -288,10 +272,7 @@ export async function onObjectiveCompleted(
         source: "event_reactor",
       });
     } catch (err) {
-      console.error(
-        `[event-reactions] Failed to create next objective suggestion:`,
-        err,
-      );
+      log.error({ err }, "failed to create next objective suggestion");
     }
   }
 }
