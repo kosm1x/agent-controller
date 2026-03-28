@@ -15,6 +15,7 @@ import { analyzeJournalDeep } from "../../commit-ai/journal-analysis.js";
 import {
   onTaskCompleted,
   onRecurringTaskCompleted,
+  onTaskCreated,
   onGoalCompleted,
   onObjectiveCompleted,
 } from "../../commit-ai/event-reactions.js";
@@ -111,6 +112,17 @@ commitEvents.post("/", async (c) => {
         ),
       );
     }
+  }
+
+  if (table === "tasks" && event === "INSERT") {
+    reactions.push("task_created");
+    // Verify alignment: flag orphan tasks that aren't linked to any objective
+    onTaskCreated(row_id, changes ?? {}).catch((err) =>
+      console.error(
+        `[commit-events] Task alignment check failed for ${row_id}:`,
+        err,
+      ),
+    );
   }
 
   if (table === "journal_entries" && event === "INSERT") {

@@ -10,6 +10,40 @@ import { getProjectByGoalId } from "../db/projects.js";
 import { getRouter } from "../messaging/index.js";
 
 // ---------------------------------------------------------------------------
+// task.created — verify alignment with active goals (flag orphan tasks)
+// ---------------------------------------------------------------------------
+
+export async function onTaskCreated(
+  rowId: string,
+  changes: Record<string, unknown>,
+): Promise<void> {
+  const objectiveId = changes.objective_id as string | undefined;
+  // Only flag tasks that have no parent objective
+  if (objectiveId) return;
+
+  const title = (changes.title as string) ?? "Sin título";
+
+  console.log(
+    `[event-reactions] Orphan task created: "${title}" (${rowId}) — no objective linked`,
+  );
+
+  try {
+    await toolRegistry.execute("commit__create_suggestion", {
+      type: "link_task",
+      title: `Tarea huérfana: "${title}"`,
+      suggestion: { task_id: rowId, task_title: title },
+      reasoning: `La tarea "${title}" fue creada sin vincularla a ningún objetivo. Considera asignarla a un objetivo activo para mantener alineación con tus metas.`,
+      source: "event_reactor",
+    });
+  } catch (err) {
+    console.error(
+      `[event-reactions] Failed to create orphan task suggestion:`,
+      err,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // task.completed — check if all sibling tasks are done → suggest objective completion
 // ---------------------------------------------------------------------------
 
