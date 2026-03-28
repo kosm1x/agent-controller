@@ -107,25 +107,51 @@ const FUNCTION_REGISTRY: Record<string, FunctionMeta> = {
 // ---------------------------------------------------------------------------
 
 function extractJSON(text: string): string | null {
-  // Try object first
-  const objMatch = text.match(/\{[\s\S]*\}/);
-  if (objMatch) {
-    try {
-      JSON.parse(objMatch[0]);
-      return objMatch[0];
-    } catch {
-      // not valid JSON
-    }
+  // Strip markdown fences
+  const cleaned = text.replace(/```(?:json|javascript)?\s*\n?/g, "").trim();
+
+  // Try parsing the entire cleaned text first
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch {
+    // continue to bracket matching
   }
 
-  // Try array
-  const arrMatch = text.match(/\[[\s\S]*\]/);
-  if (arrMatch) {
-    try {
-      JSON.parse(arrMatch[0]);
-      return arrMatch[0];
-    } catch {
-      // not valid JSON
+  // Find the first valid JSON by brace-depth counting
+  for (let i = 0; i < cleaned.length; i++) {
+    const open = cleaned[i];
+    if (open !== "{" && open !== "[") continue;
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (c === open) depth++;
+      if (c === close) depth--;
+      if (depth === 0) {
+        const candidate = cleaned.slice(i, j + 1);
+        try {
+          JSON.parse(candidate);
+          return candidate;
+        } catch {
+          break;
+        }
+      }
     }
   }
 

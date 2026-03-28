@@ -15,6 +15,7 @@ import { submitTask } from "../dispatch/dispatcher.js";
 const NUDGE_CRON = "0 8,12,16,20 * * *"; // 8AM, noon, 4PM, 8PM
 const MAX_NUDGES_PER_DAY = 2;
 const SUPPRESS_IF_ACTIVE_MS = 3_600_000; // 1 hour
+const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 
 let job: ScheduledTask | null = null;
 let nudgeCountToday = 0;
@@ -25,7 +26,6 @@ let routerRef: MessageRouter | null = null;
  * Start the proactive scheduler.
  */
 export function startProactiveScheduler(router: MessageRouter): void {
-  const tz = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
   routerRef = router;
 
   job = cron.schedule(
@@ -37,10 +37,10 @@ export function startProactiveScheduler(router: MessageRouter): void {
         );
       });
     },
-    { timezone: tz },
+    { timezone: TIMEZONE },
   );
 
-  console.log(`[proactive] Scheduled (${NUDGE_CRON}, tz=${tz})`);
+  console.log(`[proactive] Scheduled (${NUDGE_CRON}, tz=${TIMEZONE})`);
 }
 
 /**
@@ -63,7 +63,7 @@ async function runProactiveScan(): Promise<void> {
 
   // Reset daily counter
   const today = new Date().toLocaleDateString("en-CA", {
-    timeZone: "America/Mexico_City",
+    timeZone: TIMEZONE,
   });
   if (lastNudgeDate !== today) {
     nudgeCountToday = 0;
@@ -85,7 +85,7 @@ async function runProactiveScan(): Promise<void> {
 
   // Determine current hour in MX timezone for context-aware scanning
   const mxHour = new Date().toLocaleString("en-US", {
-    timeZone: "America/Mexico_City",
+    timeZone: TIMEZONE,
     hour: "numeric",
     hour12: false,
   });
