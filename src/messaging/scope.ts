@@ -217,15 +217,27 @@ export function scopeToolsForMessage(
   patterns: ScopePattern[],
   options: ScopeOptions,
 ): string[] {
-  const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
-
-  // Detect which groups are needed
-  const activeGroups = new Set<string>();
+  // Check if the CURRENT message triggers any scope groups on its own.
+  // If not (pure conversational/personal message), don't inherit from prior turns —
+  // this prevents the LLM from continuing a prior task when the user changed topics.
+  const currentGroups = new Set<string>();
   for (const { pattern, group } of patterns) {
-    if (pattern.test(contextText)) {
-      activeGroups.add(group);
+    if (pattern.test(currentMessage)) {
+      currentGroups.add(group);
     }
   }
+
+  const activeGroups = new Set<string>();
+  if (currentGroups.size > 0) {
+    // Current message has scope signals — also scan prior messages for context
+    const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
+    for (const { pattern, group } of patterns) {
+      if (pattern.test(contextText)) {
+        activeGroups.add(group);
+      }
+    }
+  }
+  // else: no scope signals in current message → activeGroups stays empty → core tools only
 
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];
