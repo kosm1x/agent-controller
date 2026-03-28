@@ -1065,7 +1065,10 @@ export async function inferWithTools(
     // Analysis paralysis: all tool calls are read-only for N consecutive rounds.
     // Catches LLM endlessly exploring without acting (different tool sigs each round,
     // large results — so repeat detector and stale-loop breaker both miss it).
-    if (allToolCallsReadOnly(response.tool_calls)) {
+    if (
+      response.tool_calls.length > 0 &&
+      allToolCallsReadOnly(response.tool_calls)
+    ) {
       consecutiveReadOnlyRounds++;
       if (consecutiveReadOnlyRounds >= 5) {
         console.warn(
@@ -1082,7 +1085,7 @@ export async function inferWithTools(
     // Catches retry loops with large errors (>300 chars) that bypass the stale-loop
     // breaker, and multi-tool rounds where every tool fails.
     // Advisory only — don't break, let the LLM pivot.
-    if (allResultsAreErrors(toolResults)) {
+    if (toolResults.length > 0 && allResultsAreErrors(toolResults)) {
       consecutiveErrorRounds++;
       if (consecutiveErrorRounds >= 4) {
         console.warn(

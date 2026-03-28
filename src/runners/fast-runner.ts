@@ -280,6 +280,9 @@ export function detectsHallucinatedExecution(
   return narrationPatterns.some((p) => p.test(text));
 }
 
+const READ_HALLUCINATION_RE =
+  /(?:he revisado|leyendo|revisando|ENLACE|ENCONTRADO|no contiene.*enlace)/i;
+
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {
   if (tier === "flash") return "fallback";
@@ -448,9 +451,7 @@ export const fastRunner: Runner = {
           // Context-aware retry message: read vs write hallucination
           const isReadHallucination =
             toolsCalled.length === 0 &&
-            /(?:he revisado|leyendo|revisando|ENLACE|ENCONTRADO|no contiene.*enlace)/i.test(
-              parsed.cleanContent,
-            );
+            READ_HALLUCINATION_RE.test(parsed.cleanContent);
           retryMessages.push({
             role: "user",
             content: isReadHallucination
@@ -513,9 +514,7 @@ export const fastRunner: Runner = {
             toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
           const readHalluc =
             toolsCalled.length === 0 &&
-            /(?:he revisado|leyendo|revisando|ENLACE|ENCONTRADO|no contiene.*enlace)/i.test(
-              parsed.cleanContent,
-            );
+            READ_HALLUCINATION_RE.test(parsed.cleanContent);
           parsed = {
             cleanContent: readHalluc
               ? `⚠️ No verifiqué realmente — narré una verificación sin leer el contenido.\n\n` +

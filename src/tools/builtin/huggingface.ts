@@ -90,7 +90,7 @@ async function callGradioSpace(
 
   // Parse SSE for "event: complete"
   const completeMatch = resultText.match(
-    /event:\s*complete\s*\ndata:\s*(\[.*\])/s,
+    /event:\s*complete\s*\ndata:\s*(\[.*?\])\s*$/s,
   );
   if (!completeMatch) {
     if (resultText.includes("event: error")) {

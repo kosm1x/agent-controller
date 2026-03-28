@@ -82,26 +82,26 @@ describe("read-before-write tracking", () => {
   });
 
   it("returns true after recordRead", () => {
-    recordRead("testsite", 42);
+    recordRead("testsite", 42, "<p>test</p>");
     expect(wasReadRecently("testsite", 42)).toBe(true);
   });
 
   it("distinguishes sites", () => {
-    recordRead("site-a", 42);
+    recordRead("site-a", 42, "<p>test</p>");
     expect(wasReadRecently("site-a", 42)).toBe(true);
     expect(wasReadRecently("site-b", 42)).toBe(false);
   });
 
   it("distinguishes post IDs", () => {
-    recordRead("testsite", 42);
+    recordRead("testsite", 42, "<p>test</p>");
     expect(wasReadRecently("testsite", 42)).toBe(true);
     expect(wasReadRecently("testsite", 99)).toBe(false);
   });
 
   it("tracks multiple posts independently", () => {
-    recordRead("testsite", 1);
-    recordRead("testsite", 2);
-    recordRead("other", 3);
+    recordRead("testsite", 1, "<p>post1</p>");
+    recordRead("testsite", 2, "<p>post2</p>");
+    recordRead("other", 3, "<p>post3</p>");
     expect(wasReadRecently("testsite", 1)).toBe(true);
     expect(wasReadRecently("testsite", 2)).toBe(true);
     expect(wasReadRecently("other", 3)).toBe(true);

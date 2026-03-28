@@ -19,9 +19,15 @@ vi.mock("fs/promises", () => ({
 
 const { pdfReadTool } = await import("./pdf-read.js");
 
+import { afterEach } from "vitest";
+
 beforeEach(() => {
   mockExtractFromUrl.mockReset();
   mockExtractToMarkdown.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("pdf_read tool", () => {
