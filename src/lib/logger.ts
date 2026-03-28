@@ -14,11 +14,20 @@
 
 import pino from "pino";
 
-const isDev = process.env.NODE_ENV === "development";
+const VALID_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"];
+const configuredLevel = process.env.LOG_LEVEL ?? "info";
+if (!VALID_LEVELS.includes(configuredLevel)) {
+  console.warn(
+    `[logger] Invalid LOG_LEVEL="${configuredLevel}", defaulting to "info"`,
+  );
+}
+
+// Use TTY detection for pretty-printing (works without NODE_ENV setup)
+const usePretty = process.stdout.isTTY === true;
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL ?? "info",
-  transport: isDev
+  level: VALID_LEVELS.includes(configuredLevel) ? configuredLevel : "info",
+  transport: usePretty
     ? {
         target: "pino-pretty",
         options: { colorize: true, translateTime: "HH:MM:ss" },

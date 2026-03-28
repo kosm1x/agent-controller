@@ -280,7 +280,7 @@ export async function dispatchCommitAI(
     return { content: json, enriched };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.error({ err: message, function: req.function }, "inference failed");
+    log.error({ err, function: req.function }, "inference failed");
     return { content: null, enriched, error: message };
   }
 }

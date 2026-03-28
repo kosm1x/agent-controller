@@ -35,10 +35,7 @@ export function startProactiveScheduler(router: MessageRouter): void {
     NUDGE_CRON,
     () => {
       runProactiveScan().catch((err) => {
-        log.warn(
-          { err: err instanceof Error ? err.message : err },
-          "scan failed",
-        );
+        log.warn({ err }, "scan failed");
       });
     },
     { timezone: TIMEZONE },
@@ -136,10 +133,7 @@ No saludes. No agregues contexto innecesario. Ve directo al punto.`,
     // and the event handler below will broadcast if warranted
     watchProactiveTask(result.taskId);
   } catch (err) {
-    log.warn(
-      { err: err instanceof Error ? err.message : err },
-      "failed to submit scan",
-    );
+    log.warn({ err }, "failed to submit scan");
   }
 }
 

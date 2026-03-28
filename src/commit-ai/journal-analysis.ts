@@ -204,10 +204,7 @@ Respond in the same language as the journal entry.`;
       "analysis complete",
     );
   } catch (err) {
-    log.error(
-      { err: err instanceof Error ? err.message : err, journalId },
-      "analysis failed",
-    );
+    log.error({ err, journalId }, "analysis failed");
   }
 }
 

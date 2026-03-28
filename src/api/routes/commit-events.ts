@@ -81,7 +81,7 @@ commitEvents.post("/", async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes("no such table")) {
-      log.error({ err: msg }, "failed to store event");
+      log.error({ err }, "failed to store event");
     }
   }
 
