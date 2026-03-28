@@ -189,6 +189,30 @@ export function detectsHallucinatedExecution(
       /(?:vía|via|through)\s+(?:FTP|SSH|SFTP)/i.test(text) ||
       /\*[^*]*\.\.\.\*/.test(text);
     if (hasSuccessMarker && claimsLegacyConcrete) return true;
+
+    // Layer 1b: Read hallucination — claims to have read/verified/reviewed
+    // specific content without calling any tools. The LLM fabricates findings
+    // from thread context or imagination instead of actually reading.
+    const claimsRead =
+      /(?:he revisado|revisando el contenido|leyendo el (?:archivo|contenido|artículo))/i.test(
+        text,
+      ) ||
+      /(?:I (?:read|reviewed|checked|inspected|examined) the (?:file|article|content|post|page))/i.test(
+        text,
+      ) ||
+      /\*?\((?:Leyendo|Buscando|Revisando|Analizando|Reading|Searching|Reviewing|Analyzing)[^)]*\)\*?/i.test(
+        text,
+      );
+    const claimsVerificationResult =
+      /(?:ENLACE (?:NO )?ENCONTRADO|LINK (?:NOT )?FOUND|no contiene (?:ningún )?enlace|does not contain (?:any )?link)/i.test(
+        text,
+      ) || /(?:❌|✅)\s*(?:ENLACE|LINK|VERIFICAD)/i.test(text);
+    if (claimsRead && claimsVerificationResult) {
+      console.log(
+        `[fast-runner] Read hallucination: claims to have read/verified content but toolsCalled is empty`,
+      );
+      return true;
+    }
   }
 
   // --- Layer 2: Partial hallucination (generic — all write tools) ---
@@ -397,7 +421,11 @@ export const fastRunner: Runner = {
 
       // Hallucination guard: if the LLM narrated tool execution without calling
       // the right tools, retry once if budget has headroom, else replace.
-      if (detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
+      // Skip for vision tasks — image analysis is a legitimate zero-tool response.
+      if (
+        !hasVision &&
+        detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)
+      ) {
         const lastPromptTokens = result.totalUsage.prompt_tokens;
         const hasHeadroom = lastPromptTokens < tokenBudget * 0.85;
 
@@ -417,10 +445,17 @@ export const fastRunner: Runner = {
                 !m.tool_calls
               ),
           );
+          // Context-aware retry message: read vs write hallucination
+          const isReadHallucination =
+            toolsCalled.length === 0 &&
+            /(?:he revisado|leyendo|revisando|ENLACE|ENCONTRADO|no contiene.*enlace)/i.test(
+              parsed.cleanContent,
+            );
           retryMessages.push({
             role: "user",
-            content:
-              "ALTO: Narraste la acción sin llamar herramientas. Llama a gsheets_write AHORA (append=false para correcciones a celdas específicas).",
+            content: isReadHallucination
+              ? "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados."
+              : "ALTO: Narraste la acción sin llamar herramientas. Llama a las herramientas de escritura AHORA.",
           });
 
           const retryResult = await inferWithTools(
@@ -476,12 +511,21 @@ export const fastRunner: Runner = {
           );
           const toolList =
             toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
+          const readHalluc =
+            toolsCalled.length === 0 &&
+            /(?:he revisado|leyendo|revisando|ENLACE|ENCONTRADO|no contiene.*enlace)/i.test(
+              parsed.cleanContent,
+            );
           parsed = {
-            cleanContent:
-              `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
-              `**Herramientas que SÍ llamé**: ${toolList}\n` +
-              `**Herramientas de escritura necesarias**: gsheets_write (append=false para correcciones)` +
-              `\n\nIntenta de nuevo con una solicitud más específica.`,
+            cleanContent: readHalluc
+              ? `⚠️ No verifiqué realmente — narré una verificación sin leer el contenido.\n\n` +
+                `**Herramientas que SÍ llamé**: ${toolList}\n` +
+                `**Necesito llamar**: wp_read_post o file_read para leer el artículo antes de verificar enlaces.\n\n` +
+                `Intenta de nuevo — esta vez leeré el contenido real.`
+              : `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
+                `**Herramientas que SÍ llamé**: ${toolList}\n` +
+                `**Herramientas necesarias**: las herramientas correspondientes a la acción solicitada.` +
+                `\n\nIntenta de nuevo con una solicitud más específica.`,
             status: "DONE_WITH_CONCERNS",
             concerns: [
               "Hallucination detected — response mechanically replaced with honest tool inventory",

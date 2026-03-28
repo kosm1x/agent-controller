@@ -133,23 +133,28 @@ function countStructuralElements(html: string): number {
 // the Node process.
 // ---------------------------------------------------------------------------
 
-/** Map of "site:postId" → timestamp of last wp_read_post call. */
-const recentReads = new Map<string, number>();
+/** Map of "site:postId" → { timestamp, contentLength } of last wp_read_post call. */
+const recentReads = new Map<string, { ts: number; contentLength: number }>();
 const READ_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
-function recordRead(site: string, postId: number): void {
+function recordRead(site: string, postId: number, contentLength: number): void {
   // Purge stale entries
   const now = Date.now();
-  for (const [key, ts] of recentReads) {
-    if (now - ts > READ_TTL_MS) recentReads.delete(key);
+  for (const [key, entry] of recentReads) {
+    if (now - entry.ts > READ_TTL_MS) recentReads.delete(key);
   }
-  recentReads.set(`${site}:${postId}`, now);
+  recentReads.set(`${site}:${postId}`, { ts: now, contentLength });
 }
 
 function wasReadRecently(site: string, postId: number): boolean {
-  const ts = recentReads.get(`${site}:${postId}`);
-  if (!ts) return false;
-  return Date.now() - ts < READ_TTL_MS;
+  const entry = recentReads.get(`${site}:${postId}`);
+  if (!entry) return false;
+  return Date.now() - entry.ts < READ_TTL_MS;
+}
+
+function getOriginalContentLength(site: string, postId: number): number | null {
+  const entry = recentReads.get(`${site}:${postId}`);
+  return entry ? entry.contentLength : null;
 }
 
 /** Exported for testing only. */
@@ -158,6 +163,7 @@ export const _testing = {
   countStructuralElements,
   recordRead,
   wasReadRecently,
+  getOriginalContentLength,
   recentReads,
 };
 
@@ -329,10 +335,10 @@ This approach prevents content truncation and article destruction.`,
 
     if (status >= 200 && status < 300) {
       const d = data as Record<string, unknown>;
-      // Track this read so wp_publish can verify it was called first
-      recordRead(resolved.name, postId);
-
       const content = (d.content as Record<string, string>)?.rendered ?? "";
+
+      // Track this read so wp_publish can verify it was called first
+      recordRead(resolved.name, postId, content.length);
 
       // Write full content to temp file — avoids inference adapter truncation
       if (!existsSync(WP_TEMP_DIR)) mkdirSync(WP_TEMP_DIR, { recursive: true });
@@ -520,6 +526,26 @@ DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, 
         });
       }
       newContent = readFileSync(contentFile, "utf-8");
+    }
+
+    // ---------- Guard 0: Edit-verification (content_file only) ----------
+    // When publishing via content_file, verify the file was actually modified.
+    // Catches the case where file_edit failed (old_string not found) but the
+    // LLM proceeded to wp_publish anyway, publishing unchanged content.
+    if (postId && contentFile && newContent) {
+      const originalLen = getOriginalContentLength(resolved.name, postId);
+      if (originalLen !== null && newContent.length === originalLen) {
+        return JSON.stringify({
+          success: false,
+          error:
+            "BLOCKED: content_file has not been modified since wp_read_post saved it " +
+            `(both are ${originalLen} chars). This means file_edit likely failed — ` +
+            "re-read the file with file_read, verify your old_string matches exactly, " +
+            "then call file_edit again before retrying wp_publish.",
+          post_id: postId,
+          content_file: contentFile,
+        });
+      }
     }
 
     // ---------- Guard 1: Read-before-write enforcement ----------

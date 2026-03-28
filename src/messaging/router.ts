@@ -393,6 +393,7 @@ interface PendingReply {
   channel: ChannelName;
   to: string;
   originalText: string;
+  imageUrl?: string; // preserved for thread continuity (vision follow-ups)
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
 }
@@ -403,7 +404,13 @@ const THREAD_BUFFER_SIZE = 8;
  *  Recent cap is higher to preserve state for multi-step workflows
  *  (e.g. "Continúa" chains where the LLM needs to know what it just did). */
 const THREAD_RESPONSE_CAP = 1600;
-const conversationThreads = new Map<string, string[]>();
+
+interface ThreadEntry {
+  text: string; // "User: ...\nJarvis: ..."
+  imageUrl?: string; // base64 data URL — preserved so follow-up turns see the image
+}
+
+const conversationThreads = new Map<string, ThreadEntry[]>();
 const hydratedChannels = new Set<string>();
 
 // ---------------------------------------------------------------------------
@@ -535,10 +542,14 @@ function ensureCriticalDataPersisted(userText: string, taskId: string): void {
   }
 }
 
-function pushToThread(channel: string, exchange: string): void {
+function pushToThread(
+  channel: string,
+  exchange: string,
+  imageUrl?: string,
+): void {
   hydrateThreadIfNeeded(channel);
   const thread = conversationThreads.get(channel)!;
-  thread.push(exchange);
+  thread.push({ text: exchange, imageUrl });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
 }
 
@@ -596,12 +607,12 @@ function getThreadTurns(channel: string): ConversationTurn[] {
 
   const turns: ConversationTurn[] = [];
   let poisonedCount = 0;
-  for (const exchange of thread) {
-    const jarvisIdx = exchange.indexOf("\nJarvis: ");
+  for (const entry of thread) {
+    const jarvisIdx = entry.text.indexOf("\nJarvis: ");
     if (jarvisIdx === -1) continue;
 
-    const userText = exchange.slice("User: ".length, jarvisIdx).trim();
-    const assistantText = exchange
+    const userText = entry.text.slice("User: ".length, jarvisIdx).trim();
+    const assistantText = entry.text
       .slice(jarvisIdx + "\nJarvis: ".length)
       .trim();
 
@@ -611,7 +622,12 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       continue;
     }
 
-    if (userText) turns.push({ role: "user", content: userText });
+    if (userText)
+      turns.push({
+        role: "user",
+        content: userText,
+        ...(entry.imageUrl && { imageUrl: entry.imageUrl }),
+      });
     if (assistantText)
       turns.push({ role: "assistant", content: assistantText });
   }
@@ -645,7 +661,10 @@ function hydrateThreadIfNeeded(channel: string): void {
 
     if (rows.length > 0) {
       // Reverse to chronological order (query returns newest-first)
-      const thread = rows.reverse().map((r) => r.content);
+      // Images don't survive restarts (base64 not stored in DB) — text only
+      const thread: ThreadEntry[] = rows
+        .reverse()
+        .map((r) => ({ text: r.content }));
       conversationThreads.set(channel, thread);
     } else {
       conversationThreads.set(channel, []);
@@ -816,6 +835,7 @@ export class MessageRouter {
       channel: msg.channel,
       to: msg.from,
       originalText: msg.text,
+      imageUrl: msg.imageUrl,
       interimTimer,
       finalTimer,
     });
@@ -949,6 +969,7 @@ export class MessageRouter {
       pushToThread(
         pending.channel,
         `User: ${pending.originalText}\nJarvis: ${cappedResult}`,
+        pending.imageUrl,
       );
 
       // Retain the exchange in conversation memory (works with any backend)

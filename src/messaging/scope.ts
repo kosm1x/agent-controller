@@ -107,6 +107,7 @@ export const MISC_TOOLS = [
   "list_schedules",
   "project_list",
   "project_get",
+  "pdf_read",
   "browser__goto",
   "browser__markdown",
 ];
@@ -116,6 +117,8 @@ export const SPECIALTY_TOOLS = [
   "chart_generate",
   "rss_read",
   "gemini_image",
+  "hf_generate",
+  "hf_spaces",
   "project_update",
 ];
 
@@ -150,7 +153,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini)/i,
+      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|speech|music|song|jingle|soundtrack|spaces)/i,
     group: "specialty",
   },
   {

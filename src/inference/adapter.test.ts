@@ -40,7 +40,12 @@ vi.mock("../prometheus/context-compressor.js", () => ({
   compress: vi.fn((msgs: unknown[]) => msgs),
 }));
 
-import { providerMetrics, tryRepairJson } from "./adapter.js";
+import {
+  providerMetrics,
+  tryRepairJson,
+  allToolCallsReadOnly,
+  allResultsAreErrors,
+} from "./adapter.js";
 
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
@@ -206,5 +211,101 @@ describe("tryRepairJson", () => {
     // Valid JSON should parse on the first attempt (trailing comma fix is a no-op)
     const result = tryRepairJson('{"key": "value"}', "test_tool");
     expect(result).toEqual({ key: "value" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Loop guard helpers
+// ---------------------------------------------------------------------------
+
+describe("allToolCallsReadOnly", () => {
+  const tc = (name: string) => ({ function: { name } });
+
+  it("should return true when all tools are read-only", () => {
+    expect(
+      allToolCallsReadOnly([tc("file_read"), tc("grep"), tc("glob")]),
+    ).toBe(true);
+  });
+
+  it("should return false when any tool is an action tool", () => {
+    expect(allToolCallsReadOnly([tc("file_read"), tc("file_edit")])).toBe(
+      false,
+    );
+  });
+
+  it("should return true for read-only browser MCP tools", () => {
+    expect(
+      allToolCallsReadOnly([
+        tc("browser__goto"),
+        tc("browser__markdown"),
+        tc("browser__links"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("should return false for action browser MCP tools", () => {
+    expect(
+      allToolCallsReadOnly([tc("browser__goto"), tc("browser__click")]),
+    ).toBe(false);
+  });
+
+  it("should return true for empty array (vacuous truth)", () => {
+    expect(allToolCallsReadOnly([])).toBe(true);
+  });
+
+  it("should return false for unknown tools (not in read-only set)", () => {
+    expect(allToolCallsReadOnly([tc("some_new_tool")])).toBe(false);
+  });
+});
+
+describe("allResultsAreErrors", () => {
+  const r = (content: string) => ({ content });
+
+  it("should return true when all results contain error indicators", () => {
+    expect(
+      allResultsAreErrors([
+        r("Error: file not found"),
+        r("ENOENT: no such file"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("should return false when any result is success-like", () => {
+    expect(
+      allResultsAreErrors([
+        r("Error: something failed"),
+        r("Successfully created the file"),
+      ]),
+    ).toBe(false);
+  });
+
+  it("should detect HTTP status codes in JSON responses", () => {
+    expect(
+      allResultsAreErrors([r('{"error": "bad request", "status": 400}')]),
+    ).toBe(true);
+    expect(
+      allResultsAreErrors([r('{"status": 500, "message": "internal"}')]),
+    ).toBe(true);
+  });
+
+  it("should return false for normal content", () => {
+    expect(
+      allResultsAreErrors([
+        r("Here is the file content:\nfunction hello() {}"),
+      ]),
+    ).toBe(false);
+  });
+
+  it("should handle large error results (>300 chars)", () => {
+    const largeError = "Error: " + "x".repeat(500) + " permission denied";
+    expect(allResultsAreErrors([r(largeError)])).toBe(true);
+  });
+
+  it("should return true for empty array (vacuous truth)", () => {
+    expect(allResultsAreErrors([])).toBe(true);
+  });
+
+  it("should return false for non-string content", () => {
+    expect(allResultsAreErrors([{ content: 42 }])).toBe(false);
   });
 });

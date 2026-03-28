@@ -55,6 +55,8 @@ import {
   projectUpdateTool,
 } from "../builtin/projects.js";
 import { exaSearchTool } from "../builtin/exa-search.js";
+import { pdfReadTool } from "../builtin/pdf-read.js";
+import { hfGenerateTool, hfSpacesTool } from "../builtin/huggingface.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -86,6 +88,9 @@ const BUILTIN_TOOLS: Tool[] = [
   projectGetTool,
   projectUpdateTool,
   exaSearchTool,
+  pdfReadTool,
+  hfGenerateTool,
+  hfSpacesTool,
 ];
 
 // WordPress tools — conditionally registered when WP_SITES is configured

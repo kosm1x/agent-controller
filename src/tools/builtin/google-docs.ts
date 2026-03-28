@@ -48,10 +48,23 @@ WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first to find
         `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`,
       );
 
+      const values = result.values ?? [];
+
+      // Extract the starting row number from the resolved range (e.g. "Sheet1!A2:L50" → 2)
+      // so each row includes its actual sheet row number. This prevents LLM row-counting errors.
+      const rangeMatch = result.range.match(/!.*?(\d+)/);
+      const startRow = rangeMatch ? parseInt(rangeMatch[1], 10) : 1;
+
+      const rows = values.map((row, i) => ({
+        row: startRow + i,
+        cells: row,
+      }));
+
       return JSON.stringify({
         range: result.range,
-        rows: result.values?.length ?? 0,
-        data: result.values ?? [],
+        total_rows: values.length,
+        start_row: startRow,
+        data: rows,
       });
     } catch (err) {
       return JSON.stringify({
@@ -80,7 +93,9 @@ DEDUP: The tool automatically skips rows whose first column value (ID) already e
 
 MODES:
 - append=true (DEFAULT): Adds rows AFTER the last row with data. Use this when adding new entries. The range only needs the sheet name and columns (e.g., "Sheet1!A:J"). Row numbers are ignored — data goes to the next empty row automatically.
-- append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells (e.g., "Sheet1!J55").
+- append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells (e.g., "Sheet1!K55:L55").
+
+ROW TARGETING: When updating specific cells, use the "row" number from gsheets_read results directly in your range. Example: gsheets_read returns {row: 30, cells: [...]} → write to "Sheet1!K30:L30". NEVER count rows manually — always use the row number from the read result.
 
 WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.`,
       parameters: {
@@ -167,41 +182,54 @@ WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (
       );
     }
 
-    const useAppend = args.append !== false;
+    // If the range targets specific rows (e.g., K6:L6), auto-detect overwrite mode.
+    // Append mode ignores row numbers — data goes to the end of the sheet.
+    const rangeHasRow = /![A-Z]+\d+/.test(range);
+    const useAppend = rangeHasRow
+      ? args.append === true
+      : args.append !== false;
+    console.log(
+      `[gsheets_write] mode=${useAppend ? "append" : "overwrite"} append_arg=${args.append} range_has_row=${rangeHasRow}`,
+    );
 
-    // Dedup: ALWAYS check column A for existing IDs, regardless of mode.
-    // Prevents duplicates whether the LLM uses append or overwrite.
+    // Dedup: only in append mode when writing to column A (first column).
+    // Skip dedup for overwrite mode or when writing to non-A columns (e.g., K:L)
+    // — comparing K-column values against A-column IDs is nonsensical.
     let dedupedValues = values;
-    try {
-      const sheetName = range.includes("!") ? range.split("!")[0] : "Sheet1";
-      const existingCol = await googleFetch<{ values?: string[][] }>(
-        `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(sheetName + "!A:A")}`,
-      );
-      const existingIds = new Set(
-        (existingCol.values ?? []).flat().map((v) => String(v).trim()),
-      );
-      const before = dedupedValues.length;
-      dedupedValues = dedupedValues.filter(
-        (row) => !existingIds.has(String(row[0]).trim()),
-      );
-      if (dedupedValues.length < before) {
-        console.log(
-          `[gsheets_write] Dedup: ${before - dedupedValues.length} duplicate row(s) skipped (IDs already in column A)`,
+    const startsAtColA = /!A[:\d]/.test(range) || /![A-Z]+$/.test(range);
+
+    if (useAppend && startsAtColA) {
+      try {
+        const sheetName = range.includes("!") ? range.split("!")[0] : "Sheet1";
+        const existingCol = await googleFetch<{ values?: string[][] }>(
+          `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(sheetName + "!A:A")}`,
+        );
+        const existingIds = new Set(
+          (existingCol.values ?? []).flat().map((v) => String(v).trim()),
+        );
+        const before = dedupedValues.length;
+        dedupedValues = dedupedValues.filter(
+          (row) => !existingIds.has(String(row[0]).trim()),
+        );
+        if (dedupedValues.length < before) {
+          console.log(
+            `[gsheets_write] Dedup: ${before - dedupedValues.length} duplicate row(s) skipped (IDs already in column A)`,
+          );
+        }
+      } catch (dedupErr) {
+        console.error(
+          `[gsheets_write] Dedup check failed: ${dedupErr instanceof Error ? dedupErr.message : dedupErr}`,
         );
       }
-    } catch (dedupErr) {
-      console.error(
-        `[gsheets_write] Dedup check failed: ${dedupErr instanceof Error ? dedupErr.message : dedupErr}`,
-      );
-    }
 
-    if (dedupedValues.length === 0) {
-      return JSON.stringify({
-        written: false,
-        skipped: values.length,
-        reason:
-          "All rows already exist in the sheet (duplicate IDs in column A)",
-      });
+      if (dedupedValues.length === 0) {
+        return JSON.stringify({
+          written: false,
+          skipped: values.length,
+          reason:
+            "All rows already exist in the sheet (duplicate IDs in column A)",
+        });
+      }
     }
 
     try {

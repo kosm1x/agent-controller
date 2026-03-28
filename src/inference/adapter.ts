@@ -552,6 +552,78 @@ const MAX_TOOL_RESULT_CHARS = 12_000;
 /** Max chars per tool result in wrap-up context — more aggressive to fit in timeout. */
 const WRAPUP_TOOL_RESULT_CHARS = 1_500;
 
+// ---------------------------------------------------------------------------
+// Loop guard constants
+// ---------------------------------------------------------------------------
+
+/** Tools that are purely observational. Used by the analysis paralysis guard. */
+const READ_ONLY_TOOLS = new Set([
+  // Filesystem
+  "file_read",
+  "grep",
+  "glob",
+  "list_dir",
+  // Web & documents
+  "web_search",
+  "web_read",
+  "exa_search",
+  "rss_read",
+  "pdf_read",
+  "hf_spaces",
+  // Memory & facts
+  "memory_search",
+  "user_fact_list",
+  "skill_list",
+  // Google (read-only subset)
+  "gmail_search",
+  "gsheets_read",
+  "gdocs_read",
+  "gdrive_list",
+  "calendar_list",
+  // WordPress (read-only subset)
+  "wp_list_posts",
+  "wp_read_post",
+  "wp_categories",
+  "wp_pages",
+  "wp_plugins",
+  "wp_settings",
+  // Projects & evolution
+  "project_list",
+  "project_get",
+  "evolution_get_data",
+  // Browser observation — click/fill/scroll/evaluate are action tools
+  "browser__goto",
+  "browser__markdown",
+  "browser__links",
+  "browser__semantic_tree",
+  "browser__structuredData",
+  "browser__interactiveElements",
+]);
+
+/** Regex matching common error indicators in tool results. */
+const ERROR_RESULT_RE =
+  /\b(?:error|failed|failure|not found|denied|unauthorized|forbidden|does not exist|no such file|ENOENT|EACCES|EPERM|timed?\s?out)\b|"(?:error|status)":\s*(?:4\d{2}|5\d{2})\b/i;
+
+function isReadOnlyTool(name: string): boolean {
+  return READ_ONLY_TOOLS.has(name);
+}
+
+/** Check if all tool calls in a round are read-only (for testing). */
+export function allToolCallsReadOnly(
+  toolCalls: Array<{ function: { name: string } }>,
+): boolean {
+  return toolCalls.every((tc) => isReadOnlyTool(tc.function.name));
+}
+
+/** Check if all tool results contain error indicators (for testing). */
+export function allResultsAreErrors(
+  results: Array<{ content: string | unknown }>,
+): boolean {
+  return results.every(
+    (r) => typeof r.content === "string" && ERROR_RESULT_RE.test(r.content),
+  );
+}
+
 /**
  * Attempt lenient parse of malformed JSON from LLM tool calls.
  * Tries common repairs: trailing commas, trailing garbage, unquoted keys.
@@ -710,6 +782,8 @@ export async function inferWithTools(
   let lastToolSig = "";
   let consecutiveRepeats = 0;
   let consecutiveSmallResults = 0;
+  let consecutiveReadOnlyRounds = 0;
+  let consecutiveErrorRounds = 0;
   const MAX_CONSECUTIVE_REPEATS = 2;
 
   for (let round = 0; round < maxRounds; round++) {
@@ -986,6 +1060,43 @@ export async function inferWithTools(
       }
     } else {
       consecutiveSmallResults = 0;
+    }
+
+    // Analysis paralysis: all tool calls are read-only for N consecutive rounds.
+    // Catches LLM endlessly exploring without acting (different tool sigs each round,
+    // large results — so repeat detector and stale-loop breaker both miss it).
+    if (allToolCallsReadOnly(response.tool_calls)) {
+      consecutiveReadOnlyRounds++;
+      if (consecutiveReadOnlyRounds >= 5) {
+        console.warn(
+          `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
+        );
+        exitReason = "analysis_paralysis";
+        break;
+      }
+    } else {
+      consecutiveReadOnlyRounds = 0;
+    }
+
+    // Persistent failure: all tool results contain error indicators for N rounds.
+    // Catches retry loops with large errors (>300 chars) that bypass the stale-loop
+    // breaker, and multi-tool rounds where every tool fails.
+    // Advisory only — don't break, let the LLM pivot.
+    if (allResultsAreErrors(toolResults)) {
+      consecutiveErrorRounds++;
+      if (consecutiveErrorRounds >= 4) {
+        console.warn(
+          `[inference] Persistent failure: ${consecutiveErrorRounds} consecutive all-error rounds. Injecting advisory.`,
+        );
+        conversation.push({
+          role: "user" as const,
+          content:
+            "SYSTEM: Multiple consecutive tool failures detected. Your current approach is not working. Try a completely different approach, use different tools, or proceed with what you have and report what you could not accomplish.",
+        });
+        consecutiveErrorRounds = 0;
+      }
+    } else {
+      consecutiveErrorRounds = 0;
     }
 
     // Token budget check — if this round's prompt exceeded the ceiling,
