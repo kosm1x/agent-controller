@@ -839,10 +839,15 @@ The suggestion appears in the COMMIT UI as an actionable card. The user can acce
             "create_task",
             "create_goal",
             "create_objective",
+            "create_idea",
             "update_status",
             "complete_objective",
+            "complete_goal",
+            "focus_next_objective",
+            "link_task",
             "reorder",
             "archive",
+            "archive_project",
           ])
           .describe("Type of change being suggested"),
         target_table: z
