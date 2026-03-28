@@ -56,8 +56,15 @@ export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     "complete_recurring",
     {
-      description:
-        "Mark a recurring task as done for a specific date (inserts task_completion record)",
+      description: `Mark a recurring task as done for a specific date (inserts task_completion record).
+
+USE WHEN:
+- User says they completed a daily habit ("ya hice ejercicio", "ya medité")
+- Event reactor detects a recurring task was completed
+- Nightly close confirms the user did a recurring activity today
+
+This is the ONLY way to record recurring task completions — do NOT use update_status
+for recurring tasks. update_status changes the task definition; this records today's completion.`,
       inputSchema: {
         task_id: z.string().describe("Task UUID"),
         date: z
@@ -151,8 +158,11 @@ export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     "create_journal_entry",
     {
-      description:
-        "Create a journal entry (for daily reflections or nightly close)",
+      description: `Create a journal entry. SACRED BOUNDARY: the journal is exclusively for the user's personal reflections.
+
+ONLY call this when the user EXPLICITLY asks to write in their journal (e.g. "escribe en mi diario", "anota esto en el journal").
+NEVER write journal entries autonomously — not as summaries, reports, nightly closes, or action logs.
+If you need to record actions you took, respond in text. The journal is NOT a log.`,
       inputSchema: {
         content: z
           .string()
@@ -639,8 +649,14 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
   server.registerTool(
     "create_vision",
     {
-      description:
-        "Create a new vision — a long-term life direction at the top of the COMMIT hierarchy",
+      description: `Create a new vision — a long-term life direction at the top of the COMMIT hierarchy.
+
+WORKFLOW:
+1. Call get_hierarchy FIRST to show the user their existing visions
+2. Confirm with the user that this is a genuinely new life direction (not a goal)
+3. Only then create the vision
+
+Visions are rare — most users have 2-5. If the user describes something measurable with a timeline, it's probably a goal, not a vision.`,
       inputSchema: {
         title: z.string().describe("Vision title"),
         description: z.string().optional().describe("Vision description"),
@@ -675,8 +691,14 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
   server.registerTool(
     "bulk_reprioritize",
     {
-      description:
-        "Update priorities for multiple tasks at once (used to rebalance after daily review)",
+      description: `Update priorities for multiple tasks at once.
+
+USE WHEN:
+- Nightly close: rebalance next-day task queue based on what was completed/skipped
+- User asks to reprioritize ("pon X como urgente", "baja la prioridad de Y")
+- Morning briefing: adjust priorities based on calendar or new deadlines
+
+Call list_tasks first to get current task IDs and priorities, then submit the changes.`,
       inputSchema: {
         updates: z
           .array(

@@ -214,8 +214,16 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     "get_hierarchy",
     {
-      description:
-        "Get the full COMMIT hierarchy tree. Visions (long-term life directions) are the root. Goals (measurable outcomes) belong to a vision. Objectives (milestones) belong to a goal. Tasks (action items) belong to an objective. Returns nested JSON: vision → goals[] → objectives[] → tasks[]. When user asks for 'goals', extract only the goal-level items — do NOT present visions as goals.",
+      description: `Get the full COMMIT hierarchy tree: Vision → Goals → Objectives → Tasks (nested JSON).
+
+USE WHEN:
+- Weekly review: full system health scan (orphan goals, stale objectives)
+- Vision alignment checks: are active goals still serving their parent visions?
+- Before creating a goal/vision: verify what already exists to avoid duplicates
+- User asks for an overview of their entire productivity system
+
+When user asks for 'goals', extract ONLY goal-level items — do NOT present visions as goals.
+For goal-specific queries, prefer list_goals (lighter, returns parent vision title).`,
       inputSchema: {
         include_completed: z
           .boolean()
@@ -584,7 +592,13 @@ ALSO USE FOR LOOKUPS: When you need to create a task under an objective, call th
   server.registerTool(
     "list_ideas",
     {
-      description: "List ideas filtered by status or category",
+      description: `List ideas from the COMMIT ideas library, filtered by status or category.
+
+USE WHEN:
+- User asks about their ideas ("qué ideas tengo", "mis ideas")
+- Conversation surfaces an idea — check if it already exists before suggesting to add it
+- Idea capture from conversations: verify no duplicate before creating a suggestion
+- Weekly review: check for stale draft ideas that need action`,
       inputSchema: {
         status: z
           .enum(["draft", "active", "completed", "archived"])
