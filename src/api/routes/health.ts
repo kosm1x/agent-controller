@@ -7,6 +7,8 @@ import { getDatabase } from "../../db/index.js";
 import { getConfig } from "../../config.js";
 import { providerMetrics } from "../../inference/adapter.js";
 import { getBudgetStatus } from "../../budget/service.js";
+import { toolMetrics } from "../../observability/tool-metrics.js";
+import { eventMetrics } from "../../observability/event-metrics.js";
 
 const health = new Hono();
 
@@ -65,6 +67,8 @@ health.get("/health", async (c) => {
         dailyLimit: budget.dailyLimit,
         remaining: +budget.remaining.toFixed(4),
       },
+      tools: toolMetrics.getSummary(),
+      commitEvents: eventMetrics.getSummary(),
     },
     code,
   );

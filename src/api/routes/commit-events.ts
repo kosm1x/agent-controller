@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getEventBus } from "../../lib/event-bus.js";
+import { eventMetrics } from "../../observability/event-metrics.js";
 import { analyzeJournalDeep } from "../../commit-ai/journal-analysis.js";
 import {
   onTaskCompleted,
@@ -32,6 +33,7 @@ interface CommitEvent {
 export const commitEvents = new Hono();
 
 commitEvents.post("/", async (c) => {
+  const eventStart = Date.now();
   let body: CommitEvent;
   try {
     body = await c.req.json();
@@ -167,6 +169,9 @@ commitEvents.post("/", async (c) => {
       );
     }
   }
+
+  // Record event processing metrics
+  eventMetrics.record(table, Date.now() - eventStart);
 
   return c.json({
     status: "received",

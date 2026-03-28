@@ -4,6 +4,7 @@
 
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool } from "./types.js";
+import { toolMetrics } from "../observability/tool-metrics.js";
 
 /** Compute Levenshtein distance between two strings. */
 function levenshtein(a: string, b: string): number {
@@ -150,7 +151,15 @@ export class ToolRegistry {
         `[tools] ⚠️ Destructive tool called: ${name} — args: ${JSON.stringify(args).slice(0, 200)}`,
       );
     }
-    return tool.execute(args);
+    const start = Date.now();
+    try {
+      const result = await tool.execute(args);
+      toolMetrics.record(name, Date.now() - start, true);
+      return result;
+    } catch (err) {
+      toolMetrics.record(name, Date.now() - start, false);
+      throw err;
+    }
   }
 
   /** List registered tool names. */
