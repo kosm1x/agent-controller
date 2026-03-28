@@ -220,24 +220,24 @@ export const geminiImageTool: Tool = {
     type: "function",
     function: {
       name: "gemini_image",
-      description: `Generate an image from a text prompt using Google's Gemini/Imagen API.
+      description: `Generate an image from a text prompt using Google's Gemini/Imagen API. Best for photorealistic images and WordPress blog hero images.
 
 USE WHEN:
-- The user asks to generate, create, or produce an image
-- You need a custom image for a blog post, presentation, or social media
-- The user describes a visual concept they want created
+- The user needs a photorealistic image or editorial photography style
+- The image is for a WordPress blog post (this tool integrates best with wp_media_upload)
+- The user explicitly asks for Gemini or Imagen
+- You need aspect ratio control (1:1, 3:4, 4:3, 9:16, 16:9) or 2K resolution
+
+USE hf_generate INSTEAD WHEN:
+- The user asks for artistic styles (anime, oil painting, 3D render, vector art)
+- The user wants audio, video, or music (hf_generate handles all media types)
+- The user explicitly asks for HuggingFace, FLUX, or Stable Diffusion
 
 WORKFLOW for WordPress posts:
 1. Call gemini_image with a detailed English prompt
 2. The tool returns a local file path to the generated image
 3. Call wp_media_upload with image_url=<file_path> and filename=<filename> to upload to WordPress
 4. Use the returned media_id as featured_media in wp_publish
-
-PROMPT TIPS:
-- Be specific: "A pair of worn running shoes next to a smartwatch showing VO2 Max metrics, dramatic lighting, photorealistic, dark background"
-- Include style: "photorealistic", "watercolor", "minimalist", "editorial photography"
-- Include mood: "warm golden hour", "dramatic side lighting", "soft diffused light"
-- Negative prompt excludes elements: "blurry, text, watermark, low quality"
 
 DO NOT narrate image generation — call this tool. If it fails, report the actual error.`,
       parameters: {
