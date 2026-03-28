@@ -162,6 +162,7 @@ for recurring tasks. update_status changes the task definition; this records tod
 
 ONLY call this when the user EXPLICITLY asks to write in their journal (e.g. "escribe en mi diario", "anota esto en el journal").
 NEVER write journal entries autonomously — not as summaries, reports, nightly closes, or action logs.
+If the user explicitly asks you to write a summary or reflection in their journal, that IS a valid use.
 If you need to record actions you took, respond in text. The journal is NOT a log.`,
       inputSchema: {
         content: z
@@ -400,7 +401,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = { modified_by: "jarvis" };
+      const updates: Record<string, unknown> = {};
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -439,6 +440,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
         };
       }
 
+      updates.modified_by = "jarvis";
       const result = await supabase
         .from("tasks")
         .update(updates)
@@ -482,7 +484,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = { modified_by: "jarvis" };
+      const updates: Record<string, unknown> = {};
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -506,6 +508,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
         };
       }
 
+      updates.modified_by = "jarvis";
       const result = await supabase
         .from("objectives")
         .update(updates)
@@ -548,7 +551,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = { modified_by: "jarvis" };
+      const updates: Record<string, unknown> = {};
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -571,6 +574,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
         };
       }
 
+      updates.modified_by = "jarvis";
       const result = await supabase
         .from("goals")
         .update(updates)
@@ -609,7 +613,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
       const supabase = getSupabase();
       const uid = getUserId();
 
-      const updates: Record<string, unknown> = { modified_by: "jarvis" };
+      const updates: Record<string, unknown> = {};
 
       if (args.title !== undefined) updates.title = args.title;
       if (args.description !== undefined)
@@ -630,6 +634,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
         };
       }
 
+      updates.modified_by = "jarvis";
       const result = await supabase
         .from("visions")
         .update(updates)

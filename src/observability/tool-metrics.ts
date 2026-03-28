@@ -33,7 +33,7 @@ class ToolMetrics {
     const arr = this.entries.get(name)!;
     arr.push({ timestamp: Date.now(), latencyMs, success });
     if (arr.length > WINDOW_SIZE) {
-      arr.shift();
+      arr.splice(0, arr.length - WINDOW_SIZE);
     }
   }
 

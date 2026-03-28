@@ -1,60 +1,64 @@
 /**
- * COMMIT event processing metrics — count by table, latency, suggestion stats.
+ * COMMIT event webhook response metrics — count by table, response latency.
  *
- * In-memory counters reset on restart. Exposed via /health.
+ * Rolling window (last 200 entries). Resets on restart.
+ * NOTE: Latency measures webhook response time only (parsing + DB insert +
+ * handler setup), NOT the async reaction processing time (fire-and-forget).
  */
 
-interface TableMetrics {
-  count: number;
-  totalLatencyMs: number;
-  lastEventAt: string | null;
+interface EventEntry {
+  table: string;
+  latencyMs: number;
+  timestamp: number;
 }
 
+const WINDOW_SIZE = 200;
+
 class EventMetrics {
-  private readonly tables = new Map<string, TableMetrics>();
-  private totalProcessed = 0;
+  private readonly entries: EventEntry[] = [];
 
-  /** Record a COMMIT event received and its processing time. */
+  /** Record a COMMIT event webhook response. */
   record(table: string, latencyMs: number): void {
-    this.totalProcessed++;
-
-    if (!this.tables.has(table)) {
-      this.tables.set(table, {
-        count: 0,
-        totalLatencyMs: 0,
-        lastEventAt: null,
-      });
+    this.entries.push({ table, latencyMs, timestamp: Date.now() });
+    if (this.entries.length > WINDOW_SIZE) {
+      this.entries.splice(0, this.entries.length - WINDOW_SIZE);
     }
-    const m = this.tables.get(table)!;
-    m.count++;
-    m.totalLatencyMs += latencyMs;
-    m.lastEventAt = new Date().toISOString();
   }
 
   /** Get summary for health endpoint. */
   getSummary(): {
     totalProcessed: number;
-    avgLatencyMs: number;
+    avgWebhookLatencyMs: number;
     byTable: Record<string, { count: number; avgLatencyMs: number }>;
   } {
-    const byTable: Record<string, { count: number; avgLatencyMs: number }> = {};
+    const byTable: Record<string, { count: number; totalLatencyMs: number }> =
+      {};
     let totalLatency = 0;
 
-    for (const [table, m] of this.tables) {
-      byTable[table] = {
+    for (const e of this.entries) {
+      if (!byTable[e.table]) {
+        byTable[e.table] = { count: 0, totalLatencyMs: 0 };
+      }
+      byTable[e.table].count++;
+      byTable[e.table].totalLatencyMs += e.latencyMs;
+      totalLatency += e.latencyMs;
+    }
+
+    const result: Record<string, { count: number; avgLatencyMs: number }> = {};
+    for (const [table, m] of Object.entries(byTable)) {
+      result[table] = {
         count: m.count,
         avgLatencyMs: m.count > 0 ? Math.round(m.totalLatencyMs / m.count) : 0,
       };
-      totalLatency += m.totalLatencyMs;
     }
 
     return {
-      totalProcessed: this.totalProcessed,
-      avgLatencyMs:
-        this.totalProcessed > 0
-          ? Math.round(totalLatency / this.totalProcessed)
+      totalProcessed: this.entries.length,
+      avgWebhookLatencyMs:
+        this.entries.length > 0
+          ? Math.round(totalLatency / this.entries.length)
           : 0,
-      byTable,
+      byTable: result,
     };
   }
 }
