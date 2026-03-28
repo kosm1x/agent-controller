@@ -6,10 +6,28 @@
  * Runs asynchronously (fire-and-forget from the webhook handler).
  */
 
+import { z } from "zod";
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { getMemoryService } from "../memory/index.js";
+
+const JournalAnalysisSchema = z.object({
+  emotions: z
+    .array(
+      z.object({
+        name: z.string(),
+        intensity: z.number().min(0).max(100),
+        color: z.string(),
+      }),
+    )
+    .min(1),
+  patterns: z.array(z.string()),
+  coping_strategies: z.array(z.string()),
+  primary_emotion: z.string(),
+  goal_connections: z.array(z.string()).optional().default([]),
+  suggested_action: z.string().nullable().optional().default(null),
+});
 
 /**
  * Perform deep analysis on a journal entry.
@@ -107,23 +125,28 @@ Respond in the same language as the journal entry.`;
     });
 
     const text = response.content ?? "";
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const jsonStr = extractJSON(text);
+    if (!jsonStr) {
       console.warn(
         `[journal-analysis] Failed to extract JSON for ${journalId}`,
       );
       return;
     }
 
-    const analysis = JSON.parse(jsonMatch[0]);
+    const raw = JSON.parse(jsonStr);
+    const parsed = JournalAnalysisSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn(
+        `[journal-analysis] Invalid schema for ${journalId}:`,
+        parsed.error.message,
+      );
+      return;
+    }
+
+    const analysis = parsed.data;
 
     // Write analysis to COMMIT's ai_analysis table
-    if (
-      analysis.emotions &&
-      analysis.patterns &&
-      analysis.coping_strategies &&
-      analysis.primary_emotion
-    ) {
+    {
       try {
         await toolRegistry.execute("commit__upsert_ai_analysis", {
           journal_entry_id: journalId,
@@ -190,4 +213,53 @@ Respond in the same language as the journal entry.`;
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+/** Extract JSON from LLM response using brace-depth counting. */
+function extractJSON(text: string): string | null {
+  const cleaned = text.replace(/```(?:json|javascript)?\s*\n?/g, "").trim();
+
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch {
+    // continue
+  }
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const open = cleaned[i];
+    if (open !== "{" && open !== "[") continue;
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (c === open) depth++;
+      if (c === close) depth--;
+      if (depth === 0) {
+        const candidate = cleaned.slice(i, j + 1);
+        try {
+          JSON.parse(candidate);
+          return candidate;
+        } catch {
+          break;
+        }
+      }
+    }
+  }
+  return null;
 }

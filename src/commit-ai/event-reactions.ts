@@ -30,6 +30,8 @@ export async function onTaskCreated(
   try {
     await toolRegistry.execute("commit__create_suggestion", {
       type: "link_task",
+      target_table: "tasks",
+      target_id: rowId,
       title: `Tarea huérfana: "${title}"`,
       suggestion: { task_id: rowId, task_title: title },
       reasoning: `La tarea "${title}" fue creada sin vincularla a ningún objetivo. Considera asignarla a un objetivo activo para mantener alineación con tus metas.`,
@@ -90,6 +92,8 @@ export async function onTaskCompleted(
     try {
       await toolRegistry.execute("commit__create_suggestion", {
         type: "complete_objective",
+        target_table: "objectives",
+        target_id: objectiveId,
         title: `Todas las tareas del objetivo completadas`,
         suggestion: { objective_id: objectiveId, new_status: "completed" },
         reasoning: `Las ${tasks.length} tarea(s) bajo este objetivo están completadas. ¿Marcar el objetivo como completado?`,
@@ -185,6 +189,8 @@ export async function onGoalCompleted(
     try {
       await toolRegistry.execute("commit__create_suggestion", {
         type: "archive_project",
+        target_table: "goals",
+        target_id: rowId,
         title: `Archivar proyecto "${project.name}" (meta completada)`,
         suggestion: {
           project_slug: project.slug,
@@ -250,6 +256,8 @@ export async function onObjectiveCompleted(
     try {
       await toolRegistry.execute("commit__create_suggestion", {
         type: "complete_goal",
+        target_table: "goals",
+        target_id: goalId,
         title: `Todos los objetivos completados — ¿completar la meta?`,
         suggestion: { goal_id: goalId, new_status: "completed" },
         reasoning: `Los ${objectives.length} objetivo(s) bajo esta meta están completados.`,
@@ -269,6 +277,8 @@ export async function onObjectiveCompleted(
     try {
       await toolRegistry.execute("commit__create_suggestion", {
         type: "focus_next_objective",
+        target_table: "goals",
+        target_id: goalId,
         title: `Siguiente objetivo: enfoca en los ${pendingObjectives.length} restantes`,
         suggestion: {
           goal_id: goalId,
