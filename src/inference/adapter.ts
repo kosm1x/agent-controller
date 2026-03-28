@@ -786,6 +786,14 @@ export async function inferWithTools(
   let consecutiveErrorRounds = 0;
   const MAX_CONSECUTIVE_REPEATS = 2;
 
+  // Track which tools have been called across rounds, so the analysis
+  // paralysis guard can distinguish "gathering data before acting" from
+  // "endlessly exploring without acting".
+  const calledToolNames = new Set<string>();
+  const availableNonReadOnly = new Set(
+    tools.map((t) => t.function.name).filter((n) => !READ_ONLY_TOOLS.has(n)),
+  );
+
   for (let round = 0; round < maxRounds; round++) {
     // Compress context if approaching limit
     const config = getConfig();
@@ -1024,6 +1032,11 @@ export async function inferWithTools(
     conversation.push(...toolResults);
 
     // Loop detection: break if the same tool calls repeat consecutively
+    // Track all tools called across rounds for the paralysis guard
+    for (const tc of response.tool_calls) {
+      calledToolNames.add(tc.function.name);
+    }
+
     const currentToolSig = response.tool_calls
       .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
       .sort()
@@ -1065,11 +1078,19 @@ export async function inferWithTools(
     // Analysis paralysis: all tool calls are read-only for N consecutive rounds.
     // Catches LLM endlessly exploring without acting (different tool sigs each round,
     // large results — so repeat detector and stale-loop breaker both miss it).
+    //
+    // Exception: if non-read-only tools are available but haven't been called yet,
+    // the LLM is still gathering data before acting — not stuck. Skip the counter.
     if (
       response.tool_calls.length > 0 &&
       allToolCallsReadOnly(response.tool_calls)
     ) {
-      consecutiveReadOnlyRounds++;
+      const hasUncalledActionTools =
+        availableNonReadOnly.size > 0 &&
+        [...availableNonReadOnly].some((t) => !calledToolNames.has(t));
+      if (!hasUncalledActionTools) {
+        consecutiveReadOnlyRounds++;
+      }
       if (consecutiveReadOnlyRounds >= 5) {
         console.warn(
           `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
