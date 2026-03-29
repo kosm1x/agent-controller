@@ -36,6 +36,7 @@ import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { toolRegistry } from "../tools/registry.js";
 import { selectParent } from "./parent-selection.js";
 import { serializeSandbox, deserializeSandbox } from "./variant-store.js";
+import { getDatabase } from "../db/index.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -375,14 +376,19 @@ export async function runOvernightTuning(
       }
     }
 
-    // Run targeted evaluation
+    // Run targeted evaluation with per-experiment timeout (30 min)
+    const EXPERIMENT_TIMEOUT_MS = 30 * 60 * 1000;
     let targeted: EvalResult;
     try {
-      targeted = await runEvaluation(
-        sandbox,
-        { caseIds: affectedCaseIds },
-        cfg.evalInferFn,
-      );
+      targeted = await Promise.race([
+        runEvaluation(sandbox, { caseIds: affectedCaseIds }, cfg.evalInferFn),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Experiment timeout (30min)")),
+            EXPERIMENT_TIMEOUT_MS,
+          ),
+        ),
+      ]);
     } catch (err) {
       console.error(`[tuning] Evaluation error: ${err}`);
       const expId = `${runId}-exp-${i}`;
@@ -456,21 +462,30 @@ export async function runOvernightTuning(
     });
   }
 
-  // --- Step 2b: Persist winning variant to archive ---
+  // --- Step 2b: Persist winning variant to archive (transaction-safe) ---
   if (experimentsWon > 0) {
     const variantId = `var-${runId}`;
-    insertVariant({
-      variant_id: variantId,
-      parent_id: parentId,
-      run_id: runId,
-      generation,
-      config_json: serializeSandbox(bestSandbox),
-      composite_score: bestScore,
-      subscores_json: null,
-      valid: true,
-      activated_at: null,
-      created_at: new Date().toISOString(),
-    });
+    const db = getDatabase();
+    db.transaction(() => {
+      insertVariant({
+        variant_id: variantId,
+        parent_id: parentId,
+        run_id: runId,
+        generation,
+        config_json: serializeSandbox(bestSandbox),
+        composite_score: bestScore,
+        subscores_json: null,
+        valid: true,
+        activated_at: null,
+        created_at: new Date().toISOString(),
+      });
+      updateRun(runId, {
+        best_score: bestScore,
+        experiments_run: experimentsRun,
+        experiments_won: experimentsWon,
+        total_cost_usd: cost.getTotalCost(),
+      });
+    })();
     console.log(
       `[tuning] Persisted variant ${variantId} (gen ${generation}, score ${bestScore.toFixed(1)})`,
     );

@@ -37,16 +37,13 @@ STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
 
-const MAX_ROUNDS_DEFAULT = 20;
-const MAX_ROUNDS_CODING = 22;
-
-/**
- * Per-round prompt token ceiling — wraps up before next round would exceed
- * the DashScope ~30K token ceiling. Checked against each round's prompt_tokens
- * (not cumulative), since prompt_tokens includes the full conversation each time.
- */
-const TOKEN_BUDGET_FAST = 28_000;
-const TOKEN_BUDGET_CODING = 30_000;
+import {
+  MAX_ROUNDS_DEFAULT,
+  MAX_ROUNDS_CODING,
+  TOKEN_BUDGET_FAST,
+  TOKEN_BUDGET_CODING,
+  HALLUCINATION_RETRY_HEADROOM,
+} from "../config/constants.js";
 
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
@@ -469,7 +466,7 @@ export const fastRunner: Runner = {
         )
       ) {
         const lastPromptTokens = result.totalUsage.prompt_tokens;
-        const hasHeadroom = lastPromptTokens < tokenBudget * 0.85;
+        const hasHeadroom = lastPromptTokens < tokenBudget * HALLUCINATION_RETRY_HEADROOM;
 
         if (hasHeadroom) {
           // Budget has room — retry with correction instead of giving up.

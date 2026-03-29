@@ -546,11 +546,17 @@ export async function infer(
  * Loops: send messages → LLM returns tool_calls → execute tools → append results → repeat.
  * Stops when LLM returns a text response with no tool calls, or maxRounds is hit.
  */
-/** Max chars per tool result in conversation — prevents prompt bloat from web_read/web_search. */
-const MAX_TOOL_RESULT_CHARS = 12_000;
+// Constants imported from centralized config
+import {
+  MAX_TOOL_RESULT_CHARS,
+  WRAPUP_TOOL_RESULT_CHARS as _WRAPUP_CHARS,
+  MAX_CONSECUTIVE_REPEATS,
+  STALE_LOOP_THRESHOLD,
+  ANALYSIS_PARALYSIS_THRESHOLD,
+  PERSISTENT_FAILURE_THRESHOLD,
+} from "../config/constants.js";
 
-/** Max chars per tool result in wrap-up context — more aggressive to fit in timeout. */
-const WRAPUP_TOOL_RESULT_CHARS = 1_500;
+const WRAPUP_TOOL_RESULT_CHARS = _WRAPUP_CHARS;
 
 // ---------------------------------------------------------------------------
 // Loop guard constants
@@ -784,7 +790,6 @@ export async function inferWithTools(
   let consecutiveSmallResults = 0;
   let consecutiveReadOnlyRounds = 0;
   let consecutiveErrorRounds = 0;
-  const MAX_CONSECUTIVE_REPEATS = 2;
 
   // Track which tools have been called across rounds, so the analysis
   // paralysis guard can distinguish "gathering data before acting" from
@@ -1076,7 +1081,7 @@ export async function inferWithTools(
     );
     if (allResultsSmall && response.tool_calls.length === 1) {
       consecutiveSmallResults += 1;
-      if (consecutiveSmallResults >= 5) {
+      if (consecutiveSmallResults >= STALE_LOOP_THRESHOLD) {
         console.warn(
           `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive rounds with small/error tool results. Breaking.`,
         );
@@ -1103,7 +1108,7 @@ export async function inferWithTools(
       if (!hasUncalledActionTools) {
         consecutiveReadOnlyRounds++;
       }
-      if (consecutiveReadOnlyRounds >= 5) {
+      if (consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD) {
         console.warn(
           `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
         );
@@ -1120,7 +1125,7 @@ export async function inferWithTools(
     // Advisory only — don't break, let the LLM pivot.
     if (toolResults.length > 0 && allResultsAreErrors(toolResults)) {
       consecutiveErrorRounds++;
-      if (consecutiveErrorRounds >= 4) {
+      if (consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD) {
         console.warn(
           `[inference] Persistent failure: ${consecutiveErrorRounds} consecutive all-error rounds. Injecting advisory.`,
         );

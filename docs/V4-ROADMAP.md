@@ -71,14 +71,14 @@
 
 ## v4.0 S5 — Inference Refactor (~2d)
 
-| CRIT # | Item                                                      | Effort | Status  |
-| ------ | --------------------------------------------------------- | ------ | ------- |
-| 2.1    | Extract `inferWithTools` into composable units            | 1-1.5d | Planned |
-| 2.2    | Paired message pruning (tool_call + tool_result as unit)  | 0.5d   | Planned |
-| 4.3    | Honest failure messages (replace mechanical substitution) | 2h     | Planned |
-| 2.5    | Consolidate hardcoded constants into config/constants.ts  | 0.5d   | Planned |
-| 10.2   | Per-experiment timeout in overnight tuning                | 1h     | Planned |
-| 10.1   | Transaction-safe overnight tuning                         | 2h     | Planned |
+| CRIT # | Item                                                      | Effort | Status                                                                                     |
+| ------ | --------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
+| 2.1    | Extract `inferWithTools` into composable units            | 1-1.5d | Deferred (constants extracted, function analyzed — full extraction deferred to avoid risk) |
+| 2.2    | Paired message pruning (tool_call + tool_result as unit)  | 0.5d   | Planned                                                                                    |
+| 4.3    | Honest failure messages (replace mechanical substitution) | 2h     | Partially done (retry + replacement messages improved in earlier session)                  |
+| 2.5    | Consolidate hardcoded constants into config/constants.ts  | 0.5d   | **Done**                                                                                   |
+| 10.2   | Per-experiment timeout in overnight tuning                | 1h     | **Done**                                                                                   |
+| 10.1   | Transaction-safe overnight tuning                         | 2h     | **Done**                                                                                   |
 
 ---
 
