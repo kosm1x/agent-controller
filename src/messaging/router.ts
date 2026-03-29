@@ -34,6 +34,8 @@ import {
   detectFeedbackSignal,
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
+import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
+import { TelegramStreamController } from "./channels/telegram-stream.js";
 import {
   isProactiveTask,
   handleProactiveResult,
@@ -396,6 +398,7 @@ interface PendingReply {
   imageUrl?: string; // preserved for thread continuity (vision follow-ups)
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
+  streamController?: TelegramStreamController;
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -754,12 +757,69 @@ export class MessageRouter {
       }
     }
 
-    // Immediate acknowledgment so the user knows the agent is listening
-    this.sendToChannel(
-      msg.channel,
-      msg.from,
-      "Recibido, trabajando en ello...",
-    );
+    // Fast-path: simple conversational messages → direct LLM, no tools, ~2s
+    if (!msg.imageUrl && isConversationalFastPath(msg.text)) {
+      try {
+        console.log(
+          `[router] Fast-path: "${msg.text.slice(0, 40)}" → direct LLM`,
+        );
+        const threadTurns = getThreadTurns(msg.channel);
+        const response = await fastPathRespond(msg.text, threadTurns);
+
+        this.sendToChannel(msg.channel, msg.from, response);
+
+        const cappedResponse =
+          response.length > THREAD_RESPONSE_CAP
+            ? response.slice(0, THREAD_RESPONSE_CAP) + "..."
+            : response;
+        pushToThread(
+          msg.channel,
+          `User: ${msg.text}\nJarvis: ${cappedResponse}`,
+        );
+
+        try {
+          const exchange = `User: ${msg.text}\nJarvis: ${response}`;
+          getMemoryService()
+            .retain(exchange, {
+              bank: "mc-jarvis",
+              tags: [msg.channel, "conversation", "fast-path"],
+              async: true,
+              trustTier: 2,
+              source: "router",
+            })
+            .catch(() => {});
+        } catch {
+          /* non-fatal */
+        }
+
+        return;
+      } catch (err) {
+        console.error("[router] Fast-path failed, falling through:", err);
+        // Fall through to full pipeline
+      }
+    }
+
+    // Streaming setup for Telegram — progressive message updates as LLM generates
+    let streamController: TelegramStreamController | null = null;
+    if (msg.channel === "telegram") {
+      const telegramAdapter = this.channels.get("telegram") as
+        | (ChannelAdapter & { getBot?(): import("grammy").Bot | null })
+        | undefined;
+      const bot = telegramAdapter?.getBot?.();
+      if (bot) {
+        streamController = new TelegramStreamController(bot, msg.from);
+        await streamController.sendPlaceholder("⏳").catch(() => {});
+      }
+    }
+
+    // Fallback ACK for non-Telegram or if streaming setup failed
+    if (!streamController) {
+      this.sendToChannel(
+        msg.channel,
+        msg.from,
+        "Recibido, trabajando en ello...",
+      );
+    }
 
     const titleText =
       msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
@@ -812,6 +872,9 @@ export class MessageRouter {
         msg.channel,
         ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
       ],
+      onTextChunk: streamController
+        ? (chunk: string) => streamController!.appendChunk(chunk)
+        : undefined,
     });
 
     // Track pending reply
@@ -838,6 +901,7 @@ export class MessageRouter {
       imageUrl: msg.imageUrl,
       interimTimer,
       finalTimer,
+      ...(streamController && { streamController }),
     });
 
     console.log(
@@ -959,7 +1023,15 @@ export class MessageRouter {
 
     const resultText = this.extractResultText(data.result);
     if (resultText) {
-      this.sendToChannel(pending.channel, pending.to, resultText);
+      // Finalize streaming message or send fresh
+      if (pending.streamController) {
+        pending.streamController.finalize(resultText).catch((err) => {
+          console.error("[router] Stream finalize failed:", err);
+          this.sendToChannel(pending.channel, pending.to, resultText);
+        });
+      } else {
+        this.sendToChannel(pending.channel, pending.to, resultText);
+      }
 
       // Push to in-memory conversation thread (chronological, instant)
       const cappedResult =

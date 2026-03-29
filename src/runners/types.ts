@@ -34,6 +34,8 @@ export interface RunnerInput {
   modelTier?: string;
   /** Prior conversation turns for thread continuity. */
   conversationHistory?: ConversationTurn[];
+  /** Streaming callback — receives text chunks as the LLM generates them. */
+  onTextChunk?: (text: string) => void;
 }
 
 /** Output returned by a runner after execution. */

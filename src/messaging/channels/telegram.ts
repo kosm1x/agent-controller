@@ -104,6 +104,11 @@ export class TelegramAdapter implements ChannelAdapter {
   private bot: Bot | null = null;
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
 
+  /** Expose bot instance for streaming controller. */
+  getBot(): Bot | null {
+    return this.bot;
+  }
+
   async start(): Promise<void> {
     if (!BOT_TOKEN) {
       throw new Error(

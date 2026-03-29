@@ -35,6 +35,8 @@ export interface TaskSubmission {
   conversationHistory?: import("../runners/types.js").ConversationTurn[];
   /** Tools that MUST appear in toolCalls for the task to be considered successful. */
   requiredTools?: string[];
+  /** Streaming callback — receives text chunks as the LLM generates them. */
+  onTextChunk?: (text: string) => void;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
 }
@@ -345,6 +347,7 @@ async function dispatchWithSlot(
     parentTaskId: submission.parentTaskId,
     modelTier: getModelTierFromTask(taskId),
     conversationHistory: submission.conversationHistory,
+    onTextChunk: submission.onTextChunk,
   };
 
   try {

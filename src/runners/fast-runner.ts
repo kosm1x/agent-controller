@@ -389,6 +389,7 @@ export const fastRunner: Runner = {
           maxRounds,
           providerName,
           tokenBudget,
+          onTextChunk: input.onTextChunk,
         },
       );
 

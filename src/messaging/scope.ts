@@ -107,6 +107,7 @@ export const MISC_TOOLS = [
   "list_schedules",
   "project_list",
   "project_get",
+  "project_update",
   "pdf_read",
   "browser__goto",
   "browser__markdown",
@@ -119,7 +120,6 @@ export const SPECIALTY_TOOLS = [
   "gemini_image",
   "hf_generate",
   "hf_spaces",
-  "project_update",
 ];
 
 /** Lightpanda interactive browser tools — only when web interaction needed.
@@ -143,7 +143,7 @@ export const BROWSER_TOOLS = [
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|COMMIT|diario|journal|briefing|resumen del d[ií]a)/i,
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|COMMIT|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?)/i,
     group: "commit_read",
   },
   {
