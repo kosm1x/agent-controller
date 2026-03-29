@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS task_outcomes (
 );
 CREATE INDEX IF NOT EXISTS idx_outcomes_runner ON task_outcomes(ran_on);
 CREATE INDEX IF NOT EXISTS idx_outcomes_created ON task_outcomes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outcomes_task_id ON task_outcomes(task_id);
+CREATE INDEX IF NOT EXISTS idx_outcomes_runner_success ON task_outcomes(ran_on, success);
 
 -- Saved skills (reusable multi-step procedures)
 CREATE TABLE IF NOT EXISTS skills (
@@ -127,6 +129,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_bank ON conversations(bank);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC);
 
 -- User facts — structured personal facts that persist across sessions
 CREATE TABLE IF NOT EXISTS user_facts (

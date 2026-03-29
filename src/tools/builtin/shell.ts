@@ -75,6 +75,24 @@ export function validateShellCommand(command: string): {
   allowed: boolean;
   reason?: string;
 } {
+  // Block command substitution — can hide any command inside otherwise-safe ones
+  if (/\$\(/.test(command)) {
+    return { allowed: false, reason: "command substitution $(...) is blocked" };
+  }
+  if (/`/.test(command)) {
+    return { allowed: false, reason: "backtick substitution is blocked" };
+  }
+  if (
+    /\$\{[^}]*\b(cat|rm|curl|wget|nc|python|node|bash|sh|eval|exec)\b/.test(
+      command,
+    )
+  ) {
+    return {
+      allowed: false,
+      reason: "variable expansion with dangerous command",
+    };
+  }
+
   // Split on shell separators to check each segment
   const segments = command.split(/\s*(?:\||\|\||&&|;)\s*/);
 

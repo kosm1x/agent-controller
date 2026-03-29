@@ -67,6 +67,17 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_cost_ledger_task ON cost_ledger(task_id)",
   );
 
+  // v4.0 S1: composite indexes for query performance
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_task_id ON task_outcomes(task_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_runner_success ON task_outcomes(ran_on, success)",
+  );
+
   // Self-tuning tables (v2.27)
   ensureTuningTables();
 

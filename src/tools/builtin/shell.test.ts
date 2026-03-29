@@ -148,4 +148,37 @@ describe("validateShellCommand", () => {
       expect(result.allowed).toBe(false);
     });
   });
+
+  describe("command substitution bypass", () => {
+    it("should block $(...) substitution", () => {
+      const result = validateShellCommand("ls $(rm -rf /)");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("$(...) is blocked");
+    });
+
+    it("should block backtick substitution", () => {
+      const result = validateShellCommand("echo `cat /etc/passwd`");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("backtick");
+    });
+
+    it("should block nested $() in find -exec", () => {
+      const result = validateShellCommand(
+        "find . -name '*.ts' -exec $(killall node) \\;",
+      );
+      expect(result.allowed).toBe(false);
+    });
+
+    it("should block dangerous commands in ${} expansion", () => {
+      const result = validateShellCommand("echo ${rm -rf /tmp}");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("dangerous command");
+    });
+
+    it("should allow safe variable references", () => {
+      expect(validateShellCommand("echo $HOME").allowed).toBe(true);
+      expect(validateShellCommand("echo ${PATH}").allowed).toBe(true);
+      expect(validateShellCommand("ls $PWD/src").allowed).toBe(true);
+    });
+  });
 });
