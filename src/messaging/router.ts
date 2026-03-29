@@ -580,7 +580,8 @@ const POISONED_RESPONSE_PATTERNS = [
   /el sistema encontr[oó] un error/i,
   /herramientas? no est[aá](?:n)? respondiendo/i,
   // Tool refusals (LLM claims it can't use available tools)
-  /no tengo (?:acceso|la herramienta|herramienta)/i,
+  /no tengo (?:acceso|(?:la|una|ninguna)\s+herramienta|herramienta)/i,
+  /no tengo.*(?:commit__|wp_|gmail_|gsheets_)/i,
   /no tengo.*wp_publish/i,
   /no pude completar la acci[oó]n/i,
   // Learned helplessness — LLM gives up or reports inability to continue
