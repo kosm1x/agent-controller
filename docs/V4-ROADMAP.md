@@ -38,11 +38,11 @@
 
 ## v4.0 S2 — Structured Output + Zod Validation (~1d)
 
-| CRIT # | Item                                                                     | Effort | Status  |
-| ------ | ------------------------------------------------------------------------ | ------ | ------- |
-| NEW    | Zod schema validation on tool call arguments before execution            | 0.5d   | Planned |
-| NEW    | Retry with error on validation failure (1 retry, then fail with details) | 0.5d   | Planned |
-| NEW    | Response validation for external API calls (HF, Google, WordPress)       | Incl.  | Planned |
+| CRIT # | Item                                                                     | Effort | Status                                   |
+| ------ | ------------------------------------------------------------------------ | ------ | ---------------------------------------- |
+| NEW    | Zod schema validation on tool call arguments before execution            | 0.5d   | **Done**                                 |
+| NEW    | Retry with error on validation failure (1 retry, then fail with details) | 0.5d   | **Done**                                 |
+| NEW    | Response validation for external API calls (HF, Google, WordPress)       | Incl.  | Deferred (tool-level, not adapter-level) |
 
 ---
 

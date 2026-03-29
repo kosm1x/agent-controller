@@ -1000,7 +1000,19 @@ export async function inferWithTools(
                 toolCall.function.name = closest;
               }
             }
-            result = await executor(toolName, args);
+            // Validate args against tool schema before execution
+            const validation = toolRegistry.validate(toolName, args);
+            if (!validation.success) {
+              console.warn(
+                `[inference] Tool ${toolName} args validation failed: ${validation.error}`,
+              );
+              result = JSON.stringify({
+                error: `Invalid arguments for ${toolName}: ${validation.error}`,
+                hint: "Fix the argument values and try again.",
+              });
+            } else {
+              result = await executor(toolName, args);
+            }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

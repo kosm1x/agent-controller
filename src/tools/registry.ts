@@ -2,10 +2,12 @@
  * Tool registry — manages available tools for runners.
  */
 
+import type { ZodType } from "zod";
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool } from "./types.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import { createLogger } from "../lib/logger.js";
+import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 
 const log = createLogger("tools");
 
@@ -30,10 +32,29 @@ function levenshtein(a: string, b: string): number {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
+  private readonly schemas = new Map<string, ZodType>();
 
-  /** Register a tool. Replaces if name already exists. */
+  /** Register a tool. Compiles its JSON Schema to Zod for validation. */
   register(tool: Tool): void {
     this.tools.set(tool.name, tool);
+    try {
+      const schema = jsonSchemaToZod(
+        tool.definition.function.parameters as Record<string, unknown>,
+      );
+      if (schema) this.schemas.set(tool.name, schema);
+    } catch {
+      // Schema conversion failed — tool will execute without validation
+    }
+  }
+
+  /** Validate args against a tool's compiled Zod schema. */
+  validate(
+    name: string,
+    args: Record<string, unknown>,
+  ): { success: true } | { success: false; error: string } {
+    const schema = this.schemas.get(name);
+    if (!schema) return { success: true }; // no schema = passthrough
+    return validateArgs(schema, args);
   }
 
   /** Get a tool by name. */
