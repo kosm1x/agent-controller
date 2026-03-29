@@ -111,6 +111,7 @@ Spawns a Docker container with the NanoClaw agent runtime. Full tool ecosystem (
 ### Heavy runner
 
 Runs the Prometheus Plan-Execute-Reflect loop in-process:
+
 1. **Plan** — decompose into goal graph (DAG with dependencies)
 2. **Execute** — work through goals with error recovery (retry, alternative, decompose, escalate)
 3. **Reflect** — evaluate results, extract learnings
@@ -126,6 +127,7 @@ Parent-child relationship tracked in the database. Cancelling a swarm cancels al
 ### A2A runner
 
 Delegates tasks to external A2A-compatible agents. The runner:
+
 1. Fetches the remote agent's card from `/.well-known/agent.json` (cached 5 min)
 2. Sends the task via `sendMessage` JSON-RPC
 3. Polls `getTask` with exponential backoff (1s → 15s, 10 min timeout)
@@ -148,6 +150,7 @@ MC also acts as an A2A server — external agents can discover MC and submit tas
 Vendor-agnostic — raw HTTP to any OpenAI-compatible `/v1/chat/completions` endpoint. Adapted from NanoClaw's production code.
 
 Configure via environment:
+
 ```
 INFERENCE_PRIMARY_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 INFERENCE_PRIMARY_KEY=sk-...
@@ -183,20 +186,20 @@ Set `MC_MCP_CONFIG` to point to a custom config path, or place `mcp-servers.json
 
 All endpoints require `X-Api-Key` header except health check.
 
-| Method | Path | What it does |
-|--------|------|-------------|
-| `POST` | `/api/tasks` | Submit a task |
-| `GET` | `/api/tasks` | List tasks (filter by status, type, parent) |
-| `GET` | `/api/tasks/:id` | Task detail with runs and sub-tasks |
-| `POST` | `/api/tasks/:id/cancel` | Cancel (cascades to sub-tasks) |
-| `POST` | `/api/agents/register` | Agent self-registration |
-| `POST` | `/api/agents/heartbeat` | Agent heartbeat |
-| `GET` | `/api/agents` | List agents |
-| `GET` | `/api/events/stream` | SSE real-time event stream |
-| `GET` | `/health` | Health check (no auth) |
-| `GET` | `/dashboard/` | Web dashboard (no auth, JS handles API key) |
-| `GET` | `/.well-known/agent.json` | A2A agent card (no auth) |
-| `POST` | `/a2a` | A2A JSON-RPC endpoint |
+| Method | Path                      | What it does                                |
+| ------ | ------------------------- | ------------------------------------------- |
+| `POST` | `/api/tasks`              | Submit a task                               |
+| `GET`  | `/api/tasks`              | List tasks (filter by status, type, parent) |
+| `GET`  | `/api/tasks/:id`          | Task detail with runs and sub-tasks         |
+| `POST` | `/api/tasks/:id/cancel`   | Cancel (cascades to sub-tasks)              |
+| `POST` | `/api/agents/register`    | Agent self-registration                     |
+| `POST` | `/api/agents/heartbeat`   | Agent heartbeat                             |
+| `GET`  | `/api/agents`             | List agents                                 |
+| `GET`  | `/api/events/stream`      | SSE real-time event stream                  |
+| `GET`  | `/health`                 | Health check (no auth)                      |
+| `GET`  | `/dashboard/`             | Web dashboard (no auth, JS handles API key) |
+| `GET`  | `/.well-known/agent.json` | A2A agent card (no auth)                    |
+| `POST` | `/a2a`                    | A2A JSON-RPC endpoint                       |
 
 ### Examples
 
@@ -344,42 +347,58 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ### Environment variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MC_API_KEY` | Yes | — | API key for authentication |
-| `MC_PORT` | No | `8080` | Server port |
-| `MC_DB_PATH` | No | `./data/mc.db` | SQLite database path |
-| `INFERENCE_PRIMARY_URL` | Yes | — | LLM provider base URL |
-| `INFERENCE_PRIMARY_KEY` | Yes | — | LLM provider API key |
-| `INFERENCE_PRIMARY_MODEL` | Yes | — | Model name |
-| `INFERENCE_FALLBACK_URL` | No | — | Fallback provider URL |
-| `INFERENCE_FALLBACK_KEY` | No | — | Fallback provider key |
-| `INFERENCE_FALLBACK_MODEL` | No | — | Fallback model name |
-| `INFERENCE_TIMEOUT_MS` | No | `30000` | LLM call timeout |
-| `INFERENCE_MAX_TOKENS` | No | `4096` | Max tokens per response |
-| `NANOCLAW_IMAGE` | No | `nanoclaw-agent:latest` | NanoClaw container image |
-| `MAX_CONCURRENT_CONTAINERS` | No | `5` | Max simultaneous containers |
-| `MC_MCP_CONFIG` | No | `./mcp-servers.json` | Path to MCP servers config |
-| `A2A_AGENT_NAME` | No | `Mission Control` | A2A agent card display name |
-| `A2A_AGENT_URL` | No | `http://localhost:{port}` | A2A agent card base URL |
+| Variable                    | Required | Default                   | Description                 |
+| --------------------------- | -------- | ------------------------- | --------------------------- |
+| `MC_API_KEY`                | Yes      | —                         | API key for authentication  |
+| `MC_PORT`                   | No       | `8080`                    | Server port                 |
+| `MC_DB_PATH`                | No       | `./data/mc.db`            | SQLite database path        |
+| `INFERENCE_PRIMARY_URL`     | Yes      | —                         | LLM provider base URL       |
+| `INFERENCE_PRIMARY_KEY`     | Yes      | —                         | LLM provider API key        |
+| `INFERENCE_PRIMARY_MODEL`   | Yes      | —                         | Model name                  |
+| `INFERENCE_FALLBACK_URL`    | No       | —                         | Fallback provider URL       |
+| `INFERENCE_FALLBACK_KEY`    | No       | —                         | Fallback provider key       |
+| `INFERENCE_FALLBACK_MODEL`  | No       | —                         | Fallback model name         |
+| `INFERENCE_TIMEOUT_MS`      | No       | `30000`                   | LLM call timeout            |
+| `INFERENCE_MAX_TOKENS`      | No       | `4096`                    | Max tokens per response     |
+| `NANOCLAW_IMAGE`            | No       | `nanoclaw-agent:latest`   | NanoClaw container image    |
+| `MAX_CONCURRENT_CONTAINERS` | No       | `5`                       | Max simultaneous containers |
+| `MC_MCP_CONFIG`             | No       | `./mcp-servers.json`      | Path to MCP servers config  |
+| `A2A_AGENT_NAME`            | No       | `Mission Control`         | A2A agent card display name |
+| `A2A_AGENT_URL`             | No       | `http://localhost:{port}` | A2A agent card base URL     |
 
 ---
 
 ## Current status
 
-**v1 complete. v2 in progress.** 51 source files, 130 tests passing, zero type errors.
+**v1–v3 complete. v4 in progress.** ~165 source files, 691 tests passing, zero type errors, 111 tools.
 
-| Phase | Status | What |
-|-------|--------|------|
-| v1: Foundation | Done | Hono server, SQLite/WAL, X-Api-Key auth, persistent event bus, adapter plugin system |
-| v1: Core API + Dispatch | Done | 5-way heuristic classifier, task dispatcher with container queue, task/agent REST routes |
-| v1: Inference + Fast Runner | Done | Vendor-agnostic LLM adapter (primary+fallback), tool registry, built-in tools, fast runner |
-| v1: Prometheus Core | Done | Goal graph DAG, planner, executor, reflector, orchestrator, heavy runner |
-| v1: NanoClaw + Swarm | Done | Docker container runner with sentinel protocol, swarm fan-out with depth guard (max 3) |
-| v1: SSE + Docker + Polish | Done | SSE stream with replay/filtering, Dockerfile, docker-compose, Makefile, vitest config |
-| v2: MCP Integration | Done | MCP client, external tool servers, namespaced tools, graceful degradation |
-| v2: A2A Protocol | Done | Agent discovery, JSON-RPC server/client, bidirectional interop, streaming, a2a-runner |
-| v2: Frontend Dashboard | Done | Real-time web UI — tasks, agents, events, goal graphs, SSE updates |
+| Phase       | Status  | What                                                                                                                                                                     |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1          | Done    | Foundation — Hono server, SQLite, 5-way classifier, dispatcher, fast/nanoclaw/heavy/swarm/a2a runners, Prometheus core, MCP integration, A2A protocol, web dashboard     |
+| v2.1–v2.13  | Done    | Tool plugin system, browser (Lightpanda), web search/read, local PDF, Google Workspace (14 tools), COMMIT bridge (22 MCP tools), Hindsight memory, adaptive intelligence |
+| v2.14–v2.22 | Done    | Production guards, coding toolkit, WordPress (10 tools), hallucination detector, dynamic tool scoping, Telegram vision, sandboxed shell                                  |
+| v2.23–v2.26 | Done    | COMMIT + Jarvis unification, project entity, strategic autonomy, HyperAgents, self-tuning overnight loop                                                                 |
+| v2.27–v2.30 | Done    | Self-tuning eval harness, 7-layer hallucination defense, 3 new tools (pdf_read, hf_generate, hf_spaces), fast-path (~2s), Telegram streaming, scope isolation            |
+| v3.0        | Done    | Production hardening — systemd, Pino logging, 3-layer guardrails, model benchmark, provider rotation                                                                     |
+| v4.0 S1–S3  | Done    | DB indexes, shell security, backups, healthcheck alerting, Zod validation, FTS5 + embedding hybrid recall                                                                |
+| v4.0 S4–S9  | Planned | Observability, inference refactor, integration tests, prompt decomposition, scope calibration, task-type routing                                                         |
+
+### Jarvis — the user-facing persona
+
+Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the agent controller:
+
+- **111 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
+- **8 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log)
+- **Dynamic tool scoping** — 14-50 tools per message based on conversation keywords
+- **7-layer hallucination defense** with retry and honest failure messages
+- **Streaming responses** — progressive Telegram message updates
+- **Fast-path** — conversational messages skip full pipeline (~2s vs 15s)
+- **Hybrid memory** — FTS5 full-text + embedding semantic search + trust-tier decay
+- **Media generation** — images, speech, video, music via HuggingFace Spaces (free with Pro)
+- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks
+- **WordPress multi-site** — content management with destruction safeguards
+- **COMMIT integration** — personal growth hierarchy (Goals → Objectives → Tasks)
+- **Zod schema validation** — validates all tool call arguments before execution
 
 ---
 
