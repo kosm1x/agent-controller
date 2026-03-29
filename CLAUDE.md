@@ -20,7 +20,7 @@ Always run `typecheck` + `test` after changes before reporting completion.
 ## Invariants
 
 - **Vendor-agnostic inference**: Raw fetch to OpenAI-compatible endpoints. Zero vendor SDKs in `src/inference/`. No `openai`, `anthropic`, etc.
-- **8 core + 2 messaging deps**: hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod + @whiskeysockets/baileys, grammy (messaging, optional at runtime). Do not add deps without discussion.
+- **9 core + 2 messaging deps**: hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client + @whiskeysockets/baileys, grammy (messaging, optional at runtime). Do not add deps without discussion.
 - **Schema changes require DB reset**: SQLite CHECK constraints can't be altered in-place. After changing `src/db/schema.sql`, users must `rm ./data/mc.db`.
 - **Singleton discipline**: `getDatabase()`, `toolRegistry`, `eventBus`, `config` — use the existing singletons. Never instantiate duplicates.
 - **Provider quirks in adapter only**: Model-specific guards (e.g. `enable_thinking: false` for Qwen) live in `src/inference/adapter.ts`, nowhere else.

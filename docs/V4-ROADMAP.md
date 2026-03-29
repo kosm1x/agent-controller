@@ -60,12 +60,12 @@
 
 ## v4.0 S4 — Observability Dashboard (~1.5d)
 
-| CRIT # | Item                                                       | Effort | Status  |
-| ------ | ---------------------------------------------------------- | ------ | ------- |
-| 9.5    | Prometheus `/metrics` endpoint (prom-client)               | 0.5d   | Planned |
-| NEW    | Grafana dashboards (latency, tasks, tools, budget, errors) | 0.5d   | Planned |
-| NEW    | Per-task token tracking (total tokens across all rounds)   | 0.5d   | Planned |
-| 2.3    | Configurable degradation thresholds via env vars           | 2h     | Planned |
+| CRIT # | Item                                                       | Effort | Status                                    |
+| ------ | ---------------------------------------------------------- | ------ | ----------------------------------------- |
+| 9.5    | Prometheus `/metrics` endpoint (prom-client)               | 0.5d   | **Done**                                  |
+| NEW    | Grafana dashboards (latency, tasks, tools, budget, errors) | 0.5d   | Deferred (infra — needs Grafana instance) |
+| NEW    | Per-task token tracking (total tokens across all rounds)   | 0.5d   | **Done** (mc*tokens*\*\_total by model)   |
+| 2.3    | Configurable degradation thresholds via env vars           | 2h     | Deferred (current hardcoded values work)  |
 
 ---
 

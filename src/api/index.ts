@@ -14,12 +14,20 @@ import { commitEvents } from "./routes/commit-events.js";
 import { commitAI } from "./routes/commit-ai.js";
 import { buildAgentCard } from "../a2a/agent-card.js";
 import { a2a } from "../a2a/server.js";
+import {
+  getMetricsText,
+  metricsContentType,
+} from "../observability/prometheus.js";
 
 export function createApp(): Hono {
   const app = new Hono();
 
-  // Health check — no auth
+  // Health check + metrics — no auth
   app.route("/", health);
+  app.get("/metrics", async (c) => {
+    const text = await getMetricsText();
+    return c.text(text, 200, { "Content-Type": metricsContentType });
+  });
 
   // A2A Agent Card — no auth (per A2A spec)
   app.get("/.well-known/agent.json", (c) => c.json(buildAgentCard()));
