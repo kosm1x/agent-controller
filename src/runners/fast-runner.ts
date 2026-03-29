@@ -172,6 +172,7 @@ const WRITE_CLAIM_PATTERNS = [
 export function detectsHallucinatedExecution(
   text: string,
   toolsCalled: string[],
+  userMessage?: string,
 ): boolean {
   const claimsWrite = WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
 
@@ -218,14 +219,15 @@ export function detectsHallucinatedExecution(
   // --- Layer 2: Partial hallucination (generic — all write tools) ---
   // LLM called SOME tools (e.g. gsheets_read, wp_list_posts) but narrated write
   // actions (gsheets_write, wp_publish, gmail_send) without calling them.
-  // EXCEPTION: if ALL tools called are read-only, the LLM is DESCRIBING observed
-  // state from tool results (e.g., "filas actualizadas" after gsheets_read).
-  // This is reporting, not hallucination.
-  // Only fire on FIRST-PERSON write claims ("escribí", "actualicé", "I wrote").
-  // Passive descriptions ("filas actualizadas", "was updated") are allowed — the
-  // LLM may be REPORTING observed state from read tool results, not hallucinating.
+  // EXCEPTION: if the user asked to verify/check/confirm, the LLM is REPORTING
+  // what it found using read tools — descriptive language about state is expected.
   const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
-  if (!calledAnyWriteTool && toolsCalled.length > 0) {
+  const isVerificationRequest = userMessage
+    ? /\b(verifica|verificar|confirma|confirmar|revisa|revisar|check|verify|confirm|comprueba|comprobar|existen|existe|están|registrad[oa]s?|ves|aparece|no las veo|no lo veo|puedes ver)\b/i.test(
+        userMessage,
+      )
+    : false;
+  if (!calledAnyWriteTool && toolsCalled.length > 0 && !isVerificationRequest) {
     const claimsAction =
       // First-person past tense (always hallucination)
       /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé)\s/i.test(
@@ -423,12 +425,21 @@ export const fastRunner: Runner = {
         }
       }
 
+      // Extract last user message for hallucination guard context
+      const lastUserMessage = input.conversationHistory
+        ?.filter((t) => t.role === "user")
+        .pop()?.content;
+
       // Hallucination guard: if the LLM narrated tool execution without calling
       // the right tools, retry once if budget has headroom, else replace.
       // Skip for vision tasks — image analysis is a legitimate zero-tool response.
       if (
         !hasVision &&
-        detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)
+        detectsHallucinatedExecution(
+          parsed.cleanContent,
+          toolsCalled,
+          lastUserMessage,
+        )
       ) {
         const lastPromptTokens = result.totalUsage.prompt_tokens;
         const hasHeadroom = lastPromptTokens < tokenBudget * 0.85;
@@ -505,7 +516,13 @@ export const fastRunner: Runner = {
         }
 
         // If no headroom or retry didn't call write tools — mechanical replacement
-        if (!detectsHallucinatedExecution(parsed.cleanContent, toolsCalled)) {
+        if (
+          !detectsHallucinatedExecution(
+            parsed.cleanContent,
+            toolsCalled,
+            lastUserMessage,
+          )
+        ) {
           // Retry fixed it — skip replacement
         } else {
           console.log(
