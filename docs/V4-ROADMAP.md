@@ -26,13 +26,13 @@
 
 ## v4.0 S1 — Operational Foundation (~3h)
 
-| CRIT # | Item                                                    | Effort | Status  |
-| ------ | ------------------------------------------------------- | ------ | ------- |
-| 3.4    | Missing DB indexes (conversations, task_outcomes)       | 15min  | Planned |
-| 7.1    | Shell command substitution bypass (`$(...)`, backticks) | 1h     | Planned |
-| 9.3    | Budget persistence to SQLite (survives restart)         | 1h     | Planned |
-| 9.4    | Database backup cron (7-day rotation)                   | 30min  | Planned |
-| 9.1    | External healthcheck → Telegram alert on failure        | 1h     | Planned |
+| CRIT # | Item                                                    | Effort | Status                  |
+| ------ | ------------------------------------------------------- | ------ | ----------------------- |
+| 3.4    | Missing DB indexes (conversations, task_outcomes)       | 15min  | **Done**                |
+| 7.1    | Shell command substitution bypass (`$(...)`, backticks) | 1h     | **Done**                |
+| 9.3    | Budget persistence to SQLite (survives restart)         | —      | **Done** (pre-existing) |
+| 9.4    | Database backup cron (7-day rotation)                   | 30min  | **Done**                |
+| 9.1    | External healthcheck → Telegram alert on failure        | 1h     | **Done**                |
 
 ---
 
