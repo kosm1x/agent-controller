@@ -291,6 +291,17 @@ export function detectActiveGroups(
   recentUserMessages: string[],
   patterns: ScopePattern[],
 ): Set<string> {
+  // Two-phase isolation: same logic as scopeToolsForMessage.
+  // Only inherit from prior messages if current has scope signals.
+  const currentGroups = new Set<string>();
+  for (const { pattern, group } of patterns) {
+    if (pattern.test(currentMessage)) {
+      currentGroups.add(group);
+    }
+  }
+
+  if (currentGroups.size === 0) return currentGroups;
+
   const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
   const active = new Set<string>();
   for (const { pattern, group } of patterns) {

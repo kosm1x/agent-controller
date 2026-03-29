@@ -1063,7 +1063,7 @@ export async function inferWithTools(
       (r) => typeof r.content === "string" && r.content.length < 300,
     );
     if (allResultsSmall && response.tool_calls.length === 1) {
-      consecutiveSmallResults = (consecutiveSmallResults ?? 0) + 1;
+      consecutiveSmallResults += 1;
       if (consecutiveSmallResults >= 5) {
         console.warn(
           `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive rounds with small/error tool results. Breaking.`,
@@ -1140,17 +1140,17 @@ export async function inferWithTools(
   );
   try {
     // Collect tools actually called so the LLM knows what it did vs didn't do
-    const calledToolNames = new Set<string>();
+    const wrapUpToolNames = new Set<string>();
     for (const msg of conversation) {
       if (msg.role === "assistant" && msg.tool_calls) {
         for (const tc of msg.tool_calls) {
-          calledToolNames.add(tc.function.name);
+          wrapUpToolNames.add(tc.function.name);
         }
       }
     }
     const toolInventory =
-      calledToolNames.size > 0
-        ? [...calledToolNames].join(", ")
+      wrapUpToolNames.size > 0
+        ? [...wrapUpToolNames].join(", ")
         : "NINGUNA — no llamaste ninguna herramienta";
 
     const leanContext = buildWrapUpContext(
