@@ -47,6 +47,7 @@ export const COMMIT_WRITE_TOOLS = [
   "commit__update_goal",
   "commit__update_vision",
   "commit__bulk_reprioritize",
+  "commit__create_suggestion",
 ];
 
 /** COMMIT journal — only when user explicitly asks to write a journal entry. */

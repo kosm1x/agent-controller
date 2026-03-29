@@ -15,6 +15,7 @@ const {
   countStructuralElements,
   recordRead,
   wasReadRecently,
+  getOriginalContentHash,
   recentReads,
 } = _testing;
 
@@ -106,6 +107,54 @@ describe("read-before-write tracking", () => {
     expect(wasReadRecently("testsite", 2)).toBe(true);
     expect(wasReadRecently("other", 3)).toBe(true);
     expect(wasReadRecently("other", 1)).toBe(false);
+  });
+});
+
+describe("Guard 0: edit-verification via content hash", () => {
+  beforeEach(() => {
+    recentReads.clear();
+  });
+
+  it("returns null when no read was recorded", () => {
+    expect(getOriginalContentHash("testsite", 42)).toBeNull();
+  });
+
+  it("returns a hash after recordRead", () => {
+    recordRead("testsite", 42, "<p>hello world</p>");
+    const hash = getOriginalContentHash("testsite", 42);
+    expect(hash).toBeTypeOf("number");
+    expect(hash).not.toBe(0);
+  });
+
+  it("returns same hash for identical content", () => {
+    const content = "<p>hello world</p>";
+    recordRead("testsite", 1, content);
+    recordRead("other", 2, content);
+    expect(getOriginalContentHash("testsite", 1)).toBe(
+      getOriginalContentHash("other", 2),
+    );
+  });
+
+  it("returns different hash for different content", () => {
+    recordRead("testsite", 1, "<p>hello</p>");
+    recordRead("testsite", 2, "<p>world</p>");
+    expect(getOriginalContentHash("testsite", 1)).not.toBe(
+      getOriginalContentHash("testsite", 2),
+    );
+  });
+
+  it("detects equal-length edits (same length, different content)", () => {
+    recordRead("testsite", 42, "<p>aaaa</p>");
+    const originalHash = getOriginalContentHash("testsite", 42);
+    // Same length but different chars — hash must differ
+    const editedContent = "<p>bbbb</p>";
+    expect(editedContent.length).toBe("<p>aaaa</p>".length);
+    // Simulate hashing the edited content
+    let hash = 5381;
+    for (let i = 0; i < editedContent.length; i++) {
+      hash = ((hash << 5) + hash + editedContent.charCodeAt(i)) | 0;
+    }
+    expect(hash).not.toBe(originalHash);
   });
 });
 
