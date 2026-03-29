@@ -7,7 +7,16 @@
 
 const int = (key: string, fallback: number): number => {
   const v = process.env[key];
-  return v ? parseInt(v, 10) : fallback;
+  if (!v) return fallback;
+  const parsed = parseInt(v, 10);
+  return Number.isNaN(parsed) ? fallback : Math.max(parsed, 0);
+};
+
+const float = (key: string, fallback: number): number => {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const parsed = parseFloat(v);
+  return Number.isNaN(parsed) ? fallback : parsed;
 };
 
 // --- Tool result handling ---
@@ -44,4 +53,14 @@ export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 22);
 
 // --- Hallucination guard ---
 /** Token budget headroom threshold for retry (0-1). */
-export const HALLUCINATION_RETRY_HEADROOM = 0.85;
+export const HALLUCINATION_RETRY_HEADROOM = float(
+  "HALLUCINATION_RETRY_HEADROOM",
+  0.85,
+);
+
+// --- Overnight tuning ---
+/** Per-experiment timeout in milliseconds (default 30 min). */
+export const EXPERIMENT_TIMEOUT_MS = int(
+  "EXPERIMENT_TIMEOUT_MS",
+  30 * 60 * 1000,
+);

@@ -37,6 +37,7 @@ import { toolRegistry } from "../tools/registry.js";
 import { selectParent } from "./parent-selection.js";
 import { serializeSandbox, deserializeSandbox } from "./variant-store.js";
 import { getDatabase } from "../db/index.js";
+import { EXPERIMENT_TIMEOUT_MS } from "../config/constants.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -376,19 +377,26 @@ export async function runOvernightTuning(
       }
     }
 
-    // Run targeted evaluation with per-experiment timeout (30 min)
-    const EXPERIMENT_TIMEOUT_MS = 30 * 60 * 1000;
+    // Run targeted evaluation with per-experiment timeout
     let targeted: EvalResult;
     try {
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
       targeted = await Promise.race([
         runEvaluation(sandbox, { caseIds: affectedCaseIds }, cfg.evalInferFn),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Experiment timeout (30min)")),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Experiment timeout (${EXPERIMENT_TIMEOUT_MS / 60_000}min)`,
+                ),
+              ),
             EXPERIMENT_TIMEOUT_MS,
-          ),
-        ),
+          );
+        }),
       ]);
+      // Clear timer on success (prevent dangling timers)
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     } catch (err) {
       console.error(`[tuning] Evaluation error: ${err}`);
       const expId = `${runId}-exp-${i}`;

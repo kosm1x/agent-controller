@@ -549,14 +549,12 @@ export async function infer(
 // Constants imported from centralized config
 import {
   MAX_TOOL_RESULT_CHARS,
-  WRAPUP_TOOL_RESULT_CHARS as _WRAPUP_CHARS,
+  WRAPUP_TOOL_RESULT_CHARS,
   MAX_CONSECUTIVE_REPEATS,
   STALE_LOOP_THRESHOLD,
   ANALYSIS_PARALYSIS_THRESHOLD,
   PERSISTENT_FAILURE_THRESHOLD,
 } from "../config/constants.js";
-
-const WRAPUP_TOOL_RESULT_CHARS = _WRAPUP_CHARS;
 
 // ---------------------------------------------------------------------------
 // Loop guard constants
