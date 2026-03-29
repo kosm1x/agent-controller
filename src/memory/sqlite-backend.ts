@@ -9,6 +9,12 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import {
+  embed,
+  cosineSimilarity,
+  serializeEmbedding,
+  deserializeEmbedding,
+} from "./embeddings.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -130,9 +136,27 @@ export class SqliteMemoryBackend implements MemoryService {
       const tags = JSON.stringify(options.tags ?? []);
       const trustTier = options.trustTier ?? 3;
       const source = options.source ?? "agent";
-      db.prepare(
-        "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
-      ).run(options.bank, tags, content, trustTier, source);
+      const result = db
+        .prepare(
+          "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(options.bank, tags, content, trustTier, source);
+
+      // Async embed + store (fire-and-forget, non-blocking)
+      const rowId = result.lastInsertRowid as number;
+      embed(content)
+        .then((vec) => {
+          if (vec) {
+            try {
+              db.prepare(
+                "INSERT OR REPLACE INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)",
+              ).run(rowId, serializeEmbedding(vec));
+            } catch {
+              /* non-fatal */
+            }
+          }
+        })
+        .catch(() => {});
     } catch {
       // DB may not be initialized in tests — best-effort
     }
@@ -143,122 +167,225 @@ export class SqliteMemoryBackend implements MemoryService {
       const db = getDatabase();
       const limit = options.maxResults ?? 10;
       const now = Date.now();
-
-      // Extract keywords from query for relevance matching
-      const keywords = extractKeywords(query);
-      const hasKeywords = keywords.length > 0;
+      const fetchLimit = limit * 3;
 
       // Build tag filter clause
       let tagClause = "";
       const tagParams: string[] = [];
       if (options.tags && options.tags.length > 0) {
         const placeholders = options.tags.map(() => "?").join(",");
-        tagClause = `AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value IN (${placeholders}))`;
+        tagClause = `AND EXISTS (SELECT 1 FROM json_each(c.tags) je WHERE je.value IN (${placeholders}))`;
         tagParams.push(...options.tags);
       }
 
-      // Helper: compute decay-weighted score for ranking
-      const rankWithDecay = (
-        rows: Array<{
-          content: string;
-          created_at: string;
-          trust_tier: number;
-          keyword_score?: number;
-        }>,
-      ): MemoryItem[] => {
-        const scored = rows.map((r) => {
-          const ageDays =
-            (now - new Date(r.created_at + "Z").getTime()) / 86_400_000;
-          const tier = (
-            [1, 2, 3, 4].includes(r.trust_tier) ? r.trust_tier : 3
-          ) as TrustTier;
-          const decayWeight = computeDecayWeight(tier, Math.max(0, ageDays));
-          const keywordBoost = r.keyword_score ?? 0;
-          return {
-            content: r.content,
-            createdAt: r.created_at,
-            trustTier: tier,
-            _score: keywordBoost + decayWeight,
-          };
-        });
-        scored.sort((a, b) => b._score - a._score);
-        return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+      // Helper: compute decay-weighted final score
+      const applyDecay = (
+        row: { content: string; created_at: string; trust_tier: number },
+        rawScore: number,
+      ): {
+        content: string;
+        createdAt: string;
+        trustTier: TrustTier;
+        _score: number;
+      } => {
+        const ageDays =
+          (now - new Date(row.created_at + "Z").getTime()) / 86_400_000;
+        const tier = (
+          [1, 2, 3, 4].includes(row.trust_tier) ? row.trust_tier : 3
+        ) as TrustTier;
+        const decayWeight = computeDecayWeight(tier, Math.max(0, ageDays));
+        return {
+          content: row.content,
+          createdAt: row.created_at,
+          trustTier: tier,
+          _score: rawScore + decayWeight,
+        };
       };
 
-      if (hasKeywords) {
-        // Keyword-matched recall with decay weighting.
-        // Fetch more candidates than needed, then re-rank with decay.
-        const fetchLimit = limit * 3;
-        const likeConditions = keywords
-          .map(() => "content LIKE ?")
-          .join(" OR ");
-        const likeParams = keywords.map((k) => `%${k}%`);
-
-        const matchSql = `
-          SELECT content, created_at, trust_tier,
-            (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS keyword_score
-          FROM conversations
-          WHERE bank = ? ${tagClause}
-            AND (${likeConditions})
-          ORDER BY keyword_score DESC, created_at DESC
-          LIMIT ?
-        `;
-        const matchParams = [
-          ...likeParams, // for score calculation
-          options.bank,
-          ...tagParams,
-          ...likeParams, // for WHERE filter
-          fetchLimit,
-        ];
-        const matched = db.prepare(matchSql).all(...matchParams) as Array<{
-          content: string;
-          created_at: string;
-          trust_tier: number;
-          keyword_score: number;
-        }>;
-
-        if (matched.length > 0) {
-          // Fill with recent rows if needed
-          const matchedContents = new Set(matched.map((r) => r.content));
-          const recentSql = `
-            SELECT content, created_at, trust_tier FROM conversations
-            WHERE bank = ? ${tagClause}
-            ORDER BY created_at DESC
-            LIMIT ?
-          `;
-          const recentRows = db
-            .prepare(recentSql)
-            .all(options.bank, ...tagParams, fetchLimit) as Array<{
-            content: string;
-            created_at: string;
-            trust_tier: number;
-          }>;
-          const filler = recentRows.filter(
-            (r) => !matchedContents.has(r.content),
-          );
-          const combined = [
-            ...matched,
-            ...filler.map((r) => ({ ...r, keyword_score: 0 })),
-          ];
-          return rankWithDecay(combined);
-        }
-      }
-
-      // No keywords or no matches — recency + decay scoring
-      const sql = `
-        SELECT content, created_at, trust_tier FROM conversations
-        WHERE bank = ? ${tagClause}
-        ORDER BY created_at DESC
-        LIMIT ?
-      `;
-      const rows = db
-        .prepare(sql)
-        .all(options.bank, ...tagParams, limit * 3) as Array<{
+      // --- Layer 1: FTS5 full-text search (BM25 ranking) ---
+      type ScoredRow = {
         content: string;
         created_at: string;
         trust_tier: number;
-      }>;
-      return rankWithDecay(rows);
+        score: number;
+      };
+      const ftsResults: ScoredRow[] = [];
+      try {
+        const ftsQuery = extractKeywords(query).join(" OR ");
+        if (ftsQuery) {
+          const ftsRows = db
+            .prepare(
+              `SELECT c.content, c.created_at, c.trust_tier, f.rank AS score
+               FROM conversations_fts f
+               JOIN conversations c ON c.id = f.rowid
+               WHERE conversations_fts MATCH ?
+                 AND c.bank = ? ${tagClause}
+               ORDER BY f.rank
+               LIMIT ?`,
+            )
+            .all(
+              ftsQuery,
+              options.bank,
+              ...tagParams,
+              fetchLimit,
+            ) as ScoredRow[];
+          ftsResults.push(...ftsRows);
+        }
+      } catch {
+        // FTS5 table may not exist yet — fall through to LIKE
+      }
+
+      // --- Layer 2: Embedding semantic search (cosine similarity) ---
+      const embeddingResults: ScoredRow[] = [];
+      try {
+        const queryVec = await embed(query);
+        if (queryVec) {
+          // Load recent embeddings from DB (last 500 in bank)
+          const rows = db
+            .prepare(
+              `SELECT c.id, c.content, c.created_at, c.trust_tier, e.embedding
+               FROM conversation_embeddings e
+               JOIN conversations c ON c.id = e.conversation_id
+               WHERE c.bank = ? ${tagClause}
+               ORDER BY c.created_at DESC
+               LIMIT 500`,
+            )
+            .all(options.bank, ...tagParams) as Array<{
+            id: number;
+            content: string;
+            created_at: string;
+            trust_tier: number;
+            embedding: Buffer;
+          }>;
+
+          for (const row of rows) {
+            const vec = deserializeEmbedding(row.embedding);
+            const sim = cosineSimilarity(queryVec, vec);
+            if (sim > 0.3) {
+              // Only include above threshold
+              embeddingResults.push({
+                content: row.content,
+                created_at: row.created_at,
+                trust_tier: row.trust_tier,
+                score: sim,
+              });
+            }
+          }
+          embeddingResults.sort((a, b) => b.score - a.score);
+          embeddingResults.splice(fetchLimit); // cap
+        }
+      } catch {
+        // Embedding search failed — continue with FTS5 only
+      }
+
+      // --- Layer 3: Fallback — LIKE keyword search (original logic) ---
+      if (ftsResults.length === 0 && embeddingResults.length === 0) {
+        const keywords = extractKeywords(query);
+        if (keywords.length > 0) {
+          const likeConditions = keywords
+            .map(() => "content LIKE ?")
+            .join(" OR ");
+          const likeParams = keywords.map((k) => `%${k}%`);
+          const matchSql = `
+            SELECT content, created_at, trust_tier,
+              (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS score
+            FROM conversations
+            WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
+              AND (${likeConditions})
+            ORDER BY score DESC, created_at DESC
+            LIMIT ?
+          `;
+          const matchParams = [
+            ...likeParams,
+            options.bank,
+            ...tagParams,
+            ...likeParams,
+            fetchLimit,
+          ];
+          const matched = db
+            .prepare(matchSql)
+            .all(...matchParams) as ScoredRow[];
+          if (matched.length > 0) {
+            const scored = matched.map((r) => applyDecay(r, r.score));
+            scored.sort((a, b) => b._score - a._score);
+            return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+          }
+        }
+
+        // No matches at all — return recent
+        const sql = `
+          SELECT content, created_at, trust_tier FROM conversations
+          WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
+          ORDER BY created_at DESC
+          LIMIT ?
+        `;
+        const rows = db
+          .prepare(sql)
+          .all(options.bank, ...tagParams, limit) as Array<{
+          content: string;
+          created_at: string;
+          trust_tier: number;
+        }>;
+        return rows.map((r) => ({
+          content: r.content,
+          createdAt: r.created_at,
+          trustTier: ([1, 2, 3, 4].includes(r.trust_tier)
+            ? r.trust_tier
+            : 3) as TrustTier,
+        }));
+      }
+
+      // --- Merge FTS5 + embedding results ---
+      const FTS_WEIGHT = 0.5;
+      const EMBED_WEIGHT = 0.5;
+
+      // Normalize scores to [0, 1]
+      const normalize = (results: ScoredRow[]): Map<string, number> => {
+        if (results.length === 0) return new Map();
+        const scores = results.map((r) => Math.abs(r.score));
+        const max = Math.max(...scores, 0.001);
+        const map = new Map<string, number>();
+        for (const r of results) {
+          map.set(r.content, Math.abs(r.score) / max);
+        }
+        return map;
+      };
+
+      const ftsScores = normalize(ftsResults);
+      const embedScores = normalize(embeddingResults);
+
+      // Merge all unique results
+      const allResults = new Map<
+        string,
+        {
+          content: string;
+          created_at: string;
+          trust_tier: number;
+          mergedScore: number;
+        }
+      >();
+
+      for (const r of [...ftsResults, ...embeddingResults]) {
+        if (allResults.has(r.content)) continue;
+        const fts = ftsScores.get(r.content) ?? 0;
+        const emb = embedScores.get(r.content) ?? 0;
+        allResults.set(r.content, {
+          ...r,
+          mergedScore: FTS_WEIGHT * fts + EMBED_WEIGHT * emb,
+        });
+      }
+
+      // Apply decay and sort
+      const scored = [...allResults.values()].map((r) =>
+        applyDecay(r, r.mergedScore),
+      );
+      scored.sort((a, b) => b._score - a._score);
+
+      console.log(
+        `[memory] Hybrid recall: FTS5=${ftsResults.length}, embed=${embeddingResults.length}, merged=${allResults.size}`,
+      );
+
+      return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
     } catch {
       return [];
     }

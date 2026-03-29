@@ -78,6 +78,36 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_outcomes_runner_success ON task_outcomes(ran_on, success)",
   );
 
+  // v4.0 S3: FTS5 full-text search + embedding vectors
+  _db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+      content, content='conversations', content_rowid='id'
+    )
+  `);
+  // Triggers for FTS5 sync
+  _db.exec(`
+    CREATE TRIGGER IF NOT EXISTS conversations_ai AFTER INSERT ON conversations BEGIN
+      INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
+    END
+  `);
+  _db.exec(`
+    CREATE TRIGGER IF NOT EXISTS conversations_ad AFTER DELETE ON conversations BEGIN
+      INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
+    END
+  `);
+  // Backfill FTS5 from existing conversations
+  _db.exec(`
+    INSERT OR IGNORE INTO conversations_fts(rowid, content)
+    SELECT id, content FROM conversations
+  `);
+  // Embedding vectors table
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_embeddings (
+      conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id),
+      embedding       BLOB NOT NULL
+    )
+  `);
+
   // Self-tuning tables (v2.27)
   ensureTuningTables();
 

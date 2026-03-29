@@ -414,6 +414,9 @@ interface ThreadEntry {
 }
 
 const conversationThreads = new Map<string, ThreadEntry[]>();
+const threadLastAccess = new Map<string, number>();
+const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+let threadAccessCount = 0;
 const hydratedChannels = new Set<string>();
 
 // ---------------------------------------------------------------------------
@@ -605,6 +608,20 @@ function isPoisonedExchange(jarvisResponse: string): boolean {
  */
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
+
+  // Track access + periodic TTL eviction (every 100 accesses)
+  threadLastAccess.set(channel, Date.now());
+  if (++threadAccessCount % 100 === 0) {
+    const now = Date.now();
+    for (const [ch, lastAccess] of threadLastAccess) {
+      if (now - lastAccess > THREAD_TTL_MS) {
+        conversationThreads.delete(ch);
+        threadLastAccess.delete(ch);
+        hydratedChannels.delete(ch);
+      }
+    }
+  }
+
   const thread = conversationThreads.get(channel);
   if (!thread || thread.length === 0) return [];
 

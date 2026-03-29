@@ -131,6 +131,27 @@ CREATE INDEX IF NOT EXISTS idx_conversations_bank ON conversations(bank);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC);
 
+-- FTS5 full-text search index (external content table — no data duplication)
+CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+  content,
+  content='conversations',
+  content_rowid='id'
+);
+
+-- Triggers to keep FTS5 in sync with conversations
+CREATE TRIGGER IF NOT EXISTS conversations_ai AFTER INSERT ON conversations BEGIN
+  INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS conversations_ad AFTER DELETE ON conversations BEGIN
+  INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
+END;
+
+-- Embedding vectors for semantic search (384-dim float32 as BLOB)
+CREATE TABLE IF NOT EXISTS conversation_embeddings (
+  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id),
+  embedding       BLOB NOT NULL
+);
+
 -- User facts — structured personal facts that persist across sessions
 CREATE TABLE IF NOT EXISTS user_facts (
   id         INTEGER PRIMARY KEY,

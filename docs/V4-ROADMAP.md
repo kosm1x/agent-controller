@@ -48,13 +48,13 @@
 
 ## v4.0 S3 — Long-Term Memory (~1.5d)
 
-| CRIT # | Item                                                    | Effort | Status  |
-| ------ | ------------------------------------------------------- | ------ | ------- |
-| 3.1    | SQLite FTS5 for conversation recall                     | 0.5d   | Planned |
-| NEW    | Local embedding storage + cosine similarity search      | 0.5d   | Planned |
-| NEW    | Hybrid recall: FTS5 keyword + embedding semantic        | 0.5d   | Planned |
-| 3.2    | Hindsight circuit breaker improvements (or replacement) | Incl.  | Planned |
-| 1.3    | Thread map TTL eviction                                 | 1h     | Planned |
+| CRIT # | Item                                                    | Effort | Status                                                   |
+| ------ | ------------------------------------------------------- | ------ | -------------------------------------------------------- |
+| 3.1    | SQLite FTS5 for conversation recall                     | 0.5d   | **Done**                                                 |
+| NEW    | Local embedding storage + cosine similarity search      | 0.5d   | **Done**                                                 |
+| NEW    | Hybrid recall: FTS5 keyword + embedding semantic        | 0.5d   | **Done**                                                 |
+| 3.2    | Hindsight circuit breaker improvements (or replacement) | Incl.  | Deferred (Hindsight stays as-is, SQLite recall upgraded) |
+| 1.3    | Thread map TTL eviction                                 | 1h     | **Done**                                                 |
 
 ---
 
