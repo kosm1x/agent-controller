@@ -94,11 +94,11 @@
 
 ## v4.0 S7 — Hallucination Prevention (~1.5d)
 
-| CRIT # | Item                                                   | Effort | Status  |
-| ------ | ------------------------------------------------------ | ------ | ------- |
-| 4.1    | Prompt decomposition into composable modules           | 1d     | Planned |
-| 4.2    | Execution-verification-first defense (invert approach) | 0.5d   | Planned |
-| 3.3    | Relevance-scored user facts (inject top-N, not all)    | Incl.  | Planned |
+| CRIT # | Item                                                   | Effort | Status                                                                                       |
+| ------ | ------------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------- |
+| 4.1    | Prompt decomposition into composable modules           | 1d     | **Done** (COMMIT section gated on hasCommit; prompt already scope-aligned from v2.21)        |
+| 4.2    | Execution-verification-first defense (invert approach) | 0.5d   | **Done** (success-aware toolsCalled + verification bypass — implemented across this session) |
+| 3.3    | Relevance-scored user facts (inject top-N, not all)    | Incl.  | **Done** (28K→2K chars always-inject; rest relevance-scored with 3K cap)                     |
 
 ---
 

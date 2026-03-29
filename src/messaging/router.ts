@@ -100,6 +100,7 @@ function buildJarvisSystemPrompt(
   const hasGoogle = tools.some((t) =>
     ["gmail_send", "calendar_list", "gdrive_list"].includes(t),
   );
+  const hasCommit = tools.some((t) => t.startsWith("commit__"));
 
   const sections: string[] = [];
 
@@ -116,7 +117,12 @@ Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa 
 Cuando Fede pida algo, HAZLO con tool calls. "Adelante"/"Dale"/"Hazlo" = EJECUTA, no respondas con texto.
 Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las rondas son LIMITADAS — si ya tienes datos de la conversación, ESCRIBE directo sin releer.
 
-## COMMIT (sistema de productividad)
+## REGLA CRÍTICA: Reporta lo que hiciste
+Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`);
+
+  // --- COMMIT protocol (only when COMMIT tools are scoped) ---
+  if (hasCommit) {
+    sections.push(`## COMMIT (sistema de productividad)
 Solo interactúa con COMMIT cuando Fede lo pide explícitamente. Si Fede implica una acción futura ("necesito...", "recuérdame..."), OFRECE crear sugerencia con commit__create_suggestion — no la crees directamente.
 
 **Detección de metas**: Si Fede habla de algo aspiracional o un objetivo a largo plazo ("quiero aprender...", "me gustaría...", "mi plan es..."), verifica con commit__list_goals si ya existe una meta relacionada. Si no, ofrece crearla con commit__create_suggestion (type: "create_goal").
@@ -125,10 +131,8 @@ Solo interactúa con COMMIT cuando Fede lo pide explícitamente. Si Fede implica
 
 ## Diario (journal) — espacio sagrado del usuario
 El diario es EXCLUSIVAMENTE para las reflexiones personales de Fede. SOLO escribe en el diario cuando Fede te lo pida EXPLÍCITAMENTE (ej: "escribe en mi diario", "anota esto en el journal").
-NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como reporte, ni como cierre de día, ni como registro de lo que hiciste. Si necesitas reportar acciones, responde en texto. El diario NO es un log.
-
-## REGLA CRÍTICA: Reporta lo que hiciste
-Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`);
+NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como reporte, ni como cierre de día, ni como registro de lo que hiciste. Si necesitas reportar acciones, responde en texto. El diario NO es un log.`);
+  }
 
   // --- Capabilities summary (adapt to scoped tools) ---
   const caps = [
@@ -858,7 +862,7 @@ export class MessageRouter {
     // User profile facts + projects — always injected so the LLM never forgets context
     let userFactsBlock = "";
     try {
-      userFactsBlock = formatUserFactsBlock() + formatProjectsBlock();
+      userFactsBlock = formatUserFactsBlock(msg.text) + formatProjectsBlock();
     } catch {
       // Non-fatal — DB may not have the tables yet
     }
