@@ -430,11 +430,14 @@ export const fastRunner: Runner = {
               typeof toolResultMsg?.content === "string"
                 ? toolResultMsg.content
                 : "";
-            // Check if the result is an error
+            // Check if the result is a tool-level error (not just any JSON
+            // containing the word "error" — that would match task lists with
+            // "error_handling" in titles or status fields).
             const isError =
-              resultContent.includes('"error"') ||
+              resultContent.startsWith('{"error"') ||
+              resultContent.startsWith('{"error":') ||
               resultContent.includes("Tool call truncated") ||
-              resultContent.includes("Invalid arguments");
+              resultContent.includes("Invalid arguments for");
             if (isError) {
               failedToolCalls.add(name);
             } else if (!toolsCalled.includes(name)) {
@@ -466,7 +469,8 @@ export const fastRunner: Runner = {
         )
       ) {
         const lastPromptTokens = result.totalUsage.prompt_tokens;
-        const hasHeadroom = lastPromptTokens < tokenBudget * HALLUCINATION_RETRY_HEADROOM;
+        const hasHeadroom =
+          lastPromptTokens < tokenBudget * HALLUCINATION_RETRY_HEADROOM;
 
         if (hasHeadroom) {
           // Budget has room — retry with correction instead of giving up.
@@ -523,9 +527,10 @@ export const fastRunner: Runner = {
                     ? rResultMsg.content
                     : "";
                 const rIsError =
-                  rContent.includes('"error"') ||
+                  rContent.startsWith('{"error"') ||
+                  rContent.startsWith('{"error":') ||
                   rContent.includes("Tool call truncated") ||
-                  rContent.includes("Invalid arguments");
+                  rContent.includes("Invalid arguments for");
                 if (!rIsError) {
                   retryToolsCalled.push(rname);
                 }
