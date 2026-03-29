@@ -61,10 +61,7 @@ const { infer, inferWithTools } = await import("../inference/adapter.js");
 beforeAll(async () => {
   mockServer = new MockLLMServer();
   await mockServer.start();
-  mockPort.value = parseInt(
-    mockServer.baseUrl.split(":").pop()?.replace("/v1", "") ?? "0",
-    10,
-  );
+  mockPort.value = mockServer.port;
 });
 
 afterAll(async () => {
@@ -407,8 +404,9 @@ describe("loop guards through mock LLM server", () => {
       { maxRounds: 10 },
     );
 
-    // MAX_CONSECUTIVE_REPEATS=2, so should break after 3rd identical call
-    expect(executor.mock.calls.length).toBeLessThanOrEqual(3);
+    // MAX_CONSECUTIVE_REPEATS=2: 1st call ok, 2nd repeat detected (count=1),
+    // 3rd repeat detected (count=2 >= threshold) → break. Exactly 3 calls.
+    expect(executor).toHaveBeenCalledTimes(3);
     expect(result.content).toBeTruthy();
   });
 });

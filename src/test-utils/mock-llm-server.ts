@@ -37,7 +37,7 @@ export class MockLLMServer {
   private server: Server | null = null;
   private responses: MockResponse[] = [];
   private requests: Array<{ body: unknown; timestamp: number }> = [];
-  private port = 0;
+  private _port = 0;
 
   /** Push a scripted response. Consumed FIFO. */
   push(...responses: MockResponse[]): void {
@@ -55,9 +55,14 @@ export class MockLLMServer {
     return this.requests;
   }
 
+  /** Get the port the server is listening on. */
+  get port(): number {
+    return this._port;
+  }
+
   /** Get the base URL (http://localhost:PORT/v1). */
   get baseUrl(): string {
-    return `http://localhost:${this.port}/v1`;
+    return `http://localhost:${this._port}/v1`;
   }
 
   /** Start the server on a random available port. */
@@ -82,7 +87,11 @@ export class MockLLMServer {
           const script = this.responses.shift();
           if (!script) {
             res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "No scripted responses left" }));
+            res.end(
+              JSON.stringify({
+                error: `MockLLMServer: unexpected request #${this.requests.length} — no scripted responses left`,
+              }),
+            );
             return;
           }
 
@@ -104,6 +113,8 @@ export class MockLLMServer {
           const response = {
             id: `mock-${Date.now()}`,
             object: "chat.completion",
+            created: Math.floor(Date.now() / 1000),
+            model: "mock-model",
             choices: [
               {
                 index: 0,
@@ -129,18 +140,19 @@ export class MockLLMServer {
         },
       );
 
-      this.server.listen(0, () => {
+      this.server.listen(0, "127.0.0.1", () => {
         const addr = this.server!.address();
-        this.port = typeof addr === "object" && addr ? addr.port : 0;
+        this._port = typeof addr === "object" && addr ? addr.port : 0;
         resolve();
       });
     });
   }
 
-  /** Stop the server. */
+  /** Stop the server — closes all connections to prevent test hangs. */
   async stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
+        this.server.closeAllConnections();
         this.server.close(() => resolve());
       } else {
         resolve();
