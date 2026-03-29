@@ -137,15 +137,20 @@
 
 ---
 
-## Metrics at v4.0 start
+## Metrics
 
-| Metric               | Value                                           |
-| -------------------- | ----------------------------------------------- |
-| Tools                | 111                                             |
-| Test files           | 62                                              |
-| Tests                | 666                                             |
-| Hallucination layers | 7                                               |
-| Inference providers  | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5) |
-| Rituals              | 8                                               |
-| Source files         | ~160                                            |
-| DB size              | ~30MB                                           |
+| Metric               | v4.0 start   | Current (S6 done)                               |
+| -------------------- | ------------ | ----------------------------------------------- |
+| Tools                | 111          | 111                                             |
+| Test files           | 62           | 65                                              |
+| Tests                | 666          | 699                                             |
+| Hallucination layers | 7            | 7 + success-aware + verification bypass         |
+| Inference providers  | 3            | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5) |
+| Rituals              | 8            | 8                                               |
+| Source files         | ~160         | ~170                                            |
+| DB size              | ~30MB        | ~39MB                                           |
+| Dependencies         | 8+2          | 9+2 (added prom-client)                         |
+| Memory               | LIKE search  | FTS5 + embeddings hybrid                        |
+| Tool validation      | None         | Zod schema on all tools                         |
+| Observability        | /health only | /health + /metrics (Prometheus)                 |
+| Integration tests    | 0            | 8 (mock LLM server)                             |
