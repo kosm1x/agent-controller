@@ -457,7 +457,7 @@ export const fastRunner: Runner = {
             role: "user",
             content: isReadHallucination
               ? "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados."
-              : "ALTO: Narraste la acción sin llamar herramientas. Llama a las herramientas de escritura AHORA.",
+              : `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Si necesitas actualizar datos, LLAMA a las herramientas de escritura correspondientes (commit__update_task, commit__update_status, gsheets_write, wp_publish, etc.). NO narres — EJECUTA.`,
           });
 
           const retryResult = await inferWithTools(
@@ -522,10 +522,10 @@ export const fastRunner: Runner = {
                 `**Herramientas que SÍ llamé**: ${toolList}\n` +
                 `**Necesito llamar**: wp_read_post o file_read para leer el artículo antes de verificar enlaces.\n\n` +
                 `Intenta de nuevo — esta vez leeré el contenido real.`
-              : `⚠️ No ejecuté la acción — narré en lugar de llamar herramientas.\n\n` +
+              : `⚠️ No completé la acción solicitada.\n\n` +
                 `**Herramientas que SÍ llamé**: ${toolList}\n` +
-                `**Herramientas necesarias**: las herramientas correspondientes a la acción solicitada.` +
-                `\n\nIntenta de nuevo con una solicitud más específica.`,
+                `**Lo que faltó**: Llamar herramientas de escritura para ejecutar los cambios (solo leí datos, no los modifiqué).\n\n` +
+                `Intenta con una instrucción más específica, por ejemplo: "actualiza el status de la tarea X a completada".`,
             status: "DONE_WITH_CONCERNS",
             concerns: [
               "Hallucination detected — response mechanically replaced with honest tool inventory",
