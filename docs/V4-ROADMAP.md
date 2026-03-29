@@ -84,11 +84,11 @@
 
 ## v4.0 S6 — Test Infrastructure (~2d)
 
-| CRIT # | Item                                        | Effort | Status  |
-| ------ | ------------------------------------------- | ------ | ------- |
-| 6.1    | Integration test suite with mock LLM server | 1.5d   | Planned |
-| 6.2    | Hallucination detection end-to-end tests    | 0.5d   | Planned |
-| 10.3   | Expand tuning seed data (49 → 200+)         | Incl.  | Planned |
+| CRIT # | Item                                        | Effort | Status                                                                                    |
+| ------ | ------------------------------------------- | ------ | ----------------------------------------------------------------------------------------- |
+| 6.1    | Integration test suite with mock LLM server | 1.5d   | **Done**                                                                                  |
+| 6.2    | Hallucination detection end-to-end tests    | 0.5d   | Deferred (needs fast-runner integration with mock server — separate from inference tests) |
+| 10.3   | Expand tuning seed data (49 → 200+)         | Incl.  | Deferred (seed expansion is gradual — scope_misses table needed first from S8)            |
 
 ---
 
