@@ -413,16 +413,43 @@ export const fastRunner: Runner = {
         };
       }
 
-      // Extract tool names actually called during execution
+      // Extract tool names that were SUCCESSFULLY called during execution.
+      // A tool is only counted as "called" if its result doesn't contain an error.
+      // This prevents the hallucination guard from being bypassed when a tool
+      // was invoked but failed (truncated args, validation error, API error).
       const toolsCalled: string[] = [];
-      for (const msg of result.messages) {
+      const failedToolCalls = new Set<string>();
+      for (let i = 0; i < result.messages.length; i++) {
+        const msg = result.messages[i];
         if (msg.role === "assistant" && msg.tool_calls) {
           for (const tc of msg.tool_calls) {
-            if (tc.function?.name && !toolsCalled.includes(tc.function.name)) {
-              toolsCalled.push(tc.function.name);
+            const name = tc.function?.name;
+            if (!name) continue;
+            // Find the corresponding tool result message
+            const toolResultMsg = result.messages
+              .slice(i + 1)
+              .find((m) => m.role === "tool" && m.tool_call_id === tc.id);
+            const resultContent =
+              typeof toolResultMsg?.content === "string"
+                ? toolResultMsg.content
+                : "";
+            // Check if the result is an error
+            const isError =
+              resultContent.includes('"error"') ||
+              resultContent.includes("Tool call truncated") ||
+              resultContent.includes("Invalid arguments");
+            if (isError) {
+              failedToolCalls.add(name);
+            } else if (!toolsCalled.includes(name)) {
+              toolsCalled.push(name);
             }
           }
         }
+      }
+      if (failedToolCalls.size > 0) {
+        console.log(
+          `[fast-runner] Failed tool calls (excluded from toolsCalled): [${[...failedToolCalls].join(", ")}]`,
+        );
       }
 
       // Extract last user message for hallucination guard context
@@ -483,16 +510,27 @@ export const fastRunner: Runner = {
           );
           const retryParsed = parseRunnerStatus(retryResult.content);
 
-          // Collect retry tools
+          // Collect retry tools (only successfully executed ones)
           const retryToolsCalled: string[] = [];
-          for (const msg of retryResult.messages) {
-            if (msg.role === "assistant" && msg.tool_calls) {
-              for (const tc of msg.tool_calls) {
-                if (
-                  tc.function?.name &&
-                  !retryToolsCalled.includes(tc.function.name)
-                ) {
-                  retryToolsCalled.push(tc.function.name);
+          for (let ri = 0; ri < retryResult.messages.length; ri++) {
+            const rmsg = retryResult.messages[ri];
+            if (rmsg.role === "assistant" && rmsg.tool_calls) {
+              for (const tc of rmsg.tool_calls) {
+                const rname = tc.function?.name;
+                if (!rname || retryToolsCalled.includes(rname)) continue;
+                const rResultMsg = retryResult.messages
+                  .slice(ri + 1)
+                  .find((m) => m.role === "tool" && m.tool_call_id === tc.id);
+                const rContent =
+                  typeof rResultMsg?.content === "string"
+                    ? rResultMsg.content
+                    : "";
+                const rIsError =
+                  rContent.includes('"error"') ||
+                  rContent.includes("Tool call truncated") ||
+                  rContent.includes("Invalid arguments");
+                if (!rIsError) {
+                  retryToolsCalled.push(rname);
                 }
               }
             }
