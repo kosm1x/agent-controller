@@ -149,7 +149,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?\s+(la\s+)?(tarea|meta|objetivo|status)|complet(?:a|ar|ada|ado)\b|completé|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|cambia(?:r)?\s+(?:el\s+)?(?:status|estado)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|termin[aé]|hecha|hecho\b|\bdone\b|m[aá]rcal[ao])/i,
+      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|title)|cambia(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|title)|renombra(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|complet(?:a|ar|ada|ado)\b|completé|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|termin[aé]|hecha|hecho\b|\bdone\b|m[aá]rcal[ao])/i,
     group: "commit_write",
   },
   {
