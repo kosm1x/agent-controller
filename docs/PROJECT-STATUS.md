@@ -13,8 +13,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Metric        | Value                                                                                                                                                                  |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source files  | ~165                                                                                                                                                                   |
-| Test files    | 64                                                                                                                                                                     |
-| Tests passing | 691                                                                                                                                                                    |
+| Test files    | 65                                                                                                                                                                     |
+| Tests passing | 699                                                                                                                                                                    |
 | Type errors   | 0                                                                                                                                                                      |
 | Total tools   | 111 (31 builtin + 10 WP + 51 MCP [22 COMMIT + 10 browser + 19 other] + 14 Google + 3 memory + 2 skill)                                                                 |
 | Dependencies  | 8 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod + @whiskeysockets/baileys, grammy) |
