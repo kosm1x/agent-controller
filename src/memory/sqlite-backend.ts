@@ -86,11 +86,14 @@ function extractKeywords(query: string): string[] {
     "fede",
   ]);
 
+  // FTS5 reserved operators must be excluded — they cause syntax errors in MATCH
+  const fts5Operators = new Set(["and", "or", "not", "near"]);
+
   return query
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !stopWords.has(w))
+    .filter((w) => w.length >= 3 && !stopWords.has(w) && !fts5Operators.has(w))
     .slice(0, 6); // Cap at 6 keywords to keep queries fast
 }
 

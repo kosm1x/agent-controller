@@ -145,6 +145,10 @@ END;
 CREATE TRIGGER IF NOT EXISTS conversations_ad AFTER DELETE ON conversations BEGIN
   INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
 END;
+CREATE TRIGGER IF NOT EXISTS conversations_au AFTER UPDATE ON conversations BEGIN
+  INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
+  INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
+END;
 
 -- Embedding vectors for semantic search (384-dim float32 as BLOB)
 CREATE TABLE IF NOT EXISTS conversation_embeddings (

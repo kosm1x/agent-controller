@@ -76,8 +76,16 @@ export function validateShellCommand(command: string): {
   reason?: string;
 } {
   // Block command substitution — can hide any command inside otherwise-safe ones
-  if (/\$\(/.test(command)) {
+  if (/\$\((?!\()/.test(command)) {
+    // $( but not $(( — allow arithmetic expansion $((expr))
     return { allowed: false, reason: "command substitution $(...) is blocked" };
+  }
+  // Block process substitution <() and >() — same class as $()
+  if (/[<>]\(/.test(command)) {
+    return {
+      allowed: false,
+      reason: "process substitution <() or >() is blocked",
+    };
   }
   if (/`/.test(command)) {
     return { allowed: false, reason: "backtick substitution is blocked" };

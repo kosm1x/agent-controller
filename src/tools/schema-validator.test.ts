@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("jsonSchemaToZod", () => {
   it("converts simple string + number properties", () => {
@@ -67,6 +71,33 @@ describe("jsonSchemaToZod", () => {
 
     expect(validateArgs(schema!, { append: "true" }).success).toBe(true);
     expect(validateArgs(schema!, { append: false }).success).toBe(true);
+    expect(validateArgs(schema!, { append: true }).success).toBe(true);
+    expect(validateArgs(schema!, { append: "0" }).success).toBe(true);
+    expect(validateArgs(schema!, { append: "1" }).success).toBe(true);
+  });
+
+  it("coerces string 'false' correctly (not truthy)", () => {
+    const schema = jsonSchemaToZod({
+      type: "object",
+      properties: {
+        append: { type: "boolean" },
+      },
+      required: ["append"],
+    });
+    expect(schema).not.toBeNull();
+
+    // The critical test: "false" as string must NOT become true
+    const result = schema!.safeParse({ append: "false" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).append).toBe(false);
+    }
+
+    const trueResult = schema!.safeParse({ append: "true" });
+    expect(trueResult.success).toBe(true);
+    if (trueResult.success) {
+      expect((trueResult.data as Record<string, unknown>).append).toBe(true);
+    }
   });
 
   it("validates arrays with typed items", () => {

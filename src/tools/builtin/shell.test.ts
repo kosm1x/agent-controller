@@ -180,5 +180,21 @@ describe("validateShellCommand", () => {
       expect(validateShellCommand("echo ${PATH}").allowed).toBe(true);
       expect(validateShellCommand("ls $PWD/src").allowed).toBe(true);
     });
+
+    it("should allow arithmetic expansion $((...))", () => {
+      expect(validateShellCommand("echo $((3*4))").allowed).toBe(true);
+      expect(validateShellCommand("echo $((1+2))").allowed).toBe(true);
+    });
+
+    it("should block process substitution <() and >()", () => {
+      const r1 = validateShellCommand(
+        "diff <(cat /etc/shadow) <(cat /etc/passwd)",
+      );
+      expect(r1.allowed).toBe(false);
+      expect(r1.reason).toContain("process substitution");
+
+      const r2 = validateShellCommand("cat <(rm -rf /)");
+      expect(r2.allowed).toBe(false);
+    });
   });
 });

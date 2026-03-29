@@ -1,4 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 import {
   cosineSimilarity,
   serializeEmbedding,

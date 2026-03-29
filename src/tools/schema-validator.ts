@@ -48,7 +48,14 @@ function propertyToZod(prop: JsonSchemaProperty): ZodType {
       return z.coerce.number().int();
 
     case "boolean":
-      return z.coerce.boolean();
+      // z.coerce.boolean() would coerce "false" → true (non-empty string is truthy).
+      // Custom transform handles string booleans correctly.
+      return z.union([
+        z.boolean(),
+        z
+          .enum(["true", "false", "0", "1"])
+          .transform((v) => v === "true" || v === "1"),
+      ]);
 
     case "array": {
       const itemSchema = prop.items ? propertyToZod(prop.items) : z.unknown();

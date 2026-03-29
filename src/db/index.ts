@@ -95,6 +95,12 @@ export function initDatabase(dbPath: string): Database.Database {
       INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
     END
   `);
+  _db.exec(`
+    CREATE TRIGGER IF NOT EXISTS conversations_au AFTER UPDATE ON conversations BEGIN
+      INSERT INTO conversations_fts(conversations_fts, rowid, content) VALUES('delete', old.id, old.content);
+      INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
+    END
+  `);
   // Backfill FTS5 from existing conversations
   _db.exec(`
     INSERT OR IGNORE INTO conversations_fts(rowid, content)
