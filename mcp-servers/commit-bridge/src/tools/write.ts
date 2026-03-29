@@ -376,7 +376,8 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
   server.registerTool(
     "update_task",
     {
-      description: "Update any field on a task (partial update)",
+      description:
+        "Update any field on a task — rename (title), change status, priority, due_date, description, notes, objective_id. Only include fields to change.",
       inputSchema: {
         id: z.string().describe("Task UUID"),
         title: z.string().optional(),
@@ -461,7 +462,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
     "update_objective",
     {
       description:
-        "Update any field on an objective (partial update). An objective is a milestone under a goal.",
+        "Update any field on an objective — rename (title), change status, priority, target_date, description, goal_id. An objective is a milestone under a goal. Only include fields to change.",
       inputSchema: {
         id: z.string().describe("Objective UUID"),
         title: z.string().optional(),
@@ -529,7 +530,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
     "update_goal",
     {
       description:
-        "Update any field on a goal (partial update). A goal is a measurable outcome under a vision.",
+        "Update any field on a goal — rename (title), change status, target_date, description, vision_id. A goal is a measurable outcome under a vision. Only include fields to change.",
       inputSchema: {
         id: z.string().describe("Goal UUID"),
         title: z.string().optional(),
@@ -595,7 +596,7 @@ ALWAYS link objectives to their parent goal when the user specifies one.`,
     "update_vision",
     {
       description:
-        "Update any field on a vision (partial update). A vision is a long-term life direction — the top of the COMMIT hierarchy.",
+        "Update any field on a vision — rename (title), change status, target_date, description. A vision is a long-term life direction — the top of the COMMIT hierarchy. Only include fields to change.",
       inputSchema: {
         id: z.string().describe("Vision UUID"),
         title: z.string().optional(),
