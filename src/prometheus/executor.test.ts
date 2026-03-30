@@ -86,8 +86,10 @@ describe("executeGoal", () => {
     expect(result.result).toBe("Goal achieved successfully");
     expect(result.goalId).toBe("g-1");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
-    expect(result.tokenUsage.promptTokens).toBe(100);
-    expect(result.tokenUsage.completionTokens).toBe(50);
+    // 100 from inferWithTools + 20 from selfAssess = 120
+    expect(result.tokenUsage.promptTokens).toBe(120);
+    // 50 from inferWithTools + 10 from selfAssess = 60
+    expect(result.tokenUsage.completionTokens).toBe(60);
   });
 
   it("should count tool calls and extract names from messages", async () => {
@@ -249,10 +251,11 @@ describe("executeGraph", () => {
 // ---------------------------------------------------------------------------
 
 describe("selfAssess", () => {
-  it("should return null for goals with no criteria", async () => {
+  it("should return null assessment for goals with no criteria", async () => {
     const goal = makeGoal({ completionCriteria: [] });
-    const result = await selfAssess(goal, "some output");
-    expect(result).toBeNull();
+    const { assessment, usage } = await selfAssess(goal, "some output");
+    expect(assessment).toBeNull();
+    expect(usage.promptTokens).toBe(0);
   });
 
   it("should return met=true when criteria satisfied", async () => {
@@ -268,10 +271,11 @@ describe("selfAssess", () => {
     });
 
     const goal = makeGoal({ completionCriteria: ["must return a number"] });
-    const result = await selfAssess(goal, "The answer is 42");
-    expect(result).not.toBeNull();
-    expect(result!.met).toBe(true);
-    expect(result!.unmetCriteria).toEqual([]);
+    const { assessment, usage } = await selfAssess(goal, "The answer is 42");
+    expect(assessment).not.toBeNull();
+    expect(assessment!.met).toBe(true);
+    expect(assessment!.unmetCriteria).toEqual([]);
+    expect(usage.promptTokens).toBe(20);
   });
 
   it("should return met=false with unmet criteria list", async () => {
@@ -289,17 +293,32 @@ describe("selfAssess", () => {
     const goal = makeGoal({
       completionCriteria: ["must return a number", "must include a chart"],
     });
-    const result = await selfAssess(goal, "The answer is 42");
-    expect(result!.met).toBe(false);
-    expect(result!.unmetCriteria).toEqual(["must include a chart"]);
+    const { assessment } = await selfAssess(goal, "The answer is 42");
+    expect(assessment!.met).toBe(false);
+    expect(assessment!.unmetCriteria).toEqual(["must include a chart"]);
   });
 
   it("should return met=true when infer throws (graceful fallback)", async () => {
     mockInfer.mockRejectedValueOnce(new Error("LLM unavailable"));
 
     const goal = makeGoal({ completionCriteria: ["some criterion"] });
-    const result = await selfAssess(goal, "output");
-    expect(result!.met).toBe(true); // Assumes met on failure
+    const { assessment } = await selfAssess(goal, "output");
+    expect(assessment!.met).toBe(true); // Assumes met on failure
+  });
+
+  it("should handle malformed LLM JSON with safe defaults", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({ met: false }), // missing unmetCriteria and reasoning
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+
+    const goal = makeGoal({ completionCriteria: ["criterion"] });
+    const { assessment } = await selfAssess(goal, "output");
+    expect(assessment!.met).toBe(false);
+    expect(assessment!.unmetCriteria).toEqual([]); // safe default
+    expect(assessment!.reasoning).toBe(""); // safe default
   });
 });
 
@@ -356,9 +375,10 @@ describe("executeGoal self-assessment integration", () => {
     expect(result.ok).toBe(true);
     expect(result.result).toBe("Complete result with chart included");
     expect(result.selfAssessRounds).toBe(1);
-    // Token usage should accumulate both runs
-    expect(result.tokenUsage.promptTokens).toBe(250); // 100 + 150
-    expect(result.tokenUsage.completionTokens).toBe(110); // 50 + 60
+    // Token usage: inferWithTools(100+150) + selfAssess(20+20) = 290 prompt
+    expect(result.tokenUsage.promptTokens).toBe(290);
+    // Token usage: inferWithTools(50+60) + selfAssess(10+10) = 130 completion
+    expect(result.tokenUsage.completionTokens).toBe(130);
     // inferWithTools called twice (initial + retry)
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
   });

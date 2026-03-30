@@ -13,6 +13,7 @@ const mockDb = {
 
 vi.mock("./index.js", () => ({
   getDatabase: () => mockDb,
+  writeWithRetry: <T>(fn: () => T): T => fn(),
 }));
 
 import {

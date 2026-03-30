@@ -77,15 +77,26 @@ interface SelfAssessment {
   reasoning: string;
 }
 
+interface SelfAssessResult {
+  assessment: SelfAssessment | null;
+  usage: { promptTokens: number; completionTokens: number };
+}
+
 /**
  * Lightweight LLM check: does the goal result satisfy its completion criteria?
- * Returns null if the goal has no criteria (skip assessment).
+ * Returns null assessment if the goal has no criteria (skip assessment).
+ * Always returns token usage for cost tracking.
  */
 export async function selfAssess(
   goal: Goal,
   resultText: string,
-): Promise<SelfAssessment | null> {
-  if (goal.completionCriteria.length === 0) return null;
+): Promise<SelfAssessResult> {
+  if (goal.completionCriteria.length === 0) {
+    return {
+      assessment: null,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    };
+  }
 
   const userContent =
     `## Goal\n${goal.description}\n\n` +
@@ -100,15 +111,29 @@ export async function selfAssess(
       ],
       temperature: 0.1,
     });
-    return parseLLMJson<SelfAssessment>(response.content ?? "");
+    const usage = {
+      promptTokens: response.usage.prompt_tokens,
+      completionTokens: response.usage.completion_tokens,
+    };
+    const raw = parseLLMJson<Partial<SelfAssessment>>(response.content ?? "");
+    // Shape guard: ensure required fields have safe defaults
+    const assessment: SelfAssessment = {
+      met: typeof raw.met === "boolean" ? raw.met : true,
+      unmetCriteria: Array.isArray(raw.unmetCriteria) ? raw.unmetCriteria : [],
+      reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
+    };
+    return { assessment, usage };
   } catch (err) {
     console.warn(
       `[executor] Self-assessment failed for ${goal.id}: ${err instanceof Error ? err.message : err}; assuming met`,
     );
     return {
-      met: true,
-      unmetCriteria: [],
-      reasoning: "Assessment failed — assuming met",
+      assessment: {
+        met: true,
+        unmetCriteria: [],
+        reasoning: "Assessment failed — assuming met",
+      },
+      usage: { promptTokens: 0, completionTokens: 0 },
     };
   }
 }
@@ -272,6 +297,9 @@ export async function executeGoal(
         result = await inferPromise;
       }
 
+      // Collect tool repairs from inference
+      const allRepairs = [...result.toolRepairs];
+
       // Extract tool call names and count from the conversation
       const tcNames: string[] = [];
       for (const m of result.messages) {
@@ -292,7 +320,12 @@ export async function executeGoal(
       let totalCompletion = result.totalUsage.completion_tokens;
 
       for (let round = 0; round < MAX_SELF_ASSESS; round++) {
-        const assessment = await selfAssess(goal, finalContent);
+        const { assessment, usage: assessUsage } = await selfAssess(
+          goal,
+          finalContent,
+        );
+        totalPrompt += assessUsage.promptTokens;
+        totalCompletion += assessUsage.completionTokens;
         // null = no criteria to check, met = passed
         if (!assessment || assessment.met) break;
 
@@ -308,7 +341,7 @@ export async function executeGoal(
           content:
             `Your output did not satisfy these completion criteria:\n` +
             assessment.unmetCriteria
-              .map((c, i) => `${i + 1}. ${c}`)
+              .map((c: string, i: number) => `${i + 1}. ${c}`)
               .join("\n") +
             `\n\nAssessment: ${assessment.reasoning}\n\n` +
             `Reflect on what went wrong and try again. Use tools if needed.`,
@@ -330,6 +363,7 @@ export async function executeGoal(
         currentMessages = retryResult.messages;
         totalPrompt += retryResult.totalUsage.prompt_tokens;
         totalCompletion += retryResult.totalUsage.completion_tokens;
+        allRepairs.push(...retryResult.toolRepairs);
 
         // Collect additional tool calls from retry
         for (const m of retryResult.messages) {
@@ -356,6 +390,7 @@ export async function executeGoal(
         toolNames: tcNames,
         toolFailures: 0,
         selfAssessRounds,
+        toolRepairs: allRepairs,
         tokenUsage: {
           promptTokens: totalPrompt,
           completionTokens: totalCompletion,
@@ -418,6 +453,7 @@ export async function executeGraph(
   let totalToolCalls = 0;
   const allToolNames: string[] = [];
   let totalToolFailures = 0;
+  const allToolRepairs: Array<{ original: string; repaired: string }> = [];
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   const maxIterations = graph.size * 4 + 1;
@@ -472,6 +508,8 @@ export async function executeGraph(
       totalToolFailures += goalResult.toolFailures;
       totalPromptTokens += goalResult.tokenUsage.promptTokens;
       totalCompletionTokens += goalResult.tokenUsage.completionTokens;
+      if (goalResult.toolRepairs)
+        allToolRepairs.push(...goalResult.toolRepairs);
 
       if (goalResult.ok) {
         graph.updateStatus(goal.id, GoalStatus.COMPLETED);
@@ -491,5 +529,6 @@ export async function executeGraph(
       promptTokens: totalPromptTokens,
       completionTokens: totalCompletionTokens,
     },
+    toolRepairs: allToolRepairs,
   };
 }

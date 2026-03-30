@@ -13,6 +13,7 @@ const mockDb = {
     get: mockGet,
     all: mockAll,
   }),
+  transaction: <T>(fn: () => T) => fn,
 };
 
 vi.mock("./index.js", () => ({

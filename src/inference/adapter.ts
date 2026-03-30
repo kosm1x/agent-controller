@@ -628,6 +628,56 @@ export function allResultsAreErrors(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Turn-scoped signal cleanup (Hermes v0.5 pattern)
+// ---------------------------------------------------------------------------
+
+/** Prefixes of user messages that are turn-scoped signals — useful for one
+ *  round but harmful when replayed in subsequent turns. */
+const STALE_SIGNAL_PREFIXES = [
+  "ALTO: Respondiste sin llamar herramientas",
+  "SYSTEM: Multiple consecutive tool failures",
+];
+
+/**
+ * Remove stale turn-scoped signals from conversation in-place.
+ * Called at the top of each inferWithTools round to prevent
+ * nudges from leaking into subsequent LLM calls.
+ */
+export function stripStaleSignals(messages: ChatMessage[]): number {
+  let removed = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (
+      m.role === "user" &&
+      typeof m.content === "string" &&
+      STALE_SIGNAL_PREFIXES.some((p) => (m.content as string).startsWith(p))
+    ) {
+      messages.splice(i, 1);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// ---------------------------------------------------------------------------
+// Think-block handling (Hermes v0.5 pattern)
+// ---------------------------------------------------------------------------
+
+/** Matches reasoning/thinking XML blocks emitted by models with extended thinking. */
+const THINK_BLOCK_RE =
+  /<(?:think|thinking|reasoning|REASONING_SCRATCHPAD)>[\s\S]*?<\/(?:think|thinking|reasoning|REASONING_SCRATCHPAD)>/gi;
+
+/**
+ * Strip reasoning/thinking blocks from LLM content.
+ * Returns the content with think blocks removed, trimmed.
+ */
+export function stripThinkBlocks(content: string): string {
+  return content.replace(THINK_BLOCK_RE, "").trim();
+}
+
+// ---------------------------------------------------------------------------
+
 /**
  * Attempt lenient parse of malformed JSON from LLM tool calls.
  * Tries common repairs: trailing commas, trailing garbage, unquoted keys.
@@ -800,12 +850,14 @@ export async function inferWithTools(
   content: string;
   messages: ChatMessage[];
   totalUsage: { prompt_tokens: number; completion_tokens: number };
+  toolRepairs: Array<{ original: string; repaired: string }>;
 }> {
   const maxRounds = options?.maxRounds ?? 10;
   const onTextChunk = options?.onTextChunk;
   const signal = options?.signal;
   const providerName = options?.providerName;
   const tokenBudget = options?.tokenBudget ?? Infinity;
+  const toolRepairs: Array<{ original: string; repaired: string }> = [];
 
   let conversation = [...messages];
   let totalPrompt = 0;
@@ -827,6 +879,10 @@ export async function inferWithTools(
   );
 
   for (let round = 0; round < maxRounds; round++) {
+    // Strip stale turn-scoped signals before the next LLM call.
+    // Nudges and advisories from prior rounds should not leak into replay.
+    if (round > 0) stripStaleSignals(conversation);
+
     // Compress context if approaching limit
     const config = getConfig();
     if (
@@ -862,6 +918,7 @@ export async function inferWithTools(
           prompt_tokens: totalPrompt,
           completion_tokens: totalCompletion,
         },
+        toolRepairs,
       };
     }
 
@@ -928,6 +985,7 @@ export async function inferWithTools(
             prompt_tokens: totalPrompt,
             completion_tokens: totalCompletion,
           },
+          toolRepairs,
         };
       } catch {
         // Wrap-up also failed — propagate original error
@@ -937,9 +995,25 @@ export async function inferWithTools(
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;
 
-    // No tool calls — check for first-round tool-skip before exiting.
+    // No tool calls — check for think-block exhaustion, then tool-skip guard.
     if (!response.tool_calls || response.tool_calls.length === 0) {
       const content = response.content ?? "";
+
+      // Think-block exhaustion: if the model spent all output on reasoning
+      // with no actionable content, retrying is useless. Force wrap-up.
+      const stripped = stripThinkBlocks(content);
+      if (
+        stripped.length === 0 &&
+        content.length > 0 &&
+        tools.length > 0 &&
+        round > 0
+      ) {
+        console.warn(
+          `[inference] Think-block exhaustion at round ${round}: all output consumed by reasoning. Forcing wrap-up.`,
+        );
+        exitReason = "think_exhaustion";
+        break;
+      }
 
       // First-round tool-skip guard: if the LLM claims success (✅) without
       // calling ANY tools on the very first round, it's lazily responding from
@@ -966,14 +1040,16 @@ export async function inferWithTools(
         continue;
       }
 
+      // Return with think blocks stripped from content (raw stays in conversation)
       conversation.push({ role: "assistant", content });
       return {
-        content,
+        content: stripped || content,
         messages: conversation,
         totalUsage: {
           prompt_tokens: totalPrompt,
           completion_tokens: totalCompletion,
         },
+        toolRepairs,
       };
     }
 
@@ -1034,6 +1110,7 @@ export async function inferWithTools(
                 console.log(
                   `[inference] Tool call repaired: "${toolName}" → "${closest}"`,
                 );
+                toolRepairs.push({ original: toolName, repaired: closest });
                 toolName = closest;
                 // Update the tool_call object so downstream code (hallucination
                 // detector, tools_used tracking) sees the correct name.
@@ -1239,6 +1316,7 @@ Provide your final response based ONLY on actual tool results. Do not request an
         prompt_tokens: totalPrompt,
         completion_tokens: totalCompletion,
       },
+      toolRepairs,
     };
   } catch {
     // Wrap-up call failed — fall back to last assistant content
@@ -1255,6 +1333,7 @@ Provide your final response based ONLY on actual tool results. Do not request an
         prompt_tokens: totalPrompt,
         completion_tokens: totalCompletion,
       },
+      toolRepairs,
     };
   }
 }

@@ -31,7 +31,7 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.pragma("journal_mode = WAL");
   _db.pragma("synchronous = NORMAL");
   _db.pragma("cache_size = -64000"); // 64MB
-  _db.pragma("busy_timeout = 5000");
+  _db.pragma("busy_timeout = 1000"); // Short: surface contention fast, retry at app level
   _db.pragma("foreign_keys = ON");
 
   // Apply schema
@@ -134,11 +134,75 @@ export function getDatabase(): Database.Database {
 }
 
 /**
- * Close the database connection.
+ * Close the database connection with a final WAL checkpoint.
  */
 export function closeDatabase(): void {
   if (_db) {
+    try {
+      _db.pragma("wal_checkpoint(PASSIVE)");
+    } catch {
+      // Best-effort — non-fatal
+    }
     _db.close();
     _db = null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Write retry with jitter (Hermes v0.5 pattern)
+// ---------------------------------------------------------------------------
+
+const WRITE_MAX_RETRIES = 10;
+const WRITE_RETRY_MIN_MS = 20;
+const WRITE_RETRY_MAX_MS = 150;
+const CHECKPOINT_EVERY_N = 100;
+
+let _writeCount = 0;
+
+/**
+ * Execute a synchronous DB write with jitter retry on SQLITE_BUSY.
+ *
+ * better-sqlite3's built-in busy_timeout uses deterministic sleep which
+ * causes convoy effects under concurrent writes. This wrapper:
+ * - Catches SQLITE_BUSY / "database is locked" errors
+ * - Retries with random jitter (20-150ms) to break convoy patterns
+ * - Periodic PASSIVE WAL checkpoint every 100 writes
+ *
+ * Use for high-contention callers (event bus, outcome tracker, memory).
+ * Sequential callers (task creation, rituals) can use bare .run().
+ */
+export function writeWithRetry<T>(fn: () => T): T {
+  let lastErr: Error | undefined;
+  for (let attempt = 0; attempt < WRITE_MAX_RETRIES; attempt++) {
+    try {
+      const result = fn();
+      _writeCount++;
+      if (_writeCount % CHECKPOINT_EVERY_N === 0) {
+        try {
+          _db?.pragma("wal_checkpoint(PASSIVE)");
+        } catch {
+          // Best-effort checkpoint — non-fatal
+        }
+      }
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("SQLITE_BUSY") || msg.includes("database is locked")) {
+        lastErr = err instanceof Error ? err : new Error(msg);
+        if (attempt < WRITE_MAX_RETRIES - 1) {
+          // Random jitter breaks convoy pattern
+          const jitter =
+            WRITE_RETRY_MIN_MS +
+            Math.random() * (WRITE_RETRY_MAX_MS - WRITE_RETRY_MIN_MS);
+          const end = Date.now() + jitter;
+          while (Date.now() < end) {
+            /* spin-wait: better-sqlite3 is sync, no setTimeout available */
+          }
+        }
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error("database is locked after max retries");
 }

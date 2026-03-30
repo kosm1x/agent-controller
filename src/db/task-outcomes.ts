@@ -6,7 +6,7 @@
  * and enrichment service (v2.9.2).
  */
 
-import { getDatabase } from "./index.js";
+import { getDatabase, writeWithRetry } from "./index.js";
 
 export interface TaskOutcome {
   task_id: string;
@@ -42,17 +42,21 @@ export interface OutcomeRow {
 /** Record a task outcome after completion. */
 export function recordOutcome(outcome: TaskOutcome): void {
   const db = getDatabase();
-  db.prepare(
-    `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    outcome.task_id,
-    outcome.classified_as,
-    outcome.ran_on,
-    JSON.stringify(outcome.tools_used),
-    outcome.duration_ms,
-    outcome.success ? 1 : 0,
-    JSON.stringify(outcome.tags),
+  writeWithRetry(() =>
+    db
+      .prepare(
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        outcome.task_id,
+        outcome.classified_as,
+        outcome.ran_on,
+        JSON.stringify(outcome.tools_used),
+        outcome.duration_ms,
+        outcome.success ? 1 : 0,
+        JSON.stringify(outcome.tags),
+      ),
   );
 }
 

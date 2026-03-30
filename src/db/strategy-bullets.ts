@@ -65,27 +65,33 @@ export function insertBullet(
   const db = getDatabase();
   const slug = slugFor(section);
 
-  // Get next ID number for this section
-  const row = db
-    .prepare(
-      `SELECT bullet_id FROM strategy_bullets
-       WHERE bullet_id LIKE ? || '-%'
-       ORDER BY id DESC LIMIT 1`,
-    )
-    .get(slug) as { bullet_id: string } | undefined;
+  // Atomic SELECT+INSERT to prevent TOCTOU race on bullet_id
+  const insertTx = db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT bullet_id FROM strategy_bullets
+         WHERE bullet_id LIKE ? || '-%'
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(slug) as { bullet_id: string } | undefined;
 
-  let nextNum = 1;
-  if (row) {
-    const match = row.bullet_id.match(/-(\d+)$/);
-    if (match) nextNum = parseInt(match[1], 10) + 1;
-  }
+    let nextNum = 1;
+    if (row) {
+      const match = row.bullet_id.match(/-(\d+)$/);
+      if (match) nextNum = parseInt(match[1], 10) + 1;
+    }
 
-  const bulletId = `${slug}-${String(nextNum).padStart(5, "0")}`;
+    const bulletId = `${slug}-${String(nextNum).padStart(5, "0")}`;
 
-  db.prepare(
-    `INSERT INTO strategy_bullets (bullet_id, section, content, source)
-     VALUES (?, ?, ?, ?)`,
-  ).run(bulletId, section, content, source);
+    db.prepare(
+      `INSERT INTO strategy_bullets (bullet_id, section, content, source)
+       VALUES (?, ?, ?, ?)`,
+    ).run(bulletId, section, content, source);
+
+    return bulletId;
+  });
+
+  const bulletId = insertTx();
 
   return bulletId;
 }

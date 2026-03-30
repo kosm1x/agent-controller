@@ -45,6 +45,8 @@ import {
   tryRepairJson,
   allToolCallsReadOnly,
   allResultsAreErrors,
+  stripStaleSignals,
+  stripThinkBlocks,
 } from "./adapter.js";
 
 beforeEach(() => {
@@ -307,5 +309,129 @@ describe("allResultsAreErrors", () => {
 
   it("should return false for non-string content", () => {
     expect(allResultsAreErrors([{ content: 42 }])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale signal stripping (Hermes v0.5 pattern)
+// ---------------------------------------------------------------------------
+
+describe("stripStaleSignals", () => {
+  it("should remove ALTO nudge messages", () => {
+    const msgs = [
+      { role: "system" as const, content: "system prompt" },
+      { role: "user" as const, content: "do the task" },
+      {
+        role: "user" as const,
+        content:
+          "ALTO: Respondiste sin llamar herramientas. EJECUTA con tool calls AHORA.",
+      },
+      { role: "assistant" as const, content: "ok" },
+    ];
+    const removed = stripStaleSignals(msgs);
+    expect(removed).toBe(1);
+    expect(msgs).toHaveLength(3);
+    expect(msgs.every((m) => !m.content.includes("ALTO"))).toBe(true);
+  });
+
+  it("should remove persistent failure advisory", () => {
+    const msgs = [
+      { role: "user" as const, content: "task" },
+      {
+        role: "user" as const,
+        content:
+          "SYSTEM: Multiple consecutive tool failures detected. Your current approach is not working.",
+      },
+    ];
+    const removed = stripStaleSignals(msgs);
+    expect(removed).toBe(1);
+    expect(msgs).toHaveLength(1);
+  });
+
+  it("should not remove regular user messages", () => {
+    const msgs = [
+      { role: "user" as const, content: "Please search for something" },
+      { role: "user" as const, content: "SYSTEM: This is from the user" },
+    ];
+    // "SYSTEM: This is from the user" does NOT start with our stale prefix
+    const removed = stripStaleSignals(msgs);
+    expect(removed).toBe(0);
+    expect(msgs).toHaveLength(2);
+  });
+
+  it("should return 0 for empty array", () => {
+    const msgs: Array<{
+      role: "user" | "assistant" | "system" | "tool";
+      content: string;
+    }> = [];
+    expect(stripStaleSignals(msgs)).toBe(0);
+  });
+
+  it("should remove multiple stale signals in one pass", () => {
+    const msgs = [
+      { role: "user" as const, content: "task" },
+      {
+        role: "user" as const,
+        content:
+          "ALTO: Respondiste sin llamar herramientas. EJECUTA con tool calls AHORA.",
+      },
+      { role: "assistant" as const, content: "thinking" },
+      {
+        role: "user" as const,
+        content:
+          "SYSTEM: Multiple consecutive tool failures detected. Try different.",
+      },
+    ];
+    const removed = stripStaleSignals(msgs);
+    expect(removed).toBe(2);
+    expect(msgs).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Think-block stripping (Hermes v0.5 pattern)
+// ---------------------------------------------------------------------------
+
+describe("stripThinkBlocks", () => {
+  it("should strip <think> blocks", () => {
+    const input = "<think>Let me reason about this...</think>The answer is 42.";
+    expect(stripThinkBlocks(input)).toBe("The answer is 42.");
+  });
+
+  it("should strip <thinking> blocks (case insensitive)", () => {
+    const input =
+      "<THINKING>Deep analysis here</THINKING>\nHere is the result.";
+    expect(stripThinkBlocks(input)).toBe("Here is the result.");
+  });
+
+  it("should strip <reasoning> blocks", () => {
+    const input = "<reasoning>step 1, step 2</reasoning>Final output.";
+    expect(stripThinkBlocks(input)).toBe("Final output.");
+  });
+
+  it("should strip multiline think blocks", () => {
+    const input =
+      "<think>\nLine 1\nLine 2\nLine 3\n</think>\nActual response here.";
+    expect(stripThinkBlocks(input)).toBe("Actual response here.");
+  });
+
+  it("should return empty string when content is only think blocks", () => {
+    const input = "<think>All reasoning, no output</think>";
+    expect(stripThinkBlocks(input)).toBe("");
+  });
+
+  it("should handle content with no think blocks", () => {
+    const input = "Normal response without any reasoning tags.";
+    expect(stripThinkBlocks(input)).toBe(input);
+  });
+
+  it("should strip multiple think blocks", () => {
+    const input =
+      "<think>first</think>Middle text<thinking>second</thinking>End.";
+    expect(stripThinkBlocks(input)).toBe("Middle textEnd.");
+  });
+
+  it("should return empty string for empty input", () => {
+    expect(stripThinkBlocks("")).toBe("");
   });
 });

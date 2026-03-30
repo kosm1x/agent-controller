@@ -8,7 +8,7 @@
  * No semantic search — recall returns recent matches filtered by bank/tags.
  */
 
-import { getDatabase } from "../db/index.js";
+import { getDatabase, writeWithRetry } from "../db/index.js";
 import {
   embed,
   cosineSimilarity,
@@ -139,11 +139,13 @@ export class SqliteMemoryBackend implements MemoryService {
       const tags = JSON.stringify(options.tags ?? []);
       const trustTier = options.trustTier ?? 3;
       const source = options.source ?? "agent";
-      const result = db
-        .prepare(
-          "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(options.bank, tags, content, trustTier, source);
+      const result = writeWithRetry(() =>
+        db
+          .prepare(
+            "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(options.bank, tags, content, trustTier, source),
+      );
 
       // Async embed + store (fire-and-forget, non-blocking)
       const rowId = result.lastInsertRowid as number;

@@ -21,6 +21,7 @@
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
+import { writeWithRetry } from "../../db/index.js";
 import type {
   Event,
   EventCategory,
@@ -489,17 +490,21 @@ export class PersistentEventBus extends EventEmitter {
   // Internal: Persistence
   // -------------------------------------------------------------------------
 
-  /** Write an event to SQLite. Uses INSERT OR IGNORE for idempotency. */
+  /** Write an event to SQLite. Uses INSERT OR IGNORE for idempotency.
+   *  Wrapped with jitter retry to prevent WAL convoy effects under
+   *  concurrent event emission (e.g. parallel swarm goals). */
   private persist(event: Event): void {
-    this.stmtInsertEvent.run({
-      id: event.id,
-      type: event.type,
-      category: event.category,
-      timestamp: event.timestamp,
-      workspace_id: event.workspace_id,
-      data: JSON.stringify(event.data),
-      correlation_id: event.correlation_id,
-      causation_id: event.causation_id ?? null,
+    writeWithRetry(() => {
+      this.stmtInsertEvent.run({
+        id: event.id,
+        type: event.type,
+        category: event.category,
+        timestamp: event.timestamp,
+        workspace_id: event.workspace_id,
+        data: JSON.stringify(event.data),
+        correlation_id: event.correlation_id,
+        causation_id: event.causation_id ?? null,
+      });
     });
 
     // Update local sequence counter.
