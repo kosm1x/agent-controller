@@ -60,12 +60,12 @@
 
 ## v4.0 S4 — Observability Dashboard (~1.5d)
 
-| CRIT # | Item                                                       | Effort | Status                                    |
-| ------ | ---------------------------------------------------------- | ------ | ----------------------------------------- |
-| 9.5    | Prometheus `/metrics` endpoint (prom-client)               | 0.5d   | **Done**                                  |
-| NEW    | Grafana dashboards (latency, tasks, tools, budget, errors) | 0.5d   | Deferred (infra — needs Grafana instance) |
-| NEW    | Per-task token tracking (total tokens across all rounds)   | 0.5d   | **Done** (mc*tokens*\*\_total by model)   |
-| 2.3    | Configurable degradation thresholds via env vars           | 2h     | Deferred (current hardcoded values work)  |
+| CRIT # | Item                                                       | Effort | Status                                                 |
+| ------ | ---------------------------------------------------------- | ------ | ------------------------------------------------------ |
+| 9.5    | Prometheus `/metrics` endpoint (prom-client)               | 0.5d   | **Done**                                               |
+| NEW    | Grafana dashboards (latency, tasks, tools, budget, errors) | 0.5d   | **Done** (v4.0.5 — :3001, 15 panels, auto-provisioned) |
+| NEW    | Per-task token tracking (total tokens across all rounds)   | 0.5d   | **Done** (mc*tokens*\*\_total by model)                |
+| 2.3    | Configurable degradation thresholds via env vars           | 2h     | Deferred (current hardcoded values work)               |
 
 ---
 
@@ -139,18 +139,18 @@
 
 ## Metrics
 
-| Metric               | v4.0 start   | Current (S6 done)                               |
-| -------------------- | ------------ | ----------------------------------------------- |
-| Tools                | 111          | 111                                             |
-| Test files           | 62           | 65                                              |
-| Tests                | 666          | 699                                             |
-| Hallucination layers | 7            | 7 + success-aware + verification bypass         |
-| Inference providers  | 3            | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5) |
-| Rituals              | 8            | 8                                               |
-| Source files         | ~160         | ~170                                            |
-| DB size              | ~30MB        | ~39MB                                           |
-| Dependencies         | 8+2          | 9+2 (added prom-client)                         |
-| Memory               | LIKE search  | FTS5 + embeddings hybrid                        |
-| Tool validation      | None         | Zod schema on all tools                         |
-| Observability        | /health only | /health + /metrics (Prometheus)                 |
-| Integration tests    | 0            | 8 (mock LLM server)                             |
+| Metric               | v4.0 start   | Current (v4.0.5)                                           |
+| -------------------- | ------------ | ---------------------------------------------------------- |
+| Tools                | 111          | 114                                                        |
+| Test files           | 62           | 70                                                         |
+| Tests                | 666          | 756                                                        |
+| Hallucination layers | 7            | 7 + success-aware + verification bypass + think-block      |
+| Inference providers  | 3            | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5)            |
+| Rituals              | 8            | 8                                                          |
+| Source files         | ~160         | 174                                                        |
+| DB size              | ~30MB        | ~39MB                                                      |
+| Dependencies         | 8+2          | 9+2 (added prom-client)                                    |
+| Memory               | LIKE search  | FTS5 + embeddings hybrid + consolidation                   |
+| Tool validation      | None         | Zod schema on all tools                                    |
+| Observability        | /health only | /health + /metrics + Grafana dashboards (15 panels, :3001) |
+| Integration tests    | 0            | 8 (mock LLM server)                                        |

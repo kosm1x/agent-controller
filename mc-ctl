@@ -636,9 +636,76 @@ usage() {
   echo -e "  ${GREEN}tuning${NC} report [id]    Full tuning report"
   echo -e "  ${GREEN}tuning${NC} promote [id]   Show winning mutations as diffs"
   echo ""
+  echo -e "  ${BOLD}Monitoring${NC}"
+  echo -e "  ${GREEN}monitoring${NC} up        Start Prometheus + Grafana stack"
+  echo -e "  ${GREEN}monitoring${NC} down      Stop monitoring stack"
+  echo -e "  ${GREEN}monitoring${NC} status    Container status + scrape health"
+  echo ""
   echo -e "  ${BOLD}Database${NC}"
   echo -e "  ${GREEN}db${NC} [query]          Interactive shell or run query"
   echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Monitoring (Prometheus + Grafana)
+# ---------------------------------------------------------------------------
+
+cmd_monitoring() {
+  local subcmd="${1:-status}"
+  local compose_file="${PROJECT_DIR}/docker-compose.monitoring.yml"
+
+  if [ ! -f "$compose_file" ]; then
+    echo -e "${RED}Monitoring compose file not found:${NC} $compose_file"
+    exit 1
+  fi
+
+  case "$subcmd" in
+    up)
+      echo -e "${CYAN}Starting monitoring stack...${NC}"
+      docker compose -f "$compose_file" up -d
+      echo ""
+      echo -e "${GREEN}Prometheus:${NC} http://localhost:9090"
+      echo -e "${GREEN}Grafana:${NC}    http://localhost:3001  (admin / \${GRAFANA_PASSWORD:-jarvis2026})"
+      ;;
+
+    down)
+      echo -e "${CYAN}Stopping monitoring stack...${NC}"
+      docker compose -f "$compose_file" down
+      ;;
+
+    status)
+      echo -e "${BOLD}Monitoring Stack${NC}"
+      echo ""
+      docker compose -f "$compose_file" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "  (not running)"
+      echo ""
+      # Check Prometheus scrape health
+      local health
+      health=$(curl -sf http://localhost:9090/api/v1/targets 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); t=d['data']['activeTargets'][0]; print(t['health'])" 2>/dev/null)
+      if [ -n "$health" ]; then
+        if [ "$health" = "up" ]; then
+          echo -e "  Prometheus scrape: ${GREEN}${health}${NC}"
+        else
+          echo -e "  Prometheus scrape: ${RED}${health}${NC}"
+        fi
+      else
+        echo -e "  Prometheus: ${RED}not reachable${NC}"
+      fi
+      # Check Grafana
+      local gf_health
+      gf_health=$(curl -sf http://localhost:3001/api/health 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('database','?'))" 2>/dev/null)
+      if [ "$gf_health" = "ok" ]; then
+        echo -e "  Grafana:          ${GREEN}ok${NC} (http://localhost:3001)"
+      else
+        echo -e "  Grafana:          ${RED}not reachable${NC}"
+      fi
+      ;;
+
+    *)
+      echo -e "${RED}Unknown monitoring subcommand:${NC} $subcmd"
+      echo "  Usage: mc-ctl monitoring [up|down|status]"
+      exit 1
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -778,6 +845,8 @@ case "$cmd" in
   budget)            cmd_budget ;;
 
   tuning)            cmd_tuning "$@" ;;
+
+  monitoring)        cmd_monitoring "$@" ;;
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;
