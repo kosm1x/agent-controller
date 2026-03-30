@@ -30,7 +30,7 @@ export const fileReadTool: Tool = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const path = args.path as string;
+    const path = (args.path ?? args.file_path ?? args.filepath) as string;
     if (!path) {
       return JSON.stringify({ error: "path is required" });
     }
@@ -76,7 +76,7 @@ export const fileWriteTool: Tool = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const path = args.path as string;
+    const path = (args.path ?? args.file_path ?? args.filepath) as string;
     const content = args.content as string;
     if (!path) {
       return JSON.stringify({ error: "path is required" });

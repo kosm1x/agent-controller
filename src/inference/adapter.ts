@@ -687,6 +687,35 @@ export function tryRepairJson(
 }
 
 /**
+ * Normalize common parameter name aliases in-place.
+ * LLMs frequently use camelCase or prefixed variants of snake_case params.
+ * Only copies if the canonical name is missing — never overwrites.
+ */
+const ARG_ALIASES: Record<string, string> = {
+  file_path: "path",
+  filepath: "path",
+  oldString: "old_string",
+  newString: "new_string",
+  replaceAll: "replace_all",
+  postId: "post_id",
+  post_ID: "post_id",
+  contentFile: "content_file",
+  imageUrl: "image_url",
+  altText: "alt_text",
+  fileName: "filename",
+  file_name: "filename",
+};
+
+function normalizeArgAliases(args: Record<string, unknown>): void {
+  for (const [alias, canonical] of Object.entries(ARG_ALIASES)) {
+    if (args[alias] !== undefined && args[canonical] === undefined) {
+      args[canonical] = args[alias];
+      delete args[alias];
+    }
+  }
+}
+
+/**
  * Build a condensed conversation for wrap-up calls.
  * Keeps system + first user message + last few tool exchanges (truncated) + wrap-up instruction.
  */
@@ -970,11 +999,19 @@ export async function inferWithTools(
           if (opens > closes) {
             result = JSON.stringify({
               error:
-                "Tool call truncated (max_tokens hit). Try a simpler query.",
+                "Tool call truncated (max_tokens hit). For large content, write it to a file first with file_write, then pass the file path.",
             });
             console.warn(
               `[inference] Tool ${toolCall.function.name} args truncated (${rawArgs.length} chars)`,
             );
+            // Sanitize the truncated args in conversation history so the
+            // malformed JSON doesn't cause HTTP 400 on subsequent rounds.
+            // response.tool_calls was pushed by reference, so mutating here
+            // fixes the conversation array too.
+            toolCall.function.arguments = JSON.stringify({
+              _truncated: true,
+              _original_length: rawArgs.length,
+            });
           } else {
             let args: Record<string, unknown>;
             try {
@@ -1003,6 +1040,11 @@ export async function inferWithTools(
                 toolCall.function.name = closest;
               }
             }
+            // Normalize common parameter aliases before validation.
+            // LLMs frequently confuse "path" vs "file_path" vs "filepath",
+            // "old_string" vs "oldString", etc.
+            normalizeArgAliases(args);
+
             // Validate args against tool schema before execution
             const validation = toolRegistry.validate(toolName, args);
             if (!validation.success) {
@@ -1023,6 +1065,15 @@ export async function inferWithTools(
           console.error(
             `[inference] Tool ${toolCall.function.name} failed: ${message}`,
           );
+          // Sanitize malformed args so conversation history stays valid JSON.
+          // Without this, providers reject the entire thread with HTTP 400.
+          try {
+            JSON.parse(toolCall.function.arguments);
+          } catch {
+            toolCall.function.arguments = JSON.stringify({
+              _error: "malformed_args",
+            });
+          }
         }
         // Large result eviction: write oversized results to temp file,
         // return head + tail preview with file path reference so the LLM

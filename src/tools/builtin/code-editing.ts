@@ -66,9 +66,9 @@ RULES:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const path = args.path as string;
-    const oldString = args.old_string as string;
-    const newString = args.new_string as string;
+    const path = (args.path ?? args.file_path ?? args.filepath) as string;
+    const oldString = (args.old_string ?? args.oldString) as string;
+    const newString = (args.new_string ?? args.newString) as string;
     const replaceAll = args.replace_all === true;
 
     if (!path) return JSON.stringify({ error: "path is required" });

@@ -405,9 +405,13 @@ WHEN TO USE:
 - User asks to republish or change post status
 
 WORKFLOW for new posts:
-1. Call wp_publish with content (inline HTML) and status "draft"
-2. If you have an image URL, call wp_media_upload first to get a media_id, then pass it as featured_media
-3. Call wp_publish again with status "publish" and post_id to go live
+1. Write the full HTML body to a temp file using file_write (e.g. /tmp/wp_content/new_post.html)
+2. Call wp_publish with content_file=<that path> and status "draft"
+3. If you have an image URL, call wp_media_upload first to get a media_id, then pass it as featured_media
+4. Call wp_publish again with status "publish" and post_id to go live
+
+IMPORTANT: NEVER pass long content inline via the "content" parameter — it will be truncated by
+the inference engine. ALWAYS use file_write + content_file for any content longer than 2 paragraphs.
 
 WORKFLOW for status-only changes (republish, unpublish, etc.):
 1. Call wp_list_posts to find the post ID
@@ -423,7 +427,9 @@ WORKFLOW for editing existing content (PREFERRED — prevents truncation):
 
 CRITICAL: If you only want to change status, tags, categories, or featured_media — do NOT
 include "content" or "content_file". The "content" field REPLACES the entire article body.
-Use content_file instead of content when editing existing articles — it avoids truncation.
+
+ALWAYS use content_file for any substantial content (new or existing). Write the HTML to a file
+with file_write first, then pass the path here. Inline "content" is only safe for very short text.
 
 DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, report the actual error.`,
       parameters: {
@@ -440,7 +446,7 @@ DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, 
           content: {
             type: "string",
             description:
-              "FULL post body in HTML. Only use for NEW posts. For editing existing posts, use content_file instead.",
+              "Short post body in HTML (max 1-2 paragraphs). For longer content, use file_write + content_file instead to avoid truncation.",
           },
           content_file: {
             type: "string",
