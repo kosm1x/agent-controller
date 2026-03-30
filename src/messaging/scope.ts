@@ -306,12 +306,12 @@ export function scopeToolsForMessage(
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];
 
-  // COMMIT tools (read + write) only when productivity context is present
+  // COMMIT tools — load read AND write when any COMMIT context is present.
+  // Write tools were previously gated behind commit_write scope, but the
+  // pattern matching proved unreliable (catastrophic backtracking on complex
+  // Spanish messages). The ~2K token overhead is acceptable given 28K budget.
   if (activeGroups.has("commit_write") || activeGroups.has("commit_read")) {
-    tools.push(...COMMIT_READ_TOOLS);
-  }
-  if (activeGroups.has("commit_write")) {
-    tools.push(...COMMIT_WRITE_TOOLS);
+    tools.push(...COMMIT_READ_TOOLS, ...COMMIT_WRITE_TOOLS);
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
