@@ -66,7 +66,7 @@ export async function onTaskCompleted(
   }
 
   // Parse the result to check completion status
-  let tasks: Array<{ id: string; status: string }>;
+  let tasks: Array<{ id: string; status: string; title?: string }>;
   try {
     const parsed = JSON.parse(tasksResult);
     tasks = Array.isArray(parsed)
@@ -81,8 +81,27 @@ export async function onTaskCompleted(
     tasks.every((t) => t.status === "completed" || t.status === "archived");
 
   if (allDone) {
+    // Fetch the objective name for a meaningful title
+    let objectiveName = "objetivo";
+    try {
+      const objResult = await toolRegistry.execute(
+        "commit__list_objectives",
+        {},
+      );
+      const objs = JSON.parse(objResult);
+      const objList = Array.isArray(objs)
+        ? objs
+        : (objs.objectives ?? objs.data ?? []);
+      const obj = objList.find(
+        (o: Record<string, unknown>) => o.id === objectiveId,
+      );
+      if (obj?.title) objectiveName = obj.title as string;
+    } catch {
+      /* use fallback */
+    }
+
     log.info(
-      { objectiveId },
+      { objectiveId, objectiveName },
       "all tasks under objective are done — suggesting completion",
     );
     try {
@@ -90,9 +109,9 @@ export async function onTaskCompleted(
         type: "complete_objective",
         target_table: "objectives",
         target_id: objectiveId,
-        title: `Todas las tareas del objetivo completadas`,
+        title: `Completar: ${objectiveName}`,
         suggestion: { objective_id: objectiveId, new_status: "completed" },
-        reasoning: `Las ${tasks.length} tarea(s) bajo este objetivo están completadas. ¿Marcar el objetivo como completado?`,
+        reasoning: `Las ${tasks.length} tarea(s) bajo "${objectiveName}" están completadas. ¿Marcar el objetivo como completado?`,
         source: "event_reactor",
       });
     } catch (err) {
@@ -233,10 +252,27 @@ export async function onObjectiveCompleted(
   );
   const allDone = objectives.length > 0 && pendingObjectives.length === 0;
 
+  // Fetch goal name for meaningful titles
+  const goalName =
+    (changes.title as string) ?? (changes.name as string) ?? null;
+  let resolvedGoalName = goalName ?? "meta";
+  if (!goalName) {
+    try {
+      const goalsResult = await toolRegistry.execute("commit__list_goals", {});
+      const goalsList = JSON.parse(goalsResult);
+      const gList = Array.isArray(goalsList)
+        ? goalsList
+        : (goalsList.goals ?? goalsList.data ?? []);
+      const g = gList.find((gl: Record<string, unknown>) => gl.id === goalId);
+      if (g?.title) resolvedGoalName = g.title as string;
+    } catch {
+      /* use fallback */
+    }
+  }
+
   if (allDone) {
-    // All objectives done — suggest completing the goal
     log.info(
-      { goalId },
+      { goalId, goalName: resolvedGoalName },
       "all objectives under goal are done — suggesting goal completion",
     );
     try {
@@ -244,16 +280,15 @@ export async function onObjectiveCompleted(
         type: "complete_goal",
         target_table: "goals",
         target_id: goalId,
-        title: `Todos los objetivos completados — ¿completar la meta?`,
+        title: `Completar meta: ${resolvedGoalName}`,
         suggestion: { goal_id: goalId, new_status: "completed" },
-        reasoning: `Los ${objectives.length} objetivo(s) bajo esta meta están completados.`,
+        reasoning: `Los ${objectives.length} objetivo(s) bajo "${resolvedGoalName}" están completados.`,
         source: "event_reactor",
       });
     } catch (err) {
       log.error({ err }, "failed to create goal completion suggestion");
     }
   } else if (pendingObjectives.length > 0) {
-    // There are more objectives — suggest focusing on the next one
     log.info(
       { goalId, remaining: pendingObjectives.length },
       "objective completed, remaining under goal",
@@ -263,12 +298,12 @@ export async function onObjectiveCompleted(
         type: "focus_next_objective",
         target_table: "goals",
         target_id: goalId,
-        title: `Siguiente objetivo: enfoca en los ${pendingObjectives.length} restantes`,
+        title: `${resolvedGoalName}: ${pendingObjectives.length} objetivo(s) pendiente(s)`,
         suggestion: {
           goal_id: goalId,
           remaining_count: pendingObjectives.length,
         },
-        reasoning: `Completaste un objetivo. Quedan ${pendingObjectives.length} por avanzar bajo esta meta.`,
+        reasoning: `Completaste un objetivo bajo "${resolvedGoalName}". Quedan ${pendingObjectives.length} por avanzar.`,
         source: "event_reactor",
       });
     } catch (err) {

@@ -160,15 +160,27 @@ Respond in the same language as the journal entry.`;
 
     // Create suggestion if actionable insight found
     if (analysis.suggested_action && analysis.suggested_action !== "null") {
+      // Build reasoning that connects to active goals, not just emotions
+      const goalContext =
+        analysis.goal_connections && analysis.goal_connections.length > 0
+          ? `Related to: ${analysis.goal_connections.join(", ")}.`
+          : "";
+      const patternContext =
+        analysis.patterns && analysis.patterns.length > 0
+          ? analysis.patterns.slice(0, 2).join(". ") + "."
+          : "";
+
       try {
         await toolRegistry.execute("commit__create_suggestion", {
           type: "create_task",
-          title: analysis.suggested_action.slice(0, 100),
+          title: analysis.suggested_action,
           suggestion: {
             title: analysis.suggested_action,
             source_journal_id: journalId,
           },
-          reasoning: `Based on journal analysis: ${analysis.primary_emotion}. ${(analysis.patterns ?? []).slice(0, 2).join(". ")}`,
+          reasoning:
+            [goalContext, patternContext].filter(Boolean).join(" ") ||
+            `From journal: ${analysis.primary_emotion}`,
           source: "journal_analysis",
         });
         log.info(
