@@ -371,18 +371,19 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v1–v4.0.4 complete.** ~174 source files, 755 tests passing, zero type errors, 114 tools.
+**v1–v4.0.6 complete.** ~174 source files, 756 tests passing, zero type errors, 114 tools.
 
-| Phase       | Status  | What                                                                                                                                                                     |
-| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v1          | Done    | Foundation — Hono server, SQLite, 5-way classifier, dispatcher, fast/nanoclaw/heavy/swarm/a2a runners, Prometheus core, MCP integration, A2A protocol, web dashboard     |
-| v2.1–v2.13  | Done    | Tool plugin system, browser (Lightpanda), web search/read, local PDF, Google Workspace (14 tools), COMMIT bridge (22 MCP tools), Hindsight memory, adaptive intelligence |
-| v2.14–v2.22 | Done    | Production guards, coding toolkit, WordPress (10 tools), hallucination detector, dynamic tool scoping, Telegram vision, sandboxed shell                                  |
-| v2.23–v2.26 | Done    | COMMIT + Jarvis unification, project entity, strategic autonomy, HyperAgents, self-tuning overnight loop                                                                 |
-| v2.27–v2.30 | Done    | Self-tuning eval harness, 7-layer hallucination defense, 3 new tools (pdf_read, hf_generate, hf_spaces), fast-path (~2s), Telegram streaming, scope isolation            |
-| v3.0        | Done    | Production hardening — systemd, Pino logging, 3-layer guardrails, model benchmark, provider rotation                                                                     |
-| v4.0 S1–S3  | Done    | DB indexes, shell security, backups, healthcheck alerting, Zod validation, FTS5 + embedding hybrid recall                                                                |
-| v4.0 S4–S9  | Planned | Observability, inference refactor, integration tests, prompt decomposition, scope calibration, task-type routing                                                         |
+| Phase         | Status  | What                                                                                                                                                                     |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1            | Done    | Foundation — Hono server, SQLite, 5-way classifier, dispatcher, fast/nanoclaw/heavy/swarm/a2a runners, Prometheus core, MCP integration, A2A protocol, web dashboard     |
+| v2.1–v2.13    | Done    | Tool plugin system, browser (Lightpanda), web search/read, local PDF, Google Workspace (14 tools), COMMIT bridge (22 MCP tools), Hindsight memory, adaptive intelligence |
+| v2.14–v2.22   | Done    | Production guards, coding toolkit, WordPress (10 tools), hallucination detector, dynamic tool scoping, Telegram vision, sandboxed shell                                  |
+| v2.23–v2.26   | Done    | COMMIT + Jarvis unification, project entity, strategic autonomy, HyperAgents, self-tuning overnight loop                                                                 |
+| v2.27–v2.30   | Done    | Self-tuning eval harness, 7-layer hallucination defense, 3 new tools (pdf_read, hf_generate, hf_spaces), fast-path (~2s), Telegram streaming, scope isolation            |
+| v3.0          | Done    | Production hardening — systemd, Pino logging, 3-layer guardrails, model benchmark, provider rotation                                                                     |
+| v4.0 S1–S3    | Done    | DB indexes, shell security, backups, healthcheck alerting, Zod validation, FTS5 + embedding hybrid recall                                                                |
+| v4.0.4–v4.0.6 | Done    | Gemini research tools, observability stack (Prometheus + Grafana), hallucination protocol enforcement                                                                    |
+| v4.0 S7–S9    | Planned | Inference refactor, prompt decomposition, scope calibration, task-type routing                                                                                           |
 
 ### Jarvis — the user-facing persona
 

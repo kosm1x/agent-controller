@@ -114,14 +114,19 @@ const WRITE_TOOLS = new Set([
   "gtasks_create",
   "gtasks_update",
   "gtasks_complete",
-  // COMMIT
+  // COMMIT (must stay in sync with COMMIT_WRITE_TOOLS in scope.ts)
   "commit__create_task",
   "commit__update_task",
+  "commit__update_status",
+  "commit__complete_recurring",
   "commit__delete_item",
   "commit__create_goal",
   "commit__update_goal",
   "commit__create_objective",
   "commit__update_objective",
+  "commit__create_vision",
+  "commit__update_vision",
+  "commit__bulk_reprioritize",
   "commit__create_suggestion",
   "commit__create_journal",
   // File system
