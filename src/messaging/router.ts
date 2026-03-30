@@ -64,6 +64,25 @@ import {
   MISC_TOOLS,
   BROWSER_TOOLS,
 } from "./scope.js";
+
+// Patch commit_write pattern at load time — tsx's transform cache serves a stale
+// version of scope.ts that lacks English verbs and clitic pronoun support.
+// This override ensures the running process uses the correct pattern regardless
+// of tsx cache state. Safe to remove once tsx cache issue is resolved.
+const COMMIT_WRITE_PATTERN =
+  /\b(crea(r|me|te)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|sincroniza\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|commit|repo)|(?:actual[ií]za|update)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|name|title)|(?:c[aá]mbia|change|modify)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|name|title)|(?:ren[oó]mbra|rename)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)(?:lo|la|los|las|rlo|rla|rlos|rlas|\s+it)\b|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(tarea|meta|objetivo|goal|task)(\s+\S+){0,8}\s*(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)\S*)/i;
+{
+  const cwIdx = DEFAULT_SCOPE_PATTERNS.findIndex(
+    (p) => p.group === "commit_write",
+  );
+  if (cwIdx >= 0) {
+    DEFAULT_SCOPE_PATTERNS[cwIdx] = {
+      pattern: COMMIT_WRITE_PATTERN,
+      group: "commit_write",
+    };
+  }
+}
+
 import {
   recordScopeDecision,
   linkScopeToTask,
