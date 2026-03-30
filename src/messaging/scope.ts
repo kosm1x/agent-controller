@@ -155,9 +155,42 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
       /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|COMMIT|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?)/i,
     group: "commit_read",
   },
+  // commit_write — split into small patterns to avoid catastrophic regex backtracking.
+  // Multiple entries with the same group are OR'd (any match activates the group).
   {
+    // Create: "crea una tarea", "haz una tarea", "trackea", "quiero lograr"
     pattern:
-      /\b(crea(r|me|te)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|sincroniza\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|commit|repo)|(?:actual[ií]za|update)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|name|title)|(?:c[aá]mbia|change|modify)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|name|title)|(?:ren[oó]mbra|rename)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)(?:lo|la|los|las|rlo|rla|rlos|rlas|\s+it)\b|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(tarea|meta|objetivo|goal|task)(\s+\S+){0,8}\s*(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)\S*)/i,
+      /\b(crea(r|me|te)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo)/i,
+    group: "commit_write",
+  },
+  {
+    // Verb-first: "actualiza la tarea", "cambia el status", "renombra el objetivo"
+    pattern:
+      /\b(?:actual[ií]za|c[aá]mbia|ren[oó]mbra|mod[ií]fica|sincroniza|update|change|rename|modify)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|name|title|commit|repo)/i,
+    group: "commit_write",
+  },
+  {
+    // Clitic pronouns: "cámbialo", "actualízalo", "renómbralo"
+    pattern:
+      /\b(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)(?:lo|la|los|las|rlo|rla|rlos|rlas)\b/i,
+    group: "commit_write",
+  },
+  {
+    // Completion: "marca como completada", "pon como done", "márcalo"
+    pattern:
+      /\b(marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao])/i,
+    group: "commit_write",
+  },
+  {
+    // Completion + noun: "completé la tarea", "terminé el objetivo", "done esta task"
+    pattern:
+      /\b(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)/i,
+    group: "commit_write",
+  },
+  {
+    // Noun-before-verb: "el objetivo... cámbialo", "la tarea... actualízala"
+    pattern:
+      /\b(tarea|meta|objetivo|goal|task)(\s+\S+){0,8}\s*(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)\S*/i,
     group: "commit_write",
   },
   {
