@@ -250,8 +250,22 @@ export function scopeToolsForMessage(
         activeGroups.add(group);
       }
     }
+  } else if (
+    currentMessage.trim().length < 30 &&
+    recentUserMessages.length > 0
+  ) {
+    // Short follow-up message with no scope signals (e.g. "links?", "procede",
+    // "hazlo", "ok", "y?") — inherit scope from recent messages to maintain
+    // context continuity. Without this, the LLM loses access to tools it just
+    // used and may hallucinate that capabilities don't exist.
+    const priorText = recentUserMessages.join(" ");
+    for (const { pattern, group } of patterns) {
+      if (pattern.test(priorText)) {
+        activeGroups.add(group);
+      }
+    }
   }
-  // else: no scope signals in current message → activeGroups stays empty → core tools only
+  // else: no scope signals and not a short follow-up → core tools only
 
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];

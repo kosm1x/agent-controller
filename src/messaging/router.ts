@@ -625,6 +625,10 @@ const POISONED_RESPONSE_PATTERNS = [
   // Tool configuration errors (stale from prior session)
   /(?:wordpress|wp).{0,20}not configured/i,
   /falla con.*(?:not configured|no configurad)/i,
+  // False capability claims — LLM researches tool docs instead of calling tools
+  /(?:API|endpoint|modelo).{0,30}no soporta.{0,30}(?:generaci[oó]n|imagen|image)/i,
+  /(?:API|endpoint|model).{0,30}(?:doesn.t|does not|cannot).{0,30}(?:generat|image|support.*image)/i,
+  /requiere.{0,20}(?:Vertex AI|billing|configuraci[oó]n diferente)/i,
   // Inference cascade failures
   /inference.*failed/i,
   /timeout.*inference/i,
