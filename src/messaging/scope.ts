@@ -240,7 +240,6 @@ export function scopeToolsForMessage(
       currentGroups.add(group);
     }
   }
-
   const activeGroups = new Set<string>();
   if (currentGroups.size > 0) {
     // Current message has scope signals — also scan prior messages for context
