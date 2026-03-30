@@ -588,6 +588,19 @@ function pushToThread(
   imageUrl?: string,
 ): void {
   hydrateThreadIfNeeded(channel);
+  // Check for poisoned responses before adding to the thread buffer.
+  // Without this, poisoned entries live in-memory until the next restart
+  // and teach the LLM learned helplessness for the rest of the session.
+  const jarvisIdx = exchange.indexOf("\nJarvis: ");
+  if (jarvisIdx !== -1) {
+    const jarvisText = exchange.slice(jarvisIdx + "\nJarvis: ".length).trim();
+    if (isPoisonedExchange(jarvisText)) {
+      console.log(
+        `[router] Blocked poisoned exchange from thread buffer: ${jarvisText.slice(0, 80)}...`,
+      );
+      return;
+    }
+  }
   const thread = conversationThreads.get(channel)!;
   thread.push({ text: exchange, imageUrl });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
@@ -615,9 +628,12 @@ const POISONED_RESPONSE_PATTERNS = [
   /herramientas? no est[aá](?:n)? respondiendo/i,
   // Tool refusals (LLM claims it can't use available tools)
   /no tengo (?:acceso|(?:la|una|ninguna)\s+herramienta|herramienta)/i,
+  /no tengo disponible/i,
   /no tengo.*(?:commit__|wp_|gmail_|gsheets_)/i,
   /no tengo.*wp_publish/i,
   /no pude completar la acci[oó]n/i,
+  /no (?:puedo|es posible) (?:renombrar|cambiar el nombre|actualizar el nombre)/i,
+  /necesitas? hacer.{0,20}(?:manualmente|desde la interfaz)/i,
   // Learned helplessness — LLM gives up or reports inability to continue
   /no puedo (?:continuar|completar|ejecutar|hacer(?:lo)?)/i,
   /problema t[eé]cnico (?:cr[ií]tico|grave)/i,
