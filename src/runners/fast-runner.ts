@@ -236,7 +236,7 @@ export function detectsHallucinatedExecution(
   if (!calledAnyWriteTool && toolsCalled.length > 0 && !isVerificationRequest) {
     const claimsAction =
       // First-person past tense (always hallucination)
-      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé)\s/i.test(
+      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué)\s/i.test(
         text,
       ) ||
       /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited)\s/i.test(
@@ -252,6 +252,11 @@ export function detectsHallucinatedExecution(
       /(?:publicad[oa]|enviad[oa]|subid[oa]|creada?|eliminad[oa])\s+(?:exitosamente|correctamente|con éxito|successfully)/i.test(
         text,
       ) ||
+      // Status change claims ("MARCADA COMO COMPLETADA", "Status: completed → ✅")
+      /marc(?:ad[oa]|ó)\s+(?:como\s+)?(?:complet|hech|done|termin)/i.test(
+        text,
+      ) ||
+      /status[:\s]+.*(?:completed|done|✅)/i.test(text) ||
       // Quantity claims ("50 celdas actualizadas")
       /\d+\s+(?:celdas?|filas?|rows?|cells?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated)/i.test(
         text,
