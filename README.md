@@ -382,7 +382,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v2.27–v2.30   | Done    | Self-tuning eval harness, 7-layer hallucination defense, 3 new tools (pdf_read, hf_generate, hf_spaces), fast-path (~2s), Telegram streaming, scope isolation            |
 | v3.0          | Done    | Production hardening — systemd, Pino logging, 3-layer guardrails, model benchmark, provider rotation                                                                     |
 | v4.0 S1–S3    | Done    | DB indexes, shell security, backups, healthcheck alerting, Zod validation, FTS5 + embedding hybrid recall                                                                |
-| v4.0.4–v4.0.6 | Done    | Gemini research tools, observability stack (Prometheus + Grafana), hallucination protocol enforcement + scope enforcement gate                                           |
+| v4.0.4–v4.0.6 | Done    | Gemini research tools, observability stack (Prometheus + Grafana), hallucination protocol enforcement (WRITE_TOOLS sync, scope gate, poison filter, COMMIT scope merge)  |
 | v4.0 S7–S9    | Planned | Inference refactor, prompt decomposition, scope calibration, task-type routing                                                                                           |
 
 ### Jarvis — the user-facing persona
