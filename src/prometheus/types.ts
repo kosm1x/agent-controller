@@ -64,6 +64,8 @@ export interface GoalResult {
   toolNames: string[];
   toolFailures: number;
   tokenUsage: TokenUsage;
+  /** Number of self-assessment reflection rounds used (0 = passed first try). */
+  selfAssessRounds?: number;
 }
 
 export interface ExecutionResult {

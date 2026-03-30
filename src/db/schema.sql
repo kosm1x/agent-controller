@@ -210,6 +210,23 @@ CREATE TABLE IF NOT EXISTS commit_events (
 );
 CREATE INDEX IF NOT EXISTS idx_commit_events_processed ON commit_events(processed) WHERE processed = 0;
 
+-- Strategy bullets — ACE-inspired per-instruction scoring (helpful/harmful counters)
+-- Structured playbook entries that evolve based on task outcomes.
+CREATE TABLE IF NOT EXISTS strategy_bullets (
+  id             INTEGER PRIMARY KEY,
+  bullet_id      TEXT UNIQUE NOT NULL,
+  section        TEXT NOT NULL,
+  content        TEXT NOT NULL,
+  helpful_count  INTEGER DEFAULT 0,
+  harmful_count  INTEGER DEFAULT 0,
+  source         TEXT DEFAULT 'reflector',
+  active         INTEGER DEFAULT 1,
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bullets_active ON strategy_bullets(active);
+CREATE INDEX IF NOT EXISTS idx_bullets_section ON strategy_bullets(section);
+
 -- A2A context-to-task mapping (for multi-turn conversations)
 CREATE TABLE IF NOT EXISTS a2a_contexts (
   context_id  TEXT PRIMARY KEY,

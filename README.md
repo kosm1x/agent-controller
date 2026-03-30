@@ -114,7 +114,8 @@ Runs the Prometheus Plan-Execute-Reflect loop in-process:
 
 1. **Plan** — decompose into goal graph (DAG with dependencies)
 2. **Execute** — work through goals with error recovery (retry, alternative, decompose, escalate)
-3. **Reflect** — evaluate results, extract learnings
+3. **Self-assess** — each goal checks its output against completion criteria; if not met, injects reflection and re-runs (up to 2 rounds)
+4. **Reflect** — evaluate results, extract learnings
 
 Auto-replans if tool failure rate exceeds threshold or goals get blocked.
 
@@ -302,7 +303,7 @@ agent-controller/
       goal-graph.ts          # DAG: goals, dependencies, status, validation
       orchestrator.ts        # Plan-Execute-Reflect loop with replan triggers
       planner.ts             # LLM-driven task decomposition into goal graph
-      executor.ts            # Goal execution with error recovery strategies
+      executor.ts            # Goal execution with error recovery + self-assessment
       reflector.ts           # Post-task evaluation + learning extraction
 
     lib/                     # Reused infrastructure

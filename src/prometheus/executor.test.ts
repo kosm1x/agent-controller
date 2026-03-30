@@ -11,6 +11,7 @@ import { GoalGraph } from "./goal-graph.js";
 
 // Mock inference adapter
 vi.mock("../inference/adapter.js", () => ({
+  infer: vi.fn(),
   inferWithTools: vi.fn(),
 }));
 
@@ -31,9 +32,10 @@ vi.mock("../tools/registry.js", () => ({
   },
 }));
 
-import { executeGoal, executeGraph } from "./executor.js";
-import { inferWithTools } from "../inference/adapter.js";
+import { executeGoal, executeGraph, selfAssess } from "./executor.js";
+import { infer, inferWithTools } from "../inference/adapter.js";
 
+const mockInfer = vi.mocked(infer);
 const mockInferWithTools = vi.mocked(inferWithTools);
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
@@ -54,6 +56,17 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: self-assessment says criteria are met (existing tests pass unmodified)
+  mockInfer.mockResolvedValue({
+    content: JSON.stringify({
+      met: true,
+      unmetCriteria: [],
+      reasoning: "All criteria satisfied",
+    }),
+    usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+    provider: "mock",
+    latency_ms: 0,
+  });
 });
 
 describe("executeGoal", () => {
@@ -228,5 +241,169 @@ describe("executeGraph", () => {
 
     expect(Object.keys(result.goalResults)).toHaveLength(0);
     expect(result.totalToolCalls).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Self-assessment tests
+// ---------------------------------------------------------------------------
+
+describe("selfAssess", () => {
+  it("should return null for goals with no criteria", async () => {
+    const goal = makeGoal({ completionCriteria: [] });
+    const result = await selfAssess(goal, "some output");
+    expect(result).toBeNull();
+  });
+
+  it("should return met=true when criteria satisfied", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: true,
+        unmetCriteria: [],
+        reasoning: "All criteria satisfied",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+
+    const goal = makeGoal({ completionCriteria: ["must return a number"] });
+    const result = await selfAssess(goal, "The answer is 42");
+    expect(result).not.toBeNull();
+    expect(result!.met).toBe(true);
+    expect(result!.unmetCriteria).toEqual([]);
+  });
+
+  it("should return met=false with unmet criteria list", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: false,
+        unmetCriteria: ["must include a chart"],
+        reasoning: "No chart was generated",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+
+    const goal = makeGoal({
+      completionCriteria: ["must return a number", "must include a chart"],
+    });
+    const result = await selfAssess(goal, "The answer is 42");
+    expect(result!.met).toBe(false);
+    expect(result!.unmetCriteria).toEqual(["must include a chart"]);
+  });
+
+  it("should return met=true when infer throws (graceful fallback)", async () => {
+    mockInfer.mockRejectedValueOnce(new Error("LLM unavailable"));
+
+    const goal = makeGoal({ completionCriteria: ["some criterion"] });
+    const result = await selfAssess(goal, "output");
+    expect(result!.met).toBe(true); // Assumes met on failure
+  });
+});
+
+describe("executeGoal self-assessment integration", () => {
+  it("should re-run with reflection when criteria not met", async () => {
+    // First inferWithTools: produces initial output
+    mockInferWithTools
+      .mockResolvedValueOnce({
+        content: "Partial result without chart",
+        messages: [
+          { role: "system", content: "..." },
+          { role: "assistant", content: "Partial result without chart" },
+        ],
+        totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
+      })
+      // Second inferWithTools: after reflection, produces complete output
+      .mockResolvedValueOnce({
+        content: "Complete result with chart included",
+        messages: [
+          { role: "system", content: "..." },
+          { role: "assistant", content: "Complete result with chart included" },
+        ],
+        totalUsage: { prompt_tokens: 150, completion_tokens: 60 },
+      });
+
+    // Self-assessment: first call says not met, second says met
+    mockInfer
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          met: false,
+          unmetCriteria: ["must include a chart"],
+          reasoning: "No chart found in output",
+        }),
+        usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+        provider: "mock",
+        latency_ms: 0,
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "All criteria satisfied",
+        }),
+        usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+        provider: "mock",
+        latency_ms: 0,
+      });
+
+    const goal = makeGoal({
+      completionCriteria: ["must include a chart"],
+    });
+
+    const result = await executeGoal(goal, "");
+    expect(result.ok).toBe(true);
+    expect(result.result).toBe("Complete result with chart included");
+    expect(result.selfAssessRounds).toBe(1);
+    // Token usage should accumulate both runs
+    expect(result.tokenUsage.promptTokens).toBe(250); // 100 + 150
+    expect(result.tokenUsage.completionTokens).toBe(110); // 50 + 60
+    // inferWithTools called twice (initial + retry)
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("should skip self-assessment for goals without criteria", async () => {
+    mockInferWithTools.mockResolvedValueOnce({
+      content: "Done",
+      messages: [{ role: "assistant", content: "Done" }],
+      totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
+    });
+
+    const goal = makeGoal({ completionCriteria: [] });
+    const result = await executeGoal(goal, "");
+    expect(result.ok).toBe(true);
+    expect(result.selfAssessRounds).toBe(0);
+    // infer (selfAssess) should NOT be called
+    expect(mockInfer).not.toHaveBeenCalled();
+  });
+
+  it("should cap at MAX_SELF_ASSESS rounds and return best-effort", async () => {
+    // Initial inferWithTools
+    mockInferWithTools.mockResolvedValue({
+      content: "Still incomplete",
+      messages: [{ role: "assistant", content: "Still incomplete" }],
+      totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
+    });
+
+    // Self-assessment always says not met
+    mockInfer.mockResolvedValue({
+      content: JSON.stringify({
+        met: false,
+        unmetCriteria: ["must be complete"],
+        reasoning: "Output is still incomplete",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+
+    const goal = makeGoal({ completionCriteria: ["must be complete"] });
+    const result = await executeGoal(goal, "");
+
+    expect(result.ok).toBe(true); // Still returns ok — best effort
+    expect(result.selfAssessRounds).toBe(2); // Capped at MAX_SELF_ASSESS
+    // 1 initial + 2 retry rounds = 3 inferWithTools calls
+    expect(mockInferWithTools).toHaveBeenCalledTimes(3);
   });
 });

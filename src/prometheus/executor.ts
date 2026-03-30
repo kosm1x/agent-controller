@@ -6,12 +6,12 @@
  * Ready goals execute concurrently via Promise.allSettled.
  */
 
-import { inferWithTools } from "../inference/adapter.js";
+import { infer, inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { GoalGraph } from "./goal-graph.js";
 import { IterationBudget } from "./budget.js";
-import { GoalStatus, ErrorStrategy } from "./types.js";
+import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 
@@ -21,6 +21,7 @@ import { getMemoryService } from "../memory/index.js";
 
 const MAX_RETRIES = 3;
 const MAX_ROUNDS_PER_GOAL = 10;
+const MAX_SELF_ASSESS = 2;
 const CONTEXT_MAX_GOALS = 5;
 const CONTEXT_MAX_CHARS = 500;
 
@@ -49,6 +50,67 @@ function classifyError(
   if (isTransient && attempt < maxAttempts - 1) return ErrorStrategy.RETRY;
   if (attempt < maxAttempts - 1) return ErrorStrategy.RETRY;
   return ErrorStrategy.ESCALATE;
+}
+
+// ---------------------------------------------------------------------------
+// Self-assessment — checks if goal output satisfies completion criteria
+// ---------------------------------------------------------------------------
+
+const SELF_ASSESS_SYSTEM = `You evaluate whether a goal's output satisfies its completion criteria.
+
+Respond ONLY with a JSON object:
+{
+  "met": true,
+  "unmetCriteria": [],
+  "reasoning": "brief explanation"
+}
+
+Rules:
+- met = true only if ALL criteria are satisfied by the output.
+- unmetCriteria = list of criteria strings that were NOT satisfied.
+- Be strict: vague or partial satisfaction counts as not met.
+- Emit ONLY valid JSON. No markdown, no commentary.`;
+
+interface SelfAssessment {
+  met: boolean;
+  unmetCriteria: string[];
+  reasoning: string;
+}
+
+/**
+ * Lightweight LLM check: does the goal result satisfy its completion criteria?
+ * Returns null if the goal has no criteria (skip assessment).
+ */
+export async function selfAssess(
+  goal: Goal,
+  resultText: string,
+): Promise<SelfAssessment | null> {
+  if (goal.completionCriteria.length === 0) return null;
+
+  const userContent =
+    `## Goal\n${goal.description}\n\n` +
+    `## Completion Criteria\n${goal.completionCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")}\n\n` +
+    `## Goal Output\n${resultText.length > 2000 ? resultText.slice(0, 2000) + "..." : resultText}`;
+
+  try {
+    const response = await infer({
+      messages: [
+        { role: "system", content: SELF_ASSESS_SYSTEM },
+        { role: "user", content: userContent },
+      ],
+      temperature: 0.1,
+    });
+    return parseLLMJson<SelfAssessment>(response.content ?? "");
+  } catch (err) {
+    console.warn(
+      `[executor] Self-assessment failed for ${goal.id}: ${err instanceof Error ? err.message : err}; assuming met`,
+    );
+    return {
+      met: true,
+      unmetCriteria: [],
+      reasoning: "Assessment failed — assuming met",
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,17 +282,83 @@ export async function executeGoal(
         }
       }
 
+      // --- Self-assessment loop (ACE-inspired) ---
+      // Check if the result satisfies completion criteria. If not,
+      // inject reflection and re-run with the existing conversation.
+      let finalContent = result.content;
+      let currentMessages = result.messages;
+      let selfAssessRounds = 0;
+      let totalPrompt = result.totalUsage.prompt_tokens;
+      let totalCompletion = result.totalUsage.completion_tokens;
+
+      for (let round = 0; round < MAX_SELF_ASSESS; round++) {
+        const assessment = await selfAssess(goal, finalContent);
+        // null = no criteria to check, met = passed
+        if (!assessment || assessment.met) break;
+
+        selfAssessRounds++;
+        console.log(
+          `[executor] Goal ${goal.id} self-assessment round ${selfAssessRounds}: ` +
+            `criteria not met — ${assessment.unmetCriteria.join("; ")}`,
+        );
+
+        // Inject reflection as a user message and re-run with tools
+        const reflectionMsg: ChatMessage = {
+          role: "user",
+          content:
+            `Your output did not satisfy these completion criteria:\n` +
+            assessment.unmetCriteria
+              .map((c, i) => `${i + 1}. ${c}`)
+              .join("\n") +
+            `\n\nAssessment: ${assessment.reasoning}\n\n` +
+            `Reflect on what went wrong and try again. Use tools if needed.`,
+        };
+
+        const retryResult = await inferWithTools(
+          [...currentMessages, reflectionMsg],
+          definitions,
+          (name, args) => toolRegistry.execute(name, args),
+          {
+            maxRounds: MAX_ROUNDS_PER_GOAL,
+            signal,
+            tokenBudget: TOKEN_BUDGET_HEAVY,
+            compressionContext,
+          },
+        );
+
+        finalContent = retryResult.content;
+        currentMessages = retryResult.messages;
+        totalPrompt += retryResult.totalUsage.prompt_tokens;
+        totalCompletion += retryResult.totalUsage.completion_tokens;
+
+        // Collect additional tool calls from retry
+        for (const m of retryResult.messages) {
+          if (m.role === "assistant" && m.tool_calls) {
+            for (const tc of m.tool_calls) {
+              tcNames.push(tc.function.name);
+            }
+          }
+        }
+      }
+
+      if (selfAssessRounds > 0) {
+        console.log(
+          `[executor] Goal ${goal.id} completed after ${selfAssessRounds} self-assessment round(s)`,
+        );
+      }
+
       return {
         goalId: goal.id,
         ok: true,
-        result: result.content,
+        result: finalContent,
         durationMs: Date.now() - start,
         toolCalls: tcNames.length,
         toolNames: tcNames,
         toolFailures: 0,
+        selfAssessRounds,
         tokenUsage: {
-          promptTokens: result.totalUsage.prompt_tokens,
-          completionTokens: result.totalUsage.completion_tokens,
+          promptTokens: totalPrompt,
+          completionTokens: totalCompletion,
         },
       };
     } catch (err) {
