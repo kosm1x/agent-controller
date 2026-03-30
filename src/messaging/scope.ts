@@ -157,7 +157,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|sincroniza(r|ción)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|commit|repo)|actualiza(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|title)|cambia(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|title)|renombra(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task))/i,
+      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|sincroniza\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|commit|repo)|actual[ií]za\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|title)|c[aá]mbia\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|title)|ren[oó]mbra\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica)(?:lo|la|los|las|rlo|rla|rlos|rlas)\b|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|(tarea|meta|objetivo|goal|task)(\s+\S+){0,8}\s*(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica)\S*)/i,
     group: "commit_write",
   },
   {
