@@ -64,6 +64,11 @@ import {
   MISC_TOOLS,
   BROWSER_TOOLS,
 } from "./scope.js";
+import {
+  recordScopeDecision,
+  linkScopeToTask,
+  linkFeedbackToScope,
+} from "../intelligence/scope-telemetry.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -101,6 +106,9 @@ function buildJarvisSystemPrompt(
     ["gmail_send", "calendar_list", "gdrive_list"].includes(t),
   );
   const hasCommit = tools.some((t) => t.startsWith("commit__"));
+  const hasResearch = tools.some((t) =>
+    ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
+  );
 
   const sections: string[] = [];
 
@@ -158,6 +166,10 @@ NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como r
   if (hasCoding)
     caps.push(
       `- **Código**: Lee, edita, ejecuta archivos (file_read, file_edit, shell_exec, grep, glob)`,
+    );
+  if (hasResearch)
+    caps.push(
+      `- **Investigación documental**: Analiza documentos, genera resúmenes, guías de estudio, podcasts (gemini_upload → gemini_research / gemini_audio_overview)`,
     );
   sections.push(`## Tus capacidades\n${caps.join("\n")}`);
 
@@ -311,6 +323,24 @@ Tienes un navegador completo (browser__*) para:
 Para lectura simple, web_read es más rápido. Usa browser__* cuando necesites JavaScript o interacción.`);
   }
 
+  // --- Research capabilities (ONLY when Gemini research tools are available) ---
+  if (hasResearch) {
+    sections.push(`## Investigación profunda de documentos (Gemini Research)
+Tienes herramientas para analizar documentos en profundidad:
+
+### Flujo de trabajo:
+1. gemini_upload: Sube documentos (PDF, texto, código, audio, video) — se almacenan 48h
+2. gemini_research: Analiza los documentos — Q&A, resúmenes, guías de estudio, briefings, quizzes, flashcards, outlines
+3. gemini_audio_overview: Genera un podcast con dos presentadores que discuten los documentos
+
+### Reglas:
+- SIEMPRE sube los documentos con gemini_upload ANTES de usar gemini_research o gemini_audio_overview
+- Puedes subir múltiples documentos y analizarlos juntos (cross-referencing)
+- Los archivos expiran a las 48h — re-sube si el usuario vuelve después
+- Para lectura simple de un PDF, usa pdf_read (más rápido, no requiere upload)
+- gemini_research usa Flash por defecto. Usa model="gemini-2.5-pro" solo para análisis complejos multi-documento`);
+  }
+
   // --- User facts and enrichment ---
   let prompt = sections.join("\n\n");
   prompt += userFactsBlock;
@@ -329,7 +359,7 @@ Para lectura simple, web_read es más rápido. Usa browser__* cuando necesites J
 function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
-): string[] {
+): { tools: string[]; activeGroups: string[] } {
   // Scope from RECENT user messages only (last 2) — older messages cause scope
   // accumulation where every past topic stays active, bloating the tool list.
   // The current message (first param) is always scanned separately.
@@ -392,7 +422,7 @@ function scopeToolsForMessage(
     2; // memory
   console.log(`[router] Tool scope: ${tools.length}/${fullCount} tools`);
 
-  return tools;
+  return { tools, activeGroups: [...activeGroups] };
 }
 
 interface PendingReply {
@@ -759,6 +789,11 @@ export class MessageRouter {
       const signal = detectFeedbackSignal(msg.text);
       if (signal !== "neutral") {
         recordTaskFeedback(feedbackTaskId, signal);
+        try {
+          linkFeedbackToScope(feedbackTaskId, signal);
+        } catch {
+          /* non-fatal */
+        }
       }
 
       // Pure feedback ("gracias", "perfecto", "no") → ack and skip task creation
@@ -868,7 +903,18 @@ export class MessageRouter {
     }
 
     // Dynamic tool scoping — only include tool groups relevant to the conversation
-    const tools = scopeToolsForMessage(msg.text, conversationHistory);
+    const { tools, activeGroups } = scopeToolsForMessage(
+      msg.text,
+      conversationHistory,
+    );
+
+    // Scope telemetry — record decision for self-tuning pipeline
+    let scopeRowId = 0;
+    try {
+      scopeRowId = recordScopeDecision(msg.text, activeGroups, tools);
+    } catch {
+      // Non-fatal — telemetry should never block the pipeline
+    }
 
     // Current date/time in Mexico City for the LLM
     const mxDate = nowMexDate();
@@ -898,6 +944,15 @@ export class MessageRouter {
         ? (chunk: string) => streamController!.appendChunk(chunk)
         : undefined,
     });
+
+    // Link scope telemetry to this task
+    if (scopeRowId > 0) {
+      try {
+        linkScopeToTask(scopeRowId, result.taskId);
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     // Track pending reply
     const interimTimer = setTimeout(() => {

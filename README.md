@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v1–v3 complete. v4 in progress.** ~165 source files, 699 tests passing, zero type errors, 111 tools.
+**v1–v4.0.4 complete.** ~174 source files, 755 tests passing, zero type errors, 114 tools.
 
 | Phase       | Status  | What                                                                                                                                                                     |
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -388,7 +388,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the agent controller:
 
-- **111 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
+- **114 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
 - **8 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log)
 - **Dynamic tool scoping** — 14-50 tools per message based on conversation keywords
 - **7-layer hallucination defense** with retry and honest failure messages
@@ -396,6 +396,7 @@ Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the 
 - **Fast-path** — conversational messages skip full pipeline (~2s vs 15s)
 - **Hybrid memory** — FTS5 full-text + embedding semantic search + trust-tier decay
 - **Media generation** — images, speech, video, music via HuggingFace Spaces (free with Pro)
+- **Document research** — Gemini-powered deep analysis, summaries, study guides, quizzes, podcast generation (NotebookLM-equivalent)
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks
 - **WordPress multi-site** — content management with destruction safeguards
 - **COMMIT integration** — personal growth hierarchy (Goals → Objectives → Tasks)

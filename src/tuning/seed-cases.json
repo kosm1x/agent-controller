@@ -395,6 +395,88 @@
   },
 
   {
+    "case_id": "sc-research-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Sube este PDF y hazme un resumen de los documentos"
+    },
+    "expected": { "scope_groups": ["research"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-research-02",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "I want to do a deep analysis of these research papers"
+    },
+    "expected": { "scope_groups": ["research"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-research-03",
+    "category": "scope_accuracy",
+    "input": { "message": "Genera un podcast con los documentos que subí" },
+    "expected": { "scope_groups": ["research"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-research-04",
+    "category": "scope_accuracy",
+    "input": { "message": "Hazme flashcards del material de estudio" },
+    "expected": { "scope_groups": ["research"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-research-05",
+    "category": "scope_accuracy",
+    "input": { "message": "Create a study guide from the uploaded files" },
+    "expected": { "scope_groups": ["research"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-research-no-scope-01",
+    "category": "scope_accuracy",
+    "input": { "message": "Busca información sobre inteligencia artificial" },
+    "expected": { "scope_groups": [], "not_scope_groups": ["research"] },
+    "weight": 1.5,
+    "source": "manual"
+  },
+
+  {
+    "case_id": "ts-gemini-upload-01",
+    "category": "tool_selection",
+    "input": { "message": "Sube este PDF para analizar: /tmp/report.pdf" },
+    "expected": { "tools": ["gemini_upload"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-gemini-research-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Qué dicen los documentos sobre el impacto económico?"
+    },
+    "expected": { "tools": ["gemini_research"], "not_tools": ["web_search"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-gemini-podcast-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Genera un audio overview de los documentos que subí"
+    },
+    "expected": { "tools": ["gemini_audio_overview"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+
+  {
     "case_id": "cl-fast-01",
     "category": "classification",
     "input": { "message": "Busca el clima en CDMX" },

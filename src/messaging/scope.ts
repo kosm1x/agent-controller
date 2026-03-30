@@ -123,6 +123,14 @@ export const SPECIALTY_TOOLS = [
   "hf_spaces",
 ];
 
+/** Gemini research tools — document analysis, Q&A, podcast generation.
+ *  Scope-gated: only when research/analysis/study keywords detected. */
+export const RESEARCH_TOOLS = [
+  "gemini_upload",
+  "gemini_research",
+  "gemini_audio_overview",
+];
+
 /** Lightpanda interactive browser tools — only when web interaction needed.
  *  browser__goto and browser__markdown are always available via MISC_TOOLS. */
 export const BROWSER_TOOLS = [
@@ -156,6 +164,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?)/i,
     group: "specialty",
+  },
+  {
+    pattern:
+      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF)|upload\s+(?:\S+\s+)?document|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?)/i,
+    group: "research",
   },
   {
     pattern:
@@ -252,6 +265,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
+  }
+  if (activeGroups.has("research")) {
+    tools.push(...RESEARCH_TOOLS);
   }
   if (activeGroups.has("commit_journal")) {
     tools.push(...COMMIT_JOURNAL_TOOLS);

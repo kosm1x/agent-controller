@@ -57,6 +57,11 @@ import {
 import { exaSearchTool } from "../builtin/exa-search.js";
 import { pdfReadTool } from "../builtin/pdf-read.js";
 import { hfGenerateTool, hfSpacesTool } from "../builtin/huggingface.js";
+import {
+  geminiUploadTool,
+  geminiResearchTool,
+  geminiAudioOverviewTool,
+} from "../builtin/gemini-research.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -91,6 +96,9 @@ const BUILTIN_TOOLS: Tool[] = [
   pdfReadTool,
   hfGenerateTool,
   hfSpacesTool,
+  geminiUploadTool,
+  geminiResearchTool,
+  geminiAudioOverviewTool,
 ];
 
 // WordPress tools — conditionally registered when WP_SITES is configured
