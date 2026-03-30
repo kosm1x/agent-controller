@@ -157,7 +157,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|actualiza(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|title)|cambia(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|title)|renombra(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task))/i,
+      /\b(crea(r|me)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo|sincroniza(r|ción)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|commit|repo)|actualiza(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|nombre|title)|cambia(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|title)|renombra(r)?(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)|marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao]|(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task))/i,
     group: "commit_write",
   },
   {
@@ -251,12 +251,16 @@ export function scopeToolsForMessage(
       }
     }
   } else if (
-    currentMessage.trim().length < 30 &&
-    recentUserMessages.length > 0
+    recentUserMessages.length > 0 &&
+    (currentMessage.trim().length < 50 ||
+      /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele)\b/i.test(
+        currentMessage,
+      ))
   ) {
-    // Short follow-up message with no scope signals (e.g. "links?", "procede",
-    // "hazlo", "ok", "y?") — inherit scope from recent messages to maintain
-    // context continuity. Without this, the LLM loses access to tools it just
+    // Follow-up message with no scope signals — either short (<50 chars) or
+    // contains imperative verbs that delegate execution without introducing
+    // a new topic. Inherit scope from recent messages to maintain context
+    // continuity. Without this, the LLM loses access to tools it just
     // used and may hallucinate that capabilities don't exist.
     const priorText = recentUserMessages.join(" ");
     for (const { pattern, group } of patterns) {

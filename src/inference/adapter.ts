@@ -884,6 +884,7 @@ export async function inferWithTools(
   // paralysis guard can distinguish "gathering data before acting" from
   // "endlessly exploring without acting".
   const calledToolNames = new Set<string>();
+  const allowedToolNames = new Set(tools.map((t) => t.function.name));
   const availableNonReadOnly = new Set(
     tools.map((t) => t.function.name).filter((n) => !READ_ONLY_TOOLS.has(n)),
   );
@@ -1127,23 +1128,35 @@ export async function inferWithTools(
                 toolCall.function.name = closest;
               }
             }
-            // Normalize common parameter aliases before validation.
-            // LLMs frequently confuse "path" vs "file_path" vs "filepath",
-            // "old_string" vs "oldString", etc.
-            normalizeArgAliases(args);
-
-            // Validate args against tool schema before execution
-            const validation = toolRegistry.validate(toolName, args);
-            if (!validation.success) {
+            // Scope enforcement: reject tool calls outside the scoped definitions.
+            // DashScope/Qwen doesn't enforce strict tool calling — the LLM may
+            // call tools not in its definitions, causing phantom COMMIT operations.
+            if (!allowedToolNames.has(toolName)) {
               console.warn(
-                `[inference] Tool ${toolName} args validation failed: ${validation.error}`,
+                `[inference] Tool ${toolName} rejected: not in scoped tool list`,
               );
               result = JSON.stringify({
-                error: `Invalid arguments for ${toolName}: ${validation.error}`,
-                hint: "Fix the argument values and try again.",
+                error: `Tool "${toolName}" is not available in the current context. Use only the tools provided in your tool definitions.`,
               });
             } else {
-              result = await executor(toolName, args);
+              // Normalize common parameter aliases before validation.
+              // LLMs frequently confuse "path" vs "file_path" vs "filepath",
+              // "old_string" vs "oldString", etc.
+              normalizeArgAliases(args);
+
+              // Validate args against tool schema before execution
+              const validation = toolRegistry.validate(toolName, args);
+              if (!validation.success) {
+                console.warn(
+                  `[inference] Tool ${toolName} args validation failed: ${validation.error}`,
+                );
+                result = JSON.stringify({
+                  error: `Invalid arguments for ${toolName}: ${validation.error}`,
+                  hint: "Fix the argument values and try again.",
+                });
+              } else {
+                result = await executor(toolName, args);
+              }
             }
           }
         } catch (err) {
