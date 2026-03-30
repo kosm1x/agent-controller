@@ -13,6 +13,10 @@ import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { setMemoryTaskContext } from "../tools/builtin/memory.js";
+import {
+  recordToolExecution,
+  recordToolRepairs,
+} from "../intelligence/scope-telemetry.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -450,6 +454,16 @@ export const fastRunner: Runner = {
         console.log(
           `[fast-runner] Failed tool calls (excluded from toolsCalled): [${[...failedToolCalls].join(", ")}]`,
         );
+      }
+
+      // Scope telemetry — record tool execution + repairs
+      try {
+        recordToolExecution(input.taskId, toolsCalled, [...failedToolCalls]);
+        if (result.toolRepairs.length > 0) {
+          recordToolRepairs(input.taskId, result.toolRepairs);
+        }
+      } catch {
+        // Non-fatal — telemetry should never block execution
       }
 
       // Extract last user message for hallucination guard context

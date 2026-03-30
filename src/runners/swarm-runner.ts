@@ -206,6 +206,7 @@ function buildExecutionResults(
     totalToolNames: [],
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    toolRepairs: [],
   };
 }
 

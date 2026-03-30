@@ -101,6 +101,21 @@ export function ensureTuningTables(): void {
       ON tune_variants(composite_score DESC);
     CREATE INDEX IF NOT EXISTS idx_tune_variants_valid
       ON tune_variants(valid);
+
+    CREATE TABLE IF NOT EXISTS mined_test_cases (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id     TEXT UNIQUE NOT NULL,
+      category    TEXT NOT NULL,
+      input       TEXT NOT NULL,
+      expected    TEXT NOT NULL,
+      weight      REAL DEFAULT 0.8,
+      source      TEXT DEFAULT 'mined',
+      active      INTEGER DEFAULT 1,
+      mined_from  TEXT,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mined_cases_category
+      ON mined_test_cases(category);
   `);
 }
 
@@ -125,26 +140,18 @@ export function insertTestCase(tc: TestCase): void {
   );
 }
 
-export function getActiveTestCases(category?: TestCaseCategory): TestCase[] {
-  const db = getDatabase();
-  const where = category
-    ? "WHERE active = 1 AND category = ?"
-    : "WHERE active = 1";
-  const params = category ? [category] : [];
+type TestCaseRow = {
+  case_id: string;
+  category: string;
+  input: string;
+  expected: string;
+  weight: number;
+  source: string;
+  active: number;
+};
 
-  const rows = db
-    .prepare(`SELECT * FROM tune_test_cases ${where} ORDER BY case_id`)
-    .all(...params) as Array<{
-    case_id: string;
-    category: string;
-    input: string;
-    expected: string;
-    weight: number;
-    source: string;
-    active: number;
-  }>;
-
-  return rows.map((r) => ({
+function parseTestCaseRow(r: TestCaseRow): TestCase {
+  return {
     case_id: r.case_id,
     category: r.category as TestCaseCategory,
     input: JSON.parse(r.input) as TestCaseInput,
@@ -152,7 +159,32 @@ export function getActiveTestCases(category?: TestCaseCategory): TestCase[] {
     weight: r.weight,
     source: r.source as TestCase["source"],
     active: r.active === 1,
-  }));
+  };
+}
+
+export function getActiveTestCases(category?: TestCaseCategory): TestCase[] {
+  const db = getDatabase();
+  const where = category
+    ? "WHERE active = 1 AND category = ?"
+    : "WHERE active = 1";
+  const params = category ? [category] : [];
+
+  // Manual seed cases
+  const manualRows = db
+    .prepare(`SELECT * FROM tune_test_cases ${where} ORDER BY case_id`)
+    .all(...params) as TestCaseRow[];
+
+  // Mined cases from scope telemetry pipeline
+  let minedRows: TestCaseRow[] = [];
+  try {
+    minedRows = db
+      .prepare(`SELECT * FROM mined_test_cases ${where} ORDER BY case_id`)
+      .all(...params) as TestCaseRow[];
+  } catch {
+    // Table may not exist yet
+  }
+
+  return [...manualRows, ...minedRows].map(parseTestCaseRow);
 }
 
 export function countTestCases(): number {

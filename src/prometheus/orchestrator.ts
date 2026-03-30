@@ -90,6 +90,7 @@ export async function orchestrate(
       totalToolNames: [],
       totalToolFailures: 0,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
     };
 
     // eslint-disable-next-line no-constant-condition
@@ -114,6 +115,17 @@ export async function orchestrate(
       trace.totalToolFailures += executionResults.totalToolFailures;
       totalPromptTokens += executionResults.tokenUsage.promptTokens;
       totalCompletionTokens += executionResults.tokenUsage.completionTokens;
+
+      // Record tool repairs to scope telemetry (non-fatal)
+      if (executionResults.toolRepairs.length > 0) {
+        try {
+          const { recordToolRepairs } =
+            await import("../intelligence/scope-telemetry.js");
+          recordToolRepairs(taskId, executionResults.toolRepairs);
+        } catch {
+          /* telemetry should never block execution */
+        }
+      }
 
       traceRecord(trace, "phase_end", {
         phase: Phase.EXECUTE,

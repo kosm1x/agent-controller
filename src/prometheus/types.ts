@@ -66,6 +66,7 @@ export interface GoalResult {
   tokenUsage: TokenUsage;
   /** Number of self-assessment reflection rounds used (0 = passed first try). */
   selfAssessRounds?: number;
+  toolRepairs?: Array<{ original: string; repaired: string }>;
 }
 
 export interface ExecutionResult {
@@ -75,6 +76,7 @@ export interface ExecutionResult {
   totalToolNames: string[];
   totalToolFailures: number;
   tokenUsage: TokenUsage;
+  toolRepairs: Array<{ original: string; repaired: string }>;
 }
 
 // ---------------------------------------------------------------------------

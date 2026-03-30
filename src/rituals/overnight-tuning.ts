@@ -14,6 +14,7 @@ import { seedTestCases } from "../tuning/test-cases.js";
 import { countTestCases } from "../tuning/schema.js";
 import { runOvernightTuning } from "../tuning/overnight-loop.js";
 import { submitTask } from "../dispatch/dispatcher.js";
+import { mineTestCases } from "../tuning/case-miner.js";
 
 /**
  * Execute the overnight tuning run.
@@ -34,6 +35,13 @@ export async function executeOvernightTuning(): Promise<void> {
   // Ensure test cases are seeded
   if (countTestCases() === 0) {
     seedTestCases();
+  }
+
+  // Mine new test cases from scope telemetry before running the loop
+  try {
+    mineTestCases();
+  } catch (err) {
+    console.warn("[rituals] case mining failed (non-fatal):", err);
   }
 
   try {

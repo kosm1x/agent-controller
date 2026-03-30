@@ -97,6 +97,7 @@ function makeExecResult(): ExecutionResult {
     totalToolNames: ["web_search", "gmail_send", "file_read"],
     totalToolFailures: 0,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    toolRepairs: [],
   };
 }
 
@@ -213,6 +214,7 @@ describe("orchestrate", () => {
       ],
       totalToolFailures: 4,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
     };
     mockExecuteGraph.mockResolvedValueOnce(highFailExec);
 
@@ -258,6 +260,7 @@ describe("orchestrate", () => {
       totalToolNames: [],
       totalToolFailures: 8,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
     };
 
     // All executions fail with high failure rate
@@ -323,6 +326,7 @@ describe("orchestrate", () => {
       ],
       totalToolFailures: 0,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
     };
     mockExecuteGraph.mockResolvedValueOnce(loopyExec);
 

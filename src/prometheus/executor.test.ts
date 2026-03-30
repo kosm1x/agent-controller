@@ -78,6 +78,7 @@ describe("executeGoal", () => {
         { role: "user", content: "..." },
         { role: "assistant", content: "Goal achieved successfully" },
       ],
+      toolRepairs: [],
       totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
     });
 
@@ -118,6 +119,7 @@ describe("executeGoal", () => {
         { role: "tool", content: "result 2", tool_call_id: "tc-2" },
         { role: "assistant", content: "Done with tools" },
       ],
+      toolRepairs: [],
       totalUsage: { prompt_tokens: 200, completion_tokens: 100 },
     });
 
@@ -136,6 +138,7 @@ describe("executeGoal", () => {
           { role: "system", content: "..." },
           { role: "assistant", content: "Succeeded on retry" },
         ],
+        toolRepairs: [],
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       });
 
@@ -171,6 +174,7 @@ describe("executeGraph", () => {
       return {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
+        toolRepairs: [],
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -202,6 +206,7 @@ describe("executeGraph", () => {
       return {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
+        toolRepairs: [],
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -332,6 +337,7 @@ describe("executeGoal self-assessment integration", () => {
           { role: "system", content: "..." },
           { role: "assistant", content: "Partial result without chart" },
         ],
+        toolRepairs: [],
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       })
       // Second inferWithTools: after reflection, produces complete output
@@ -341,6 +347,7 @@ describe("executeGoal self-assessment integration", () => {
           { role: "system", content: "..." },
           { role: "assistant", content: "Complete result with chart included" },
         ],
+        toolRepairs: [],
         totalUsage: { prompt_tokens: 150, completion_tokens: 60 },
       });
 
@@ -387,6 +394,7 @@ describe("executeGoal self-assessment integration", () => {
     mockInferWithTools.mockResolvedValueOnce({
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
+      toolRepairs: [],
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 
@@ -403,6 +411,7 @@ describe("executeGoal self-assessment integration", () => {
     mockInferWithTools.mockResolvedValue({
       content: "Still incomplete",
       messages: [{ role: "assistant", content: "Still incomplete" }],
+      toolRepairs: [],
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 

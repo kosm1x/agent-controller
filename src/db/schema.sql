@@ -96,6 +96,22 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_created ON task_outcomes(created_at DESC
 CREATE INDEX IF NOT EXISTS idx_outcomes_task_id ON task_outcomes(task_id);
 CREATE INDEX IF NOT EXISTS idx_outcomes_runner_success ON task_outcomes(ran_on, success);
 
+-- Scope telemetry (feeds self-tuning case miner)
+CREATE TABLE IF NOT EXISTS scope_telemetry (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id         TEXT,
+  message         TEXT NOT NULL,
+  active_groups   TEXT DEFAULT '[]',
+  tools_in_scope  TEXT DEFAULT '[]',
+  tools_called    TEXT DEFAULT '[]',
+  tools_repaired  TEXT DEFAULT '[]',
+  tools_failed    TEXT DEFAULT '[]',
+  feedback_signal TEXT DEFAULT 'none',
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_scope_tel_task ON scope_telemetry(task_id);
+CREATE INDEX IF NOT EXISTS idx_scope_tel_created ON scope_telemetry(created_at DESC);
+
 -- Saved skills (reusable multi-step procedures)
 CREATE TABLE IF NOT EXISTS skills (
   id            INTEGER PRIMARY KEY,
