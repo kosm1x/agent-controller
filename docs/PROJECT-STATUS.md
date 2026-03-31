@@ -77,6 +77,33 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v4.0.11 | 5-layer hallucination defense — scope gap (destructive→read+write), post-nudge persistence, Layer 0 (failed writes), passive voice detection (✅+participle), clitic pronoun confirmation, fast-path tool triggers (procede/ejecuta), poison filter tuning. 11 fixes, 16 DB purges. 859 tests | Done | `fa96771` |
 | v4.0.12 | Fix commit\_\_delete_item invisible to LLM — destructive tools now visible whenever any COMMIT scope activates (scope gate removed, execution lock is real safety). Scheduled tasks pre-authorize destructive tools when explicitly listed. 862 tests | Done | — |
 
+## v5.0 Planning (DRAFT)
+
+v5.0 theme: **scalability** — making the architecture handle more concurrent work, smarter routing, real-time intelligence, and resilience without accumulating complexity.
+
+Full plans: `V5-ROADMAP.md` (565 lines) and `V5-INTELLIGENCE-DEPOT.md` (652 lines).
+
+External pattern sources assessed and selectively adopted:
+
+- **Crucix** (calesthio) — delta engine, multi-tier alert routing, content-hash dedup
+- **aden-hive/hive** — multi-level compaction pipeline, doom-loop fingerprinting, conversation quality gate
+- **PraisonAI** (MervinPraison) — ping-pong cycle detector, content-chanting detector, graduated escalation ladder, circuit breaker registry
+- **OpenFang** (RightNow-AI) — outcome-aware loop detection, session repair, pair-aware context trimming, phantom action detection, three-window spending quotas
+
+Also assessed and **rejected**: ruflo (ruvnet) — inflated metrics, misleading claims, thin substance.
+
+| Session | Theme                   | Scope                                                                                                                  | Source                      |
+| ------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| S1      | Memory + Guards         | 8 sub-items: 5-layer doom-loop, compaction, auto-persist, escalation, circuit breaker, session repair, spending quotas | hive + PraisonAI + OpenFang |
+| S2      | Inference workers       | Move inferWithTools to worker_threads. Pool of 2-3 workers                                                             | v4 carry                    |
+| S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups                                                          | v4 carry                    |
+| S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation                                                                             | v4 carry                    |
+| S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds                                                                         | v4 carry                    |
+| S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine                                                    | Crucix                      |
+| S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE)                                                | Crucix                      |
+| S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, ritual integration                                           | Crucix                      |
+| S9+     | Multi-user              | PostgreSQL, Redis, per-user isolation. Only if needed                                                                  | —                           |
+
 ## Tools (137 total, managed by 5 ToolSource plugins)
 
 | Category             | Tools                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Count |

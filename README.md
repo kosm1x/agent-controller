@@ -386,6 +386,9 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v4.0 S7       | Done   | Test coverage — scope, dispatcher, adapter guards (756→841 tests)                                                                                                        |
 | v4.0 S8       | Done   | Decomposition — guards.ts, prompt-sections.ts, InferOptions (+40 tests)                                                                                                  |
 | v4.0 S9       | Done   | Scope telemetry — tool_chain attribution, implicit satisfaction, mc-ctl tool-chains (847 tests)                                                                          |
+| v5.0          | Plan   | 9 sessions: memory+guards (S1), inference workers (S2), embedding scoping (S3), A2A mesh (S4), classifier calibration (S5), intelligence depot (S6-S8), multi-user (S9+) |
+
+**v5.0** is in planning. Key additions: 5-layer doom-loop detection, multi-level context compaction, circuit breaker for tools, real-time intelligence depot (30 data sources, WebSocket streaming, delta engine, multi-tier alerts), graduated escalation ladder, session repair, spending quotas. Patterns adopted from 4 open-source projects (hive, PraisonAI, OpenFang, Crucix) after critical assessment. See `docs/V5-ROADMAP.md` and `docs/V5-INTELLIGENCE-DEPOT.md`.
 
 ### Jarvis — the user-facing persona
 
