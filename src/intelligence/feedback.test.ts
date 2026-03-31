@@ -3,7 +3,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { detectFeedbackSignal, isFeedbackMessage } from "./feedback.js";
+import {
+  detectFeedbackSignal,
+  detectImplicitFeedback,
+  isFeedbackMessage,
+} from "./feedback.js";
 
 describe("feedback", () => {
   describe("detectFeedbackSignal", () => {
@@ -61,6 +65,69 @@ describe("feedback", () => {
 
     it("should not intercept neutral messages", () => {
       expect(isFeedbackMessage("muéstrame las tareas")).toBe(false);
+    });
+  });
+
+  describe("detectImplicitFeedback", () => {
+    it("returns positive when scope groups have no overlap (topic change)", () => {
+      expect(
+        detectImplicitFeedback(
+          new Set(["google"]),
+          new Set(["commit_read"]),
+          "Busca en gmail",
+          "Lista tareas",
+        ),
+      ).toBe("positive");
+    });
+
+    it("returns neutral when scope groups overlap (same topic)", () => {
+      expect(
+        detectImplicitFeedback(
+          new Set(["commit_read", "google"]),
+          new Set(["commit_read"]),
+          "Lista objetivos y busca en gmail",
+          "Lista tareas",
+        ),
+      ).toBe("neutral");
+    });
+
+    it("returns rephrase when message is a rephrase", () => {
+      expect(
+        detectImplicitFeedback(
+          new Set(["commit_read"]),
+          new Set(["commit_read"]),
+          "Busca los correos de Javier del martes pasado",
+          "Busca los correos de Javier de ayer por favor",
+        ),
+      ).toBe("rephrase");
+    });
+
+    it("returns neutral when current groups are empty", () => {
+      expect(
+        detectImplicitFeedback(
+          new Set(),
+          new Set(["commit_read"]),
+          "Hola",
+          "Lista tareas",
+        ),
+      ).toBe("neutral");
+    });
+
+    it("returns neutral when previous groups are empty", () => {
+      expect(
+        detectImplicitFeedback(
+          new Set(["google"]),
+          new Set(),
+          "Busca en gmail",
+          "Hola",
+        ),
+      ).toBe("neutral");
+    });
+
+    it("returns neutral when both groups are empty", () => {
+      expect(detectImplicitFeedback(new Set(), new Set(), "Hola", "Hey")).toBe(
+        "neutral",
+      );
     });
   });
 });

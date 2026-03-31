@@ -138,7 +138,10 @@ export function recordToolExecution(
 // Link feedback signal (called when user feedback is recorded)
 // ---------------------------------------------------------------------------
 
-export function linkFeedbackToScope(taskId: string, signal: string): void {
+export function linkFeedbackToScope(
+  taskId: string,
+  signal: import("./feedback.js").AnyFeedbackSignal | string,
+): void {
   const db = getDatabase();
   db.prepare(
     `UPDATE scope_telemetry SET feedback_signal = ? WHERE task_id = ?`,

@@ -18,7 +18,14 @@ const POSITIVE_PATTERNS =
 const NEGATIVE_PATTERNS =
   /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;
 
+/** Explicit feedback signals detected from user message text. */
 export type FeedbackSignal = "positive" | "negative" | "rephrase" | "neutral";
+
+/** All feedback signal types including implicit (scope-transition-based). */
+export type AnyFeedbackSignal =
+  | FeedbackSignal
+  | "implicit_positive"
+  | "implicit_rephrase";
 
 /**
  * Detect feedback signal from message text.

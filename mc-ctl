@@ -514,6 +514,7 @@ cmd_db() {
 
 cmd_tool_chains() {
   local days="${1:-7}"
+  [[ "$days" =~ ^[0-9]+$ ]] || die "days must be a number"
   need_db
   echo -e "${BOLD}=== Tool Chain Success Rates (last ${days} days) ===${NC}"
   echo ""
@@ -650,6 +651,7 @@ usage() {
   echo -e "  ${BOLD}Tools${NC}"
   echo -e "  ${GREEN}tools${NC}               List registered tools"
   echo -e "  ${GREEN}tool-health${NC}          Health check tool sources"
+  echo -e "  ${GREEN}tool-chains${NC} [days]   Tool chain success rates (default: 7 days)"
   echo ""
   echo -e "  ${BOLD}Memory${NC}"
   echo -e "  ${GREEN}conversations${NC} [N]   Last N conversations (default 10)"
