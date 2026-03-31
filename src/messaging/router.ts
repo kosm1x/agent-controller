@@ -402,10 +402,12 @@ const POISONED_RESPONSE_PATTERNS = [
   /estoy alucinando/i,
   /est[aá]s alucinando/i,
   /narr(?:ando|é) acciones sin ejecutar/i,
-  // Lazy acknowledgments — claimed action "in process" without executing
-  // These teach the LLM to plan instead of execute
-  /✅.*(?:en proceso|en curso|en progreso|iniciando|comenzando)/i,
-  /✅.*(?:Entendido|Recibido|Confirmado).*(?:proceso|homolog|reescritura)/i,
+  // Lazy acknowledgments — claimed action "in process" without executing.
+  // These teach the LLM to plan instead of execute.
+  // IMPORTANT: limit .{0,80} span — ✅ followed much later by "en progreso"
+  // in a status report (e.g. "10 tareas en progreso") is NOT lazy acknowledgment.
+  /✅.{0,80}(?:en proceso|en curso|iniciando|comenzando)\b/i,
+  /✅.{0,80}(?:Entendido|Recibido|Confirmado).{0,40}(?:proceso|homolog|reescritura)/i,
   // Mechanical hallucination replacement (from our detector)
   /⚠️ No completé la acción solicitada/i,
   /Herramientas que SÍ llamé/i,
@@ -421,8 +423,10 @@ const POISONED_RESPONSE_PATTERNS = [
   /no pude completar la acci[oó]n/i,
   /no (?:puedo|es posible) (?:renombrar|cambiar el nombre|actualizar el nombre)/i,
   /necesitas? hacer.{0,20}(?:manualmente|desde la interfaz)/i,
-  // Learned helplessness — LLM gives up or reports inability to continue
-  /no puedo (?:continuar|completar|ejecutar|hacer(?:lo)?)/i,
+  // Learned helplessness — LLM gives up or reports inability to continue.
+  // Require sentence-start position (^|\n|[.!?]\s+) to avoid matching
+  // inside capability reports ("No puedo hacer búsquedas" as status vs refusal).
+  /(?:^|[\n.!?]\s*)no puedo (?:continuar|completar|ejecutar)\b/im,
   /problema t[eé]cnico (?:cr[ií]tico|grave)/i,
   /error de configuraci[oó]n/i,
   // Tool configuration errors (stale from prior session)
