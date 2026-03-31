@@ -435,6 +435,11 @@ const POISONED_RESPONSE_PATTERNS = [
   // Inference cascade failures
   /inference.*failed/i,
   /timeout.*inference/i,
+  // Narrated update claim — LLM claims to have updated COMMIT without tools.
+  // NOTE: "Acciones Ejecutadas" removed from here — it's a legitimate header
+  // when tools actually ran. The hallucination guard (fast-runner Layer 2)
+  // handles it with tool-call context; the poison filter cannot distinguish.
+  /acabo de actualizar\s+COMMIT/i,
 ];
 
 function isPoisonedExchange(jarvisResponse: string): boolean {

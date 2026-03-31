@@ -216,6 +216,77 @@ describe("detectsHallucinatedExecution", () => {
       ),
     ).toBe(false);
   });
+
+  // --- Layer 2 extended: passive participle + ✅ ---
+  it("detects ✅ Marcada como completed (passive claim, no write tools called)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        '✅ **Marcada como `completed`** | "S7 - Descomponer prompts"',
+        ["commit__list_tasks", "browser__goto"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects ✅ Eliminada (passive delete claim)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        '✅ **Eliminada (no existe en roadmap):** `76890a25` — "S5 - Inference"',
+        ["commit__list_tasks"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects Acciones Ejecutadas header", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "### Acciones Ejecutadas:\n| ✅ Actualizada | tarea X |",
+        ["commit__list_tasks"],
+      ),
+    ).toBe(true);
+  });
+
+  it("allows passive observation WITHOUT ✅ (read-tool status listing)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "La tarea está marcada como completada en COMMIT.",
+        ["commit__list_tasks"],
+      ),
+    ).toBe(false);
+  });
+
+  // --- Layer 0: Failed write tools ---
+  it("detects failed-write hallucination: update_task failed but claims ✅ Marcada", () => {
+    expect(
+      detectsHallucinatedExecution(
+        '✅ **Marcada como `completed`** | "S7 - Descomponer prompts"',
+        ["commit__list_tasks", "shell_exec"],
+        undefined,
+        ["commit__update_task"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects failed-write hallucination: passive voice with success marker", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "## ✅ **Sincronización Completada: V4.0 100% Alineado**",
+        ["commit__list_tasks"],
+        undefined,
+        ["commit__update_task"],
+      ),
+    ).toBe(true);
+  });
+
+  it("allows response without success marker when write tools failed", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "No pude actualizar la tarea porque el servidor devolvió error.",
+        ["commit__list_tasks"],
+        undefined,
+        ["commit__update_task"],
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("hasUserConfirmedDeletion", () => {
@@ -292,5 +363,71 @@ describe("hasUserConfirmedDeletion", () => {
         { role: "user", content: "Bórrala" },
       ]),
     ).toBe(true);
+  });
+
+  // --- Direct deletion commands (no two-step needed) ---
+  it("returns true for direct 'elimina lo que no está' command", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        {
+          role: "user",
+          content:
+            "Revisa contra el roadmap. Elimina lo que no esté y marca como completado lo que ya está.",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for direct 'borra las que no existen'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        {
+          role: "user",
+          content: "Borra las que no existen en el roadmap.",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for direct 'delete the ones that'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        {
+          role: "user",
+          content: "Delete the ones that are not in the roadmap.",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for clitic 'eliminala' in user message", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        {
+          role: "user",
+          content: "Si la tarea no está en el roadmap, eliminala.",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true when user says 'Procede' after assistant asks", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        {
+          role: "assistant",
+          content: "¿Confirmas que elimine la tarea 76890a25?",
+        },
+        { role: "user", content: "Procede con la actualización" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not match vague mentions of elimination without target", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "¿Se puede eliminar?" },
+      ]),
+    ).toBe(false);
   });
 });

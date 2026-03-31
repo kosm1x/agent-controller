@@ -37,6 +37,8 @@ const TOOL_TRIGGERS = [
   /\b(recuerda|remember|guarda|save|anota|registra)\b/i,
   /\b(lee|read|analiza|analyze|revisa|check|verifica|audita)\b/i,
   /\b(programa|configura|setup|instala|deploy)\b/i,
+  /\b(procede|ejecuta|hazlo|adelante|dale|confir\w+|s[ií]guele|int[eé]ntalo|reint[eé]ntalo)\b/i,
+  /\b(elimina\w*|borra\w*|delete|quita\w*|actualiza\w*|marca\w*|update)\b/i,
   /\b(imagen|image|foto|photo|video|audio|m[uú]sica|music|pdf)\b/i,
   /\b(proyecto|project|artículo|article|enlace|link)\b/i,
   /\b(hugging\s?face|gemini|hf_|wp_|gsheets)\b/i,

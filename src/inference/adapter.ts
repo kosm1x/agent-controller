@@ -823,6 +823,7 @@ export async function inferWithTools(
   let consecutiveSmallResults = 0;
   let consecutiveReadOnlyRounds = 0;
   let consecutiveErrorRounds = 0;
+  let toolSkipNudgeSent = false;
 
   // Track which tools have been called across rounds, so the analysis
   // paralysis guard can distinguish "gathering data before acting" from
@@ -977,7 +978,6 @@ export async function inferWithTools(
       // First-round tool-skip guard: if the LLM claims success (✅) without
       // calling ANY tools on the very first round, it's lazily responding from
       // conversation context instead of executing. Nudge it to use tools.
-      // Only fires once (round === 0) to avoid infinite loops.
       // Skip for short replies (<500 chars) — those are genuine conversational
       // responses that don't need tool execution.
       if (
@@ -989,6 +989,7 @@ export async function inferWithTools(
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );
+        toolSkipNudgeSent = true;
         // Don't add the LLM's planning text — it wastes tokens in all
         // subsequent rounds. Just inject the correction as a user message.
         conversation.push({
@@ -997,6 +998,24 @@ export async function inferWithTools(
             "ALTO: Respondiste sin llamar herramientas. EJECUTA con tool calls AHORA.",
         });
         continue;
+      }
+
+      // Post-nudge persistence: the LLM was nudged at round 0 but still
+      // responded without tool calls. Give one final chance listing the
+      // available write tools so it knows exactly what to call.
+      if (toolSkipNudgeSent && round === 1 && tools.length > 0) {
+        const writeToolNames = [...availableNonReadOnly];
+        if (writeToolNames.length > 0) {
+          console.log(
+            `[inference] Post-nudge tool skip. Listing ${writeToolNames.length} available non-read tools.`,
+          );
+          conversation.push({
+            role: "user",
+            content: `ÚLTIMO INTENTO: No llamaste herramientas. Estas son las herramientas disponibles: [${writeToolNames.join(", ")}]. Llama a la correcta AHORA. NO respondas con texto.`,
+          });
+          toolSkipNudgeSent = false; // prevent infinite loop
+          continue;
+        }
       }
 
       // Return with think blocks stripped from content (raw stays in conversation)

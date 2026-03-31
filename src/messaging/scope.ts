@@ -324,7 +324,11 @@ export function scopeToolsForMessage(
   // Write tools were previously gated behind commit_write scope, but the
   // pattern matching proved unreliable (catastrophic backtracking on complex
   // Spanish messages). The ~2K token overhead is acceptable given 28K budget.
-  if (activeGroups.has("commit_write") || activeGroups.has("commit_read")) {
+  if (
+    activeGroups.has("commit_write") ||
+    activeGroups.has("commit_read") ||
+    activeGroups.has("commit_destructive")
+  ) {
     tools.push(...COMMIT_READ_TOOLS, ...COMMIT_WRITE_TOOLS);
   }
   if (activeGroups.has("specialty")) {

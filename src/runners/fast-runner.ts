@@ -53,18 +53,33 @@ import {
 
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
-  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead)(\s|$|[.,!?])/i;
+  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|procede|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead)(\s|$|[.,!?])/i;
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
 const DELETION_ASK_PATTERN =
   /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que (?:elimine|borre)|want me to delete)/i;
 
+/** Direct user deletion command — the user explicitly tells Jarvis to delete.
+ *  Two forms: explicit target ("elimina lo que") or clitic pronoun ("elimínala"). */
+const DIRECT_DELETE_COMMAND =
+  /\b(?:elimina|borra|delete|quita|remueve)\w*\s+(?:lo que|las? que|los que|todo lo que|tareas? que|what|those|them|the ones)|\b(?:elim[ií]nal[aoe]s?|b[oó]rral[aoe]s?|qu[ií]tal[aoe]s?)\b/i;
+
 /**
  * Check conversation history for a confirmed deletion request.
- * Returns true if an assistant asked about deletion AND the user confirmed after.
+ * Returns true if:
+ * 1. An assistant asked about deletion AND the user confirmed after, OR
+ * 2. The user's CURRENT message is a direct deletion command (no two-step needed)
  */
 export function hasUserConfirmedDeletion(
   history: { role: string; content: string }[],
 ): boolean {
+  // Check for direct deletion command in the LAST user message.
+  // "Elimina lo que no está en el roadmap" = explicit, unambiguous command.
+  const lastUserMsg = [...history].reverse().find((t) => t.role === "user");
+  if (lastUserMsg && DIRECT_DELETE_COMMAND.test(lastUserMsg.content)) {
+    return true;
+  }
+
+  // Two-step confirmation: assistant asked → user confirmed
   let assistantAskedDeletion = false;
   for (const turn of history) {
     if (turn.role === "assistant" && DELETION_ASK_PATTERN.test(turn.content)) {
@@ -181,8 +196,25 @@ export function detectsHallucinatedExecution(
   text: string,
   toolsCalled: string[],
   userMessage?: string,
+  failedWriteTools?: string[],
 ): boolean {
   const claimsWrite = WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
+
+  // --- Layer 0: Failed write tools ---
+  // If a write tool was attempted and FAILED (returned error), and the response
+  // claims success (✅), it's always a hallucination. The LLM tried, failed,
+  // and narrates success — even passive voice ("Marcada como completed") is a
+  // false claim here, not a legitimate status observation.
+  if (failedWriteTools && failedWriteTools.length > 0) {
+    const hasSuccessMarker =
+      /✅|🚀|EXITOSAMENTE|SUCCESSFULLY|COMPLETADO|STATUS:\s*DONE\b/i.test(text);
+    if (hasSuccessMarker) {
+      console.log(
+        `[fast-runner] Failed-write hallucination: write tools [${failedWriteTools.join(", ")}] failed but response claims success`,
+      );
+      return true;
+    }
+  }
 
   // --- Layer 1: Full hallucination (zero tools + write claim) ---
   // If no tools called at all and response claims a write action, it's hallucinated.
@@ -260,6 +292,15 @@ export function detectsHallucinatedExecution(
       /(?:marqué|marcamos|marc[oó])\s+(?:como\s+)?(?:complet|hech|done|termin)/i.test(
         text,
       ) ||
+      // Passive participle with ✅ prefix — action claim, not observation.
+      // "✅ Marcada como completed" = hallucinated write (no tool called)
+      // "✅ Eliminada (no existe)" = hallucinated delete
+      // vs "La tarea está marcada como completada" = read observation (no ✅)
+      /✅[^.\n]{0,30}(?:Marcad[ao]s?|Eliminad[ao]s?|Actualizada?s?|Cambiad[ao]s?|Borrad[ao]s?|Cread[ao]s?|Modificad[ao]s?|Completad[ao]s?)\s*(?:como|a\s|en\s|\(|—|:)/i.test(
+        text,
+      ) ||
+      // "Acciones Ejecutadas" header — narrated action table
+      /accione?s?\s+ejecutadas?/i.test(text) ||
       // Direct status assignment (not a listing of multiple statuses)
       /status[:\s]+(?:completed|done|✅)\b/i.test(text) ||
       // Quantity claims ("50 celdas actualizadas")
@@ -497,6 +538,11 @@ export const fastRunner: Runner = {
         ?.filter((t) => t.role === "user")
         .pop()?.content;
 
+      // Build failed write tools list for hallucination guard
+      const failedWriteTools = [...failedToolCalls].filter((t) =>
+        WRITE_TOOLS.has(t),
+      );
+
       // Hallucination guard: if the LLM narrated tool execution without calling
       // the right tools, retry once if budget has headroom, else replace.
       // Skip for vision tasks — image analysis is a legitimate zero-tool response.
@@ -506,6 +552,7 @@ export const fastRunner: Runner = {
           parsed.cleanContent,
           toolsCalled,
           lastUserMessage,
+          failedWriteTools,
         )
       ) {
         const lastPromptTokens = result.totalUsage.prompt_tokens;
@@ -532,11 +579,21 @@ export const fastRunner: Runner = {
           const isReadHallucination =
             toolsCalled.length === 0 &&
             READ_HALLUCINATION_RE.test(parsed.cleanContent);
+          // Build dynamic write tool list from scoped definitions instead of
+          // hardcoding names — prevents the LLM from calling tools that are
+          // not in scope and getting rejected in a loop.
+          const scopedWriteTools = definitions
+            .map((d) => d.function.name)
+            .filter((n) => WRITE_TOOLS.has(n));
+          const writeToolHint =
+            scopedWriteTools.length > 0
+              ? scopedWriteTools.join(", ")
+              : "commit__update_task, commit__update_status";
           retryMessages.push({
             role: "user",
             content: isReadHallucination
               ? "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados."
-              : `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Si necesitas actualizar datos, LLAMA a las herramientas de escritura correspondientes (commit__update_task, commit__update_status, gsheets_write, wp_publish, etc.). NO narres — EJECUTA.`,
+              : `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Herramientas de escritura disponibles: [${writeToolHint}]. Llama a la correcta AHORA. NO narres — EJECUTA.`,
           });
 
           const retryResult = await inferWithTools(
@@ -601,6 +658,7 @@ export const fastRunner: Runner = {
             parsed.cleanContent,
             toolsCalled,
             lastUserMessage,
+            failedWriteTools,
           )
         ) {
           // Retry fixed it — skip replacement
