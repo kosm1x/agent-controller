@@ -44,8 +44,10 @@ STATUS: BLOCKED — [what is preventing completion]`;
 import {
   MAX_ROUNDS_DEFAULT,
   MAX_ROUNDS_CODING,
+  MAX_ROUNDS_BROWSER,
   TOKEN_BUDGET_FAST,
   TOKEN_BUDGET_CODING,
+  TOKEN_BUDGET_BROWSER,
   HALLUCINATION_RETRY_HEADROOM,
 } from "../config/constants.js";
 
@@ -356,12 +358,21 @@ export const fastRunner: Runner = {
       });
     }
 
-    // Use higher round limit when coding tools are available (file_edit, grep, glob)
-    const codingTools = ["file_edit", "grep", "glob"];
-    const hasCodingTools = input.tools
-      ? input.tools.some((t) => codingTools.includes(t))
-      : false;
-    const maxRounds = hasCodingTools ? MAX_ROUNDS_CODING : MAX_ROUNDS_DEFAULT;
+    // Adaptive limits based on tool type:
+    // - Playwright (SPA browsing): 35 rounds / 40K tokens — navigate+snapshot+click cycles
+    // - Coding (file_edit, grep): 22 rounds / 30K tokens
+    // - Default (chat): 20 rounds / 28K tokens
+    const hasPlaywright = input.tools?.some((t) =>
+      t.startsWith("playwright__"),
+    );
+    const hasCodingTools = input.tools?.some((t) =>
+      ["file_edit", "grep", "glob"].includes(t),
+    );
+    const maxRounds = hasPlaywright
+      ? MAX_ROUNDS_BROWSER
+      : hasCodingTools
+        ? MAX_ROUNDS_CODING
+        : MAX_ROUNDS_DEFAULT;
 
     // Reset destructive locks, then unlock if user already confirmed in history.
     toolRegistry.resetDestructiveLocks();
@@ -379,9 +390,11 @@ export const fastRunner: Runner = {
     setMemoryTaskContext(input.taskId);
 
     try {
-      const tokenBudget = hasCodingTools
-        ? TOKEN_BUDGET_CODING
-        : TOKEN_BUDGET_FAST;
+      const tokenBudget = hasPlaywright
+        ? TOKEN_BUDGET_BROWSER
+        : hasCodingTools
+          ? TOKEN_BUDGET_CODING
+          : TOKEN_BUDGET_FAST;
       // Vision override: route to primary (vision-capable) when conversation
       // contains images, regardless of classifier-assigned tier.
       const hasVision = input.conversationHistory?.some((t) => t.imageUrl);
