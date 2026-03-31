@@ -121,7 +121,7 @@ function buildJarvisSystemPrompt(
   sections.push(toolFirstSection(flags));
   if (flags.hasWordpress) sections.push(wordpressSection());
   sections.push(mechanicalVerificationSection());
-  sections.push(memoryPersistenceSection());
+  if (tools.includes("memory_store")) sections.push(memoryPersistenceSection());
   sections.push(correctionMemorySection());
   if (flags.hasCoding) sections.push(codingSection());
   if (flags.hasBrowser) sections.push(browserSection());

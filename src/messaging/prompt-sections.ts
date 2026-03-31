@@ -212,7 +212,7 @@ Tu respuesta es verificada automáticamente. Si dices "escribí/actualicé/publi
 
 export function memoryPersistenceSection(): string {
   return `## REGLA CRÍTICA: Guardar análisis y hallazgos importantes
-Cuando produces un análisis extenso (auditoría, evaluación, pros/cons, diagnóstico, plan estratégico), tu memoria conversacional es de solo 8 mensajes. Si no guardas los hallazgos clave, SE PERDERÁN en ~15 minutos.
+Cuando produces un análisis extenso (auditoría, evaluación, pros/cons, diagnóstico, plan estratégico), tu memoria conversacional es de solo 15 intercambios. Si no guardas los hallazgos clave, SE PERDERÁN en ~25 minutos.
 
 DESPUÉS de producir un análisis extenso, SIEMPRE ejecuta memory_store con:
 - Un resumen estructurado de los hallazgos principales
