@@ -31,6 +31,9 @@ Examples:
 - "Send me a daily AI news report at 8am" → cron "0 8 * * *", tools: ["web_search", "gmail_send"], delivery: "email"
 - "Every Monday remind me of my weekly goals" → cron "0 9 * * 1", tools: ["commit__get_daily_snapshot"], delivery: "telegram"
 - "Check my overdue tasks twice a day" → cron "0 9,18 * * *", tools: ["commit__list_tasks"], delivery: "telegram"
+- "Auto-prune completed tasks weekly" → cron "0 22 * * 0", tools: ["commit__list_tasks", "commit__delete_item"], delivery: "telegram"
+
+IMPORTANT: For cleanup/prune/delete tasks, you MUST include "commit__delete_item" in the tools array — without it, the agent cannot delete anything.
 
 Cron format: minute hour day-of-month month day-of-week
 - "0 8 * * *" = every day at 8:00 AM

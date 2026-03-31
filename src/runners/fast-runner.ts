@@ -53,15 +53,18 @@ import {
 
 /** Confirmation words from the user (Spanish + English). */
 const CONFIRM_PATTERN =
-  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|procede|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead)(\s|$|[.,!?])/i;
+  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|procede|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead|do it|haz(?:lo)?|claro)(\s|$|[.,!?])/i;
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
 const DELETION_ASK_PATTERN =
-  /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que (?:elimine|borre)|want me to delete)/i;
+  /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que\s+(?:\S+\s+)?(?:elimine|borre)|want me to (?:delete|remove)|shall I (?:delete|remove)|should I (?:delete|remove)|confirm.*(?:delet|elimin|borr)|(?:delet|elimin|borr)\S*\s*\?|procedo con la eliminaci[oó]n|CONFIRMATION_REQUIRED)/i;
 
 /** Direct user deletion command — the user explicitly tells Jarvis to delete.
- *  Two forms: explicit target ("elimina lo que") or clitic pronoun ("elimínala"). */
+ *  Three forms:
+ *  1. Explicit target: "elimina lo que" / "delete those"
+ *  2. Clitic pronoun: "elimínala" / "bórralas"
+ *  3. Delete verb + optional adjectives + COMMIT noun: "delete completed tasks" */
 const DIRECT_DELETE_COMMAND =
-  /\b(?:elimina|borra|delete|quita|remueve)\w*\s+(?:lo que|las? que|los que|todo lo que|tareas? que|what|those|them|the ones)|\b(?:elim[ií]nal[aoe]s?|b[oó]rral[aoe]s?|qu[ií]tal[aoe]s?)\b/i;
+  /\b(?:elimina|borra|delete|quita|remueve)\w*\s+(?:lo que|las? que|los que|todo lo que|tareas? que|what|those|them|the ones|(?:\S+\s+){0,3}(?:tareas?|tasks?|metas?|goals?|objetivos?|objectives?|ideas?))|\b(?:elim[ií]nal[aoe]s?|b[oó]rral[aoe]s?|qu[ií]tal[aoe]s?)\b/i;
 
 /**
  * Check conversation history for a confirmed deletion request.
@@ -550,9 +553,12 @@ export const fastRunner: Runner = {
         ?.filter((t) => t.role === "user")
         .pop()?.content;
 
-      // Build failed write tools list for hallucination guard
-      const failedWriteTools = [...failedToolCalls].filter((t) =>
-        WRITE_TOOLS.has(t),
+      // Build failed write tools list for hallucination guard.
+      // Exclude tools that failed once but succeeded on a later call within
+      // the same execution (e.g. commit__delete_item: first call gets
+      // CONFIRMATION_REQUIRED, LLM retries, second call succeeds).
+      const failedWriteTools = [...failedToolCalls].filter(
+        (t) => WRITE_TOOLS.has(t) && !toolsCalled.includes(t),
       );
 
       // Hallucination guard: if the LLM narrated tool execution without calling

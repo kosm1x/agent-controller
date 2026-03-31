@@ -287,6 +287,21 @@ describe("detectsHallucinatedExecution", () => {
       ),
     ).toBe(false);
   });
+
+  it("allows success when write tool failed first but succeeded on retry within same execution", () => {
+    // commit__delete_item: first call → CONFIRMATION_REQUIRED (error),
+    // second call after unlock → success. Tool appears in BOTH
+    // failedToolCalls and toolsCalled. Should NOT trigger guard.
+    expect(
+      detectsHallucinatedExecution(
+        "✅ Eliminadas 5 tareas completadas con más de 8 días.",
+        ["commit__list_tasks", "commit__delete_item"],
+        undefined,
+        // failedWriteTools now excludes tools that also succeeded
+        [],
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("hasUserConfirmedDeletion", () => {
@@ -429,5 +444,95 @@ describe("hasUserConfirmedDeletion", () => {
         { role: "user", content: "¿Se puede eliminar?" },
       ]),
     ).toBe(false);
+  });
+
+  // --- Direct delete + COMMIT noun (no two-step needed) ---
+  it("returns true for 'delete completed tasks'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Delete completed tasks" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for 'elimina las tareas completadas'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Elimina las tareas completadas" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for 'borra las tareas viejas'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Borra las tareas viejas" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns true for 'delete the old goals'", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Delete the old goals" },
+      ]),
+    ).toBe(true);
+  });
+
+  // --- Two-step with CONFIRMATION_REQUIRED in assistant response ---
+  it("returns true when assistant relayed CONFIRMATION_REQUIRED and user confirmed", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Limpia las tareas completadas" },
+        {
+          role: "assistant",
+          content:
+            "Encontré 5 tareas completadas. CONFIRMATION_REQUIRED — ¿las elimino?",
+        },
+        { role: "user", content: "Sí" },
+      ]),
+    ).toBe(true);
+  });
+
+  // --- Two-step with English "shall I delete" ---
+  it("returns true when assistant asks 'shall I delete' and user confirms", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Clean up old tasks" },
+        {
+          role: "assistant",
+          content: "I found 3 completed tasks. Shall I delete them?",
+        },
+        { role: "user", content: "Yes" },
+      ]),
+    ).toBe(true);
+  });
+
+  // --- Two-step with intervening pronoun (quieres que los elimine) ---
+  it("returns true when assistant asks 'quieres que los elimine' and user confirms", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Hay tareas viejas" },
+        {
+          role: "assistant",
+          content: "Encontré 4 tareas completadas. ¿Quieres que los elimine?",
+        },
+        { role: "user", content: "Dale" },
+      ]),
+    ).toBe(true);
+  });
+
+  // --- User says 'do it' ---
+  it("returns true when user says 'do it' after deletion ask", () => {
+    expect(
+      hasUserConfirmedDeletion([
+        { role: "user", content: "Remove old objectives" },
+        {
+          role: "assistant",
+          content: "Found 2 archived objectives. Want me to delete them?",
+        },
+        { role: "user", content: "Do it" },
+      ]),
+    ).toBe(true);
   });
 });

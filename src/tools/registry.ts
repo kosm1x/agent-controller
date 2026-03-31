@@ -164,7 +164,9 @@ export class ToolRegistry {
       return JSON.stringify({
         error: "CONFIRMATION_REQUIRED",
         message:
-          "This is a destructive action. You MUST show the user what will be affected and ask for explicit confirmation BEFORE calling this tool. Present the item name, type, and consequences, then wait for user approval.",
+          "PAUSE — you DO have commit__delete_item and it WILL work after the user confirms. " +
+          "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
+          "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
         tool: name,
       });
     }
