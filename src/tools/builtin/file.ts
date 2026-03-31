@@ -3,10 +3,17 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, extname } from "path";
 import type { Tool } from "../types.js";
 
 const MAX_READ = 50_000; // chars
+
+/** Convert .docx to plain text using mammoth (lazy-loaded). */
+async function readDocx(filePath: string): Promise<string> {
+  const mammoth = await import("mammoth");
+  const result = await mammoth.default.extractRawText({ path: filePath });
+  return result.value;
+}
 
 export const fileReadTool: Tool = {
   name: "file_read",
@@ -15,7 +22,7 @@ export const fileReadTool: Tool = {
     function: {
       name: "file_read",
       description:
-        "Read the contents of a file. Returns the file content as text.",
+        "Read the contents of a file. Returns the file content as text. Supports plain text files and .docx (Word documents).",
       parameters: {
         type: "object",
         properties: {
@@ -36,7 +43,12 @@ export const fileReadTool: Tool = {
     }
 
     try {
-      const content = readFileSync(path, "utf-8");
+      let content: string;
+      if (extname(path).toLowerCase() === ".docx") {
+        content = await readDocx(path);
+      } else {
+        content = readFileSync(path, "utf-8");
+      }
       const trimmed =
         content.length > MAX_READ
           ? content.slice(0, MAX_READ) +

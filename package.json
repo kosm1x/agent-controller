@@ -23,6 +23,7 @@
     "better-sqlite3": "^11.7.0",
     "grammy": "^1.41.1",
     "hono": "^4.7.0",
+    "mammoth": "^1.12.0",
     "node-cron": "^4.2.1",
     "pino": "^10.3.1",
     "prom-client": "^15.1.3",
