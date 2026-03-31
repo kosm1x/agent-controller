@@ -111,8 +111,7 @@ export const MISC_TOOLS = [
   "project_get",
   "project_update",
   "pdf_read",
-  // Browser — all tools always available so Jarvis can navigate, fill forms,
-  // and click without needing explicit "navega" keywords in the message.
+  // Lightpanda browser — fast, lightweight, for content reading + simple forms
   "browser__goto",
   "browser__markdown",
   "browser__links",
@@ -123,6 +122,19 @@ export const MISC_TOOLS = [
   "browser__interactiveElements",
   "browser__semantic_tree",
   "browser__structuredData",
+  // Playwright browser — full Chromium, for React/Next.js SPAs, JS-heavy pages
+  "playwright__browser_navigate",
+  "playwright__browser_click",
+  "playwright__browser_fill_form",
+  "playwright__browser_snapshot",
+  "playwright__browser_take_screenshot",
+  "playwright__browser_press_key",
+  "playwright__browser_select_option",
+  "playwright__browser_tabs",
+  "playwright__browser_wait_for",
+  "playwright__browser_evaluate",
+  "playwright__browser_type",
+  "playwright__browser_close",
 ];
 
 /** Specialty tools — keyword-gated to save tokens. */

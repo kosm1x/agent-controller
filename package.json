@@ -19,6 +19,7 @@
     "@hono/node-server": "^1.13.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@opendataloader/pdf": "^2.0.0",
+    "@playwright/mcp": "^0.0.69",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.7.0",
     "grammy": "^1.41.1",

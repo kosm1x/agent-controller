@@ -95,9 +95,7 @@ export function capabilitiesSection(flags: PromptToolFlags): string {
     `- **Perfil de usuario**: Guarda datos personales de Fede con user_fact_set para NUNCA olvidarlos`,
   );
   caps.push(
-    flags.hasBrowser
-      ? `- **Navegador**: Navega e interactúa con sitios web (browser__goto, browser__markdown, browser__click, browser__fill)`
-      : `- **Navegador**: Lee contenido de sitios web (browser__goto, browser__markdown)`,
+    `- **Navegador**: Lightpanda (rápido, HTML/WP) + Playwright (Chromium completo, React/SPAs). Elige según la página`,
   );
   if (flags.hasCoding)
     caps.push(
@@ -251,12 +249,32 @@ REGLAS de código:
 }
 
 export function browserSection(): string {
-  return `## Navegación web avanzada
-Tienes un navegador completo (browser__*) para:
-- Verificar sitios web después de cambios (browser__goto + browser__markdown)
-- Interactuar con páginas: clic, formularios, scroll (browser__click, browser__fill, browser__scroll)
-- Extraer datos estructurados (browser__structuredData)
-Para lectura simple, web_read es más rápido. Usa browser__* cuando necesites JavaScript o interacción.`;
+  return `## Navegación web — dos navegadores disponibles
+
+Tienes DOS navegadores. Elige el correcto según el caso:
+
+### Lightpanda (browser__*) — rápido, ligero
+- **USA PARA**: WordPress admin, páginas estáticas, contenido simple, verificación post-deploy
+- browser__goto → browser__markdown para leer contenido
+- browser__click, browser__fill para formularios simples
+- browser__structuredData para datos estructurados
+- **NO FUNCIONA CON**: React, Next.js, SPAs con login dinámico, páginas JS-heavy
+
+### Playwright (playwright__browser_*) — Chromium completo
+- **USA PARA**: React/Next.js apps, SPAs, logins con JavaScript, páginas dinámicas, UI testing
+- playwright__browser_navigate → cargar página (espera a que JS renderice)
+- playwright__browser_snapshot → ver la estructura accesible de la página (usa ESTO para entender qué elementos hay)
+- playwright__browser_click → clic en elementos (usa ref= del snapshot)
+- playwright__browser_fill_form → llenar campos de formulario
+- playwright__browser_take_screenshot → captura visual de la página
+- playwright__browser_press_key → Enter, Tab, Escape, etc.
+- playwright__browser_wait_for → esperar a que aparezca un elemento
+- playwright__browser_close → cerrar cuando termines
+
+### Regla de decisión
+Si la página es una SPA (React, Next.js, Vue, Angular) o tiene login con JavaScript → USA Playwright.
+Si es WordPress, HTML estático, o solo necesitas leer contenido → USA Lightpanda (más rápido).
+Para lectura simple sin interacción, web_read es aún más rápido que ambos navegadores.`;
 }
 
 export function researchSection(): string {
