@@ -254,6 +254,61 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(false);
   });
 
+  // --- Layer 3b: Completion claims only fire without write tools ---
+  it("allows 'acabo de actualizar' when write tools were called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
+        ["commit__list_tasks", "commit__update_status"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows 'he verificado' when write tools were called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "He verificado y actualizado las tareas. Todas marcadas como completadas.",
+        ["commit__list_tasks", "commit__update_task"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows 'just updated' when write tools were called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "I just updated the task status to completed.",
+        ["commit__update_status"],
+      ),
+    ).toBe(false);
+  });
+
+  it("detects 'acabo de actualizar' when NO write tools were called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
+        ["commit__list_tasks"],
+      ),
+    ).toBe(true);
+  });
+
+  it("still detects impossible FTP narration even with write tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Conexión FTP establecida con éxito. Archivo subido al servidor.",
+        ["commit__update_task"],
+      ),
+    ).toBe(true);
+  });
+
+  it("still detects (Procesando...) narration even with write tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "*(Publicando artículo en WordPress...)*\n\nEl artículo está publicado.",
+        ["wp_publish"],
+      ),
+    ).toBe(true);
+  });
+
   // --- Layer 0: Failed write tools ---
   it("detects failed-write hallucination: update_task failed but claims ✅ Marcada", () => {
     expect(

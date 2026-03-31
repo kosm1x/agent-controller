@@ -320,26 +320,33 @@ export function detectsHallucinatedExecution(
     }
   }
 
-  // --- Layer 3: Specific narration patterns (always fire) ---
-  // Narrating processing steps is always wrong regardless of tools called.
-  const narrationPatterns = [
-    // Narrated processing steps
+  // --- Layer 3: Impossible narration (always fire) ---
+  // Narrating fake process steps (FTP connections, handshakes, ellipsis progress)
+  // is always hallucinated — no tool produces these outputs.
+  const impossibleNarration = [
     /\*?\((?:Procesando|Ejecutando|Conectando|Subiendo|Descargando|Verificando|Generando|Escaneando|Publicando|Guardando)[^)]*\.\.\.\)\*?/i,
     /\*?\((?:Processing|Executing|Connecting|Uploading|Downloading|Verifying|Generating|Scanning|Publishing|Saving)[^)]*\.\.\.\)\*?/i,
-    // Spanish narrated completion
     /(?:Conexión exitosa|Handshake completado|Upload exitoso)/i,
-    /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
-    /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar|inyectar|instalar|configurar)/i,
-    /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
-    // Connection narration
     /(?:Conexión\s+(?:FTP|SSH|SFTP)).*(?:exitosa|establecida|OK)/i,
     /(?:FTP\s+connection|SSH\s+connection|SFTP\s+connection).*(?:successful|established|OK)/i,
-    // English narrated completion
-    /(?:just (?:executed|published|uploaded|created|saved|updated|verified))/i,
-    /(?:is now live|is now published|has been published)/i,
   ];
+  if (impossibleNarration.some((p) => p.test(text))) return true;
 
-  return narrationPatterns.some((p) => p.test(text));
+  // --- Layer 3b: Completion claims (only fire when NO write tools called) ---
+  // "acabo de actualizar", "he verificado", "just updated" are legitimate when
+  // the LLM actually called write tools. Only flag when tools weren't called.
+  if (!calledAnyWriteTool) {
+    const completionClaims = [
+      /(?:he verificado|acabo de verificar|confirmado en tiempo real)/i,
+      /acabo de (?:ejecutar|publicar|subir|crear|guardar|actualizar|inyectar|instalar|configurar)/i,
+      /(?:ya está|ya queda)\s+(?:live|publicado|en línea|activo|guardado)/i,
+      /(?:just (?:executed|published|uploaded|created|saved|updated|verified))/i,
+      /(?:is now live|is now published|has been published)/i,
+    ];
+    if (completionClaims.some((p) => p.test(text))) return true;
+  }
+
+  return false;
 }
 
 const READ_HALLUCINATION_RE =
