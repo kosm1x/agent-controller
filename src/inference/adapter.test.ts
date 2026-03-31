@@ -435,3 +435,50 @@ describe("stripThinkBlocks", () => {
     expect(stripThinkBlocks("")).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Loop guard thresholds — tests for the constants and guard logic
+// ---------------------------------------------------------------------------
+
+describe("COMMIT tools in READ_ONLY_TOOLS", () => {
+  const tc = (name: string) => ({ function: { name } });
+  const r = (content: string) => ({ content });
+
+  it("commit__list_tasks is read-only", () => {
+    expect(allToolCallsReadOnly([tc("commit__list_tasks")])).toBe(true);
+  });
+
+  it("commit__get_daily_snapshot is read-only", () => {
+    expect(allToolCallsReadOnly([tc("commit__get_daily_snapshot")])).toBe(true);
+  });
+
+  it("commit__list_goals + commit__list_objectives are read-only", () => {
+    expect(
+      allToolCallsReadOnly([
+        tc("commit__list_goals"),
+        tc("commit__list_objectives"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("commit__update_status is NOT read-only", () => {
+    expect(allToolCallsReadOnly([tc("commit__update_status")])).toBe(false);
+  });
+
+  it("commit__update_objective is NOT read-only", () => {
+    expect(allToolCallsReadOnly([tc("commit__update_objective")])).toBe(false);
+  });
+
+  it("mixed COMMIT read + write returns false", () => {
+    expect(
+      allToolCallsReadOnly([
+        tc("commit__list_tasks"),
+        tc("commit__update_task"),
+      ]),
+    ).toBe(false);
+  });
+
+  it("gemini_research is read-only", () => {
+    expect(allToolCallsReadOnly([tc("gemini_research")])).toBe(true);
+  });
+});
