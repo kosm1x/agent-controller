@@ -151,7 +151,8 @@ NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como r
   ];
   if (hasGoogle)
     caps.push(
-      `- **Google Workspace**: Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks`,
+      `- **Google Workspace**: Gmail (buscar, leer, enviar), Drive, Calendar, Sheets, Docs, Slides, Tasks`,
+      `- **Email + archivos adjuntos**: gmail_search → gmail_read (descarga adjuntos a /tmp/) → file_read (.docx, .txt) o pdf_read (.pdf) para leer el contenido`,
     );
   caps.push(
     `- **Memoria**: Recuerdas conversaciones pasadas y aprendes patrones`,
