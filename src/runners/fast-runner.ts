@@ -428,6 +428,18 @@ export const fastRunner: Runner = {
       console.log(
         "[fast-runner] Destructive tool unlocked: commit__delete_item (user confirmed in history)",
       );
+    } else if (
+      !input.conversationHistory &&
+      input.tools?.includes("commit__delete_item")
+    ) {
+      // Scheduled/programmatic tasks: no conversation history exists, but
+      // explicit tool inclusion is the user's pre-authorization (they
+      // configured the schedule with this tool). The delete_item handler
+      // still requires confirm_title matching the exact item title.
+      toolRegistry.unlockDestructive("commit__delete_item");
+      console.log(
+        "[fast-runner] Destructive tool unlocked: commit__delete_item (scheduled task pre-authorized)",
+      );
     }
 
     // Governance: set task context for memory store rate limiting

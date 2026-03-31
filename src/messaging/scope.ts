@@ -320,16 +320,23 @@ export function scopeToolsForMessage(
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];
 
-  // COMMIT tools — load read AND write when any COMMIT context is present.
-  // Write tools were previously gated behind commit_write scope, but the
-  // pattern matching proved unreliable (catastrophic backtracking on complex
-  // Spanish messages). The ~2K token overhead is acceptable given 28K budget.
+  // COMMIT tools — load read, write, AND destructive when any COMMIT context
+  // is present. Destructive tools were previously gated behind a separate
+  // commit_destructive scope (requiring explicit delete/remove keywords), but
+  // this caused the LLM to report "I don't have a delete tool" when the user
+  // phrased deletion differently (prune, clean, purge, etc.). The execution-
+  // time destructive lock (CONFIRMATION_REQUIRED + confirm_title) is the real
+  // safety gate — scope visibility should not be the gatekeeper.
   if (
     activeGroups.has("commit_write") ||
     activeGroups.has("commit_read") ||
     activeGroups.has("commit_destructive")
   ) {
-    tools.push(...COMMIT_READ_TOOLS, ...COMMIT_WRITE_TOOLS);
+    tools.push(
+      ...COMMIT_READ_TOOLS,
+      ...COMMIT_WRITE_TOOLS,
+      ...COMMIT_DESTRUCTIVE_TOOLS,
+    );
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
@@ -339,9 +346,6 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("commit_journal")) {
     tools.push(...COMMIT_JOURNAL_TOOLS);
-  }
-  if (activeGroups.has("commit_destructive")) {
-    tools.push(...COMMIT_DESTRUCTIVE_TOOLS);
   }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);

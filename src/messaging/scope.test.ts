@@ -95,6 +95,14 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("commit__delete_item");
   });
 
+  it("commit__delete_item visible when any COMMIT scope is active", () => {
+    // delete_item should be visible whenever COMMIT context is present,
+    // not only when explicit delete/remove keywords are used.
+    // The execution-time lock is the real safety gate.
+    const tools = scope("Lista mis tareas de COMMIT");
+    expect(tools).toContain("commit__delete_item");
+  });
+
   it("schedule activates on schedule/reporte/programad keywords", () => {
     const tools = scope("Programa un reporte diario");
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
