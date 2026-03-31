@@ -202,8 +202,8 @@ export function getToolChainStats(days: number = 7): Array<{
       `SELECT
          tool_chain,
          COUNT(*) as total,
-         SUM(CASE WHEN feedback_signal = 'positive' THEN 1 ELSE 0 END) as positive,
-         SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase') THEN 1 ELSE 0 END) as negative,
+         SUM(CASE WHEN feedback_signal IN ('positive', 'implicit_positive') THEN 1 ELSE 0 END) as positive,
+         SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase') THEN 1 ELSE 0 END) as negative,
          SUM(CASE WHEN feedback_signal IN ('none', 'neutral') THEN 1 ELSE 0 END) as neutral
        FROM scope_telemetry
        WHERE tool_chain != ''

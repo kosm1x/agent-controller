@@ -713,10 +713,12 @@ export class MessageRouter {
       conversationHistory,
     );
 
-    // Implicit feedback: compare current scope groups with previous message's
+    // Implicit feedback: compare current scope groups with previous message's.
+    // Uses feedbackTaskId captured at line 592 (checkFeedbackWindow is destructive
+    // — consumes the ID on first call, so we can't call it again here).
     const prevGroups = previousScopeGroups.get(msg.channel);
     const prevMsg = previousMessages.get(msg.channel);
-    if (prevGroups && prevMsg) {
+    if (prevGroups && prevMsg && feedbackTaskId) {
       const implicitSignal = detectImplicitFeedback(
         new Set(activeGroups),
         prevGroups,
@@ -724,17 +726,14 @@ export class MessageRouter {
         prevMsg,
       );
       if (implicitSignal !== "neutral") {
-        const prevTaskId = checkFeedbackWindow(msg.channel);
-        if (prevTaskId) {
-          try {
-            linkFeedbackToScope(prevTaskId, `implicit_${implicitSignal}`);
-          } catch {
-            /* non-fatal */
-          }
-          console.log(
-            `[router] Implicit feedback for ${prevTaskId}: ${implicitSignal}`,
-          );
+        try {
+          linkFeedbackToScope(feedbackTaskId, `implicit_${implicitSignal}`);
+        } catch {
+          /* non-fatal */
         }
+        console.log(
+          `[router] Implicit feedback for ${feedbackTaskId}: ${implicitSignal}`,
+        );
       }
     }
     previousScopeGroups.set(msg.channel, new Set(activeGroups));
