@@ -108,6 +108,28 @@ describe("scope pattern matching", () => {
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
   });
 
+  it("meta scope loads ALL groups for diagnostics", () => {
+    const tools = scope(
+      "Vuelve a hacer el autodiagnostico y lista todas las tools",
+    );
+    expect(tools).toContain("commit__list_tasks");
+    expect(tools).toContain("commit__delete_item");
+    expect(tools).toContain("commit__update_task");
+    expect(tools).toContain("schedule_task");
+    expect(hasAll(tools, CODING_TOOLS)).toBe(true);
+  });
+
+  it("meta scope activates on 'herramientas disponibles'", () => {
+    const tools = scope("Cuáles herramientas disponibles tienes?");
+    expect(tools).toContain("commit__list_tasks");
+    expect(tools).toContain("commit__update_task");
+  });
+
+  it("meta scope activates on 'nivel operativo'", () => {
+    const tools = scope("Dame un auto-diagnostico de tu nivel operativo");
+    expect(tools).toContain("commit__list_tasks");
+  });
+
   it("no false positives on casual Spanish conversation", () => {
     const tools = scope("Hola, buenos días. Cómo estás?");
     // Should only have core + misc tools

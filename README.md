@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v1–v4.0.15 complete.** ~174 source files, 877 tests passing, zero type errors, 137 tools.
+**v1–v4.0.16 complete.** ~174 source files, 880 tests passing, zero type errors, 137 tools.
 
 | Phase         | Status | What                                                                                                                                                                     |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

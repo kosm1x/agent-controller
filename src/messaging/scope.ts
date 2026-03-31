@@ -252,6 +252,13 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
       /\b(wordpress|wp|blogs?|posts?|art[ií]culos?|publi(ca|car|que)|drafts?|borrador|featured\s*image|hero\s*image|categor[iy]|tags?|plugin|theme|tema|sitio\s+web|header|footer|inyect|inject|tracker|tracking|GA4|analytics|widget|snippet|livingjoyfully|redlightinsider|genera.*imagen|image.*genera|gemini.*imag|imag.*blog|sube.*imagen|upload.*image|media.*upload)/i,
     group: "wordpress",
   },
+  {
+    // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
+    // so the LLM can give an accurate inventory instead of reporting tools as missing.
+    pattern:
+      /\b(auto.?diagn[oó]stic|diagn[oó]stic|nivel operativo|herramientas?\s+(?:disponibles?|activas?|funcional)|lista\w*\s+(?:todas?\s+)?(?:las?\s+)?(?:tools?|herramientas?)|tools?\s+(?:available|status|check)|capacidades|capabilities|funcionalidad(?:es)?)\b/i,
+    group: "meta",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -319,6 +326,21 @@ export function scopeToolsForMessage(
 
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];
+
+  // Meta: user asked about capabilities/diagnostics → load ALL groups
+  // so the LLM sees every tool and can give an accurate inventory.
+  if (activeGroups.has("meta")) {
+    activeGroups.add("commit_read");
+    activeGroups.add("commit_write");
+    activeGroups.add("commit_destructive");
+    activeGroups.add("specialty");
+    activeGroups.add("research");
+    activeGroups.add("schedule");
+    activeGroups.add("google");
+    activeGroups.add("browser");
+    activeGroups.add("coding");
+    activeGroups.add("wordpress");
+  }
 
   // COMMIT tools — load read, write, AND destructive when any COMMIT context
   // is present. Destructive tools were previously gated behind a separate
