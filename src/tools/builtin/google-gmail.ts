@@ -1,9 +1,11 @@
 /**
- * Gmail tools — send and search emails.
+ * Gmail tools — send, search, and read emails (with attachments).
  */
 
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
+import { writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
 
 // ---------------------------------------------------------------------------
 // gmail_send
@@ -201,6 +203,199 @@ Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unrea
     } catch (err) {
       return JSON.stringify({
         error: `Gmail search failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// gmail_read
+// ---------------------------------------------------------------------------
+
+/** Gmail message part (recursive — multipart messages nest parts). */
+interface GmailPart {
+  partId: string;
+  mimeType: string;
+  filename: string;
+  headers: Array<{ name: string; value: string }>;
+  body: { attachmentId?: string; size: number; data?: string };
+  parts?: GmailPart[];
+}
+
+interface GmailFullMessage {
+  id: string;
+  threadId: string;
+  snippet: string;
+  payload: GmailPart;
+  internalDate: string;
+}
+
+const ATTACHMENT_DIR = "/tmp/gmail-attachments";
+
+/** Recursively extract body text and attachment metadata from message parts. */
+function extractParts(
+  part: GmailPart,
+  bodyParts: Array<{ mimeType: string; content: string }>,
+  attachments: Array<{
+    partId: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    attachmentId: string;
+  }>,
+): void {
+  if (part.parts) {
+    for (const child of part.parts) extractParts(child, bodyParts, attachments);
+    return;
+  }
+  if (part.body.attachmentId && part.filename) {
+    attachments.push({
+      partId: part.partId,
+      filename: part.filename,
+      mimeType: part.mimeType,
+      size: part.body.size,
+      attachmentId: part.body.attachmentId,
+    });
+  } else if (
+    part.body.data &&
+    (part.mimeType === "text/plain" || part.mimeType === "text/html")
+  ) {
+    const decoded = Buffer.from(part.body.data, "base64url").toString("utf-8");
+    bodyParts.push({ mimeType: part.mimeType, content: decoded });
+  }
+}
+
+export const gmailReadTool: Tool = {
+  name: "gmail_read",
+  definition: {
+    type: "function",
+    function: {
+      name: "gmail_read",
+      description: `Read a full email message — body text and attachments.
+
+USE WHEN:
+- You have a message ID from gmail_search and need to read the full content
+- The user asks to read, open, or view an email
+- You need to download or inspect email attachments
+
+WORKFLOW: gmail_search → get message ID → gmail_read with that ID.
+
+Returns the email body (plain text preferred, HTML fallback) and a list of
+attachments with filenames and sizes. Use download_attachments=true to save
+attachments to /tmp/ and get their local file paths (then use file_read or
+pdf_read to inspect them).`,
+      parameters: {
+        type: "object",
+        properties: {
+          message_id: {
+            type: "string",
+            description:
+              "Gmail message ID (from gmail_search results). NOT the subject or sender — the actual ID string.",
+          },
+          download_attachments: {
+            type: "boolean",
+            description:
+              "If true, download all attachments to /tmp/gmail-attachments/ and return file paths. Default: false (returns metadata only).",
+          },
+        },
+        required: ["message_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const messageId = args.message_id as string;
+    const downloadAttachments = (args.download_attachments as boolean) ?? false;
+
+    try {
+      // Fetch full message (includes body data + attachment metadata)
+      const msg = await googleFetch<GmailFullMessage>(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
+        { timeout: 20_000 },
+      );
+
+      // Extract headers
+      const getHeader = (name: string) =>
+        msg.payload.headers.find(
+          (h) => h.name.toLowerCase() === name.toLowerCase(),
+        )?.value ?? "";
+
+      // Extract body parts and attachment metadata
+      const bodyParts: Array<{ mimeType: string; content: string }> = [];
+      const attachments: Array<{
+        partId: string;
+        filename: string;
+        mimeType: string;
+        size: number;
+        attachmentId: string;
+      }> = [];
+      extractParts(msg.payload, bodyParts, attachments);
+
+      // Prefer plain text body, fall back to HTML
+      const plainBody = bodyParts.find((p) => p.mimeType === "text/plain");
+      const htmlBody = bodyParts.find((p) => p.mimeType === "text/html");
+      const body = plainBody?.content ?? htmlBody?.content ?? msg.snippet;
+      const bodyType = plainBody
+        ? "text/plain"
+        : htmlBody
+          ? "text/html"
+          : "snippet";
+
+      // Download attachments if requested
+      const downloadedFiles: Array<{
+        filename: string;
+        path: string;
+        size: number;
+        mimeType: string;
+      }> = [];
+      if (downloadAttachments && attachments.length > 0) {
+        mkdirSync(ATTACHMENT_DIR, { recursive: true });
+        for (const att of attachments) {
+          const attData = await googleFetch<{ size: number; data: string }>(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.attachmentId}`,
+            { timeout: 30_000 },
+          );
+          const buffer = Buffer.from(attData.data, "base64url");
+          const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const filePath = join(ATTACHMENT_DIR, `${Date.now()}-${safeName}`);
+          writeFileSync(filePath, buffer);
+          downloadedFiles.push({
+            filename: att.filename,
+            path: filePath,
+            size: buffer.length,
+            mimeType: att.mimeType,
+          });
+        }
+      }
+
+      // Cap body at 8K chars to avoid token bloat
+      const cappedBody =
+        body.length > 8000
+          ? body.slice(0, 8000) +
+            "\n... [truncated, " +
+            body.length +
+            " chars total]"
+          : body;
+
+      return JSON.stringify({
+        id: msg.id,
+        threadId: msg.threadId,
+        from: getHeader("From"),
+        to: getHeader("To"),
+        subject: getHeader("Subject"),
+        date: getHeader("Date"),
+        bodyType,
+        body: cappedBody,
+        attachments: downloadAttachments
+          ? downloadedFiles
+          : attachments.map((a) => ({
+              filename: a.filename,
+              mimeType: a.mimeType,
+              size: a.size,
+            })),
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Failed to read email: ${err instanceof Error ? err.message : err}`,
       });
     }
   },

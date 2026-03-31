@@ -63,6 +63,7 @@ export const SCHEDULE_TOOLS = ["schedule_task", "delete_schedule"];
 export const GOOGLE_TOOLS = [
   "gmail_send",
   "gmail_search",
+  "gmail_read",
   "gdrive_list",
   "gdrive_create",
   "gdrive_share",

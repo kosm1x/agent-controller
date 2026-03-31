@@ -33,7 +33,7 @@ export class GoogleToolSource implements ToolSource {
   async registerTools(registry: ToolRegistry): Promise<string[]> {
     const names: string[] = [];
 
-    const { gmailSendTool, gmailSearchTool } =
+    const { gmailSendTool, gmailSearchTool, gmailReadTool } =
       await import("../builtin/google-gmail.js");
     const { gdriveListTool, gdriveCreateTool, gdriveShareTool } =
       await import("../builtin/google-drive.js");
@@ -51,6 +51,7 @@ export class GoogleToolSource implements ToolSource {
     const tools = [
       gmailSendTool,
       gmailSearchTool,
+      gmailReadTool,
       gdriveListTool,
       gdriveCreateTool,
       gdriveShareTool,
