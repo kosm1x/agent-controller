@@ -347,9 +347,19 @@ pdf_read to inspect them).`,
         size: number;
         mimeType: string;
       }> = [];
+      const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25MB
       if (downloadAttachments && attachments.length > 0) {
         mkdirSync(ATTACHMENT_DIR, { recursive: true });
         for (const att of attachments) {
+          if (att.size > MAX_ATTACHMENT_SIZE) {
+            downloadedFiles.push({
+              filename: att.filename,
+              path: `[skipped: ${(att.size / 1024 / 1024).toFixed(1)}MB exceeds 25MB limit]`,
+              size: att.size,
+              mimeType: att.mimeType,
+            });
+            continue;
+          }
           const attData = await googleFetch<{ size: number; data: string }>(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.attachmentId}`,
             { timeout: 30_000 },

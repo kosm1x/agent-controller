@@ -122,19 +122,6 @@ export const MISC_TOOLS = [
   "browser__interactiveElements",
   "browser__semantic_tree",
   "browser__structuredData",
-  // Playwright browser — full Chromium, for React/Next.js SPAs, JS-heavy pages
-  "playwright__browser_navigate",
-  "playwright__browser_click",
-  "playwright__browser_fill_form",
-  "playwright__browser_snapshot",
-  "playwright__browser_take_screenshot",
-  "playwright__browser_press_key",
-  "playwright__browser_select_option",
-  "playwright__browser_tabs",
-  "playwright__browser_wait_for",
-  "playwright__browser_evaluate",
-  "playwright__browser_type",
-  "playwright__browser_close",
 ];
 
 /** Specialty tools — keyword-gated to save tokens. */
@@ -154,8 +141,22 @@ export const RESEARCH_TOOLS = [
   "gemini_audio_overview",
 ];
 
-/** Lightpanda interactive browser tools — all moved to MISC_TOOLS (always available). */
-export const BROWSER_TOOLS: string[] = [];
+/** Playwright (Chromium) tools — scope-gated to avoid inflating token budget for all tasks.
+ *  Lightpanda tools stay in MISC_TOOLS (always available, lightweight). */
+export const BROWSER_TOOLS = [
+  "playwright__browser_navigate",
+  "playwright__browser_click",
+  "playwright__browser_fill_form",
+  "playwright__browser_snapshot",
+  "playwright__browser_take_screenshot",
+  "playwright__browser_press_key",
+  "playwright__browser_select_option",
+  "playwright__browser_tabs",
+  "playwright__browser_wait_for",
+  "playwright__browser_evaluate",
+  "playwright__browser_type",
+  "playwright__browser_close",
+];
 
 // ---------------------------------------------------------------------------
 // Default scope patterns
@@ -233,7 +234,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(naveg|browse|sitio web|p[aá]gina web|click|login|formulario|scrape|render|javascript)\b/i,
+      /\b(naveg|browse|sitio web|p[aá]gina web|click|login|formulario|scrape|render|javascript|playwright|chromium|react|next\.?js|SPA|iniciar sesi[oó]n|log\s?in|sign\s?in|entra a|abre la app)\b/i,
     group: "browser",
   },
   {

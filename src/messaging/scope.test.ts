@@ -64,12 +64,20 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
-  it("browser tools always available (moved to MISC_TOOLS)", () => {
+  it("Lightpanda browser tools always available via MISC_TOOLS", () => {
     const tools = scope("Hola, buenos días");
     expect(tools).toContain("browser__goto");
     expect(tools).toContain("browser__click");
     expect(tools).toContain("browser__fill");
-    expect(tools).toContain("browser__scroll");
+    // Playwright tools are scope-gated, NOT always available
+    expect(tools).not.toContain("playwright__browser_navigate");
+  });
+
+  it("Playwright tools activate on browser/SPA keywords", () => {
+    const tools = scope("Navega al login de la app React");
+    expect(tools).toContain("playwright__browser_navigate");
+    expect(tools).toContain("playwright__browser_click");
+    expect(tools).toContain("playwright__browser_snapshot");
   });
 
   it("specialty activates on chart/rss/image keywords", () => {

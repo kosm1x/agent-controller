@@ -155,11 +155,12 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("http_fetch");
       // Specialty tools now keyword-gated
       expect(call.tools).not.toContain("chart_generate");
-      // All browser tools always present (moved to MISC_TOOLS)
+      // Lightpanda browser always present (MISC_TOOLS)
       expect(call.tools).toContain("browser__goto");
       expect(call.tools).toContain("browser__markdown");
       expect(call.tools).toContain("browser__click");
-      expect(call.tools).toContain("browser__fill");
+      // Playwright NOT present for generic greetings (scope-gated)
+      expect(call.tools).not.toContain("playwright__browser_navigate");
       // exa_search always present
       expect(call.tools).toContain("exa_search");
       // Should NOT include heavy groups for a simple greeting
