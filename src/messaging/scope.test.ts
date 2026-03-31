@@ -15,7 +15,6 @@ import {
   WORDPRESS_TOOLS,
   CODING_TOOLS,
   BROWSER_TOOLS,
-  SPECIALTY_TOOLS,
   RESEARCH_TOOLS,
   SCHEDULE_TOOLS,
   MISC_TOOLS,
@@ -26,11 +25,6 @@ const ALL_ON: ScopeOptions = {
   hasGoogle: true,
   hasWordpress: true,
   hasMemory: true,
-};
-const ALL_OFF: ScopeOptions = {
-  hasGoogle: false,
-  hasWordpress: false,
-  hasMemory: false,
 };
 
 function scope(msg: string, prior: string[] = [], options = ALL_ON): string[] {
@@ -106,6 +100,64 @@ describe("scope pattern matching", () => {
 });
 
 // ---------------------------------------------------------------------------
+// commit_write patterns — each of 6 sub-patterns tested independently
+// ---------------------------------------------------------------------------
+
+describe("commit_write sub-patterns", () => {
+  it("create verbs: 'Crea una tarea nueva'", () => {
+    const tools = scope("Crea una tarea nueva para mañana");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("verb-first updates: 'Actualiza la tarea de diseño'", () => {
+    const tools = scope("Actualiza la tarea de diseño UX");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("clitic pronouns: 'cámbialo'", () => {
+    const tools = scope("El objetivo está mal, cámbialo");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("completion markers: 'Marca como completada'", () => {
+    const tools = scope("Marca como completada la tarea");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("completion + noun: 'Completé la tarea'", () => {
+    const tools = scope("Completé la tarea de escritura");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("noun-before-verb: 'La tarea de ayer, actualízala'", () => {
+    const tools = scope("La tarea de ayer necesita cambios, actualízala");
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// commit_journal — separate scope group
+// ---------------------------------------------------------------------------
+
+describe("commit_journal scope", () => {
+  it("activates on 'escribe en mi diario'", () => {
+    const tools = scope("Escribe en mi diario lo que pasó hoy");
+    expect(tools).toContain("commit__create_journal");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wordpress positive activation
+// ---------------------------------------------------------------------------
+
+describe("wordpress positive", () => {
+  it("activates on 'Publica el artículo en WordPress'", () => {
+    const tools = scope("Publica el artículo en WordPress");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Two-phase isolation — scope inheritance behavior
 // ---------------------------------------------------------------------------
 
@@ -123,6 +175,18 @@ describe("two-phase scope isolation", () => {
     const tools = scope("Procede", ["Revisa el código del servidor"]);
     // "Procede" is 7 chars, no scope signals — should inherit coding
     expect(tools).toContain("shell_exec");
+  });
+
+  it("49 chars inherits scope, 50+ chars does not (boundary)", () => {
+    // 49 chars: should inherit
+    const msg49 = "A".repeat(49);
+    const tools49 = scope(msg49, ["Busca en mi gmail"]);
+    expect(hasAll(tools49, GOOGLE_TOOLS)).toBe(true);
+
+    // 50 chars, no imperative verb: should NOT inherit
+    const msg50 = "B".repeat(50);
+    const tools50 = scope(msg50, ["Busca en mi gmail"]);
+    expect(hasNone(tools50, GOOGLE_TOOLS)).toBe(true);
   });
 
   it("imperative verb inherits scope regardless of length", () => {

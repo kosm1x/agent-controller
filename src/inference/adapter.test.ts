@@ -2,7 +2,7 @@
  * Tests for inference adapter — ProviderMetrics and token budget enforcement.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // We test ProviderMetrics by importing the singleton and exercising it directly.
 // For inferWithTools token budget, we mock infer() and verify early termination.
@@ -52,6 +52,10 @@ import {
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
   // public reset, but we can test fresh state per provider name)
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("ProviderMetrics", () => {
@@ -442,7 +446,6 @@ describe("stripThinkBlocks", () => {
 
 describe("COMMIT tools in READ_ONLY_TOOLS", () => {
   const tc = (name: string) => ({ function: { name } });
-  const r = (content: string) => ({ content });
 
   it("commit__list_tasks is read-only", () => {
     expect(allToolCallsReadOnly([tc("commit__list_tasks")])).toBe(true);
