@@ -21,6 +21,7 @@ export const CORE_TOOLS = [
   "exa_search",
   "skill_save",
   "skill_list",
+  "file_read", // Always available — reads .txt, .docx, downloaded attachments
 ];
 
 /** COMMIT read tools — included by default for quick lookups. */
@@ -81,7 +82,6 @@ export const GOOGLE_TOOLS = [
 /** Coding/file tools — only when code/files are the topic. */
 export const CODING_TOOLS = [
   "shell_exec",
-  "file_read",
   "file_write",
   "file_edit",
   "grep",
