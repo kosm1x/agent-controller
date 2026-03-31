@@ -60,6 +60,7 @@ import {
   toolFirstSection,
   wordpressSection,
   mechanicalVerificationSection,
+  memoryPersistenceSection,
   correctionMemorySection,
   codingSection,
   browserSection,
@@ -120,6 +121,7 @@ function buildJarvisSystemPrompt(
   sections.push(toolFirstSection(flags));
   if (flags.hasWordpress) sections.push(wordpressSection());
   sections.push(mechanicalVerificationSection());
+  sections.push(memoryPersistenceSection());
   sections.push(correctionMemorySection());
   if (flags.hasCoding) sections.push(codingSection());
   if (flags.hasBrowser) sections.push(browserSection());
@@ -218,7 +220,7 @@ interface PendingReply {
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
-const THREAD_BUFFER_SIZE = 8;
+const THREAD_BUFFER_SIZE = 15;
 /** Max chars per Jarvis response stored in the thread buffer.
  *  Recent cap is higher to preserve state for multi-step workflows
  *  (e.g. "Continúa" chains where the LLM needs to know what it just did). */

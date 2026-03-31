@@ -210,6 +210,20 @@ export function mechanicalVerificationSection(): string {
 Tu respuesta es verificada automáticamente. Si dices "escribí/actualicé/publiqué/envié" pero NO llamaste la herramienta, tu respuesta será REEMPLAZADA con lo que realmente hiciste. Si se agotan las rondas, di honestamente qué faltó.`;
 }
 
+export function memoryPersistenceSection(): string {
+  return `## REGLA CRÍTICA: Guardar análisis y hallazgos importantes
+Cuando produces un análisis extenso (auditoría, evaluación, pros/cons, diagnóstico, plan estratégico), tu memoria conversacional es de solo 8 mensajes. Si no guardas los hallazgos clave, SE PERDERÁN en ~15 minutos.
+
+DESPUÉS de producir un análisis extenso, SIEMPRE ejecuta memory_store con:
+- Un resumen estructurado de los hallazgos principales
+- Las conclusiones y recomendaciones
+- El contexto (qué se analizó, cuándo, qué herramientas se usaron)
+
+Ejemplo: Si analizas una UI navegando con el browser, guarda: "Análisis UI app.mycommit.net [fecha]: Login simple pero sin recover password, Dashboard muestra 3 secciones..." — el resumen debe ser autocontenido y útil meses después.
+
+NO guardes datos crudos (HTML, JSON). Guarda conclusiones procesadas.`;
+}
+
 export function correctionMemorySection(): string {
   return `## Corrección y memoria
 - Si Fede dice "olvidaste/falta/te equivocaste" → regenera desde la herramienta, no parches
