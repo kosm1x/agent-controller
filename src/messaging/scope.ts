@@ -111,8 +111,18 @@ export const MISC_TOOLS = [
   "project_get",
   "project_update",
   "pdf_read",
+  // Browser — all tools always available so Jarvis can navigate, fill forms,
+  // and click without needing explicit "navega" keywords in the message.
   "browser__goto",
   "browser__markdown",
+  "browser__links",
+  "browser__click",
+  "browser__fill",
+  "browser__scroll",
+  "browser__evaluate",
+  "browser__interactiveElements",
+  "browser__semantic_tree",
+  "browser__structuredData",
 ];
 
 /** Specialty tools — keyword-gated to save tokens. */
@@ -132,18 +142,8 @@ export const RESEARCH_TOOLS = [
   "gemini_audio_overview",
 ];
 
-/** Lightpanda interactive browser tools — only when web interaction needed.
- *  browser__goto and browser__markdown are always available via MISC_TOOLS. */
-export const BROWSER_TOOLS = [
-  "browser__links",
-  "browser__evaluate",
-  "browser__semantic_tree",
-  "browser__interactiveElements",
-  "browser__structuredData",
-  "browser__click",
-  "browser__fill",
-  "browser__scroll",
-];
+/** Lightpanda interactive browser tools — all moved to MISC_TOOLS (always available). */
+export const BROWSER_TOOLS: string[] = [];
 
 // ---------------------------------------------------------------------------
 // Default scope patterns

@@ -14,7 +14,6 @@ import {
   GOOGLE_TOOLS,
   WORDPRESS_TOOLS,
   CODING_TOOLS,
-  BROWSER_TOOLS,
   RESEARCH_TOOLS,
   SCHEDULE_TOOLS,
   MISC_TOOLS,
@@ -65,9 +64,12 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
-  it("browser activates on navigation keywords", () => {
-    const tools = scope("Navega al sitio web de la empresa");
-    expect(hasAll(tools, BROWSER_TOOLS)).toBe(true);
+  it("browser tools always available (moved to MISC_TOOLS)", () => {
+    const tools = scope("Hola, buenos días");
+    expect(tools).toContain("browser__goto");
+    expect(tools).toContain("browser__click");
+    expect(tools).toContain("browser__fill");
+    expect(tools).toContain("browser__scroll");
   });
 
   it("specialty activates on chart/rss/image keywords", () => {
