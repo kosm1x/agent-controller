@@ -31,6 +31,7 @@ const READ_ONLY_TOOLS = new Set([
   "skill_list",
   // Google (read-only subset)
   "gmail_search",
+  "gmail_read",
   "gsheets_read",
   "gdocs_read",
   "gdrive_list",

@@ -254,11 +254,14 @@ export function detectsHallucinatedExecution(
       /(?:publicad[oa]|enviad[oa]|subid[oa]|creada?|eliminad[oa])\s+(?:exitosamente|correctamente|con éxito|successfully)/i.test(
         text,
       ) ||
-      // Status change claims ("MARCADA COMO COMPLETADA", "Status: completed → ✅")
-      /marc(?:ad[oa]|ó)\s+(?:como\s+)?(?:complet|hech|done|termin)/i.test(
+      // Status change claims — must have first-person anchor or active voice
+      // "marqué como completada" or "la marcamos como done" = hallucination
+      // "está marcada como completada" = observation from read tool (allowed)
+      /(?:marqué|marcamos|marc[oó])\s+(?:como\s+)?(?:complet|hech|done|termin)/i.test(
         text,
       ) ||
-      /status[:\s]+.*(?:completed|done|✅)/i.test(text) ||
+      // Direct status assignment (not a listing of multiple statuses)
+      /status[:\s]+(?:completed|done|✅)\b/i.test(text) ||
       // Quantity claims ("50 celdas actualizadas")
       /\d+\s+(?:celdas?|filas?|rows?|cells?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated)/i.test(
         text,
