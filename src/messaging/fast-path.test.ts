@@ -118,8 +118,8 @@ describe("fastPathRespond", () => {
 
     await fastPathRespond("hey", []);
 
-    const providerArg = mockInfer.mock.calls[0][3];
-    expect(providerArg).toBe("fallback");
+    const optionsArg = mockInfer.mock.calls[0][1] as { providerName?: string };
+    expect(optionsArg?.providerName).toBe("fallback");
   });
 
   it("returns fallback emoji if infer returns empty", async () => {

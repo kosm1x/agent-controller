@@ -447,12 +447,17 @@ async function parseSSEStream(
  * Send a single inference request with automatic failover.
  * Tries providers in priority order; retries on 429/5xx with exponential backoff.
  */
+export interface InferOptions {
+  onTextChunk?: OnTextChunk;
+  signal?: AbortSignal;
+  providerName?: string;
+}
+
 export async function infer(
   request: InferenceRequest,
-  onTextChunk?: OnTextChunk,
-  signal?: AbortSignal,
-  providerName?: string, // TODO: refactor infer/inferWithTools to use options object
+  options?: InferOptions,
 ): Promise<InferenceResponse> {
+  const { onTextChunk, signal, providerName } = options ?? {};
   const config = getConfig();
   const providers = loadProviders();
 
@@ -560,83 +565,22 @@ import {
 // Loop guard constants
 // ---------------------------------------------------------------------------
 
-/** Tools that are purely observational. Used by the analysis paralysis guard. */
-const READ_ONLY_TOOLS = new Set([
-  // Filesystem
-  "file_read",
-  "grep",
-  "glob",
-  "list_dir",
-  // Web & documents
-  "web_search",
-  "web_read",
-  "exa_search",
-  "rss_read",
-  "pdf_read",
-  "hf_spaces",
-  // Memory & facts
-  "memory_search",
-  "user_fact_list",
-  "skill_list",
-  // Google (read-only subset)
-  "gmail_search",
-  "gsheets_read",
-  "gdocs_read",
-  "gdrive_list",
-  "calendar_list",
-  // WordPress (read-only subset)
-  "wp_list_posts",
-  "wp_read_post",
-  "wp_categories",
-  "wp_pages",
-  "wp_plugins",
-  "wp_settings",
-  // COMMIT (read-only subset)
-  "commit__get_daily_snapshot",
-  "commit__get_hierarchy",
-  "commit__list_tasks",
-  "commit__list_goals",
-  "commit__list_objectives",
-  "commit__search_journal",
-  "commit__list_ideas",
-  // Projects & evolution
-  "project_list",
-  "project_get",
-  "evolution_get_data",
-  // Gemini (read-only subset)
-  "gemini_research",
-  // Browser observation — click/fill/scroll/evaluate are action tools
-  "browser__goto",
-  "browser__markdown",
-  "browser__links",
-  "browser__semantic_tree",
-  "browser__structuredData",
-  "browser__interactiveElements",
-]);
-
-/** Regex matching common error indicators in tool results. */
-const ERROR_RESULT_RE =
-  /\b(?:error|failed|failure|not found|denied|unauthorized|forbidden|does not exist|no such file|ENOENT|EACCES|EPERM|timed?\s?out)\b|"(?:error|status)":\s*(?:4\d{2}|5\d{2})\b/i;
-
-function isReadOnlyTool(name: string): boolean {
-  return READ_ONLY_TOOLS.has(name);
-}
-
-/** Check if all tool calls in a round are read-only (for testing). */
-export function allToolCallsReadOnly(
-  toolCalls: Array<{ function: { name: string } }>,
-): boolean {
-  return toolCalls.every((tc) => isReadOnlyTool(tc.function.name));
-}
-
-/** Check if all tool results contain error indicators (for testing). */
-export function allResultsAreErrors(
-  results: Array<{ content: string | unknown }>,
-): boolean {
-  return results.every(
-    (r) => typeof r.content === "string" && ERROR_RESULT_RE.test(r.content),
-  );
-}
+// Loop guard functions extracted to guards.ts for testability.
+// Re-export for backward compatibility (tests import from adapter.ts).
+export {
+  allToolCallsReadOnly,
+  allResultsAreErrors,
+  isReadOnlyTool,
+} from "./guards.js";
+import {
+  isReadOnlyTool,
+  buildToolSignature,
+  checkConsecutiveRepeats,
+  checkStaleLoop,
+  checkAnalysisParalysis,
+  checkPersistentFailure,
+  isTokenBudgetExceeded,
+} from "./guards.js";
 
 // ---------------------------------------------------------------------------
 // Turn-scoped signal cleanup (Hermes v0.5 pattern)
@@ -886,7 +830,7 @@ export async function inferWithTools(
   const calledToolNames = new Set<string>();
   const allowedToolNames = new Set(tools.map((t) => t.function.name));
   const availableNonReadOnly = new Set(
-    tools.map((t) => t.function.name).filter((n) => !READ_ONLY_TOOLS.has(n)),
+    tools.map((t) => t.function.name).filter((n) => !isReadOnlyTool(n)),
   );
 
   for (let round = 0; round < maxRounds; round++) {
@@ -937,9 +881,11 @@ export async function inferWithTools(
     try {
       response = await infer(
         { messages: conversation, tools },
-        onTextChunk,
-        signal,
-        providerName,
+        {
+          onTextChunk,
+          signal,
+          providerName,
+        },
       );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -982,8 +928,10 @@ export async function inferWithTools(
         );
         const wrapUp = await infer(
           { messages: leanContext },
-          onTextChunk,
-          signal,
+          {
+            onTextChunk,
+            signal,
+          },
         );
         totalPrompt += wrapUp.usage.prompt_tokens;
         totalCompletion += wrapUp.usage.completion_tokens;
@@ -1203,95 +1151,72 @@ export async function inferWithTools(
       calledToolNames.add(tc.function.name);
     }
 
-    const currentToolSig = response.tool_calls
-      .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
-      .sort()
-      .join("|");
-    if (currentToolSig === lastToolSig) {
-      consecutiveRepeats++;
-      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
-        console.warn(
-          `[inference] Loop detected: identical tool calls repeated ${consecutiveRepeats + 1}x`,
-        );
-        exitReason = "loop_detected";
-        break;
-      }
-    } else {
-      consecutiveRepeats = 0;
+    // --- Loop guards (extracted to guards.ts for testability) ---
+    const currentToolSig = buildToolSignature(response.tool_calls);
+
+    // Consecutive repeats
+    consecutiveRepeats = checkConsecutiveRepeats(
+      currentToolSig,
+      lastToolSig,
+      consecutiveRepeats,
+    );
+    if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
+      console.warn(
+        `[inference] Loop detected: identical tool calls repeated ${consecutiveRepeats + 1}x`,
+      );
+      exitReason = "loop_detected";
+      break;
     }
     lastToolSig = currentToolSig;
 
-    // Stale-loop detection: if all tool results in this round are small
-    // error-sized responses (< 300 chars each), count consecutive error rounds.
-    // The LLM may be trying different args (so tool sig differs) but getting
-    // the same error every time (e.g., 404s on sequential IDs).
-    const allResultsSmall = toolResults.every(
-      (r) => typeof r.content === "string" && r.content.length < 300,
+    // Stale loop
+    consecutiveSmallResults = checkStaleLoop(
+      toolResults,
+      response.tool_calls.length,
+      consecutiveSmallResults,
     );
-    if (allResultsSmall && response.tool_calls.length === 1) {
-      consecutiveSmallResults += 1;
-      if (consecutiveSmallResults >= STALE_LOOP_THRESHOLD) {
-        console.warn(
-          `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive rounds with small/error tool results. Breaking.`,
-        );
-        exitReason = "stale_loop";
-        break;
-      }
-    } else {
-      consecutiveSmallResults = 0;
+    if (consecutiveSmallResults >= STALE_LOOP_THRESHOLD) {
+      console.warn(
+        `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive small-result rounds. Breaking.`,
+      );
+      exitReason = "stale_loop";
+      break;
     }
 
-    // Analysis paralysis: all tool calls are read-only for N consecutive rounds.
-    // Catches LLM endlessly exploring without acting (different tool sigs each round,
-    // large results — so repeat detector and stale-loop breaker both miss it).
-    //
-    // Exception: if non-read-only tools are available but haven't been called yet,
-    // the LLM is still gathering data before acting — not stuck. Skip the counter.
-    if (
-      response.tool_calls.length > 0 &&
-      allToolCallsReadOnly(response.tool_calls)
-    ) {
-      const hasUncalledActionTools =
-        availableNonReadOnly.size > 0 &&
-        [...availableNonReadOnly].some((t) => !calledToolNames.has(t));
-      if (!hasUncalledActionTools) {
-        consecutiveReadOnlyRounds++;
-      }
-      if (consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD) {
-        console.warn(
-          `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
-        );
-        exitReason = "analysis_paralysis";
-        break;
-      }
-    } else {
-      consecutiveReadOnlyRounds = 0;
+    // Analysis paralysis
+    consecutiveReadOnlyRounds = checkAnalysisParalysis(
+      response.tool_calls,
+      calledToolNames,
+      availableNonReadOnly,
+      consecutiveReadOnlyRounds,
+    );
+    if (consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD) {
+      console.warn(
+        `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
+      );
+      exitReason = "analysis_paralysis";
+      break;
     }
 
-    // Persistent failure: all tool results contain error indicators for N rounds.
-    // Catches retry loops with large errors (>300 chars) that bypass the stale-loop
-    // breaker, and multi-tool rounds where every tool fails.
-    // Advisory only — don't break, let the LLM pivot.
-    if (toolResults.length > 0 && allResultsAreErrors(toolResults)) {
-      consecutiveErrorRounds++;
-      if (consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD) {
-        console.warn(
-          `[inference] Persistent failure: ${consecutiveErrorRounds} consecutive all-error rounds. Injecting advisory.`,
-        );
-        conversation.push({
-          role: "user" as const,
-          content:
-            "SYSTEM: Multiple consecutive tool failures detected. Your current approach is not working. Try a completely different approach, use different tools, or proceed with what you have and report what you could not accomplish.",
-        });
-        consecutiveErrorRounds = 0;
-      }
-    } else {
+    // Persistent failure (advisory only — don't break)
+    consecutiveErrorRounds = checkPersistentFailure(
+      toolResults,
+      consecutiveErrorRounds,
+    );
+    if (consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD) {
+      console.warn(
+        `[inference] Persistent failure: ${consecutiveErrorRounds} consecutive all-error rounds. Injecting advisory.`,
+      );
+      conversation.push({
+        role: "user" as const,
+        content:
+          "SYSTEM: Multiple consecutive tool failures detected. Your current approach is not working. Try a completely different approach, use different tools, or proceed with what you have and report what you could not accomplish.",
+      });
       consecutiveErrorRounds = 0;
     }
 
-    // Token budget check — if this round's prompt exceeded the ceiling,
-    // the next round will be even larger (more tool results). Wrap up now.
-    if (response.usage.prompt_tokens >= tokenBudget) {
+    // Token budget
+    if (isTokenBudgetExceeded(response.usage.prompt_tokens, tokenBudget)) {
       exitReason = "token_budget";
       console.log(
         `[inference] Token budget exceeded (round prompt=${response.usage.prompt_tokens} >= ${tokenBudget}), forcing wrap-up`,
@@ -1327,7 +1252,10 @@ CRITICAL: You ONLY called these tools: [${toolInventory}]. Do NOT claim to have 
 
 Provide your final response based ONLY on actual tool results. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [what was incomplete]`,
     );
-    const wrapUp = await infer({ messages: leanContext }, onTextChunk, signal);
+    const wrapUp = await infer(
+      { messages: leanContext },
+      { onTextChunk, signal },
+    );
     totalPrompt += wrapUp.usage.prompt_tokens;
     totalCompletion += wrapUp.usage.completion_tokens;
     const content = wrapUp.content ?? "[max tool rounds reached]";

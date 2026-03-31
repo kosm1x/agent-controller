@@ -95,9 +95,7 @@ export async function fastPathRespond(
 
   const result = await infer(
     { messages, temperature: 0.7 },
-    undefined, // no streaming (response is very short)
-    undefined, // no abort signal
-    "fallback", // flash model for speed
+    { providerName: "fallback" }, // flash model for speed, no streaming
   );
 
   return result.content || "👋";

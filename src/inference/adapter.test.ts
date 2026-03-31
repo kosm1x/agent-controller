@@ -255,8 +255,8 @@ describe("allToolCallsReadOnly", () => {
     ).toBe(false);
   });
 
-  it("should return true for empty array (vacuous truth)", () => {
-    expect(allToolCallsReadOnly([])).toBe(true);
+  it("should return false for empty array (no tools = no read-only claim)", () => {
+    expect(allToolCallsReadOnly([])).toBe(false);
   });
 
   it("should return false for unknown tools (not in read-only set)", () => {
@@ -307,8 +307,8 @@ describe("allResultsAreErrors", () => {
     expect(allResultsAreErrors([r(largeError)])).toBe(true);
   });
 
-  it("should return true for empty array (vacuous truth)", () => {
-    expect(allResultsAreErrors([])).toBe(true);
+  it("should return false for empty array (no results = no error claim)", () => {
+    expect(allResultsAreErrors([])).toBe(false);
   });
 
   it("should return false for non-string content", () => {
