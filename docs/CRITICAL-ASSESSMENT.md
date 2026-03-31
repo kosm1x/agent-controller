@@ -454,3 +454,25 @@ If a single eval hangs, it blocks the entire loop. The only timeout is the globa
 Every defense layer, every workaround, and every hardcoded threshold in this codebase was born from a real production incident. That's the system's greatest strength — it's battle-tested — and its greatest weakness — it's accreted, not designed. The path forward isn't rewriting. It's disciplined extraction of accreted complexity into testable, composable units, starting with the P0 items that take 30 minutes each and compound into operational stability.
 
 The most honest architectural observation: all 7 hallucination defense layers exist because the underlying approach (large dynamic prompt + budget model + many tools) inherently produces hallucinations. Reducing prompt complexity may eliminate more hallucinations than adding an 8th detection layer.
+
+---
+
+## Addendum: v4.0 Resolution Status (2026-03-31)
+
+Many items from this assessment were resolved during v4.0 (S1-S9):
+
+| CRIT # | Resolution                                                          |
+| ------ | ------------------------------------------------------------------- |
+| 1.2    | **Resolved** — systemd crash recovery (v3.2)                        |
+| 2.1    | **Resolved** — inferWithTools decomposed into guards.ts (S8)        |
+| 3.1    | **Resolved** — FTS5 full-text search (S3)                           |
+| 3.4    | **Resolved** — DB composite indexes (S1)                            |
+| 4.1    | **Resolved** — prompt decomposed into prompt-sections.ts (S8)       |
+| 5.2    | **Resolved** — scope telemetry + tool_chain attribution (S9)        |
+| 6.1    | **Resolved** — integration tests with mock LLM server (S6)          |
+| 7.1    | **Resolved** — shell substitution bypass blocked (S1)               |
+| 9.1    | **Resolved** — healthcheck + Telegram alert (S1)                    |
+| 9.4    | **Resolved** — daily SQLite backup (S1)                             |
+| 9.5    | **Resolved** — Prometheus /metrics + Grafana dashboards (S4/v4.0.5) |
+
+Remaining from this assessment: 1.1 (worker threads), 2.2 (paired pruning), 5.3 (embedding-based scoping), 8.1-8.2 (classifier calibration). Deferred to v5.0.

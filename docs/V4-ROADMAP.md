@@ -2,7 +2,7 @@
 
 > Based on [CRITICAL-ASSESSMENT.md](./CRITICAL-ASSESSMENT.md) (v2.28 audit) + user vision for swarm orchestration, structured output, observability, long-term memory, and multi-user scaling.
 >
-> Last updated: 2026-03-29
+> Last updated: 2026-03-31 — v4.0 S1-S9 COMPLETE + audited
 
 ## Status Key
 
@@ -69,58 +69,50 @@
 
 ---
 
-## v4.0 S5 — Inference Refactor (~2d)
+## v4.0 S5–S6 — Integration Tests + Constants (~2d)
 
-| CRIT # | Item                                                      | Effort | Status                                                                                     |
-| ------ | --------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
-| 2.1    | Extract `inferWithTools` into composable units            | 1-1.5d | Deferred (constants extracted, function analyzed — full extraction deferred to avoid risk) |
-| 2.2    | Paired message pruning (tool_call + tool_result as unit)  | 0.5d   | Planned                                                                                    |
-| 4.3    | Honest failure messages (replace mechanical substitution) | 2h     | Partially done (retry + replacement messages improved in earlier session)                  |
-| 2.5    | Consolidate hardcoded constants into config/constants.ts  | 0.5d   | **Done**                                                                                   |
-| 10.2   | Per-experiment timeout in overnight tuning                | 1h     | **Done**                                                                                   |
-| 10.1   | Transaction-safe overnight tuning                         | 2h     | **Done**                                                                                   |
+| CRIT # | Item                                                     | Effort | Status   |
+| ------ | -------------------------------------------------------- | ------ | -------- |
+| 6.1    | Integration test suite with mock LLM server              | 1.5d   | **Done** |
+| 2.5    | Consolidate hardcoded constants into config/constants.ts | 0.5d   | **Done** |
+| 10.2   | Per-experiment timeout in overnight tuning               | 1h     | **Done** |
+| 10.1   | Transaction-safe overnight tuning                        | 2h     | **Done** |
 
 ---
 
-## v4.0 S6 — Test Infrastructure (~2d)
+## v4.0 S7 — Test Coverage (~1d)
 
-| CRIT # | Item                                        | Effort | Status                                                                                    |
-| ------ | ------------------------------------------- | ------ | ----------------------------------------------------------------------------------------- |
-| 6.1    | Integration test suite with mock LLM server | 1.5d   | **Done**                                                                                  |
-| 6.2    | Hallucination detection end-to-end tests    | 0.5d   | Deferred (needs fast-runner integration with mock server — separate from inference tests) |
-| 10.3   | Expand tuning seed data (49 → 200+)         | Incl.  | Deferred (seed expansion is gradual — scope_misses table needed first from S8)            |
-
----
-
-## v4.0 S7 — Hallucination Prevention (~1.5d)
-
-| CRIT # | Item                                                   | Effort | Status                                                                                       |
-| ------ | ------------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------- |
-| 4.1    | Prompt decomposition into composable modules           | 1d     | **Done** (COMMIT section gated on hasCommit; prompt already scope-aligned from v2.21)        |
-| 4.2    | Execution-verification-first defense (invert approach) | 0.5d   | **Done** (success-aware toolsCalled + verification bypass — implemented across this session) |
-| 3.3    | Relevance-scored user facts (inject top-N, not all)    | Incl.  | **Done** (28K→2K chars always-inject; rest relevance-scored with 3K cap)                     |
+| Item                                                              | Status   |
+| ----------------------------------------------------------------- | -------- |
+| scope.test.ts — 15 tests for patterns + two-phase isolation       | **Done** |
+| dispatcher.test.ts — 13 tests for task lifecycle                  | **Done** |
+| adapter.test.ts — +7 tests for COMMIT READ_ONLY_TOOLS             | **Done** |
+| guards.test.ts — 20 tests for extracted guard functions           | **Done** |
+| prompt-sections.test.ts — 20 tests for detectToolFlags + sections | **Done** |
+| feedback.test.ts — 6 tests for detectImplicitFeedback             | **Done** |
+| QA audit: mock correctness, pattern coverage, conventions         | **Done** |
 
 ---
 
-## v4.0 S8 — Scope & Classification (~1d)
+## v4.0 S8 — Decomposition (~1d)
 
-| CRIT # | Item                                                | Effort | Status  |
-| ------ | --------------------------------------------------- | ------ | ------- |
-| 5.1    | Scope stickiness in multi-turn conversations        | 2h     | Planned |
-| 5.2    | Scope feedback loop (log misses → feed into tuning) | 0.5d   | Planned |
-| 8.1    | Classifier weight calibration from task_outcomes    | 0.5d   | Planned |
-| 8.2    | Lower adaptive adjustment thresholds                | 1h     | Planned |
-| 7.3    | Credential detection source check (user msgs only)  | 1h     | Planned |
+| Item                                                               | Status   |
+| ------------------------------------------------------------------ | -------- |
+| guards.ts — 6 guard functions extracted from inferWithTools        | **Done** |
+| prompt-sections.ts — 13 sections from buildJarvisSystemPrompt      | **Done** |
+| InferOptions — infer() refactored from 4 positional to options obj | **Done** |
+| QA audit: behavioral equivalence confirmed                         | **Done** |
 
 ---
 
-## v4.0 S9 — Task-Type Routing (~1.5d)
+## v4.0 S9 — Scope Telemetry + Outcome Attribution (~0.5d)
 
-| CRIT # | Item                                                              | Effort | Status  |
-| ------ | ----------------------------------------------------------------- | ------ | ------- |
-| NEW    | Per-task-type system prompts (creative/coding/research/logistics) | 1d     | Planned |
-| NEW    | Classifier routes to persona, not just runner                     | 0.5d   | Planned |
-| 1.4    | Task queue with backpressure                                      | Incl.  | Planned |
+| Item                                                              | Status   |
+| ----------------------------------------------------------------- | -------- |
+| tool_chain column in scope_telemetry (deduplicated ordered tools) | **Done** |
+| detectImplicitFeedback (topic change → positive, rephrase → neg)  | **Done** |
+| mc-ctl tool-chains command (top chains by success rate)           | **Done** |
+| QA audit: feedback window fix, query alignment, types             | **Done** |
 
 ---
 
@@ -139,18 +131,20 @@
 
 ## Metrics
 
-| Metric               | v4.0 start   | Current (v4.0.5)                                           |
-| -------------------- | ------------ | ---------------------------------------------------------- |
-| Tools                | 111          | 114                                                        |
-| Test files           | 62           | 70                                                         |
-| Tests                | 666          | 756                                                        |
-| Hallucination layers | 7            | 7 + success-aware + verification bypass + think-block      |
-| Inference providers  | 3            | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5)            |
-| Rituals              | 8            | 8                                                          |
-| Source files         | ~160         | 174                                                        |
-| DB size              | ~30MB        | ~39MB                                                      |
-| Dependencies         | 8+2          | 9+2 (added prom-client)                                    |
-| Memory               | LIKE search  | FTS5 + embeddings hybrid + consolidation                   |
-| Tool validation      | None         | Zod schema on all tools                                    |
-| Observability        | /health only | /health + /metrics + Grafana dashboards (15 panels, :3001) |
-| Integration tests    | 0            | 8 (mock LLM server)                                        |
+| Metric               | v4.0 start   | Final (v4.0 S9)                                                       |
+| -------------------- | ------------ | --------------------------------------------------------------------- |
+| Tools                | 111          | 137 (+26: gmail_read, .docx, Playwright 21, Lightpanda scope-gated)   |
+| Test files           | 62           | 73 (+11)                                                              |
+| Tests                | 666          | 848 (+182)                                                            |
+| Hallucination layers | 7            | 7 + success-aware + verification bypass + think-block + status-narr   |
+| Inference providers  | 3            | 3 (qwen3.5-plus / qwen3-coder-plus / kimi-k2.5)                       |
+| Rituals              | 8            | 8                                                                     |
+| Source files         | ~160         | 174                                                                   |
+| Dependencies         | 8+2          | 11+2 (added prom-client, mammoth, @playwright/mcp)                    |
+| Memory               | LIKE search  | FTS5 + embeddings hybrid + tool_chain attribution + implicit feedback |
+| Tool validation      | None         | Zod schema on all tools                                               |
+| Observability        | /health only | /health + /metrics + Grafana (15 panels) + mc-ctl tool-chains         |
+| Integration tests    | 0            | 8 (mock LLM server)                                                   |
+| QA audits            | 0            | 6 (S7, S8, S9, v4.0.6, v4.0.7, amnesia fix — all passed)              |
+| Production runtime   | tsx (cached) | node dist/index.js (compiled, scripts/deploy.sh)                      |
+| Browsers             | Lightpanda   | Lightpanda (static) + Playwright/Chromium (SPAs)                      |
