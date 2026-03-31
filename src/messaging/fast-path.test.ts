@@ -51,6 +51,15 @@ describe("isConversationalFastPath", () => {
     },
   );
 
+  it.each([
+    "Hablame de la serie de TV Community",
+    "Cuéntame sobre tu día favorito",
+    "Dime algo interesante sobre México",
+    "Estoy pensando en cambiar de carrera",
+  ])("returns true for 6-8 word conversational statement: %s", (text) => {
+    expect(isConversationalFastPath(text)).toBe(true);
+  });
+
   // --- Should NOT fast-path (false) ---
   it.each([
     "qué hora es?",

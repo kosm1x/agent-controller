@@ -978,11 +978,11 @@ export async function inferWithTools(
       // First-round tool-skip guard: if the LLM claims success (✅) without
       // calling ANY tools on the very first round, it's lazily responding from
       // conversation context instead of executing. Nudge it to use tools.
-      // Skip for short replies (<500 chars) — those are genuine conversational
-      // responses that don't need tool execution.
+      // Skip when: short replies (<500 chars), or no write tools in scope
+      // (conversational messages with only core tools don't need tool calls).
       if (
         round === 0 &&
-        tools.length > 0 &&
+        availableNonReadOnly.size > 0 &&
         content.includes("✅") &&
         content.length > 500
       ) {

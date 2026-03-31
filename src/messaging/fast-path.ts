@@ -63,8 +63,10 @@ export function isConversationalFastPath(text: string): boolean {
   // Explicit safe patterns
   if (SAFE_PATTERNS.some((p) => p.test(trimmed))) return true;
 
-  // Fallback: very short (≤5 words), no tool triggers, no question mark
-  if (wordCount <= 5 && !trimmed.endsWith("?")) return true;
+  // Fallback: short (≤8 words), no tool triggers, no question mark.
+  // These are conversational statements that don't need the full pipeline.
+  // Tool triggers already filtered at line 61, so this is safe.
+  if (wordCount <= 8 && !trimmed.endsWith("?")) return true;
 
   return false;
 }
