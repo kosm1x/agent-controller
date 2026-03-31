@@ -27,7 +27,8 @@ fi
 echo "[$(date)] healthcheck: FAILED (HTTP $RESP)"
 send_telegram "⚠️ Jarvis health check FAILED (HTTP $RESP). Attempting restart..."
 
-# Attempt auto-restart
+# Rebuild and restart — ensures compiled dist/ has latest source
+cd /root/claude/mission-control && npm run build >> /var/log/mc-healthcheck.log 2>&1
 systemctl restart mission-control 2>/dev/null
 sleep 10
 
