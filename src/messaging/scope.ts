@@ -256,7 +256,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
-      /\b(auto.?diagn[oó]stic|diagn[oó]stic|nivel operativo|herramientas?\s+(?:disponibles?|activas?|funcional)|lista\w*\s+(?:todas?\s+)?(?:las?\s+)?(?:tools?|herramientas?)|tools?\s+(?:available|status|check)|capacidades|capabilities|funcionalidad(?:es)?)\b/i,
+      /\b(auto.?diagn[oó]stic\w*|diagn[oó]stic\w*|nivel operativo|herramientas?\s+(?:disponibles?|activas?|funcional)|lista\w*\s+(?:todas?\s+)?(?:las?\s+)?(?:tools?|herramientas?)|tools?\s+(?:available|status|check)|capacidades|capabilities|funcionalidad(?:es)?)\b/i,
     group: "meta",
   },
 ];
