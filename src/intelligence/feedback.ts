@@ -54,6 +54,36 @@ export function isFeedbackMessage(text: string): boolean {
   return POSITIVE_PATTERNS.test(trimmed) || NEGATIVE_PATTERNS.test(trimmed);
 }
 
+/**
+ * Detect implicit satisfaction by comparing scope transitions between messages.
+ *
+ * - Topic change → implicit positive (user moved on, previous task was satisfactory)
+ * - Same topic continuation → implicit positive (user is building on the result)
+ * - Rephrase of same request → implicit negative (user is retrying)
+ *
+ * Returns a signal only when confidence is high enough. "neutral" = no inference.
+ */
+export function detectImplicitFeedback(
+  currentGroups: Set<string>,
+  previousGroups: Set<string>,
+  currentMessage: string,
+  previousMessage: string,
+): FeedbackSignal {
+  // Skip if either has no scope (generic messages)
+  if (currentGroups.size === 0 || previousGroups.size === 0) return "neutral";
+
+  // Rephrase check (highest priority — user is retrying the same thing)
+  if (isRephrase(currentMessage, previousMessage)) return "rephrase";
+
+  // Topic change: current groups have NO overlap with previous → implicit positive
+  const hasOverlap = [...currentGroups].some((g) => previousGroups.has(g));
+  if (!hasOverlap) return "positive";
+
+  // Same topic continuation without complaint → stay neutral
+  // (explicit positive/negative detection in detectFeedbackSignal handles the rest)
+  return "neutral";
+}
+
 /** Check if text is a rephrase of previous (>40% word overlap, both short). */
 function isRephrase(current: string, previous: string): boolean {
   const curWords = new Set(

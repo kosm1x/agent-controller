@@ -28,12 +28,21 @@ export function ensureScopeTelemetryTable(): void {
       tools_called    TEXT DEFAULT '[]',
       tools_repaired  TEXT DEFAULT '[]',
       tools_failed    TEXT DEFAULT '[]',
+      tool_chain      TEXT DEFAULT '',
       feedback_signal TEXT DEFAULT 'none',
       created_at      TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_scope_tel_task ON scope_telemetry(task_id);
     CREATE INDEX IF NOT EXISTS idx_scope_tel_created ON scope_telemetry(created_at DESC);
   `);
+  // Additive migration: add tool_chain column if missing (existing DBs)
+  try {
+    db.exec(
+      `ALTER TABLE scope_telemetry ADD COLUMN tool_chain TEXT DEFAULT ''`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 let _initialized = false;
@@ -105,9 +114,24 @@ export function recordToolExecution(
   toolsFailed: string[],
 ): void {
   const db = getDatabase();
+  // Build tool_chain: ordered, deduplicated sequence of tools called
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  for (const t of toolsCalled) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      chain.push(t);
+    }
+  }
+  const toolChain = chain.join("→");
   db.prepare(
-    `UPDATE scope_telemetry SET tools_called = ?, tools_failed = ? WHERE task_id = ?`,
-  ).run(JSON.stringify(toolsCalled), JSON.stringify(toolsFailed), taskId);
+    `UPDATE scope_telemetry SET tools_called = ?, tools_failed = ?, tool_chain = ? WHERE task_id = ?`,
+  ).run(
+    JSON.stringify(toolsCalled),
+    JSON.stringify(toolsFailed),
+    toolChain,
+    taskId,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +158,7 @@ export interface ScopeTelemetryRow {
   tools_called: string;
   tools_repaired: string;
   tools_failed: string;
+  tool_chain: string;
   feedback_signal: string;
   created_at: string;
 }
@@ -161,6 +186,39 @@ export function getTelemetryWithRepairs(
        ORDER BY created_at DESC`,
     )
     .all(`-${hours}`) as ScopeTelemetryRow[];
+}
+
+/** Get tool chain success rates for the mc-ctl dashboard. */
+export function getToolChainStats(days: number = 7): Array<{
+  tool_chain: string;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+}> {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT
+         tool_chain,
+         COUNT(*) as total,
+         SUM(CASE WHEN feedback_signal = 'positive' THEN 1 ELSE 0 END) as positive,
+         SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase') THEN 1 ELSE 0 END) as negative,
+         SUM(CASE WHEN feedback_signal IN ('none', 'neutral') THEN 1 ELSE 0 END) as neutral
+       FROM scope_telemetry
+       WHERE tool_chain != ''
+         AND created_at > datetime('now', ? || ' days')
+       GROUP BY tool_chain
+       ORDER BY total DESC
+       LIMIT 20`,
+    )
+    .all(`-${days}`) as Array<{
+    tool_chain: string;
+    total: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+  }>;
 }
 
 export function getTelemetryWithNegativeFeedback(

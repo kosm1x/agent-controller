@@ -512,6 +512,35 @@ cmd_db() {
   fi
 }
 
+cmd_tool_chains() {
+  local days="${1:-7}"
+  need_db
+  echo -e "${BOLD}=== Tool Chain Success Rates (last ${days} days) ===${NC}"
+  echo ""
+  sql "SELECT
+    tool_chain,
+    COUNT(*) as total,
+    SUM(CASE WHEN feedback_signal = 'positive' OR feedback_signal = 'implicit_positive' THEN 1 ELSE 0 END) as positive,
+    SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase') THEN 1 ELSE 0 END) as negative,
+    SUM(CASE WHEN feedback_signal IN ('none', 'neutral') THEN 1 ELSE 0 END) as no_signal
+  FROM scope_telemetry
+  WHERE tool_chain != ''
+    AND created_at > datetime('now', '-${days} days')
+  GROUP BY tool_chain
+  ORDER BY total DESC
+  LIMIT 20;"
+  echo ""
+  echo -e "${BOLD}Feedback signal distribution:${NC}"
+  sql "SELECT
+    feedback_signal,
+    COUNT(*) as count
+  FROM scope_telemetry
+  WHERE tool_chain != ''
+    AND created_at > datetime('now', '-${days} days')
+  GROUP BY feedback_signal
+  ORDER BY count DESC;"
+}
+
 cmd_stats() {
   need_db
   echo -e "${BOLD}=== Mission Control Stats ===${NC}"
@@ -847,6 +876,8 @@ case "$cmd" in
   tuning)            cmd_tuning "$@" ;;
 
   monitoring)        cmd_monitoring "$@" ;;
+
+  tool-chains)       cmd_tool_chains "${1:-7}" ;;
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;

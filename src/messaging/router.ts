@@ -32,6 +32,7 @@ import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
 import { formatProjectsBlock } from "../db/projects.js";
 import {
   detectFeedbackSignal,
+  detectImplicitFeedback,
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
@@ -230,6 +231,9 @@ interface ThreadEntry {
 
 const conversationThreads = new Map<string, ThreadEntry[]>();
 const threadLastAccess = new Map<string, number>();
+/** Previous scope groups per channel — used for implicit feedback detection. */
+const previousScopeGroups = new Map<string, Set<string>>();
+const previousMessages = new Map<string, string>();
 const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let threadAccessCount = 0;
 const hydratedChannels = new Set<string>();
@@ -708,6 +712,33 @@ export class MessageRouter {
       msg.text,
       conversationHistory,
     );
+
+    // Implicit feedback: compare current scope groups with previous message's
+    const prevGroups = previousScopeGroups.get(msg.channel);
+    const prevMsg = previousMessages.get(msg.channel);
+    if (prevGroups && prevMsg) {
+      const implicitSignal = detectImplicitFeedback(
+        new Set(activeGroups),
+        prevGroups,
+        msg.text,
+        prevMsg,
+      );
+      if (implicitSignal !== "neutral") {
+        const prevTaskId = checkFeedbackWindow(msg.channel);
+        if (prevTaskId) {
+          try {
+            linkFeedbackToScope(prevTaskId, `implicit_${implicitSignal}`);
+          } catch {
+            /* non-fatal */
+          }
+          console.log(
+            `[router] Implicit feedback for ${prevTaskId}: ${implicitSignal}`,
+          );
+        }
+      }
+    }
+    previousScopeGroups.set(msg.channel, new Set(activeGroups));
+    previousMessages.set(msg.channel, msg.text);
 
     // Scope telemetry — record decision for self-tuning pipeline
     let scopeRowId = 0;
