@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getConfig } from "../../config.js";
 import { providerMetrics } from "../../inference/adapter.js";
+import { circuitRegistry } from "../../lib/circuit-breaker.js";
 import { getBudgetStatus } from "../../budget/service.js";
 import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
@@ -69,6 +70,7 @@ health.get("/health", async (c) => {
       },
       tools: toolMetrics.getSummary(),
       commitEvents: eventMetrics.getSummary(),
+      circuitBreakers: circuitRegistry.getAllStatus(),
     },
     code,
   );

@@ -42,13 +42,13 @@
 
 > **Priority: CRITICAL.** Guard stack was the primary failure mode in v4 — 5 sessions of hallucination fixes, guard stack inversion incident, 3-strike rule. Every other v5 session runs on top of these guards.
 
-| Item                                                                                                                                                                                                   | Source               | Effort | Status  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ------ | ------- |
-| S1.1 Multi-layer doom-loop detection — canonical JSON fingerprinting, outcome-aware tracking, ping-pong cycle detector (period 2-3), content-chanting (sliding window hash), n-gram Jaccard similarity | hive + PraisonAI     | 0.5d   | Planned |
-| S1.4 Graduated escalation ladder — 4-level enum (RETRY_DIFFERENT → ESCALATE_MODEL → FORCE_WRAPUP + quality gate → ABORT), phantom action detection (action verb + channel, no tool call)               | PraisonAI + OpenFang | 0.5d   | Planned |
-| S1.5 Circuit breaker registry — CLOSED/OPEN/HALF_OPEN per service, 5 failures/60s trips, 30s cooldown, /health integration, mc-ctl breakers                                                            | PraisonAI            | 0.5d   | Planned |
-| S1.6 Session repair before inference — remove orphaned ToolResults, synthetic errors for unmatched ToolUse, dedup, merge same-role, pair-aware drain boundary                                          | OpenFang             | 0.5d   | Planned |
-| WRITE_TOOLS compile-time sync test (from v4.0.18 QA audit)                                                                                                                                             | QA audit             | 1h     | Planned |
+| Item                                                                                                                                                                                                   | Source               | Effort | Status   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ------ | -------- |
+| S1.1 Multi-layer doom-loop detection — canonical JSON fingerprinting, outcome-aware tracking, ping-pong cycle detector (period 2-3), content-chanting (sliding window hash), n-gram Jaccard similarity | hive + PraisonAI     | 0.5d   | **Done** |
+| S1.4 Graduated escalation ladder — 4-level enum (RETRY_DIFFERENT → ESCALATE_MODEL → FORCE_WRAPUP + quality gate → ABORT), phantom action detection (action verb + channel, no tool call)               | PraisonAI + OpenFang | 0.5d   | **Done** |
+| S1.5 Circuit breaker registry — CLOSED/OPEN/HALF_OPEN per service, 5 failures/60s trips, 30s cooldown, /health integration                                                                             | PraisonAI            | 0.5d   | **Done** |
+| S1.6 Session repair before inference — remove orphaned ToolResults, synthetic errors for unmatched ToolUse, dedup, merge same-role                                                                     | OpenFang             | 0.5d   | **Done** |
+| WRITE_TOOLS compile-time sync test (from v4.0.18 QA audit)                                                                                                                                             | QA audit             | 1h     | **Done** |
 
 **Exit criteria:** Existing guard tests pass + new tests for: reordered JSON keys, ping-pong A-B-A-B, content chanting, n-gram edge cases, escalation state machine, quality gate, phantom detection, circuit breaker lifecycle, session repair (4 edge cases), WRITE_TOOLS sync.
 

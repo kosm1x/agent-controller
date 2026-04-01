@@ -12,9 +12,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric        | Value                                                                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 174                                                                                                                                                                                                            |
-| Test files    | 74                                                                                                                                                                                                             |
-| Tests passing | 903                                                                                                                                                                                                            |
+| Source files  | 180                                                                                                                                                                                                            |
+| Test files    | 79                                                                                                                                                                                                             |
+| Tests passing | 966                                                                                                                                                                                                            |
 | Type errors   | 0                                                                                                                                                                                                              |
 | Total tools   | 137 (44 builtin + 10 WP + 73 MCP [22 COMMIT + 10 browser + 21 playwright + 20 other] + 15 Google + 3 memory + 2 skill)                                                                                         |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
@@ -90,21 +90,21 @@ Full design: `V5-NORTHSTAR.md` (909 lines, themes, code examples, open questions
 
 External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compaction, doom-loop, quality gate), PraisonAI (ping-pong, escalation, circuit breaker), OpenFang (session repair, phantom detection, spending quotas), HyperGraph (knowledge maps), Feynman (research verification), OpenMontage (video production, TS reimplementation).
 
-| Session | Theme                   | Scope                                                                                          | Source                      | Status  |
-| ------- | ----------------------- | ---------------------------------------------------------------------------------------------- | --------------------------- | ------- |
-| S1a     | Guard upgrades          | Doom-loop detection, escalation ladder, circuit breaker, session repair, WRITE_TOOLS sync test | hive + PraisonAI + OpenFang | Planned |
-| S1b     | Memory upgrades         | 4-level compaction, auto-persist, spending quotas                                              | hive + OpenFang             | Planned |
-| S2      | Inference workers       | Move inferWithTools to worker_threads. Pool of 2-3 workers                                     | v4 carry                    | Planned |
-| S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups                                  | v4 carry                    | Planned |
-| S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation                                                     | v4 carry                    | Planned |
-| S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds                                                 | v4 carry                    | Planned |
-| S5b     | Knowledge maps          | `knowledge_map` tool, SQLite persistence, Prometheus integration                               | HyperGraph                  | Planned |
-| S5c     | Research verification   | Provenance records, source anchoring, status tagging, search condensation                      | Feynman                     | Planned |
-| S5d     | Video production        | ~10 TS tools (VideoToolSource), Remotion + FFmpeg, provider cascade                            | OpenMontage (TS rewrite)    | Planned |
-| S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine                            | Crucix                      | Planned |
-| S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE)                        | Crucix                      | Planned |
-| S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, ritual integration                   | Crucix                      | Planned |
-| S9+     | Multi-user              | PostgreSQL, Redis, per-user isolation. Only if needed                                          | —                           | Future  |
+| Session | Theme                   | Scope                                                                                          | Source                      | Status   |
+| ------- | ----------------------- | ---------------------------------------------------------------------------------------------- | --------------------------- | -------- |
+| S1a     | Guard upgrades          | Doom-loop detection, escalation ladder, circuit breaker, session repair, WRITE_TOOLS sync test | hive + PraisonAI + OpenFang | **Done** |
+| S1b     | Memory upgrades         | 4-level compaction, auto-persist, spending quotas                                              | hive + OpenFang             | Planned  |
+| S2      | Inference workers       | Move inferWithTools to worker_threads. Pool of 2-3 workers                                     | v4 carry                    | Planned  |
+| S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups                                  | v4 carry                    | Planned  |
+| S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation                                                     | v4 carry                    | Planned  |
+| S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds                                                 | v4 carry                    | Planned  |
+| S5b     | Knowledge maps          | `knowledge_map` tool, SQLite persistence, Prometheus integration                               | HyperGraph                  | Planned  |
+| S5c     | Research verification   | Provenance records, source anchoring, status tagging, search condensation                      | Feynman                     | Planned  |
+| S5d     | Video production        | ~10 TS tools (VideoToolSource), Remotion + FFmpeg, provider cascade                            | OpenMontage (TS rewrite)    | Planned  |
+| S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine                            | Crucix                      | Planned  |
+| S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE)                        | Crucix                      | Planned  |
+| S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, ritual integration                   | Crucix                      | Planned  |
+| S9+     | Multi-user              | PostgreSQL, Redis, per-user isolation. Only if needed                                          | —                           | Future   |
 
 ## Tools (137 total, managed by 5 ToolSource plugins)
 

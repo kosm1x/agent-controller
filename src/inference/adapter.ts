@@ -15,8 +15,17 @@
 
 import { getConfig } from "../config.js";
 import { evictToFile, hasEvictedPath } from "../lib/eviction.js";
+import { circuitRegistry } from "../lib/circuit-breaker.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shouldCompress, compress } from "../prometheus/context-compressor.js";
+import { repairSession } from "./session-repair.js";
+import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
+import type { RoundData } from "./doom-loop.js";
+import {
+  createEscalationState,
+  escalate,
+  detectPhantomActions,
+} from "./escalation.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -481,6 +490,15 @@ export async function infer(
   for (let pi = 0; pi < providers.length; pi++) {
     const provider = providers[pi];
 
+    // Circuit breaker: hard rejection when breaker is OPEN
+    const breaker = circuitRegistry.get(provider.name);
+    if (!breaker.allowRequest()) {
+      console.warn(
+        `[inference] Circuit breaker OPEN for ${provider.name}, skipping`,
+      );
+      continue;
+    }
+
     // Preemptive failover: skip degraded providers if alternatives remain
     if (
       pi < providers.length - 1 &&
@@ -501,7 +519,14 @@ export async function infer(
         console.log(
           `[inference] Attempting ${provider.name}/${provider.model} (provider ${pi + 1}/${providers.length}, attempt ${attempt + 1}/${config.inferenceMaxRetries}, timeout=${effectiveTimeoutLog}ms, tools=${toolCount})`,
         );
-        return await callProvider(provider, request, onTextChunk, signal);
+        const result = await callProvider(
+          provider,
+          request,
+          onTextChunk,
+          signal,
+        );
+        breaker.recordSuccess();
+        return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const statusMatch = lastError.message.match(/HTTP (\d+)/);
@@ -513,7 +538,8 @@ export async function infer(
           `[inference] ${provider.name} attempt ${attempt + 1} failed: ${lastError.message}${isAbort ? " (timeout)" : ""} status=${status}`,
         );
 
-        // Record failure metrics
+        // Record failure on circuit breaker + provider metrics
+        breaker.recordFailure();
         providerMetrics.record(provider.name, {
           timestamp: Date.now(),
           latencyMs: Date.now() - attemptStart,
@@ -815,6 +841,19 @@ export async function inferWithTools(
   const toolRepairs: Array<{ original: string; repaired: string }> = [];
 
   let conversation = [...messages];
+
+  // Session repair: fix structural anomalies before inference
+  const sessionRepairs = repairSession(conversation);
+  if (
+    sessionRepairs.orphanedToolResults +
+      sessionRepairs.syntheticErrors +
+      sessionRepairs.dedupedResults +
+      sessionRepairs.mergedMessages >
+    0
+  ) {
+    console.log(`[inference] Session repaired:`, sessionRepairs);
+  }
+
   let totalPrompt = 0;
   let totalCompletion = 0;
   let exitReason = "max_rounds";
@@ -825,6 +864,11 @@ export async function inferWithTools(
   let consecutiveReadOnlyRounds = 0;
   let consecutiveErrorRounds = 0;
   let toolSkipNudgeSent = false;
+
+  // v5 S1a: multi-layer doom-loop detection + graduated escalation
+  const doomState = createDoomLoopState();
+  const escalationState = createEscalationState();
+  let activeProvider = providerName; // mutable for Level 2 model escalation
 
   // Track which tools have been called across rounds, so the analysis
   // paralysis guard can distinguish "gathering data before acting" from
@@ -886,7 +930,7 @@ export async function inferWithTools(
         {
           onTextChunk,
           signal,
-          providerName,
+          providerName: activeProvider,
         },
       );
     } catch (err) {
@@ -1169,68 +1213,117 @@ export async function inferWithTools(
       calledToolNames.add(tc.function.name);
     }
 
-    // --- Loop guards (extracted to guards.ts for testability) ---
+    // --- Loop guards (v4 guards + v5 doom-loop + escalation) ---
     const currentToolSig = buildToolSignature(response.tool_calls);
 
-    // Consecutive repeats
+    // v4 counters (still useful for logging)
     consecutiveRepeats = checkConsecutiveRepeats(
       currentToolSig,
       lastToolSig,
       consecutiveRepeats,
     );
-    if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
-      console.warn(
-        `[inference] Loop detected: identical tool calls repeated ${consecutiveRepeats + 1}x`,
-      );
-      exitReason = "loop_detected";
-      break;
-    }
     lastToolSig = currentToolSig;
 
-    // Stale loop
     consecutiveSmallResults = checkStaleLoop(
       toolResults,
       response.tool_calls.length,
       consecutiveSmallResults,
     );
-    if (consecutiveSmallResults >= STALE_LOOP_THRESHOLD) {
-      console.warn(
-        `[inference] Stale loop detected: ${consecutiveSmallResults} consecutive small-result rounds. Breaking.`,
-      );
-      exitReason = "stale_loop";
-      break;
-    }
 
-    // Analysis paralysis
     consecutiveReadOnlyRounds = checkAnalysisParalysis(
       response.tool_calls,
       calledToolNames,
       availableNonReadOnly,
       consecutiveReadOnlyRounds,
     );
-    if (consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD) {
-      console.warn(
-        `[inference] Analysis paralysis: ${consecutiveReadOnlyRounds} consecutive read-only rounds. Breaking.`,
-      );
-      exitReason = "analysis_paralysis";
-      break;
-    }
 
-    // Persistent failure (advisory only — don't break)
     consecutiveErrorRounds = checkPersistentFailure(
       toolResults,
       consecutiveErrorRounds,
     );
-    if (consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD) {
+
+    // v5 S1a: multi-layer doom-loop detection
+    const roundData: RoundData = {
+      toolCalls: response.tool_calls,
+      toolResults,
+      llmText: typeof response.content === "string" ? response.content : "",
+    };
+    const doomSignal = updateDoomLoop(doomState, roundData);
+
+    // v5 S1a: phantom action detection
+    const toolCallNames = response.tool_calls.map(
+      (tc: { function: { name: string } }) => tc.function.name,
+    );
+    const phantoms = detectPhantomActions(roundData.llmText, toolCallNames);
+
+    // Collect all guard triggers for this round
+    const guardTriggered =
+      consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS ||
+      consecutiveSmallResults >= STALE_LOOP_THRESHOLD ||
+      consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD ||
+      consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD ||
+      doomSignal !== null ||
+      phantoms.length > 0;
+
+    if (guardTriggered) {
+      const reason =
+        doomSignal?.description ??
+        (phantoms.length > 0
+          ? `phantom action: ${phantoms[0].verb} + ${phantoms[0].channel}`
+          : consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS
+            ? "consecutive_repeats"
+            : consecutiveSmallResults >= STALE_LOOP_THRESHOLD
+              ? "stale_loop"
+              : consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD
+                ? "analysis_paralysis"
+                : "persistent_failure");
+
       console.warn(
-        `[inference] Persistent failure: ${consecutiveErrorRounds} consecutive all-error rounds. Injecting advisory.`,
+        `[inference] Guard trigger: ${reason} (escalation ${escalationState.triggerCount + 1})`,
       );
-      conversation.push({
-        role: "user" as const,
-        content:
-          "SYSTEM: Multiple consecutive tool failures detected. Your current approach is not working. Try a completely different approach, use different tools, or proceed with what you have and report what you could not accomplish.",
-      });
-      consecutiveErrorRounds = 0;
+
+      const action = escalate(escalationState);
+
+      switch (action.action) {
+        case "RETRY_DIFFERENT":
+          // Inject nudge, continue loop
+          conversation.push({
+            role: "user" as const,
+            content: action.message,
+          });
+          // Reset counters so the nudge gets a fair chance
+          consecutiveRepeats = 0;
+          consecutiveSmallResults = 0;
+          consecutiveErrorRounds = 0;
+          break;
+
+        case "ESCALATE_MODEL":
+          // Switch to primary (strongest) provider, continue loop
+          activeProvider = undefined; // undefined = auto-select strongest
+          conversation.push({
+            role: "user" as const,
+            content: action.message,
+          });
+          consecutiveRepeats = 0;
+          consecutiveSmallResults = 0;
+          consecutiveErrorRounds = 0;
+          break;
+
+        case "FORCE_WRAPUP":
+          exitReason = "escalation_wrapup";
+          console.log(`[inference] Escalation level 3: forcing wrap-up`);
+          break; // exits the switch — the for-loop break is below
+
+        case "ABORT":
+          exitReason = "escalation_abort";
+          console.log(`[inference] Escalation level 4: aborting`);
+          break;
+      }
+
+      // For FORCE_WRAPUP and ABORT, break out of the for-loop
+      if (action.action === "FORCE_WRAPUP" || action.action === "ABORT") {
+        break;
+      }
     }
 
     // Token budget

@@ -62,6 +62,28 @@ export const HALLUCINATION_RETRY_HEADROOM = float(
   0.85,
 );
 
+// --- Circuit breaker ---
+/** Failures within window to trip the breaker. */
+export const CB_FAILURE_THRESHOLD = int("CB_FAILURE_THRESHOLD", 5);
+/** Rolling window for counting failures (ms). */
+export const CB_WINDOW_MS = int("CB_WINDOW_MS", 60_000);
+/** Cooldown before HALF_OPEN probe (ms). */
+export const CB_COOLDOWN_MS = int("CB_COOLDOWN_MS", 30_000);
+
+// --- Doom-loop detection ---
+/** Repeated text chunk hashes to trigger content-chanting alarm. */
+export const DOOM_CHANTING_THRESHOLD = int("DOOM_CHANTING_THRESHOLD", 8);
+/** Chunk size in chars for content-chanting sliding window. */
+export const DOOM_CHANTING_CHUNK = int("DOOM_CHANTING_CHUNK", 200);
+/** Identical (callHash, resultHash) pairs to trigger fingerprint alarm. */
+export const DOOM_FINGERPRINT_THRESHOLD = int("DOOM_FINGERPRINT_THRESHOLD", 3);
+/** Pairwise Jaccard similarity threshold (0-1) for text-stalled alarm. */
+export const DOOM_JACCARD_THRESHOLD = float("DOOM_JACCARD_THRESHOLD", 0.85);
+/** Number of recent LLM text responses to compare for Jaccard. */
+export const DOOM_JACCARD_WINDOW = int("DOOM_JACCARD_WINDOW", 4);
+/** Number of recent call signatures to keep for cycle detection. */
+export const DOOM_CYCLE_HISTORY = int("DOOM_CYCLE_HISTORY", 6);
+
 // --- Overnight tuning ---
 /** Per-experiment timeout in milliseconds (default 30 min). */
 export const EXPERIMENT_TIMEOUT_MS = int(
