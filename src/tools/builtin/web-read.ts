@@ -6,6 +6,8 @@
  * No API key required for 20 RPM, or set JINA_API_KEY for 500 RPM.
  */
 
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Tool } from "../types.js";
 import { extractPdfFromUrl } from "../../lib/pdf.js";
 
@@ -118,17 +120,41 @@ For interactive browsing or JS-rendered pages, use the browser__* tools (goto, m
 
       const content = await response.text();
 
-      const trimmed =
-        content.length > MAX_CONTENT
-          ? content.slice(0, MAX_CONTENT) +
-            `\n\n... (truncated, ${content.length} total chars)`
-          : content;
+      let trimmed = content;
+      let evictedPath: string | undefined;
+
+      if (content.length > MAX_CONTENT) {
+        // Write full content to temp file so the LLM can file_read sections
+        const evictDir = join(process.cwd(), "data", "tool-results");
+        mkdirSync(evictDir, { recursive: true });
+        evictedPath = join(evictDir, `web-read-${Date.now()}.txt`);
+        writeFileSync(evictedPath, content, "utf-8");
+
+        // Build a table of contents from markdown headings
+        const headings = content
+          .split("\n")
+          .filter((l) => /^#{1,3}\s/.test(l))
+          .map((h) => h.replace(/^#+\s*/, "").trim())
+          .slice(0, 30);
+        const toc =
+          headings.length > 0
+            ? `\n\nTABLE OF CONTENTS (${headings.length} sections):\n${headings.map((h) => `- ${h}`).join("\n")}`
+            : "";
+
+        trimmed =
+          content.slice(0, MAX_CONTENT) +
+          `\n\n--- DOCUMENT TRUNCATED (${content.length} chars total) ---` +
+          `\nFull content saved to: ${evictedPath}` +
+          `\nUse file_read(path="${evictedPath}") to read specific sections.` +
+          toc;
+      }
 
       return JSON.stringify({
         url,
         content: trimmed,
         chars: content.length,
         truncated: content.length > MAX_CONTENT,
+        ...(evictedPath && { full_content_path: evictedPath }),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
