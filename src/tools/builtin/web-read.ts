@@ -12,7 +12,7 @@ import { evictToFile } from "../../lib/eviction.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
-const MAX_CONTENT = 10_000; // chars — keep small to avoid prompt bloat in tool loops
+const MAX_CONTENT = 5_000; // chars — halved from 10K to prevent token budget blow-outs when many tools are scoped
 
 async function extractPdfLocally(url: string): Promise<string> {
   try {

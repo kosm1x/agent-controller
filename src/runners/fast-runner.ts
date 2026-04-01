@@ -444,11 +444,18 @@ export const fastRunner: Runner = {
     setMemoryTaskContext(input.taskId);
 
     try {
-      const tokenBudget = hasPlaywright
+      let tokenBudget = hasPlaywright
         ? TOKEN_BUDGET_BROWSER
         : hasCodingTools
           ? TOKEN_BUDGET_CODING
           : TOKEN_BUDGET_FAST;
+      // Many scoped tools (~15K tokens for 70+ tool defs) leave too little
+      // room for tool results, causing budget blow-outs on web_read / browser.
+      // Bump to browser-tier budget when tool count is high.
+      const toolCount = definitions.length;
+      if (toolCount > 60 && tokenBudget < TOKEN_BUDGET_BROWSER) {
+        tokenBudget = TOKEN_BUDGET_BROWSER;
+      }
       // Vision override: route to primary (vision-capable) when conversation
       // contains images, regardless of classifier-assigned tier.
       const hasVision = input.conversationHistory?.some((t) => t.imageUrl);
