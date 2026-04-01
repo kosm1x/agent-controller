@@ -13,6 +13,8 @@
  *   - Model-specific guards (Qwen enable_thinking)
  */
 
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { getConfig } from "../config.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shouldCompress, compress } from "../prometheus/context-compressor.js";
@@ -1142,18 +1144,37 @@ export async function inferWithTools(
             });
           }
         }
-        // Large result eviction: write oversized results to temp file,
-        // return head + tail preview with file path reference so the LLM
-        // can read specific sections with file_read if needed.
+        // Large result eviction: write full content to a temp file so the
+        // LLM can read specific sections via file_read. Return a structured
+        // summary (first ~4K chars + table of contents) instead of a lossy
+        // head+tail truncation that causes hallucination on long documents.
         if (result.length > MAX_TOOL_RESULT_CHARS) {
-          const previewHead = result.slice(
+          const evictDir = join(process.cwd(), "data", "tool-results");
+          mkdirSync(evictDir, { recursive: true });
+          const evictFile = join(evictDir, `${toolCall.id}-${Date.now()}.txt`);
+          writeFileSync(evictFile, result, "utf-8");
+
+          // Build a table of contents from markdown headings
+          const headings = result
+            .split("\n")
+            .filter((l) => /^#{1,3}\s/.test(l))
+            .map((h) => h.replace(/^#+\s*/, "").trim())
+            .slice(0, 30);
+          const toc =
+            headings.length > 0
+              ? `\n\nTABLE OF CONTENTS (${headings.length} sections):\n${headings.map((h) => `- ${h}`).join("\n")}`
+              : "";
+
+          const preview = result.slice(
             0,
-            Math.floor(MAX_TOOL_RESULT_CHARS * 0.7),
+            Math.floor(MAX_TOOL_RESULT_CHARS * 0.3),
           );
-          const previewTail = result.slice(
-            -Math.floor(MAX_TOOL_RESULT_CHARS * 0.2),
-          );
-          result = `${previewHead}\n\n... (${result.length} chars total — middle section omitted) ...\n\n${previewTail}`;
+          result =
+            `${preview}\n\n` +
+            `--- DOCUMENT TRUNCATED (${result.length} chars total) ---\n` +
+            `Full content saved to: ${evictFile}\n` +
+            `Use file_read(path="${evictFile}") to read specific sections.` +
+            toc;
         }
         return {
           role: "tool" as const,
