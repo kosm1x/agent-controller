@@ -13,9 +13,8 @@
  *   - Model-specific guards (Qwen enable_thinking)
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { getConfig } from "../config.js";
+import { evictToFile, hasEvictedPath } from "../lib/eviction.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shouldCompress, compress } from "../prometheus/context-compressor.js";
 
@@ -1144,37 +1143,16 @@ export async function inferWithTools(
             });
           }
         }
-        // Large result eviction: write full content to a temp file so the
-        // LLM can read specific sections via file_read. Return a structured
-        // summary (first ~4K chars + table of contents) instead of a lossy
-        // head+tail truncation that causes hallucination on long documents.
-        if (result.length > MAX_TOOL_RESULT_CHARS) {
-          const evictDir = join(process.cwd(), "data", "tool-results");
-          mkdirSync(evictDir, { recursive: true });
-          const evictFile = join(evictDir, `${toolCall.id}-${Date.now()}.txt`);
-          writeFileSync(evictFile, result, "utf-8");
-
-          // Build a table of contents from markdown headings
-          const headings = result
-            .split("\n")
-            .filter((l) => /^#{1,3}\s/.test(l))
-            .map((h) => h.replace(/^#+\s*/, "").trim())
-            .slice(0, 30);
-          const toc =
-            headings.length > 0
-              ? `\n\nTABLE OF CONTENTS (${headings.length} sections):\n${headings.map((h) => `- ${h}`).join("\n")}`
-              : "";
-
-          const preview = result.slice(
-            0,
+        // Large result eviction: write to temp file, return preview + TOC.
+        // Skip if result already contains an evicted file path (e.g., from
+        // web_read) to avoid double-eviction of the same content.
+        if (result.length > MAX_TOOL_RESULT_CHARS && !hasEvictedPath(result)) {
+          const { preview } = evictToFile(
+            result,
+            `call-${toolCall.id.slice(0, 12)}`,
             Math.floor(MAX_TOOL_RESULT_CHARS * 0.3),
           );
-          result =
-            `${preview}\n\n` +
-            `--- DOCUMENT TRUNCATED (${result.length} chars total) ---\n` +
-            `Full content saved to: ${evictFile}\n` +
-            `Use file_read(path="${evictFile}") to read specific sections.` +
-            toc;
+          result = preview;
         }
         return {
           role: "tool" as const,
