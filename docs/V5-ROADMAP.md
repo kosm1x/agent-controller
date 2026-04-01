@@ -2,7 +2,7 @@
 
 > Preliminary plan based on deferred v4.0 items, CRITICAL-ASSESSMENT gaps, and operational learnings from the v4.0 session marathon (39 commits, 6 QA audits).
 >
-> Last updated: 2026-04-01 — DRAFT, will evolve over sessions
+> Last updated: 2026-04-01 — Prioritized, ready for execution
 >
 > External pattern sources: Crucix (delta engine, alert tiers), aden-hive/hive (compaction pipeline, doom-loop fingerprinting, quality gate), PraisonAI (ping-pong detector, content-chanting, escalation ladder, circuit breaker), OpenFang (outcome-aware loops, session repair, pair-aware trimming, phantom action detection, spending quotas)
 
@@ -36,84 +36,37 @@ Resolved in v4.0.18: WRITE_TOOLS phantom names (H1), fullCount diagnostic (H2), 
 
 ---
 
+## Execution tiers
+
+v5 has ~20-30 days of work across 12 sessions. Prioritized in three tiers:
+
+**Tier 1 — Bedrock (ship first, everything else depends on it):**
+
+- S1 (Theme 0 + Theme 3): Guards + Memory — doom-loop detection, circuit breakers, escalation ladder, compaction, session repair, spending quotas
+- S2 (Theme 1): Inference workers — unblocks concurrent tasks
+- S4 (Theme 5): A2A mesh — 3.5h quick win, connects CRM
+
+**Tier 2 — Core intelligence (build on stable foundation):**
+
+- S3 (Theme 2): Embedding-based scoping — replaces fragile regex
+- S5 (Theme 5): Classifier calibration — self-improvement loop
+- S5c (Theme 8): Research verification — provenance + source anchoring
+
+**Tier 3 — New capabilities (build after Tier 1-2 are solid):**
+
+- S5b (Theme 7): Knowledge maps
+- S5d (Theme 9): Video production
+- S6-S8 (Theme 6-8 of Intel Depot): Intelligence Depot
+
+---
+
 ## New themes from v4.0 learnings
 
-### Theme 1: Inference concurrency
+### Theme 0: Guard upgrades — doom-loop detection + escalation + circuit breaker
 
-**Problem**: One LLM call blocks everything. Playwright browsing tasks take 2+ minutes of inference rounds — during which no other Telegram message is processed.
+> **Priority: CRITICAL.** This is the foundation. The guard stack was the primary failure mode in v4 — 5 sessions of hallucination fixes, guard stack inversion incident, 3-strike rule born from repeated guard failures. Every other v5 session runs on top of these guards. Without solid guards, workers (S2) just fail faster in parallel, and video production (S5d) burns money on hallucinated pipelines.
 
-**Direction**: Move inference calls to worker threads. The fast-runner's `inferWithTools` loop is CPU-idle (waiting on network). Worker threads would allow true concurrency without additional cores.
-
-**Open questions**:
-
-- How to share tool registry across threads (it's a singleton with MCP connections)?
-- Worker pool size? Memory budget is ~3GB free.
-- Does streaming (onTextChunk callback) work across thread boundaries?
-
----
-
-### Theme 2: Smarter tool scoping
-
-**Problem**: Keyword regex for scope is fragile (catastrophic backtracking, Spanish morphology, clitic pronouns). The v4.0.6 fix was to merge scopes — but this loads more tools per message (~40 tokens each).
-
-**Direction**: Replace keyword regex with embedding similarity. Compute a vector for the user message, compare against pre-computed scope group vectors, activate groups above a threshold.
-
-**Benefits**: No regex, no language-specific patterns, handles synonyms and rephrases naturally.
-
-**Open questions**:
-
-- Latency? Embedding call adds ~200ms. Acceptable for Telegram but not for fast-path.
-- Cache? Most messages in a conversation share scope — cache the last scope decision.
-- Hybrid? Keep simple keyword triggers for core groups (COMMIT nouns), use embeddings for finer-grained groups.
-
----
-
-### Theme 3: Memory architecture + Multi-level compaction
-
-**Problem**: Thread buffer (15 entries) is a ring buffer — high-value outputs get evicted alongside greetings. The v4.0.10 fix (auto-persist prompt) is soft — depends on LLM compliance. The current `context-compressor.ts` uses a single-level PRESERVE+ADD strategy — when it fails, the fallback is to drop messages without summary.
-
-**Direction**: Two improvements stacked together:
-
-1. **Mechanical auto-persist** — detect output characteristics (length > N chars, tool_calls > M, Playwright browsing involved) and automatically call memory_store with a structured summary.
-
-2. **Multi-level compaction pipeline** (adapted from aden-hive/hive's `compaction.py`) — replace the single PRESERVE+ADD with a 4-level fallback chain:
-   - **Level 0**: Prune old tool results (free, fast — already partially done via `MAX_TOOL_RESULT_CHARS`)
-   - **Level 1**: Structure-preserving compaction with paired message pruning (CRIT 2.2 — tool_call + tool_result as unit)
-   - **Level 2**: LLM recursive summary — when conversation exceeds the compaction LLM's own context, binary-split messages, summarize each half, concatenate. Recurse up to 5 levels.
-   - **Level 3**: Emergency deterministic summary (no LLM — extract last user question + tool names called + final assistant response). Current drop-without-summary fallback is replaced by this.
-
-   Each level fires only when the previous level's output still exceeds the target. This eliminates the "compressor itself runs out of context" failure mode.
-
-**Related**: The v4.0 S9 tool_chain attribution needs more data before the self-tuning system can learn from it. Implicit feedback detection is live but needs production validation.
-
-**Open questions**:
-
-- What constitutes "high-value"? Length alone is insufficient (long error messages aren't valuable).
-- Should auto-persist be mechanical (post-hoc in fast-runner) or LLM-driven (prompt instruction)?
-- Memory consolidation: how to merge overlapping memories over time?
-- Level 2 recursive split: use the same model as the main inference, or a cheaper/faster one?
-
----
-
-### Theme 4: Multi-user architecture
-
-**Problem**: Everything is single-user (Fede). Thread buffer, user_facts, conversation history, Hindsight bank — all assume one user.
-
-**Direction**: Per-user isolation. PostgreSQL migration for concurrent writes, Redis for session state, user_id column on all tables.
-
-**Dependencies**: Only worth building when there's a second user. Currently premature.
-
----
-
-### Theme 5: A2A agent mesh
-
-**Problem**: CRM (crm-azteca) and agent-controller are separate systems. Cross-system workflows (e.g., CRM prospect data → Jarvis analysis → COMMIT task creation) require manual coordination.
-
-**Direction**: A2A protocol already implemented (v2.2). Need to deploy CRM as an A2A agent and wire bidirectional task delegation. Plan exists at `docs/PLAN-A2A-AGENT-MESH.md`.
-
----
-
-### Theme 6: Guard upgrades — doom-loop detection + escalation + circuit breaker
+**Source**: hive (compaction, doom-loop fingerprinting, quality gate), PraisonAI (ping-pong detector, content-chanting, escalation ladder, circuit breaker), OpenFang (outcome-aware loops, session repair, phantom action detection, spending quotas).
 
 **Problem 1**: The current `buildToolSignature()` in `guards.ts` concatenates `name:arguments` as raw strings and sorts. This misses three classes of loops:
 
@@ -188,6 +141,81 @@ This prevents cascading failures across tasks and gives the LLM clear feedback t
 - Escalation Level 2 (model switch): which models are valid escalation targets? Need a model capability tier list.
 - Session repair: should synthetic error insertion count toward the persistent failure guard, or be excluded?
 - Spending quotas: what are reasonable hourly/daily limits? Need production baseline data first.
+
+---
+
+### Theme 1: Inference concurrency
+
+**Problem**: One LLM call blocks everything. Playwright browsing tasks take 2+ minutes of inference rounds — during which no other Telegram message is processed.
+
+**Direction**: Move inference calls to worker threads. The fast-runner's `inferWithTools` loop is CPU-idle (waiting on network). Worker threads would allow true concurrency without additional cores.
+
+**Open questions**:
+
+- How to share tool registry across threads (it's a singleton with MCP connections)?
+- Worker pool size? Memory budget is ~3GB free.
+- Does streaming (onTextChunk callback) work across thread boundaries?
+
+---
+
+### Theme 2: Smarter tool scoping
+
+**Problem**: Keyword regex for scope is fragile (catastrophic backtracking, Spanish morphology, clitic pronouns). The v4.0.6 fix was to merge scopes — but this loads more tools per message (~40 tokens each).
+
+**Direction**: Replace keyword regex with embedding similarity. Compute a vector for the user message, compare against pre-computed scope group vectors, activate groups above a threshold.
+
+**Benefits**: No regex, no language-specific patterns, handles synonyms and rephrases naturally.
+
+**Open questions**:
+
+- Latency? Embedding call adds ~200ms. Acceptable for Telegram but not for fast-path.
+- Cache? Most messages in a conversation share scope — cache the last scope decision.
+- Hybrid? Keep simple keyword triggers for core groups (COMMIT nouns), use embeddings for finer-grained groups.
+
+---
+
+### Theme 3: Memory architecture + Multi-level compaction
+
+**Problem**: Thread buffer (15 entries) is a ring buffer — high-value outputs get evicted alongside greetings. The v4.0.10 fix (auto-persist prompt) is soft — depends on LLM compliance. The current `context-compressor.ts` uses a single-level PRESERVE+ADD strategy — when it fails, the fallback is to drop messages without summary.
+
+**Direction**: Two improvements stacked together:
+
+1. **Mechanical auto-persist** — detect output characteristics (length > N chars, tool_calls > M, Playwright browsing involved) and automatically call memory_store with a structured summary.
+
+2. **Multi-level compaction pipeline** (adapted from aden-hive/hive's `compaction.py`) — replace the single PRESERVE+ADD with a 4-level fallback chain:
+   - **Level 0**: Prune old tool results (free, fast — already partially done via `MAX_TOOL_RESULT_CHARS`)
+   - **Level 1**: Structure-preserving compaction with paired message pruning (CRIT 2.2 — tool_call + tool_result as unit)
+   - **Level 2**: LLM recursive summary — when conversation exceeds the compaction LLM's own context, binary-split messages, summarize each half, concatenate. Recurse up to 5 levels.
+   - **Level 3**: Emergency deterministic summary (no LLM — extract last user question + tool names called + final assistant response). Current drop-without-summary fallback is replaced by this.
+
+   Each level fires only when the previous level's output still exceeds the target. This eliminates the "compressor itself runs out of context" failure mode.
+
+**Related**: The v4.0 S9 tool_chain attribution needs more data before the self-tuning system can learn from it. Implicit feedback detection is live but needs production validation.
+
+**Open questions**:
+
+- What constitutes "high-value"? Length alone is insufficient (long error messages aren't valuable).
+- Should auto-persist be mechanical (post-hoc in fast-runner) or LLM-driven (prompt instruction)?
+- Memory consolidation: how to merge overlapping memories over time?
+- Level 2 recursive split: use the same model as the main inference, or a cheaper/faster one?
+
+---
+
+### Theme 4: Multi-user architecture
+
+**Problem**: Everything is single-user (Fede). Thread buffer, user_facts, conversation history, Hindsight bank — all assume one user.
+
+**Direction**: Per-user isolation. PostgreSQL migration for concurrent writes, Redis for session state, user_id column on all tables.
+
+**Dependencies**: Only worth building when there's a second user. Currently premature.
+
+---
+
+### Theme 5: A2A agent mesh
+
+**Problem**: CRM (crm-azteca) and agent-controller are separate systems. Cross-system workflows (e.g., CRM prospect data → Jarvis analysis → COMMIT task creation) require manual coordination.
+
+**Direction**: A2A protocol already implemented (v2.2). Need to deploy CRM as an A2A agent and wire bidirectional task delegation. Plan exists at `docs/PLAN-A2A-AGENT-MESH.md`.
 
 ---
 
@@ -541,7 +569,7 @@ CREATE TABLE IF NOT EXISTS video_jobs (
 
 ## S1 Detailed Scope: Memory + Guards
 
-S1 bundles eight improvements into one session. They share no code dependencies but all target the same failure class: Jarvis losing context or delivering garbage after long inference chains. Given the scope, S1 may split into S1a (guards: S1.1, S1.4, S1.5, S1.6) and S1b (memory: S1.2, S1.3, S1.7) at execution time.
+S1 implements Theme 0 (guards) + Theme 3 (memory) — the critical foundation. Eight improvements bundled into one session. They share no code dependencies but all target the same failure class: Jarvis losing context or delivering garbage after long inference chains. Given the scope, S1 may split into S1a (guards: S1.1, S1.4, S1.5, S1.6) and S1b (memory: S1.2, S1.3, S1.7) at execution time.
 
 ### S1.1 — Multi-layer doom-loop detection
 
