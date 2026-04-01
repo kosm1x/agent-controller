@@ -84,32 +84,27 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v4.0.18 | COMMIT_READ always-on + QA audit fixes. Read tools moved to CORE_TOOLS via spread (dedup). Hallucination guard WRITE_TOOLS fixed: 11 phantom Google tool names replaced with 9 correct ones (calendar_create, gdocs_write, etc.). fullCount diagnostic now includes SPECIALTY+RESEARCH. Meta scope now includes commit_journal. case-miner maps research group. 10 new tests (meta completeness, detectActiveGroups). 894 tests | Done | `9449d7b` |
 | v4.0.19 | Tool result eviction — fixes hallucination on long documents. Root cause: web_read truncated 58K docs to 10K (lossy head-only), adapter 12K eviction never fired. Fix: shared `evictToFile()` utility writes full content to temp file, returns preview + markdown TOC + file_path for file_read. Double-eviction prevention via `hasEvictedPath()`. Probabilistic cleanup (1h TTL). 9 new tests. 903 tests | Done | `70118a4` |
 
-## v5.0 Planning
+## v5.0 — Scalability + New Capabilities
 
-v5.0 theme: **scalability** — making the architecture handle more concurrent work, smarter routing, real-time intelligence, and resilience without accumulating complexity.
+Full design: `V5-NORTHSTAR.md` (909 lines, themes, code examples, open questions). Execution tracking: `V5-ROADMAP.md`. Intel Depot: `V5-INTELLIGENCE-DEPOT.md`.
 
-Full plans: `V5-ROADMAP.md` (565 lines) and `V5-INTELLIGENCE-DEPOT.md` (652 lines).
+External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compaction, doom-loop, quality gate), PraisonAI (ping-pong, escalation, circuit breaker), OpenFang (session repair, phantom detection, spending quotas), HyperGraph (knowledge maps), Feynman (research verification), OpenMontage (video production, TS reimplementation).
 
-External pattern sources assessed and selectively adopted:
-
-- **Crucix** (calesthio) — delta engine, multi-tier alert routing, content-hash dedup
-- **aden-hive/hive** — multi-level compaction pipeline, doom-loop fingerprinting, conversation quality gate
-- **PraisonAI** (MervinPraison) — ping-pong cycle detector, content-chanting detector, graduated escalation ladder, circuit breaker registry
-- **OpenFang** (RightNow-AI) — outcome-aware loop detection, session repair, pair-aware context trimming, phantom action detection, three-window spending quotas
-
-Also assessed and **rejected**: ruflo (ruvnet) — inflated metrics, misleading claims, thin substance.
-
-| Session | Theme                   | Scope                                                                                                                  | Source                      |
-| ------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| S1      | Memory + Guards         | 8 sub-items: 5-layer doom-loop, compaction, auto-persist, escalation, circuit breaker, session repair, spending quotas | hive + PraisonAI + OpenFang |
-| S2      | Inference workers       | Move inferWithTools to worker_threads. Pool of 2-3 workers                                                             | v4 carry                    |
-| S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups                                                          | v4 carry                    |
-| S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation                                                                             | v4 carry                    |
-| S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds                                                                         | v4 carry                    |
-| S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine                                                    | Crucix                      |
-| S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE)                                                | Crucix                      |
-| S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, ritual integration                                           | Crucix                      |
-| S9+     | Multi-user              | PostgreSQL, Redis, per-user isolation. Only if needed                                                                  | —                           |
+| Session | Theme                   | Scope                                                                                          | Source                      | Status  |
+| ------- | ----------------------- | ---------------------------------------------------------------------------------------------- | --------------------------- | ------- |
+| S1a     | Guard upgrades          | Doom-loop detection, escalation ladder, circuit breaker, session repair, WRITE_TOOLS sync test | hive + PraisonAI + OpenFang | Planned |
+| S1b     | Memory upgrades         | 4-level compaction, auto-persist, spending quotas                                              | hive + OpenFang             | Planned |
+| S2      | Inference workers       | Move inferWithTools to worker_threads. Pool of 2-3 workers                                     | v4 carry                    | Planned |
+| S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups                                  | v4 carry                    | Planned |
+| S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation                                                     | v4 carry                    | Planned |
+| S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds                                                 | v4 carry                    | Planned |
+| S5b     | Knowledge maps          | `knowledge_map` tool, SQLite persistence, Prometheus integration                               | HyperGraph                  | Planned |
+| S5c     | Research verification   | Provenance records, source anchoring, status tagging, search condensation                      | Feynman                     | Planned |
+| S5d     | Video production        | ~10 TS tools (VideoToolSource), Remotion + FFmpeg, provider cascade                            | OpenMontage (TS rewrite)    | Planned |
+| S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine                            | Crucix                      | Planned |
+| S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE)                        | Crucix                      | Planned |
+| S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, ritual integration                   | Crucix                      | Planned |
+| S9+     | Multi-user              | PostgreSQL, Redis, per-user isolation. Only if needed                                          | —                           | Future  |
 
 ## Tools (137 total, managed by 5 ToolSource plugins)
 
