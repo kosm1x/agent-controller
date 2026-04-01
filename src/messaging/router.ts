@@ -489,9 +489,18 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       .slice(jarvisIdx + "\nJarvis: ".length)
       .trim();
 
-    // Skip poisoned exchanges — they teach learned helplessness
+    // Poisoned exchanges: keep the user message (it carries valid scope
+    // keywords for follow-up inheritance) but drop the assistant response
+    // (it teaches learned helplessness / hallucinated success).
     if (isPoisonedExchange(assistantText)) {
       poisonedCount++;
+      if (userText) {
+        turns.push({
+          role: "user",
+          content: userText,
+          ...(entry.imageUrl && { imageUrl: entry.imageUrl }),
+        });
+      }
       continue;
     }
 
