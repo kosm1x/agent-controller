@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CircuitBreaker, circuitRegistry } from "./circuit-breaker.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("CircuitBreaker", () => {
   it("starts CLOSED and allows requests", () => {

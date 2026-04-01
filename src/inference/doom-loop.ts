@@ -94,6 +94,11 @@ export function detectContentChanting(
     const h = fnv1a(text.slice(i, i + chunkSize));
     const count = (state.textHashes.get(h) ?? 0) + 1;
     state.textHashes.set(h, count);
+    // Cap map size to prevent unbounded growth across long inference loops
+    if (state.textHashes.size > 500) {
+      const first = state.textHashes.keys().next().value;
+      if (first !== undefined) state.textHashes.delete(first);
+    }
     if (count >= threshold) {
       return {
         layer: 0,
@@ -174,6 +179,11 @@ export function detectFingerprint(
 
   const count = (state.callResultPairs.get(pairKey) ?? 0) + 1;
   state.callResultPairs.set(pairKey, count);
+  // Cap map size to prevent unbounded growth
+  if (state.callResultPairs.size > 200) {
+    const first = state.callResultPairs.keys().next().value;
+    if (first !== undefined) state.callResultPairs.delete(first);
+  }
 
   if (count >= threshold) {
     return {

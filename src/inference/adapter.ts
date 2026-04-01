@@ -1294,6 +1294,7 @@ export async function inferWithTools(
           // Reset counters so the nudge gets a fair chance
           consecutiveRepeats = 0;
           consecutiveSmallResults = 0;
+          consecutiveReadOnlyRounds = 0;
           consecutiveErrorRounds = 0;
           break;
 
@@ -1306,6 +1307,7 @@ export async function inferWithTools(
           });
           consecutiveRepeats = 0;
           consecutiveSmallResults = 0;
+          consecutiveReadOnlyRounds = 0;
           consecutiveErrorRounds = 0;
           break;
 
