@@ -822,6 +822,36 @@ export interface InferWithToolsOptions {
   compressionContext?: string;
 }
 
+/**
+ * Extract the largest string value from truncated JSON tool args.
+ * Unescapes JSON string escapes so the salvaged content is usable.
+ * Returns null if no substantial content found (< 200 chars).
+ */
+function salvageTruncatedContent(rawArgs: string): string | null {
+  // Match common content field names, then fall back to any large string value
+  const patterns = [
+    /"(?:content|text|body|html)":\s*"/,
+    /"(?:slides|notes|description)":\s*"/,
+  ];
+  for (const pattern of patterns) {
+    const match = rawArgs.match(pattern);
+    if (match?.index !== undefined) {
+      const startIdx = match.index + match[0].length;
+      let content = rawArgs.slice(startIdx);
+      // Unescape JSON string escapes
+      content = content
+        .replace(/\\n/g, "\n")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\");
+      // Trim trailing incomplete escape
+      content = content.replace(/\\?$/, "");
+      if (content.length > 200) return content;
+    }
+  }
+  return null;
+}
+
 export async function inferWithTools(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -1096,12 +1126,30 @@ export async function inferWithTools(
           const opens = (rawArgs.match(/[{[]/g) || []).length;
           const closes = (rawArgs.match(/[}\]]/g) || []).length;
           if (opens > closes) {
+            // Salvage: extract the large content field, write to temp file,
+            // and tell the LLM to retry with content_file=<path>.
+            const salvaged = salvageTruncatedContent(rawArgs);
+            let salvagePath: string | undefined;
+            if (salvaged) {
+              try {
+                const { filePath } = evictToFile(
+                  salvaged,
+                  `salvage-${toolCall.function.name}`,
+                  salvaged.length, // keep full content, no preview needed
+                );
+                salvagePath = filePath;
+              } catch {
+                /* non-fatal */
+              }
+            }
+            const retryHint = salvagePath
+              ? ` Content saved to ${salvagePath} (${salvaged!.length} chars). Retry: call ${toolCall.function.name} with content_file="${salvagePath}" instead of inline content.`
+              : " For large content, write it to a file first with file_write, then pass content_file=<path>.";
             result = JSON.stringify({
-              error:
-                "Tool call truncated (max_tokens hit). For large content, write it to a file first with file_write, then pass the file path.",
+              error: `Tool call truncated (max_tokens hit).${retryHint}`,
             });
             console.warn(
-              `[inference] Tool ${toolCall.function.name} args truncated (${rawArgs.length} chars)`,
+              `[inference] Tool ${toolCall.function.name} args truncated (${rawArgs.length} chars)${salvagePath ? ` → salvaged to ${salvagePath}` : ""}`,
             );
             // Sanitize the truncated args in conversation history so the
             // malformed JSON doesn't cause HTTP 400 on subsequent rounds.
@@ -1110,6 +1158,7 @@ export async function inferWithTools(
             toolCall.function.arguments = JSON.stringify({
               _truncated: true,
               _original_length: rawArgs.length,
+              ...(salvagePath && { _salvage_path: salvagePath }),
             });
           } else {
             let args: Record<string, unknown>;

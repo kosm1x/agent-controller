@@ -350,8 +350,15 @@ export const gdocsWriteTool: Tool = {
     type: "function",
     function: {
       name: "gdocs_write",
-      description:
-        "Append text to a Google Doc. Inserts at the end of the document.",
+      description: `Append text to a Google Doc. Inserts at the end of the document.
+
+LARGE CONTENT (> 2 paragraphs): Pass content_file=<path> instead of inline text.
+The tool reads the file and writes its contents to the doc. This avoids truncation
+when the content is too long to fit in tool arguments.
+
+WORKFLOW for long documents:
+1. Write content to a temp file with file_write (e.g., /tmp/doc-content.txt)
+2. Call gdocs_write with document_id and content_file=<that path>`,
       parameters: {
         type: "object",
         properties: {
@@ -361,16 +368,43 @@ export const gdocsWriteTool: Tool = {
           },
           text: {
             type: "string",
-            description: "Text to append to the document",
+            description:
+              "Text to append (short content only). For long content, use content_file instead.",
+          },
+          content_file: {
+            type: "string",
+            description:
+              "Path to a file whose contents will be appended to the doc. Use instead of text for large documents.",
           },
         },
-        required: ["document_id", "text"],
+        required: ["document_id"],
       },
     },
   },
   async execute(args: Record<string, unknown>): Promise<string> {
     const docId = args.document_id as string;
-    const text = args.text as string;
+    const contentFile = args.content_file as string | undefined;
+    let text: string;
+
+    if (contentFile) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        text = readFileSync(contentFile, "utf-8");
+      } catch (err) {
+        return JSON.stringify({
+          error: `content_file not found: ${contentFile}. Write the content to a file first with file_write.`,
+        });
+      }
+    } else {
+      text = args.text as string;
+    }
+
+    if (!text) {
+      return JSON.stringify({
+        error:
+          "Either text or content_file is required. For large documents, use content_file.",
+      });
+    }
 
     try {
       // First get the doc to find the end index
