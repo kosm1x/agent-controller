@@ -7,14 +7,17 @@
 import { describe, it, expect } from "vitest";
 import {
   scopeToolsForMessage,
+  detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
   COMMIT_READ_TOOLS,
   COMMIT_WRITE_TOOLS,
+  COMMIT_JOURNAL_TOOLS,
   GOOGLE_TOOLS,
   WORDPRESS_TOOLS,
   CODING_TOOLS,
   RESEARCH_TOOLS,
+  SPECIALTY_TOOLS,
   SCHEDULE_TOOLS,
   MISC_TOOLS,
 } from "./scope.js";
@@ -82,7 +85,7 @@ describe("scope pattern matching", () => {
 
   it("specialty activates on chart/rss/image keywords", () => {
     const tools = scope("Genera un gráfico de ventas");
-    expect(tools).toContain("chart_generate");
+    expect(hasAll(tools, SPECIALTY_TOOLS)).toBe(true);
   });
 
   it("research activates on gemini/study/podcast keywords", () => {
@@ -242,11 +245,12 @@ describe("two-phase scope isolation", () => {
       "Me siento bien hoy, tuve un buen día y quiero descansar un poco esta tarde después de caminar",
     );
     // 80+ chars, no scope keywords, no imperative verbs
+    // COMMIT_READ is now in CORE_TOOLS (always-on), so it's present
     expect(hasAll(tools, CORE_TOOLS)).toBe(true);
     expect(hasAll(tools, MISC_TOOLS)).toBe(true);
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
     expect(hasNone(tools, CODING_TOOLS)).toBe(true);
-    expect(hasNone(tools, COMMIT_READ_TOOLS)).toBe(true);
+    expect(hasNone(tools, COMMIT_WRITE_TOOLS)).toBe(true);
   });
 });
 
@@ -274,5 +278,80 @@ describe("scope feature gates", () => {
   it("file_read is always in CORE_TOOLS regardless of scope", () => {
     const tools = scope("Hola");
     expect(tools).toContain("file_read");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Meta scope completeness — all groups present for diagnostic queries
+// ---------------------------------------------------------------------------
+
+describe("meta scope completeness", () => {
+  it("meta scope includes all tool groups", () => {
+    const tools = scope("Lista todas las herramientas");
+    // All groups should be active
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(hasAll(tools, COMMIT_JOURNAL_TOOLS)).toBe(true);
+    expect(hasAll(tools, SPECIALTY_TOOLS)).toBe(true);
+    expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
+    expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
+    expect(hasAll(tools, CODING_TOOLS)).toBe(true);
+    expect(tools).toContain("commit__delete_item");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectActiveGroups — standalone group detection
+// ---------------------------------------------------------------------------
+
+describe("detectActiveGroups", () => {
+  const detect = (msg: string, prior: string[] = []) =>
+    detectActiveGroups(msg, prior, DEFAULT_SCOPE_PATTERNS);
+
+  it("returns empty set for generic greetings", () => {
+    const groups = detect("Hola, buenos días");
+    expect(groups.size).toBe(0);
+  });
+
+  it("detects commit_read on task keywords", () => {
+    const groups = detect("Qué tareas tengo pendientes?");
+    expect(groups.has("commit_read")).toBe(true);
+  });
+
+  it("detects google on email keywords", () => {
+    const groups = detect("Busca en mi gmail");
+    expect(groups.has("google")).toBe(true);
+  });
+
+  it("detects coding on code keywords", () => {
+    const groups = detect("Revisa el código");
+    expect(groups.has("coding")).toBe(true);
+  });
+
+  it("inherits groups from prior messages when current has scope signals", () => {
+    const groups = detect("Crea una tarea nueva", [
+      "Busca en mi gmail los correos",
+    ]);
+    expect(groups.has("commit_write")).toBe(true);
+    expect(groups.has("google")).toBe(true);
+  });
+
+  it("does NOT inherit groups when current has no scope signals", () => {
+    const groups = detect("Ok, gracias", ["Busca en mi gmail los correos"]);
+    expect(groups.size).toBe(0);
+  });
+
+  it("detects meta on capability/diagnostic keywords", () => {
+    const groups = detect("Lista todas las herramientas");
+    expect(groups.has("meta")).toBe(true);
+  });
+
+  it("detects specialty on chart/image keywords", () => {
+    const groups = detect("Genera un gráfico");
+    expect(groups.has("specialty")).toBe(true);
+  });
+
+  it("detects research on study/podcast keywords", () => {
+    const groups = detect("Hazme un study guide");
+    expect(groups.has("research")).toBe(true);
   });
 });

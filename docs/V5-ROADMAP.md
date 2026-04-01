@@ -2,7 +2,7 @@
 
 > Preliminary plan based on deferred v4.0 items, CRITICAL-ASSESSMENT gaps, and operational learnings from the v4.0 session marathon (39 commits, 6 QA audits).
 >
-> Last updated: 2026-03-31 — DRAFT, will evolve over sessions
+> Last updated: 2026-04-01 — DRAFT, will evolve over sessions
 >
 > External pattern sources: Crucix (delta engine, alert tiers), aden-hive/hive (compaction pipeline, doom-loop fingerprinting, quality gate), PraisonAI (ping-pong detector, content-chanting, escalation ladder, circuit breaker), OpenFang (outcome-aware loops, session repair, pair-aware trimming, phantom action detection, spending quotas)
 
@@ -24,6 +24,15 @@ These were scoped but deferred during v4.0:
 | CRIT 8.1 | Classifier weight calibration from task_outcomes         | Adaptive classifier adjustments exist but thresholds are untested                                          |
 | CRIT 8.2 | Lower adaptive adjustment thresholds                     | Coupled to 8.1                                                                                             |
 | CRIT 7.3 | Credential detection (only from user messages)           | Low incident rate                                                                                          |
+
+### Known issues from v4.0.18 QA audit (2026-04-01)
+
+Resolved in v4.0.18: WRITE_TOOLS phantom names (H1), fullCount diagnostic (H2), meta scope missing commit_journal (W1), case-miner missing research group (W3), SPECIALTY_TOOLS partial test coverage (W4), zero detectActiveGroups tests (W5). Two items carry into v5:
+
+| Issue                                                                                                                                                                                                                                               | Impact                                                                                       | Resolution path                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **detectActiveGroups diverges from scopeToolsForMessage** — no short-message follow-up inheritance, no imperative verb detection. Eval runner and router logging produce wrong scope accuracy for follow-up patterns ("Procede", "Dale", "Ejecuta") | Eval scope_accuracy scores systematically wrong for ~30% of real messages (short follow-ups) | S3 (embedding scoping) replaces both functions. If S3 is delayed, extract shared two-phase + follow-up logic into a helper consumed by both                                 |
+| **No compile-time sync between WRITE_TOOLS (fast-runner) and registered tool names** — phantom names went undetected until audit                                                                                                                    | Hallucination guard blind to renamed/added tools                                             | Add cross-reference test in S1 (guards): assert every WRITE_TOOLS entry exists in toolRegistry, and every write tool in GOOGLE_TOOLS / COMMIT_WRITE_TOOLS is in WRITE_TOOLS |
 
 ---
 
@@ -182,6 +191,159 @@ This prevents cascading failures across tasks and gives the LLM clear feedback t
 
 ---
 
+### Theme 7: Breadth-first knowledge acquisition for Prometheus
+
+**Source**: HyperGraph (hyperbrowserai/hyperbrowser-app-examples) — adapted from their breadth-first-then-expand pattern.
+
+**Problem**: When Prometheus encounters an unfamiliar domain (e.g., "analyze Mexican telecom regulation trends"), it dives straight into tool calls without understanding the domain structure. This leads to shallow or misguided plans — the planner doesn't know what it doesn't know.
+
+**Direction**: A `knowledge_map` tool that generates a structured domain overview before deep execution. Two-phase:
+
+1. **Map phase** (during `plan()`): Given a topic, scrape 3-5 top sources (web_search + web_read), send to LLM to produce a 8-12 node concept map stored in SQLite. Each node has: id, label, type (`concept | pattern | gotcha`), one-paragraph summary, and links to related nodes with justification ("follow this if X is relevant to the task").
+2. **Expand phase** (during `execute()`): When a goal requires deeper domain knowledge, expand a specific node — scrape topic-specific sources, generate 3-6 child nodes. Parent summary is updated with links to children.
+
+**Key design constraints**:
+
+- Nodes stored in SQLite (`knowledge_nodes` table), reusable across tasks. A map on "Mexican telecom" persists for future queries.
+- Progressive depth: initial retrieval returns broad overviews. Deeper nodes fetched only when the reflector identifies a knowledge gap.
+- Links carry semantic justification (wikilink-in-prose pattern) — not "see also: spectrum_auction" but "if the task involves pricing, [[spectrum_auction]] explains how IFT allocates bandwidth, which drives carrier costs."
+- Budget cap: max 60 nodes per topic, max depth 5. Expansion costs ~1 LLM call + 2-3 scrapes per node.
+- Not a replacement for web_search — complementary. web_search answers specific questions; knowledge_map builds domain understanding.
+
+**Integration with Prometheus**:
+
+- Planner checks if a relevant knowledge map exists before generating goals. If not, first goal is "build domain overview."
+- Reflector scores goal outcomes against knowledge map: "did the execution address the key concepts and gotchas?"
+- Executor can request node expansion mid-execution when it hits a knowledge gap.
+
+**Open questions**:
+
+- Should maps expire? Domain knowledge gets stale. TTL per topic, or user-triggered refresh?
+- How to detect "unfamiliar domain"? Heuristic: if the planner's first attempt produces vague goals with no specific tool calls, trigger map generation.
+- Overlap with Hindsight memory: knowledge maps are structured, Hindsight is freeform. Keep separate or merge retrieval?
+
+---
+
+### Theme 8: Research verification + provenance
+
+**Source**: Feynman (getcompanion-ai/feynman) — adapted from their 3-layer prompt-based verification pipeline (researcher → verifier → reviewer) and provenance sidecar pattern.
+
+**Problem**: When Jarvis performs research tasks (web_search + exa_search + web_read), there's no mechanical verification that cited sources actually support the claims, no record of what was consulted vs. accepted vs. rejected, and no structured distinction between verified facts and inferences. The 7-layer hallucination detection catches fabricated tool calls but not fabricated citations or unsupported claims within legitimate tool results.
+
+**Direction**: Four improvements that extend the Prometheus reflect phase with research-specific verification:
+
+1. **Provenance records** — After every Prometheus task completion, write a structured provenance record to a `task_provenance` SQLite table:
+   - `task_id` (FK to tasks), `sources_consulted` (JSON array of URLs/tools), `sources_accepted` (subset actually cited), `sources_rejected` (consulted but not used, with reason), `verification_passes` (which checks ran and their outcomes), `intermediate_artifacts` (file paths, knowledge map node IDs)
+   - Lightweight audit trail — one INSERT per completed task, no ongoing cost.
+
+2. **Mechanical source anchoring** — During the Prometheus reflect phase, for research-heavy tasks: extract claimed URLs from the assistant's response, verify each URL appears in the content actually fetched by web_read/exa_search during execution. Flag any URL that wasn't fetched as `unverified`. This is the code-level equivalent of Feynman's "URL or it didn't happen" rule.
+   - Implementation: compare claimed URLs against `tool_calls` history for the task. If a URL is cited but no `web_read(url)` or `exa_search` result contains it, mark the claim as unverified and inject a correction nudge.
+
+3. **Source status tagging** — Extend the evidence model with a 3-state classification: `verified` (URL fetched + content confirms claim), `inferred` (URL fetched but claim is the agent's interpretation), `unverified` (no supporting tool call). The reflector uses this to score research quality and decide whether to replan.
+
+4. **Search result condensation** — When web_search returns results from multiple queries (>2), pass them through a cheap LLM call to extract key findings before returning to the main inference loop. Reduces token bloat from raw search results without losing signal.
+   - Implementation: optional `condense: true` parameter on web_search tool. When enabled, calls `infer()` with a condensation prompt on the combined results. Budget: ~500 tokens output.
+
+**Integration with existing systems**:
+
+- Provenance records feed into the scope telemetry / outcome attribution pipeline (v4.0 S9). The `sources_accepted` list links to `tool_chain` entries.
+- Source anchoring complements Layer 2 (tool inventory check) of the hallucination guard — Layer 2 catches "no tool called", source anchoring catches "tool called but claim doesn't match content."
+- Condensation reduces the prompt bloat problem (documented in `feedback_prompt_bloat.md`) at the tool-result level.
+
+**Also adopted from Feynman** (convention-level, no code):
+
+- **Source integrity rules** for research-scoped prompts: "URL or it didn't happen", "read before you summarize", "mark status honestly (verified/inferred/unverified)", "never extrapolate details you haven't read." Added to Prometheus executor prompt template when research tools are in scope.
+- **Slug-based artifact namespacing** for long-running research: derive a slug from the topic, use consistently across intermediate files and knowledge map nodes. Prevents collision in concurrent tasks.
+
+**Open questions**:
+
+- Source anchoring adds latency (URL extraction + comparison). Run it only on Prometheus tasks, or also on fast-runner research?
+- Condensation LLM call cost vs. token savings — need production data to validate the tradeoff.
+- Should provenance records be user-visible (via Telegram summary) or internal-only (for telemetry)?
+
+---
+
+### Theme 9: Video production — OpenMontage integration
+
+**Source**: OpenMontage (calesthio/OpenMontage) — agent-orchestrated video production system. 57 Python tools, Remotion (React) composer, 11 pipeline types, provider-agnostic selector pattern. AGPLv3 license.
+
+**Goal**: Give Jarvis the ability to produce short videos on demand via Telegram — explainers, social clips (TikTok/Reels/Shorts), product ads, trailers. User says "hazme un video de 60 segundos explicando redes neuronales" and gets back an MP4.
+
+**Architecture challenge**: OpenMontage is agent-first — no programmatic API. The LLM IS the orchestrator. Its tools are Python, ours are TypeScript. We need a bridge layer.
+
+**Direction**: Deploy OpenMontage as a sidecar Python microservice on the VPS, orchestrated by agent-controller via HTTP.
+
+```
+User (Telegram)
+  → Jarvis (agent-controller, TS)
+    → video_create tool (HTTP call)
+      → video-service (Python, FastAPI)
+        → OpenMontage pipeline:
+           1. Script generation (LLM via our inference adapter)
+           2. Scene planning (LLM)
+           3. Asset generation (image: FLUX/Pexels, TTS: Piper/ElevenLabs)
+           4. Composition (Remotion render or FFmpeg)
+           5. Audio mixing (FFmpeg)
+        → Returns: video_path, duration, cost, thumbnail
+      ← HTTP response with video metadata
+    → Telegram: send video file
+```
+
+**Integration design**:
+
+1. **video-service** — Thin Python FastAPI wrapper around OpenMontage tools. Runs as a systemd service alongside agent-controller. Endpoints:
+   - `POST /create` — accepts prompt, style, platform, duration, budget. Orchestrates the full pipeline. Returns video path + metadata. Long-running (5-20 min), returns immediately with a `job_id`, polled via `GET /status/{job_id}`.
+   - `GET /providers` — returns available providers (based on configured API keys).
+   - `GET /health` — service health + FFmpeg/Node.js/Piper availability.
+
+2. **Agent-controller tools** — 3 new tools scoped to a `video` group:
+   - `video_create` — submit a video job (prompt, style, platform, budget). Returns job_id.
+   - `video_status` — poll job status (queued/rendering/done/failed). Returns progress %, artifacts when done.
+   - `video_list_styles` — list available styles and platform profiles.
+
+3. **Task routing** — Video creation is inherently long-running (5-20 min). Route to heavy runner (Prometheus) so:
+   - Planner decomposes into goals: research topic → write script → generate assets → compose video
+   - Executor calls video_create, then video_status in a polling loop
+   - Reflector verifies the output exists and matches requested params
+   - User gets progress updates via Telegram during rendering
+
+4. **Provider cascade** (zero-key to premium):
+   - **Tier 0 (free)**: Pexels/Pixabay stock + Piper TTS + FFmpeg compose. Functional but generic.
+   - **Tier 1 (cheap)**: fal.ai FLUX images (~$0.03/image) + Piper TTS. Custom visuals, ~$0.30-0.50/video.
+   - **Tier 2 (quality)**: fal.ai FLUX + ElevenLabs TTS + Suno music. ~$1-3/video.
+   - **Tier 3 (premium)**: FLUX + ElevenLabs + AI video clips (Kling/Veo). ~$3-10/video.
+
+**VPS requirements**:
+
+- FFmpeg: `apt install ffmpeg` (~50MB)
+- Node.js 18+: already have
+- Python 3.10+: already have
+- Remotion: `cd remotion-composer && npm install` (~200MB)
+- Piper TTS: download voice model (~100MB)
+- Disk: ~500MB base + workspace for rendered videos
+- RAM: +1-2GB during renders (within our 8GB VPS budget)
+- No GPU required (all generation via cloud APIs)
+
+**Scope constraints**:
+
+- Video duration: 15s-120s (short-form only — longer videos need too much context)
+- Resolution: 1080p max (VPS can't render 4K efficiently)
+- Concurrent renders: 1 at a time (memory constraint)
+- Budget default: $2/video, configurable per request
+- Auto-cleanup: rendered videos deleted after 24h (disk constraint)
+
+**License consideration**: AGPLv3 means the video-service wrapper must also be AGPLv3 if it links to OpenMontage code. Keep it as a standalone service (separate process, HTTP boundary) to minimize license contamination to agent-controller. The agent-controller itself only calls HTTP endpoints — no OpenMontage code imported.
+
+**Open questions**:
+
+- Should the Python service do its own LLM calls for scripting (via our inference endpoint), or should Jarvis write the script and pass it to the service?
+- Remotion render is CPU-intensive. Will it starve the main agent-controller process? May need `nice -n 19` or cgroup limits.
+- Should we store rendered videos in SQLite (as blob references) or just filesystem paths?
+- Video creation is expensive ($0.30-3.00). Should it require explicit user confirmation before starting? (Lean yes — use the existing CONFIRMATION_REQUIRED pattern.)
+- ElevenLabs free tier is 10K chars/month. For regular use, need paid plan (~$5/month).
+
+---
+
 ## Tentative session structure
 
 | Session | Theme                   | Scope                                                                                                                                                                    | Source                      |
@@ -191,6 +353,9 @@ This prevents cascading failures across tasks and gives the LLM clear feedback t
 | S3      | Embedding-based scoping | Replace keyword regex with vector similarity for scope groups.                                                                                                           | v4 carry                    |
 | S4      | A2A mesh                | CRM ↔ Jarvis bidirectional task delegation.                                                                                                                              | v4 carry                    |
 | S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds, negative feedback loop.                                                                                                  | v4 carry                    |
+| S5b     | Knowledge maps          | `knowledge_map` tool for Prometheus: breadth-first domain overview (8-12 nodes), expand-on-demand, SQLite persistence, reflector integration.                            | HyperGraph                  |
+| S5c     | Research verification   | Provenance records (`task_provenance` table), mechanical source anchoring, source status tagging (verified/inferred/unverified), search condensation.                    | Feynman                     |
+| S5d     | Video production        | OpenMontage sidecar service (Python/FastAPI), 3 tools (video_create/status/list_styles), Remotion + FFmpeg compose, provider cascade, budget governance.                 | OpenMontage                 |
 | S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine. See `V5-INTELLIGENCE-DEPOT.md`                                                                      | Crucix                      |
 | S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE), remaining adapters                                                                              | Crucix                      |
 | S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, Jarvis tools + ritual integration                                                                              | Crucix                      |
@@ -200,26 +365,33 @@ This prevents cascading failures across tasks and gives the LLM clear feedback t
 
 ## Metrics to track
 
-| Metric                   | v4.0 baseline         | v5.0 target                                                  |
-| ------------------------ | --------------------- | ------------------------------------------------------------ |
-| Feedback signal rate     | 5/603 explicit (0.8%) | >15% with implicit signals                                   |
-| Tool chain attribution   | New (S9)              | Self-tuning proposes mutations based on chain success rates  |
-| Concurrent task handling | 1 (sequential)        | 3 (worker threads)                                           |
-| Scope false positives    | Unknown (no tracking) | <5% (embedding-based)                                        |
-| Memory recall precision  | Unknown               | Track via scope_telemetry + feedback loop                    |
-| Avg response time        | ~15s (full pipeline)  | <10s (with worker concurrency)                               |
-| Doom-loop detection      | String-match only     | Canonical JSON + ping-pong cycle + content-chanting + n-gram |
-| Wrap-up quality          | No verification       | Quality gate on forced wrap-ups (cheapest model, YES/NO)     |
-| Compaction fallback hits | No tracking           | Track L0/L1/L2/L3 invocations via Prometheus counter         |
-| Circuit breaker trips    | None (no breaker)     | Track trips per service, prevent cascading failures          |
-| Escalation events        | Binary (nudge→wrap)   | 4-level ladder with per-level Prometheus counters            |
-| Session repairs          | Compaction-only       | Pre-inference: orphan removal, synthetic errors, dedup       |
-| Phantom actions caught   | None                  | Post-response heuristic (action verb + channel, no tool)     |
-| Spending (aggregate)     | Per-round only        | Three-window (hourly/daily/monthly) with pre-call gating     |
-| Signal sources active    | 0 (manual web search) | 25+ (automated polling + 3 WebSocket streams)                |
-| Signal-to-alert latency  | ~24h (daily ritual)   | <5 min (delta engine + alert router)                         |
-| FLASH alerts/week        | 0                     | <3 (high-value, low-noise)                                   |
-| Anomaly detection        | None                  | z-score baselines at 5 windows, auto-escalation on z>3       |
+| Metric                   | v4.0 baseline         | v5.0 target                                                        |
+| ------------------------ | --------------------- | ------------------------------------------------------------------ |
+| Feedback signal rate     | 5/603 explicit (0.8%) | >15% with implicit signals                                         |
+| Tool chain attribution   | New (S9)              | Self-tuning proposes mutations based on chain success rates        |
+| Concurrent task handling | 1 (sequential)        | 3 (worker threads)                                                 |
+| Scope false positives    | Unknown (no tracking) | <5% (embedding-based)                                              |
+| Memory recall precision  | Unknown               | Track via scope_telemetry + feedback loop                          |
+| Avg response time        | ~15s (full pipeline)  | <10s (with worker concurrency)                                     |
+| Doom-loop detection      | String-match only     | Canonical JSON + ping-pong cycle + content-chanting + n-gram       |
+| Wrap-up quality          | No verification       | Quality gate on forced wrap-ups (cheapest model, YES/NO)           |
+| Compaction fallback hits | No tracking           | Track L0/L1/L2/L3 invocations via Prometheus counter               |
+| Circuit breaker trips    | None (no breaker)     | Track trips per service, prevent cascading failures                |
+| Escalation events        | Binary (nudge→wrap)   | 4-level ladder with per-level Prometheus counters                  |
+| Session repairs          | Compaction-only       | Pre-inference: orphan removal, synthetic errors, dedup             |
+| Phantom actions caught   | None                  | Post-response heuristic (action verb + channel, no tool)           |
+| Spending (aggregate)     | Per-round only        | Three-window (hourly/daily/monthly) with pre-call gating           |
+| Signal sources active    | 0 (manual web search) | 25+ (automated polling + 3 WebSocket streams)                      |
+| Signal-to-alert latency  | ~24h (daily ritual)   | <5 min (delta engine + alert router)                               |
+| FLASH alerts/week        | 0                     | <3 (high-value, low-noise)                                         |
+| Anomaly detection        | None                  | z-score baselines at 5 windows, auto-escalation on z>3             |
+| Knowledge maps           | None                  | Persistent domain maps in SQLite, breadth-first + expand-on-demand |
+| Research provenance      | None                  | Per-task audit trail: sources consulted/accepted/rejected          |
+| Source anchoring         | None                  | Mechanical URL-in-content check during reflect phase               |
+| Unverified claims        | No tracking           | <10% of research task claims tagged as unverified                  |
+| Videos produced          | None                  | On-demand short video creation via Telegram (15-120s)              |
+| Video cost per unit      | N/A                   | $0.30-3.00 per video depending on provider tier                    |
+| Video render time        | N/A                   | <20 min for 60s video (cloud APIs)                                 |
 
 ---
 
@@ -436,7 +608,7 @@ If phantom detected: inject correction nudge (reuses existing narration-strip pa
 
 Prometheus counters: `escalation_total{level="1|2|3|4"}`, `phantom_actions_total`.
 
-**Exit criteria**: escalation state machine progresses correctly through levels in tests. Quality gate catches mock garbage. Phantom detection catches "I sent the email" without gmail_send. Model escalation uses the provider tier list from adapter config.
+**Exit criteria**: escalation state machine progresses correctly through levels in tests. Quality gate catches mock garbage. Phantom detection catches "I sent the email" without gmail_send. Model escalation uses the provider tier list from adapter config. **WRITE_TOOLS sync test**: assert every entry in WRITE_TOOLS exists as a registered tool name, and every write-capable tool from GOOGLE_TOOLS / COMMIT_WRITE_TOOLS / WORDPRESS_TOOLS is in WRITE_TOOLS (from v4.0.18 audit).
 
 ### S1.5 — Circuit breaker registry for tools
 

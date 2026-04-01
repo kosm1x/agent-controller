@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v1–v4.0.16 complete.** ~174 source files, 880 tests passing, zero type errors, 137 tools.
+**v1–v4.0.18 complete.** ~174 source files, 894 tests passing, zero type errors, 137 tools.
 
 | Phase         | Status | What                                                                                                                                                                     |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -396,7 +396,7 @@ Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the 
 
 - **137 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
 - **8 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log)
-- **Dynamic tool scoping** — 14-50 tools per message based on conversation keywords
+- **Dynamic tool scoping** — 34-100 tools per message based on conversation keywords
 - **7-layer hallucination defense** with retry and honest failure messages
 - **Streaming responses** — progressive Telegram message updates
 - **Fast-path** — conversational messages skip full pipeline (~2s vs 15s)

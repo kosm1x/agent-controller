@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-03-31
+> Last updated: 2026-04-01
 
 ## Overview
 
@@ -14,7 +14,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source files  | 174                                                                                                                                                                                                            |
 | Test files    | 73                                                                                                                                                                                                             |
-| Tests passing | 884                                                                                                                                                                                                            |
+| Tests passing | 894                                                                                                                                                                                                            |
 | Type errors   | 0                                                                                                                                                                                                              |
 | Total tools   | 137 (44 builtin + 10 WP + 73 MCP [22 COMMIT + 10 browser + 21 playwright + 20 other] + 15 Google + 3 memory + 2 skill)                                                                                         |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
@@ -81,6 +81,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | v4.0.15 | Fix poison filter false positives — `✅.*en progreso` matched status reports 80+ chars away (limited to .{0,80}, removed "en progreso" as trigger). `no puedo hacer` matched capability listings (narrowed to sentence-start + removed "hacer"). Legitimate diagnostic responses no longer stripped from thread buffer. 877 tests | Done | `6f249ff` |
 | v4.0.16 | Meta scope for diagnostics — "autodiagnostico", "nivel operativo", "herramientas disponibles", "lista las tools" now load ALL tool groups so Jarvis can give accurate inventory. Coding scope expanded with language names (typescript, python, javascript, react, node.js) and programming verbs (rutina, función, implementa, refactor). Brave API key rotated. Google OAuth refresh token renewed. 880 tests | Done | `0d72001` |
 | v4.0.17 | Fix conversational messages stuck in tool-nudge loop — fast-path fallback 5→8 words (short statements without tool triggers skip full pipeline). Nudge guard gated on `availableNonReadOnly.size > 0` (only fires when write tools in scope). Meta scope regex fixed for Spanish suffixes (autodiagnóstico). Coding scope expanded. 884 tests | Done | `ab3cce6` |
+| v4.0.18 | COMMIT_READ always-on + QA audit fixes. Read tools moved to CORE_TOOLS via spread (dedup). Hallucination guard WRITE_TOOLS fixed: 11 phantom Google tool names replaced with 9 correct ones (calendar_create, gdocs_write, etc.). fullCount diagnostic now includes SPECIALTY+RESEARCH. Meta scope now includes commit_journal. case-miner maps research group. 10 new tests (meta completeness, detectActiveGroups). 894 tests | Done | — |
 
 ## v5.0 Planning (DRAFT)
 

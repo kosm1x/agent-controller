@@ -11,6 +11,19 @@ import type { ScopePattern } from "../tuning/types.js";
 // Tool groups — organized for dynamic scoping
 // ---------------------------------------------------------------------------
 
+/** COMMIT read tools — always-on (included in CORE_TOOLS) so Jarvis can answer
+ *  "qué pendientes tengo?" without requiring COMMIT keywords. ~1,750 tokens.
+ *  Named constant kept for scope logic and case-miner reverse mapping. */
+export const COMMIT_READ_TOOLS = [
+  "commit__get_daily_snapshot",
+  "commit__get_hierarchy",
+  "commit__list_tasks",
+  "commit__list_goals",
+  "commit__list_objectives",
+  "commit__search_journal",
+  "commit__list_ideas",
+];
+
 /** Always included: essential tools for every conversation. */
 export const CORE_TOOLS = [
   "user_fact_set",
@@ -22,17 +35,7 @@ export const CORE_TOOLS = [
   "skill_save",
   "skill_list",
   "file_read", // Always available — reads .txt, .docx, downloaded attachments
-];
-
-/** COMMIT read tools — included by default for quick lookups. */
-export const COMMIT_READ_TOOLS = [
-  "commit__get_daily_snapshot",
-  "commit__get_hierarchy",
-  "commit__list_tasks",
-  "commit__list_goals",
-  "commit__list_objectives",
-  "commit__search_journal",
-  "commit__list_ideas",
+  ...COMMIT_READ_TOOLS,
 ];
 
 /** COMMIT write tools — only when productivity management is the topic. */
@@ -332,6 +335,7 @@ export function scopeToolsForMessage(
   if (activeGroups.has("meta")) {
     activeGroups.add("commit_read");
     activeGroups.add("commit_write");
+    activeGroups.add("commit_journal");
     activeGroups.add("commit_destructive");
     activeGroups.add("specialty");
     activeGroups.add("research");
@@ -342,23 +346,15 @@ export function scopeToolsForMessage(
     activeGroups.add("wordpress");
   }
 
-  // COMMIT tools — load read, write, AND destructive when any COMMIT context
-  // is present. Destructive tools were previously gated behind a separate
-  // commit_destructive scope (requiring explicit delete/remove keywords), but
-  // this caused the LLM to report "I don't have a delete tool" when the user
-  // phrased deletion differently (prune, clean, purge, etc.). The execution-
-  // time destructive lock (CONFIRMATION_REQUIRED + confirm_title) is the real
-  // safety gate — scope visibility should not be the gatekeeper.
+  // COMMIT write + destructive — load when any COMMIT context is present.
+  // Read tools are already in CORE_TOOLS (always-on). Write and destructive
+  // are scope-gated to save ~4,500 tokens on non-COMMIT messages.
   if (
     activeGroups.has("commit_write") ||
     activeGroups.has("commit_read") ||
     activeGroups.has("commit_destructive")
   ) {
-    tools.push(
-      ...COMMIT_READ_TOOLS,
-      ...COMMIT_WRITE_TOOLS,
-      ...COMMIT_DESTRUCTIVE_TOOLS,
-    );
+    tools.push(...COMMIT_WRITE_TOOLS, ...COMMIT_DESTRUCTIVE_TOOLS);
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);

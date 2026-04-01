@@ -148,9 +148,9 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("web_search");
       expect(call.tools).toContain("web_read");
       expect(call.tools).toContain("skill_list");
-      // COMMIT read tools now keyword-gated (not in generic greetings)
-      expect(call.tools).not.toContain("commit__get_daily_snapshot");
-      expect(call.tools).not.toContain("commit__list_tasks");
+      // COMMIT read tools are always-on (moved to CORE_TOOLS)
+      expect(call.tools).toContain("commit__get_daily_snapshot");
+      expect(call.tools).toContain("commit__list_tasks");
       // Misc always present
       expect(call.tools).toContain("http_fetch");
       // Specialty tools now keyword-gated

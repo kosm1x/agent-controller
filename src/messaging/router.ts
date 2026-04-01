@@ -71,7 +71,6 @@ import {
   detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
-  COMMIT_READ_TOOLS,
   COMMIT_WRITE_TOOLS,
   COMMIT_JOURNAL_TOOLS,
   COMMIT_DESTRUCTIVE_TOOLS,
@@ -81,6 +80,8 @@ import {
   WORDPRESS_TOOLS,
   MISC_TOOLS,
   BROWSER_TOOLS,
+  SPECIALTY_TOOLS,
+  RESEARCH_TOOLS,
 } from "./scope.js";
 
 import {
@@ -192,8 +193,7 @@ function scopeToolsForMessage(
   );
 
   const fullCount =
-    CORE_TOOLS.length +
-    COMMIT_READ_TOOLS.length +
+    CORE_TOOLS.length + // already includes COMMIT_READ_TOOLS
     COMMIT_WRITE_TOOLS.length +
     COMMIT_JOURNAL_TOOLS.length +
     COMMIT_DESTRUCTIVE_TOOLS.length +
@@ -201,6 +201,8 @@ function scopeToolsForMessage(
     MISC_TOOLS.length +
     BROWSER_TOOLS.length +
     CODING_TOOLS.length +
+    SPECIALTY_TOOLS.length +
+    RESEARCH_TOOLS.length +
     (process.env.GOOGLE_CLIENT_ID ? GOOGLE_TOOLS.length : 0) +
     (process.env.WP_SITES ? WORDPRESS_TOOLS.length : 0) +
     2; // memory

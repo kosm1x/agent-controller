@@ -28,7 +28,7 @@ import {
   WORDPRESS_TOOLS,
   BROWSER_TOOLS,
   SPECIALTY_TOOLS,
-  MISC_TOOLS,
+  RESEARCH_TOOLS,
 } from "../messaging/scope.js";
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,7 @@ function buildToolToGroupMap(): void {
     ["wordpress", WORDPRESS_TOOLS],
     ["browser", BROWSER_TOOLS],
     ["specialty", SPECIALTY_TOOLS],
+    ["research", RESEARCH_TOOLS],
   ];
 
   for (const [group, tools] of groups) {

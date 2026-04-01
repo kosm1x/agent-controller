@@ -111,29 +111,16 @@ const WRITE_TOOLS = new Set([
   "wp_raw_api",
   "wp_plugins",
   "wp_settings",
-  // Google Sheets
-  "gsheets_write",
-  // Gmail
+  // Google Workspace (must stay in sync with write tools in GOOGLE_TOOLS)
   "gmail_send",
-  "gmail_reply",
-  "gmail_draft",
-  // Google Calendar
-  "gcalendar_create",
-  "gcalendar_update",
-  "gcalendar_delete",
-  // Google Drive
+  "gsheets_write",
   "gdrive_create",
-  "gdrive_upload",
   "gdrive_share",
-  // Google Docs/Slides
-  "gdocs_create",
-  "gdocs_update",
+  "calendar_create",
+  "calendar_update",
+  "gdocs_write",
   "gslides_create",
-  "gslides_update",
-  // Google Tasks
   "gtasks_create",
-  "gtasks_update",
-  "gtasks_complete",
   // COMMIT (must stay in sync with COMMIT_WRITE_TOOLS in scope.ts)
   "commit__create_task",
   "commit__update_task",
