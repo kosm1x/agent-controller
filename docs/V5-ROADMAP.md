@@ -263,84 +263,228 @@ This prevents cascading failures across tasks and gives the LLM clear feedback t
 
 ---
 
-### Theme 9: Video production — OpenMontage integration
+### Theme 9: Video production — clean-room TypeScript reimplementation
 
-**Source**: OpenMontage (calesthio/OpenMontage) — agent-orchestrated video production system. 57 Python tools, Remotion (React) composer, 11 pipeline types, provider-agnostic selector pattern. AGPLv3 license.
+**Inspiration**: OpenMontage (calesthio/OpenMontage) — architecture, provider cascade, and Remotion composer approach. We reimplement the capability in TypeScript from scratch rather than wrapping or porting the AGPLv3 Python codebase. OpenMontage's tools are thin wrappers around provider APIs (fal.ai, ElevenLabs, Pexels) and FFmpeg CLI — the logic is dictated by the providers, not by OpenMontage's code.
 
 **Goal**: Give Jarvis the ability to produce short videos on demand via Telegram — explainers, social clips (TikTok/Reels/Shorts), product ads, trailers. User says "hazme un video de 60 segundos explicando redes neuronales" and gets back an MP4.
 
-**Architecture challenge**: OpenMontage is agent-first — no programmatic API. The LLM IS the orchestrator. Its tools are Python, ours are TypeScript. We need a bridge layer.
+**Why TypeScript, not Python sidecar**:
 
-**Direction**: Deploy OpenMontage as a sidecar Python microservice on the VPS, orchestrated by agent-controller via HTTP.
+| Concern           | Python sidecar                               | TS reimplementation                  |
+| ----------------- | -------------------------------------------- | ------------------------------------ |
+| Language friction | HTTP bridge, JSON serialization, 2 processes | Zero — same process, same ToolSource |
+| License           | AGPLv3 contained behind HTTP boundary        | Clean-room — no AGPLv3 at all        |
+| Ops overhead      | Extra systemd service, health checks         | None — deploys with agent-controller |
+| Tool integration  | Custom job polling pattern                   | Standard ToolSource, direct registry |
+| Maintenance       | Track upstream Python + our wrapper          | We own it, evolve freely             |
+| Scope             | All 57 tools (most unused)                   | Only the ~10 we need                 |
+
+**Architecture**: All-TypeScript, in-process. Video tools register as a `VideoToolSource` implementing our existing `ToolSource` interface. Remotion is already TypeScript/React. FFmpeg and Piper are invoked via `child_process.exec()`.
 
 ```
 User (Telegram)
   → Jarvis (agent-controller, TS)
-    → video_create tool (HTTP call)
-      → video-service (Python, FastAPI)
-        → OpenMontage pipeline:
-           1. Script generation (LLM via our inference adapter)
-           2. Scene planning (LLM)
-           3. Asset generation (image: FLUX/Pexels, TTS: Piper/ElevenLabs)
-           4. Composition (Remotion render or FFmpeg)
-           5. Audio mixing (FFmpeg)
-        → Returns: video_path, duration, cost, thumbnail
-      ← HTTP response with video metadata
+    → video_create tool (in-process)
+      → Pipeline (all TypeScript):
+         1. video_script — LLM generates timestamped narration via infer()
+         2. image_generate — fal.ai FLUX / Pexels stock via fetch()
+         3. tts_generate — Piper CLI / ElevenLabs API via exec() / fetch()
+         4. audio_mix — FFmpeg ducking + overlay via exec()
+         5. video_compose — Remotion render via npx exec()
+         6. video_stitch — FFmpeg concat + H.264 encode via exec()
+      → Returns: video_path, duration, cost, thumbnail
     → Telegram: send video file
 ```
 
-**Integration design**:
+**Tool inventory** (~10 tools, new `video` scope group):
 
-1. **video-service** — Thin Python FastAPI wrapper around OpenMontage tools. Runs as a systemd service alongside agent-controller. Endpoints:
-   - `POST /create` — accepts prompt, style, platform, duration, budget. Orchestrates the full pipeline. Returns video path + metadata. Long-running (5-20 min), returns immediately with a `job_id`, polled via `GET /status/{job_id}`.
-   - `GET /providers` — returns available providers (based on configured API keys).
-   - `GET /health` — service health + FFmpeg/Node.js/Piper availability.
+| Tool                  | What                                                          | Implementation                                 | Complexity |
+| --------------------- | ------------------------------------------------------------- | ---------------------------------------------- | ---------- |
+| `video_create`        | Orchestrate full pipeline: script → assets → compose → encode | Pure TS, calls other tools sequentially        | Medium     |
+| `video_status`        | Track long-running job (queued/rendering/done/failed)         | SQLite `video_jobs` table                      | Low        |
+| `video_script`        | LLM generates timestamped narration with scene descriptions   | `infer()` with structured output (Zod schema)  | Low        |
+| `video_tts`           | Text-to-speech: Piper (local, free) or ElevenLabs (API)       | `exec('piper ...')` or `fetch(elevenlabs_url)` | Low        |
+| `video_image`         | Generate scene images: fal.ai FLUX (~$0.03) or Pexels (free)  | `fetch()` to provider API                      | Low        |
+| `video_compose`       | Render image sequence + audio via Remotion                    | `exec('npx remotion render ...')`              | Medium     |
+| `video_stitch`        | FFmpeg concat, encode H.264/AAC, platform profile             | `exec('ffmpeg ...')`                           | Low        |
+| `video_audio_mix`     | FFmpeg: layer narration + music with ducking                  | `exec('ffmpeg -filter_complex ...')`           | Low        |
+| `video_subtitle`      | Generate SRT/VTT from script timestamps                       | Pure TS string builder                         | Trivial    |
+| `video_list_profiles` | List available styles and platform render profiles            | Pure TS, static data                           | Trivial    |
 
-2. **Agent-controller tools** — 3 new tools scoped to a `video` group:
-   - `video_create` — submit a video job (prompt, style, platform, budget). Returns job_id.
-   - `video_status` — poll job status (queued/rendering/done/failed). Returns progress %, artifacts when done.
-   - `video_list_styles` — list available styles and platform profiles.
+**ToolSource implementation** (`src/tools/sources/video-source.ts`):
 
-3. **Task routing** — Video creation is inherently long-running (5-20 min). Route to heavy runner (Prometheus) so:
-   - Planner decomposes into goals: research topic → write script → generate assets → compose video
-   - Executor calls video_create, then video_status in a polling loop
-   - Reflector verifies the output exists and matches requested params
-   - User gets progress updates via Telegram during rendering
+```typescript
+class VideoToolSource implements ToolSource {
+  name = "video";
 
-4. **Provider cascade** (zero-key to premium):
-   - **Tier 0 (free)**: Pexels/Pixabay stock + Piper TTS + FFmpeg compose. Functional but generic.
-   - **Tier 1 (cheap)**: fal.ai FLUX images (~$0.03/image) + Piper TTS. Custom visuals, ~$0.30-0.50/video.
-   - **Tier 2 (quality)**: fal.ai FLUX + ElevenLabs TTS + Suno music. ~$1-3/video.
-   - **Tier 3 (premium)**: FLUX + ElevenLabs + AI video clips (Kling/Veo). ~$3-10/video.
+  async initialize(): Promise<void> {
+    // Check FFmpeg available: exec('ffmpeg -version')
+    // Check Remotion installed: exec('npx remotion --version')
+    // Check Piper available: exec('piper --version')
+    // Detect API keys: FAL_KEY, ELEVENLABS_API_KEY, PEXELS_API_KEY
+  }
 
-**VPS requirements**:
+  async registerTools(registry: ToolRegistry): Promise<void> {
+    // Register all video_* tools with Zod schemas + .describe()
+    // Scope group: "video" — keyword-gated on video/explainer/clip/TikTok/Reels
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    // Report: FFmpeg ok, Remotion ok, providers available (tier 0/1/2/3)
+  }
+}
+```
+
+**Provider cascade** (zero-key to premium):
+
+- **Tier 0 (free, no API keys)**: Pexels stock images + Piper TTS + FFmpeg compose. Functional but generic.
+- **Tier 1 (~$0.30-0.50/video)**: fal.ai FLUX images (~$0.03/image) + Piper TTS. Custom AI visuals.
+- **Tier 2 (~$1-3/video)**: fal.ai FLUX + ElevenLabs TTS + background music. Quality narration.
+- **Tier 3 (~$3-10/video)**: FLUX + ElevenLabs + AI video clips (Kling/Veo via fal.ai). Motion video.
+
+Provider selection is automatic based on available API keys. User can override via tool parameters.
+
+**Remotion composer** (`src/tools/video/remotion-composer/`):
+
+Minimal React project — reusable across renders:
+
+- `Explainer.tsx` — main composition: image sequence + text overlays + transitions
+- `Subtitle.tsx` — burned-in subtitle component
+- `TitleCard.tsx` — intro/outro cards
+- Video rendered via `npx remotion render Explainer --props <json>` into the output directory
+- Pre-installed at deploy time (`npm install` in the remotion-composer dir)
+
+**Pipeline orchestration** (inside `video_create` tool handler):
+
+```typescript
+async function executeVideoJob(params: VideoCreateInput): Promise<VideoResult> {
+  const job = await createJob(params); // SQLite insert, returns job_id
+
+  // 1. Script — LLM generates structured narration
+  const script = await infer(scriptPrompt(params), { schema: scriptSchema });
+
+  // 2. Assets — parallel: images + TTS + music
+  const [images, narration, music] = await Promise.all([
+    generateImages(script.scenes, params.image_provider),
+    generateTTS(script.narration, params.voice_provider),
+    params.music_enabled ? fetchMusic(script.mood) : null,
+  ]);
+
+  // 3. Audio mix — layer narration + music with ducking
+  const audioPath = await mixAudio(narration, music);
+
+  // 4. Compose — Remotion render (image sequence + audio + subtitles)
+  const rawVideoPath = await renderRemotionVideo(
+    images,
+    audioPath,
+    script,
+    params,
+  );
+
+  // 5. Encode — FFmpeg final encode to platform profile
+  const finalPath = await encodeForPlatform(rawVideoPath, params.platform);
+
+  return { video_path: finalPath, duration: script.duration, cost: job.cost };
+}
+```
+
+Asset generation (step 2) runs in parallel via `Promise.all` — images, TTS, and music are independent. This is the main time savings vs. sequential execution.
+
+**Task routing**: Video creation is long-running (5-20 min). Two modes:
+
+1. **Fast runner** — For simple requests. `video_create` runs the full pipeline in a single tool call. The fast runner's existing round-based loop handles it — the tool call just takes longer. User gets a "generating video..." Telegram message, then the result.
+2. **Heavy runner (Prometheus)** — For complex requests needing research first. Planner decomposes: research topic → write script → generate assets → compose video. Each goal maps to tool calls. Reflector verifies output quality.
+
+The classifier routes based on complexity: "hazme un video corto de gatos" → fast runner. "Produce a 90-second explainer on quantum computing with real research data" → Prometheus.
+
+**Scope integration**:
+
+New `video` scope group in `scope.ts`:
+
+```typescript
+export const VIDEO_TOOLS = [
+  "video_create",
+  "video_status",
+  "video_script",
+  "video_tts",
+  "video_image",
+  "video_compose",
+  "video_stitch",
+  "video_audio_mix",
+  "video_subtitle",
+  "video_list_profiles",
+];
+```
+
+Scope pattern: `/\b(video|clip|explainer|tiktok|reels?|shorts?|trailer|anima(ción|tion)|produci?r?\s+.*video|graba|render)/i`
+
+**Budget governance**:
+
+- CONFIRMATION_REQUIRED on `video_create` — user must confirm before spending
+- Per-job cost tracking in `video_jobs` SQLite table
+- Default budget: $2/video, configurable via parameter
+- Cost estimated before execution, checked against spending quotas (S1.7)
+- Provider tier auto-selected to stay within budget
+
+**SQLite schema** (additive — no DB reset):
+
+```sql
+CREATE TABLE IF NOT EXISTS video_jobs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT REFERENCES tasks(id),
+  status TEXT NOT NULL DEFAULT 'queued',  -- queued | scripting | generating | composing | encoding | done | failed
+  prompt TEXT NOT NULL,
+  style TEXT,
+  platform TEXT DEFAULT 'youtube_landscape',
+  duration_target INTEGER,
+  duration_actual REAL,
+  cost_usd REAL DEFAULT 0,
+  video_path TEXT,
+  thumbnail_path TEXT,
+  subtitle_path TEXT,
+  error TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+```
+
+**VPS requirements** (no Python needed):
 
 - FFmpeg: `apt install ffmpeg` (~50MB)
 - Node.js 18+: already have
-- Python 3.10+: already have
 - Remotion: `cd remotion-composer && npm install` (~200MB)
-- Piper TTS: download voice model (~100MB)
-- Disk: ~500MB base + workspace for rendered videos
-- RAM: +1-2GB during renders (within our 8GB VPS budget)
-- No GPU required (all generation via cloud APIs)
+- Piper TTS: download binary + voice model (~150MB)
+- Disk: ~400MB base + workspace for rendered videos
+- RAM: +1-2GB during Remotion renders (within our 8GB VPS budget)
+- No GPU, no Python
 
 **Scope constraints**:
 
-- Video duration: 15s-120s (short-form only — longer videos need too much context)
-- Resolution: 1080p max (VPS can't render 4K efficiently)
-- Concurrent renders: 1 at a time (memory constraint)
+- Video duration: 15-120s (short-form only)
+- Resolution: 1080p max
+- Concurrent renders: 1 at a time (memory constraint — enforced via semaphore)
 - Budget default: $2/video, configurable per request
-- Auto-cleanup: rendered videos deleted after 24h (disk constraint)
+- Auto-cleanup: rendered videos deleted after 24h via cron (disk constraint)
 
-**License consideration**: AGPLv3 means the video-service wrapper must also be AGPLv3 if it links to OpenMontage code. Keep it as a standalone service (separate process, HTTP boundary) to minimize license contamination to agent-controller. The agent-controller itself only calls HTTP endpoints — no OpenMontage code imported.
+**Platform render profiles** (static config, adapted from OpenMontage's `media_profiles.py`):
+
+| Profile           | Resolution | Aspect | FPS | CRF | Max Duration |
+| ----------------- | ---------- | ------ | --- | --- | ------------ |
+| youtube_landscape | 1920x1080  | 16:9   | 30  | 23  | unlimited    |
+| youtube_shorts    | 1080x1920  | 9:16   | 30  | 23  | 60s          |
+| instagram_reels   | 1080x1920  | 9:16   | 30  | 23  | 90s          |
+| instagram_feed    | 1080x1080  | 1:1    | 30  | 23  | 60s          |
+| tiktok            | 1080x1920  | 9:16   | 30  | 23  | 180s         |
+| linkedin          | 1920x1080  | 16:9   | 30  | 23  | 600s         |
 
 **Open questions**:
 
-- Should the Python service do its own LLM calls for scripting (via our inference endpoint), or should Jarvis write the script and pass it to the service?
-- Remotion render is CPU-intensive. Will it starve the main agent-controller process? May need `nice -n 19` or cgroup limits.
-- Should we store rendered videos in SQLite (as blob references) or just filesystem paths?
-- Video creation is expensive ($0.30-3.00). Should it require explicit user confirmation before starting? (Lean yes — use the existing CONFIRMATION_REQUIRED pattern.)
-- ElevenLabs free tier is 10K chars/month. For regular use, need paid plan (~$5/month).
+- Remotion render is CPU-intensive (~30-120s for 60s video). May need `nice -n 19` on the child process to avoid starving agent-controller. Test under load.
+- Piper TTS quality vs. ElevenLabs — is Piper good enough for tier 0? Need to A/B test with real users.
+- Should `video_create` be a single mega-tool or should Jarvis call the sub-tools individually? Lean: mega-tool for fast runner, individual tools for Prometheus.
+- Music sourcing: Suno API is pay-per-use via third-party wrapper (sunoapi.org). Alternatives: royalty-free library, or skip music for tier 0/1.
+- Subtitle burn-in vs. sidecar SRT — burn-in is simpler but prevents language switching. Start with burn-in, add sidecar later.
 
 ---
 
@@ -355,7 +499,7 @@ User (Telegram)
 | S5      | Classifier calibration  | Outcome-driven weight tuning, lower thresholds, negative feedback loop.                                                                                                  | v4 carry                    |
 | S5b     | Knowledge maps          | `knowledge_map` tool for Prometheus: breadth-first domain overview (8-12 nodes), expand-on-demand, SQLite persistence, reflector integration.                            | HyperGraph                  |
 | S5c     | Research verification   | Provenance records (`task_provenance` table), mechanical source anchoring, source status tagging (verified/inferred/unverified), search condensation.                    | Feynman                     |
-| S5d     | Video production        | OpenMontage sidecar service (Python/FastAPI), 3 tools (video_create/status/list_styles), Remotion + FFmpeg compose, provider cascade, budget governance.                 | OpenMontage                 |
+| S5d     | Video production        | Clean-room TS reimplementation: VideoToolSource (~10 tools), Remotion composer, FFmpeg, provider cascade (Pexels/FLUX/ElevenLabs/Piper), budget governance, video scope. | OpenMontage (inspiration)   |
 | S6      | Intel Depot: Foundation | 30-source collector adapters + signal store (SQLite) + delta engine. See `V5-INTELLIGENCE-DEPOT.md`                                                                      | Crucix                      |
 | S7      | Intel Depot: Streaming  | WebSocket hub (Finnhub, Bluesky), alert router (FLASH/PRIORITY/ROUTINE), remaining adapters                                                                              | Crucix                      |
 | S8      | Intel Depot: Prediction | Statistical baselines, anomaly detection, trend analysis, Jarvis tools + ritual integration                                                                              | Crucix                      |
