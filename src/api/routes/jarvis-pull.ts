@@ -34,11 +34,12 @@ const ROLE_MAX_TOKENS: Record<CrmRole, number> = {
 };
 
 jarvisPull.post("/jarvis-pull", async (c) => {
-  const body = await c.req.json<{
-    query: string;
-    role?: CrmRole;
-    context?: string;
-  }>();
+  let body: { query: string; role?: CrmRole; context?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
 
   if (!body.query) {
     return c.json({ error: "Missing required field: query" }, 400);
