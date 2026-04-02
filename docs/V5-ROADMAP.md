@@ -66,17 +66,19 @@
 
 ---
 
-## v5.0 S2 — Inference Workers (Theme 1) (~2-3d)
+## v5.0 S2 — Concurrent Task Isolation (Theme 1) (~1d)
 
-| Item                                                        | Source   | Effort | Status  |
-| ----------------------------------------------------------- | -------- | ------ | ------- |
-| Move inferWithTools to worker_threads — pool of 2-3 workers | CRIT 1.1 | 2-3d   | Planned |
-| Tool registry sharing across threads (MCP connections)      | —        | Incl.  | Planned |
-| Streaming callback across thread boundaries                 | —        | Incl.  | Planned |
+> **Pivot from worker_threads:** Analysis showed the system is already async-concurrent (fetch yields event loop). The real problem was shared mutable state (destructive locks, memory rate limits) corrupting across concurrent tasks. Per-task execution context is simpler, uses zero extra RAM, and directly solves the actual bug. Worker threads deferred to v6.0 (only if CPU-bound bottlenecks measured).
 
-**Open questions:** How to share toolRegistry singleton across threads? Worker pool size vs 3GB free RAM? Does onTextChunk work across boundaries?
-
-**Exit criteria:** 2+ tasks execute concurrently without blocking. Telegram messages processed during heavy inference. Existing tests pass with worker pool active.
+| Item                                                                         | Source         | Effort | Status   |
+| ---------------------------------------------------------------------------- | -------------- | ------ | -------- |
+| TaskExecutionContext class — per-task destructive locks + memory rate limits | S2 analysis    | 0.5d   | **Done** |
+| createTaskExecutor wrapper — delegates to registry with context-aware gates  | S2 analysis    | 0.25d  | **Done** |
+| Wire into fast-runner + orchestrator — context flows through inference loop  | —              | 0.25d  | **Done** |
+| inferWithTools returns exitReason + roundsCompleted (5 return paths)         | prod diagnosis | Incl.  | **Done** |
+| Provider failure → completed_with_concerns (not completed)                   | prod diagnosis | Incl.  | **Done** |
+| task_history builtin tool (#138) — LLM queries own past executions           | prod diagnosis | 0.25d  | **Done** |
+| Concurrency metrics — mc_tasks_active, mc_tasks_active_by_runner gauges      | —              | 0.25d  | **Done** |
 
 ---
 
