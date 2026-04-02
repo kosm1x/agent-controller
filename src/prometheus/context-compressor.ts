@@ -8,6 +8,7 @@
 
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
+import { getDatabase } from "../db/index.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -118,6 +119,25 @@ export async function compress(
   } catch {
     // Fallback: drop without summary
     summaryContent = `[Earlier conversation compressed — ${middle.length} messages removed]`;
+  }
+
+  // Persist summary to jarvis_files for cross-session retrieval
+  try {
+    const db = getDatabase();
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const path = `compaction/${ts}.md`;
+    db.prepare(
+      `INSERT OR IGNORE INTO jarvis_files (id, path, title, content, tags, qualifier, priority, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'workspace', 90, datetime('now'))`,
+    ).run(
+      path,
+      path,
+      `Compaction summary ${ts}`,
+      summaryContent,
+      JSON.stringify(["compaction", "summary"]),
+    );
+  } catch {
+    // Non-fatal
   }
 
   // Build final summary with prefix marker + optional context injection
