@@ -26,6 +26,16 @@ export async function initMcp(): Promise<void> {
   await _manager.init(config, toolRegistry);
 }
 
+/**
+ * Wire MCP alerts to a broadcast function (e.g., Telegram).
+ * Call after messaging router is ready.
+ */
+export function setMcpAlertFn(fn: (msg: string) => void): void {
+  if (_manager) {
+    _manager.setAlertFn(fn);
+  }
+}
+
 /** Shut down all MCP server connections. */
 export async function shutdownMcp(): Promise<void> {
   if (_manager) {

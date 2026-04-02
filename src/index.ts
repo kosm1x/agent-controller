@@ -20,6 +20,7 @@ import {
   stopDynamicScheduler,
 } from "./rituals/dynamic.js";
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
+import { setMcpAlertFn } from "./mcp/index.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
 import { seedMentalModels } from "./intelligence/mental-models.js";
@@ -161,8 +162,9 @@ async function main(): Promise<void> {
   // Start messaging channels (WhatsApp/Telegram) if enabled
   const router = await initMessaging();
 
-  // Start proactive intelligence scheduler (after messaging is ready)
+  // Wire MCP alerts to Telegram (after messaging is ready)
   if (router) {
+    setMcpAlertFn((msg: string) => router.broadcastToAll(msg));
     startProactiveScheduler(router);
   }
 
