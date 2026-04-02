@@ -21,6 +21,8 @@ vi.mock("../config.js", () => ({
   getConfig: () => ({
     budgetEnabled: true,
     budgetDailyLimitUsd: 10.0,
+    budgetHourlyLimitUsd: 2.0,
+    budgetMonthlyLimitUsd: 200.0,
     inferencePrimaryModel: "qwen3.5-plus",
   }),
 }));
@@ -28,8 +30,13 @@ vi.mock("../config.js", () => ({
 import {
   recordCost,
   getDailySpend,
+  getHourlySpend,
+  getMonthlySpend,
   isBudgetExceeded,
+  isAnyWindowExceeded,
   getBudgetStatus,
+  getThreeWindowStatus,
+  wouldExceedBudget,
 } from "./service.js";
 
 describe("budget service", () => {
@@ -125,6 +132,93 @@ describe("budget service", () => {
 
       expect(status.remaining).toBe(0);
       expect(status.exceeded).toBe(true);
+    });
+  });
+
+  describe("getHourlySpend", () => {
+    it("should query with hour-boundary SQL", () => {
+      mockGet.mockReturnValue({ total: 0.5 });
+      expect(getHourlySpend()).toBe(0.5);
+      expect(mockDb.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("%H:00:00"),
+      );
+    });
+  });
+
+  describe("getMonthlySpend", () => {
+    it("should query with month-boundary SQL", () => {
+      mockGet.mockReturnValue({ total: 45.0 });
+      expect(getMonthlySpend()).toBe(45.0);
+      expect(mockDb.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("%Y-%m-01"),
+      );
+    });
+  });
+
+  describe("getThreeWindowStatus", () => {
+    it("should return status for all three windows", () => {
+      // Each call to getDailySpend/getHourlySpend/getMonthlySpend calls prepare().get()
+      mockGet
+        .mockReturnValueOnce({ total: 0.5 }) // hourly
+        .mockReturnValueOnce({ total: 3.0 }) // daily
+        .mockReturnValueOnce({ total: 50.0 }); // monthly
+
+      const status = getThreeWindowStatus();
+
+      expect(status.hourly.spend).toBe(0.5);
+      expect(status.hourly.limit).toBe(2.0);
+      expect(status.hourly.exceeded).toBe(false);
+      expect(status.daily.spend).toBe(3.0);
+      expect(status.daily.limit).toBe(10.0);
+      expect(status.monthly.spend).toBe(50.0);
+      expect(status.monthly.limit).toBe(200.0);
+    });
+  });
+
+  describe("isAnyWindowExceeded", () => {
+    it("should return false when all under limit", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 0.5 })
+        .mockReturnValueOnce({ total: 3.0 })
+        .mockReturnValueOnce({ total: 50.0 });
+      expect(isAnyWindowExceeded()).toBe(false);
+    });
+
+    it("should return true when hourly exceeded", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 2.5 }) // hourly over
+        .mockReturnValueOnce({ total: 3.0 })
+        .mockReturnValueOnce({ total: 50.0 });
+      expect(isAnyWindowExceeded()).toBe(true);
+    });
+
+    it("should return true when monthly exceeded", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 0.5 })
+        .mockReturnValueOnce({ total: 3.0 })
+        .mockReturnValueOnce({ total: 200.0 }); // monthly at limit
+      expect(isAnyWindowExceeded()).toBe(true);
+    });
+  });
+
+  describe("wouldExceedBudget", () => {
+    it("should return false when well under all limits", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 0.1 })
+        .mockReturnValueOnce({ total: 1.0 })
+        .mockReturnValueOnce({ total: 10.0 });
+      const result = wouldExceedBudget("qwen3.5-plus", 10_000, 4_000);
+      expect(result.exceeded).toBe(false);
+    });
+
+    it("should return true with window name when hourly would exceed", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 1.99 }) // hourly almost at limit
+        .mockReturnValueOnce({ total: 1.99 })
+        .mockReturnValueOnce({ total: 10.0 });
+      const result = wouldExceedBudget("qwen3.5-plus", 50_000, 4_000);
+      expect(result.exceeded).toBe(true);
+      expect(result.window).toBe("hourly");
     });
   });
 });

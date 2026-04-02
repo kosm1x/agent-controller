@@ -11,7 +11,7 @@ import { getEventBus } from "../lib/event-bus.js";
 import { classify } from "./classifier.js";
 import { getConfig } from "../config.js";
 import { checkoutTask } from "./checkout.js";
-import { isBudgetExceeded, recordCost } from "../budget/service.js";
+import { isAnyWindowExceeded, recordCost } from "../budget/service.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 
@@ -262,9 +262,9 @@ async function dispatchTask(
     return;
   }
 
-  // Budget enforcement — block new tasks if daily limit exceeded
+  // Budget enforcement — block new tasks if any spending window exceeded
   const config = getConfig();
-  if (config.budgetEnabled && isBudgetExceeded()) {
+  if (config.budgetEnabled && isAnyWindowExceeded()) {
     const limit = config.budgetDailyLimitUsd;
     log.info({ taskId, dailyLimitUsd: limit }, "task blocked: budget exceeded");
     updateTaskStatus(

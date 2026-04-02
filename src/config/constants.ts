@@ -84,6 +84,15 @@ export const DOOM_JACCARD_WINDOW = int("DOOM_JACCARD_WINDOW", 4);
 /** Number of recent call signatures to keep for cycle detection. */
 export const DOOM_CYCLE_HISTORY = int("DOOM_CYCLE_HISTORY", 6);
 
+// --- Compaction pipeline ---
+/** Max chars for tool result content after L0 truncation. */
+export const COMPACTION_L0_TRUNCATE_CHARS = int(
+  "COMPACTION_L0_TRUNCATE_CHARS",
+  200,
+);
+/** Minimum assistant+tool pairs for L1 to remove per pass. */
+export const COMPACTION_L1_MIN_PAIRS = int("COMPACTION_L1_MIN_PAIRS", 3);
+
 // --- Overnight tuning ---
 /** Per-experiment timeout in milliseconds (default 30 min). */
 export const EXPERIMENT_TIMEOUT_MS = int(

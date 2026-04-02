@@ -56,11 +56,11 @@
 
 ## v5.0 S1b — Memory Upgrades (Theme 3) (~1.5d)
 
-| Item                                                                                                                                                                                      | Source          | Effort | Status  |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------ | ------- |
-| S1.2 Multi-level compaction pipeline — L0 prune old results, L1 paired pruning (pair-aware drain), L2 recursive LLM summary (binary split, 5 levels), L3 emergency deterministic (no LLM) | hive + OpenFang | 0.5d   | Planned |
-| S1.3 Mechanical auto-persist — post-task: length >2K + tools >3 → persist, Playwright → always, explanatory Q + >1K → persist                                                             | hive            | 0.5d   | Planned |
-| S1.7 Three-window spending quotas — hourly/daily/monthly token budgets, pre-call gating, per-runner configurable, /metrics + mc-ctl spending                                              | OpenFang        | 0.5d   | Planned |
+| Item                                                                                                                                                                                    | Source          | Effort | Status   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------ | -------- |
+| S1.2 Multi-level compaction pipeline — L0 prune old results, L1 paired pruning (pair-aware drain), L2 LLM summary (delegates to existing compress), L3 emergency deterministic (no LLM) | hive + OpenFang | 0.5d   | **Done** |
+| S1.3 Mechanical auto-persist — post-task: length >2K + tools >3, Playwright → always, explanatory Q + >1K. Compact summary with tags                                                    | hive            | 0.5d   | **Done** |
+| S1.7 Three-window spending quotas — hourly/daily/monthly budgets, fixed-boundary SQL, pre-call gating (wouldExceedBudget), /health + /metrics integration                               | OpenFang        | 0.5d   | **Done** |
 
 **Exit criteria:** Compaction tests at all 4 levels, counter increments verified. Auto-persist fires on qualifying responses, not on short acks. Spending quotas block when exhausted, reset at window boundaries.
 

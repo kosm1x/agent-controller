@@ -17,7 +17,8 @@ import { getConfig } from "../config.js";
 import { evictToFile, hasEvictedPath } from "../lib/eviction.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
 import { toolRegistry } from "../tools/registry.js";
-import { shouldCompress, compress } from "../prometheus/context-compressor.js";
+import { shouldCompress } from "../prometheus/context-compressor.js";
+import { compactConversation } from "../prometheus/compaction-pipeline.js";
 import { repairSession } from "./session-repair.js";
 import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
 import type { RoundData } from "./doom-loop.js";
@@ -914,7 +915,7 @@ export async function inferWithTools(
     // Nudges and advisories from prior rounds should not leak into replay.
     if (round > 0) stripStaleSignals(conversation);
 
-    // Compress context if approaching limit
+    // Compress context if approaching limit (multi-level pipeline)
     const config = getConfig();
     if (
       shouldCompress(
@@ -923,15 +924,16 @@ export async function inferWithTools(
         config.compressionThreshold,
       )
     ) {
-      console.log(
-        `[inference] Context compression triggered at round ${round} (${conversation.length} messages)`,
-      );
-      conversation = await compress(
+      const compactionResult = await compactConversation(
         conversation,
-        3,
-        4,
+        config.inferenceContextLimit,
+        config.compressionThreshold,
         options?.compressionContext,
       );
+      console.log(
+        `[inference] Compaction ${compactionResult.level} at round ${round} (${conversation.length} → ${compactionResult.messages.length} messages, removed ${compactionResult.removedCount})`,
+      );
+      conversation = compactionResult.messages;
     }
 
     // Check abort before each round
@@ -966,18 +968,19 @@ export async function inferWithTools(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
 
-      // 413 auto-compression: force-compress and retry once
+      // 413 auto-compression: force-compress via pipeline and retry once
       if (errMsg.includes("413") && !has413Retried) {
         has413Retried = true;
         console.log(
           `[inference] 413 payload too large at round ${round}, force-compressing`,
         );
-        conversation = await compress(
+        const c413 = await compactConversation(
           conversation,
-          3,
-          4,
+          config.inferenceContextLimit,
+          0.5, // aggressive threshold for 413
           options?.compressionContext,
         );
+        conversation = c413.messages;
         continue;
       }
 

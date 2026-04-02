@@ -7,6 +7,7 @@ import { getDatabase } from "../../db/index.js";
 import { getConfig } from "../../config.js";
 import { providerMetrics } from "../../inference/adapter.js";
 import { circuitRegistry } from "../../lib/circuit-breaker.js";
+import { getThreeWindowStatus } from "../../budget/service.js";
 import { getBudgetStatus } from "../../budget/service.js";
 import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
@@ -67,6 +68,7 @@ health.get("/health", async (c) => {
         dailySpend: +budget.dailySpend.toFixed(4),
         dailyLimit: budget.dailyLimit,
         remaining: +budget.remaining.toFixed(4),
+        threeWindow: getThreeWindowStatus(),
       },
       tools: toolMetrics.getSummary(),
       commitEvents: eventMetrics.getSummary(),

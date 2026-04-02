@@ -12,7 +12,7 @@ import client from "prom-client";
 import { toolMetrics } from "./tool-metrics.js";
 import { eventMetrics } from "./event-metrics.js";
 import { providerMetrics } from "../inference/adapter.js";
-import { getBudgetStatus } from "../budget/service.js";
+import { getBudgetStatus, getThreeWindowStatus } from "../budget/service.js";
 import { getDatabase } from "../db/index.js";
 
 // Default Node.js metrics (event loop lag, heap, GC, etc.)
@@ -47,7 +47,7 @@ const providerRequestCount = new client.Gauge({
   labelNames: ["provider"] as const,
 });
 
-// --- Budget ---
+// --- Budget (three-window) ---
 const budgetDailySpend = new client.Gauge({
   name: "mc_budget_daily_spend_usd",
   help: "Today's total spend in USD",
@@ -61,6 +61,26 @@ const budgetDailyLimit = new client.Gauge({
 const budgetRemaining = new client.Gauge({
   name: "mc_budget_remaining_usd",
   help: "Remaining budget today in USD",
+});
+
+const budgetHourlySpend = new client.Gauge({
+  name: "mc_budget_hourly_spend_usd",
+  help: "Current hour spend in USD",
+});
+
+const budgetHourlyLimit = new client.Gauge({
+  name: "mc_budget_hourly_limit_usd",
+  help: "Hourly budget limit in USD",
+});
+
+const budgetMonthlySpend = new client.Gauge({
+  name: "mc_budget_monthly_spend_usd",
+  help: "Current month spend in USD",
+});
+
+const budgetMonthlyLimit = new client.Gauge({
+  name: "mc_budget_monthly_limit_usd",
+  help: "Monthly budget limit in USD",
 });
 
 // --- Tools ---
@@ -155,11 +175,17 @@ export function collectMetrics(): void {
     providerRequestCount.set({ provider: name }, stats.count);
   }
 
-  // Budget
+  // Budget (three-window)
   const budget = getBudgetStatus();
   budgetDailySpend.set(budget.dailySpend);
   budgetDailyLimit.set(budget.dailyLimit);
   budgetRemaining.set(budget.remaining);
+
+  const threeWindow = getThreeWindowStatus();
+  budgetHourlySpend.set(threeWindow.hourly.spend);
+  budgetHourlyLimit.set(threeWindow.hourly.limit);
+  budgetMonthlySpend.set(threeWindow.monthly.spend);
+  budgetMonthlyLimit.set(threeWindow.monthly.limit);
 
   // Tool metrics
   const toolSummary = toolMetrics.getSummary();

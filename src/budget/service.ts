@@ -25,6 +25,19 @@ export interface BudgetStatus {
   exceeded: boolean;
 }
 
+export interface WindowStatus {
+  spend: number;
+  limit: number;
+  remaining: number;
+  exceeded: boolean;
+}
+
+export interface ThreeWindowStatus {
+  hourly: WindowStatus;
+  daily: WindowStatus;
+  monthly: WindowStatus;
+}
+
 /** Record cost for a completed run. */
 export function recordCost(record: CostRecord): void {
   const db = getDatabase();
@@ -58,6 +71,88 @@ export function getDailySpend(): number {
     )
     .get() as { total: number };
   return row.total;
+}
+
+/** Get total spend in the current clock hour. */
+export function getHourlySpend(): number {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_ledger WHERE created_at >= strftime('%Y-%m-%d %H:00:00', 'now')",
+    )
+    .get() as { total: number };
+  return row.total;
+}
+
+/** Get total spend in the current calendar month. */
+export function getMonthlySpend(): number {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_ledger WHERE created_at >= strftime('%Y-%m-01', 'now')",
+    )
+    .get() as { total: number };
+  return row.total;
+}
+
+/** Get status of all three spending windows. */
+export function getThreeWindowStatus(): ThreeWindowStatus {
+  const config = getConfig();
+  const hourlySpend = getHourlySpend();
+  const dailySpend = getDailySpend();
+  const monthlySpend = getMonthlySpend();
+
+  function windowStatus(spend: number, limit: number): WindowStatus {
+    return {
+      spend,
+      limit,
+      remaining: Math.max(0, limit - spend),
+      exceeded: spend >= limit,
+    };
+  }
+
+  return {
+    hourly: windowStatus(hourlySpend, config.budgetHourlyLimitUsd),
+    daily: windowStatus(dailySpend, config.budgetDailyLimitUsd),
+    monthly: windowStatus(monthlySpend, config.budgetMonthlyLimitUsd),
+  };
+}
+
+/** Check if any spending window is exceeded. */
+export function isAnyWindowExceeded(): boolean {
+  const status = getThreeWindowStatus();
+  return (
+    status.hourly.exceeded || status.daily.exceeded || status.monthly.exceeded
+  );
+}
+
+/**
+ * Pre-call budget gate: estimate if the next inference call would
+ * push any window over its limit. Returns the window name if exceeded.
+ */
+export function wouldExceedBudget(
+  model: string,
+  estimatedPromptTokens: number,
+  maxCompletionTokens: number,
+): { exceeded: boolean; window?: string } {
+  const estimatedCost = calculateCost(
+    model,
+    estimatedPromptTokens,
+    Math.floor(maxCompletionTokens * 0.5), // conservative: assume 50% of max
+  );
+
+  const status = getThreeWindowStatus();
+
+  if (status.hourly.spend + estimatedCost >= status.hourly.limit) {
+    return { exceeded: true, window: "hourly" };
+  }
+  if (status.daily.spend + estimatedCost >= status.daily.limit) {
+    return { exceeded: true, window: "daily" };
+  }
+  if (status.monthly.spend + estimatedCost >= status.monthly.limit) {
+    return { exceeded: true, window: "monthly" };
+  }
+  return { exceeded: false };
 }
 
 /** Check if daily budget limit is exceeded. */

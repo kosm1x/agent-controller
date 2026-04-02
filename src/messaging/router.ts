@@ -89,6 +89,7 @@ import {
   linkScopeToTask,
   linkFeedbackToScope,
 } from "../intelligence/scope-telemetry.js";
+import { autoPersistConversation } from "../memory/auto-persist.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
@@ -993,6 +994,32 @@ export class MessageRouter {
       // Safety net: auto-persist critical data the LLM may have ignored
       try {
         ensureCriticalDataPersisted(pending.originalText, taskId);
+      } catch {
+        // Non-fatal
+      }
+
+      // Mechanical auto-persist: store noteworthy exchanges based on heuristics
+      try {
+        let apToolCalls: string[] = [];
+        const apRow = getDatabase()
+          .prepare(
+            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(taskId) as { output: string | null } | undefined;
+        if (apRow?.output) {
+          try {
+            apToolCalls = JSON.parse(apRow.output).toolCalls ?? [];
+          } catch {
+            /* ignore */
+          }
+        }
+        autoPersistConversation({
+          userText: pending.originalText,
+          responseText: resultText,
+          toolCalls: apToolCalls,
+          channel: pending.channel,
+          taskId,
+        }).catch(() => {});
       } catch {
         // Non-fatal
       }
