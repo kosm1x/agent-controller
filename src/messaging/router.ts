@@ -1019,7 +1019,12 @@ export class MessageRouter {
           toolCalls: apToolCalls,
           channel: pending.channel,
           taskId,
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn(
+            "[router] Auto-persist failed:",
+            err instanceof Error ? err.message : err,
+          );
+        });
       } catch {
         // Non-fatal
       }

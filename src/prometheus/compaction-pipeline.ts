@@ -86,6 +86,10 @@ export function compactL1(
   keepTail: number,
   minPairs = COMPACTION_L1_MIN_PAIRS,
 ): { messages: ChatMessage[]; removedPairs: number } {
+  if (keepHead + keepTail >= messages.length) {
+    return { messages, removedPairs: 0 };
+  }
+
   const head = messages.slice(0, keepHead);
   const tail = messages.slice(messages.length - keepTail);
   const middle = messages.slice(keepHead, messages.length - keepTail);
@@ -146,8 +150,15 @@ export function compactL3(
 ): { messages: ChatMessage[]; removedCount: number } {
   // Preserve the system message (always first)
   const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
+  const minSize = keepTail + (systemMsg ? 1 : 0);
+
+  // Nothing to truncate if conversation fits in system + tail
+  if (messages.length <= minSize) {
+    return { messages, removedCount: 0 };
+  }
+
   const tail = messages.slice(messages.length - keepTail);
-  const removedCount = messages.length - (systemMsg ? 1 : 0) - keepTail;
+  const removedCount = messages.length - minSize;
 
   const marker: ChatMessage = {
     role: "system" as const,
@@ -159,7 +170,7 @@ export function compactL3(
   result.push(marker);
   result.push(...sanitizeToolPairs([...tail]));
 
-  return { messages: result, removedCount: Math.max(0, removedCount) };
+  return { messages: result, removedCount };
 }
 
 // ---------------------------------------------------------------------------
