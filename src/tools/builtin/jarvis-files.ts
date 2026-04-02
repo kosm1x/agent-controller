@@ -11,6 +11,7 @@ import {
   getFile,
   upsertFile,
   appendToFile,
+  updateMetadata,
   deleteFile,
   listFiles,
 } from "../../db/jarvis-fs.js";
@@ -278,14 +279,11 @@ USE WHEN:
 
     // Update metadata if provided
     if (tags || qualifier || priority !== undefined) {
-      const { getDatabase } = await import("../../db/index.js");
-      const db = getDatabase();
-      const newTags = tags ? JSON.stringify(tags) : existing.tags;
-      const newQualifier = qualifier ?? existing.qualifier;
-      const newPriority = priority ?? existing.priority;
-      db.prepare(
-        "UPDATE jarvis_files SET tags = ?, qualifier = ?, priority = ?, updated_at = datetime('now') WHERE path = ?",
-      ).run(newTags, newQualifier, newPriority, path);
+      updateMetadata(path, {
+        tags: tags ?? undefined,
+        qualifier: qualifier ?? undefined,
+        priority: priority ?? undefined,
+      });
     }
 
     const updated = getFile(path);

@@ -133,6 +133,31 @@ export function appendToFile(path: string, content: string): boolean {
   return true;
 }
 
+/** Update file metadata (tags, qualifier, priority) without touching content. */
+export function updateMetadata(
+  path: string,
+  updates: { tags?: string[]; qualifier?: string; priority?: number },
+): boolean {
+  const db = getDatabase();
+  const existing = db
+    .prepare(
+      "SELECT tags, qualifier, priority FROM jarvis_files WHERE path = ?",
+    )
+    .get(path) as
+    | { tags: string; qualifier: string; priority: number }
+    | undefined;
+  if (!existing) return false;
+
+  const newTags = updates.tags ? JSON.stringify(updates.tags) : existing.tags;
+  const newQualifier = updates.qualifier ?? existing.qualifier;
+  const newPriority = updates.priority ?? existing.priority;
+
+  db.prepare(
+    "UPDATE jarvis_files SET tags = ?, qualifier = ?, priority = ?, updated_at = datetime('now') WHERE path = ?",
+  ).run(newTags, newQualifier, newPriority, path);
+  return true;
+}
+
 /** Delete a file. Returns false if not found. */
 export function deleteFile(path: string): boolean {
   const db = getDatabase();
