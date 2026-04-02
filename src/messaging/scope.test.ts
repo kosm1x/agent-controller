@@ -106,14 +106,21 @@ describe("scope pattern matching", () => {
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
   });
 
-  it("crm activates on pipeline/ventas/cuota keywords", () => {
-    expect(scope("Cómo va el pipeline de ventas?")).toContain("crm_query");
-    expect(scope("Dame la cuota de esta semana")).toContain("crm_query");
-    expect(scope("Quiero ver los prospectos activos")).toContain("crm_query");
-    expect(scope("Executive dashboard please")).toContain("crm_query");
+  it("crm activates ONLY when CRM or Azteca is mentioned", () => {
+    expect(scope("Del CRM de Azteca, dime cómo van")).toContain("crm_query");
+    expect(scope("Del CRM, dime el proyectado")).toContain("crm_query");
+    expect(scope("Oye del crm azteca dime quién va más atrasado")).toContain(
+      "crm_query",
+    );
+    expect(scope("Revisa el CRM")).toContain("crm_query");
   });
 
-  it("crm does NOT activate on unrelated messages", () => {
+  it("crm does NOT activate on generic sales words without CRM mention", () => {
+    expect(scope("Cómo va el pipeline de ventas?")).not.toContain("crm_query");
+    expect(scope("Dame la cuota de esta semana")).not.toContain("crm_query");
+    expect(scope("Quiero ver los prospectos activos")).not.toContain(
+      "crm_query",
+    );
     expect(scope("Crea una tarea en COMMIT")).not.toContain("crm_query");
     expect(scope("Busca en mi gmail")).not.toContain("crm_query");
   });

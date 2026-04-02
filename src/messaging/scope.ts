@@ -266,8 +266,9 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "wordpress",
   },
   {
-    pattern:
-      /\b(CRM|pipeline|prospectos?|propuestas?|cuota|quotas?|ventas|sales|facturaci[oó]n|billing|descarga|clientes?|cuentas?|accounts?|deals?|revenue|ingresos|comisi[oó]n|equipo\s+(?:de\s+)?ventas|alertas?\s+(?:de\s+)?(?:ventas|CRM|pipeline)|vp.?glance|executive\s+(?:view|summary|dashboard))/i,
+    // CRM scope requires explicit mention of "CRM" or "Azteca" — prevents
+    // false activation on generic sales words like "ventas" or "clientes".
+    pattern: /\b(?:del?\s+)?(?:CRM|crm|azteca)\b/i,
     group: "crm",
   },
   {
