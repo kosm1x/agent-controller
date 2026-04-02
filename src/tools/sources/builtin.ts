@@ -64,6 +64,14 @@ import {
 } from "../builtin/gemini-research.js";
 import { taskHistoryTool } from "../builtin/task-history.js";
 import { crmQueryTool } from "../builtin/crm-query.js";
+import {
+  jarvisFileReadTool,
+  jarvisFileWriteTool,
+  jarvisFileUpdateTool,
+  jarvisFileListTool,
+  jarvisFileDeleteTool,
+} from "../builtin/jarvis-files.js";
+import { jarvisInitTool } from "../builtin/jarvis-init.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -102,6 +110,12 @@ const BUILTIN_TOOLS: Tool[] = [
   geminiResearchTool,
   geminiAudioOverviewTool,
   taskHistoryTool,
+  jarvisFileReadTool,
+  jarvisFileWriteTool,
+  jarvisFileUpdateTool,
+  jarvisFileListTool,
+  jarvisFileDeleteTool,
+  jarvisInitTool,
 ];
 
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured

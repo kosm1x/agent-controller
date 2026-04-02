@@ -18,6 +18,7 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
+import { getFilesByQualifier } from "../tools/builtin/jarvis-files.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -32,6 +33,60 @@ STATUS: DONE
 STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
+
+/**
+ * Build the knowledge base injection section from jarvis_files.
+ * Fetches always-read + enforce files, plus conditional files matching scope.
+ */
+function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
+  try {
+    const files = getFilesByQualifier("always-read", "enforce", "conditional");
+    if (files.length === 0) return null;
+
+    const sections: string[] = [];
+    let totalChars = 0;
+    const KB_CHAR_BUDGET = 8000; // ~2000 tokens — protects prompt budget
+
+    for (const f of files) {
+      // Skip conditional files whose condition doesn't match scope
+      if (f.qualifier === "conditional" && f.condition) {
+        const condLower = f.condition.toLowerCase();
+        const matches =
+          (condLower.includes("crm") && scopedTools.includes("crm_query")) ||
+          (condLower.includes("commit") &&
+            scopedTools.some((t) => t.startsWith("commit__"))) ||
+          (condLower.includes("google") &&
+            scopedTools.includes("gmail_send")) ||
+          (condLower.includes("wordpress") &&
+            scopedTools.includes("wp_publish")) ||
+          (condLower.includes("coding") &&
+            scopedTools.includes("shell_exec")) ||
+          (condLower.includes("browser") &&
+            scopedTools.some((t) => t.startsWith("playwright__")));
+        if (!matches) continue;
+      }
+
+      const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
+      const section = `### ${prefix}${f.title}\n${f.content}`;
+
+      // Hard budget cap — enforce files always included, others fill remaining
+      if (
+        f.qualifier !== "enforce" &&
+        totalChars + section.length > KB_CHAR_BUDGET
+      ) {
+        continue;
+      }
+      sections.push(section);
+      totalChars += section.length;
+    }
+
+    if (sections.length === 0) return null;
+    return `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
+  } catch {
+    // DB not ready or table missing — non-fatal
+    return null;
+  }
+}
 
 /** Status suffix appended to chat system prompts. */
 const STATUS_SUFFIX = `
@@ -377,6 +432,12 @@ export const fastRunner: Runner = {
         role: "system",
         content: input.description + STATUS_SUFFIX,
       });
+
+      // Inject Jarvis knowledge base files (always-read, enforce, conditional)
+      const kb = buildKnowledgeBaseSection(input.tools ?? []);
+      if (kb) {
+        messages.push({ role: "system", content: kb });
+      }
 
       for (const turn of input.conversationHistory) {
         if (turn.imageUrl && turn.role === "user") {

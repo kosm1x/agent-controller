@@ -51,11 +51,13 @@ const READ_ONLY_TOOLS = new Set([
   "commit__list_objectives",
   "commit__search_journal",
   "commit__list_ideas",
-  // Projects, evolution, introspection & CRM
+  // Projects, evolution, introspection, CRM & Jarvis files
   "project_list",
   "project_get",
   "task_history",
   "crm_query",
+  "jarvis_file_read",
+  "jarvis_file_list",
   "evolution_get_data",
   // Gemini (read-only subset)
   "gemini_research",

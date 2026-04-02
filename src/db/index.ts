@@ -115,6 +115,27 @@ export function initDatabase(dbPath: string): Database.Database {
   `);
 
   // Self-tuning tables (v2.27)
+  // v5.0: Jarvis internal file system — persistent knowledge base
+  _db.exec(`CREATE TABLE IF NOT EXISTS jarvis_files (
+    id          TEXT PRIMARY KEY,
+    path        TEXT UNIQUE NOT NULL,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL DEFAULT '',
+    tags        TEXT DEFAULT '[]',
+    qualifier   TEXT DEFAULT 'reference' CHECK(qualifier IN ('always-read','enforce','conditional','reference','workspace')),
+    condition   TEXT,
+    priority    INTEGER DEFAULT 50,
+    related_to  TEXT DEFAULT '[]',
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_jarvis_files_qualifier ON jarvis_files(qualifier)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_jarvis_files_priority ON jarvis_files(priority)",
+  );
+
   ensureTuningTables();
 
   // Activate best variant from archive (v2.28 — HyperAgents pattern)

@@ -112,6 +112,12 @@ export const CRM_TOOLS_SCOPE = ["crm_query"];
 
 /** Other utility tools — always included (keep minimal for token budget). */
 export const MISC_TOOLS = [
+  "jarvis_file_read",
+  "jarvis_file_write",
+  "jarvis_file_update",
+  "jarvis_file_list",
+  "jarvis_file_delete",
+  "jarvis_init",
   "http_fetch",
   "list_schedules",
   "project_list",
