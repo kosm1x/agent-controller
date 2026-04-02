@@ -16,6 +16,7 @@ import {
   getThreeWindowStatus,
   recordCost,
 } from "../budget/service.js";
+import { taskStarted, taskCompleted } from "../observability/prometheus.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 
@@ -359,6 +360,7 @@ async function dispatchWithSlot(
     onTextChunk: submission.onTextChunk,
   };
 
+  taskStarted(agentType);
   try {
     const start = Date.now();
     const result = await runner.execute(input);
@@ -511,6 +513,7 @@ async function dispatchWithSlot(
 
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
   } finally {
+    taskCompleted(agentType);
     if (needsContainer(agentType)) {
       releaseContainerSlot();
     }

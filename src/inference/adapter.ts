@@ -863,6 +863,8 @@ export async function inferWithTools(
   messages: ChatMessage[];
   totalUsage: { prompt_tokens: number; completion_tokens: number };
   toolRepairs: Array<{ original: string; repaired: string }>;
+  exitReason: string;
+  roundsCompleted: number;
 }> {
   const maxRounds = options?.maxRounds ?? 10;
   const onTextChunk = options?.onTextChunk;
@@ -952,6 +954,8 @@ export async function inferWithTools(
           completion_tokens: totalCompletion,
         },
         toolRepairs,
+        exitReason: "aborted",
+        roundsCompleted: round,
       };
     }
 
@@ -1024,6 +1028,8 @@ export async function inferWithTools(
             completion_tokens: totalCompletion,
           },
           toolRepairs,
+          exitReason: "provider_failure",
+          roundsCompleted: round,
         };
       } catch {
         // Wrap-up also failed — propagate original error
@@ -1106,6 +1112,8 @@ export async function inferWithTools(
           completion_tokens: totalCompletion,
         },
         toolRepairs,
+        exitReason: "natural",
+        roundsCompleted: round + 1,
       };
     }
 
@@ -1433,6 +1441,8 @@ Provide your final response based ONLY on actual tool results. Do not request an
         completion_tokens: totalCompletion,
       },
       toolRepairs,
+      exitReason,
+      roundsCompleted: maxRounds,
     };
   } catch {
     // Wrap-up call failed — fall back to last assistant content
@@ -1450,6 +1460,8 @@ Provide your final response based ONLY on actual tool results. Do not request an
         completion_tokens: totalCompletion,
       },
       toolRepairs,
+      exitReason: "wrapup_failed",
+      roundsCompleted: maxRounds,
     };
   }
 }

@@ -35,6 +35,7 @@ export const CORE_TOOLS = [
   "skill_save",
   "skill_list",
   "file_read", // Always available — reads .txt, .docx, downloaded attachments
+  "task_history", // Always available — LLM can query its own past executions
   ...COMMIT_READ_TOOLS,
 ];
 

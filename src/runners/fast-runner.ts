@@ -12,7 +12,8 @@ import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import { setMemoryTaskContext } from "../tools/builtin/memory.js";
+import { TaskExecutionContext } from "../inference/execution-context.js";
+import { createTaskExecutor } from "../tools/task-executor.js";
 import {
   recordToolExecution,
   recordToolRepairs,
@@ -416,13 +417,13 @@ export const fastRunner: Runner = {
         ? MAX_ROUNDS_CODING
         : MAX_ROUNDS_DEFAULT;
 
-    // Reset destructive locks, then unlock if user already confirmed in history.
-    toolRegistry.resetDestructiveLocks();
+    // Per-task execution context: isolates destructive locks + memory rate limits
+    const taskContext = new TaskExecutionContext(input.taskId);
     if (
       input.conversationHistory &&
       hasUserConfirmedDeletion(input.conversationHistory)
     ) {
-      toolRegistry.unlockDestructive("commit__delete_item");
+      taskContext.unlockDestructive("commit__delete_item");
       console.log(
         "[fast-runner] Destructive tool unlocked: commit__delete_item (user confirmed in history)",
       );
@@ -430,18 +431,12 @@ export const fastRunner: Runner = {
       !input.conversationHistory &&
       input.tools?.includes("commit__delete_item")
     ) {
-      // Scheduled/programmatic tasks: no conversation history exists, but
-      // explicit tool inclusion is the user's pre-authorization (they
-      // configured the schedule with this tool). The delete_item handler
-      // still requires confirm_title matching the exact item title.
-      toolRegistry.unlockDestructive("commit__delete_item");
+      taskContext.unlockDestructive("commit__delete_item");
       console.log(
         "[fast-runner] Destructive tool unlocked: commit__delete_item (scheduled task pre-authorized)",
       );
     }
-
-    // Governance: set task context for memory store rate limiting
-    setMemoryTaskContext(input.taskId);
+    const taskExecutor = createTaskExecutor(toolRegistry, taskContext);
 
     try {
       let tokenBudget = hasPlaywright
@@ -468,19 +463,29 @@ export const fastRunner: Runner = {
         );
       }
 
-      const result = await inferWithTools(
-        messages,
-        definitions,
-        (name, args) => toolRegistry.execute(name, args),
-        {
-          maxRounds,
-          providerName,
-          tokenBudget,
-          onTextChunk: input.onTextChunk,
-        },
-      );
+      const result = await inferWithTools(messages, definitions, taskExecutor, {
+        maxRounds,
+        providerName,
+        tokenBudget,
+        onTextChunk: input.onTextChunk,
+      });
 
       let parsed = parseRunnerStatus(result.content);
+
+      // Provider failure or wrap-up failure: force DONE_WITH_CONCERNS regardless
+      // of what the LLM says. The task is incomplete — don't claim success.
+      if (
+        result.exitReason === "provider_failure" ||
+        result.exitReason === "wrapup_failed"
+      ) {
+        parsed = {
+          ...parsed,
+          status: "DONE_WITH_CONCERNS",
+          concerns: [
+            `Inference failed mid-execution (${result.exitReason}, round ${result.roundsCompleted}/${maxRounds}). Task may be incomplete.`,
+          ],
+        };
+      }
 
       // Safety net: if the LLM returned substantial content but reported BLOCKED/NEEDS_CONTEXT,
       // override to DONE_WITH_CONCERNS. This prevents infinite retry loops when the wrap-up
@@ -619,7 +624,7 @@ export const fastRunner: Runner = {
           const retryResult = await inferWithTools(
             retryMessages,
             definitions,
-            (name, args) => toolRegistry.execute(name, args),
+            taskExecutor,
             {
               maxRounds: 5,
               providerName: tierToProvider(input.modelTier),
@@ -717,6 +722,9 @@ export const fastRunner: Runner = {
         output: {
           text: parsed.cleanContent,
           toolCalls: toolsCalled,
+          exitReason: result.exitReason,
+          roundsCompleted: result.roundsCompleted,
+          maxRounds,
         },
         toolCalls: toolsCalled,
         tokenUsage: {
@@ -732,7 +740,7 @@ export const fastRunner: Runner = {
         durationMs: Date.now() - start,
       };
     } finally {
-      setMemoryTaskContext(null); // Governance: clear rate limit state
+      // TaskExecutionContext is GC'd with the task — no global cleanup needed
     }
   },
 };

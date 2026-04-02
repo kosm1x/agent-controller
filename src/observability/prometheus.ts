@@ -83,6 +83,18 @@ const budgetMonthlyLimit = new client.Gauge({
   help: "Monthly budget limit in USD",
 });
 
+// --- Concurrency ---
+const tasksActive = new client.Gauge({
+  name: "mc_tasks_active",
+  help: "Currently executing tasks",
+});
+
+const tasksActiveByRunner = new client.Gauge({
+  name: "mc_tasks_active_by_runner",
+  help: "Currently executing tasks by runner type",
+  labelNames: ["runner"] as const,
+});
+
 // --- Tools ---
 const toolCallsTotal = new client.Gauge({
   name: "mc_tool_calls_total",
@@ -273,6 +285,18 @@ export function collectMetrics(): void {
   } catch {
     // DB not ready — metrics will be zero
   }
+}
+
+// --- Task lifecycle tracking (called from dispatcher) ---
+
+export function taskStarted(runner: string): void {
+  tasksActive.inc();
+  tasksActiveByRunner.inc({ runner });
+}
+
+export function taskCompleted(runner: string): void {
+  tasksActive.dec();
+  tasksActiveByRunner.dec({ runner });
 }
 
 /** Return Prometheus-formatted metrics string. */

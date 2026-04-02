@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 import { plan, replan } from "./planner.js";
 import { executeGraph } from "./executor.js";
-import { setMemoryTaskContext } from "../tools/builtin/memory.js";
+import { TaskExecutionContext } from "../inference/execution-context.js";
 import { reflect } from "./reflector.js";
 import { eventBus } from "../lib/event-bus.js";
 
@@ -39,8 +39,8 @@ export async function orchestrate(
   const trace = createTrace();
   const budget = new IterationBudget(cfg.maxIterations);
 
-  // Governance: set task context for memory store rate limiting
-  setMemoryTaskContext(taskId);
+  // Per-task execution context: isolates mutable state for concurrent safety
+  const _taskContext = new TaskExecutionContext(taskId);
 
   try {
     let replanCount = 0;
@@ -225,7 +225,7 @@ export async function orchestrate(
       iterationsUsed: budget.consumed,
     };
   } finally {
-    setMemoryTaskContext(null); // Governance: clear rate limit state on all paths
+    // TaskExecutionContext is GC'd with the task — no global cleanup needed
   }
 }
 

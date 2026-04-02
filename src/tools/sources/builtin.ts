@@ -62,6 +62,7 @@ import {
   geminiResearchTool,
   geminiAudioOverviewTool,
 } from "../builtin/gemini-research.js";
+import { taskHistoryTool } from "../builtin/task-history.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -99,6 +100,7 @@ const BUILTIN_TOOLS: Tool[] = [
   geminiUploadTool,
   geminiResearchTool,
   geminiAudioOverviewTool,
+  taskHistoryTool,
 ];
 
 // WordPress tools — conditionally registered when WP_SITES is configured

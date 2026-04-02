@@ -51,9 +51,10 @@ const READ_ONLY_TOOLS = new Set([
   "commit__list_objectives",
   "commit__search_journal",
   "commit__list_ideas",
-  // Projects & evolution
+  // Projects, evolution & introspection
   "project_list",
   "project_get",
+  "task_history",
   "evolution_get_data",
   // Gemini (read-only subset)
   "gemini_research",
