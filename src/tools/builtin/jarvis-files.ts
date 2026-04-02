@@ -1,88 +1,20 @@
 /**
- * Jarvis internal file system — persistent knowledge base tools.
+ * Jarvis file system tools — thin wrappers over src/db/jarvis-fs.ts.
  *
- * Gives Jarvis structured, taggable, priority-ordered files that persist
- * across sessions. Files with qualifier "always-read" or "enforce" are
- * auto-injected into the system prompt. Files with "conditional" are
- * injected when their condition matches the active scope.
- *
- * All files are Markdown (.md). SQLite is source of truth; filesystem
- * mirror at data/jarvis/ for human inspection.
+ * The infrastructure (upsertFile, getFile, mirrorToDisk, etc.) lives
+ * in the DB layer. These tools just expose it to the LLM with ACI
+ * descriptions and parameter validation.
  */
 
 import type { Tool } from "../types.js";
-import { getDatabase } from "../../db/index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-
-const MIRROR_DIR = join(process.cwd(), "data", "jarvis");
-
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
-interface JarvisFile {
-  id: string;
-  path: string;
-  title: string;
-  content: string;
-  tags: string;
-  qualifier: string;
-  condition: string | null;
-  priority: number;
-  related_to: string;
-  created_at: string;
-  updated_at: string;
-}
-
-function mirrorToDisk(path: string, content: string): void {
-  try {
-    const fullPath = join(MIRROR_DIR, path);
-    // Defense-in-depth: block path traversal
-    if (!fullPath.startsWith(MIRROR_DIR)) return;
-    mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, content, "utf-8");
-  } catch {
-    // Non-fatal — SQLite is source of truth
-  }
-}
-
-/** Use path as ID — no derived transformation, no collision risk. */
-function pathToId(path: string): string {
-  return path;
-}
-
-// ---------------------------------------------------------------------------
-// Query functions (exported for auto-injection)
-// ---------------------------------------------------------------------------
-
-/** Get files by qualifier, ordered by priority. */
-export function getFilesByQualifier(...qualifiers: string[]): Array<{
-  path: string;
-  title: string;
-  content: string;
-  qualifier: string;
-  condition: string | null;
-  priority: number;
-}> {
-  const db = getDatabase();
-  const placeholders = qualifiers.map(() => "?").join(",");
-  return db
-    .prepare(
-      `SELECT path, title, content, qualifier, condition, priority
-       FROM jarvis_files
-       WHERE qualifier IN (${placeholders})
-       ORDER BY priority ASC, created_at ASC`,
-    )
-    .all(...qualifiers) as Array<{
-    path: string;
-    title: string;
-    content: string;
-    qualifier: string;
-    condition: string | null;
-    priority: number;
-  }>;
-}
+import {
+  getFile,
+  upsertFile,
+  appendToFile,
+  deleteFile,
+  listFiles,
+} from "../../db/jarvis-fs.js";
+import type { JarvisFile } from "../../db/jarvis-fs.js";
 
 // ---------------------------------------------------------------------------
 // Tools
@@ -123,31 +55,27 @@ If searching by tags, returns all matching files with previews.`,
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const db = getDatabase();
     const path = args.path as string | undefined;
     const tags = args.tags as string[] | undefined;
 
     if (path) {
-      const file = db
-        .prepare("SELECT * FROM jarvis_files WHERE path = ?")
-        .get(path) as JarvisFile | undefined;
-
+      const file = getFile(path);
       if (!file) {
         return JSON.stringify({ error: `File not found: ${path}` });
       }
 
-      // Also fetch related files (1 hop)
+      // Fetch related files (1 hop)
       let related: Array<{ path: string; title: string }> = [];
       try {
         const relatedIds = JSON.parse(file.related_to) as string[];
         if (relatedIds.length > 0) {
-          const ph = relatedIds.map(() => "?").join(",");
-          related = db
-            .prepare(`SELECT path, title FROM jarvis_files WHERE id IN (${ph})`)
-            .all(...relatedIds) as Array<{ path: string; title: string }>;
+          related = relatedIds
+            .map((rid) => getFile(rid))
+            .filter((f): f is JarvisFile => f !== null)
+            .map((f) => ({ path: f.path, title: f.title }));
         }
       } catch {
-        /* ignore malformed JSON */
+        /* ignore */
       }
 
       return JSON.stringify({
@@ -164,30 +92,14 @@ If searching by tags, returns all matching files with previews.`,
     }
 
     if (tags && tags.length > 0) {
-      // Search by tags using JSON containment
-      const all = db
-        .prepare(
-          "SELECT path, title, tags, qualifier, priority, substr(content, 1, 200) as preview FROM jarvis_files ORDER BY priority ASC",
-        )
-        .all() as Array<{
-        path: string;
-        title: string;
-        tags: string;
-        qualifier: string;
-        priority: number;
-        preview: string;
-      }>;
-
-      const matches = all.filter((f) => {
-        try {
-          const fileTags = JSON.parse(f.tags) as string[];
-          return tags.some((t) => fileTags.includes(t));
-        } catch {
-          return false;
-        }
+      const matches = listFiles({ tags });
+      return JSON.stringify({
+        results: matches.map((f) => ({
+          ...f,
+          preview: undefined, // size is enough for listing
+        })),
+        total: matches.length,
       });
-
-      return JSON.stringify({ results: matches, total: matches.length });
     }
 
     return JSON.stringify({
@@ -223,7 +135,7 @@ QUALIFIERS:
           path: {
             type: "string",
             description:
-              'File path ending in .md (e.g. "DIRECTIVES.md", "context/user-profile.md", "schedules/active.md")',
+              'File path ending in .md (e.g. "DIRECTIVES.md", "context/user-profile.md")',
           },
           title: {
             type: "string",
@@ -236,8 +148,7 @@ QUALIFIERS:
           tags: {
             type: "array",
             items: { type: "string" },
-            description:
-              'Tags for categorization and search. Example: ["directive", "always-read", "persona"]',
+            description: "Tags for categorization and search.",
           },
           qualifier: {
             type: "string",
@@ -253,7 +164,7 @@ QUALIFIERS:
           condition: {
             type: "string",
             description:
-              'When qualifier is "conditional": describe when to inject. Example: "when CRM context active"',
+              'When qualifier is "conditional": describe when to inject.',
           },
           priority: {
             type: "number",
@@ -272,7 +183,6 @@ QUALIFIERS:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const db = getDatabase();
     const path = args.path as string;
     const title = args.title as string;
     const content = args.content as string;
@@ -280,53 +190,24 @@ QUALIFIERS:
     const qualifier = (args.qualifier as string) ?? "reference";
     const condition = (args.condition as string) ?? null;
     const priority = (args.priority as number) ?? 50;
-    const relatedPaths = (args.related_to as string[]) ?? [];
+    const relatedTo = (args.related_to as string[]) ?? [];
 
     if (!path.endsWith(".md")) {
-      return JSON.stringify({
-        error: "All files must end with .md",
-      });
+      return JSON.stringify({ error: "All files must end with .md" });
     }
 
-    const id = pathToId(path);
-
-    // Resolve related paths to IDs
-    const relatedIds = relatedPaths.map(pathToId);
-
-    db.prepare(
-      `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET
-         path = excluded.path,
-         title = excluded.title,
-         content = excluded.content,
-         tags = excluded.tags,
-         qualifier = excluded.qualifier,
-         condition = excluded.condition,
-         priority = excluded.priority,
-         related_to = excluded.related_to,
-         updated_at = datetime('now')`,
-    ).run(
-      id,
+    upsertFile(
       path,
       title,
       content,
-      JSON.stringify(tags),
+      tags,
       qualifier,
-      condition,
       priority,
-      JSON.stringify(relatedIds),
+      condition,
+      relatedTo,
     );
 
-    mirrorToDisk(path, content);
-
-    return JSON.stringify({
-      success: true,
-      path,
-      id,
-      qualifier,
-      priority,
-    });
+    return JSON.stringify({ success: true, path, qualifier, priority });
   },
 };
 
@@ -356,8 +237,7 @@ USE WHEN:
           tags: {
             type: "array",
             items: { type: "string" },
-            description:
-              "Replace tags (if provided). Omit to keep existing tags.",
+            description: "Replace tags (if provided).",
           },
           qualifier: {
             type: "string",
@@ -381,43 +261,40 @@ USE WHEN:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const db = getDatabase();
     const path = args.path as string;
-
-    const existing = db
-      .prepare("SELECT * FROM jarvis_files WHERE path = ?")
-      .get(path) as JarvisFile | undefined;
-
-    if (!existing) {
-      return JSON.stringify({ error: `File not found: ${path}` });
-    }
-
     const append = args.append as string | undefined;
     const tags = args.tags as string[] | undefined;
     const qualifier = args.qualifier as string | undefined;
     const priority = args.priority as number | undefined;
 
-    const newContent = append
-      ? `${existing.content}\n\n${append}`
-      : existing.content;
-    const newTags = tags ? JSON.stringify(tags) : existing.tags;
-    const newQualifier = qualifier ?? existing.qualifier;
-    const newPriority = priority ?? existing.priority;
+    const existing = getFile(path);
+    if (!existing) {
+      return JSON.stringify({ error: `File not found: ${path}` });
+    }
 
-    db.prepare(
-      `UPDATE jarvis_files
-       SET content = ?, tags = ?, qualifier = ?, priority = ?, updated_at = datetime('now')
-       WHERE path = ?`,
-    ).run(newContent, newTags, newQualifier, newPriority, path);
+    if (append) {
+      appendToFile(path, append);
+    }
 
-    mirrorToDisk(path, newContent);
+    // Update metadata if provided
+    if (tags || qualifier || priority !== undefined) {
+      const { getDatabase } = await import("../../db/index.js");
+      const db = getDatabase();
+      const newTags = tags ? JSON.stringify(tags) : existing.tags;
+      const newQualifier = qualifier ?? existing.qualifier;
+      const newPriority = priority ?? existing.priority;
+      db.prepare(
+        "UPDATE jarvis_files SET tags = ?, qualifier = ?, priority = ?, updated_at = datetime('now') WHERE path = ?",
+      ).run(newTags, newQualifier, newPriority, path);
+    }
 
+    const updated = getFile(path);
     return JSON.stringify({
       success: true,
       path,
-      contentLength: newContent.length,
-      qualifier: newQualifier,
-      priority: newPriority,
+      contentLength: updated?.content.length ?? 0,
+      qualifier: updated?.qualifier,
+      priority: updated?.priority,
     });
   },
 };
@@ -464,59 +341,12 @@ USE WHEN:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const db = getDatabase();
-    const prefix = args.prefix as string | undefined;
-    const qualifier = args.qualifier as string | undefined;
-    const tags = args.tags as string[] | undefined;
-
-    let sql =
-      "SELECT path, title, tags, qualifier, priority, length(content) as size, updated_at FROM jarvis_files";
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-
-    if (prefix) {
-      conditions.push("path LIKE ?");
-      params.push(`${prefix}%`);
-    }
-    if (qualifier) {
-      conditions.push("qualifier = ?");
-      params.push(qualifier);
-    }
-
-    if (conditions.length > 0) {
-      sql += " WHERE " + conditions.join(" AND ");
-    }
-    sql += " ORDER BY priority ASC, path ASC";
-
-    let results = db.prepare(sql).all(...params) as Array<{
-      path: string;
-      title: string;
-      tags: string;
-      qualifier: string;
-      priority: number;
-      size: number;
-      updated_at: string;
-    }>;
-
-    // Post-filter by tags (JSON containment)
-    if (tags && tags.length > 0) {
-      results = results.filter((f) => {
-        try {
-          const fileTags = JSON.parse(f.tags) as string[];
-          return tags.some((t) => fileTags.includes(t));
-        } catch {
-          return false;
-        }
-      });
-    }
-
-    return JSON.stringify({
-      files: results.map((r) => ({
-        ...r,
-        tags: JSON.parse(r.tags),
-      })),
-      total: results.length,
+    const results = listFiles({
+      prefix: args.prefix as string | undefined,
+      qualifier: args.qualifier as string | undefined,
+      tags: args.tags as string[] | undefined,
     });
+    return JSON.stringify({ files: results, total: results.length });
   },
 };
 
@@ -532,7 +362,7 @@ USE WHEN:
 - A file is outdated and no longer relevant
 - You're cleaning up workspace files after completing a task
 
-CAUTION: This permanently removes the file. Consider updating qualifier to "workspace" first if unsure.`,
+CAUTION: This permanently removes the file.`,
       parameters: {
         type: "object",
         properties: {
@@ -547,19 +377,11 @@ CAUTION: This permanently removes the file. Consider updating qualifier to "work
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const db = getDatabase();
     const path = args.path as string;
-
-    const existing = db
-      .prepare("SELECT id FROM jarvis_files WHERE path = ?")
-      .get(path) as { id: string } | undefined;
-
-    if (!existing) {
+    const deleted = deleteFile(path);
+    if (!deleted) {
       return JSON.stringify({ error: `File not found: ${path}` });
     }
-
-    db.prepare("DELETE FROM jarvis_files WHERE path = ?").run(path);
-
     return JSON.stringify({ success: true, deleted: path });
   },
 };

@@ -3,59 +3,12 @@
  * all existing data sources into structured jarvis_files.
  *
  * Idempotent: safe to re-run (upserts via ON CONFLICT).
- * Runs as a builtin tool so Jarvis can self-bootstrap.
+ * Uses the jarvis-fs infrastructure layer for all writes.
  */
 
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-
-const MIRROR_DIR = join(process.cwd(), "data", "jarvis");
-
-function mirror(path: string, content: string): void {
-  try {
-    const full = join(MIRROR_DIR, path);
-    if (!full.startsWith(MIRROR_DIR)) return;
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, content, "utf-8");
-  } catch {
-    /* non-fatal */
-  }
-}
-
-function upsertFile(
-  id: string,
-  path: string,
-  title: string,
-  content: string,
-  tags: string[],
-  qualifier: string,
-  priority: number,
-  condition?: string,
-  relatedTo?: string[],
-): void {
-  const db = getDatabase();
-  db.prepare(
-    `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET
-       path = excluded.path, title = excluded.title, content = excluded.content,
-       tags = excluded.tags, qualifier = excluded.qualifier, condition = excluded.condition,
-       priority = excluded.priority, related_to = excluded.related_to, updated_at = datetime('now')`,
-  ).run(
-    id,
-    path,
-    title,
-    content,
-    JSON.stringify(tags),
-    qualifier,
-    condition ?? null,
-    priority,
-    JSON.stringify(relatedTo ?? []),
-  );
-  mirror(path, content);
-}
+import { upsertFile, listFiles } from "../../db/jarvis-fs.js";
 
 export const jarvisInitTool: Tool = {
   name: "jarvis_init",
@@ -70,7 +23,7 @@ USE WHEN:
 - User asks you to re-initialize or refresh your knowledge base
 - You notice your knowledge base is empty
 
-This pulls from: user_facts, projects, scheduled_tasks, conversations (top topics), task_outcomes, and builds your DIRECTIVES.md, MEMORY.md, and context files.
+This pulls from: user_facts, projects, scheduled_tasks, scope_telemetry, task_outcomes.
 
 IDEMPOTENT: Safe to re-run — updates existing files.`,
       parameters: {
@@ -86,7 +39,6 @@ IDEMPOTENT: Safe to re-run — updates existing files.`,
 
     // 1. DIRECTIVES.md — core persona and SOPs
     upsertFile(
-      "directives",
       "DIRECTIVES.md",
       "Jarvis Core Directives",
       `# Jarvis Core Directives
@@ -124,13 +76,12 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
           "# User Profile — Fede\n\n" +
           facts.map((f) => `- **${f.key}**: ${f.value}`).join("\n");
         upsertFile(
-          "context__user-profile",
           "context/user-profile.md",
           "User Profile",
           content,
-          ["user", "profile", "always-read"],
-          "always-read",
-          5,
+          ["user", "profile"],
+          "reference",
+          40,
         );
         created.push("context/user-profile.md");
       }
@@ -142,13 +93,12 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
     try {
       const projects = db
         .prepare(
-          "SELECT name, description, status, metadata FROM projects ORDER BY name",
+          "SELECT name, description, status FROM projects WHERE status = 'active' ORDER BY name",
         )
         .all() as Array<{
         name: string;
         description: string;
         status: string;
-        metadata: string | null;
       }>;
 
       if (projects.length > 0) {
@@ -160,7 +110,6 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n\n---\n\n");
         upsertFile(
-          "context__projects",
           "context/projects.md",
           "Active Projects",
           content,
@@ -198,7 +147,6 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n\n---\n\n");
         upsertFile(
-          "schedules__active",
           "schedules/active.md",
           "Active Schedules",
           content,
@@ -230,11 +178,10 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             .map((p) => `- **${p.tool_chain}** — ${p.cnt} times`)
             .join("\n");
         upsertFile(
-          "context__tool-patterns",
           "context/tool-patterns.md",
           "Common Tool Patterns",
           content,
-          ["tools", "patterns", "reference"],
+          ["tools", "patterns"],
           "reference",
           40,
         );
@@ -272,11 +219,10 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n");
         upsertFile(
-          "context__execution-patterns",
           "context/execution-patterns.md",
           "Execution Patterns",
           content,
-          ["execution", "patterns", "reference"],
+          ["execution", "patterns"],
           "reference",
           45,
         );
@@ -287,31 +233,21 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
     }
 
     // 7. MEMORY.md — index of all files
-    const allFiles = db
-      .prepare(
-        "SELECT path, title, qualifier, priority FROM jarvis_files ORDER BY priority ASC, path ASC",
-      )
-      .all() as Array<{
-      path: string;
-      title: string;
-      qualifier: string;
-      priority: number;
-    }>;
-
-    const memoryContent =
+    const allFiles = listFiles();
+    const memContent =
       "# Jarvis Knowledge Base Index\n\n" +
-      "| Path | Title | Qualifier | Priority |\n|------|-------|-----------|----------|\n" +
+      "| Path | Title | Qualifier | Priority | Size |\n|------|-------|-----------|----------|------|\n" +
       allFiles
         .map(
-          (f) => `| ${f.path} | ${f.title} | ${f.qualifier} | ${f.priority} |`,
+          (f) =>
+            `| ${f.path} | ${f.title} | ${f.qualifier} | ${f.priority} | ${f.size} |`,
         )
         .join("\n");
 
     upsertFile(
-      "memory",
       "MEMORY.md",
       "Knowledge Base Index",
-      memoryContent,
+      memContent,
       ["index", "memory"],
       "always-read",
       1,

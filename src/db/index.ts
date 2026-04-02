@@ -10,6 +10,7 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
+import { seedDirectives } from "./jarvis-fs.js";
 import { ensureTuningTables } from "../tuning/schema.js";
 import { activateBestVariant } from "../tuning/activation.js";
 
@@ -135,6 +136,9 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_jarvis_files_priority ON jarvis_files(priority)",
   );
+
+  // Seed Jarvis file system on first boot
+  seedDirectives();
 
   ensureTuningTables();
 

@@ -9,11 +9,7 @@
  */
 
 import { getMemoryService } from "./index.js";
-import { getDatabase } from "../db/index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-
-const JARVIS_MIRROR = join(process.cwd(), "data", "jarvis");
+import { upsertFile } from "../db/jarvis-fs.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -91,30 +87,17 @@ export async function autoPersistConversation(
 
   // Also persist to jarvis_files for structured retrieval
   try {
-    const db = getDatabase();
     const date = new Date().toISOString().slice(0, 10);
     const shortId = taskId.slice(0, 8);
     const path = `auto-persist/${date}-${shortId}.md`;
-    const title = `${userText.slice(0, 60)}`;
-
-    db.prepare(
-      `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, priority, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'workspace', 80, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
-    ).run(
+    upsertFile(
       path,
-      path,
-      title,
+      userText.slice(0, 60),
       summary,
-      JSON.stringify(["auto-persist", channel]),
+      ["auto-persist", channel],
+      "workspace",
+      80,
     );
-
-    // Mirror to disk
-    const fullPath = join(JARVIS_MIRROR, path);
-    if (fullPath.startsWith(JARVIS_MIRROR)) {
-      mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, summary, "utf-8");
-    }
   } catch {
     // Non-fatal — Hindsight is primary, this is secondary
   }

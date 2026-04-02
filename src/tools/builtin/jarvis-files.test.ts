@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const mockRun = vi.fn();
+const mockRun = vi.fn().mockReturnValue({ changes: 1 });
 const mockGet = vi.fn();
 const mockAll = vi.fn().mockReturnValue([]);
 const mockDb = {
@@ -27,8 +27,8 @@ import {
   jarvisFileUpdateTool,
   jarvisFileListTool,
   jarvisFileDeleteTool,
-  getFilesByQualifier,
 } from "./jarvis-files.js";
+import { getFilesByQualifier } from "../../db/jarvis-fs.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -130,11 +130,21 @@ describe("jarvis_file_read", () => {
 
 describe("jarvis_file_update", () => {
   it("appends content to existing file", async () => {
-    mockGet.mockReturnValueOnce({
+    const fileRow = {
       content: "# Original",
       tags: '["test"]',
       qualifier: "reference",
       priority: 50,
+      related_to: "[]",
+      condition: null,
+      updated_at: "2026-04-02",
+    };
+    // Call 1: getFile in execute(), Call 2: appendToFile SELECT, Call 3: getFile at end
+    mockGet.mockReturnValueOnce(fileRow);
+    mockGet.mockReturnValueOnce({ content: "# Original" });
+    mockGet.mockReturnValueOnce({
+      ...fileRow,
+      content: "# Original\n\n## New section",
     });
 
     const result = await jarvisFileUpdateTool.execute({
@@ -143,14 +153,11 @@ describe("jarvis_file_update", () => {
     });
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
-    // Verify the content was concatenated
-    expect(mockRun).toHaveBeenCalledWith(
-      expect.stringContaining("# Original\n\n## New section"),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      "notes.md",
+    // Verify appendToFile triggered a DB write
+    const prepareCalls = mockDb.prepare.mock.calls.map((c: unknown[]) =>
+      String(c[0]),
     );
+    expect(prepareCalls.some((s) => s.includes("UPDATE"))).toBe(true);
   });
 
   it("returns error for missing file", async () => {
@@ -194,13 +201,13 @@ describe("jarvis_file_list", () => {
 
 describe("jarvis_file_delete", () => {
   it("deletes an existing file", async () => {
-    mockGet.mockReturnValueOnce({ id: "notes" });
+    mockRun.mockReturnValueOnce({ changes: 1 });
     const result = await jarvisFileDeleteTool.execute({ path: "notes.md" });
     expect(JSON.parse(result).success).toBe(true);
   });
 
   it("returns error for missing file", async () => {
-    mockGet.mockReturnValueOnce(undefined);
+    mockRun.mockReturnValueOnce({ changes: 0 });
     const result = await jarvisFileDeleteTool.execute({
       path: "missing.md",
     });

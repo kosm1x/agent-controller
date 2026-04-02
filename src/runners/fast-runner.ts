@@ -18,7 +18,7 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
-import { getFilesByQualifier } from "../tools/builtin/jarvis-files.js";
+import { getFilesByQualifier } from "../db/jarvis-fs.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
