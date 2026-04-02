@@ -196,6 +196,10 @@ export const WRITE_TOOLS = new Set([
   // File system
   "file_write",
   "file_edit",
+  // Jarvis knowledge base
+  "jarvis_file_write",
+  "jarvis_file_update",
+  "jarvis_file_delete",
   // Other
   "schedule_task",
   "delete_schedule",
