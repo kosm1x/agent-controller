@@ -178,11 +178,11 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
     try {
       const schedules = db
         .prepare(
-          "SELECT name, cron_expression, description, delivery, active FROM scheduled_tasks ORDER BY name",
+          "SELECT name, cron_expr, description, delivery, active FROM scheduled_tasks ORDER BY name",
         )
         .all() as Array<{
         name: string;
-        cron_expression: string;
+        cron_expr: string;
         description: string;
         delivery: string;
         active: number;
@@ -194,7 +194,7 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
           schedules
             .map(
               (s) =>
-                `## ${s.name} ${s.active ? "✅" : "⏸️"}\n**Cron:** \`${s.cron_expression}\`\n**Delivery:** ${s.delivery}\n${s.description}`,
+                `## ${s.name} ${s.active ? "✅" : "⏸️"}\n**Cron:** \`${s.cron_expr}\`\n**Delivery:** ${s.delivery}\n${s.description}`,
             )
             .join("\n\n---\n\n");
         upsertFile(
