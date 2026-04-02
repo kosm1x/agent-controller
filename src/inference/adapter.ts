@@ -827,7 +827,7 @@ export interface InferWithToolsOptions {
  * Unescapes JSON string escapes so the salvaged content is usable.
  * Returns null if no substantial content found (< 200 chars).
  */
-function salvageTruncatedContent(rawArgs: string): string | null {
+export function salvageTruncatedContent(rawArgs: string): string | null {
   // Match common content field names, then fall back to any large string value
   const patterns = [
     /"(?:content|text|body|html)":\s*"/,
@@ -838,12 +838,12 @@ function salvageTruncatedContent(rawArgs: string): string | null {
     if (match?.index !== undefined) {
       const startIdx = match.index + match[0].length;
       let content = rawArgs.slice(startIdx);
-      // Unescape JSON string escapes
+      // Unescape JSON string escapes (backslash FIRST to avoid double-decode)
       content = content
+        .replace(/\\\\/g, "\\")
         .replace(/\\n/g, "\n")
         .replace(/\\t/g, "\t")
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, "\\");
+        .replace(/\\"/g, '"');
       // Trim trailing incomplete escape
       content = content.replace(/\\?$/, "");
       if (content.length > 200) return content;

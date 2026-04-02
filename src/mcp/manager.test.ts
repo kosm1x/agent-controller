@@ -194,6 +194,48 @@ describe("McpManager", () => {
     await expect(manager.shutdown()).resolves.toBeUndefined();
   });
 
+  it("should track failed servers for reconnection", async () => {
+    mockConnect.mockRejectedValue(new Error("Connection refused"));
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init({ failing: { command: "bad-cmd" } }, registry);
+
+    expect(manager.getServerIds()).toEqual([]);
+    expect(manager.getFailedServerIds()).toEqual(["failing"]);
+  });
+
+  it("should call alertFn on startup degradation", async () => {
+    mockConnect.mockRejectedValue(new Error("Timeout"));
+    const alertSpy = vi.fn();
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+    manager.setAlertFn(alertSpy);
+
+    await manager.init({ commit: { command: "bad" } }, registry);
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toContain("DEGRADED");
+    expect(alertSpy.mock.calls[0][0]).toContain("commit");
+  });
+
+  it("should clear failed servers and timer on shutdown", async () => {
+    mockConnect.mockRejectedValue(new Error("Timeout"));
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init({ failing: { command: "bad" } }, registry);
+
+    expect(manager.getFailedServerIds()).toEqual(["failing"]);
+
+    await manager.shutdown();
+
+    expect(manager.getFailedServerIds()).toEqual([]);
+  });
+
   it("should register tools with correct definitions", async () => {
     mockConnect.mockResolvedValue(undefined);
     mockListTools.mockResolvedValue(

@@ -47,6 +47,7 @@ import {
   allResultsAreErrors,
   stripStaleSignals,
   stripThinkBlocks,
+  salvageTruncatedContent,
 } from "./adapter.js";
 
 beforeEach(() => {
@@ -483,5 +484,61 @@ describe("COMMIT tools in READ_ONLY_TOOLS", () => {
 
   it("gemini_research is read-only", () => {
     expect(allToolCallsReadOnly([tc("gemini_research")])).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// salvageTruncatedContent
+// ---------------------------------------------------------------------------
+
+describe("salvageTruncatedContent", () => {
+  it("extracts content from truncated gdocs_write args", () => {
+    const raw =
+      '{"document_id": "abc123", "text": "Hello world, this is a long document' +
+      "x".repeat(300) +
+      "...";
+    const result = salvageTruncatedContent(raw);
+    expect(result).not.toBeNull();
+    expect(result!).toContain("Hello world");
+    expect(result!.length).toBeGreaterThan(200);
+  });
+
+  it("extracts content field from truncated args", () => {
+    const raw =
+      '{"path": "/tmp/test.txt", "content": "Big file content here' +
+      "y".repeat(300);
+    const result = salvageTruncatedContent(raw);
+    expect(result).not.toBeNull();
+    expect(result!).toContain("Big file content here");
+  });
+
+  it("returns null when content is too short", () => {
+    const raw = '{"text": "short"}';
+    expect(salvageTruncatedContent(raw)).toBeNull();
+  });
+
+  it("returns null when no content field found", () => {
+    const raw =
+      '{"document_id": "abc123", "title": "something' + "x".repeat(300);
+    expect(salvageTruncatedContent(raw)).toBeNull();
+  });
+
+  it("unescapes JSON newlines and quotes", () => {
+    const raw =
+      '{"text": "line1\\nline2\\tindented and a \\"quote\\"' + "x".repeat(300);
+    const result = salvageTruncatedContent(raw);
+    expect(result).not.toBeNull();
+    expect(result!).toContain("line1\nline2"); // \n → actual newline
+    expect(result!).toContain("line2\tindented"); // \t → actual tab
+    expect(result!).toContain('"quote"'); // \" → actual quote
+  });
+
+  it("handles body field name", () => {
+    const raw =
+      '{"to": "test@test.com", "body": "Email body content here' +
+      "z".repeat(300);
+    const result = salvageTruncatedContent(raw);
+    expect(result).not.toBeNull();
+    expect(result!).toContain("Email body content here");
   });
 });
