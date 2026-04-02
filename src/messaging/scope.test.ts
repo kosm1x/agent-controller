@@ -93,6 +93,17 @@ describe("scope pattern matching", () => {
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
   });
 
+  it("research activates on 'lee este PDF'", () => {
+    const tools = scope("Lee este PDF y dame un resumen");
+    expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
+    expect(tools).toContain("pdf_read");
+  });
+
+  it("research activates on .pdf file reference", () => {
+    const tools = scope("Analiza el archivo reporte.pdf");
+    expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
+  });
+
   it("commit_destructive activates on delete/remove keywords", () => {
     const tools = scope("Elimina esa tarea");
     expect(tools).toContain("commit__delete_item");
@@ -220,16 +231,16 @@ describe("two-phase scope isolation", () => {
     expect(tools).toContain("shell_exec");
   });
 
-  it("49 chars inherits scope, 50+ chars does not (boundary)", () => {
-    // 49 chars: should inherit
-    const msg49 = "A".repeat(49);
-    const tools49 = scope(msg49, ["Busca en mi gmail"]);
-    expect(hasAll(tools49, GOOGLE_TOOLS)).toBe(true);
+  it("79 chars inherits scope, 80+ chars does not (boundary)", () => {
+    // 79 chars: should inherit
+    const msg79 = "A".repeat(79);
+    const tools79 = scope(msg79, ["Busca en mi gmail"]);
+    expect(hasAll(tools79, GOOGLE_TOOLS)).toBe(true);
 
-    // 50 chars, no imperative verb: should NOT inherit
-    const msg50 = "B".repeat(50);
-    const tools50 = scope(msg50, ["Busca en mi gmail"]);
-    expect(hasNone(tools50, GOOGLE_TOOLS)).toBe(true);
+    // 80 chars, no imperative verb: should NOT inherit
+    const msg80 = "B".repeat(80);
+    const tools80 = scope(msg80, ["Busca en mi gmail"]);
+    expect(hasNone(tools80, GOOGLE_TOOLS)).toBe(true);
   });
 
   it("imperative verb inherits scope regardless of length", () => {
@@ -238,6 +249,40 @@ describe("two-phase scope isolation", () => {
     ]);
     // "ejecuta" triggers inheritance even though message has own signals
     expect(hasAll(tools, GOOGLE_TOOLS)).toBe(true);
+  });
+
+  it("short message 'tu tienes Gdrive' inherits scope via length (<80)", () => {
+    const tools = scope("tu tienes Gdrive. Escribelo ahi y me lo compartes", [
+      "Consolida el documento de investigación",
+    ]);
+    // 49 chars — under 80 threshold, inherits from prior
+    expect(tools.length).toBeGreaterThan(CORE_TOOLS.length + MISC_TOOLS.length);
+  });
+
+  it("referential phrase 'el primero que' inherits scope on long message", () => {
+    const tools = scope(
+      "El primero que realizaste lo hiciste el miércoles. Ese está bien. Quiero el resumen del de hoy.",
+      ["Lee el journal de COMMIT y busca la consolidación"],
+    );
+    // 95 chars but "el primero que" triggers referential inheritance
+    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+  });
+
+  it("referential phrase 'lo que te pedí' inherits scope", () => {
+    const tools = scope("lo que te pedí sobre los correos", [
+      "Busca en mi gmail los correos de ayer",
+    ]);
+    // 31 chars — under threshold, inherits
+    expect(hasAll(tools, GOOGLE_TOOLS)).toBe(true);
+  });
+
+  it("bare 'lo que' without verb context does NOT trigger referential inheritance on long msg", () => {
+    const tools = scope(
+      "lo que pasa es que el clima esta cambiando mucho este año y me preocupa bastante la situación",
+      ["Busca en mi gmail los correos de ayer"],
+    );
+    // 93 chars, "lo que" without "te/me pedí/dije" — should NOT inherit
+    expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
   });
 
   it("long message without scope signals gets core tools only", () => {
