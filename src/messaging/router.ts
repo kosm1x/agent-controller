@@ -190,6 +190,7 @@ function scopeToolsForMessage(
       hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
       hasWordpress: !!process.env.WP_SITES,
       hasMemory: getMemoryService().backend === "hindsight",
+      hasCrm: !!process.env.CRM_API_TOKEN,
     },
   );
 

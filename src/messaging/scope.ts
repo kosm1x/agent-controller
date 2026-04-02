@@ -107,6 +107,9 @@ export const WORDPRESS_TOOLS = [
   "wp_raw_api",
 ];
 
+/** CRM tools — only when sales/pipeline context detected. */
+export const CRM_TOOLS_SCOPE = ["crm_query"];
+
 /** Other utility tools — always included (keep minimal for token budget). */
 export const MISC_TOOLS = [
   "http_fetch",
@@ -257,6 +260,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "wordpress",
   },
   {
+    pattern:
+      /\b(CRM|pipeline|prospectos?|propuestas?|cuota|quotas?|ventas|sales|facturaci[oó]n|billing|descarga|clientes?|cuentas?|accounts?|deals?|revenue|ingresos|comisi[oó]n|equipo\s+(?:de\s+)?ventas|alertas?\s+(?:de\s+)?(?:ventas|CRM|pipeline)|vp.?glance|executive\s+(?:view|summary|dashboard))/i,
+    group: "crm",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -273,6 +281,7 @@ export interface ScopeOptions {
   hasGoogle: boolean;
   hasWordpress: boolean;
   hasMemory: boolean;
+  hasCrm: boolean;
 }
 
 /**
@@ -345,6 +354,7 @@ export function scopeToolsForMessage(
     activeGroups.add("browser");
     activeGroups.add("coding");
     activeGroups.add("wordpress");
+    activeGroups.add("crm");
   }
 
   // COMMIT write + destructive — load when any COMMIT context is present.
@@ -377,6 +387,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("coding")) {
     tools.push(...CODING_TOOLS);
+  }
+  if (activeGroups.has("crm") && options.hasCrm) {
+    tools.push(...CRM_TOOLS_SCOPE);
   }
   if (activeGroups.has("wordpress") && options.hasWordpress) {
     tools.push(...WORDPRESS_TOOLS);

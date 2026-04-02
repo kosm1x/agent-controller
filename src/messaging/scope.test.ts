@@ -20,6 +20,7 @@ import {
   SPECIALTY_TOOLS,
   SCHEDULE_TOOLS,
   MISC_TOOLS,
+  CRM_TOOLS_SCOPE,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -27,6 +28,7 @@ const ALL_ON: ScopeOptions = {
   hasGoogle: true,
   hasWordpress: true,
   hasMemory: true,
+  hasCrm: true,
 };
 
 function scope(msg: string, prior: string[] = [], options = ALL_ON): string[] {
@@ -102,6 +104,18 @@ describe("scope pattern matching", () => {
   it("research activates on .pdf file reference", () => {
     const tools = scope("Analiza el archivo reporte.pdf");
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
+  });
+
+  it("crm activates on pipeline/ventas/cuota keywords", () => {
+    expect(scope("Cómo va el pipeline de ventas?")).toContain("crm_query");
+    expect(scope("Dame la cuota de esta semana")).toContain("crm_query");
+    expect(scope("Quiero ver los prospectos activos")).toContain("crm_query");
+    expect(scope("Executive dashboard please")).toContain("crm_query");
+  });
+
+  it("crm does NOT activate on unrelated messages", () => {
+    expect(scope("Crea una tarea en COMMIT")).not.toContain("crm_query");
+    expect(scope("Busca en mi gmail")).not.toContain("crm_query");
   });
 
   it("commit_destructive activates on delete/remove keywords", () => {

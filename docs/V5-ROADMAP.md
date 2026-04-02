@@ -100,16 +100,18 @@
 
 ---
 
-## v5.0 S4 — A2A Mesh (Theme 5) (~3.5h)
+## v5.0 S4 — CRM Integration (~2h)
 
-| Item                                                                    | Source   | Effort | Status  |
-| ----------------------------------------------------------------------- | -------- | ------ | ------- |
-| CRM `/a2a` endpoint (reuses existing inference adapter + tool executor) | v4 carry | 1.5h   | Planned |
-| Jarvis `crm_query` tool                                                 | —        | 1h     | Planned |
-| Scope patterns for CRM keywords                                         | —        | 0.5h   | Planned |
-| API key authentication                                                  | —        | 0.5h   | Planned |
+> **Pivot from A2A protocol:** The CRM already has REST endpoints on port 3000 with JWT auth. A direct HTTP tool is simpler and sufficient — no A2A protocol overhead needed. Full bidirectional A2A deferred until CRM needs to initiate tasks on Jarvis.
 
-**Exit criteria:** User asks Jarvis about CRM pipeline → A2A delegation → CRM agent runs → result flows back → Telegram response.
+| Item                                                                                   | Source   | Effort | Status   |
+| -------------------------------------------------------------------------------------- | -------- | ------ | -------- |
+| `crm_query` builtin tool (#139) — queries 7 CRM REST endpoints with VP-level JWT       | v4 carry | 1h     | **Done** |
+| "crm" scope group — pipeline/cuota/ventas/prospectos/facturación keywords              | —        | 0.5h   | **Done** |
+| `hasCrm` scope gate — conditional on CRM_API_TOKEN env var (matches Google/WP pattern) | QA audit | Incl.  | **Done** |
+| QA audit fixes: fresh token per call (not module-level), non-JSON response guard       | QA       | Incl.  | **Done** |
+
+**Exit criteria:** User asks Jarvis "cómo va el pipeline?" → crm_query(vp-glance) → real-time CRM data in Telegram response.
 
 ---
 

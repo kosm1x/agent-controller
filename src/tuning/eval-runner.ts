@@ -93,6 +93,7 @@ async function evalToolSelection(
       hasGoogle: true,
       hasWordpress: true,
       hasMemory: false,
+      hasCrm: true,
     },
   );
 
