@@ -40,8 +40,6 @@ import { McpToolSource } from "./tools/sources/mcp.js";
 import { GoogleToolSource } from "./tools/sources/google.js";
 import { MemoryToolSource } from "./tools/sources/memory.js";
 import { SkillsToolSource } from "./tools/sources/skills.js";
-import { CommitToolSource } from "./tools/sources/commit.js";
-
 // Runner registration (side-effect imports)
 import "./runners/fast-runner.js";
 import "./runners/heavy-runner.js";
@@ -104,7 +102,6 @@ async function main(): Promise<void> {
   // Initialize tool sources (plugin system)
   const sourceManager = new ToolSourceManager();
   sourceManager.addSource(new BuiltinToolSource());
-  sourceManager.addSource(new CommitToolSource());
   sourceManager.addSource(new McpToolSource());
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN) {
     sourceManager.addSource(new GoogleToolSource());

@@ -43,8 +43,8 @@ describe("detectToolFlags", () => {
     expect(flags.hasGoogle).toBe(true);
   });
 
-  it("detects commit tools by prefix", () => {
-    const flags = detectToolFlags(["commit__list_tasks"]);
+  it("detects NorthStar via jarvis_file_read", () => {
+    const flags = detectToolFlags(["jarvis_file_read"]);
     expect(flags.hasCommit).toBe(true);
   });
 
@@ -82,11 +82,10 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("Jarvis");
   });
 
-  it("commitSection mentions COMMIT and journal rules", () => {
+  it("commitSection mentions NorthStar and jarvis files", () => {
     const s = commitSection();
-    expect(s).toContain("COMMIT");
-    expect(s).toContain("diario");
-    expect(s).toContain("commit__create_suggestion");
+    expect(s).toContain("NorthStar");
+    expect(s).toContain("jarvis_file_read");
   });
 
   it("capabilitiesSection includes Google when flag set", () => {

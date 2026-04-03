@@ -148,9 +148,9 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("web_search");
       expect(call.tools).toContain("web_read");
       expect(call.tools).toContain("skill_list");
-      // COMMIT read tools are always-on (moved to CORE_TOOLS)
-      expect(call.tools).toContain("commit__get_daily_snapshot");
-      expect(call.tools).toContain("commit__list_tasks");
+      // Jarvis file tools always-on (NorthStar visions live here)
+      expect(call.tools).toContain("jarvis_file_read");
+      expect(call.tools).toContain("jarvis_file_list");
       // Misc always present
       expect(call.tools).toContain("http_fetch");
       // Specialty tools now keyword-gated
@@ -166,10 +166,9 @@ describe("MessageRouter", () => {
       // Should NOT include heavy groups for a simple greeting
       expect(call.tools).not.toContain("shell_exec");
       expect(call.tools).not.toContain("gmail_send");
-      expect(call.tools).not.toContain("commit__create_task");
     });
 
-    it("should activate COMMIT write + coding tools when keywords present", async () => {
+    it("should activate coding tools when keywords present", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
         from: "owner@s.whatsapp.net",
@@ -180,9 +179,6 @@ describe("MessageRouter", () => {
       await router.handleInbound(msg);
 
       const call = (submitTask as any).mock.calls[0][0];
-      // COMMIT write tools activated by "crea una tarea"
-      expect(call.tools).toContain("commit__create_task");
-      expect(call.tools).toContain("commit__update_task");
       // Coding tools activated by "deploy" and "servidor"
       expect(call.tools).toContain("shell_exec");
       expect(call.tools).toContain("file_read");

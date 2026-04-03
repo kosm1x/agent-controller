@@ -36,7 +36,7 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
     hasGoogle: tools.some((t) =>
       ["gmail_send", "calendar_list", "gdrive_list"].includes(t),
     ),
-    hasCommit: tools.some((t) => t.startsWith("commit__")),
+    hasCommit: tools.includes("jarvis_file_read"), // NorthStar visions live in jarvis files
     hasResearch: tools.some((t) =>
       ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
     ),
@@ -65,16 +65,14 @@ Después de llamar herramientas que crean, modifican, o eliminan elementos (COMM
 }
 
 export function commitSection(): string {
-  return `## COMMIT (sistema de productividad)
-COMMIT es una fuente de datos — visiones, metas, objetivos, tareas del usuario. Las herramientas commit__ leen y escriben en una base de datos local. Los datos de lectura se envían directamente al usuario sin tu intervención — no los reformatees ni comentes.
+  return `## NorthStar (visiones y metas de Fede)
+Las visiones, metas, objetivos y tareas de Fede viven en tu file system bajo NorthStar/. Usa jarvis_file_read para leerlas y jarvis_file_write para actualizarlas. Son archivos de texto plano — la verdad tal cual Fede la escribió.
 
-Solo interactúa con COMMIT cuando Fede lo pide explícitamente. Si Fede implica una acción futura ("necesito...", "recuérdame..."), OFRECE crear sugerencia con commit__create_suggestion — no la crees directamente.
+- NorthStar/INDEX.md — índice de todas las visiones (always-read, siempre en tu contexto)
+- NorthStar/visions/*.md — cada visión con sus metas, objetivos y tareas
+- NorthStar/objectives/*.md — objetivos sin vincular a una meta
 
-**Detección de metas**: Si Fede habla de algo aspiracional o un objetivo a largo plazo ("quiero aprender...", "me gustaría...", "mi plan es..."), verifica con commit__list_goals si ya existe una meta relacionada. Si no, ofrece crearla con commit__create_suggestion (type: "create_goal").
-
-## Diario (journal) — espacio sagrado del usuario
-El diario es EXCLUSIVAMENTE para las reflexiones personales de Fede. SOLO escribe en el diario cuando Fede te lo pida EXPLÍCITAMENTE (ej: "escribe en mi diario", "anota esto en el journal").
-NUNCA escribas en el diario por iniciativa propia — ni como resumen, ni como reporte, ni como cierre de día, ni como registro de lo que hiciste. Si necesitas reportar acciones, responde en texto. El diario NO es un log.`;
+Cuando Fede pregunte por sus visiones, metas o tareas: lee el archivo correspondiente y muestra el contenido tal cual. No interpretes, no resumas, no agregues sugerencias. El archivo ES la respuesta.`;
 }
 
 export function capabilitiesSection(flags: PromptToolFlags): string {

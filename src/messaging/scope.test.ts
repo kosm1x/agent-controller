@@ -125,17 +125,10 @@ describe("scope pattern matching", () => {
     expect(scope("Busca en mi gmail")).not.toContain("crm_query");
   });
 
-  it("commit_destructive activates on delete/remove keywords", () => {
-    const tools = scope("Elimina esa tarea");
-    expect(tools).toContain("commit__delete_item");
-  });
-
-  it("commit__delete_item visible when any COMMIT scope is active", () => {
-    // delete_item should be visible whenever COMMIT context is present,
-    // not only when explicit delete/remove keywords are used.
-    // The execution-time lock is the real safety gate.
-    const tools = scope("Lista mis tareas de COMMIT");
-    expect(tools).toContain("commit__delete_item");
+  it("jarvis file tools always present in core", () => {
+    const tools = scope("Lista mis visiones");
+    expect(tools).toContain("jarvis_file_read");
+    expect(tools).toContain("jarvis_file_list");
   });
 
   it("schedule activates on schedule/reporte/programad keywords", () => {
@@ -147,22 +140,18 @@ describe("scope pattern matching", () => {
     const tools = scope(
       "Vuelve a hacer el autodiagnostico y lista todas las tools",
     );
-    expect(tools).toContain("commit__list_tasks");
-    expect(tools).toContain("commit__delete_item");
-    expect(tools).toContain("commit__update_task");
     expect(tools).toContain("schedule_task");
     expect(hasAll(tools, CODING_TOOLS)).toBe(true);
   });
 
   it("meta scope activates on 'herramientas disponibles'", () => {
     const tools = scope("Cuáles herramientas disponibles tienes?");
-    expect(tools).toContain("commit__list_tasks");
-    expect(tools).toContain("commit__update_task");
+    expect(tools).toContain("jarvis_file_read");
   });
 
   it("meta scope activates on 'nivel operativo'", () => {
     const tools = scope("Dame un auto-diagnostico de tu nivel operativo");
-    expect(tools).toContain("commit__list_tasks");
+    expect(tools).toContain("jarvis_file_read");
   });
 
   it("no false positives on casual Spanish conversation", () => {
@@ -214,10 +203,10 @@ describe("commit_write sub-patterns", () => {
 // commit_journal — separate scope group
 // ---------------------------------------------------------------------------
 
-describe("commit_journal scope", () => {
-  it("activates on 'escribe en mi diario'", () => {
+describe("journal scope (retired — now jarvis files)", () => {
+  it("journal keyword still routes through tools pipeline", () => {
     const tools = scope("Escribe en mi diario lo que pasó hoy");
-    expect(tools).toContain("commit__create_journal");
+    expect(tools).toContain("jarvis_file_write");
   });
 });
 
@@ -361,7 +350,6 @@ describe("meta scope completeness", () => {
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
     expect(hasAll(tools, CODING_TOOLS)).toBe(true);
-    expect(tools).toContain("commit__delete_item");
   });
 });
 

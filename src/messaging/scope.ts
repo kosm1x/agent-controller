@@ -11,18 +11,13 @@ import type { ScopePattern } from "../tuning/types.js";
 // Tool groups — organized for dynamic scoping
 // ---------------------------------------------------------------------------
 
-/** COMMIT read tools — always-on (included in CORE_TOOLS) so Jarvis can answer
- *  "qué pendientes tengo?" without requiring COMMIT keywords. ~1,750 tokens.
- *  Named constant kept for scope logic and case-miner reverse mapping. */
-export const COMMIT_READ_TOOLS = [
-  "commit__get_daily_snapshot",
-  "commit__get_hierarchy",
-  "commit__list_tasks",
-  "commit__list_goals",
-  "commit__list_objectives",
-  "commit__search_journal",
-  "commit__list_ideas",
-];
+/** COMMIT tool arrays — RETIRED. Visions/goals/objectives/tasks now live
+ *  as plain text in Jarvis file system under NorthStar/. Jarvis reads them
+ *  with jarvis_file_read like any other file. No special tools needed. */
+export const COMMIT_READ_TOOLS: string[] = [];
+export const COMMIT_WRITE_TOOLS: string[] = [];
+export const COMMIT_JOURNAL_TOOLS: string[] = [];
+export const COMMIT_DESTRUCTIVE_TOOLS: string[] = [];
 
 /** Always included: essential tools for every conversation. */
 export const CORE_TOOLS = [
@@ -36,30 +31,9 @@ export const CORE_TOOLS = [
   "skill_list",
   "file_read", // Always available — reads .txt, .docx, downloaded attachments
   "task_history", // Always available — LLM can query its own past executions
-  ...COMMIT_READ_TOOLS,
+  "jarvis_file_read", // NorthStar visions/goals live here
+  "jarvis_file_list", // List files in Jarvis file system
 ];
-
-/** COMMIT write tools — only when productivity management is the topic. */
-export const COMMIT_WRITE_TOOLS = [
-  "commit__update_status",
-  "commit__complete_recurring",
-  "commit__create_task",
-  "commit__create_goal",
-  "commit__create_objective",
-  "commit__create_vision",
-  "commit__update_task",
-  "commit__update_objective",
-  "commit__update_goal",
-  "commit__update_vision",
-  "commit__bulk_reprioritize",
-  "commit__create_suggestion",
-];
-
-/** COMMIT journal — only when user explicitly asks to write a journal entry. */
-export const COMMIT_JOURNAL_TOOLS = ["commit__create_journal"];
-
-/** Destructive COMMIT tools — only on explicit deletion keywords. */
-export const COMMIT_DESTRUCTIVE_TOOLS = ["commit__delete_item"];
 
 /** Scheduling tools — only when reports/automation discussed. */
 export const SCHEDULE_TOOLS = ["schedule_task", "delete_schedule"];
