@@ -233,19 +233,20 @@ export function listFiles(filters?: {
 // Seed — called from initDatabase() on first boot
 // ---------------------------------------------------------------------------
 
-/** Create DIRECTIVES.md if it doesn't exist. Idempotent. */
+/** Create seed files if they don't exist. Idempotent. */
 export function seedDirectives(): void {
   try {
     const db = getDatabase();
-    const exists = db
+
+    // DIRECTIVES.md — core persona and SOPs
+    const directivesExist = db
       .prepare("SELECT 1 FROM jarvis_files WHERE path = 'DIRECTIVES.md'")
       .get();
-    if (exists) return;
-
-    upsertFile(
-      "DIRECTIVES.md",
-      "Jarvis Core Directives",
-      `# Jarvis Core Directives
+    if (!directivesExist) {
+      upsertFile(
+        "DIRECTIVES.md",
+        "Jarvis Core Directives",
+        `# Jarvis Core Directives
 
 ## Persona
 Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en español mexicano, conciso y orientado a la acción.
@@ -256,10 +257,50 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
 3. **Usa tu sistema de archivos.** Lee DIRECTIVES.md y archivos relevantes antes de actuar.
 4. **Reporta limitaciones.** Si algo falló, dilo. No encubras errores.
 5. **Actualiza tu conocimiento.** Cuando aprendas algo nuevo, guárdalo con jarvis_file_write.`,
-      ["directive", "persona", "sop"],
-      "enforce",
-      0,
-    );
+        ["directive", "persona", "sop"],
+        "enforce",
+        0,
+      );
+    }
+
+    // context-management.md — context pressure awareness SOP
+    const ctxExists = db
+      .prepare(
+        "SELECT 1 FROM jarvis_files WHERE path = 'sop/context-management.md'",
+      )
+      .get();
+    if (!ctxExists) {
+      upsertFile(
+        "sop/context-management.md",
+        "Context Management SOP",
+        `# Gestión de Contexto
+
+## Presión de Contexto
+El sistema monitorea automáticamente el uso de tu ventana de contexto. Cuando recibes un aviso \`[CONTEXT ADVISORY]\`, significa que la conversación está usando >70% de la capacidad disponible.
+
+## Qué hacer cuando recibes el aviso
+1. **Sé más conciso.** Respuestas cortas y directas.
+2. **En modo chat**, informa al usuario: "La conversación se está alargando. Para solicitudes complejas, te recomiendo enviar un nuevo mensaje."
+3. **Prioriza la acción sobre la explicación.** Ejecuta tools en vez de describir lo que harías.
+4. **No repitas información** que ya dijiste en turnos anteriores.
+
+## Compactación automática
+Si la presión sube a ~85%, el sistema compactará automáticamente:
+- L0: Trunca resultados viejos de herramientas
+- L1: Elimina pares antiguos de tool calls
+- L2: Resumen LLM de la conversación media
+- L3 (emergencia): Truncación determinista
+
+Después de una compactación, el contexto anterior se resume. Los datos clave se preservan pero los detalles se pierden. Trabaja con lo disponible.
+
+## Buenas prácticas
+- Si una tarea requiere muchos rounds, usa \`jarvis_file_write\` para persistir hallazgos intermedios antes de que se compacten.
+- Guarda conclusiones, no datos crudos. Los datos se pueden recuperar; las conclusiones no.`,
+        ["directive", "sop", "context"],
+        "always-read",
+        5,
+      );
+    }
   } catch {
     // DB may not have the table yet on very first init
   }

@@ -84,6 +84,13 @@ export const DOOM_JACCARD_WINDOW = int("DOOM_JACCARD_WINDOW", 4);
 /** Number of recent call signatures to keep for cycle detection. */
 export const DOOM_CYCLE_HISTORY = int("DOOM_CYCLE_HISTORY", 6);
 
+// --- Context pressure ---
+/** Fraction of context window that triggers a soft advisory (0-1). */
+export const CONTEXT_PRESSURE_ADVISORY = float(
+  "CONTEXT_PRESSURE_ADVISORY",
+  0.7,
+);
+
 // --- Compaction pipeline ---
 /** Max chars for tool result content after L0 truncation. */
 export const COMPACTION_L0_TRUNCATE_CHARS = int(

@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-01
+> Last updated: 2026-04-03
 
 ## Overview
 
@@ -14,7 +14,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source files  | 194                                                                                                                                                                                                            |
 | Test files    | 84                                                                                                                                                                                                             |
-| Tests passing | 1031                                                                                                                                                                                                           |
+| Tests passing | 1036                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
 | Total tools   | 145 (52 builtin + 10 WP + 73 MCP [22 COMMIT + 10 browser + 21 playwright + 20 other] + 15 Google + 3 memory + 2 skill)                                                                                         |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
@@ -89,6 +89,8 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Scope fixes | Follow-up inheritance threshold 50→80 chars. Tightened referential phrases (require verb context to avoid false-positive on new topics). PDF direct trigger for research scope ("lee este PDF", ".pdf"). QA audit: bare "lo que" no longer triggers inheritance. 7 new scope tests. 1017 tests | Done | `db0515d` |
 | v5.0 S4 | CRM integration — crm_query builtin tool (#139) queries CRM REST API (pipeline, cuota, descarga, actividades, equipo, alertas, vp-glance). VP-level JWT auth. Conditional registration (CRM_API_TOKEN). hasCrm scope gate. "crm" scope group for sales/pipeline keywords. QA audit: fresh token per call, non-JSON guard, scope env gate. 2 new scope tests. 1019 tests | Done | `5a3987c` |
 | Jarvis File System | Internal knowledge base — jarvis_files SQLite table with tags, qualifiers (enforce/always-read/conditional/reference/workspace), priority ordering, related_to chains. 6 new tools (#140-145): jarvis_file_read/write/update/list/delete + jarvis_init. Auto-injection in fast-runner (8K char budget). Filesystem mirror at data/jarvis/. Auto-persist + compaction summaries write to jarvis_files. Restructured to Layer 0 (src/db/jarvis-fs.ts) — seedDirectives on boot. QA: updateMetadata extracted, no raw DB in tools. 12 new tests. 1031 tests, 145 tools | Done | `97d89af` |
+| CRM ↔ Jarvis | Bidirectional integration — POST /api/jarvis-pull endpoint for CRM agents to request analysis. Role-based depth (AE: 3 bullets/300 tokens, VP: full/2000 tokens). CRM persona templates updated with mandatory flow (doc link first, commentary separate). QA: JSON parse guard, fresh token per call | Done | `e6c19c5` |
+| Context Pressure Awareness | Jarvis self-aware of context window usage — estimateTokens() extracted, advisory injected at 70% capacity, compaction metadata (level + removedCount) in inference return type. always-read SOP teaches Jarvis to warn users and be concise. /compact-jarvis Claude Code skill. QA: division-by-zero guard, always-read budget exemption, 5 new estimateTokens tests. 1036 tests | Done | — |
 
 ## v5.0 — Scalability + New Capabilities
 

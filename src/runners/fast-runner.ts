@@ -69,9 +69,10 @@ function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
       const section = `### ${prefix}${f.title}\n${f.content}`;
 
-      // Hard budget cap — enforce files always included, others fill remaining
+      // Hard budget cap — enforce + always-read guaranteed, others fill remaining
       if (
         f.qualifier !== "enforce" &&
+        f.qualifier !== "always-read" &&
         totalChars + section.length > KB_CHAR_BUDGET
       ) {
         continue;
@@ -790,6 +791,10 @@ export const fastRunner: Runner = {
           exitReason: result.exitReason,
           roundsCompleted: result.roundsCompleted,
           maxRounds,
+          contextPressure: result.contextPressure,
+          ...(result.compactionApplied && {
+            compactionApplied: result.compactionApplied,
+          }),
         },
         toolCalls: toolsCalled,
         tokenUsage: {

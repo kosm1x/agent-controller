@@ -22,14 +22,10 @@ export const SUMMARY_PREFIX = "[CONTEXT SUMMARY]";
 // ---------------------------------------------------------------------------
 
 /**
- * Rough token estimate: chars / 4. Returns true if messages exceed
- * `threshold` fraction of `contextLimit`.
+ * Rough token estimate: chars / 4.
+ * Extracted for reuse in context pressure calculations.
  */
-export function shouldCompress(
-  messages: ChatMessage[],
-  contextLimit: number,
-  threshold = 0.85,
-): boolean {
+export function estimateTokens(messages: ChatMessage[]): number {
   let totalChars = 0;
   for (const msg of messages) {
     if (typeof msg.content === "string") {
@@ -41,8 +37,18 @@ export function shouldCompress(
       totalChars += JSON.stringify(msg.tool_calls).length;
     }
   }
-  const estimatedTokens = totalChars / 4;
-  return estimatedTokens > contextLimit * threshold;
+  return totalChars / 4;
+}
+
+/**
+ * Returns true if messages exceed `threshold` fraction of `contextLimit`.
+ */
+export function shouldCompress(
+  messages: ChatMessage[],
+  contextLimit: number,
+  threshold = 0.85,
+): boolean {
+  return estimateTokens(messages) > contextLimit * threshold;
 }
 
 /**

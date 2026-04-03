@@ -17,8 +17,13 @@ import { getConfig } from "../config.js";
 import { evictToFile, hasEvictedPath } from "../lib/eviction.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
 import { toolRegistry } from "../tools/registry.js";
-import { shouldCompress } from "../prometheus/context-compressor.js";
+import {
+  shouldCompress,
+  estimateTokens,
+} from "../prometheus/context-compressor.js";
 import { compactConversation } from "../prometheus/compaction-pipeline.js";
+import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
+import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
 import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
 import type { RoundData } from "./doom-loop.js";
@@ -865,6 +870,8 @@ export async function inferWithTools(
   toolRepairs: Array<{ original: string; repaired: string }>;
   exitReason: string;
   roundsCompleted: number;
+  contextPressure: number;
+  compactionApplied?: { level: CompactionLevel; removedCount: number };
 }> {
   const maxRounds = options?.maxRounds ?? 10;
   const onTextChunk = options?.onTextChunk;
@@ -903,6 +910,13 @@ export async function inferWithTools(
   const escalationState = createEscalationState();
   let activeProvider = providerName; // mutable for Level 2 model escalation
 
+  // v5 context pressure awareness
+  let contextPressure = 0;
+  let advisorySent = false;
+  let compactionApplied:
+    | { level: CompactionLevel; removedCount: number }
+    | undefined;
+
   // Track which tools have been called across rounds, so the analysis
   // paralysis guard can distinguish "gathering data before acting" from
   // "endlessly exploring without acting".
@@ -917,8 +931,32 @@ export async function inferWithTools(
     // Nudges and advisories from prior rounds should not leak into replay.
     if (round > 0) stripStaleSignals(conversation);
 
-    // Compress context if approaching limit (multi-level pipeline)
+    // Context pressure awareness — compute before compaction check
     const config = getConfig();
+    const tokens = estimateTokens(conversation);
+    contextPressure =
+      config.inferenceContextLimit > 0
+        ? Math.min(tokens / config.inferenceContextLimit, 1)
+        : 1;
+
+    // Inject advisory when pressure crosses soft threshold (once per session)
+    if (contextPressure >= CONTEXT_PRESSURE_ADVISORY && !advisorySent) {
+      advisorySent = true;
+      const pct = Math.round(contextPressure * 100);
+      conversation.push({
+        role: "system",
+        content:
+          `[CONTEXT ADVISORY] Conversation is at ~${pct}% capacity. ` +
+          `Be concise in remaining responses. Wrap up multi-step work efficiently. ` +
+          `If in a chat conversation, inform the user that context is getting long ` +
+          `and suggest continuing complex requests in a new message.`,
+      });
+      console.log(
+        `[inference] Context pressure advisory at round ${round}: ${pct}%`,
+      );
+    }
+
+    // Compress context if approaching limit (multi-level pipeline)
     if (
       shouldCompress(
         conversation,
@@ -936,6 +974,18 @@ export async function inferWithTools(
         `[inference] Compaction ${compactionResult.level} at round ${round} (${conversation.length} → ${compactionResult.messages.length} messages, removed ${compactionResult.removedCount})`,
       );
       conversation = compactionResult.messages;
+      compactionApplied = {
+        level: compactionResult.level,
+        removedCount: compactionResult.removedCount,
+      };
+      // Recalculate pressure after compaction
+      contextPressure =
+        config.inferenceContextLimit > 0
+          ? Math.min(
+              estimateTokens(conversation) / config.inferenceContextLimit,
+              1,
+            )
+          : 1;
     }
 
     // Check abort before each round
@@ -956,6 +1006,8 @@ export async function inferWithTools(
         toolRepairs,
         exitReason: "aborted",
         roundsCompleted: round,
+        contextPressure,
+        compactionApplied,
       };
     }
 
@@ -1030,6 +1082,8 @@ export async function inferWithTools(
           toolRepairs,
           exitReason: "provider_failure",
           roundsCompleted: round,
+          contextPressure,
+          compactionApplied,
         };
       } catch {
         // Wrap-up also failed — propagate original error
@@ -1114,6 +1168,8 @@ export async function inferWithTools(
         toolRepairs,
         exitReason: "natural",
         roundsCompleted: round + 1,
+        contextPressure,
+        compactionApplied,
       };
     }
 
@@ -1443,6 +1499,8 @@ Provide your final response based ONLY on actual tool results. Do not request an
       toolRepairs,
       exitReason,
       roundsCompleted: maxRounds,
+      contextPressure,
+      compactionApplied,
     };
   } catch {
     // Wrap-up call failed — fall back to last assistant content
@@ -1462,6 +1520,8 @@ Provide your final response based ONLY on actual tool results. Do not request an
       toolRepairs,
       exitReason: "wrapup_failed",
       roundsCompleted: maxRounds,
+      contextPressure,
+      compactionApplied,
     };
   }
 }

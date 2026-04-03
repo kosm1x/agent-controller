@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-02 — S1a, S1b, S2 complete. Scope fixes shipped.
+> Last updated: 2026-04-03 — S1a, S1b, S2, S4 complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure awareness done.
 
 ## Status Key
 
@@ -115,6 +115,19 @@
 
 ---
 
+## Post-S4: CRM Bidirectional + Jarvis File System + Context Pressure
+
+| Item                                                                                         | Source       | Effort | Status   |
+| -------------------------------------------------------------------------------------------- | ------------ | ------ | -------- |
+| POST /api/jarvis-pull — CRM agents request Jarvis analysis, role-based depth control         | prod design  | 2h     | **Done** |
+| CRM persona templates — mandatory Jarvis flow (doc link first, commentary separate)          | UX review    | 1h     | **Done** |
+| Jarvis File System — Layer 0 infrastructure (src/db/jarvis-fs.ts), 6 tools, auto-injection   | architecture | 1d     | **Done** |
+| Context pressure awareness — advisory at 70%, compaction metadata in return type, SOP seeded | Claude Code  | 2h     | **Done** |
+| `always-read` budget exemption — enforce + always-read files bypass KB char budget           | QA audit     | Incl.  | **Done** |
+| QA: division-by-zero guard, estimateTokens extraction + 5 tests, mock updates                | QA           | Incl.  | **Done** |
+
+---
+
 ## v5.0 S5 — Classifier Calibration (~1d)
 
 | Item                                                                | Source   | Effort | Status  |
@@ -197,22 +210,23 @@
 
 ## Metrics
 
-| Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                     |
-| ------------------- | ------------------------- | ---------------------------------------- | ------------------------------- |
-| Tests               | 903                       | 1017                                     | ~1,200+                         |
-| Test files          | 74                        | 83                                       | ~90+                            |
-| Tools               | 137                       | 138                                      | ~150 (+video, intel, CRM query) |
-| Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                            |
-| Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                            |
-| Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                            |
-| Compaction          | Single-level PRESERVE+ADD | 4-level (prune→pair→LLM→deterministic)   | Done                            |
-| Spending controls   | Per-round only            | Three-window (hourly/daily/monthly)      | Done                            |
-| Scope method        | Keyword regex             | Keyword regex (92%+ accuracy, tightened) | Embeddings deferred to v6       |
-| Concurrent tasks    | Unsafe (shared state)     | Safe (per-task context)                  | Done                            |
-| Task introspection  | None                      | task_history tool                        | Done                            |
-| CRM integration     | None                      | —                                        | A2A bidirectional (S4)          |
-| Knowledge maps      | None                      | —                                        | SQLite, breadth-first (S5b)     |
-| Research provenance | None                      | —                                        | Per-task audit trail (S5c)      |
-| Video production    | None                      | —                                        | On-demand via Telegram (S5d)    |
-| Signal sources      | 0 (manual)                | —                                        | 25+ automated (S6–S8)           |
-| QA audits           | 6 (v4)                    | 10 (v5)                                  | Continuing                      |
+| Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
+| ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
+| Tests               | 903                       | 1036                                     | ~1,200+                      |
+| Test files          | 74                        | 84                                       | ~90+                         |
+| Tools               | 137                       | 145                                      | ~150 (+video, intel)         |
+| Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
+| Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
+| Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |
+| Compaction          | Single-level PRESERVE+ADD | 4-level (prune→pair→LLM→deterministic)   | Done                         |
+| Spending controls   | Per-round only            | Three-window (hourly/daily/monthly)      | Done                         |
+| Scope method        | Keyword regex             | Keyword regex (92%+ accuracy, tightened) | Embeddings deferred to v6    |
+| Concurrent tasks    | Unsafe (shared state)     | Safe (per-task context)                  | Done                         |
+| Task introspection  | None                      | task_history tool                        | Done                         |
+| CRM integration     | None                      | REST + jarvis-pull (bidirectional)       | Done                         |
+| Knowledge maps      | None                      | —                                        | SQLite, breadth-first (S5b)  |
+| Research provenance | None                      | —                                        | Per-task audit trail (S5c)   |
+| Video production    | None                      | —                                        | On-demand via Telegram (S5d) |
+| Signal sources      | 0 (manual)                | —                                        | 25+ automated (S6–S8)        |
+| Context awareness   | None                      | Advisory at 70%, metadata in output      | Done                         |
+| QA audits           | 6 (v4)                    | 11 (v5)                                  | Continuing                   |

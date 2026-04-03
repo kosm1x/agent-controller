@@ -11,6 +11,7 @@ vi.mock("../inference/adapter.js", () => ({
 
 import {
   shouldCompress,
+  estimateTokens,
   compress,
   sanitizeToolPairs,
   SUMMARY_PREFIX,
@@ -21,6 +22,51 @@ const mockInfer = vi.mocked(infer);
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("estimateTokens", () => {
+  it("should return 0 for empty array", () => {
+    expect(estimateTokens([])).toBe(0);
+  });
+
+  it("should estimate string content as chars / 4", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "x".repeat(400) },
+    ];
+    expect(estimateTokens(messages)).toBe(100);
+  });
+
+  it("should count array content (multimodal)", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hello" }] as unknown as string,
+      },
+    ];
+    expect(estimateTokens(messages)).toBeGreaterThan(0);
+  });
+
+  it("should count tool_calls", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "tc-1",
+            type: "function",
+            function: { name: "test", arguments: "x".repeat(400) },
+          },
+        ],
+      },
+    ];
+    expect(estimateTokens(messages)).toBeGreaterThan(100);
+  });
+
+  it("should handle null content gracefully", () => {
+    const messages: ChatMessage[] = [{ role: "assistant", content: null }];
+    expect(estimateTokens(messages)).toBe(0);
+  });
 });
 
 describe("shouldCompress", () => {

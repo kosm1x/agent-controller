@@ -38,6 +38,7 @@ vi.mock("../tools/registry.js", () => ({
 vi.mock("../prometheus/context-compressor.js", () => ({
   shouldCompress: vi.fn(() => false),
   compress: vi.fn((msgs: unknown[]) => msgs),
+  estimateTokens: vi.fn(() => 0),
 }));
 
 import {
