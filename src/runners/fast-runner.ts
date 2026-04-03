@@ -324,7 +324,18 @@ export function detectsHallucinatedExecution(
         userMessage,
       )
     : false;
-  if (!calledAnyWriteTool && toolsCalled.length > 0 && !isVerificationRequest) {
+  // Read/list/query requests: the LLM is reporting DB state, not claiming writes
+  const isReadRequest = userMessage
+    ? /\b(lista|listar|list|cu[aá]les|muestra|mostrar|show|dame|dime|qu[eé]\s+(hay|tareas?|metas?|objetivos?|visio)|report[ae]|describe|consulta|status|estado)\b/i.test(
+        userMessage,
+      )
+    : false;
+  if (
+    !calledAnyWriteTool &&
+    toolsCalled.length > 0 &&
+    !isVerificationRequest &&
+    !isReadRequest
+  ) {
     const claimsAction =
       // First-person past tense (always hallucination)
       /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué)\s/i.test(

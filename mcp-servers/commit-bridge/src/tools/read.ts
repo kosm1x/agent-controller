@@ -59,7 +59,7 @@ export function registerReadTools(server: McpServer): void {
     "get_daily_snapshot",
     {
       description:
-        "Get daily snapshot: pending tasks, recurring status, deadlines, streaks. COMMIT hierarchy: Vision (life direction) > Goal (measurable outcome) > Objective (milestone) > Task (action item). Returns the active vision for context, counts of goals/objectives, and detailed pending tasks. When the user asks about 'goals', report data from the goals count — do NOT present the vision as a goal.",
+        "Get daily snapshot: pending tasks, recurring status, deadlines, streaks. COMMIT hierarchy: Vision (life direction) > Goal (measurable outcome) > Objective (milestone) > Task (action item). Returns the active vision for context, counts of goals/objectives, and detailed pending tasks. When the user asks about 'goals', report data from the goals count — do NOT present the vision as a goal. CRITICAL: Report EXACTLY what the database returns — exact titles, statuses, dates. Never summarize or paraphrase DB data.",
       inputSchema: {
         date: z
           .string()
@@ -216,6 +216,17 @@ export function registerReadTools(server: McpServer): void {
     {
       description: `Get the full COMMIT hierarchy tree: Vision → Goals → Objectives → Tasks (nested JSON).
 
+Returns { visions: [...], orphans?: { unlinked_goals, unlinked_objectives, unlinked_tasks } }.
+The "visions" array contains ONLY real visions from the database.
+The "orphans" object (if present) contains items not linked to a parent — these are NOT visions.
+
+CRITICAL REPORTING RULES:
+- Report EXACTLY what the database returns. Do NOT summarize, paraphrase, or invent data.
+- Use the exact titles, descriptions, statuses, and dates from the JSON response.
+- Include ALL levels: every vision, every goal, every objective, every task.
+- NEVER present orphaned items as visions. Report them separately as "items needing linking."
+- If a field is null or missing, say so — do not guess or fill in.
+
 USE WHEN:
 - Weekly review: full system health scan (orphan goals, stale objectives)
 - Vision alignment checks: are active goals still serving their parent visions?
@@ -301,108 +312,29 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
         children: goalsByVision.get(v.id) ?? [],
       }));
 
-      // Add orphaned goals (no vision) as a virtual root
-      const orphanGoals = goalsByVision.get(null);
-      if (orphanGoals && orphanGoals.length > 0) {
-        tree.push({
-          id: "_unlinked",
-          user_id: uid,
-          title: "Unlinked Goals",
-          description: "Goals not linked to any vision",
-          status: "in_progress",
-          target_date: null,
-          order: 999,
-          created_at: "",
-          updated_at: "",
-          last_edited_at: "",
-          children: orphanGoals,
-        });
-      }
+      // Collect orphaned items into a separate section — NOT as vision-level nodes.
+      // These are virtual grouping containers, not real visions.
+      const orphans: {
+        unlinked_goals: GoalNode[];
+        unlinked_objectives: ObjectiveNode[];
+        unlinked_tasks: TaskRow[];
+      } = {
+        unlinked_goals: goalsByVision.get(null) ?? [],
+        unlinked_objectives: objByGoal.get(null) ?? [],
+        unlinked_tasks: tasksByObjective.get(null) ?? [],
+      };
 
-      // Add orphaned objectives (no goal)
-      const orphanObjectives = objByGoal.get(null);
-      if (orphanObjectives && orphanObjectives.length > 0) {
-        tree.push({
-          id: "_unlinked_objectives",
-          user_id: uid,
-          title: "Unlinked Objectives",
-          description: "Objectives not linked to any goal",
-          status: "in_progress",
-          target_date: null,
-          order: 1000,
-          created_at: "",
-          updated_at: "",
-          last_edited_at: "",
-          children: [
-            {
-              id: "_virtual_goal",
-              user_id: uid,
-              title: "",
-              description: "",
-              status: "in_progress",
-              target_date: null,
-              vision_id: null,
-              order: 0,
-              created_at: "",
-              updated_at: "",
-              last_edited_at: "",
-              children: orphanObjectives,
-            },
-          ],
-        });
-      }
+      const hasOrphans =
+        orphans.unlinked_goals.length > 0 ||
+        orphans.unlinked_objectives.length > 0 ||
+        orphans.unlinked_tasks.length > 0;
 
-      // Add orphaned tasks (no objective)
-      const orphanTasks = tasksByObjective.get(null);
-      if (orphanTasks && orphanTasks.length > 0) {
-        tree.push({
-          id: "_unlinked_tasks",
-          user_id: uid,
-          title: "Unlinked Tasks",
-          description: "Tasks not linked to any objective",
-          status: "in_progress",
-          target_date: null,
-          order: 1001,
-          created_at: "",
-          updated_at: "",
-          last_edited_at: "",
-          children: [
-            {
-              id: "_virtual_goal_tasks",
-              user_id: uid,
-              title: "",
-              description: "",
-              status: "in_progress",
-              target_date: null,
-              vision_id: null,
-              order: 0,
-              created_at: "",
-              updated_at: "",
-              last_edited_at: "",
-              children: [
-                {
-                  id: "_virtual_objective_tasks",
-                  user_id: uid,
-                  goal_id: null,
-                  title: "",
-                  description: "",
-                  status: "in_progress",
-                  priority: "medium",
-                  target_date: null,
-                  order: 0,
-                  created_at: "",
-                  updated_at: "",
-                  last_edited_at: "",
-                  children: orphanTasks,
-                },
-              ],
-            },
-          ],
-        });
-      }
+      const result_obj = hasOrphans
+        ? { visions: tree, orphans }
+        : { visions: tree };
 
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(tree) }],
+        content: [{ type: "text" as const, text: JSON.stringify(result_obj) }],
       };
     },
   );
@@ -482,6 +414,8 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
     "list_goals",
     {
       description: `List GOALS only (not visions, not objectives, not tasks). A goal is a measurable outcome that belongs to a vision. Use this tool when the user asks for 'metas' or 'goals'. Do NOT use get_hierarchy or get_daily_snapshot to answer goal-related questions — this tool returns goals directly with their parent vision title for context.
+
+CRITICAL: Report EXACTLY what the database returns — exact titles, statuses, dates, descriptions. Never summarize, paraphrase, or invent data not present in the response.
 
 ALSO USE FOR LOOKUPS: When you need to create an objective under a goal, call this first to find the goal's UUID by matching its title, then pass that UUID to create_objective's goal_id parameter.`,
       inputSchema: {
