@@ -8,7 +8,7 @@ import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { getConfig } from "./config.js";
-import { initDatabase } from "./db/index.js";
+import { initDatabase, closeDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
 import {
@@ -137,7 +137,7 @@ async function main(): Promise<void> {
   // Create and start HTTP server
   const app = createApp();
 
-  serve(
+  const httpServer = serve(
     {
       fetch: app.fetch,
       port: config.port,
@@ -176,20 +176,43 @@ async function main(): Promise<void> {
     startProactiveScheduler(router);
   }
 
-  // Graceful shutdown
+  // Graceful shutdown — ordered teardown to prevent requests hitting torn-down state
   const shutdown = async () => {
     log.info("shutting down...");
+
+    // 1. Stop accepting new requests
+    httpServer.close();
+
+    // 2. Stop schedulers + collectors
     reactionManager.stop();
     stopIntelCollectors();
     stopDynamicScheduler();
     stopProactiveScheduler();
     stopRitualScheduler();
+
+    // 3. Flush messaging channels
     await shutdownMessaging();
+
+    // 4. Teardown MCP + tool sources
     await sourceManager.teardownAll();
+
+    // 5. WAL checkpoint + close database
+    closeDatabase();
+
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+
+  // Global error handlers — prevent silent crashes
+  process.on("unhandledRejection", (reason) => {
+    log.error({ err: reason }, "unhandled rejection");
+  });
+  process.on("uncaughtException", (err) => {
+    log.fatal({ err }, "uncaught exception — shutting down");
+    closeDatabase();
+    process.exit(1);
+  });
 }
 
 main().catch((err) => {

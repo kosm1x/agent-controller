@@ -2,7 +2,7 @@
  * MCP bridge tests — schema conversion, namespacing, execute routing.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi , afterEach } from "vitest";
 import {
   createMcpTool,
   extractText,
@@ -11,6 +11,7 @@ import {
 } from "./bridge.js";
 
 describe("extractText", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should join text content items", () => {
     const content: McpContentItem[] = [
       { type: "text", text: "Hello" },

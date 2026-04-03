@@ -2,7 +2,7 @@
  * Tests for ToolSourceManager.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { ToolSourceManager } from "./source.js";
 import type { ToolSource, ToolSourceHealth } from "./source.js";
 import type { ToolRegistry } from "./registry.js";
@@ -46,6 +46,7 @@ function makeSource(
 }
 
 describe("ToolSourceManager", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   let manager: ToolSourceManager;
   let registry: ToolRegistry;
 

@@ -22,6 +22,7 @@ const mockPrepare = vi.fn((_sql: string) => ({
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: (...args: unknown[]) => mockPrepare(...(args as [string])),
+    transaction: (fn: Function) => fn,
   }),
 }));
 

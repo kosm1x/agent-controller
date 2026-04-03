@@ -2,7 +2,7 @@
  * Learning consolidation tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { serializeEmbedding } from "./embeddings.js";
 
 // ---------------------------------------------------------------------------
@@ -85,6 +85,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("consolidateLearnings", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should return no-op for empty bank", () => {
     mockAll.mockReturnValueOnce([]);
 

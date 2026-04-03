@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { currencyConvertTool } from "./currency.js";
 
 const mockFetch = vi.fn();
@@ -9,6 +9,7 @@ beforeEach(() => {
 });
 
 describe("currency_convert", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("has consistent name", () => {
     expect(currencyConvertTool.name).toBe("currency_convert");
     expect(currencyConvertTool.definition.function.name).toBe(

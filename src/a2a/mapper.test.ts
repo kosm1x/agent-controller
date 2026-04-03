@@ -2,7 +2,7 @@
  * A2A mapper tests — bidirectional MC <-> A2A conversion.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi , afterEach } from "vitest";
 
 // Mock the database module
 vi.mock("../db/index.js", () => {
@@ -52,6 +52,7 @@ function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
 }
 
 describe("mcStatusToA2A", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should map all MC statuses correctly", () => {
     expect(mcStatusToA2A("pending")).toBe("submitted");
     expect(mcStatusToA2A("classifying")).toBe("submitted");

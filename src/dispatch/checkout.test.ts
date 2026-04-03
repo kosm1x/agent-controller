@@ -2,7 +2,7 @@
  * Atomic task checkout tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 const mockRun = vi.fn();
 const mockGet = vi.fn();
@@ -20,6 +20,7 @@ vi.mock("../db/index.js", () => ({
 import { checkoutTask, releaseCheckout } from "./checkout.js";
 
 describe("checkout", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({

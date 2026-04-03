@@ -172,7 +172,8 @@ export function getRecentTelemetry(hours: number = 24): ScopeTelemetryRow[] {
     .prepare(
       `SELECT * FROM scope_telemetry
        WHERE created_at > datetime('now', ? || ' hours')
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 500`,
     )
     .all(`-${hours}`) as ScopeTelemetryRow[];
 }
@@ -186,7 +187,8 @@ export function getTelemetryWithRepairs(
       `SELECT * FROM scope_telemetry
        WHERE tools_repaired != '[]'
          AND created_at > datetime('now', ? || ' hours')
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 200`,
     )
     .all(`-${hours}`) as ScopeTelemetryRow[];
 }
@@ -233,7 +235,8 @@ export function getTelemetryWithNegativeFeedback(
       `SELECT * FROM scope_telemetry
        WHERE feedback_signal = 'negative'
          AND created_at > datetime('now', ? || ' days')
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 200`,
     )
     .all(`-${days}`) as ScopeTelemetryRow[];
 }

@@ -2,7 +2,7 @@
  * Budget service tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 const mockRun = vi.fn();
 const mockGet = vi.fn();
@@ -40,6 +40,7 @@ import {
 } from "./service.js";
 
 describe("budget service", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({

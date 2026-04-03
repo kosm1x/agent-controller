@@ -50,6 +50,7 @@ export async function getAccessToken(): Promise<string> {
       refresh_token: config.refreshToken,
       grant_type: "refresh_token",
     }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok) {

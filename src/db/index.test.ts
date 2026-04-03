@@ -2,7 +2,7 @@
  * Database index tests — writeWithRetry jitter behavior.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi , afterEach } from "vitest";
 
 // Mock the database module to test writeWithRetry in isolation
 const mockPragma = vi.fn();
@@ -33,6 +33,7 @@ import { initDatabase, writeWithRetry } from "./index.js";
 initDatabase("/tmp/test-wal-jitter.db");
 
 describe("writeWithRetry", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should return result on first success", () => {
     const result = writeWithRetry(() => 42);
     expect(result).toBe(42);

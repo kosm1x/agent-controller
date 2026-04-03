@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi , afterEach } from "vitest";
 import {
   setUserFact,
   getUserFacts,
@@ -16,6 +16,7 @@ vi.mock("./index.js", () => ({
 }));
 
 describe("user-facts", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
   });

@@ -47,16 +47,16 @@ This document tracks the evolving relationship between Jarvis (the AI agent) and
 
 **Goals attempted**:
 
-| Goal | Objective | Status | Blocker |
-|------|-----------|--------|---------|
-| g-1 | Recover final system state (tasks, completed, streaks) | DONE_WITH_CONCERNS | `commit__get_daily_snapshot` tool unavailable |
-| g-2 | Search memory bank for conversation records | INCOMPLETE | `memory_search` tool not in toolkit |
-| g-3 | Reflect on mission progress | INCOMPLETE | `memory_reflect` tool not in toolkit |
-| g-5 | Compose daily log entry with real metrics | INCOMPLETE | Snapshot files (`daily-snapshot-2026-04-01.json`, `registry.json`, `goals.json`) not accessible |
+| Goal | Objective                                              | Status             | Blocker                                                                                         |
+| ---- | ------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------- |
+| g-1  | Recover final system state (tasks, completed, streaks) | DONE_WITH_CONCERNS | `jarvis_file_read` tool unavailable                                                             |
+| g-2  | Search memory bank for conversation records            | INCOMPLETE         | `memory_search` tool not in toolkit                                                             |
+| g-3  | Reflect on mission progress                            | INCOMPLETE         | `memory_reflect` tool not in toolkit                                                            |
+| g-5  | Compose daily log entry with real metrics              | INCOMPLETE         | Snapshot files (`daily-snapshot-2026-04-01.json`, `registry.json`, `goals.json`) not accessible |
 
 **Key observations**:
 
-1. **Tool availability is context-dependent**. The mission-control environment provides only `file_read` and `file_write` capabilities. Specialized tools like `memory_search`, `memory_reflect`, and `commit__get_daily_snapshot` are not available in all execution contexts.
+1. **Tool availability is context-dependent**. The mission-control environment provides only `file_read` and `file_write` capabilities. Specialized tools like `memory_search`, `memory_reflect`, and `jarvis_file_read` are not available in all execution contexts.
 
 2. **File-based persistence is reliable**. The evolution log at `/root/claude/mission-control/docs/EVOLUTION-LOG.md` remains accessible and serves as the primary persistent record when other systems are unavailable.
 
@@ -76,16 +76,16 @@ This document tracks the evolving relationship between Jarvis (the AI agent) and
 
 ### System state
 
-| Metric | Value |
-|--------|-------|
-| Completed today | 0 |
-| Pending tasks | 0 |
-| Active goals | 0 |
-| Active objectives | 0 |
-| Streak days | 0 |
-| Overdue tasks | None |
-| Due today | None |
-| In progress | None |
+| Metric            | Value |
+| ----------------- | ----- |
+| Completed today   | 0     |
+| Pending tasks     | 0     |
+| Active goals      | 0     |
+| Active objectives | 0     |
+| Streak days       | 0     |
+| Overdue tasks     | None  |
+| Due today         | None  |
+| In progress       | None  |
 
 ### Interactions summary
 

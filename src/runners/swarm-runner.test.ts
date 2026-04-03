@@ -2,7 +2,7 @@
  * Tests for swarm runner sibling context injection.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi , afterEach } from "vitest";
 
 // Mock dispatcher before importing swarm-runner (it auto-registers)
 vi.mock("../dispatch/dispatcher.js", () => ({
@@ -50,6 +50,7 @@ function makeGraph(): GoalGraph {
 }
 
 describe("buildSubTaskDescription — sibling context", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("includes sibling goals with their status", () => {
     const graph = makeGraph();
     const trackers = new Map<string, Tracker>([

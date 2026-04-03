@@ -115,10 +115,11 @@ export function initDatabase(dbPath: string): Database.Database {
       INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
     END
   `);
-  // Backfill FTS5 from existing conversations
+  // Incremental FTS5 backfill — only rows not yet indexed (avoids full table scan on every startup)
   _db.exec(`
     INSERT OR IGNORE INTO conversations_fts(rowid, content)
     SELECT id, content FROM conversations
+    WHERE id > COALESCE((SELECT MAX(rowid) FROM conversations_fts), 0)
   `);
   // Embedding vectors table
   _db.exec(`

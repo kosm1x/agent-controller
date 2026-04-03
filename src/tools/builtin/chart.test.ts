@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { chartGenerateTool } from "./chart.js";
 
 const mockFetch = vi.fn();
@@ -9,6 +9,7 @@ beforeEach(() => {
 });
 
 describe("chart_generate", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("has consistent name", () => {
     expect(chartGenerateTool.name).toBe("chart_generate");
     expect(chartGenerateTool.definition.function.name).toBe("chart_generate");

@@ -2,7 +2,7 @@
  * Task outcomes CRUD tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 const mockDb = {
   prepare: vi.fn().mockReturnValue({
@@ -23,6 +23,7 @@ import {
 } from "./task-outcomes.js";
 
 describe("task-outcomes", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({

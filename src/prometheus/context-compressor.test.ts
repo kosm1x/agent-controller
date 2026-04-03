@@ -2,7 +2,7 @@
  * Context compressor tests — compression trigger, tool pair sanitization, fallback.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import type { ChatMessage } from "../inference/adapter.js";
 
 vi.mock("../inference/adapter.js", () => ({
@@ -25,6 +25,7 @@ beforeEach(() => {
 });
 
 describe("estimateTokens", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should return 0 for empty array", () => {
     expect(estimateTokens([])).toBe(0);
   });

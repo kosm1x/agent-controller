@@ -2,7 +2,7 @@
  * A2A server (JSON-RPC) tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 // Mock database
 vi.mock("../db/index.js", () => {
@@ -97,6 +97,7 @@ function makeTaskRow(overrides = {}) {
 }
 
 describe("A2A server", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   describe("sendMessage", () => {
     it("should create a task and return A2A response", async () => {
       mockSubmitTask.mockResolvedValueOnce({

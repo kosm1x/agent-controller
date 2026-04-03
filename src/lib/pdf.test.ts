@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 // Mock @opendataloader/pdf before importing the module under test
 const mockConvert = vi.fn();
@@ -18,6 +18,7 @@ beforeEach(() => {
 });
 
 describe("extractPdfToMarkdown", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("calls convert with correct args and returns content", async () => {
     mockConvert.mockImplementation(
       async (_paths: string[], opts: { outputDir: string }) => {

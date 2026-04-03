@@ -2,7 +2,7 @@
  * Skill discovery tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 vi.mock("../db/task-outcomes.js", () => ({
   queryOutcomes: vi.fn().mockReturnValue([]),
@@ -27,6 +27,7 @@ import {
 } from "./skill-discovery.js";
 
 describe("skill-discovery", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     resetDiscoveryRateLimit();

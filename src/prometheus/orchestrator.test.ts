@@ -3,7 +3,7 @@
  * Tests the plan→execute→reflect flow, replan triggers, event emission.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { ExecutionResult, ReflectionResult } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -111,6 +111,7 @@ function makeReflection(): ReflectionResult {
 }
 
 describe("orchestrate", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should run plan→execute→reflect successfully", async () => {
     const graph = makeGraph();
     mockPlan.mockResolvedValueOnce({

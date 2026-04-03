@@ -2,7 +2,7 @@
  * Skills CRUD tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 
 const mockDb = {
   prepare: vi.fn().mockReturnValue({
@@ -25,6 +25,7 @@ import {
 } from "./skills.js";
 
 describe("skills", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({

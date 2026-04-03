@@ -3,8 +3,8 @@
 > Real-time signal ingestion, delta computation, and predictive alerting for Jarvis.
 >
 > Slot: v5.0 S6–S8 (after S5 classifier calibration, before multi-user).
-> Status: PLAN — not yet started.
-> Last updated: 2026-03-31
+> Status: DONE — S6-S8 complete (8 sources, delta engine, alerts, baselines, 4 Jarvis tools, ritual integration).
+> Last updated: 2026-04-03
 
 ---
 

@@ -12,7 +12,7 @@
  * This adapter is auto-registered with the global `adapterRegistry` on import.
  */
 
-import { getDatabase } from "../db.js";
+import { getDatabase } from "../../db/index.js";
 import {
   DefaultAdapter,
   type AgentCreatedPayload,

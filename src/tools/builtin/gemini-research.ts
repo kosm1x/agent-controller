@@ -110,7 +110,9 @@ async function pollFileState(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     try {
-      const resp = await fetch(`${FILE_GET_URL(fileName)}?key=${apiKey}`);
+      const resp = await fetch(`${FILE_GET_URL(fileName)}?key=${apiKey}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!resp.ok) continue;
       const data = (await resp.json()) as Record<string, unknown>;
       const state = data.state as string;

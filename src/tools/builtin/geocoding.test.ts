@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { geocodeAddressTool } from "./geocoding.js";
 
 const mockFetch = vi.fn();
@@ -9,6 +9,7 @@ beforeEach(() => {
 });
 
 describe("geocode_address", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("has consistent name", () => {
     expect(geocodeAddressTool.name).toBe("geocode_address");
     expect(geocodeAddressTool.definition.function.name).toBe("geocode_address");

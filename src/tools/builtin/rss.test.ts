@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { rssReadTool } from "./rss.js";
 
 const mockFetch = vi.fn();
@@ -9,6 +9,7 @@ beforeEach(() => {
 });
 
 describe("rss_read", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("has consistent name", () => {
     expect(rssReadTool.name).toBe("rss_read");
     expect(rssReadTool.definition.function.name).toBe("rss_read");

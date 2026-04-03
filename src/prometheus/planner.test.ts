@@ -3,7 +3,7 @@
  * Tests JSON parsing, fence-stripping, error handling, dependency resolution.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 
 // Mock the inference adapter before importing planner
@@ -29,6 +29,7 @@ beforeEach(() => {
 });
 
 describe("plan", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should parse a simple goal graph from LLM", async () => {
     mockInfer.mockResolvedValueOnce({
       content: JSON.stringify({

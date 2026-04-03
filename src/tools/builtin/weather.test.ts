@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { weatherForecastTool } from "./weather.js";
 
 const mockFetch = vi.fn();
@@ -9,6 +9,7 @@ beforeEach(() => {
 });
 
 describe("weather_forecast", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("has consistent name", () => {
     expect(weatherForecastTool.name).toBe("weather_forecast");
     expect(weatherForecastTool.definition.function.name).toBe(

@@ -56,8 +56,8 @@ Available sources: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury,
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const hours = Math.min(Math.max((args.hours as number) ?? 24, 1), 168);
-    const limit = Math.min(Math.max((args.limit as number) ?? 20, 1), 50);
+    const hours = Math.min(Math.max(Number(args.hours) || 24, 1), 168);
+    const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
     const source = args.source as string | undefined;
     const domain = args.domain as string | undefined;
 

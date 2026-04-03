@@ -28,14 +28,14 @@ export function createApp(): Hono {
     return c.text(text, 200, { "Content-Type": metricsContentType });
   });
 
-  // A2A Agent Card — no auth (per A2A spec)
-  app.get("/.well-known/agent.json", (c) => c.json(buildAgentCard()));
-
-  // A2A JSON-RPC endpoint — authenticated
-  const a2aApi = new Hono();
-  a2aApi.use("/*", apiKeyAuth);
-  a2aApi.route("/", a2a);
-  app.route("/a2a", a2aApi);
+  // A2A Agent Card + JSON-RPC — only mounted when A2A is configured
+  if (process.env.A2A_AGENT_NAME) {
+    app.get("/.well-known/agent.json", (c) => c.json(buildAgentCard()));
+    const a2aApi = new Hono();
+    a2aApi.use("/*", apiKeyAuth);
+    a2aApi.route("/", a2a);
+    app.route("/a2a", a2aApi);
+  }
 
   // All /api/* routes require API key
   const api = new Hono();

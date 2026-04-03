@@ -3,7 +3,7 @@
  * Tests LLM evaluation, heuristic fallback, score divergence override.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { ExecutionResult, GoalResult } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -76,6 +76,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
 }
 
 describe("reflect", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should return LLM assessment when valid", async () => {
     mockInfer.mockResolvedValueOnce({
       content: JSON.stringify({

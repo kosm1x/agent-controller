@@ -8,7 +8,7 @@
  */
 
 import { eventBus } from "../event-bus.js";
-import { getDatabase } from "../db.js";
+import { getDatabase } from "../../db/index.js";
 import type {
   FrameworkAdapter,
   FrameworkMetadata,

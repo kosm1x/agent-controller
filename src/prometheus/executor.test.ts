@@ -4,7 +4,7 @@
  * retry logic, and error strategies.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { Goal } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -70,6 +70,7 @@ beforeEach(() => {
 });
 
 describe("executeGoal", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should return success with result from LLM", async () => {
     mockInferWithTools.mockResolvedValueOnce({
       content: "Goal achieved successfully",

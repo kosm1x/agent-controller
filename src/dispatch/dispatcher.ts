@@ -669,25 +669,25 @@ export function cancelTask(taskId: string): boolean {
     return false;
   }
 
-  // Cancel the task
-  db.prepare(
-    `UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
-  ).run(taskId);
+  // Atomic cancel: task + runs + subtask cascade in one transaction
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
+    ).run(taskId);
 
-  // Cancel all active runs
-  db.prepare(
-    `UPDATE runs SET status = 'cancelled', completed_at = datetime('now') WHERE task_id = ? AND status = 'running'`,
-  ).run(taskId);
+    db.prepare(
+      `UPDATE runs SET status = 'cancelled', completed_at = datetime('now') WHERE task_id = ? AND status = 'running'`,
+    ).run(taskId);
 
-  // Cascade to sub-tasks
-  const subtasks = db
-    .prepare(
-      "SELECT task_id FROM tasks WHERE parent_task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
-    )
-    .all(taskId) as { task_id: string }[];
-  for (const sub of subtasks) {
-    cancelTask(sub.task_id);
-  }
+    const subtasks = db
+      .prepare(
+        "SELECT task_id FROM tasks WHERE parent_task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+      )
+      .all(taskId) as { task_id: string }[];
+    for (const sub of subtasks) {
+      cancelTask(sub.task_id);
+    }
+  })();
 
   try {
     getEventBus().emitEvent("task.cancelled", {

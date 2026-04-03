@@ -3,7 +3,7 @@
  * both in-process and containerized execution paths.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
 import type { OrchestratorResult } from "../prometheus/types.js";
 import type { ContainerOutput, ContainerHandle } from "./container.js";
 
@@ -101,6 +101,7 @@ beforeEach(() => {
 });
 
 describe("heavyRunner", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("should have type heavy", () => {
     expect(heavyRunner.type).toBe("heavy");
   });

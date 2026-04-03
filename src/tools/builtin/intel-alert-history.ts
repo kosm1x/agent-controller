@@ -47,8 +47,8 @@ Tiers: FLASH (critical, immediate), PRIORITY (high, same day), ROUTINE (moderate
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const hours = Math.min(Math.max((args.hours as number) ?? 48, 1), 168);
-    const limit = Math.min(Math.max((args.limit as number) ?? 10, 1), 30);
+    const hours = Math.min(Math.max(Number(args.hours) || 48, 1), 168);
+    const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
     const tier = args.tier as AlertTier | undefined;
 
     const alerts = getRecentAlerts(hours, tier, limit);
