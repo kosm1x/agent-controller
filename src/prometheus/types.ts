@@ -67,6 +67,16 @@ export interface GoalResult {
   /** Number of self-assessment reflection rounds used (0 = passed first try). */
   selfAssessRounds?: number;
   toolRepairs?: Array<{ original: string; repaired: string }>;
+  /** Provenance records extracted from this goal's research tool calls. */
+  provenanceRecords?: Array<{
+    tool_name: string;
+    url: string | null;
+    query: string | null;
+    status: "verified" | "inferred" | "unverified";
+    snippet: string | null;
+  }>;
+  /** Condensed search summary (when 3+ queries triggered condensation). */
+  provenanceSummary?: string;
 }
 
 export interface ExecutionResult {
@@ -77,6 +87,15 @@ export interface ExecutionResult {
   totalToolFailures: number;
   tokenUsage: TokenUsage;
   toolRepairs: Array<{ original: string; repaired: string }>;
+  /** Aggregated provenance records across all goals. */
+  provenanceRecords?: Array<{
+    goalId: string;
+    tool_name: string;
+    url: string | null;
+    query: string | null;
+    status: "verified" | "inferred" | "unverified";
+    snippet: string | null;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +107,8 @@ export interface ReflectionResult {
   score: number;
   learnings: string[];
   summary: string;
+  /** Source anchoring score (0-1): fraction of cited URLs that were verified/fetched. */
+  anchoringScore?: number;
 }
 
 // ---------------------------------------------------------------------------

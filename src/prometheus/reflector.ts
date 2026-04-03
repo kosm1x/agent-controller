@@ -99,6 +99,27 @@ export async function reflect(
     assessment.success = heuristicScore >= 0.8 && !hasFailedGoals;
   }
 
+  // Source anchoring heuristic (S5c): penalize unverified citations
+  let anchoringScore: number | undefined;
+  if (
+    executionResults.provenanceRecords &&
+    executionResults.provenanceRecords.length > 0
+  ) {
+    const records = executionResults.provenanceRecords;
+    const verified = records.filter((r) => r.status === "verified").length;
+    const total = records.length;
+    anchoringScore = total > 0 ? verified / total : 1;
+
+    // Penalize score if anchoring is weak (< 50% verified) and enough sources
+    if (anchoringScore < 0.5 && total >= 3) {
+      const penalty = (0.5 - anchoringScore) * 0.2; // Max 10% penalty
+      assessment.score = Math.max(0, assessment.score - penalty);
+      console.log(
+        `[reflector] Source anchoring penalty: ${penalty.toFixed(3)} (${verified}/${total} verified)`,
+      );
+    }
+  }
+
   const learnings = assessment.learnings ?? [];
 
   // Persist learnings via memory service
@@ -126,6 +147,7 @@ export async function reflect(
       score: assessment.score,
       learnings,
       summary: assessment.summary ?? "",
+      anchoringScore,
     },
     usage,
   };
@@ -190,6 +212,29 @@ function buildReflectPrompt(
     // Non-fatal
   }
 
+  // Provenance context — inject source verification data (S5c)
+  let provenanceSection = "";
+  if (
+    executionResults.provenanceRecords &&
+    executionResults.provenanceRecords.length > 0
+  ) {
+    const records = executionResults.provenanceRecords;
+    const verified = records.filter((r) => r.status === "verified").length;
+    const inferred = records.filter((r) => r.status === "inferred").length;
+    const unverified = records.filter((r) => r.status === "unverified").length;
+
+    provenanceSection =
+      `\n\n## Source Provenance\n` +
+      `Sources consulted: ${records.length} (verified: ${verified}, inferred: ${inferred}, unverified: ${unverified})\n` +
+      records
+        .slice(0, 20)
+        .map(
+          (r) => `- [${r.status}] ${r.tool_name}: ${r.url ?? r.query ?? "N/A"}`,
+        )
+        .join("\n") +
+      `\nScore lower if many sources are unverified or if URLs in the output were not actually fetched.`;
+  }
+
   return (
     `## Task\n${taskDescription}\n\n` +
     `## Goal Graph Summary\n` +
@@ -199,7 +244,8 @@ function buildReflectPrompt(
     `## Execution Stats\n` +
     `Tool calls: ${executionResults.totalToolCalls}, ` +
     `Tool failures: ${executionResults.totalToolFailures}` +
-    mapSection
+    mapSection +
+    provenanceSection
   );
 }
 

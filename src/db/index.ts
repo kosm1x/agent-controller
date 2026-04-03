@@ -161,6 +161,27 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_nodes(parent_id)",
   );
 
+  // v5.0 S5c: Research provenance tracking for Prometheus
+  _db.exec(`CREATE TABLE IF NOT EXISTS task_provenance (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      TEXT NOT NULL,
+    goal_id      TEXT NOT NULL,
+    tool_name    TEXT NOT NULL,
+    url          TEXT,
+    query        TEXT,
+    status       TEXT NOT NULL DEFAULT 'unverified'
+                 CHECK(status IN ('verified','inferred','unverified')),
+    content_hash TEXT,
+    snippet      TEXT,
+    created_at   TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_provenance_task ON task_provenance(task_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_provenance_goal ON task_provenance(goal_id)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

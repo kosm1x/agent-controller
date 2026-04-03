@@ -127,6 +127,30 @@ export async function orchestrate(
         }
       }
 
+      // Record research provenance to database (non-fatal, S5c)
+      if (
+        executionResults.provenanceRecords &&
+        executionResults.provenanceRecords.length > 0
+      ) {
+        try {
+          const { insertProvenance } = await import("../db/provenance.js");
+          insertProvenance(
+            executionResults.provenanceRecords.map((r) => ({
+              task_id: taskId,
+              goal_id: r.goalId,
+              tool_name: r.tool_name,
+              url: r.url,
+              query: r.query,
+              status: r.status,
+              content_hash: null,
+              snippet: r.snippet,
+            })),
+          );
+        } catch {
+          /* provenance should never block execution */
+        }
+      }
+
       traceRecord(trace, "phase_end", {
         phase: Phase.EXECUTE,
         summary: graph.summary(),

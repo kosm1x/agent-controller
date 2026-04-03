@@ -14,6 +14,11 @@ import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
+import {
+  extractProvenance,
+  classifySources,
+  condenseSearchResults,
+} from "./provenance.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -381,6 +386,37 @@ export async function executeGoal(
         );
       }
 
+      // --- Provenance extraction (S5c) ---
+      let provenanceRecords: GoalResult["provenanceRecords"];
+      let provenanceSummary: string | undefined;
+      try {
+        const extraction = extractProvenance(currentMessages);
+        if (extraction.records.length > 0) {
+          const classified = classifySources(extraction, finalContent);
+          provenanceRecords = classified.map((r) => ({
+            tool_name: r.tool_name,
+            url: r.url,
+            query: r.query,
+            status: r.status,
+            snippet: r.snippet,
+          }));
+
+          const condensed = await condenseSearchResults(
+            extraction,
+            currentMessages,
+          );
+          if (condensed) {
+            provenanceSummary = condensed.summary;
+            totalPrompt += condensed.usage.promptTokens;
+            totalCompletion += condensed.usage.completionTokens;
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[executor] Provenance extraction failed for ${goal.id}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+
       return {
         goalId: goal.id,
         ok: true,
@@ -391,6 +427,8 @@ export async function executeGoal(
         toolFailures: 0,
         selfAssessRounds,
         toolRepairs: allRepairs,
+        provenanceRecords,
+        provenanceSummary,
         tokenUsage: {
           promptTokens: totalPrompt,
           completionTokens: totalCompletion,
@@ -454,6 +492,9 @@ export async function executeGraph(
   const allToolNames: string[] = [];
   let totalToolFailures = 0;
   const allToolRepairs: Array<{ original: string; repaired: string }> = [];
+  const allProvenanceRecords: NonNullable<
+    ExecutionResult["provenanceRecords"]
+  > = [];
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   const maxIterations = graph.size * 4 + 1;
@@ -510,6 +551,14 @@ export async function executeGraph(
       totalCompletionTokens += goalResult.tokenUsage.completionTokens;
       if (goalResult.toolRepairs)
         allToolRepairs.push(...goalResult.toolRepairs);
+      if (goalResult.provenanceRecords) {
+        allProvenanceRecords.push(
+          ...goalResult.provenanceRecords.map((r) => ({
+            goalId: goal.id,
+            ...r,
+          })),
+        );
+      }
 
       if (goalResult.ok) {
         graph.updateStatus(goal.id, GoalStatus.COMPLETED);
@@ -530,5 +579,7 @@ export async function executeGraph(
       completionTokens: totalCompletionTokens,
     },
     toolRepairs: allToolRepairs,
+    provenanceRecords:
+      allProvenanceRecords.length > 0 ? allProvenanceRecords : undefined,
   };
 }

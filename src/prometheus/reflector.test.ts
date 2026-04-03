@@ -243,4 +243,109 @@ describe("reflect", () => {
     expect(userMsg!.content).toContain("Spectrum Auction");
     expect(userMsg!.content).toContain("Regulatory Capture");
   });
+
+  it("should include provenance section in reflect prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: ["Good sources"],
+        summary: "Well researched",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    execResult.provenanceRecords = [
+      {
+        goalId: "c-0",
+        tool_name: "web_search",
+        url: "https://example.com",
+        query: "test",
+        status: "verified",
+        snippet: "content",
+      },
+      {
+        goalId: "c-0",
+        tool_name: "output_citation",
+        url: "https://untraced.com",
+        query: null,
+        status: "unverified",
+        snippet: null,
+      },
+    ];
+
+    await reflect("Research test task", graph, execResult);
+
+    const callArgs = mockInfer.mock.calls[0][0];
+    const userMsg = callArgs.messages.find(
+      (m: { role: string }) => m.role === "user",
+    );
+    expect(userMsg!.content).toContain("Source Provenance");
+    expect(userMsg!.content).toContain("verified: 1");
+    expect(userMsg!.content).toContain("unverified: 1");
+  });
+
+  it("should penalize score when anchoring is weak", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "Done",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    // 0 verified out of 4 sources → anchoring = 0, penalty = 0.5 * 0.2 = 0.1
+    execResult.provenanceRecords = [
+      {
+        goalId: "c-0",
+        tool_name: "output_citation",
+        url: "https://a.com",
+        query: null,
+        status: "unverified",
+        snippet: null,
+      },
+      {
+        goalId: "c-0",
+        tool_name: "output_citation",
+        url: "https://b.com",
+        query: null,
+        status: "unverified",
+        snippet: null,
+      },
+      {
+        goalId: "c-0",
+        tool_name: "web_search",
+        url: "https://c.com",
+        query: "q",
+        status: "inferred",
+        snippet: null,
+      },
+      {
+        goalId: "c-0",
+        tool_name: "web_search",
+        url: "https://d.com",
+        query: "q",
+        status: "inferred",
+        snippet: null,
+      },
+    ];
+
+    const { result } = await reflect("Research task", graph, execResult);
+
+    // 0/4 verified → anchoringScore = 0 → penalty = 0.5 * 0.2 = 0.1
+    expect(result.score).toBe(0.8); // 0.9 - 0.1
+    expect(result.anchoringScore).toBe(0);
+  });
 });
