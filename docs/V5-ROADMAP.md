@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5, S5b, S5c complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps + research verification + classifier calibration done.
+> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5, S5b, S5c, S6 complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps + research verification + classifier calibration + Intelligence Depot foundation done.
 
 ## Status Key
 
@@ -199,11 +199,11 @@
 
 > See [V5-INTELLIGENCE-DEPOT.md](./V5-INTELLIGENCE-DEPOT.md) for full design.
 
-| Session       | What                                                                          | Effort | Status  |
-| ------------- | ----------------------------------------------------------------------------- | ------ | ------- |
-| S6 Foundation | 30-source collector adapters + signal store + delta engine                    | 3d     | Planned |
-| S7 Streaming  | WebSocket hub (Finnhub, Bluesky, HN) + alert router (FLASH/PRIORITY/ROUTINE)  | 2d     | Planned |
-| S8 Prediction | Statistical baselines + anomaly detection + Jarvis tools + ritual integration | 2d     | Planned |
+| Session       | What                                                                          | Effort | Status   |
+| ------------- | ----------------------------------------------------------------------------- | ------ | -------- |
+| S6 Foundation | 5 collector adapters + signal store + delta engine + polling scheduler        | 1d     | **Done** |
+| S7 Streaming  | WebSocket hub (Finnhub, Bluesky, HN) + alert router (FLASH/PRIORITY/ROUTINE)  | 2d     | Planned  |
+| S8 Prediction | Statistical baselines + anomaly detection + Jarvis tools + ritual integration | 2d     | Planned  |
 
 ---
 
@@ -222,9 +222,9 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1097                                     | ~1,200+                      |
-| Test files          | 74                        | 88                                       | ~90+                         |
-| Tools               | 137                       | 134                                      | ~145 (+video, intel)         |
+| Tests               | 903                       | 1153                                     | ~1,200+                      |
+| Test files          | 74                        | 92                                       | ~95+                         |
+| Tools               | 137                       | 134                                      | ~145 (+video, intel tools)   |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
 | Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
 | Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |
@@ -237,6 +237,6 @@
 | Knowledge maps      | None                      | 2 tools, 2 tables, Prometheus integrated | Done                         |
 | Research provenance | None                      | 3-state classification, anchoring score  | Done                         |
 | Video production    | None                      | —                                        | On-demand via Telegram (S5d) |
-| Signal sources      | 0 (manual)                | —                                        | 25+ automated (S6–S8)        |
+| Signal sources      | 0 (manual)                | 5 polling (USGS, NWS, GDELT, FX, CISA)   | 25+ automated (S7–S8)        |
 | Context awareness   | None                      | Advisory at 70%, metadata in output      | Done                         |
 | QA audits           | 6 (v4)                    | 11 (v5)                                  | Continuing                   |

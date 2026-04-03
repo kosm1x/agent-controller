@@ -16,6 +16,10 @@ import {
   stopRitualScheduler,
 } from "./rituals/scheduler.js";
 import {
+  startIntelCollectors,
+  stopIntelCollectors,
+} from "./intel/scheduler.js";
+import {
   startDynamicScheduler,
   stopDynamicScheduler,
 } from "./rituals/dynamic.js";
@@ -158,6 +162,9 @@ async function main(): Promise<void> {
   // Start dynamic (user-defined) scheduled tasks
   startDynamicScheduler();
 
+  // Start Intelligence Depot collectors (S6)
+  startIntelCollectors();
+
   // Start messaging channels (WhatsApp/Telegram) if enabled
   const router = await initMessaging();
 
@@ -171,6 +178,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     log.info("shutting down...");
     reactionManager.stop();
+    stopIntelCollectors();
     stopDynamicScheduler();
     stopProactiveScheduler();
     stopRitualScheduler();

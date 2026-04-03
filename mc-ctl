@@ -662,6 +662,12 @@ usage() {
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
   echo ""
+  echo -e "  ${BOLD}Intelligence Depot${NC}"
+  echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
+  echo -e "  ${GREEN}intel${NC} signals [hours]  Recent signals (default 24h)"
+  echo -e "  ${GREEN}intel${NC} deltas           Active deltas above threshold"
+  echo -e "  ${GREEN}intel${NC} counts           Signal totals by source"
+  echo ""
   echo -e "  ${BOLD}Self-Tuning${NC}"
   echo -e "  ${GREEN}tuning${NC} status         Latest tuning run summary"
   echo -e "  ${GREEN}tuning${NC} report [id]    Full tuning report"
@@ -839,6 +845,71 @@ cmd_tuning() {
 }
 
 # ---------------------------------------------------------------------------
+# Intel commands (S6 Intelligence Depot)
+# ---------------------------------------------------------------------------
+
+cmd_intel() {
+  need_db
+  local subcmd="${1:-status}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    status)
+      echo -e "${BOLD}=== Intelligence Depot Status ===${NC}"
+      echo ""
+      echo -e "${BOLD}Snapshots (last poll per source):${NC}"
+      sql "SELECT source, key, last_value_numeric, snapshot_at, run_count
+        FROM signal_snapshots
+        ORDER BY snapshot_at DESC
+        LIMIT 30;"
+      echo ""
+      echo -e "${BOLD}Signal counts (last 24h):${NC}"
+      sql "SELECT source, COUNT(*) as signals, MIN(collected_at) as oldest, MAX(collected_at) as newest
+        FROM signals
+        WHERE collected_at >= datetime('now', '-24 hours')
+        GROUP BY source
+        ORDER BY signals DESC;"
+      ;;
+    signals)
+      local hours="${1:-24}"
+      echo -e "${BOLD}=== Signals (last ${hours}h) ===${NC}"
+      sql "SELECT id, source, domain, signal_type, key,
+        COALESCE(value_numeric, '') as val_num,
+        SUBSTR(COALESCE(value_text, ''), 1, 60) as val_text,
+        collected_at
+        FROM signals
+        WHERE collected_at >= datetime('now', '-${hours} hours')
+        ORDER BY collected_at DESC
+        LIMIT 50;"
+      ;;
+    deltas)
+      echo -e "${BOLD}=== Active Deltas (from snapshots) ===${NC}"
+      echo ""
+      echo -e "Showing source+key pairs with recent updates:"
+      sql "SELECT s.source, s.key, s.last_value_numeric as current_val,
+        s.run_count, s.snapshot_at
+        FROM signal_snapshots s
+        WHERE s.snapshot_at >= datetime('now', '-1 hours')
+        ORDER BY s.snapshot_at DESC
+        LIMIT 30;"
+      ;;
+    counts)
+      echo -e "${BOLD}=== Signal Totals ===${NC}"
+      sql "SELECT source, COUNT(*) as total,
+        SUM(CASE WHEN collected_at >= datetime('now', '-1 hours') THEN 1 ELSE 0 END) as last_1h,
+        SUM(CASE WHEN collected_at >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) as last_24h
+        FROM signals
+        GROUP BY source
+        ORDER BY total DESC;"
+      ;;
+    *)
+      echo -e "${RED}Unknown intel subcommand:${NC} ${subcmd}"
+      echo "Usage: mc-ctl intel [status|signals [hours]|deltas|counts]"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -876,6 +947,8 @@ case "$cmd" in
   budget)            cmd_budget ;;
 
   tuning)            cmd_tuning "$@" ;;
+
+  intel)             cmd_intel "$@" ;;
 
   monitoring)        cmd_monitoring "$@" ;;
 
