@@ -19,6 +19,7 @@ import {
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
 import { getFilesByQualifier } from "../db/jarvis-fs.js";
+import { COMMIT_READ_TOOLS } from "../messaging/scope.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -635,6 +636,52 @@ export const fastRunner: Runner = {
         }
       } catch {
         // Non-fatal — telemetry should never block execution
+      }
+
+      // --- COMMIT read bypass (S5c) ---
+      // When ONLY COMMIT read tools were called, extract the tool result
+      // directly and bypass the LLM's final message. The LLM cannot be
+      // trusted to relay structured data faithfully — it reformats, translates,
+      // and adds unsolicited commentary. The pre-formatted tool output IS
+      // the answer. See feedback_preformat_over_prompt.md.
+      const commitReadSet = new Set(COMMIT_READ_TOOLS);
+      const onlyCommitReads =
+        toolsCalled.length > 0 &&
+        toolsCalled.every((t) => commitReadSet.has(t));
+
+      if (onlyCommitReads) {
+        // Extract the last COMMIT read tool result from the message history
+        let directOutput = "";
+        for (let ri = result.messages.length - 1; ri >= 0; ri--) {
+          const m = result.messages[ri];
+          if (m.role === "tool" && typeof m.content === "string") {
+            directOutput = m.content;
+            break;
+          }
+        }
+        if (directOutput) {
+          console.log(
+            `[fast-runner] COMMIT read bypass: relaying tool result directly. Tools: [${toolsCalled.join(", ")}]`,
+          );
+          return {
+            success: true,
+            status: "DONE",
+            output: {
+              text: directOutput,
+              toolCalls: toolsCalled,
+              exitReason: result.exitReason,
+              roundsCompleted: result.roundsCompleted,
+              maxRounds,
+              contextPressure: result.contextPressure,
+            },
+            toolCalls: toolsCalled,
+            tokenUsage: {
+              promptTokens: result.totalUsage.prompt_tokens,
+              completionTokens: result.totalUsage.completion_tokens,
+            },
+            durationMs: Date.now() - start,
+          };
+        }
       }
 
       // Extract last user message for hallucination guard context
