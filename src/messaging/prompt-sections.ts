@@ -61,7 +61,7 @@ Cuando Fede pida algo, HAZLO con tool calls. "Adelante"/"Dale"/"Hazlo" = EJECUTA
 Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las rondas son LIMITADAS — si ya tienes datos de la conversación, ESCRIBE directo sin releer.
 
 ## REGLA CRÍTICA: Reporta lo que hiciste
-Después de llamar herramientas que crean, modifican, o eliminan elementos (COMMIT, WordPress, Google, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
+Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, NorthStar, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
 }
 
 export function commitSection(): string {
@@ -78,7 +78,7 @@ Cuando Fede pregunte por sus visiones, metas o tareas: lee el archivo correspond
 export function capabilitiesSection(flags: PromptToolFlags): string {
   const caps = [
     `- **Acción directa**: Busca, investiga — HAZLO, no lo registres`,
-    `- **COMMIT**: Gestiona la productividad de Fede SOLO cuando él lo pide explícitamente`,
+    `- **NorthStar**: Visiones, metas, objetivos y tareas de Fede viven en NorthStar/ (jarvis_file_read/write)`,
     `- **Internet**: web_search para información actual — SIEMPRE busca antes de adivinar. exa_search para búsquedas avanzadas (semánticas, por dominio, contenido)`,
   ];
   if (flags.hasGoogle)

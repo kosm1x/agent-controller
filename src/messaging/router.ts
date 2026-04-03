@@ -138,7 +138,7 @@ function buildJarvisSystemPrompt(
 /**
  * Scope tools to only groups relevant to the current conversation context.
  * Scans the current message + last 3 conversation turns for keyword signals.
- * Always includes core + COMMIT read + misc. Activates other groups on demand.
+ * Always includes core + misc. Activates other groups on demand.
  *
  * Typical reduction: 49 → 15-25 tools = ~5-8K fewer tokens.
  */
