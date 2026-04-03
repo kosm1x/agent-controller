@@ -5,7 +5,6 @@ import type {
   DailySnapshot,
   GoalNode,
   GoalRow,
-  HierarchyNode,
   ObjectiveNode,
   ObjectiveRow,
   TaskRow,
@@ -214,27 +213,10 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     "get_hierarchy",
     {
-      description: `Get the full COMMIT hierarchy tree: Vision → Goals → Objectives → Tasks (nested JSON).
+      description: `Get the full COMMIT hierarchy tree as pre-formatted text. Returns human-readable output — relay it directly to the user without rephrasing. The output IS the answer.
 
-Returns { visions: [...], orphans?: { unlinked_goals, unlinked_objectives, unlinked_tasks } }.
-The "visions" array contains ONLY real visions from the database.
-The "orphans" object (if present) contains items not linked to a parent — these are NOT visions.
-
-CRITICAL REPORTING RULES:
-- Report EXACTLY what the database returns. Do NOT summarize, paraphrase, or invent data.
-- Use the exact titles, descriptions, statuses, and dates from the JSON response.
-- Include ALL levels: every vision, every goal, every objective, every task.
-- NEVER present orphaned items as visions. Report them separately as "items needing linking."
-- If a field is null or missing, say so — do not guess or fill in.
-
-USE WHEN:
-- Weekly review: full system health scan (orphan goals, stale objectives)
-- Vision alignment checks: are active goals still serving their parent visions?
-- Before creating a goal/vision: verify what already exists to avoid duplicates
-- User asks for an overview of their entire productivity system
-
-When user asks for 'goals', extract ONLY goal-level items — do NOT present visions as goals.
-For goal-specific queries, prefer list_goals (lighter, returns parent vision title).`,
+USE WHEN: user asks about visions, full overview, weekly review, or "what do I have in COMMIT."
+For goal-specific queries, prefer list_goals (lighter).`,
       inputSchema: {
         include_completed: z
           .boolean()
@@ -307,34 +289,83 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
         goalsByVision.get(key)!.push(g);
       }
 
-      const tree: HierarchyNode[] = visions.map((v) => ({
-        ...v,
-        children: goalsByVision.get(v.id) ?? [],
-      }));
+      // --- Pre-format as human-readable text ---
+      // The LLM must relay this directly, not interpret JSON.
+      const lines: string[] = [];
+      lines.push(
+        `COMMIT HIERARCHY (${visions.length} visions, ${goals.length} goals, ${objectives.length} objectives, ${tasks.length} tasks)`,
+      );
+      lines.push("=".repeat(70));
 
-      // Collect orphaned items into a separate section — NOT as vision-level nodes.
-      // These are virtual grouping containers, not real visions.
-      const orphans: {
-        unlinked_goals: GoalNode[];
-        unlinked_objectives: ObjectiveNode[];
-        unlinked_tasks: TaskRow[];
-      } = {
-        unlinked_goals: goalsByVision.get(null) ?? [],
-        unlinked_objectives: objByGoal.get(null) ?? [],
-        unlinked_tasks: tasksByObjective.get(null) ?? [],
-      };
+      for (const v of visions) {
+        const vGoals = goalsByVision.get(v.id) ?? [];
+        lines.push("");
+        lines.push(`VISION: ${v.title}`);
+        lines.push(
+          `  Status: ${v.status} | Target: ${v.target_date ?? "none"} | Description: ${v.description}`,
+        );
 
-      const hasOrphans =
-        orphans.unlinked_goals.length > 0 ||
-        orphans.unlinked_objectives.length > 0 ||
-        orphans.unlinked_tasks.length > 0;
+        if (vGoals.length === 0) {
+          lines.push("  (no goals)");
+        }
+        for (const g of vGoals) {
+          const gObjs = objByGoal.get(g.id) ?? [];
+          lines.push(`  GOAL: ${g.title}`);
+          lines.push(
+            `    Status: ${g.status} | Target: ${g.target_date ?? "none"} | Description: ${g.description || "(none)"}`,
+          );
 
-      const result_obj = hasOrphans
-        ? { visions: tree, orphans }
-        : { visions: tree };
+          if (gObjs.length === 0) {
+            lines.push("    (no objectives)");
+          }
+          for (const o of gObjs) {
+            const oTasks = tasksByObjective.get(o.id) ?? [];
+            lines.push(`    OBJECTIVE: ${o.title}`);
+            lines.push(
+              `      Status: ${o.status} | Priority: ${o.priority} | Target: ${o.target_date ?? "none"}`,
+            );
+
+            for (const t of oTasks) {
+              const recurring = t.is_recurring ? " [recurring]" : "";
+              lines.push(`      TASK: ${t.title}${recurring}`);
+              lines.push(
+                `        Status: ${t.status} | Priority: ${t.priority} | Due: ${t.due_date ?? "none"}`,
+              );
+            }
+          }
+        }
+      }
+
+      // Orphaned items
+      const orphanGoals = goalsByVision.get(null) ?? [];
+      const orphanObjs = objByGoal.get(null) ?? [];
+      const orphanTasks = tasksByObjective.get(null) ?? [];
+
+      if (
+        orphanGoals.length > 0 ||
+        orphanObjs.length > 0 ||
+        orphanTasks.length > 0
+      ) {
+        lines.push("");
+        lines.push("UNLINKED ITEMS (not part of any vision)");
+        lines.push("-".repeat(40));
+        for (const g of orphanGoals) {
+          lines.push(`  GOAL (no vision): ${g.title} | Status: ${g.status}`);
+        }
+        for (const o of orphanObjs) {
+          lines.push(
+            `  OBJECTIVE (no goal): ${o.title} | Status: ${o.status} | Priority: ${o.priority}`,
+          );
+        }
+        for (const t of orphanTasks) {
+          lines.push(
+            `  TASK (no objective): ${t.title} | Status: ${t.status} | Due: ${t.due_date ?? "none"}`,
+          );
+        }
+      }
 
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result_obj) }],
+        content: [{ type: "text" as const, text: lines.join("\n") }],
       };
     },
   );
@@ -344,7 +375,7 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
     "list_tasks",
     {
       description:
-        "List tasks with optional filters. Use objective_id to get all tasks (including recurring) under a specific objective. Use is_recurring to filter recurring/non-recurring tasks specifically.",
+        "List tasks as pre-formatted text. Relay the output directly — it IS the answer. Use objective_id to filter by parent objective.",
       inputSchema: {
         objective_id: z
           .string()
@@ -402,9 +433,25 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
         .limit(limit ?? 50);
 
       const result = await q;
-      const tasks = unwrap(result, "list_tasks");
+      const tasks = unwrap(result, "list_tasks") as Array<
+        TaskRow & { objectives?: { title: string } | null }
+      >;
+      const lines: string[] = [];
+      lines.push(`TASKS (${tasks.length} results)`);
+      lines.push("-".repeat(50));
+      for (const t of tasks) {
+        const obj = t.objectives?.title ?? "(no objective)";
+        const recurring = t.is_recurring ? " [recurring]" : "";
+        lines.push(`TASK: ${t.title}${recurring}`);
+        lines.push(`  ID: ${t.id}`);
+        lines.push(
+          `  Status: ${t.status} | Priority: ${t.priority} | Objective: ${obj} | Due: ${t.due_date ?? "none"}`,
+        );
+        if (t.description) lines.push(`  Description: ${t.description}`);
+        if (t.notes) lines.push(`  Notes: ${t.notes}`);
+      }
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(tasks) }],
+        content: [{ type: "text" as const, text: lines.join("\n") }],
       };
     },
   );
@@ -413,11 +460,8 @@ For goal-specific queries, prefer list_goals (lighter, returns parent vision tit
   server.registerTool(
     "list_goals",
     {
-      description: `List GOALS only (not visions, not objectives, not tasks). A goal is a measurable outcome that belongs to a vision. Use this tool when the user asks for 'metas' or 'goals'. Do NOT use get_hierarchy or get_daily_snapshot to answer goal-related questions — this tool returns goals directly with their parent vision title for context.
-
-CRITICAL: Report EXACTLY what the database returns — exact titles, statuses, dates, descriptions. Never summarize, paraphrase, or invent data not present in the response.
-
-ALSO USE FOR LOOKUPS: When you need to create an objective under a goal, call this first to find the goal's UUID by matching its title, then pass that UUID to create_objective's goal_id parameter.`,
+      description: `List GOALS as pre-formatted text. Relay the output directly — it IS the answer.
+ALSO USE FOR LOOKUPS: call this first to find a goal's UUID, then pass it to create_objective.`,
       inputSchema: {
         status: z
           .enum(["not_started", "in_progress", "completed", "on_hold"])
@@ -438,9 +482,23 @@ ALSO USE FOR LOOKUPS: When you need to create an objective under a goal, call th
       q = q.order("order", { ascending: true }).limit(limit ?? 50);
 
       const result = await q;
-      const goals = unwrap(result, "list_goals");
+      const goals = unwrap(result, "list_goals") as Array<
+        GoalRow & { visions?: { title: string } | null }
+      >;
+      const lines: string[] = [];
+      lines.push(`GOALS (${goals.length} results)`);
+      lines.push("-".repeat(50));
+      for (const g of goals) {
+        const vision = g.visions?.title ?? "(no vision)";
+        lines.push(`GOAL: ${g.title}`);
+        lines.push(`  ID: ${g.id}`);
+        lines.push(
+          `  Status: ${g.status} | Vision: ${vision} | Target: ${g.target_date ?? "none"}`,
+        );
+        if (g.description) lines.push(`  Description: ${g.description}`);
+      }
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(goals) }],
+        content: [{ type: "text" as const, text: lines.join("\n") }],
       };
     },
   );
@@ -449,9 +507,8 @@ ALSO USE FOR LOOKUPS: When you need to create an objective under a goal, call th
   server.registerTool(
     "list_objectives",
     {
-      description: `List objectives with optional filters. Returns each objective's UUID (id field), title, status, priority, and parent goal title.
-
-ALSO USE FOR LOOKUPS: When you need to create a task under an objective, call this first to find the objective's UUID by matching its title, then pass that UUID to create_task's objective_id parameter.`,
+      description: `List objectives as pre-formatted text. Relay the output directly — it IS the answer.
+ALSO USE FOR LOOKUPS: call this first to find an objective's UUID, then pass it to create_task.`,
       inputSchema: {
         goal_id: z.string().optional().describe("Filter by parent goal UUID"),
         status: z
@@ -479,9 +536,23 @@ ALSO USE FOR LOOKUPS: When you need to create a task under an objective, call th
       q = q.order("order", { ascending: true }).limit(limit ?? 50);
 
       const result = await q;
-      const objectives = unwrap(result, "list_objectives");
+      const objectives = unwrap(result, "list_objectives") as Array<
+        ObjectiveRow & { goals?: { title: string } | null }
+      >;
+      const lines: string[] = [];
+      lines.push(`OBJECTIVES (${objectives.length} results)`);
+      lines.push("-".repeat(50));
+      for (const o of objectives) {
+        const goal = o.goals?.title ?? "(no goal)";
+        lines.push(`OBJECTIVE: ${o.title}`);
+        lines.push(`  ID: ${o.id}`);
+        lines.push(
+          `  Status: ${o.status} | Priority: ${o.priority} | Goal: ${goal} | Target: ${o.target_date ?? "none"}`,
+        );
+        if (o.description) lines.push(`  Description: ${o.description}`);
+      }
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(objectives) }],
+        content: [{ type: "text" as const, text: lines.join("\n") }],
       };
     },
   );
