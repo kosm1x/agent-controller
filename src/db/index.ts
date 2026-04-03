@@ -137,6 +137,30 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_jarvis_files_priority ON jarvis_files(priority)",
   );
 
+  // v5.0 S5b: Knowledge maps for Prometheus
+  _db.exec(`CREATE TABLE IF NOT EXISTS knowledge_maps (
+    id          TEXT PRIMARY KEY,
+    topic       TEXT NOT NULL,
+    node_count  INTEGER DEFAULT 0,
+    max_depth   INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(`CREATE TABLE IF NOT EXISTS knowledge_nodes (
+    id          TEXT PRIMARY KEY,
+    map_id      TEXT NOT NULL REFERENCES knowledge_maps(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL,
+    type        TEXT NOT NULL CHECK(type IN ('concept','pattern','gotcha')),
+    summary     TEXT NOT NULL,
+    depth       INTEGER NOT NULL DEFAULT 0,
+    parent_id   TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec("CREATE INDEX IF NOT EXISTS idx_kn_map ON knowledge_nodes(map_id)");
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_nodes(parent_id)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

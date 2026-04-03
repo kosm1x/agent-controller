@@ -197,6 +197,7 @@ export const WRITE_TOOLS = new Set([
   // File system
   "file_write",
   "file_edit",
+  "file_delete",
   // Jarvis knowledge base
   "jarvis_file_write",
   "jarvis_file_update",

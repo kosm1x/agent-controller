@@ -11,6 +11,7 @@ import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
 import type { TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
+import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 
 // ---------------------------------------------------------------------------
 // System prompts
@@ -37,6 +38,7 @@ Rules:
 - Keep the graph to at most 3 levels deep and 15 goals max.
 - Each goal should have 1-3 completion criteria.
 - IDs must be sequential: g-1, g-2, g-3, etc.
+- If the task involves an unfamiliar or specialized domain, make the first goal "Build domain overview using knowledge_map tool" before detailed execution goals.
 - Emit ONLY valid JSON. No markdown, no commentary.`;
 
 const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A previous plan partially executed but needs revision.
@@ -99,11 +101,34 @@ export async function plan(
       ? `\n\n## Prior learnings\n${learnings.map((l) => `- ${l}`).join("\n")}`
       : "";
 
+  // Check for existing knowledge maps relevant to this task
+  let mapBlock = "";
+  try {
+    const maps = searchMaps(taskDescription);
+    if (maps.length > 0) {
+      const map = maps[0];
+      const nodes = getNodes(map.id);
+      const concepts = nodes.filter((n) => n.type === "concept");
+      const gotchas = nodes.filter((n) => n.type === "gotcha");
+      if (concepts.length > 0 || gotchas.length > 0) {
+        mapBlock =
+          `\n\n## Domain Knowledge Map: ${map.topic}\n` +
+          `Key concepts: ${concepts.map((n) => n.label).join(", ")}\n` +
+          (gotchas.length > 0
+            ? `Gotchas to address:\n${gotchas.map((n) => `- ${n.label}: ${n.summary.slice(0, 150)}`).join("\n")}\n`
+            : "") +
+          `Use this domain knowledge to create more specific, informed goals.`;
+      }
+    }
+  } catch {
+    // Non-fatal — plan without map context
+  }
+
   const messages: ChatMessage[] = [
     { role: "system", content: PLAN_SYSTEM },
     {
       role: "user",
-      content: `## Task\n${taskDescription}${learningsBlock}\n\nDecompose this task into a goal graph. Respond with JSON only.`,
+      content: `## Task\n${taskDescription}${mapBlock}${learningsBlock}\n\nDecompose this task into a goal graph. Respond with JSON only.`,
     },
   ];
 

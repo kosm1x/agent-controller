@@ -12,10 +12,18 @@ vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
 }));
 
+vi.mock("../db/knowledge-maps.js", () => ({
+  searchMaps: vi.fn(() => []),
+  getNodes: vi.fn(() => []),
+}));
+
 import { reflect } from "./reflector.js";
 import { infer } from "../inference/adapter.js";
+import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 
 const mockInfer = vi.mocked(infer);
+const mockSearchMaps = vi.mocked(searchMaps);
+const mockGetNodes = vi.mocked(getNodes);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -63,6 +71,7 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
     totalToolNames: Object.keys(goalResults).map(() => "test_tool"),
     totalToolFailures: Object.values(goalResults).filter((r) => !r.ok).length,
     tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    toolRepairs: [],
   };
 }
 
@@ -167,5 +176,71 @@ describe("reflect", () => {
     const { result } = await reflect("Test task", graph, execResult);
 
     expect(result.score).toBe(0.85); // LLM score accepted
+  });
+
+  it("should include knowledge map concepts in reflect prompt", async () => {
+    mockSearchMaps.mockReturnValueOnce([
+      {
+        id: "telecom",
+        topic: "Telecom Regulation",
+        node_count: 2,
+        max_depth: 0,
+        created_at: "2026-04-03 00:00:00",
+        updated_at: "2026-04-03 00:00:00",
+      },
+    ] as never);
+    mockGetNodes.mockReturnValueOnce([
+      {
+        id: "n-1",
+        map_id: "telecom",
+        label: "Spectrum Auction",
+        type: "concept",
+        summary: "How bandwidth is allocated",
+        depth: 0,
+        parent_id: null,
+        created_at: "",
+      },
+      {
+        id: "n-2",
+        map_id: "telecom",
+        label: "Regulatory Capture",
+        type: "gotcha",
+        summary: "When regulators serve industry",
+        depth: 0,
+        parent_id: null,
+        created_at: "",
+      },
+    ] as never);
+
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: ["Good coverage"],
+        summary: "Solid analysis",
+      }),
+      tool_calls: undefined,
+      usage: {
+        prompt_tokens: 300,
+        completion_tokens: 80,
+        total_tokens: 380,
+      },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    await reflect("Analyze telecom regulation", graph, execResult);
+
+    // Verify map context was included in the prompt sent to LLM
+    const callArgs = mockInfer.mock.calls[0][0];
+    const userMsg = callArgs.messages.find(
+      (m: { role: string }) => m.role === "user",
+    );
+    expect(userMsg).toBeDefined();
+    expect(userMsg!.content).toContain("Domain Knowledge Map");
+    expect(userMsg!.content).toContain("Spectrum Auction");
+    expect(userMsg!.content).toContain("Regulatory Capture");
   });
 });

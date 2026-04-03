@@ -2,8 +2,8 @@
  * File read/write tools.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname, extname } from "path";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync } from "fs";
+import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 
 const MAX_READ = 50_000; // chars
@@ -127,6 +127,84 @@ instead of inline content. The tool reads the salvaged file and writes it to the
       return JSON.stringify({
         path,
         bytes_written: Buffer.byteLength(content, "utf-8"),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return JSON.stringify({ error: message });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Allowed paths for deletion — same as shell_exec write prefixes
+// ---------------------------------------------------------------------------
+
+const ALLOW_DELETE_PREFIXES = ["/root/claude/", "/tmp/", "/workspace/"];
+
+export const fileDeleteTool: Tool = {
+  name: "file_delete",
+  requiresConfirmation: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "file_delete",
+      description: `Delete a file or directory. Requires confirmation before execution.
+
+USE WHEN:
+- You need to remove a file or folder that is no longer needed
+- Cleaning up temporary files or outdated outputs
+
+RESTRICTIONS:
+- Only paths under /root/claude/, /tmp/, or /workspace/ can be deleted
+- System paths are blocked for safety
+- Directories are removed recursively (like rm -rf)
+
+CAUTION: This is irreversible. Verify the path is correct before calling.`,
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute path to the file or directory to delete",
+          },
+        },
+        required: ["path"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const rawPath = (args.path ?? args.file_path) as string;
+    if (!rawPath) return JSON.stringify({ error: "path is required" });
+
+    const absPath = resolve(rawPath);
+
+    // Safety: only allow deletion under known safe prefixes, at least 1 level deep
+    const matchedPrefix = ALLOW_DELETE_PREFIXES.find((p) =>
+      absPath.startsWith(p),
+    );
+    if (!matchedPrefix) {
+      return JSON.stringify({
+        error: `Deletion blocked: '${absPath}' is outside allowed paths (${ALLOW_DELETE_PREFIXES.join(", ")})`,
+      });
+    }
+    // Prevent deleting the prefix root itself (e.g., /root/claude/ or /tmp/)
+    const relative = absPath.slice(matchedPrefix.length);
+    if (!relative || relative === "/") {
+      return JSON.stringify({
+        error: `Deletion blocked: cannot delete root prefix '${matchedPrefix}'`,
+      });
+    }
+
+    try {
+      const stats = statSync(absPath);
+      const type = stats.isDirectory() ? "directory" : "file";
+
+      rmSync(absPath, { recursive: true, force: true });
+
+      return JSON.stringify({
+        deleted: absPath,
+        type,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

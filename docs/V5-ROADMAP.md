@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-03 — S1a, S1b, S2, S4 complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure awareness done.
+> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5b complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps done.
 
 ## Status Key
 
@@ -144,11 +144,13 @@
 
 > Source: [HyperGraph](https://github.com/hyperbrowserai/hyperbrowser-app-examples/tree/main/hypergraph) — breadth-first-then-expand pattern.
 
-| Item                                                                                                  | Source     | Effort | Status  |
-| ----------------------------------------------------------------------------------------------------- | ---------- | ------ | ------- |
-| `knowledge_map` tool — breadth-first domain overview (8-12 nodes), expand-on-demand                   | HyperGraph | 1d     | Planned |
-| SQLite `knowledge_nodes` table, reusable across tasks                                                 | —          | Incl.  | Planned |
-| Prometheus integration: planner checks for maps, reflector scores against map, executor expands nodes | —          | 0.5d   | Planned |
+| Item                                                                                                                          | Source     | Effort | Status   |
+| ----------------------------------------------------------------------------------------------------------------------------- | ---------- | ------ | -------- |
+| `knowledge_map` + `knowledge_map_expand` tools — LLM-generated domain overviews (8-12 nodes), expand-on-demand (3-6 children) | HyperGraph | 1d     | **Done** |
+| SQLite `knowledge_maps` + `knowledge_nodes` tables, 7-day TTL, max 60 nodes, max depth 5, reusable across tasks               | —          | Incl.  | **Done** |
+| Prometheus integration: planner injects map context, reflector scores against concepts/gotchas                                | —          | 0.5d   | **Done** |
+| `file_delete` tool (#148) — path-restricted recursive delete with depth guard, requiresConfirmation                           | prod fix   | 0.5h   | **Done** |
+| QA: deleteMap before regeneration, MAX-based nextNodeSeq, isStale→updated_at, prefix root guard                               | QA         | Incl.  | **Done** |
 
 **Exit criteria:** knowledge_map generates domain overview. Nodes persist in SQLite. Prometheus planner uses existing maps.
 
@@ -212,9 +214,9 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1036                                     | ~1,200+                      |
-| Test files          | 74                        | 84                                       | ~90+                         |
-| Tools               | 137                       | 145                                      | ~150 (+video, intel)         |
+| Tests               | 903                       | 1074                                     | ~1,200+                      |
+| Test files          | 74                        | 86                                       | ~90+                         |
+| Tools               | 137                       | 148                                      | ~155 (+video, intel)         |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
 | Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
 | Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |
@@ -224,7 +226,7 @@
 | Concurrent tasks    | Unsafe (shared state)     | Safe (per-task context)                  | Done                         |
 | Task introspection  | None                      | task_history tool                        | Done                         |
 | CRM integration     | None                      | REST + jarvis-pull (bidirectional)       | Done                         |
-| Knowledge maps      | None                      | —                                        | SQLite, breadth-first (S5b)  |
+| Knowledge maps      | None                      | 2 tools, 2 tables, Prometheus integrated | Done                         |
 | Research provenance | None                      | —                                        | Per-task audit trail (S5c)   |
 | Video production    | None                      | —                                        | On-demand via Telegram (S5d) |
 | Signal sources      | 0 (manual)                | —                                        | 25+ automated (S6–S8)        |

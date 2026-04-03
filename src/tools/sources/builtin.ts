@@ -10,7 +10,11 @@ import type {
 } from "../source.js";
 import { shellTool } from "../builtin/shell.js";
 import { httpTool } from "../builtin/http.js";
-import { fileReadTool, fileWriteTool } from "../builtin/file.js";
+import {
+  fileReadTool,
+  fileWriteTool,
+  fileDeleteTool,
+} from "../builtin/file.js";
 import { webSearchTool } from "../builtin/web-search.js";
 import { webReadTool } from "../builtin/web-read.js";
 import { weatherForecastTool } from "../builtin/weather.js";
@@ -72,6 +76,10 @@ import {
   jarvisFileDeleteTool,
 } from "../builtin/jarvis-files.js";
 import { jarvisInitTool } from "../builtin/jarvis-init.js";
+import {
+  knowledgeMapTool,
+  knowledgeMapExpandTool,
+} from "../builtin/knowledge-map.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -80,6 +88,7 @@ const BUILTIN_TOOLS: Tool[] = [
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  fileDeleteTool,
   grepTool,
   globTool,
   listDirTool,
@@ -116,6 +125,8 @@ const BUILTIN_TOOLS: Tool[] = [
   jarvisFileListTool,
   jarvisFileDeleteTool,
   jarvisInitTool,
+  knowledgeMapTool,
+  knowledgeMapExpandTool,
 ];
 
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured

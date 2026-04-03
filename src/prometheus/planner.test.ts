@@ -11,10 +11,18 @@ vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
 }));
 
+vi.mock("../db/knowledge-maps.js", () => ({
+  searchMaps: vi.fn(() => []),
+  getNodes: vi.fn(() => []),
+}));
+
 import { plan, replan } from "./planner.js";
 import { infer } from "../inference/adapter.js";
+import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 
 const mockInfer = vi.mocked(infer);
+const mockSearchMaps = vi.mocked(searchMaps);
+const mockGetNodes = vi.mocked(getNodes);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -148,6 +156,71 @@ describe("plan", () => {
     });
 
     await expect(plan("No goals test")).rejects.toThrow("goals");
+  });
+
+  it("should inject knowledge map context when map exists", async () => {
+    mockSearchMaps.mockReturnValueOnce([
+      {
+        id: "telecom-regulation",
+        topic: "Telecom Regulation",
+        node_count: 3,
+        max_depth: 0,
+        created_at: "2026-04-03 00:00:00",
+        updated_at: "2026-04-03 00:00:00",
+      },
+    ] as never);
+    mockGetNodes.mockReturnValueOnce([
+      {
+        id: "n-1",
+        map_id: "telecom-regulation",
+        label: "Spectrum Auction",
+        type: "concept",
+        summary: "How bandwidth is allocated",
+        depth: 0,
+        parent_id: null,
+        created_at: "",
+      },
+      {
+        id: "n-2",
+        map_id: "telecom-regulation",
+        label: "Regulatory Capture",
+        type: "gotcha",
+        summary: "When regulators serve industry instead of public",
+        depth: 0,
+        parent_id: null,
+        created_at: "",
+      },
+    ] as never);
+
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Analyze regulation",
+            completion_criteria: ["done"],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 50, total_tokens: 250 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    await plan("Analyze Mexican telecom regulation");
+
+    // Verify the LLM received map context in the prompt
+    const callArgs = mockInfer.mock.calls[0][0];
+    const userMsg = callArgs.messages.find(
+      (m: { role: string }) => m.role === "user",
+    );
+    expect(userMsg).toBeDefined();
+    expect(userMsg!.content).toContain("Domain Knowledge Map");
+    expect(userMsg!.content).toContain("Spectrum Auction");
+    expect(userMsg!.content).toContain("Regulatory Capture");
   });
 });
 

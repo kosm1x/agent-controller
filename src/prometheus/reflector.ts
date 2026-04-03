@@ -11,6 +11,7 @@ import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
 import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
+import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -31,6 +32,7 @@ Rules:
 - success = true only if score >= 0.8 and no critical goals failed.
 - learnings should be actionable and specific, not generic.
 - summary should be 1-3 sentences.
+- If a domain knowledge map is provided, evaluate whether execution addressed key concepts and avoided listed gotchas.
 - Emit ONLY valid JSON. No markdown, no commentary.`;
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,34 @@ function buildReflectPrompt(
     goalDetails.push(detail);
   }
 
+  // Check for domain knowledge map to score against
+  let mapSection = "";
+  try {
+    const maps = searchMaps(taskDescription);
+    if (maps.length > 0) {
+      const nodes = getNodes(maps[0].id);
+      const concepts = nodes.filter((n) => n.type === "concept");
+      const gotchas = nodes.filter((n) => n.type === "gotcha");
+      if (concepts.length > 0 || gotchas.length > 0) {
+        mapSection =
+          `\n\n## Domain Knowledge Map: ${maps[0].topic}\n` +
+          `Key concepts that should have been addressed:\n` +
+          concepts.map((n) => `- ${n.label}`).join("\n") +
+          "\n" +
+          (gotchas.length > 0
+            ? `Gotchas that should have been considered:\n` +
+              gotchas
+                .map((n) => `- ${n.label}: ${n.summary.slice(0, 200)}`)
+                .join("\n") +
+              "\n"
+            : "") +
+          `Score lower if critical concepts were ignored or gotchas were not addressed.`;
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
   return (
     `## Task\n${taskDescription}\n\n` +
     `## Goal Graph Summary\n` +
@@ -168,7 +198,8 @@ function buildReflectPrompt(
     `## Goal Details\n${goalDetails.join("\n")}\n\n` +
     `## Execution Stats\n` +
     `Tool calls: ${executionResults.totalToolCalls}, ` +
-    `Tool failures: ${executionResults.totalToolFailures}`
+    `Tool failures: ${executionResults.totalToolFailures}` +
+    mapSection
   );
 }
 

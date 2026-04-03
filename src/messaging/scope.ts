@@ -88,6 +88,7 @@ export const CODING_TOOLS = [
   "shell_exec",
   "file_write",
   "file_edit",
+  "file_delete",
   "grep",
   "glob",
   "list_dir",
@@ -152,6 +153,8 @@ export const RESEARCH_TOOLS = [
   "gemini_upload",
   "gemini_research",
   "gemini_audio_overview",
+  "knowledge_map",
+  "knowledge_map_expand",
 ];
 
 /** Playwright (Chromium) tools — scope-gated to avoid inflating token budget for all tasks.
