@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5b complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps done.
+> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5b, S5c complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps + research verification done.
 
 ## Status Key
 
@@ -160,12 +160,12 @@
 
 > Source: [Feynman](https://github.com/getcompanion-ai/feynman) — 3-layer verification pipeline.
 
-| Item                                                                                               | Source  | Effort | Status  |
-| -------------------------------------------------------------------------------------------------- | ------- | ------ | ------- |
-| Provenance records — `task_provenance` SQLite table (sources consulted/accepted/rejected per task) | Feynman | 0.5d   | Planned |
-| Mechanical source anchoring — URL-in-content check during reflect phase                            | Feynman | 0.5d   | Planned |
-| Source status tagging — verified / inferred / unverified classification                            | Feynman | Incl.  | Planned |
-| Search result condensation — LLM pass on multi-query results (>2 queries)                          | Feynman | 2h     | Planned |
+| Item                                                                                               | Source  | Effort | Status   |
+| -------------------------------------------------------------------------------------------------- | ------- | ------ | -------- |
+| Provenance records — `task_provenance` SQLite table (sources consulted/accepted/rejected per task) | Feynman | 0.5d   | **Done** |
+| Mechanical source anchoring — URL-in-content check during reflect phase, conservative penalty      | Feynman | 0.5d   | **Done** |
+| Source status tagging — verified / inferred / unverified 3-state classification                    | Feynman | Incl.  | **Done** |
+| Search result condensation — LLM pass on multi-query results (≥3 queries, max 15 sources)          | Feynman | 2h     | **Done** |
 
 **Exit criteria:** Provenance records written for Prometheus tasks. Source anchoring flags uncited URLs.
 
@@ -214,9 +214,9 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1074                                     | ~1,200+                      |
-| Test files          | 74                        | 86                                       | ~90+                         |
-| Tools               | 137                       | 148                                      | ~155 (+video, intel)         |
+| Tests               | 903                       | 1097                                     | ~1,200+                      |
+| Test files          | 74                        | 88                                       | ~90+                         |
+| Tools               | 137                       | 156                                      | ~165 (+video, intel)         |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
 | Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
 | Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |
@@ -227,7 +227,7 @@
 | Task introspection  | None                      | task_history tool                        | Done                         |
 | CRM integration     | None                      | REST + jarvis-pull (bidirectional)       | Done                         |
 | Knowledge maps      | None                      | 2 tools, 2 tables, Prometheus integrated | Done                         |
-| Research provenance | None                      | —                                        | Per-task audit trail (S5c)   |
+| Research provenance | None                      | 3-state classification, anchoring score  | Done                         |
 | Video production    | None                      | —                                        | On-demand via Telegram (S5d) |
 | Signal sources      | 0 (manual)                | —                                        | 25+ automated (S6–S8)        |
 | Context awareness   | None                      | Advisory at 70%, metadata in output      | Done                         |
