@@ -25,13 +25,17 @@ export function createSignalIntelligence(dateLabel: string): TaskSubmission {
 Scan the web for signals relevant to Fede's active projects and interests.
 Store a structured digest that the morning briefing can reference.
 
+## Step 0: Check the Intelligence Depot first
+
+Call intel_query with hours=24 to get signals already collected by the depot (earthquakes, weather alerts, FX rates, crypto prices, geopolitical articles, cyber vulnerabilities, breaking news). Also call intel_alert_history with hours=24 for any FLASH/PRIORITY alerts. Use depot data as your PRIMARY signal source — only supplement with web searches for gaps.
+
 ## Step 1: Gather context
 
 Call user_fact_list to retrieve:
 - Active projects (category "projects") — these define what's relevant
 - Any existing signal preferences (category "intelligence")
 
-## Step 2: Collect signals (3 parallel scans)
+## Step 2: Collect signals (3 parallel scans — supplement depot data)
 
 Run these searches to cover different signal types:
 
@@ -125,6 +129,8 @@ IMPORTANT:
       "rss_read",
       "gmail_send",
       "memory_search",
+      "intel_query",
+      "intel_alert_history",
     ],
     requiredTools: ["exa_search", "user_fact_set", "gmail_send"],
   };

@@ -9,8 +9,11 @@ import { nwsAdapter } from "./nws.js";
 import { gdeltAdapter } from "./gdelt.js";
 import { frankfurterAdapter } from "./frankfurter.js";
 import { cisaKevAdapter } from "./cisa-kev.js";
+import { coingeckoAdapter } from "./coingecko.js";
+import { treasuryAdapter } from "./treasury.js";
+import { googleNewsAdapter } from "./google-news.js";
 import { getAllAdapters } from "./index.js";
-import type { CollectorAdapter, Signal } from "../types.js";
+import type { CollectorAdapter } from "../types.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -62,6 +65,9 @@ testAdapterContract(nwsAdapter);
 testAdapterContract(gdeltAdapter);
 testAdapterContract(frankfurterAdapter);
 testAdapterContract(cisaKevAdapter);
+testAdapterContract(coingeckoAdapter);
+testAdapterContract(treasuryAdapter);
+testAdapterContract(googleNewsAdapter);
 
 // ---------------------------------------------------------------------------
 // USGS-specific
@@ -283,15 +289,106 @@ describe("cisa-kev adapter", () => {
 // Registry
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CoinGecko-specific
+// ---------------------------------------------------------------------------
+
+describe("coingecko adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("produces one signal per crypto", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bitcoin: { usd: 67500, usd_24h_change: 2.1 },
+        ethereum: { usd: 3200, usd_24h_change: -0.5 },
+      }),
+    });
+
+    const signals = await coingeckoAdapter.collect();
+    expect(signals).toHaveLength(2);
+    const btc = signals.find((s) => s.key === "bitcoin");
+    expect(btc).toBeDefined();
+    expect(btc!.valueNumeric).toBe(67500);
+    expect(btc!.domain).toBe("financial");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Treasury-specific
+// ---------------------------------------------------------------------------
+
+describe("treasury adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("extracts 10Y Treasury Note rate", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            record_date: "2026-04-02",
+            avg_interest_rate_amt: "4.250",
+            security_desc: "Treasury Notes",
+          },
+        ],
+      }),
+    });
+
+    const signals = await treasuryAdapter.collect();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].key).toBe("10Y");
+    expect(signals[0].valueNumeric).toBe(4.25);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Google News-specific
+// ---------------------------------------------------------------------------
+
+describe("google-news adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("produces article signals from RSS feed", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "ok",
+        items: [
+          {
+            title: "Breaking: Major Event",
+            link: "https://example.com/article1",
+            pubDate: "2026-04-03T12:00:00Z",
+            description: "Details of the event...",
+          },
+        ],
+      }),
+    });
+
+    const signals = await googleNewsAdapter.collect();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].signalType).toBe("article");
+    expect(signals[0].valueText).toContain("Breaking");
+    expect(signals[0].domain).toBe("news");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------
+
 describe("adapter registry", () => {
-  it("returns all 5 S6 adapters", () => {
+  it("returns all 8 adapters", () => {
     const adapters = getAllAdapters();
-    expect(adapters).toHaveLength(5);
+    expect(adapters).toHaveLength(8);
     const sources = adapters.map((a) => a.source);
     expect(sources).toContain("usgs");
     expect(sources).toContain("nws");
     expect(sources).toContain("gdelt");
     expect(sources).toContain("frankfurter");
     expect(sources).toContain("cisa_kev");
+    expect(sources).toContain("coingecko");
+    expect(sources).toContain("treasury");
+    expect(sources).toContain("google_news");
   });
 });

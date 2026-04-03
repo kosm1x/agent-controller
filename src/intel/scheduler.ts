@@ -7,15 +7,23 @@
 
 import type { CollectorAdapter, CollectorHealth } from "./types.js";
 import { getAllAdapters } from "./adapters/index.js";
-import { insertSignals } from "./signal-store.js";
+import { insertSignals, pruneOldSignals } from "./signal-store.js";
 import { processSignals } from "./delta-engine.js";
+import { evaluateDeltas, shouldSuppress, createAlert } from "./alert-router.js";
+import { deliverPendingAlerts } from "./alert-delivery.js";
 
 const timers = new Map<string, ReturnType<typeof setInterval>>();
 const health = new Map<string, CollectorHealth>();
+let broadcastFn: ((text: string) => Promise<void>) | null = null;
+
+/** Set the broadcast function for alert delivery (called from index.ts after messaging init). */
+export function setIntelBroadcast(fn: (text: string) => Promise<void>): void {
+  broadcastFn = fn;
+}
 
 /**
  * Run a single collection cycle for an adapter.
- * Inserts signals, computes deltas, updates health.
+ * Inserts signals, computes deltas, evaluates alerts, delivers if needed.
  */
 async function runCollector(adapter: CollectorAdapter): Promise<void> {
   const h = health.get(adapter.source) ?? {
@@ -42,9 +50,26 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
         console.log(
           `[intel] ${adapter.source}: ${inserted} signals, ${deltas.length} deltas (${deltas.map((d) => `${d.key}:${d.severity}`).join(", ")})`,
         );
+
+        // Evaluate deltas → create alerts → deliver
+        const candidates = evaluateDeltas(deltas);
+        for (const candidate of candidates) {
+          if (!shouldSuppress(candidate)) {
+            createAlert(candidate);
+          }
+        }
+
+        // Deliver pending FLASH/PRIORITY via Telegram
+        if (broadcastFn) {
+          await deliverPendingAlerts(broadcastFn).catch((err) => {
+            console.warn(
+              `[intel] Alert delivery failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
       }
     } else {
-      // Empty response is not a failure (source may just have no new data)
       h.consecutiveFailures = 0;
       h.lastSuccess = new Date().toISOString();
     }
@@ -92,6 +117,16 @@ export function startIntelCollectors(): void {
       timers.set(adapter.source, timer);
     }
   }
+
+  // Daily signal pruning (30-day retention)
+  const pruneTimer = setInterval(
+    () => {
+      const deleted = pruneOldSignals(30);
+      if (deleted > 0) console.log(`[intel] Pruned ${deleted} old signals`);
+    },
+    24 * 60 * 60_000,
+  );
+  timers.set("_pruner", pruneTimer);
 }
 
 /** Stop all collector intervals (for graceful shutdown). */

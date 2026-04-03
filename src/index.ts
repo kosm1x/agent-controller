@@ -18,6 +18,7 @@ import {
 import {
   startIntelCollectors,
   stopIntelCollectors,
+  setIntelBroadcast,
 } from "./intel/scheduler.js";
 import {
   startDynamicScheduler,
@@ -168,9 +169,10 @@ async function main(): Promise<void> {
   // Start messaging channels (WhatsApp/Telegram) if enabled
   const router = await initMessaging();
 
-  // Wire MCP alerts to Telegram (after messaging is ready)
+  // Wire MCP alerts + intel alerts to Telegram (after messaging is ready)
   if (router) {
     setMcpAlertFn((msg: string) => router.broadcastToAll(msg));
+    setIntelBroadcast((msg: string) => router.broadcastToAll(msg));
     startProactiveScheduler(router);
   }
 

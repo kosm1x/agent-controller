@@ -144,6 +144,14 @@ export const BROWSER_TOOLS = [
   "playwright__browser_close",
 ];
 
+/** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
+export const INTEL_TOOLS = [
+  "intel_query",
+  "intel_status",
+  "intel_alert_history",
+  "intel_baseline",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -245,6 +253,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "crm",
   },
   {
+    pattern:
+      /\b(intel(?:ligencia|ligence)?|se[ñn]ales?|signals?|alertas?\s+del?\s+depot|depot|mercado|market|earthquake|terremoto|cyber|threat|anomal[iy]|baseline|z.?score|bitcoin|cripto|treasury|yield)/i,
+    group: "intel",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -329,6 +342,7 @@ export function scopeToolsForMessage(
     activeGroups.add("destructive");
     activeGroups.add("specialty");
     activeGroups.add("research");
+    activeGroups.add("intel");
     activeGroups.add("schedule");
     activeGroups.add("google");
     activeGroups.add("browser");
@@ -342,6 +356,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("research")) {
     tools.push(...RESEARCH_TOOLS);
+  }
+  if (activeGroups.has("intel")) {
+    tools.push(...INTEL_TOOLS);
   }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);

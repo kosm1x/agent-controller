@@ -28,7 +28,8 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 6. If any tasks have overdue due_dates, flag them prominently.
 7. If any goals have no active objectives or tasks, flag the gap.
 8. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
-9. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
+9. Call intel_query with hours=12 to get overnight signal intelligence from the depot. Call intel_alert_history with hours=12 to check for any FLASH or PRIORITY alerts. Include a "📡 Señales del Depot" section with the top deltas and any active alerts.
+10. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 
@@ -62,7 +63,14 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
 
 Racha actual: X días consecutivos.`,
     agentType: "heavy",
-    tools: ["jarvis_file_read", "memory_search", "gmail_send", "project_list"],
+    tools: [
+      "jarvis_file_read",
+      "memory_search",
+      "gmail_send",
+      "project_list",
+      "intel_query",
+      "intel_alert_history",
+    ],
     requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

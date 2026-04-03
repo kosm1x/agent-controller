@@ -80,6 +80,10 @@ import {
   knowledgeMapTool,
   knowledgeMapExpandTool,
 } from "../builtin/knowledge-map.js";
+import { intelQueryTool } from "../builtin/intel-query.js";
+import { intelStatusTool } from "../builtin/intel-status.js";
+import { intelAlertHistoryTool } from "../builtin/intel-alert-history.js";
+import { intelBaselineTool } from "../builtin/intel-baseline.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -119,6 +123,10 @@ const BUILTIN_TOOLS: Tool[] = [
   geminiResearchTool,
   geminiAudioOverviewTool,
   taskHistoryTool,
+  intelQueryTool,
+  intelStatusTool,
+  intelAlertHistoryTool,
+  intelBaselineTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,
