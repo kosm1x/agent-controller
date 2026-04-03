@@ -14,7 +14,7 @@ export function createEvolutionLogEntry(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call commit__get_daily_snapshot to see today's final state (tasks, completions, streaks).
+1. Call jarvis_file_read to read NorthStar/ files and see today's final state (tasks, completions, streaks).
 2. Call memory_search with query "conversations today" in bank "jarvis" to recall today's interactions.
 3. Call memory_reflect with query "What patterns emerged in today's conversations? What did the user care about? What went well and what caused friction?" in bank "jarvis".
 
@@ -53,7 +53,7 @@ Do NOT modify existing entries. Only append.
 If there were zero interactions today, still write an entry noting the quiet day.`,
     agentType: "heavy",
     tools: [
-      "commit__get_daily_snapshot",
+      "jarvis_file_read",
       "memory_search",
       "memory_reflect",
       "file_read",

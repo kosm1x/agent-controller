@@ -118,9 +118,7 @@ describe("task templates", () => {
     const task = createMorningBriefing("2026-03-13");
     expect(task.title).toBe("Morning briefing — 2026-03-13");
     expect(task.agentType).toBe("heavy");
-    expect(task.tools).toContain("commit__get_daily_snapshot");
-    expect(task.tools).toContain("commit__list_tasks");
-    expect(task.tools).toContain("commit__get_hierarchy");
+    expect(task.tools).toContain("jarvis_file_read");
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Eisenhower");
   });
@@ -129,9 +127,8 @@ describe("task templates", () => {
     const task = createNightlyClose("2026-03-13");
     expect(task.title).toBe("Nightly close — 2026-03-13");
     expect(task.agentType).toBe("heavy");
-    expect(task.tools).toContain("commit__get_daily_snapshot");
+    expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("gmail_send");
-    expect(task.tools).not.toContain("commit__create_journal_entry");
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Reflexión");
     expect(task.description).toContain("Do NOT write to the journal");

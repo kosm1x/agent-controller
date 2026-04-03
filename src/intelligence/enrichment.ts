@@ -158,7 +158,7 @@ function getMatchingSkills(messageText: string): SkillMatchResult {
         `### ${s.name} (usado ${s.use_count} veces, ${successRate}% éxito)\n` +
         `Trigger: ${s.trigger_text}\n` +
         `Pasos:\n${steps.map((st, i) => `${i + 1}. ${st}`).join("\n")}\n` +
-        `Herramientas: ${tools.map((t) => t.replace("commit__", "")).join(", ")}`
+        `Herramientas: ${tools.join(", ")}`
       );
     });
 
@@ -231,7 +231,7 @@ function getToolHintsAndTopTools(): {
     const lines = sorted.map(([tool, count]) => {
       const succ = toolSuccess.get(tool) ?? 0;
       const toolRate = Math.round((succ / count) * 100);
-      const label = tool.replace("commit__", "");
+      const label = tool;
       if (toolRate < 40 && count >= 5) {
         return `- ${label}: ${count} usos, ${toolRate}% éxito (EVITAR para tareas simples)`;
       }
@@ -266,17 +266,17 @@ const TOOL_FIRST_RULES: { pattern: RegExp; tools: string[]; label: string }[] =
     },
     {
       pattern: /\b(qu[eé]\s+(tareas?|pendientes?|tasks?))\b/i,
-      tools: ["commit__list_tasks"],
+      tools: ["jarvis_file_read"],
       label: "tareas",
     },
     {
       pattern: /\b(qu[eé]\s+(metas?|goals?))\b/i,
-      tools: ["commit__list_goals"],
+      tools: ["jarvis_file_read"],
       label: "metas",
     },
     {
       pattern: /\b(qu[eé]\s+(objetivos?|objectives?))\b/i,
-      tools: ["commit__list_objectives"],
+      tools: ["jarvis_file_read"],
       label: "objetivos",
     },
     {
@@ -293,7 +293,7 @@ const TOOL_FIRST_RULES: { pattern: RegExp; tools: string[]; label: string }[] =
     {
       pattern:
         /\b(cu[aá]ntos?|lista(r|me)?|mu[eé]stra(me)?|dame)\b.*\b(reportes?|tareas?|schedules?|metas?|objetivos?|skills?)\b/i,
-      tools: ["list_schedules", "commit__list_tasks"],
+      tools: ["list_schedules", "jarvis_file_read"],
       label: "datos del sistema",
     },
     {

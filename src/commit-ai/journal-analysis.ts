@@ -9,13 +9,21 @@
 import { z } from "zod";
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
-import {
-  getSnapshot,
-  listGoals,
-  upsertAiAnalysis,
-  createSuggestion,
-} from "../db/commit.js";
 import { getMemoryService } from "../memory/index.js";
+
+// Stubs — COMMIT DB retired, journal analysis writes are no-ops until NorthStar journal is implemented
+function getSnapshot(): string {
+  return "";
+}
+function listGoals(_status?: string, _limit?: number): string {
+  return "";
+}
+function upsertAiAnalysis(_fields: Record<string, unknown>): { ok: boolean } {
+  return { ok: true };
+}
+function createSuggestion(_fields: Record<string, unknown>): { ok: boolean } {
+  return { ok: true };
+}
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("journal-analysis");

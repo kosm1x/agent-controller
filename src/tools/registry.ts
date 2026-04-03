@@ -123,9 +123,7 @@ export class ToolRegistry {
   }
 
   /** MCP tools that require confirmation (can't be tagged via interface). */
-  private static readonly DESTRUCTIVE_MCP_TOOLS = new Set([
-    "commit__delete_item",
-  ]);
+  private static readonly DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
 
   /**
    * Tracks whether destructive tools have been "unlocked" for the current
@@ -164,7 +162,7 @@ export class ToolRegistry {
       return JSON.stringify({
         error: "CONFIRMATION_REQUIRED",
         message:
-          "PAUSE — you DO have commit__delete_item and it WILL work after the user confirms. " +
+          "PAUSE — this tool requires user confirmation before execution. " +
           "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
           "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
         tool: name,

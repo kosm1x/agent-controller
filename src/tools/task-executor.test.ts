@@ -23,41 +23,14 @@ describe("createTaskExecutor", () => {
     expect(registry.execute).toHaveBeenCalledWith("web_search", { q: "test" });
   });
 
-  it("blocks destructive tool when not unlocked", async () => {
+  it("passes through tools not in DESTRUCTIVE_MCP_TOOLS", async () => {
     const registry = mockRegistry();
     const ctx = new TaskExecutionContext("task-1");
     const executor = createTaskExecutor(registry, ctx);
 
-    const result = await executor("commit__delete_item", { id: "1" });
-    expect(result).toContain("CONFIRMATION_REQUIRED");
-    expect(registry.execute).not.toHaveBeenCalled();
-  });
-
-  it("allows destructive tool when unlocked in context", async () => {
-    const registry = mockRegistry();
-    const ctx = new TaskExecutionContext("task-1");
-    ctx.unlockDestructive("commit__delete_item");
-    const executor = createTaskExecutor(registry, ctx);
-
-    const result = await executor("commit__delete_item", { id: "1" });
+    const result = await executor("file_delete", { path: "/tmp/x" });
     expect(result).toBe('{"ok": true}');
     expect(registry.execute).toHaveBeenCalled();
-  });
-
-  it("isolates destructive locks between tasks", async () => {
-    const registry = mockRegistry();
-    const ctxA = new TaskExecutionContext("task-a");
-    const ctxB = new TaskExecutionContext("task-b");
-    ctxA.unlockDestructive("commit__delete_item");
-
-    const execA = createTaskExecutor(registry, ctxA);
-    const execB = createTaskExecutor(registry, ctxB);
-
-    // A can delete, B cannot
-    expect(await execA("commit__delete_item", {})).toBe('{"ok": true}');
-    expect(await execB("commit__delete_item", {})).toContain(
-      "CONFIRMATION_REQUIRED",
-    );
   });
 
   it("enforces memory store rate limit via context", async () => {

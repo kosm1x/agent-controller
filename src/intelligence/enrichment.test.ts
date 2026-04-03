@@ -54,10 +54,7 @@ describe("enrichment", () => {
         task_id: `task-${i}`,
         classified_as: "fast",
         ran_on: "fast",
-        tools_used: JSON.stringify([
-          "commit__list_tasks",
-          "commit__update_status",
-        ]),
+        tools_used: JSON.stringify(["jarvis_file_read", "jarvis_file_write"]),
         duration_ms: 2000,
         success: 1,
         feedback_signal: "none",
@@ -69,7 +66,7 @@ describe("enrichment", () => {
     const result = await enrichContext("test", "telegram");
 
     expect(result.contextBlock).toContain("Herramientas más efectivas");
-    expect(result.contextBlock).toContain("list_tasks");
+    expect(result.contextBlock).toContain("jarvis_file_read");
   });
 
   it("should return matchedSkillIds and confidence", async () => {
@@ -97,7 +94,7 @@ describe("enrichment", () => {
       );
 
       expect(result.contextBlock).toContain("OBLIGATORIO");
-      expect(result.contextBlock).toContain("commit__list_tasks");
+      expect(result.contextBlock).toContain("jarvis_file_read");
     });
 
     it("should inject correction protocol when user says olvidaste", async () => {

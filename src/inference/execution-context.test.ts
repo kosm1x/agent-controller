@@ -5,21 +5,21 @@ describe("TaskExecutionContext", () => {
   describe("destructive locks", () => {
     it("starts locked", () => {
       const ctx = new TaskExecutionContext("task-1");
-      expect(ctx.isDestructiveUnlocked("commit__delete_item")).toBe(false);
+      expect(ctx.isDestructiveUnlocked("dangerous_tool")).toBe(false);
     });
 
     it("unlocks after explicit call", () => {
       const ctx = new TaskExecutionContext("task-1");
-      ctx.unlockDestructive("commit__delete_item");
-      expect(ctx.isDestructiveUnlocked("commit__delete_item")).toBe(true);
+      ctx.unlockDestructive("dangerous_tool");
+      expect(ctx.isDestructiveUnlocked("dangerous_tool")).toBe(true);
     });
 
     it("isolates between contexts", () => {
       const ctxA = new TaskExecutionContext("task-a");
       const ctxB = new TaskExecutionContext("task-b");
-      ctxA.unlockDestructive("commit__delete_item");
-      expect(ctxA.isDestructiveUnlocked("commit__delete_item")).toBe(true);
-      expect(ctxB.isDestructiveUnlocked("commit__delete_item")).toBe(false);
+      ctxA.unlockDestructive("dangerous_tool");
+      expect(ctxA.isDestructiveUnlocked("dangerous_tool")).toBe(true);
+      expect(ctxB.isDestructiveUnlocked("dangerous_tool")).toBe(false);
     });
   });
 

@@ -116,7 +116,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "Creé una tarea bajo el objetivo de optimización.",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
       ),
     ).toBe(true);
   });
@@ -222,7 +222,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         '✅ **Marcada como `completed`** | "S7 - Descomponer prompts"',
-        ["commit__list_tasks", "browser__goto"],
+        ["jarvis_file_read", "browser__goto"],
       ),
     ).toBe(true);
   });
@@ -231,7 +231,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         '✅ **Eliminada (no existe en roadmap):** `76890a25` — "S5 - Inference"',
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
       ),
     ).toBe(true);
   });
@@ -240,7 +240,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "### Acciones Ejecutadas:\n| ✅ Actualizada | tarea X |",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
       ),
     ).toBe(true);
   });
@@ -249,7 +249,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "La tarea está marcada como completada en COMMIT.",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
       ),
     ).toBe(false);
   });
@@ -259,7 +259,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
-        ["commit__list_tasks", "commit__update_status"],
+        ["jarvis_file_read", "jarvis_file_write"],
       ),
     ).toBe(false);
   });
@@ -268,7 +268,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "He verificado y actualizado las tareas. Todas marcadas como completadas.",
-        ["commit__list_tasks", "commit__update_task"],
+        ["jarvis_file_read", "file_write"],
       ),
     ).toBe(false);
   });
@@ -277,7 +277,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "I just updated the task status to completed.",
-        ["commit__update_status"],
+        ["jarvis_file_write"],
       ),
     ).toBe(false);
   });
@@ -286,7 +286,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
       ),
     ).toBe(true);
   });
@@ -295,7 +295,7 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "Conexión FTP establecida con éxito. Archivo subido al servidor.",
-        ["commit__update_task"],
+        ["file_write"],
       ),
     ).toBe(true);
   });
@@ -314,9 +314,9 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         '✅ **Marcada como `completed`** | "S7 - Descomponer prompts"',
-        ["commit__list_tasks", "shell_exec"],
+        ["jarvis_file_read", "shell_exec"],
         undefined,
-        ["commit__update_task"],
+        ["file_write"],
       ),
     ).toBe(true);
   });
@@ -325,9 +325,9 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "## ✅ **Sincronización Completada: V4.0 100% Alineado**",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
         undefined,
-        ["commit__update_task"],
+        ["file_write"],
       ),
     ).toBe(true);
   });
@@ -336,21 +336,21 @@ describe("detectsHallucinatedExecution", () => {
     expect(
       detectsHallucinatedExecution(
         "No pude actualizar la tarea porque el servidor devolvió error.",
-        ["commit__list_tasks"],
+        ["jarvis_file_read"],
         undefined,
-        ["commit__update_task"],
+        ["file_write"],
       ),
     ).toBe(false);
   });
 
   it("allows success when write tool failed first but succeeded on retry within same execution", () => {
-    // commit__delete_item: first call → CONFIRMATION_REQUIRED (error),
+    // file_delete: first call → CONFIRMATION_REQUIRED (error),
     // second call after unlock → success. Tool appears in BOTH
     // failedToolCalls and toolsCalled. Should NOT trigger guard.
     expect(
       detectsHallucinatedExecution(
         "✅ Eliminadas 5 tareas completadas con más de 8 días.",
-        ["commit__list_tasks", "commit__delete_item"],
+        ["jarvis_file_read", "file_delete"],
         undefined,
         // failedWriteTools now excludes tools that also succeeded
         [],

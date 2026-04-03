@@ -43,14 +43,6 @@ const READ_ONLY_TOOLS = new Set([
   "wp_pages",
   "wp_plugins",
   "wp_settings",
-  // COMMIT (read-only subset)
-  "commit__get_daily_snapshot",
-  "commit__get_hierarchy",
-  "commit__list_tasks",
-  "commit__list_goals",
-  "commit__list_objectives",
-  "commit__search_journal",
-  "commit__list_ideas",
   // Projects, evolution, introspection, CRM & Jarvis files
   "project_list",
   "project_get",

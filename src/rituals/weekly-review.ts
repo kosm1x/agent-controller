@@ -15,11 +15,10 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 
 ## Instrucciones
 
-1. Llama commit__get_hierarchy para ver la estructura completa: visiones, metas, objetivos, tareas.
-2. Llama commit__list_goals con status "in_progress" para revisar el estado de cada meta activa.
-3. Llama commit__list_tasks para ver tareas completadas esta semana y pendientes.
-4. Llama commit__get_daily_snapshot para obtener el resumen del día y racha actual.
-5. Llama project_list para ver proyectos activos y su vinculación con metas COMMIT.
+1. Llama jarvis_file_read para leer la estructura completa en NorthStar/: visiones, metas, objetivos, tareas.
+2. Revisa el estado de cada meta activa en los archivos NorthStar/.
+3. Identifica tareas completadas esta semana y pendientes en NorthStar/.
+4. Llama project_list para ver proyectos activos y su vinculación con metas.
 6. Llama memory_search con query "semana" o "weekly" para recuperar contexto relevante.
 
 ## Análisis requerido
@@ -77,16 +76,7 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 
 IMPORTANTE: Do NOT write to the journal. The journal is exclusively for the user's personal input.`,
     agentType: "heavy",
-    tools: [
-      "commit__get_hierarchy",
-      "commit__get_daily_snapshot",
-      "commit__list_goals",
-      "commit__list_objectives",
-      "commit__list_tasks",
-      "project_list",
-      "memory_search",
-      "gmail_send",
-    ],
-    requiredTools: ["commit__get_hierarchy", "gmail_send"],
+    tools: ["jarvis_file_read", "project_list", "memory_search", "gmail_send"],
+    requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

@@ -33,17 +33,17 @@ describe("scoreToolSelection", () => {
 
   it("penalizes forbidden tools that are called", () => {
     const result = scoreToolSelection(
-      { tools: ["web_search"], not_tools: ["commit__create_task"] },
-      ["web_search", "commit__create_task"],
+      { tools: ["web_search"], not_tools: ["memory_store"] },
+      ["web_search", "memory_store"],
     );
     // 1 hit - 2 violation = -1, max 1, normalized: max(0, -1/1) = 0
     expect(result.score).toBe(0);
-    expect(result.details.violations).toContain("commit__create_task");
+    expect(result.details.violations).toContain("memory_store");
   });
 
   it("scores 1.0 when expected is empty and no forbidden tools called", () => {
     const result = scoreToolSelection(
-      { tools: [], not_tools: ["commit__create_task"] },
+      { tools: [], not_tools: ["memory_store"] },
       [],
     );
     expect(result.score).toBe(1.0);
@@ -51,8 +51,8 @@ describe("scoreToolSelection", () => {
 
   it("scores 0.0 when expected is empty but forbidden tools called", () => {
     const result = scoreToolSelection(
-      { tools: [], not_tools: ["commit__create_task"] },
-      ["commit__create_task"],
+      { tools: [], not_tools: ["memory_store"] },
+      ["memory_store"],
     );
     expect(result.score).toBe(0.0);
   });

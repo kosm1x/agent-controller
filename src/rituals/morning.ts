@@ -2,8 +2,8 @@
  * Morning briefing task template.
  *
  * Submitted to the dispatcher as a Heavy runner task.
- * The LLM calls commit__* tools to build a structured daily briefing,
- * then emails it to the user.
+ * The LLM reads NorthStar/ files via jarvis_file_read to build a structured
+ * daily briefing, then emails it to the user.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -15,7 +15,7 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call the tool commit__get_daily_snapshot to get today's full context.
+1. Call jarvis_file_read to read NorthStar/ files and get today's full context (visions, goals, objectives, tasks).
 2. Review the vision and active goals to frame the day strategically.
 3. Analyze pending tasks and classify each using the Eisenhower matrix:
    - CRITICAL: Urgent + Important (do first)
@@ -62,14 +62,7 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
 
 Racha actual: X días consecutivos.`,
     agentType: "heavy",
-    tools: [
-      "commit__get_daily_snapshot",
-      "commit__list_tasks",
-      "commit__get_hierarchy",
-      "memory_search",
-      "gmail_send",
-      "project_list",
-    ],
-    requiredTools: ["commit__get_daily_snapshot", "gmail_send"],
+    tools: ["jarvis_file_read", "memory_search", "gmail_send", "project_list"],
+    requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

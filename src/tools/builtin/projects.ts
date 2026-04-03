@@ -190,7 +190,7 @@ CREDENTIAL STORAGE:
           commit_goal_id: {
             type: "string",
             description:
-              "COMMIT goal UUID to link this project to. Get from commit__list_goals.",
+              "Goal UUID to link this project to. Get from NorthStar/ files via jarvis_file_read.",
           },
         },
         required: ["slug"],

@@ -100,10 +100,10 @@ async function runProactiveScan(): Promise<void> {
       title: `Proactive scan — ${today}`,
       description: `Eres Jarvis. Realiza un escaneo proactivo de la situación del usuario:
 
-1. Usa commit__get_daily_snapshot para ver tareas pendientes, vencidas, y próximos deadlines.
-2. Usa commit__list_objectives con status "in_progress" para detectar objetivos estancados.
-3. Usa commit__list_goals con status "in_progress" para detectar metas sin actividad en 14+ días.
-4. Usa project_list para ver proyectos activos y verificar que los que tienen commit_goal_id vinculado tengan progreso reciente.
+1. Usa jarvis_file_read para leer los archivos en NorthStar/ y ver tareas pendientes, vencidas, y próximos deadlines.
+2. Usa jarvis_file_read para revisar objetivos en NorthStar/ con status "in_progress" y detectar objetivos estancados.
+3. Usa jarvis_file_read para revisar metas en NorthStar/ con status "in_progress" y detectar metas sin actividad en 14+ días.
+4. Usa project_list para ver proyectos activos y verificar que tengan progreso reciente.
 
 ## Qué buscar
 
@@ -119,13 +119,7 @@ Si todo está en orden, responde exactamente: "NOTHING_TO_REPORT"
 
 No saludes. No agregues contexto innecesario. Ve directo al punto.`,
       agentType: "fast",
-      tools: [
-        "commit__get_daily_snapshot",
-        "commit__list_objectives",
-        "commit__list_tasks",
-        "commit__list_goals",
-        "project_list",
-      ],
+      tools: ["jarvis_file_read", "project_list"],
       tags: ["proactive"],
     });
 

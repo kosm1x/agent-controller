@@ -5,8 +5,12 @@
  * and fire-and-forget — errors are logged but never block the webhook response.
  */
 
-import { createSuggestion } from "../db/commit.js";
 import { getProjectByGoalId } from "../db/projects.js";
+
+// Stub — COMMIT DB retired, suggestions are no-ops until NorthStar equivalent
+function createSuggestion(_fields: Record<string, unknown>): { ok: boolean } {
+  return { ok: true };
+}
 import { getRouter } from "../messaging/index.js";
 import { createLogger } from "../lib/logger.js";
 

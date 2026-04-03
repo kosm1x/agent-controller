@@ -29,11 +29,8 @@ The task will be executed autonomously — you write the task description (what 
 
 Examples:
 - "Send me a daily AI news report at 8am" → cron "0 8 * * *", tools: ["web_search", "gmail_send"], delivery: "email"
-- "Every Monday remind me of my weekly goals" → cron "0 9 * * 1", tools: ["commit__get_daily_snapshot"], delivery: "telegram"
-- "Check my overdue tasks twice a day" → cron "0 9,18 * * *", tools: ["commit__list_tasks"], delivery: "telegram"
-- "Auto-prune completed tasks weekly" → cron "0 22 * * 0", tools: ["commit__list_tasks", "commit__delete_item"], delivery: "telegram"
-
-IMPORTANT: For cleanup/prune/delete tasks, you MUST include "commit__delete_item" in the tools array — without it, the agent cannot delete anything.
+- "Every Monday remind me of my weekly goals" → cron "0 9 * * 1", tools: ["jarvis_file_read"], delivery: "telegram"
+- "Check my overdue tasks twice a day" → cron "0 9,18 * * *", tools: ["jarvis_file_read"], delivery: "telegram"
 
 Cron format: minute hour day-of-month month day-of-week
 - "0 8 * * *" = every day at 8:00 AM
@@ -64,7 +61,7 @@ All times are in the user's timezone (Mexico City).`,
             type: "array",
             items: { type: "string" },
             description:
-              'Tool names the task needs. Common: ["web_search", "web_read"] for reports, ["commit__get_daily_snapshot"] for COMMIT tasks, ["gmail_send"] for email delivery.',
+              'Tool names the task needs. Common: ["web_search", "web_read"] for reports, ["jarvis_file_read"] for NorthStar tasks, ["gmail_send"] for email delivery.',
           },
           delivery: {
             type: "string",

@@ -47,7 +47,7 @@ describe("skills", () => {
         description: "Review goals and tasks for the week",
         trigger: "weekly review or revisión semanal",
         steps: ["list_goals", "list_tasks", "search_journal"],
-        tools: ["commit__list_goals", "commit__list_tasks"],
+        tools: ["project_list", "jarvis_file_read"],
       });
 
       expect(runFn).toHaveBeenCalled();

@@ -6,7 +6,7 @@
  * silently ignored — enrichment is additive, never blocking.
  */
 
-import { getSnapshot, listGoals } from "../db/commit.js";
+import { getDatabase } from "../db/index.js";
 import { getMemoryService } from "../memory/index.js";
 
 export interface EnrichedContext {
@@ -65,25 +65,21 @@ export async function enrichCommitContext(
   const result: EnrichedContext = {};
   const tasks: Array<Promise<void>> = [];
 
-  if (flags.includes("snapshot")) {
+  if (flags.includes("snapshot") || flags.includes("goals")) {
+    // NorthStar: read visions/goals from jarvis_files
     tasks.push(
       Promise.resolve().then(() => {
         try {
-          const text = getSnapshot();
-          if (text) result.snapshotSummary = text.slice(0, SNAPSHOT_CAP);
-        } catch {
-          // Non-fatal
-        }
-      }),
-    );
-  }
-
-  if (flags.includes("goals")) {
-    tasks.push(
-      Promise.resolve().then(() => {
-        try {
-          const text = listGoals("in_progress", 5);
-          if (text) result.goalsSummary = text.slice(0, GOALS_CAP);
+          const db = getDatabase();
+          const row = db
+            .prepare(
+              `SELECT content FROM jarvis_files WHERE path = 'NorthStar/INDEX.md'`,
+            )
+            .get() as { content: string } | undefined;
+          if (row?.content) {
+            result.snapshotSummary = row.content.slice(0, SNAPSHOT_CAP);
+            result.goalsSummary = row.content.slice(0, GOALS_CAP);
+          }
         } catch {
           // Non-fatal
         }

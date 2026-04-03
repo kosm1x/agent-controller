@@ -446,40 +446,26 @@ describe("stripThinkBlocks", () => {
 // Loop guard thresholds — tests for the constants and guard logic
 // ---------------------------------------------------------------------------
 
-describe("COMMIT tools in READ_ONLY_TOOLS", () => {
+describe("READ_ONLY_TOOLS classification", () => {
   const tc = (name: string) => ({ function: { name } });
 
-  it("commit__list_tasks is read-only", () => {
-    expect(allToolCallsReadOnly([tc("commit__list_tasks")])).toBe(true);
+  it("jarvis_file_read is read-only", () => {
+    expect(allToolCallsReadOnly([tc("jarvis_file_read")])).toBe(true);
   });
 
-  it("commit__get_daily_snapshot is read-only", () => {
-    expect(allToolCallsReadOnly([tc("commit__get_daily_snapshot")])).toBe(true);
+  it("project_list + project_get are read-only", () => {
+    expect(allToolCallsReadOnly([tc("project_list"), tc("project_get")])).toBe(
+      true,
+    );
   });
 
-  it("commit__list_goals + commit__list_objectives are read-only", () => {
+  it("file_write is NOT read-only", () => {
+    expect(allToolCallsReadOnly([tc("file_write")])).toBe(false);
+  });
+
+  it("mixed read + write returns false", () => {
     expect(
-      allToolCallsReadOnly([
-        tc("commit__list_goals"),
-        tc("commit__list_objectives"),
-      ]),
-    ).toBe(true);
-  });
-
-  it("commit__update_status is NOT read-only", () => {
-    expect(allToolCallsReadOnly([tc("commit__update_status")])).toBe(false);
-  });
-
-  it("commit__update_objective is NOT read-only", () => {
-    expect(allToolCallsReadOnly([tc("commit__update_objective")])).toBe(false);
-  });
-
-  it("mixed COMMIT read + write returns false", () => {
-    expect(
-      allToolCallsReadOnly([
-        tc("commit__list_tasks"),
-        tc("commit__update_task"),
-      ]),
+      allToolCallsReadOnly([tc("jarvis_file_read"), tc("file_write")]),
     ).toBe(false);
   });
 

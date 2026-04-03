@@ -92,9 +92,7 @@ export async function detectRecurringPatterns(): Promise<void> {
 
 /** Generate a human-readable name from tool names. */
 function generateSkillName(tools: string[]): string {
-  const simplified = tools
-    .map((t) => t.replace("commit__", "").replace(/_/g, " "))
-    .slice(0, 3);
+  const simplified = tools.map((t) => t.replace(/_/g, " ")).slice(0, 3);
   return simplified.join(" + ");
 }
 

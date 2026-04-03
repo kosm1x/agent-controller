@@ -66,7 +66,7 @@ WHAT HAPPENS:
             type: "array",
             items: { type: "string" },
             description:
-              "Tool names used in this skill (e.g., ['commit__list_goals', 'commit__list_tasks', 'commit__create_journal_entry']).",
+              "Tool names used in this skill (e.g., ['jarvis_file_read', 'web_search', 'gmail_send']).",
           },
         },
         required: ["name", "description", "trigger", "steps", "tools"],

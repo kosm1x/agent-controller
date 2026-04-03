@@ -15,10 +15,10 @@ export function createNightlyClose(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call commit__get_daily_snapshot to see today's final state.
+1. Call jarvis_file_read to read NorthStar/ files and see today's final state (visions, goals, objectives, tasks).
 2. Compare with what was planned (the morning briefing context): what got done, what didn't, what was added mid-day.
 3. For each incomplete critical/urgent task, assess: should it carry over to tomorrow, be reprioritized, or be dropped?
-4. If any tasks need rebalancing for tomorrow, call commit__update_status to adjust.
+4. If any tasks need rebalancing for tomorrow, use jarvis_file_write to update the NorthStar/ files.
 5. Prepare tomorrow's preliminary priority list.
 6. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
 
@@ -47,13 +47,11 @@ Top 3 prioridades preliminares:
 Racha: X días. [motivational note if streak is growing]`,
     agentType: "heavy",
     tools: [
-      "commit__get_daily_snapshot",
-      "commit__list_tasks",
-      "commit__get_hierarchy",
-      "commit__update_status",
+      "jarvis_file_read",
+      "jarvis_file_write",
       "gmail_send",
       "project_list",
     ],
-    requiredTools: ["commit__get_daily_snapshot", "gmail_send"],
+    requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

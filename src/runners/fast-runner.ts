@@ -54,7 +54,7 @@ function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
         const matches =
           (condLower.includes("crm") && scopedTools.includes("crm_query")) ||
           (condLower.includes("commit") &&
-            scopedTools.some((t) => t.startsWith("commit__"))) ||
+            scopedTools.includes("jarvis_file_read")) ||
           (condLower.includes("google") &&
             scopedTools.includes("gmail_send")) ||
           (condLower.includes("wordpress") &&
@@ -183,21 +183,6 @@ export const WRITE_TOOLS = new Set([
   "gdocs_replace",
   "gslides_create",
   "gtasks_create",
-  // COMMIT (must stay in sync with COMMIT_WRITE_TOOLS in scope.ts)
-  "commit__create_task",
-  "commit__update_task",
-  "commit__update_status",
-  "commit__complete_recurring",
-  "commit__delete_item",
-  "commit__create_goal",
-  "commit__update_goal",
-  "commit__create_objective",
-  "commit__update_objective",
-  "commit__create_vision",
-  "commit__update_vision",
-  "commit__bulk_reprioritize",
-  "commit__create_suggestion",
-  "commit__create_journal",
   // File system
   "file_write",
   "file_edit",
@@ -501,23 +486,6 @@ export const fastRunner: Runner = {
 
     // Per-task execution context: isolates destructive locks + memory rate limits
     const taskContext = new TaskExecutionContext(input.taskId);
-    if (
-      input.conversationHistory &&
-      hasUserConfirmedDeletion(input.conversationHistory)
-    ) {
-      taskContext.unlockDestructive("commit__delete_item");
-      console.log(
-        "[fast-runner] Destructive tool unlocked: commit__delete_item (user confirmed in history)",
-      );
-    } else if (
-      !input.conversationHistory &&
-      input.tools?.includes("commit__delete_item")
-    ) {
-      taskContext.unlockDestructive("commit__delete_item");
-      console.log(
-        "[fast-runner] Destructive tool unlocked: commit__delete_item (scheduled task pre-authorized)",
-      );
-    }
     const taskExecutor = createTaskExecutor(toolRegistry, taskContext);
 
     try {
@@ -644,8 +612,8 @@ export const fastRunner: Runner = {
 
       // Build failed write tools list for hallucination guard.
       // Exclude tools that failed once but succeeded on a later call within
-      // the same execution (e.g. commit__delete_item: first call gets
-      // CONFIRMATION_REQUIRED, LLM retries, second call succeeds).
+      // the same execution (first call gets CONFIRMATION_REQUIRED, LLM
+      // retries, second call succeeds).
       const failedWriteTools = [...failedToolCalls].filter(
         (t) => WRITE_TOOLS.has(t) && !toolsCalled.includes(t),
       );
@@ -695,7 +663,7 @@ export const fastRunner: Runner = {
           const writeToolHint =
             scopedWriteTools.length > 0
               ? scopedWriteTools.join(", ")
-              : "commit__update_task, commit__update_status";
+              : "file_write, file_edit";
           retryMessages.push({
             role: "user",
             content: isReadHallucination

@@ -130,8 +130,6 @@ Una vez que el usuario diga "sí", "confirmo", "dale" o similar → EJECUTA inme
 Si el usuario dice "no" o "cancela", NO ejecutes y pregunta qué cambiar.
 
 **SIN confirmación** — ejecuta directo cuando Fede lo pida:
-- commit__update_task, commit__update_status, commit__complete_recurring (actualizar/completar tareas, metas, objetivos)
-- commit__create_task, commit__create_goal, commit__create_objective, commit__create_suggestion
 - calendar_create, calendar_update
 Estas operaciones NO son destructivas. Si Fede dice "completa la tarea" o "márcala como hecha", HAZLO sin preguntar.`;
 }
@@ -148,8 +146,8 @@ Si browser__goto no está disponible, usa web_read como alternativa.`;
 export function toolFirstSection(flags: PromptToolFlags): string {
   const lines = [
     `- "Qué reportes/schedules tienes?" → list_schedules PRIMERO, luego responde`,
-    `- "Qué tareas hay?" → commit__list_tasks PRIMERO, luego responde`,
-    `- "Qué metas/objetivos tengo?" → commit__list_goals / commit__list_objectives PRIMERO`,
+    `- "Qué tareas hay?" → jarvis_file_read (NorthStar/) PRIMERO, luego responde`,
+    `- "Qué metas/objetivos tengo?" → jarvis_file_read (NorthStar/) PRIMERO`,
     `- "Qué skills tienes?" → skill_list PRIMERO`,
     `- "Cuánto llevo de cuota?" → consultar la herramienta correspondiente PRIMERO`,
   ];
@@ -229,7 +227,7 @@ export function correctionMemorySection(): string {
 - Guarda datos valiosos (preferencias, contexto) con memory_store. No guardes datos efímeros.
 
 ### Qué NO guardar
-- Resultados crudos de herramientas (web_search, commit__list_tasks)
+- Resultados crudos de herramientas (web_search, jarvis_file_read)
 - Datos que ya están en user_facts o projects
 - Observaciones genéricas sin contexto específico`;
 }

@@ -53,7 +53,7 @@
     "input": {
       "message": "Crea una tarea para revisar el contrato de Televisa"
     },
-    "expected": { "tools": ["commit__create_task"] },
+    "expected": { "tools": ["jarvis_file_write"] },
     "weight": 1.0,
     "source": "manual"
   },
@@ -61,7 +61,7 @@
     "case_id": "ts-commit-list-01",
     "category": "tool_selection",
     "input": { "message": "Qué tareas pendientes tengo?" },
-    "expected": { "tools": ["commit__list_tasks"] },
+    "expected": { "tools": ["jarvis_file_read"] },
     "weight": 1.0,
     "source": "manual"
   },
@@ -71,7 +71,7 @@
     "input": { "message": "Investiga cuánto cuesta un dominio .ai" },
     "expected": {
       "tools": ["web_search"],
-      "not_tools": ["commit__create_task"]
+      "not_tools": ["jarvis_file_write"]
     },
     "weight": 1.5,
     "source": "manual"
@@ -183,7 +183,7 @@
     "input": { "message": "Buenos días Jarvis, cómo estás?" },
     "expected": {
       "tools": [],
-      "not_tools": ["web_search", "commit__create_task"]
+      "not_tools": ["web_search", "jarvis_file_write"]
     },
     "weight": 1.0,
     "source": "manual"
@@ -208,7 +208,7 @@
     "case_id": "ts-delete-01",
     "category": "tool_selection",
     "input": { "message": "Elimina la tarea de revisar el contrato" },
-    "expected": { "tools": ["commit__delete_item"] },
+    "expected": { "tools": ["jarvis_file_write"] },
     "weight": 1.0,
     "source": "manual"
   },

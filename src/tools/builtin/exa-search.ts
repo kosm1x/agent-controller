@@ -33,7 +33,7 @@ DO NOT USE WHEN:
 - Quick factual lookups (use web_search instead — faster, broader)
 - Current events or breaking news (use web_search — fresher index)
 - Looking for a specific known URL or page (use web_read)
-- The user's own data (use commit__ or user_fact tools)
+- The user's own data (use jarvis_file_read or user_fact tools)
 
 CATEGORIES (use to narrow results):
 - "company" — company websites and profiles

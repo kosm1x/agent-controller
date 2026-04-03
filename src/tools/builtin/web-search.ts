@@ -29,8 +29,8 @@ USE WHEN:
 - ANY question where your training data might be outdated or insufficient
 
 DO NOT USE WHEN:
-- The answer is about the user's own COMMIT data (use commit__ tools instead)
-- The user is giving you a command to manage tasks/goals (use commit__ tools)
+- The answer is about the user's own goals/tasks data (use jarvis_file_read on NorthStar/ instead)
+- The user is giving you a command to manage tasks/goals (use jarvis_file_read/jarvis_file_write)
 - You already have the information from conversation memory or mental models
 
 ALWAYS prefer searching over guessing. If you're unsure, search.`,

@@ -17,7 +17,7 @@ import { createLogger } from "../lib/logger.js";
 const log = createLogger("task-executor");
 
 /** Tools that require user confirmation before execution. */
-const DESTRUCTIVE_MCP_TOOLS = new Set(["commit__delete_item"]);
+const DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
 
 /**
  * Create a per-task executor that delegates to toolRegistry but uses the
@@ -44,7 +44,7 @@ export function createTaskExecutor(
       return JSON.stringify({
         error: "CONFIRMATION_REQUIRED",
         message:
-          "PAUSE — you DO have commit__delete_item and it WILL work after the user confirms. " +
+          "PAUSE — this tool requires user confirmation before execution. " +
           "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
           "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
         tool: name,
