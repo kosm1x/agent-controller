@@ -5,7 +5,11 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { classify } from "./classifier.js";
-import type { RunnerStats, KeywordOutcomeRow } from "../db/task-outcomes.js";
+import type {
+  RunnerStats,
+  KeywordOutcomeRow,
+  FeedbackStats,
+} from "../db/task-outcomes.js";
 
 describe("classifier", () => {
   it("should classify short simple tasks as fast", () => {
@@ -134,13 +138,44 @@ describe("classifier", () => {
     expect(result.modelTier).toBe("standard");
   });
 
-  it("should set standard model tier for messaging tasks", () => {
+  it("should assign flash tier for short messaging tasks", () => {
     const result = classify({
-      title: "Send greeting",
-      description: "Say hello to the user",
+      title: "Chat: hola",
+      description: "You are Jarvis, a strategic AI assistant...",
       tags: ["messaging"],
     });
+    expect(result.agentType).toBe("fast");
+    expect(result.modelTier).toBe("flash");
+  });
+
+  it("should assign capable tier for research messaging tasks", () => {
+    const result = classify({
+      title: "Chat: Investiga las tendencias del mercado de AI en 2026",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+    expect(result.modelTier).toBe("capable");
+  });
+
+  it("should assign standard tier for medium messaging tasks", () => {
+    const result = classify({
+      title: "Chat: Necesito que me ayudes con un correo para el cliente",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
     expect(result.modelTier).toBe("standard");
+  });
+
+  it("should assign capable tier when user message has architecture signals", () => {
+    const result = classify({
+      title: "Chat: Analiza el rendimiento del pipeline y hazme un audit",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+    expect(result.modelTier).toBe("capable");
   });
 
   it("should set standard model tier for explicit overrides", () => {
@@ -174,11 +209,13 @@ describe("classifier outcome adjustments", () => {
     stats: RunnerStats[],
     keywords: KeywordOutcomeRow[],
     input: { title: string; description: string },
+    feedbackStats: FeedbackStats[] = [],
   ) {
     vi.resetModules();
     vi.doMock("../db/task-outcomes.js", () => ({
       queryRunnerStats: () => stats,
       queryOutcomesByKeywords: () => keywords,
+      queryFeedbackQuality: () => feedbackStats,
     }));
     const { classify: c } = await import("./classifier.js");
     return c(input);
@@ -279,5 +316,34 @@ describe("classifier outcome adjustments", () => {
       { title: "Test", description: "task" },
     );
     expect(result.score).toBeGreaterThanOrEqual(-3);
+  });
+
+  it("should nudge score up when fast+flash has high negative rate", async () => {
+    const fbStats: FeedbackStats[] = [
+      {
+        ran_on: "fast",
+        model_tier: "flash",
+        total: 10,
+        negative_count: 3,
+        negative_rate: 0.3,
+      },
+    ];
+    const result = await classifyWith(
+      makeStats([{ ran_on: "fast", total: 30, success_rate: 0.7 }]),
+      [],
+      { title: "Test", description: "task" },
+      fbStats,
+    );
+    expect(result.reason).toContain("tier upgrade");
+  });
+
+  it("should not nudge when feedback data is insufficient", async () => {
+    const result = await classifyWith(
+      makeStats([{ ran_on: "fast", total: 30, success_rate: 0.7 }]),
+      [],
+      { title: "Test", description: "task" },
+      [], // no feedback stats
+    );
+    expect(result.reason).not.toContain("tier upgrade");
   });
 });

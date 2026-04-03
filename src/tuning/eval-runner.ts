@@ -123,6 +123,7 @@ async function evalToolSelection(
     caseId: tc.case_id,
     category: "tool_selection",
     score,
+    weight: tc.weight,
     details: {
       ...details,
       tokensUsed: result.tokensUsed,
@@ -151,6 +152,7 @@ function evalScopeAccuracy(tc: TestCase, sandbox: SandboxConfig): CaseScore {
     caseId: tc.case_id,
     category: "scope_accuracy",
     score,
+    weight: tc.weight,
     details,
   };
 }
@@ -171,6 +173,7 @@ function evalClassification(tc: TestCase): CaseScore {
     caseId: tc.case_id,
     category: "classification",
     score,
+    weight: tc.weight,
     details: {
       ...details,
       classifierScore: result.score,
@@ -289,6 +292,7 @@ export async function runEvaluation(
         caseId: tc.case_id,
         category: tc.category,
         score: 0,
+        weight: tc.weight,
         details: { error: String(err) },
       });
     }

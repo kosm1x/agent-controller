@@ -555,5 +555,51 @@
     "expected": { "agent_type": "fast" },
     "weight": 1.0,
     "source": "manual"
+  },
+  {
+    "case_id": "cl-msg-greeting",
+    "category": "classification",
+    "input": { "message": "hola" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-msg-thanks",
+    "category": "classification",
+    "input": { "message": "gracias, perfecto" },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-msg-research",
+    "category": "classification",
+    "input": {
+      "message": "Investiga las tendencias del mercado de AI en 2026 y hazme un resumen"
+    },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-msg-email",
+    "category": "classification",
+    "input": {
+      "message": "Ayúdame a redactar un correo para el cliente sobre la propuesta"
+    },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-msg-audit",
+    "category": "classification",
+    "input": {
+      "message": "Analiza el rendimiento del pipeline de ventas este trimestre"
+    },
+    "expected": { "agent_type": "fast" },
+    "weight": 1.0,
+    "source": "manual"
   }
 ]

@@ -51,6 +51,7 @@ export interface CaseScore {
   caseId: string;
   category: TestCaseCategory;
   score: number; // 0.0 - 1.0
+  weight?: number; // from TestCase.weight (defaults to 1.0 if missing)
   details: Record<string, unknown>;
 }
 

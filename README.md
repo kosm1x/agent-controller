@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v5.0 S5c complete + NorthStar.** 186 source files, 1090 tests passing, zero type errors, 134 tools.
+**v5.0 S5 complete + NorthStar.** 186 source files, 1097 tests passing, zero type errors, 134 tools.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -387,6 +387,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v5.0 S4      | Done   | CRM integration (bidirectional REST, jarvis-pull)                                                                                                                    |
 | v5.0 S5b     | Done   | Knowledge maps (2 tools, 2 tables, Prometheus integrated)                                                                                                            |
 | v5.0 S5c     | Done   | Research verification (provenance tracking, source anchoring, condensation)                                                                                          |
+| v5.0 S5      | Done   | Classifier calibration (dynamic messaging tier, rephrase fix, feedback quality loop, weighted eval scoring)                                                          |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
 See `docs/V5-ROADMAP.md` for full roadmap and `docs/V5-INTELLIGENCE-DEPOT.md` for upcoming intelligence features.

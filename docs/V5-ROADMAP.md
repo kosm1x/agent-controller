@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5b, S5c complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps + research verification done.
+> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5, S5b, S5c complete. Scope fixes shipped. Jarvis file system + CRM bidirectional + context pressure + knowledge maps + research verification + classifier calibration done.
 
 ## Status Key
 
@@ -130,13 +130,21 @@
 
 ## v5.0 S5 — Classifier Calibration (~1d)
 
-| Item                                                                | Source   | Effort | Status  |
-| ------------------------------------------------------------------- | -------- | ------ | ------- |
-| Outcome-driven weight tuning from task_outcomes table               | CRIT 8.1 | 0.5d   | Planned |
-| Lower adaptive adjustment thresholds                                | CRIT 8.2 | 2h     | Planned |
-| Negative feedback loop (rephrase detection → classifier correction) | —        | 0.5d   | Planned |
+> Production reality: 100% of traffic (messaging tasks) bypassed the classifier via hardcoded `modelTier: "standard"`. Rephrase detection was dead (previousMessage never passed). Implicit feedback was siloed in scope_telemetry, invisible to the classifier. Fixed all three + added quality-aware feedback loop.
 
-**Exit criteria:** Classifier weights updated based on production outcomes. Mis-routing rate measurably reduced.
+| Item                                                                                                                                      | Source       | Effort | Status   |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------ | -------- |
+| Fix rephrase detection — pass previousMessage to detectFeedbackSignal in router                                                           | Bug          | 0.5h   | **Done** |
+| Bridge implicit feedback to task_outcomes — implicit_positive/implicit_rephrase now flow to classifier                                    | Bug          | 0.5h   | **Done** |
+| Dynamic messaging modelTier — computeMessagingTier() replaces hardcoded "standard" (flash/standard/capable based on user message signals) | CRIT 8.1     | 2h     | **Done** |
+| Record model_tier in task_outcomes — new column, captured from classification JSON                                                        | CRIT 8.1     | 1h     | **Done** |
+| Feedback quality query + Signal 5 — queryFeedbackQuality(), high negative rate on flash → tier upgrade nudge                              | CRIT 8.2     | 1h     | **Done** |
+| Lower adaptive thresholds — totalOutcomes 10→5, per-runner 5→3 (sparse data reality)                                                      | CRIT 8.2     | 0.5h   | **Done** |
+| TestCase.weight support — weighted average in computeCompositeScore, propagated from eval runner                                          | Eval harness | 1h     | **Done** |
+| Tier-mismatch case mining — mineTierMismatches() in case-miner (flash + negative → classification test case)                              | —            | 0.5h   | **Done** |
+| New seed cases — 5 messaging tier classification cases                                                                                    | —            | 0.5h   | **Done** |
+
+**Exit criteria:** Rephrase signals flowing. Messaging tasks get dynamic model tier. Feedback quality feeds back into classifier. 1097 tests.
 
 ---
 
@@ -214,7 +222,7 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1090                                     | ~1,200+                      |
+| Tests               | 903                       | 1097                                     | ~1,200+                      |
 | Test files          | 74                        | 88                                       | ~90+                         |
 | Tools               | 137                       | 134                                      | ~145 (+video, intel)         |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |

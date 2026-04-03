@@ -165,4 +165,36 @@ describe("computeCompositeScore", () => {
     expect(subscores.toolSelection).toBe(0);
     expect(compositeScore).toBe(50 * 0.3); // only scope contributes
   });
+
+  it("uses case weights when provided", () => {
+    const cases: CaseScore[] = [
+      {
+        caseId: "ts-1",
+        category: "tool_selection",
+        score: 1.0,
+        weight: 1.0,
+        details: {},
+      },
+      {
+        caseId: "ts-2",
+        category: "tool_selection",
+        score: 0.0,
+        weight: 0.1,
+        details: {},
+      },
+    ];
+    const { subscores } = computeCompositeScore(cases);
+    // Weighted avg: (1.0*1.0 + 0.0*0.1) / (1.0+0.1) = 0.909... → ~90.9
+    expect(subscores.toolSelection).toBeCloseTo(90.9, 0);
+  });
+
+  it("defaults weight to 1.0 when not provided", () => {
+    const cases: CaseScore[] = [
+      { caseId: "ts-1", category: "tool_selection", score: 0.8, details: {} },
+      { caseId: "ts-2", category: "tool_selection", score: 0.6, details: {} },
+    ];
+    const { subscores } = computeCompositeScore(cases);
+    // Equal weight: (0.8+0.6)/2 = 0.7 → 70
+    expect(subscores.toolSelection).toBe(70);
+  });
 });

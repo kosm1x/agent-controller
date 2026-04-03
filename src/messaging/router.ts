@@ -609,7 +609,10 @@ export class MessageRouter {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
-      const signal = detectFeedbackSignal(msg.text);
+      const signal = detectFeedbackSignal(
+        msg.text,
+        previousMessages.get(msg.channel),
+      );
       if (signal !== "neutral") {
         recordTaskFeedback(feedbackTaskId, signal);
         try {
@@ -749,6 +752,8 @@ export class MessageRouter {
         } catch {
           /* non-fatal */
         }
+        // Bridge to task_outcomes so the classifier can see implicit signals
+        recordTaskFeedback(feedbackTaskId, `implicit_${implicitSignal}`);
         console.log(
           `[router] Implicit feedback for ${feedbackTaskId}: ${implicitSignal}`,
         );

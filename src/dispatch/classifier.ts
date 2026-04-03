@@ -15,6 +15,7 @@ import type { AgentType } from "../runners/types.js";
 import {
   queryRunnerStats,
   queryOutcomesByKeywords,
+  queryFeedbackQuality,
 } from "../db/task-outcomes.js";
 import { extractKeywords } from "./keywords.js";
 
@@ -70,6 +71,30 @@ const ISOLATION_PATTERNS = [
   /\bpersistent\s+session\b/i,
 ];
 
+/**
+ * Compute model tier for messaging tasks.
+ * Title is "Chat: <user message (60 chars)>" — more reliable than description
+ * (inflated with persona + context memories).
+ */
+const CAPABLE_MSG_PATTERNS = [
+  /\b(architect|redesign|review|design|audit|anali[zs]|investigar?|research)\b/i,
+  /\b(compara|evalúa|estrategia|planifica)\b/i,
+];
+
+function computeMessagingTier(title: string, _description: string): ModelTier {
+  const text = title.replace(/^Chat:\s*/, "");
+  const wordCount = text.split(/\s+/).length;
+
+  // Research/architecture signals in the user message → capable
+  // Only check title (user text), not description (inflated system prompt)
+  if (CAPABLE_MSG_PATTERNS.some((p) => p.test(text))) return "capable";
+
+  // Very short messages → flash (greetings, confirmations, single-word)
+  if (wordCount <= 5) return "flash";
+
+  return "standard";
+}
+
 export function classify(input: ClassificationInput): ClassificationResult {
   // Explicit override always wins
   if (input.agentType && input.agentType !== "auto") {
@@ -86,7 +111,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
 
   // Messaging tasks always route to fast — they use MCP tools, not containers.
   // The description is inflated by persona + conversation memories, which would
-  // cause false-positive complexity scoring.
+  // cause false-positive complexity scoring. Model tier IS dynamic though.
   const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
   if (tags.has("messaging")) {
     return {
@@ -94,7 +119,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
       score: 0,
       reason: "messaging task → fast",
       explicit: false,
-      modelTier: "standard",
+      modelTier: computeMessagingTier(input.title, input.description),
     };
   }
 
@@ -224,14 +249,14 @@ function getOutcomeAdjustments(input: ClassificationInput): OutcomeAdjustment {
   try {
     const stats = queryRunnerStats(30);
     const totalOutcomes = stats.reduce((sum, s) => sum + s.total, 0);
-    if (totalOutcomes < 10) return ZERO;
+    if (totalOutcomes < 5) return ZERO;
 
     let adj = 0;
     const reasons: string[] = [];
 
     // Signal 1: Per-runner success rates
     for (const s of stats) {
-      if (s.total < 5) continue;
+      if (s.total < 3) continue;
 
       if (s.ran_on === "fast") {
         if (s.success_rate > 0.85) {
@@ -314,6 +339,26 @@ function getOutcomeAdjustments(input: ClassificationInput): OutcomeAdjustment {
           }
         }
       }
+    }
+
+    // Signal 5: Feedback quality — high negative rate on a tier → nudge away
+    try {
+      const fbStats = queryFeedbackQuality(30);
+      for (const fb of fbStats) {
+        if (
+          fb.ran_on === "fast" &&
+          fb.model_tier === "flash" &&
+          fb.negative_rate > 0.15
+        ) {
+          adj += 1;
+          reasons.push(
+            `fast+flash negative ${(fb.negative_rate * 100).toFixed(0)}% → tier upgrade (+1)`,
+          );
+          break;
+        }
+      }
+    } catch {
+      /* non-fatal — model_tier column may not exist yet */
     }
 
     // Clamp to prevent wild swings

@@ -191,6 +191,52 @@ function mineNegativeFeedback(days: number = 7): MinedCase[] {
 }
 
 // ---------------------------------------------------------------------------
+// Mine tier mismatches (S5: model tier + negative feedback correlation)
+// ---------------------------------------------------------------------------
+
+function mineTierMismatches(days: number = 14): MinedCase[] {
+  const db = getDatabase();
+  const cases: MinedCase[] = [];
+
+  try {
+    // Find tasks where flash tier got negative feedback → should have been standard+
+    const rows = db
+      .prepare(
+        `SELECT t.title, o.model_tier, o.feedback_signal
+         FROM task_outcomes o
+         JOIN tasks t ON t.task_id = o.task_id
+         WHERE o.created_at >= datetime('now', '-' || ? || ' days')
+           AND o.model_tier = 'flash'
+           AND o.feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase')
+         LIMIT 20`,
+      )
+      .all(days) as Array<{
+      title: string;
+      model_tier: string;
+      feedback_signal: string;
+    }>;
+
+    for (const row of rows) {
+      // Extract user message from "Chat: <message>"
+      const msg = row.title.replace(/^Chat:\s*/, "");
+      if (msg.length < 5) continue;
+
+      cases.push({
+        case_id: `mined-tier-mismatch-${hashMessage(msg)}`,
+        category: "classification",
+        input: { message: msg },
+        expected: { agent_type: "fast" }, // runner is correct, tier is wrong
+        mined_from: `tier_mismatch:flash+${row.feedback_signal}`,
+      });
+    }
+  } catch {
+    // model_tier column may not exist yet — non-fatal
+  }
+
+  return cases;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -224,6 +270,7 @@ export function mineTestCases(): {
     ...mineScopeMisses(),
     ...mineScopeWaste(),
     ...mineNegativeFeedback(),
+    ...mineTierMismatches(),
   ];
 
   const insertStmt = db.prepare(`

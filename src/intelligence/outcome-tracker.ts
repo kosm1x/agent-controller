@@ -63,6 +63,7 @@ export function trackTaskOutcome(
       duration_ms: durationMs,
       success,
       tags,
+      model_tier: classification?.modelTier ?? null,
     });
 
     // Write semantic summary to Hindsight
@@ -144,10 +145,12 @@ export function checkFeedbackWindow(channel: string): string | null {
 
 /**
  * Record feedback for a task outcome.
+ * Accepts both explicit signals (positive/negative/rephrase/neutral)
+ * and implicit signals (implicit_positive/implicit_rephrase).
  */
 export function recordTaskFeedback(
   taskId: string,
-  signal: "positive" | "negative" | "rephrase" | "neutral",
+  signal: import("./feedback.js").AnyFeedbackSignal | string,
 ): void {
   try {
     updateFeedback(taskId, signal);

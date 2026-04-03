@@ -79,6 +79,18 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_outcomes_runner_success ON task_outcomes(ran_on, success)",
   );
 
+  // S5: Add model_tier column to task_outcomes (additive migration)
+  try {
+    _db.exec(
+      "ALTER TABLE task_outcomes ADD COLUMN model_tier TEXT DEFAULT NULL",
+    );
+  } catch {
+    /* column already exists */
+  }
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_feedback ON task_outcomes(created_at, feedback_signal, ran_on, model_tier)",
+  );
+
   // v4.0 S3: FTS5 full-text search + embedding vectors
   _db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(

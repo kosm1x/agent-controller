@@ -190,10 +190,14 @@ export function computeCompositeScore(cases: CaseScore[]): {
 
   function weightedAvg(scores: CaseScore[]): number {
     if (scores.length === 0) return 0;
-    // For now, all cases have equal weight within their category.
-    // TestCase.weight can be used for prioritization later.
-    const sum = scores.reduce((acc, s) => acc + s.score, 0);
-    return (sum / scores.length) * 100;
+    let wSum = 0;
+    let wDenom = 0;
+    for (const s of scores) {
+      const w = s.weight ?? 1.0;
+      wSum += s.score * w;
+      wDenom += w;
+    }
+    return wDenom > 0 ? (wSum / wDenom) * 100 : 0;
   }
 
   const subscores: EvalSubscores = {

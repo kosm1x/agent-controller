@@ -57,6 +57,7 @@ describe("task-outcomes", () => {
         2500,
         1,
         '["messaging","telegram"]',
+        null,
       );
     });
 
@@ -82,6 +83,7 @@ describe("task-outcomes", () => {
         500,
         0,
         "[]",
+        null,
       );
     });
   });

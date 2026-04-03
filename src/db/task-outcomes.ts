@@ -16,6 +16,7 @@ export interface TaskOutcome {
   duration_ms: number;
   success: boolean;
   tags: string[];
+  model_tier?: string;
 }
 
 export interface OutcomeFilter {
@@ -36,6 +37,7 @@ export interface OutcomeRow {
   success: number;
   feedback_signal: string;
   tags: string;
+  model_tier: string | null;
   created_at: string;
 }
 
@@ -45,8 +47,8 @@ export function recordOutcome(outcome: TaskOutcome): void {
   writeWithRetry(() =>
     db
       .prepare(
-        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, model_tier)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         outcome.task_id,
@@ -56,6 +58,7 @@ export function recordOutcome(outcome: TaskOutcome): void {
         outcome.duration_ms,
         outcome.success ? 1 : 0,
         JSON.stringify(outcome.tags),
+        outcome.model_tier ?? null,
       ),
   );
 }
@@ -244,13 +247,54 @@ export function queryOutcomesByKeywords(
     .all(days, ...params, limit) as KeywordOutcomeRow[];
 }
 
-/** Update feedback signal for a task outcome. */
+/** Update feedback signal for a task outcome (explicit or implicit). */
 export function updateFeedback(
   taskId: string,
-  signal: "positive" | "negative" | "rephrase" | "neutral",
+  signal: import("../intelligence/feedback.js").AnyFeedbackSignal | string,
 ): void {
   const db = getDatabase();
   db.prepare(
     "UPDATE task_outcomes SET feedback_signal = ? WHERE task_id = ?",
   ).run(signal, taskId);
+}
+
+// ---------------------------------------------------------------------------
+// Feedback quality queries (S5 classifier calibration)
+// ---------------------------------------------------------------------------
+
+export interface FeedbackStats {
+  ran_on: string;
+  model_tier: string | null;
+  total: number;
+  negative_count: number;
+  negative_rate: number;
+}
+
+/**
+ * Per-runner + per-tier feedback quality stats for the last N days.
+ * Only includes rows with actual feedback signals (excludes 'none').
+ * Requires at least 3 rows per group (sparse data guard).
+ */
+export function queryFeedbackQuality(days: number): FeedbackStats[] {
+  const db = getDatabase();
+  try {
+    return db
+      .prepare(
+        `SELECT
+           ran_on,
+           model_tier,
+           COUNT(*) AS total,
+           SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase') THEN 1 ELSE 0 END) AS negative_count,
+           ROUND(CAST(SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase') THEN 1 ELSE 0 END) AS REAL) / COUNT(*), 3) AS negative_rate
+         FROM task_outcomes
+         WHERE created_at >= datetime('now', '-' || ? || ' days')
+           AND feedback_signal != 'none'
+         GROUP BY ran_on, model_tier
+         HAVING COUNT(*) >= 3
+         ORDER BY negative_rate DESC`,
+      )
+      .all(days) as FeedbackStats[];
+  } catch {
+    return [];
+  }
 }
