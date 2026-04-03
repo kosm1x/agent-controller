@@ -52,6 +52,9 @@ function calculateStreak(dates: string[]): number {
   return streak;
 }
 
+const TRUTH_FOOTER =
+  "\n---\nABOVE IS THE COMPLETE DATA FROM THE DATABASE. If an item is not listed, it DOES NOT EXIST in COMMIT. Do not fabricate, infer, or supplement with data from other sources.";
+
 export function registerReadTools(server: McpServer): void {
   // 1. get_daily_snapshot
   server.registerTool(
@@ -365,7 +368,9 @@ For goal-specific queries, prefer list_goals (lighter).`,
       }
 
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
+        content: [
+          { type: "text" as const, text: lines.join("\n") + TRUTH_FOOTER },
+        ],
       };
     },
   );
@@ -451,7 +456,9 @@ For goal-specific queries, prefer list_goals (lighter).`,
         if (t.notes) lines.push(`  Notes: ${t.notes}`);
       }
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
+        content: [
+          { type: "text" as const, text: lines.join("\n") + TRUTH_FOOTER },
+        ],
       };
     },
   );
@@ -498,7 +505,9 @@ ALSO USE FOR LOOKUPS: call this first to find a goal's UUID, then pass it to cre
         if (g.description) lines.push(`  Description: ${g.description}`);
       }
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
+        content: [
+          { type: "text" as const, text: lines.join("\n") + TRUTH_FOOTER },
+        ],
       };
     },
   );
@@ -552,7 +561,9 @@ ALSO USE FOR LOOKUPS: call this first to find an objective's UUID, then pass it 
         if (o.description) lines.push(`  Description: ${o.description}`);
       }
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
+        content: [
+          { type: "text" as const, text: lines.join("\n") + TRUTH_FOOTER },
+        ],
       };
     },
   );
