@@ -174,6 +174,7 @@ export const WRITE_TOOLS = new Set([
   "gsheets_write",
   "gdrive_create",
   "gdrive_share",
+  "gdrive_delete",
   "calendar_create",
   "calendar_update",
   "gdocs_write",

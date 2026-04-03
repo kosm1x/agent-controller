@@ -35,8 +35,12 @@ export class GoogleToolSource implements ToolSource {
 
     const { gmailSendTool, gmailSearchTool, gmailReadTool } =
       await import("../builtin/google-gmail.js");
-    const { gdriveListTool, gdriveCreateTool, gdriveShareTool } =
-      await import("../builtin/google-drive.js");
+    const {
+      gdriveListTool,
+      gdriveCreateTool,
+      gdriveShareTool,
+      gdriveDeleteTool,
+    } = await import("../builtin/google-drive.js");
     const { calendarListTool, calendarCreateTool, calendarUpdateTool } =
       await import("../builtin/google-calendar.js");
     const {
@@ -55,6 +59,7 @@ export class GoogleToolSource implements ToolSource {
       gdriveListTool,
       gdriveCreateTool,
       gdriveShareTool,
+      gdriveDeleteTool,
       calendarListTool,
       calendarCreateTool,
       calendarUpdateTool,

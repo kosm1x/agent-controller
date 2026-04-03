@@ -1,5 +1,5 @@
 /**
- * Google Drive tools — list, create, and share files.
+ * Google Drive tools — list, create, share, and delete files.
  */
 
 import type { Tool } from "../types.js";
@@ -220,6 +220,69 @@ WORKFLOW: If user mentions a file by name, call gdrive_list first to find the fi
     } catch (err) {
       return JSON.stringify({
         error: `Drive share failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// gdrive_delete
+// ---------------------------------------------------------------------------
+
+export const gdriveDeleteTool: Tool = {
+  name: "gdrive_delete",
+  requiresConfirmation: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "gdrive_delete",
+      description: `Delete a file or folder from Google Drive (moves to trash). Requires confirmation.
+
+USE WHEN:
+- The user asks to remove, delete, or clean up files/folders in Drive
+- Removing duplicate files or outdated documents
+
+WORKFLOW:
+1. Call gdrive_list to find the file/folder ID by name
+2. Call gdrive_delete with the file_id
+3. Folders are deleted recursively (all contents moved to trash)
+
+CAUTION: Deleting a folder removes all files inside it. Verify the ID is correct.
+NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.`,
+      parameters: {
+        type: "object",
+        properties: {
+          file_id: {
+            type: "string",
+            description: "File or folder ID to delete (get from gdrive_list)",
+          },
+        },
+        required: ["file_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const fileId = args.file_id as string;
+    if (!fileId) return JSON.stringify({ error: "file_id is required" });
+
+    try {
+      // Move to trash (recoverable) rather than permanent delete
+      await googleFetch<{ id: string; trashed: boolean }>(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`,
+        {
+          method: "PATCH",
+          body: { trashed: true },
+        },
+      );
+
+      return JSON.stringify({
+        deleted: true,
+        file_id: fileId,
+        note: "Moved to trash (recoverable for 30 days)",
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Drive delete failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },
