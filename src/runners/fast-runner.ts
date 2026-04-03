@@ -176,9 +176,11 @@ export const WRITE_TOOLS = new Set([
   "gdrive_share",
   "gdrive_delete",
   "gdrive_move",
+  "gdrive_upload",
   "calendar_create",
   "calendar_update",
   "gdocs_write",
+  "gdocs_replace",
   "gslides_create",
   "gtasks_create",
   // COMMIT (must stay in sync with COMMIT_WRITE_TOOLS in scope.ts)

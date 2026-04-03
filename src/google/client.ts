@@ -17,6 +17,9 @@ export async function googleFetch<T>(
   options?: {
     method?: string;
     body?: unknown;
+    /** Raw body string + explicit content type (for multipart uploads). */
+    rawBody?: string;
+    contentType?: string;
     timeout?: number;
   },
 ): Promise<T> {
@@ -33,7 +36,11 @@ export async function googleFetch<T>(
     };
     let body: string | undefined;
 
-    if (options?.body) {
+    if (options?.rawBody) {
+      headers["Content-Type"] =
+        options.contentType ?? "application/octet-stream";
+      body = options.rawBody;
+    } else if (options?.body) {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(options.body);
     }

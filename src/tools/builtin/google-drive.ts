@@ -33,8 +33,10 @@ export const gdriveListTool: Tool = {
 
 USE WHEN:
 - The user asks to see their files, find a document, or check what's in Drive
-- You need to find a file ID for subsequent operations (read, share)
+- You need to find a file ID for subsequent operations (read, share, delete, move)
+- Checking if a file already exists before creating (dedup check)
 
+Use parent_folder_id to list contents of a specific folder instead of searching all of Drive.
 Supports Drive search queries: name contains 'X', mimeType='application/...', modifiedTime > '2026-01-01'`,
       parameters: {
         type: "object",
@@ -43,6 +45,11 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
             type: "string",
             description:
               "Drive search query (optional). E.g., \"name contains 'report'\" or leave empty for recent files",
+          },
+          parent_folder_id: {
+            type: "string",
+            description:
+              "List only files inside this folder (optional). Use to check folder contents or verify a file exists in a specific location.",
           },
           max_results: {
             type: "number",
@@ -54,14 +61,21 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
   },
   async execute(args: Record<string, unknown>): Promise<string> {
     const query = args.query as string | undefined;
+    const parentFolderId = args.parent_folder_id as string | undefined;
     const maxResults = Math.min(
       Math.max((args.max_results as number) ?? 10, 1),
       20,
     );
 
     try {
-      let url = `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&fields=files(id,name,mimeType,modifiedTime,webViewLink)&orderBy=modifiedTime desc`;
-      if (query) url += `&q=${encodeURIComponent(query)}`;
+      // Build query: combine user query with parent filter
+      const queryParts: string[] = [];
+      if (query) queryParts.push(query);
+      if (parentFolderId) queryParts.push(`'${parentFolderId}' in parents`);
+      queryParts.push("trashed = false");
+
+      let url = `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)&orderBy=modifiedTime desc`;
+      url += `&q=${encodeURIComponent(queryParts.join(" and "))}`;
 
       const result = await googleFetch<{
         files: Array<{
@@ -70,6 +84,7 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
           mimeType: string;
           modifiedTime: string;
           webViewLink: string;
+          parents?: string[];
         }>;
       }>(url);
 
@@ -78,6 +93,7 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
           id: f.id,
           name: f.name,
           type: f.mimeType.replace("application/vnd.google-apps.", ""),
+          parents: f.parents,
           modified: f.modifiedTime,
           url: f.webViewLink,
         })),
@@ -402,6 +418,166 @@ Also supports renaming — pass new_name to rename while moving (or rename in pl
     } catch (err) {
       return JSON.stringify({
         error: `Drive move failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// gdrive_upload
+// ---------------------------------------------------------------------------
+
+export const gdriveUploadTool: Tool = {
+  name: "gdrive_upload",
+  definition: {
+    type: "function",
+    function: {
+      name: "gdrive_upload",
+      description: `Upload or update a plain text file (.md, .txt, .json, etc.) in Google Drive.
+
+USE WHEN:
+- Syncing Jarvis knowledge base files to Drive (Obsidian mirror)
+- Uploading any plain text content as a real file (not a Google Doc)
+- Updating an existing file's content (pass file_id to overwrite)
+
+BEHAVIOR:
+- Creates a new file if no file_id provided
+- UPDATES existing file content if file_id is provided (full replace, not append)
+- Files are plain text, readable by Obsidian and any text editor
+
+WORKFLOW for Obsidian sync:
+1. Call gdrive_list with parent_folder_id to check if file exists
+2. If exists → call gdrive_upload with file_id to update content
+3. If not → call gdrive_upload without file_id to create new file
+
+IMPORTANT: Always use parent_folder_id when creating new files to place them in the correct folder.`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              'File name with extension (e.g. "DIRECTIVES.md", "projects.md")',
+          },
+          content: {
+            type: "string",
+            description: "Text content to upload",
+          },
+          content_file: {
+            type: "string",
+            description:
+              "Path to a local file whose contents will be uploaded. Use instead of content for large files.",
+          },
+          parent_folder_id: {
+            type: "string",
+            description:
+              "Folder ID to place the file in (required for new files, ignored for updates)",
+          },
+          file_id: {
+            type: "string",
+            description: "Existing file ID to update (omit to create new file)",
+          },
+          mime_type: {
+            type: "string",
+            description:
+              'MIME type (default: "text/markdown"). Use "text/plain" for .txt, "application/json" for .json',
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const name = args.name as string;
+    const fileId = args.file_id as string | undefined;
+    const parentFolderId = args.parent_folder_id as string | undefined;
+    const contentFile = args.content_file as string | undefined;
+    const mimeType = (args.mime_type as string) ?? "text/markdown";
+
+    if (!name) return JSON.stringify({ error: "name is required" });
+
+    // Resolve content
+    let content: string;
+    if (contentFile) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        content = readFileSync(contentFile, "utf-8");
+      } catch {
+        return JSON.stringify({
+          error: `content_file not found: ${contentFile}`,
+        });
+      }
+    } else {
+      content = (args.content as string) ?? "";
+    }
+
+    if (!content && !fileId) {
+      return JSON.stringify({
+        error: "content or content_file is required for new files",
+      });
+    }
+
+    const boundary = "jarvis_upload_boundary";
+
+    try {
+      if (fileId) {
+        // UPDATE existing file — simple media upload
+        const result = await googleFetch<{
+          id: string;
+          name: string;
+          modifiedTime: string;
+        }>(
+          `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,name,modifiedTime`,
+          {
+            method: "PATCH",
+            rawBody: content,
+            contentType: mimeType,
+          },
+        );
+        return JSON.stringify({
+          updated: true,
+          file_id: result.id,
+          name: result.name,
+          modified: result.modifiedTime,
+        });
+      }
+
+      // CREATE new file — multipart/related (metadata + content)
+      const metadata: Record<string, unknown> = { name, mimeType };
+      if (parentFolderId) metadata.parents = [parentFolderId];
+
+      const body =
+        `--${boundary}\r\n` +
+        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+        `${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n` +
+        `${content}\r\n` +
+        `--${boundary}--`;
+
+      const result = await googleFetch<{
+        id: string;
+        name: string;
+        webViewLink: string;
+      }>(
+        `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink`,
+        {
+          method: "POST",
+          rawBody: body,
+          contentType: `multipart/related; boundary=${boundary}`,
+        },
+      );
+
+      return JSON.stringify({
+        created: true,
+        file_id: result.id,
+        name: result.name,
+        url: result.webViewLink,
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Drive upload failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },

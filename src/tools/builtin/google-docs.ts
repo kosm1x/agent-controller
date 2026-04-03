@@ -446,6 +446,121 @@ WORKFLOW for long documents:
 };
 
 // ---------------------------------------------------------------------------
+// gdocs_replace
+// ---------------------------------------------------------------------------
+
+export const gdocsReplaceTool: Tool = {
+  name: "gdocs_replace",
+  definition: {
+    type: "function",
+    function: {
+      name: "gdocs_replace",
+      description: `Replace ALL content in a Google Doc with new text. Clears existing content first.
+
+USE WHEN:
+- Syncing/updating a Google Doc with fresh content (not appending)
+- The document needs to reflect current state, not accumulate history
+
+DIFFERENCE FROM gdocs_write:
+- gdocs_write APPENDS to the end (additive)
+- gdocs_replace CLEARS everything and writes fresh (destructive)
+
+LARGE CONTENT: Pass content_file=<path> instead of inline text.`,
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: {
+            type: "string",
+            description: "Google Doc ID",
+          },
+          text: {
+            type: "string",
+            description: "New content to replace the entire document with",
+          },
+          content_file: {
+            type: "string",
+            description:
+              "Path to a file whose contents will replace the doc. Use for large documents.",
+          },
+        },
+        required: ["document_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const docId = args.document_id as string;
+    const contentFile = args.content_file as string | undefined;
+    let text: string;
+
+    if (contentFile) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        text = readFileSync(contentFile, "utf-8");
+      } catch {
+        return JSON.stringify({
+          error: `content_file not found: ${contentFile}`,
+        });
+      }
+    } else {
+      text = args.text as string;
+    }
+
+    if (!text) {
+      return JSON.stringify({
+        error: "text or content_file is required",
+      });
+    }
+
+    try {
+      // Get current doc to find content range
+      const doc = await googleFetch<{
+        body: { content: Array<{ endIndex: number }> };
+      }>(`https://docs.googleapis.com/v1/documents/${docId}`);
+
+      const endIndex =
+        doc.body.content[doc.body.content.length - 1]?.endIndex ?? 1;
+
+      const requests: unknown[] = [];
+
+      // Delete existing content (if any beyond the initial newline)
+      if (endIndex > 2) {
+        requests.push({
+          deleteContentRange: {
+            range: { startIndex: 1, endIndex: endIndex - 1 },
+          },
+        });
+      }
+
+      // Insert new content at the beginning
+      requests.push({
+        insertText: {
+          location: { index: 1 },
+          text,
+        },
+      });
+
+      await googleFetch(
+        `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
+        {
+          method: "POST",
+          body: { requests },
+        },
+      );
+
+      return JSON.stringify({
+        replaced: true,
+        document_id: docId,
+        chars: text.length,
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Docs replace failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // gslides_create
 // ---------------------------------------------------------------------------
 

@@ -74,6 +74,7 @@ export const GOOGLE_TOOLS = [
   "gdrive_share",
   "gdrive_delete",
   "gdrive_move",
+  "gdrive_upload",
   "calendar_list",
   "calendar_create",
   "calendar_update",
@@ -81,6 +82,7 @@ export const GOOGLE_TOOLS = [
   "gsheets_write",
   "gdocs_read",
   "gdocs_write",
+  "gdocs_replace",
   "gslides_create",
   "gtasks_create",
 ];

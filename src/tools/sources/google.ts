@@ -1,5 +1,5 @@
 /**
- * Google Workspace tool source — wraps 14 Google API tools.
+ * Google Workspace tool source — wraps 19 Google API tools.
  */
 
 import type { ToolRegistry } from "../registry.js";
@@ -41,6 +41,7 @@ export class GoogleToolSource implements ToolSource {
       gdriveShareTool,
       gdriveDeleteTool,
       gdriveMoveTool,
+      gdriveUploadTool,
     } = await import("../builtin/google-drive.js");
     const { calendarListTool, calendarCreateTool, calendarUpdateTool } =
       await import("../builtin/google-calendar.js");
@@ -49,6 +50,7 @@ export class GoogleToolSource implements ToolSource {
       gsheetsWriteTool,
       gdocsReadTool,
       gdocsWriteTool,
+      gdocsReplaceTool,
       gslidesCreateTool,
       gtasksCreateTool,
     } = await import("../builtin/google-docs.js");
@@ -62,6 +64,7 @@ export class GoogleToolSource implements ToolSource {
       gdriveShareTool,
       gdriveDeleteTool,
       gdriveMoveTool,
+      gdriveUploadTool,
       calendarListTool,
       calendarCreateTool,
       calendarUpdateTool,
@@ -69,6 +72,7 @@ export class GoogleToolSource implements ToolSource {
       gsheetsWriteTool,
       gdocsReadTool,
       gdocsWriteTool,
+      gdocsReplaceTool,
       gslidesCreateTool,
       gtasksCreateTool,
     ];
