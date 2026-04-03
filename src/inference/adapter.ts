@@ -1333,9 +1333,10 @@ export async function inferWithTools(
     const currentToolSig = buildToolSignature(response.tool_calls);
 
     // v4 counters (still useful for logging)
+    const prevToolSig = lastToolSig;
     consecutiveRepeats = checkConsecutiveRepeats(
       currentToolSig,
-      lastToolSig,
+      prevToolSig,
       consecutiveRepeats,
     );
     lastToolSig = currentToolSig;
@@ -1344,6 +1345,8 @@ export async function inferWithTools(
       toolResults,
       response.tool_calls.length,
       consecutiveSmallResults,
+      currentToolSig,
+      prevToolSig,
     );
 
     consecutiveReadOnlyRounds = checkAnalysisParalysis(

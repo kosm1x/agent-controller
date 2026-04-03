@@ -125,18 +125,25 @@ export function checkConsecutiveRepeats(
 }
 
 /**
- * Detect stale loop: all results < 300 chars and only 1 tool called.
+ * Detect stale loop: all results < 300 chars and only 1 tool called
+ * WITH the same signature as last round. Different arguments (e.g.
+ * sequential gdrive_delete with different file IDs) are not stale.
  * Returns the new consecutive count (0 = reset, N = consecutive).
  */
 export function checkStaleLoop(
   toolResults: Array<{ content: string | unknown }>,
   toolCallCount: number,
   currentCount: number,
+  currentSig?: string,
+  lastSig?: string,
 ): number {
   const allSmall = toolResults.every(
     (r) => typeof r.content === "string" && r.content.length < 300,
   );
-  return allSmall && toolCallCount === 1 ? currentCount + 1 : 0;
+  if (!allSmall || toolCallCount !== 1) return 0;
+  // Different signatures = different operations, not a stale loop
+  if (currentSig && lastSig && currentSig !== lastSig) return 0;
+  return currentCount + 1;
 }
 
 /**

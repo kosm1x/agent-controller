@@ -100,6 +100,11 @@ USE WHEN:
 - The user asks to create a new document, spreadsheet, presentation, or folder
 - You need to prepare a file for sharing or collaboration
 
+IMPORTANT — CHECK BEFORE CREATING:
+Always call gdrive_list first to verify the file/folder doesn't already exist.
+If it exists, return the existing file instead of creating a duplicate.
+Drive does NOT prevent duplicate names — every call creates a new file.
+
 Returns the file URL for sharing.`,
       parameters: {
         type: "object",

@@ -65,8 +65,14 @@ describe("checkConsecutiveRepeats", () => {
 // ---------------------------------------------------------------------------
 
 describe("checkStaleLoop", () => {
-  it("increments when single tool returns small result", () => {
+  it("increments when single tool returns small result with same signature", () => {
     const results = [{ content: '{"error":"not found"}' }]; // <300 chars
+    const sig = 'gdrive_delete:{"file_id":"abc"}';
+    expect(checkStaleLoop(results, 1, 0, sig, sig)).toBe(1);
+  });
+
+  it("increments when no signatures provided (backwards compat)", () => {
+    const results = [{ content: "small" }];
     expect(checkStaleLoop(results, 1, 0)).toBe(1);
   });
 
@@ -78,6 +84,13 @@ describe("checkStaleLoop", () => {
   it("resets when multiple tools called", () => {
     const results = [{ content: "small" }, { content: "also small" }];
     expect(checkStaleLoop(results, 2, 3)).toBe(0);
+  });
+
+  it("resets when signature differs (different args = not stale)", () => {
+    const results = [{ content: '{"deleted":true}' }];
+    const current = 'gdrive_delete:{"file_id":"file-2"}';
+    const previous = 'gdrive_delete:{"file_id":"file-1"}';
+    expect(checkStaleLoop(results, 1, 5, current, previous)).toBe(0);
   });
 
   it("boundary: 299 chars counts as small", () => {
