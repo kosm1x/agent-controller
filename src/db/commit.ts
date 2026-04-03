@@ -242,7 +242,9 @@ export function getSnapshot(date?: string): string {
 
 export function getHierarchy(includeCompleted?: boolean): string {
   const db = getDatabase();
-  const filter = includeCompleted ? "" : `WHERE status != 'completed'`;
+  // Default: show ALL items including completed. The user expects the full truth.
+  const filter =
+    includeCompleted === false ? `WHERE status != 'completed'` : "";
 
   const visions = db
     .prepare(`SELECT * FROM commit_visions ${filter} ORDER BY "order"`)
@@ -283,10 +285,12 @@ export function getHierarchy(includeCompleted?: boolean): string {
   );
   lines.push("=".repeat(70));
 
+  const done = (s: string) => (s === "completed" ? " [COMPLETED]" : "");
+
   for (const v of visions) {
     const vGoals = goalsByVision.get(v.id) ?? [];
     lines.push("");
-    lines.push(`VISION: ${v.title}`);
+    lines.push(`VISION: ${v.title}${done(v.status)}`);
     lines.push(
       `  Status: ${v.status} | Target: ${v.target_date ?? "none"} | Description: ${v.description}`,
     );
@@ -294,7 +298,7 @@ export function getHierarchy(includeCompleted?: boolean): string {
     if (vGoals.length === 0) lines.push("  (no goals)");
     for (const g of vGoals) {
       const gObjs = objsByGoal.get(g.id) ?? [];
-      lines.push(`  GOAL: ${g.title}`);
+      lines.push(`  GOAL: ${g.title}${done(g.status)}`);
       lines.push(
         `    Status: ${g.status} | Target: ${g.target_date ?? "none"} | Description: ${g.description || "(none)"}`,
       );
@@ -302,16 +306,16 @@ export function getHierarchy(includeCompleted?: boolean): string {
       if (gObjs.length === 0) lines.push("    (no objectives)");
       for (const o of gObjs) {
         const oTasks = tasksByObj.get(o.id) ?? [];
-        lines.push(`    OBJECTIVE: ${o.title}`);
+        lines.push(`    OBJECTIVE: ${o.title}${done(o.status)}`);
         lines.push(
-          `      Status: ${o.status} | Priority: ${o.priority} | Target: ${o.target_date ?? "none"}`,
+          `      Status: ${o.status} | Priority: ${o.priority} | Target: ${o.target_date ?? "none"}${o.description ? ` | Description: ${o.description}` : ""}`,
         );
 
         for (const t of oTasks) {
           const rec = t.is_recurring ? " [recurring]" : "";
-          lines.push(`      TASK: ${t.title}${rec}`);
+          lines.push(`      TASK: ${t.title}${done(t.status)}${rec}`);
           lines.push(
-            `        Status: ${t.status} | Priority: ${t.priority} | Due: ${t.due_date ?? "none"}`,
+            `        Status: ${t.status} | Priority: ${t.priority} | Due: ${t.due_date ?? "none"}${t.description ? ` | Description: ${t.description}` : ""}`,
           );
         }
       }
