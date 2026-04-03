@@ -1,6 +1,6 @@
 /**
  * Projects CRUD — first-class project entity with credentials,
- * config, and COMMIT goal linking.
+ * config, and NorthStar goal linking.
  *
  * Projects persist across sessions and are injected into every Jarvis
  * prompt so the LLM always has project context available.
@@ -86,7 +86,7 @@ export function getProject(slugOrId: string): Project | null {
   return row ? rowToProject(row) : null;
 }
 
-/** Get project by COMMIT goal ID. */
+/** Get project by NorthStar goal ID (commit_goal_id column — legacy name preserved). */
 export function getProjectByGoalId(goalId: string): Project | null {
   const db = getDatabase();
   const row = db
@@ -288,7 +288,7 @@ export function formatProjectsBlock(): string {
     const parts = [`- **${p.name}** (${p.slug}): ${p.status}`];
     if (p.urls.site) parts.push(`  URL: ${p.urls.site}`);
     if (p.commit_goal_id)
-      parts.push(`  Linked COMMIT goal: ${p.commit_goal_id}`);
+      parts.push(`  Linked NorthStar goal: ${p.commit_goal_id}`);
     if (p.description) parts.push(`  ${p.description.slice(0, 100)}`);
     // Show credential keys (not values) so LLM knows what's available
     const credKeys = Object.keys(p.credentials);

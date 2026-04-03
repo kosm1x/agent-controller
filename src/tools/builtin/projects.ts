@@ -1,8 +1,8 @@
 /**
  * Project management tools — CRUD for the projects entity.
  *
- * Projects are the bridge between Jarvis's work and COMMIT's hierarchy.
- * Each project can link to a COMMIT goal via commit_goal_id.
+ * Projects are the bridge between Jarvis's work and NorthStar's hierarchy.
+ * Each project can link to a NorthStar goal via commit_goal_id.
  */
 
 import type { Tool } from "../types.js";
@@ -25,7 +25,7 @@ export const projectListTool: Tool = {
     type: "function",
     function: {
       name: "project_list",
-      description: `List all projects with their status, URLs, and linked COMMIT goals.
+      description: `List all projects with their status, URLs, and linked NorthStar goals.
 
 USE WHEN:
 - User asks about their projects or what's active
@@ -82,7 +82,7 @@ USE WHEN:
 - You need a project's credentials (WP password, API key, FTP host)
 - You need to check project configuration or URLs
 - User asks about a specific project's status or details
-- You need the commit_goal_id to link project progress to COMMIT
+- You need the commit_goal_id to link project progress to NorthStar
 
 ALWAYS call this when the user mentions a project by name — it loads the full context
 (credentials, URLs, config) so you don't need to ask the user for information they've
@@ -139,13 +139,13 @@ export const projectUpdateTool: Tool = {
 USE WHEN:
 - User provides project credentials (WP password, API key, FTP host) — store them here
 - User creates a new project or changes project status
-- You need to link a project to a COMMIT goal
+- You need to link a project to a NorthStar goal
 - Auto-detected credentials should be stored here
 
 WORKFLOW for new projects:
 1. Call project_update with slug + name to create
 2. Add credentials, URLs, config as they become available
-3. Link to COMMIT goal with commit_goal_id when appropriate
+3. Link to NorthStar goal with commit_goal_id when appropriate
 
 CREDENTIAL STORAGE:
 - WordPress: credentials.wp_user, credentials.wp_app_password

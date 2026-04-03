@@ -1,0 +1,165 @@
+- generic [ref=e7]:
+  - main [ref=e8]:
+    - generic [ref=e1556]:
+      - generic [ref=e1558]:
+        - heading "Maps" [level=1] [ref=e1561]
+        - generic [ref=e1563]:
+          - button "Kanban" [ref=e1564] [cursor=pointer]:
+            - img [ref=e1565]
+            - generic [ref=e1570]: Kanban
+          - button "Mind Map" [ref=e1571] [cursor=pointer]:
+            - img [ref=e1572]
+            - generic [ref=e1577]: Mind Map
+      - generic [ref=e1580]:
+        - button "Vision Board" [ref=e1582] [cursor=pointer]:
+          - img [ref=e1583]
+          - text: Vision Board
+        - button "Goals Board" [ref=e1586] [cursor=pointer]:
+          - img [ref=e1587]
+          - text: Goals Board
+        - button "Objectives Board" [ref=e1590] [cursor=pointer]:
+          - img [ref=e1591]
+          - text: Objectives Board
+        - generic [ref=e1593]:
+          - button "Tasks Board" [ref=e1594] [cursor=pointer]:
+            - img [ref=e1595]
+            - text: Tasks Board
+          - generic [ref=e1598]:
+            - generic [ref=e1599]:
+              - generic [ref=e1600]:
+                - heading "Not Started" [level=3] [ref=e1601]
+                - paragraph [ref=e1602]: 0 tasks
+              - generic [ref=e1604]: No tasks in this status
+            - generic [ref=e1605]:
+              - generic [ref=e1606]:
+                - heading "In Progress" [level=3] [ref=e1607]
+                - paragraph [ref=e1608]: 2 tasks
+              - generic [ref=e1609]:
+                - generic [ref=e1610] [cursor=pointer]:
+                  - generic [ref=e1611]:
+                    - heading "Research methodologies for launching a new app and monetize it" [level=4] [ref=e1614]
+                    - generic [ref=e1615]:
+                      - img [ref=e1616]
+                      - text: Medium
+                  - generic [ref=e1619]:
+                    - img [ref=e1620]
+                    - text: Launch the app as a service and monetize it
+                - generic [ref=e1623] [cursor=pointer]:
+                  - generic [ref=e1624]:
+                    - generic [ref=e1626]:
+                      - heading "Walk 2 kms in 20 minutes or less" [level=4] [ref=e1627]
+                      - generic [ref=e1628]: 🔁
+                    - generic [ref=e1629]:
+                      - img [ref=e1630]
+                      - text: Medium
+                  - generic [ref=e1633]:
+                    - img [ref=e1634]
+                    - text: Walk 10 kms per week
+            - generic [ref=e1637]:
+              - generic [ref=e1638]:
+                - heading "On Hold" [level=3] [ref=e1639]
+                - paragraph [ref=e1640]: 2 tasks
+              - generic [ref=e1641]:
+                - generic [ref=e1642] [cursor=pointer]:
+                  - generic [ref=e1643]:
+                    - heading "Research Nutrition Fundamentals" [level=4] [ref=e1646]
+                    - generic [ref=e1647]:
+                      - img [ref=e1648]
+                      - text: Low
+                  - generic [ref=e1651]:
+                    - img [ref=e1652]
+                    - text: Mental Well-being
+                - generic [ref=e1655] [cursor=pointer]:
+                  - generic [ref=e1656]:
+                    - heading "Prototype a guided meditation app module" [level=4] [ref=e1659]
+                    - generic [ref=e1660]:
+                      - img [ref=e1661]
+                      - text: Medium
+                  - generic [ref=e1664]:
+                    - img [ref=e1665]
+                    - text: An app for meditation and relaxation
+            - generic [ref=e1668]:
+              - generic [ref=e1669]:
+                - heading "Completed" [level=3] [ref=e1670]
+                - paragraph [ref=e1671]: 4 tasks
+              - generic [ref=e1672]:
+                - generic [ref=e1673] [cursor=pointer]:
+                  - generic [ref=e1674]:
+                    - generic [ref=e1675]:
+                      - img [ref=e1676]
+                      - heading "Make the app go Live" [level=4] [ref=e1680]
+                    - generic [ref=e1681]:
+                      - img [ref=e1682]
+                      - text: Medium
+                  - generic [ref=e1684]:
+                    - generic [ref=e1685]:
+                      - img [ref=e1686]
+                      - text: 1/17/2026
+                    - generic [ref=e1688]:
+                      - img [ref=e1689]
+                      - text: Design and launch and APP based on the COMMIT method
+                - generic [ref=e1692] [cursor=pointer]:
+                  - generic [ref=e1693]:
+                    - generic [ref=e1694]:
+                      - img [ref=e1695]
+                      - heading "Write the foundation of the COMMIT Method" [level=4] [ref=e1699]
+                    - generic [ref=e1700]:
+                      - img [ref=e1701]
+                      - text: Medium
+                  - generic [ref=e1704]:
+                    - img [ref=e1705]
+                    - text: Design and launch and APP based on the COMMIT method
+                - generic [ref=e1708] [cursor=pointer]:
+                  - generic [ref=e1709]:
+                    - generic [ref=e1710]:
+                      - img [ref=e1711]
+                      - heading "Fine Tune the code" [level=4] [ref=e1715]
+                    - generic [ref=e1716]:
+                      - img [ref=e1717]
+                      - text: Medium
+                  - generic [ref=e1720]:
+                    - img [ref=e1721]
+                    - text: Design and launch and APP based on the COMMIT method
+                - generic [ref=e1724] [cursor=pointer]:
+                  - generic [ref=e1725]:
+                    - generic [ref=e1726]:
+                      - img [ref=e1727]
+                      - heading "Research best books to learn" [level=4] [ref=e1731]
+                    - generic [ref=e1732]:
+                      - img [ref=e1733]
+                      - text: Medium
+                  - generic [ref=e1735]:
+                    - generic [ref=e1736]:
+                      - img [ref=e1737]
+                      - text: 1/14/2026
+                    - generic [ref=e1739]:
+                      - img [ref=e1740]
+                      - text: Learn Calculus
+  - navigation [ref=e622]:
+    - generic [ref=e623]:
+      - link "Journal" [ref=e624] [cursor=pointer]:
+        - /url: /journal
+        - img [ref=e626]
+        - generic [ref=e629]: Journal
+      - link "Goals" [ref=e630] [cursor=pointer]:
+        - /url: /goals
+        - img [ref=e632]
+        - generic [ref=e634]: Goals
+      - link "Maps" [active] [ref=e635] [cursor=pointer]:
+        - /url: /boards
+        - img [ref=e637]
+        - generic [ref=e642]: Maps
+      - link "Ideate" [ref=e643] [cursor=pointer]:
+        - /url: /ideate
+        - img [ref=e645]
+        - generic [ref=e647]: Ideate
+      - link "Tracking" [ref=e648] [cursor=pointer]:
+        - /url: /track
+        - img [ref=e650]
+        - generic [ref=e653]: Tracking
+      - button "Jarvis Suggestions" [ref=e654] [cursor=pointer]:
+        - img [ref=e656]
+        - generic [ref=e659]: Jarvis
+      - button "Settings" [ref=e660] [cursor=pointer]:
+        - img [ref=e662]
+        - generic [ref=e665]: Me

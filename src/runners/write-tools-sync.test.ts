@@ -9,13 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { WRITE_TOOLS } from "./fast-runner.js";
-import {
-  GOOGLE_TOOLS,
-  COMMIT_WRITE_TOOLS,
-  COMMIT_JOURNAL_TOOLS,
-  COMMIT_DESTRUCTIVE_TOOLS,
-  WORDPRESS_TOOLS,
-} from "../messaging/scope.js";
+import { GOOGLE_TOOLS, WORDPRESS_TOOLS } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
 const GOOGLE_READ_ONLY = new Set([
@@ -41,18 +35,6 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !GOOGLE_READ_ONLY.has(t),
     );
     for (const tool of googleWriteTools) {
-      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
-        true,
-      );
-    }
-  });
-
-  it("includes all COMMIT write + journal + destructive tools", () => {
-    for (const tool of [
-      ...COMMIT_WRITE_TOOLS,
-      ...COMMIT_JOURNAL_TOOLS,
-      ...COMMIT_DESTRUCTIVE_TOOLS,
-    ]) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

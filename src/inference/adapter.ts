@@ -1258,7 +1258,7 @@ export async function inferWithTools(
             }
             // Scope enforcement: reject tool calls outside the scoped definitions.
             // DashScope/Qwen doesn't enforce strict tool calling — the LLM may
-            // call tools not in its definitions, causing phantom COMMIT operations.
+            // call tools not in its definitions, causing phantom tool operations.
             if (!allowedToolNames.has(toolName)) {
               console.warn(
                 `[inference] Tool ${toolName} rejected: not in scoped tool list`,

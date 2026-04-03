@@ -248,7 +248,7 @@ describe("detectsHallucinatedExecution", () => {
   it("allows passive observation WITHOUT ✅ (read-tool status listing)", () => {
     expect(
       detectsHallucinatedExecution(
-        "La tarea está marcada como completada en COMMIT.",
+        "La tarea está marcada como completada en NorthStar.",
         ["jarvis_file_read"],
       ),
     ).toBe(false);
@@ -258,7 +258,7 @@ describe("detectsHallucinatedExecution", () => {
   it("allows 'acabo de actualizar' when write tools were called", () => {
     expect(
       detectsHallucinatedExecution(
-        "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
+        "Acabo de actualizar los 3 estados de las tareas en NorthStar.",
         ["jarvis_file_read", "jarvis_file_write"],
       ),
     ).toBe(false);
@@ -285,7 +285,7 @@ describe("detectsHallucinatedExecution", () => {
   it("detects 'acabo de actualizar' when NO write tools were called", () => {
     expect(
       detectsHallucinatedExecution(
-        "Acabo de actualizar los 3 estados de las tareas en COMMIT.",
+        "Acabo de actualizar los 3 estados de las tareas en NorthStar.",
         ["jarvis_file_read"],
       ),
     ).toBe(true);
@@ -501,7 +501,7 @@ describe("hasUserConfirmedDeletion", () => {
     ).toBe(false);
   });
 
-  // --- Direct delete + COMMIT noun (no two-step needed) ---
+  // --- Direct delete + task noun (no two-step needed) ---
   it("returns true for 'delete completed tasks'", () => {
     expect(
       hasUserConfirmedDeletion([

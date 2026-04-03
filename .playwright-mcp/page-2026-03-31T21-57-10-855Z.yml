@@ -1,0 +1,497 @@
+- generic [ref=e7]:
+  - main [ref=e8]:
+    - generic [ref=e796]:
+      - heading "Goals" [level=1] [ref=e801]
+      - generic [ref=e803]:
+        - generic [ref=e805]:
+          - generic [ref=e806]:
+            - generic [ref=e807]:
+              - heading "Vision" [level=2] [ref=e809]
+              - generic [ref=e810]: "2"
+            - button "New Vision" [ref=e811] [cursor=pointer]:
+              - img [ref=e812]
+              - generic [ref=e813]: New Vision
+          - generic [ref=e814]:
+            - generic [ref=e816]:
+              - generic [ref=e817]:
+                - generic [ref=e818]:
+                  - img [ref=e819]
+                  - heading "Earn financial freedom" [level=3] [ref=e822] [cursor=pointer]
+                - generic [ref=e823]:
+                  - button "Convert type" [ref=e824] [cursor=pointer]:
+                    - img [ref=e825]
+                  - button "Edit" [ref=e830] [cursor=pointer]:
+                    - img [ref=e831]
+                  - button "Delete" [ref=e833] [cursor=pointer]:
+                    - img [ref=e834]
+              - paragraph [ref=e837]: I should be able to decide when, how and why on everything on my life.
+              - generic [ref=e838]:
+                - generic [ref=e839]:
+                  - img [ref=e840]
+                  - text: Jan 17
+                - generic [ref=e842]: 1/18/2026
+            - generic [ref=e844]:
+              - generic [ref=e845]:
+                - generic [ref=e846]:
+                  - img [ref=e847]
+                  - heading "Live longer" [level=3] [ref=e850] [cursor=pointer]
+                - generic [ref=e851]:
+                  - button "Convert type" [ref=e852] [cursor=pointer]:
+                    - img [ref=e853]
+                  - button "Edit" [ref=e858] [cursor=pointer]:
+                    - img [ref=e859]
+                  - button "Delete" [ref=e861] [cursor=pointer]:
+                    - img [ref=e862]
+              - paragraph [ref=e865]: Maximize longevity
+              - generic [ref=e867]: 12/26/2025
+        - generic [ref=e869]:
+          - generic [ref=e870]:
+            - generic [ref=e871]:
+              - heading "Goal" [level=2] [ref=e873]
+              - generic [ref=e874]: "3"
+            - button "Add Goal / Project" [ref=e875] [cursor=pointer]:
+              - img [ref=e876]
+              - generic [ref=e877]: Add Goal / Project
+          - generic [ref=e879]:
+            - generic [ref=e882]:
+              - button "Toggle status" [ref=e883] [cursor=pointer]:
+                - img [ref=e884]
+              - generic [ref=e886]:
+                - generic [ref=e887]:
+                  - heading "Build and monetize a Productivity App" [level=3] [ref=e889] [cursor=pointer]
+                  - generic [ref=e890]:
+                    - button "Convert type" [ref=e891] [cursor=pointer]:
+                      - img [ref=e892]
+                    - button "Edit" [ref=e897] [cursor=pointer]:
+                      - img [ref=e898]
+                    - button "Delete" [ref=e900] [cursor=pointer]:
+                      - img [ref=e901]
+                - paragraph [ref=e904]: Design and build an App that helps people reach their objectives
+                - generic [ref=e906]: 1/18/2026
+                - button "Objective AI suggestions 1 / 2" [ref=e908] [cursor=pointer]:
+                  - generic [ref=e909]:
+                    - img [ref=e910]
+                    - generic [ref=e912]: Objective
+                    - button "AI suggestions" [ref=e913]:
+                      - img [ref=e914]
+                  - generic [ref=e916]: 1 / 2
+            - generic [ref=e921]:
+              - button "Toggle status" [ref=e922] [cursor=pointer]:
+                - img [ref=e923]
+              - generic [ref=e925]:
+                - generic [ref=e926]:
+                  - heading "Develop Healthspan" [level=3] [ref=e928] [cursor=pointer]
+                  - generic [ref=e929]:
+                    - button "Convert type" [ref=e930] [cursor=pointer]:
+                      - img [ref=e931]
+                    - button "Edit" [ref=e936] [cursor=pointer]:
+                      - img [ref=e937]
+                    - button "Delete" [ref=e939] [cursor=pointer]:
+                      - img [ref=e940]
+                - generic [ref=e944]: 12/26/2025
+                - button "Objective AI suggestions 0 / 2" [ref=e946] [cursor=pointer]:
+                  - generic [ref=e947]:
+                    - img [ref=e948]
+                    - generic [ref=e950]: Objective
+                    - button "AI suggestions" [ref=e951]:
+                      - img [ref=e952]
+                  - generic [ref=e954]: 0 / 2
+            - generic [ref=e958]:
+              - button "Toggle status" [ref=e959] [cursor=pointer]:
+                - img [ref=e960]
+              - generic [ref=e962]:
+                - generic [ref=e963]:
+                  - heading "Build a Network of Wellbeing apps" [level=3] [ref=e965] [cursor=pointer]
+                  - generic [ref=e966]:
+                    - button "Convert type" [ref=e967] [cursor=pointer]:
+                      - img [ref=e968]
+                    - button "Edit" [ref=e973] [cursor=pointer]:
+                      - img [ref=e974]
+                    - button "Delete" [ref=e976] [cursor=pointer]:
+                      - img [ref=e977]
+                - generic [ref=e981]: 1/18/2026
+                - button "Objective AI suggestions 0 / 1" [ref=e983] [cursor=pointer]:
+                  - generic [ref=e984]:
+                    - img [ref=e985]
+                    - generic [ref=e987]: Objective
+                    - button "AI suggestions" [ref=e988]:
+                      - img [ref=e989]
+                  - generic [ref=e991]: 0 / 1
+        - generic [ref=e994]:
+          - generic [ref=e995]:
+            - generic [ref=e996]:
+              - heading "Objective" [level=2] [ref=e998]
+              - generic [ref=e999]: "6"
+            - button "Add Objective" [ref=e1000] [cursor=pointer]:
+              - img [ref=e1001]
+              - generic [ref=e1002]: Add Objective
+          - generic [ref=e1003]:
+            - generic [ref=e1004]:
+              - button "Orphaned Objectives (1)" [ref=e1005] [cursor=pointer]:
+                - img [ref=e1006]
+                - text: Orphaned Objectives (1)
+              - generic [ref=e1011]:
+                - button "Toggle status" [ref=e1012] [cursor=pointer]:
+                  - img [ref=e1013]
+                - generic [ref=e1015]:
+                  - generic [ref=e1016]:
+                    - heading "Learn Calculus" [level=3] [ref=e1018] [cursor=pointer]
+                    - generic [ref=e1019]:
+                      - button "Convert type" [ref=e1020] [cursor=pointer]:
+                        - img [ref=e1021]
+                      - button "Edit" [ref=e1026] [cursor=pointer]:
+                        - img [ref=e1027]
+                      - button "Delete" [ref=e1029] [cursor=pointer]:
+                        - img [ref=e1030]
+                  - paragraph [ref=e1033]: I need to learn this bitch
+                  - generic [ref=e1035]:
+                    - img [ref=e1036]
+                    - text: Jan 31
+                  - generic [ref=e1038]:
+                    - generic [ref=e1039]: medium
+                    - generic [ref=e1040]: 12/31/2025
+                  - button "Tasks AI suggestions 1 / 1" [ref=e1042] [cursor=pointer]:
+                    - generic [ref=e1043]:
+                      - img [ref=e1044]
+                      - generic [ref=e1046]: Tasks
+                      - button "AI suggestions" [ref=e1047]:
+                        - img [ref=e1048]
+                    - generic [ref=e1050]: 1 / 1
+                  - generic [ref=e1053]:
+                    - img [ref=e1054]
+                    - text: Orphaned
+            - generic [ref=e1057]:
+              - generic [ref=e1060]:
+                - button "Toggle status" [ref=e1061] [cursor=pointer]:
+                  - img [ref=e1062]
+                - generic [ref=e1064]:
+                  - generic [ref=e1065]:
+                    - heading "Walk 10 kms per week" [level=3] [ref=e1067] [cursor=pointer]
+                    - generic [ref=e1068]:
+                      - button "Convert type" [ref=e1069] [cursor=pointer]:
+                        - img [ref=e1070]
+                      - button "Edit" [ref=e1075] [cursor=pointer]:
+                        - img [ref=e1076]
+                      - button "Delete" [ref=e1078] [cursor=pointer]:
+                        - img [ref=e1079]
+                  - generic [ref=e1082]:
+                    - generic [ref=e1083]: medium
+                    - generic [ref=e1084]: 12/27/2025
+                  - button "Tasks AI suggestions 0 / 1" [ref=e1086] [cursor=pointer]:
+                    - generic [ref=e1087]:
+                      - img [ref=e1088]
+                      - generic [ref=e1090]: Tasks
+                      - button "AI suggestions" [ref=e1091]:
+                        - img [ref=e1092]
+                    - generic [ref=e1094]: 0 / 1
+              - generic [ref=e1098]:
+                - button "Toggle status" [ref=e1099] [cursor=pointer]:
+                  - img [ref=e1100]
+                - generic [ref=e1102]:
+                  - generic [ref=e1103]:
+                    - heading "Launch the app as a service and monetize it" [level=3] [ref=e1105] [cursor=pointer]
+                    - generic [ref=e1106]:
+                      - button "Convert type" [ref=e1107] [cursor=pointer]:
+                        - img [ref=e1108]
+                      - button "Edit" [ref=e1113] [cursor=pointer]:
+                        - img [ref=e1114]
+                      - button "Delete" [ref=e1116] [cursor=pointer]:
+                        - img [ref=e1117]
+                  - generic [ref=e1121]:
+                    - img [ref=e1122]
+                    - text: Jan 31
+                  - generic [ref=e1124]:
+                    - generic [ref=e1125]: medium
+                    - generic [ref=e1126]: 1/18/2026
+                  - button "Tasks AI suggestions 0 / 1" [ref=e1128] [cursor=pointer]:
+                    - generic [ref=e1129]:
+                      - img [ref=e1130]
+                      - generic [ref=e1132]: Tasks
+                      - button "AI suggestions" [ref=e1133]:
+                        - img [ref=e1134]
+                    - generic [ref=e1136]: 0 / 1
+              - generic [ref=e1140]:
+                - button "Toggle status" [ref=e1141] [cursor=pointer]:
+                  - img [ref=e1142]
+                - generic [ref=e1144]:
+                  - generic [ref=e1145]:
+                    - heading "An app for meditation and relaxation" [level=3] [ref=e1147] [cursor=pointer]
+                    - generic [ref=e1148]:
+                      - button "Convert type" [ref=e1149] [cursor=pointer]:
+                        - img [ref=e1150]
+                      - button "Edit" [ref=e1155] [cursor=pointer]:
+                        - img [ref=e1156]
+                      - button "Delete" [ref=e1158] [cursor=pointer]:
+                        - img [ref=e1159]
+                  - generic [ref=e1162]:
+                    - generic [ref=e1163]: medium
+                    - generic [ref=e1164]: 12/31/2025
+                  - button "Tasks AI suggestions 0 / 1" [ref=e1166] [cursor=pointer]:
+                    - generic [ref=e1167]:
+                      - img [ref=e1168]
+                      - generic [ref=e1170]: Tasks
+                      - button "AI suggestions" [ref=e1171]:
+                        - img [ref=e1172]
+                    - generic [ref=e1174]: 0 / 1
+              - generic [ref=e1178]:
+                - button "Toggle status" [ref=e1179] [cursor=pointer]:
+                  - img [ref=e1180]
+                - generic [ref=e1182]:
+                  - generic [ref=e1183]:
+                    - heading "Mental Well-being" [level=3] [ref=e1185] [cursor=pointer]
+                    - generic [ref=e1186]:
+                      - button "Convert type" [ref=e1187] [cursor=pointer]:
+                        - img [ref=e1188]
+                      - button "Edit" [ref=e1193] [cursor=pointer]:
+                        - img [ref=e1194]
+                      - button "Delete" [ref=e1196] [cursor=pointer]:
+                        - img [ref=e1197]
+                  - paragraph [ref=e1200]: "Created from mind map: Personal Healthspan Development"
+                  - generic [ref=e1201]:
+                    - generic [ref=e1202]: medium
+                    - generic [ref=e1203]: 1/18/2026
+                  - button "Tasks AI suggestions 0 / 1" [ref=e1205] [cursor=pointer]:
+                    - generic [ref=e1206]:
+                      - img [ref=e1207]
+                      - generic [ref=e1209]: Tasks
+                      - button "AI suggestions" [ref=e1210]:
+                        - img [ref=e1211]
+                    - generic [ref=e1213]: 0 / 1
+              - generic [ref=e1217]:
+                - button "Toggle status" [ref=e1218] [cursor=pointer]:
+                  - img [ref=e1219]
+                - generic [ref=e1222]:
+                  - generic [ref=e1223]:
+                    - heading "Design and launch and APP based on the COMMIT method" [level=3] [ref=e1225] [cursor=pointer]
+                    - generic [ref=e1226]:
+                      - button "Convert type" [ref=e1227] [cursor=pointer]:
+                        - img [ref=e1228]
+                      - button "Edit" [ref=e1233] [cursor=pointer]:
+                        - img [ref=e1234]
+                      - button "Delete" [ref=e1236] [cursor=pointer]:
+                        - img [ref=e1237]
+                  - generic [ref=e1240]:
+                    - generic [ref=e1241]: medium
+                    - generic [ref=e1242]: 1/18/2026
+                  - button "Tasks AI suggestions 3 / 3" [ref=e1244] [cursor=pointer]:
+                    - generic [ref=e1245]:
+                      - img [ref=e1246]
+                      - generic [ref=e1248]: Tasks
+                      - button "AI suggestions" [ref=e1249]:
+                        - img [ref=e1250]
+                    - generic [ref=e1252]: 3 / 3
+        - generic [ref=e1256]:
+          - generic [ref=e1257]:
+            - generic [ref=e1258]:
+              - heading "Tasks" [level=2] [ref=e1260]
+              - generic [ref=e1261]: "8"
+            - button "Add Task" [ref=e1262] [cursor=pointer]:
+              - img [ref=e1263]
+              - generic [ref=e1264]: Add Task
+          - generic [ref=e1267]:
+            - generic [ref=e1270]:
+              - button "Toggle status" [ref=e1271] [cursor=pointer]:
+                - img [ref=e1272]
+              - generic [ref=e1274]:
+                - generic [ref=e1275]:
+                  - heading "Research methodologies for launching a new app and monetize it" [level=3] [ref=e1277] [cursor=pointer]
+                  - generic [ref=e1278]:
+                    - button "Convert type" [ref=e1279] [cursor=pointer]:
+                      - img [ref=e1280]
+                    - button "Edit" [ref=e1285] [cursor=pointer]:
+                      - img [ref=e1286]
+                    - button "Delete" [ref=e1288] [cursor=pointer]:
+                      - img [ref=e1289]
+                - generic [ref=e1292]:
+                  - generic [ref=e1293]: medium
+                  - generic [ref=e1294]: 1/18/2026
+                - button "Document Links 0" [ref=e1296] [cursor=pointer]:
+                  - generic [ref=e1297]:
+                    - img [ref=e1298]
+                    - generic [ref=e1300]: Document Links
+                  - generic [ref=e1301]: "0"
+            - generic [ref=e1304]:
+              - button "Toggle status" [ref=e1305] [cursor=pointer]:
+                - img [ref=e1306]
+              - generic [ref=e1308]:
+                - generic [ref=e1309]:
+                  - generic [ref=e1310]:
+                    - heading "Walk 2 kms in 20 minutes or less" [level=3] [ref=e1311] [cursor=pointer]
+                    - generic [ref=e1312]: 🔁
+                  - generic [ref=e1313]:
+                    - button "Convert type" [ref=e1314] [cursor=pointer]:
+                      - img [ref=e1315]
+                    - button "Edit" [ref=e1320] [cursor=pointer]:
+                      - img [ref=e1321]
+                    - button "Delete" [ref=e1323] [cursor=pointer]:
+                      - img [ref=e1324]
+                - button "Mark Completed Today" [ref=e1328] [cursor=pointer]
+                - generic [ref=e1329]:
+                  - generic [ref=e1330]: medium
+                  - generic [ref=e1331]: 1/18/2026
+                - button "Document Links 0" [ref=e1333] [cursor=pointer]:
+                  - generic [ref=e1334]:
+                    - img [ref=e1335]
+                    - generic [ref=e1337]: Document Links
+                  - generic [ref=e1338]: "0"
+            - generic [ref=e1341]:
+              - button "Toggle status" [ref=e1342] [cursor=pointer]:
+                - img [ref=e1343]
+              - generic [ref=e1345]:
+                - generic [ref=e1346]:
+                  - heading "Prototype a guided meditation app module" [level=3] [ref=e1348] [cursor=pointer]
+                  - generic [ref=e1349]:
+                    - button "Convert type" [ref=e1350] [cursor=pointer]:
+                      - img [ref=e1351]
+                    - button "Edit" [ref=e1356] [cursor=pointer]:
+                      - img [ref=e1357]
+                    - button "Delete" [ref=e1359] [cursor=pointer]:
+                      - img [ref=e1360]
+                - generic [ref=e1363]:
+                  - generic [ref=e1364]: medium
+                  - generic [ref=e1365]: 1/18/2026
+                - button "Document Links 0" [ref=e1367] [cursor=pointer]:
+                  - generic [ref=e1368]:
+                    - img [ref=e1369]
+                    - generic [ref=e1371]: Document Links
+                  - generic [ref=e1372]: "0"
+            - generic [ref=e1375]:
+              - button "Toggle status" [ref=e1376] [cursor=pointer]:
+                - img [ref=e1377]
+              - generic [ref=e1379]:
+                - generic [ref=e1380]:
+                  - heading "Research Nutrition Fundamentals" [level=3] [ref=e1382] [cursor=pointer]
+                  - generic [ref=e1383]:
+                    - button "Convert type" [ref=e1384] [cursor=pointer]:
+                      - img [ref=e1385]
+                    - button "Edit" [ref=e1390] [cursor=pointer]:
+                      - img [ref=e1391]
+                    - button "Delete" [ref=e1393] [cursor=pointer]:
+                      - img [ref=e1394]
+                - paragraph [ref=e1397]: "Created from mind map: Personal Healthspan Development"
+                - generic [ref=e1398]:
+                  - generic [ref=e1399]: low
+                  - generic [ref=e1400]: 1/18/2026
+                - button "Document Links 0" [ref=e1402] [cursor=pointer]:
+                  - generic [ref=e1403]:
+                    - img [ref=e1404]
+                    - generic [ref=e1406]: Document Links
+                  - generic [ref=e1407]: "0"
+            - generic [ref=e1410]:
+              - button "Toggle status" [ref=e1411] [cursor=pointer]:
+                - img [ref=e1412]
+              - generic [ref=e1415]:
+                - generic [ref=e1416]:
+                  - heading "Research best books to learn" [level=3] [ref=e1418] [cursor=pointer]
+                  - generic [ref=e1419]:
+                    - button "Convert type" [ref=e1420] [cursor=pointer]:
+                      - img [ref=e1421]
+                    - button "Edit" [ref=e1426] [cursor=pointer]:
+                      - img [ref=e1427]
+                    - button "Delete" [ref=e1429] [cursor=pointer]:
+                      - img [ref=e1430]
+                - generic [ref=e1434]:
+                  - img [ref=e1435]
+                  - text: Jan 14
+                - generic [ref=e1437]:
+                  - generic [ref=e1438]: medium
+                  - generic [ref=e1439]: 12/31/2025
+                - button "Document Links 0" [ref=e1441] [cursor=pointer]:
+                  - generic [ref=e1442]:
+                    - img [ref=e1443]
+                    - generic [ref=e1445]: Document Links
+                  - generic [ref=e1446]: "0"
+            - generic [ref=e1449]:
+              - button "Toggle status" [ref=e1450] [cursor=pointer]:
+                - img [ref=e1451]
+              - generic [ref=e1454]:
+                - generic [ref=e1455]:
+                  - heading "Make the app go Live" [level=3] [ref=e1457] [cursor=pointer]
+                  - generic [ref=e1458]:
+                    - button "Convert type" [ref=e1459] [cursor=pointer]:
+                      - img [ref=e1460]
+                    - button "Edit" [ref=e1465] [cursor=pointer]:
+                      - img [ref=e1466]
+                    - button "Delete" [ref=e1468] [cursor=pointer]:
+                      - img [ref=e1469]
+                - generic [ref=e1473]:
+                  - img [ref=e1474]
+                  - text: Jan 17
+                - generic [ref=e1476]:
+                  - generic [ref=e1477]: medium
+                  - generic [ref=e1478]: 1/18/2026
+                - button "Document Links 0" [ref=e1480] [cursor=pointer]:
+                  - generic [ref=e1481]:
+                    - img [ref=e1482]
+                    - generic [ref=e1484]: Document Links
+                  - generic [ref=e1485]: "0"
+            - generic [ref=e1488]:
+              - button "Toggle status" [ref=e1489] [cursor=pointer]:
+                - img [ref=e1490]
+              - generic [ref=e1493]:
+                - generic [ref=e1494]:
+                  - heading "Fine Tune the code" [level=3] [ref=e1496] [cursor=pointer]
+                  - generic [ref=e1497]:
+                    - button "Convert type" [ref=e1498] [cursor=pointer]:
+                      - img [ref=e1499]
+                    - button "Edit" [ref=e1504] [cursor=pointer]:
+                      - img [ref=e1505]
+                    - button "Delete" [ref=e1507] [cursor=pointer]:
+                      - img [ref=e1508]
+                - generic [ref=e1511]:
+                  - generic [ref=e1512]: medium
+                  - generic [ref=e1513]: 12/31/2025
+                - button "Document Links 0" [ref=e1515] [cursor=pointer]:
+                  - generic [ref=e1516]:
+                    - img [ref=e1517]
+                    - generic [ref=e1519]: Document Links
+                  - generic [ref=e1520]: "0"
+            - generic [ref=e1523]:
+              - button "Toggle status" [ref=e1524] [cursor=pointer]:
+                - img [ref=e1525]
+              - generic [ref=e1528]:
+                - generic [ref=e1529]:
+                  - heading "Write the foundation of the COMMIT Method" [level=3] [ref=e1531] [cursor=pointer]
+                  - generic [ref=e1532]:
+                    - button "Convert type" [ref=e1533] [cursor=pointer]:
+                      - img [ref=e1534]
+                    - button "Edit" [ref=e1539] [cursor=pointer]:
+                      - img [ref=e1540]
+                    - button "Delete" [ref=e1542] [cursor=pointer]:
+                      - img [ref=e1543]
+                - generic [ref=e1546]:
+                  - generic [ref=e1547]: medium
+                  - generic [ref=e1548]: 12/28/2025
+                - button "Document Links 0" [ref=e1550] [cursor=pointer]:
+                  - generic [ref=e1551]:
+                    - img [ref=e1552]
+                    - generic [ref=e1554]: Document Links
+                  - generic [ref=e1555]: "0"
+  - navigation [ref=e622]:
+    - generic [ref=e623]:
+      - link "Journal" [ref=e624] [cursor=pointer]:
+        - /url: /journal
+        - img [ref=e626]
+        - generic [ref=e629]: Journal
+      - link "Goals" [active] [ref=e630] [cursor=pointer]:
+        - /url: /goals
+        - img [ref=e632]
+        - generic [ref=e634]: Goals
+      - link "Maps" [ref=e635] [cursor=pointer]:
+        - /url: /boards
+        - img [ref=e637]
+        - generic [ref=e642]: Maps
+      - link "Ideate" [ref=e643] [cursor=pointer]:
+        - /url: /ideate
+        - img [ref=e645]
+        - generic [ref=e647]: Ideate
+      - link "Tracking" [ref=e648] [cursor=pointer]:
+        - /url: /track
+        - img [ref=e650]
+        - generic [ref=e653]: Tracking
+      - button "Jarvis Suggestions" [ref=e654] [cursor=pointer]:
+        - img [ref=e656]
+        - generic [ref=e659]: Jarvis
+      - button "Settings" [ref=e660] [cursor=pointer]:
+        - img [ref=e662]
+        - generic [ref=e665]: Me

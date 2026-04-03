@@ -10,9 +10,6 @@ import {
   detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
-  COMMIT_READ_TOOLS,
-  COMMIT_WRITE_TOOLS,
-  COMMIT_JOURNAL_TOOLS,
   GOOGLE_TOOLS,
   WORDPRESS_TOOLS,
   CODING_TOOLS,
@@ -48,14 +45,9 @@ function hasNone(tools: string[], excluded: string[]): boolean {
 // ---------------------------------------------------------------------------
 
 describe("scope pattern matching", () => {
-  it("commit_read activates on COMMIT nouns (tarea, objetivo, meta)", () => {
+  it("northstar_read activates on task/goal nouns (tarea, objetivo, meta)", () => {
     const tools = scope("Qué tareas tengo pendientes?");
-    expect(hasAll(tools, COMMIT_READ_TOOLS)).toBe(true);
-  });
-
-  it("commit_read also loads COMMIT_WRITE_TOOLS (merged scope)", () => {
-    const tools = scope("Lista mis objetivos");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_read");
   });
 
   it("google activates on email/calendar/drive keywords", () => {
@@ -121,7 +113,7 @@ describe("scope pattern matching", () => {
     expect(scope("Quiero ver los prospectos activos")).not.toContain(
       "crm_query",
     );
-    expect(scope("Crea una tarea en COMMIT")).not.toContain("crm_query");
+    expect(scope("Crea una tarea nueva")).not.toContain("crm_query");
     expect(scope("Busca en mi gmail")).not.toContain("crm_query");
   });
 
@@ -157,53 +149,52 @@ describe("scope pattern matching", () => {
   it("no false positives on casual Spanish conversation", () => {
     const tools = scope("Hola, buenos días. Cómo estás?");
     // Should only have core + misc tools
-    expect(hasNone(tools, COMMIT_WRITE_TOOLS)).toBe(true);
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
     expect(hasNone(tools, CODING_TOOLS)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// commit_write patterns — each of 6 sub-patterns tested independently
+// northstar_write patterns — each of 6 sub-patterns tested independently
 // ---------------------------------------------------------------------------
 
-describe("commit_write sub-patterns", () => {
+describe("northstar_write sub-patterns", () => {
   it("create verbs: 'Crea una tarea nueva'", () => {
     const tools = scope("Crea una tarea nueva para mañana");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("verb-first updates: 'Actualiza la tarea de diseño'", () => {
     const tools = scope("Actualiza la tarea de diseño UX");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("clitic pronouns: 'cámbialo'", () => {
     const tools = scope("El objetivo está mal, cámbialo");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("completion markers: 'Marca como completada'", () => {
     const tools = scope("Marca como completada la tarea");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("completion + noun: 'Completé la tarea'", () => {
     const tools = scope("Completé la tarea de escritura");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("noun-before-verb: 'La tarea de ayer, actualízala'", () => {
     const tools = scope("La tarea de ayer necesita cambios, actualízala");
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_write");
   });
 });
 
 // ---------------------------------------------------------------------------
-// commit_journal — separate scope group
+// northstar_journal — journal scope group
 // ---------------------------------------------------------------------------
 
-describe("journal scope (retired — now jarvis files)", () => {
+describe("journal scope (jarvis files)", () => {
   it("journal keyword still routes through tools pipeline", () => {
     const tools = scope("Escribe en mi diario lo que pasó hoy");
     expect(tools).toContain("jarvis_file_write");
@@ -230,8 +221,8 @@ describe("two-phase scope isolation", () => {
     const tools = scope("Actualiza el status de la tarea", [
       "Busca en mi gmail los correos de ayer",
     ]);
-    // Current triggers commit_read, prior adds google
-    expect(hasAll(tools, COMMIT_READ_TOOLS)).toBe(true);
+    // Current triggers northstar_read, prior adds google
+    expect(tools).toContain("jarvis_file_read");
     expect(hasAll(tools, GOOGLE_TOOLS)).toBe(true);
   });
 
@@ -254,7 +245,7 @@ describe("two-phase scope isolation", () => {
   });
 
   it("imperative verb inherits scope regardless of length", () => {
-    const tools = scope("Ejecuta lo que te pedí con las tareas de COMMIT", [
+    const tools = scope("Ejecuta lo que te pedí con las tareas del NorthStar", [
       "Busca en mi gmail los correos de ayer",
     ]);
     // "ejecuta" triggers inheritance even though message has own signals
@@ -272,10 +263,10 @@ describe("two-phase scope isolation", () => {
   it("referential phrase 'el primero que' inherits scope on long message", () => {
     const tools = scope(
       "El primero que realizaste lo hiciste el miércoles. Ese está bien. Quiero el resumen del de hoy.",
-      ["Lee el journal de COMMIT y busca la consolidación"],
+      ["Lee el journal del NorthStar y busca la consolidación"],
     );
     // 95 chars but "el primero que" triggers referential inheritance
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
+    expect(tools).toContain("jarvis_file_read");
   });
 
   it("referential phrase 'lo que te pedí' inherits scope", () => {
@@ -300,12 +291,10 @@ describe("two-phase scope isolation", () => {
       "Me siento bien hoy, tuve un buen día y quiero descansar un poco esta tarde después de caminar",
     );
     // 80+ chars, no scope keywords, no imperative verbs
-    // COMMIT_READ is now in CORE_TOOLS (always-on), so it's present
     expect(hasAll(tools, CORE_TOOLS)).toBe(true);
     expect(hasAll(tools, MISC_TOOLS)).toBe(true);
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
     expect(hasNone(tools, CODING_TOOLS)).toBe(true);
-    expect(hasNone(tools, COMMIT_WRITE_TOOLS)).toBe(true);
   });
 });
 
@@ -344,8 +333,6 @@ describe("meta scope completeness", () => {
   it("meta scope includes all tool groups", () => {
     const tools = scope("Lista todas las herramientas");
     // All groups should be active
-    expect(hasAll(tools, COMMIT_WRITE_TOOLS)).toBe(true);
-    expect(hasAll(tools, COMMIT_JOURNAL_TOOLS)).toBe(true);
     expect(hasAll(tools, SPECIALTY_TOOLS)).toBe(true);
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
@@ -366,9 +353,9 @@ describe("detectActiveGroups", () => {
     expect(groups.size).toBe(0);
   });
 
-  it("detects commit_read on task keywords", () => {
+  it("detects northstar_read on task keywords", () => {
     const groups = detect("Qué tareas tengo pendientes?");
-    expect(groups.has("commit_read")).toBe(true);
+    expect(groups.has("northstar_read")).toBe(true);
   });
 
   it("detects google on email keywords", () => {
@@ -385,7 +372,7 @@ describe("detectActiveGroups", () => {
     const groups = detect("Crea una tarea nueva", [
       "Busca en mi gmail los correos",
     ]);
-    expect(groups.has("commit_write")).toBe(true);
+    expect(groups.has("northstar_write")).toBe(true);
     expect(groups.has("google")).toBe(true);
   });
 

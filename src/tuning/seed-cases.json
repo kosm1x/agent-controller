@@ -48,7 +48,7 @@
     "source": "manual"
   },
   {
-    "case_id": "ts-commit-create-01",
+    "case_id": "ts-northstar-create-01",
     "category": "tool_selection",
     "input": {
       "message": "Crea una tarea para revisar el contrato de Televisa"
@@ -58,7 +58,7 @@
     "source": "manual"
   },
   {
-    "case_id": "ts-commit-list-01",
+    "case_id": "ts-northstar-list-01",
     "category": "tool_selection",
     "input": { "message": "Qué tareas pendientes tengo?" },
     "expected": { "tools": ["jarvis_file_read"] },
@@ -66,7 +66,7 @@
     "source": "manual"
   },
   {
-    "case_id": "ts-commit-no-create-01",
+    "case_id": "ts-northstar-no-create-01",
     "category": "tool_selection",
     "input": { "message": "Investiga cuánto cuesta un dominio .ai" },
     "expected": {
@@ -273,44 +273,44 @@
     "source": "manual"
   },
   {
-    "case_id": "sc-commit-write-01",
+    "case_id": "sc-northstar-write-01",
     "category": "scope_accuracy",
     "input": {
       "message": "Crea una meta para mejorar la retención de clientes"
     },
-    "expected": { "scope_groups": ["commit_write"] },
+    "expected": { "scope_groups": ["northstar_write"] },
     "weight": 1.0,
     "source": "manual"
   },
   {
-    "case_id": "sc-commit-write-02",
+    "case_id": "sc-northstar-write-02",
     "category": "scope_accuracy",
     "input": { "message": "Marca la tarea de revisar docs como completada" },
-    "expected": { "scope_groups": ["commit_write"] },
+    "expected": { "scope_groups": ["northstar_write"] },
     "weight": 1.0,
     "source": "manual"
   },
   {
-    "case_id": "sc-commit-write-03",
+    "case_id": "sc-northstar-write-03",
     "category": "scope_accuracy",
     "input": { "message": "Cambia el status de la tarea a in_progress" },
-    "expected": { "scope_groups": ["commit_write"] },
+    "expected": { "scope_groups": ["northstar_write"] },
     "weight": 1.0,
     "source": "manual"
   },
   {
-    "case_id": "sc-commit-write-04",
+    "case_id": "sc-northstar-write-04",
     "category": "scope_accuracy",
     "input": { "message": "Completé la tarea del reporte" },
-    "expected": { "scope_groups": ["commit_write"] },
+    "expected": { "scope_groups": ["northstar_write"] },
     "weight": 1.0,
     "source": "manual"
   },
   {
-    "case_id": "sc-commit-destructive-01",
+    "case_id": "sc-destructive-01",
     "category": "scope_accuracy",
     "input": { "message": "Elimina la meta de Q1 que ya no aplica" },
-    "expected": { "scope_groups": ["commit_destructive", "commit_write"] },
+    "expected": { "scope_groups": ["destructive", "northstar_write"] },
     "weight": 1.0,
     "source": "manual"
   },

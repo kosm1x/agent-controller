@@ -73,7 +73,7 @@ describe("feedback", () => {
       expect(
         detectImplicitFeedback(
           new Set(["google"]),
-          new Set(["commit_read"]),
+          new Set(["northstar_read"]),
           "Busca en gmail",
           "Lista tareas",
         ),
@@ -83,8 +83,8 @@ describe("feedback", () => {
     it("returns neutral when scope groups overlap (same topic)", () => {
       expect(
         detectImplicitFeedback(
-          new Set(["commit_read", "google"]),
-          new Set(["commit_read"]),
+          new Set(["northstar_read", "google"]),
+          new Set(["northstar_read"]),
           "Lista objetivos y busca en gmail",
           "Lista tareas",
         ),
@@ -94,8 +94,8 @@ describe("feedback", () => {
     it("returns rephrase when message is a rephrase", () => {
       expect(
         detectImplicitFeedback(
-          new Set(["commit_read"]),
-          new Set(["commit_read"]),
+          new Set(["northstar_read"]),
+          new Set(["northstar_read"]),
           "Busca los correos de Javier del martes pasado",
           "Busca los correos de Javier de ayer por favor",
         ),
@@ -106,7 +106,7 @@ describe("feedback", () => {
       expect(
         detectImplicitFeedback(
           new Set(),
-          new Set(["commit_read"]),
+          new Set(["northstar_read"]),
           "Hola",
           "Lista tareas",
         ),

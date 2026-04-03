@@ -1,0 +1,402 @@
+- generic [ref=e127]:
+  - main [ref=e128]:
+    - generic [ref=e1828]:
+      - generic [ref=e1830]:
+        - heading "Progress Tracking" [level=1] [ref=e1833]
+        - generic [ref=e1835]:
+          - button "Daily" [ref=e1836] [cursor=pointer]
+          - button "Weekly" [ref=e1837] [cursor=pointer]
+          - button "Monthly" [ref=e1838] [cursor=pointer]
+      - generic [ref=e1840]:
+        - generic [ref=e1841]:
+          - generic [ref=e1842]: Drag widgets to customize layout
+          - button "Reset Layout" [ref=e1843] [cursor=pointer]:
+            - img [ref=e1844]
+            - text: Reset Layout
+        - generic [ref=e1847]:
+          - generic [ref=e1848]:
+            - img [ref=e1850]
+            - generic [ref=e1857]:
+              - heading "Daily Habits" [level=3] [ref=e1858]:
+                - img [ref=e1859]
+                - text: Daily Habits
+              - generic [ref=e1865]:
+                - generic [ref=e1866]:
+                  - generic "Walk 2 kms in 20 minutes or less" [ref=e1867]
+                  - generic [ref=e1868]: "0"
+                - generic [ref=e1869]:
+                  - generic [ref=e1870]: M
+                  - generic [ref=e1871]: T
+                  - generic [ref=e1872]: W
+                  - generic [ref=e1873]: T
+                  - generic [ref=e1874]: F
+                  - generic [ref=e1875]: S
+                  - generic [ref=e1876]: S
+                - generic [ref=e1877]:
+                  - button "2026-03-09 Click to toggle" [ref=e1878] [cursor=pointer]
+                  - button "2026-03-10 Click to toggle" [ref=e1879] [cursor=pointer]
+                  - button "2026-03-11 Click to toggle" [ref=e1880] [cursor=pointer]
+                  - button "2026-03-12 Click to toggle" [ref=e1881] [cursor=pointer]
+                  - button "2026-03-13 Click to toggle" [ref=e1882] [cursor=pointer]
+                  - button "2026-03-14 Click to toggle" [ref=e1883] [cursor=pointer]
+                  - button "2026-03-15 Click to toggle" [ref=e1884] [cursor=pointer]
+                  - button "2026-03-16 Click to toggle" [ref=e1885] [cursor=pointer]
+                  - button "2026-03-17 Click to toggle" [ref=e1886] [cursor=pointer]
+                  - button "2026-03-18 Click to toggle" [ref=e1887] [cursor=pointer]
+                  - button "2026-03-19 Click to toggle" [ref=e1888] [cursor=pointer]
+                  - button "2026-03-20 Click to toggle" [ref=e1889] [cursor=pointer]
+                  - button "2026-03-21 Click to toggle" [ref=e1890] [cursor=pointer]
+                  - button "2026-03-22 Click to toggle" [ref=e1891] [cursor=pointer]
+                  - button "2026-03-23 Click to toggle" [ref=e1892] [cursor=pointer]
+                  - button "2026-03-24 Click to toggle" [ref=e1893] [cursor=pointer]
+                  - button "2026-03-25 Click to toggle" [ref=e1894] [cursor=pointer]
+                  - button "2026-03-26 Click to toggle" [ref=e1895] [cursor=pointer]
+                  - button "2026-03-27 Click to toggle" [ref=e1896] [cursor=pointer]
+                  - button "2026-03-28 Click to toggle" [ref=e1897] [cursor=pointer]
+                  - button "2026-03-29 Click to toggle" [ref=e1898] [cursor=pointer]
+                  - button "2026-03-30 Click to toggle" [ref=e1899] [cursor=pointer]
+                  - button "2026-03-31 Click to toggle" [ref=e1900] [cursor=pointer]
+                  - button "2026-04-01" [disabled] [ref=e1901]
+                  - button "2026-04-02" [disabled] [ref=e1902]
+                  - button "2026-04-03" [disabled] [ref=e1903]
+                  - button "2026-04-04" [disabled] [ref=e1904]
+                  - button "2026-04-05" [disabled] [ref=e1905]
+          - generic [ref=e1906]:
+            - img [ref=e1908]
+            - generic [ref=e1915]:
+              - generic [ref=e1916]:
+                - img [ref=e1918]
+                - generic [ref=e1921]:
+                  - generic [ref=e1922]:
+                    - img [ref=e1923]
+                    - generic [ref=e1926]: Completed Tasks
+                  - generic [ref=e1927]: "4"
+                  - generic [ref=e1928]: Total tasks finished
+              - generic [ref=e1929]:
+                - img [ref=e1931]
+                - generic [ref=e1935]:
+                  - generic [ref=e1936]:
+                    - img [ref=e1937]
+                    - generic [ref=e1941]: Completion Rate
+                  - generic [ref=e1942]: 50%
+              - generic [ref=e1945]:
+                - img [ref=e1947]
+                - generic [ref=e1950]:
+                  - generic [ref=e1951]:
+                    - img [ref=e1952]
+                    - generic [ref=e1955]: Current Streak
+                  - generic [ref=e1956]: 0 days
+                  - generic [ref=e1957]: Keep it up!
+              - generic [ref=e1958]:
+                - img [ref=e1960]
+                - generic [ref=e1962]:
+                  - generic [ref=e1963]:
+                    - img [ref=e1964]
+                    - generic [ref=e1966]: Active Goals
+                  - generic [ref=e1967]: "2"
+                  - generic [ref=e1968]: In progress
+        - generic [ref=e1969]:
+          - generic [ref=e1970]:
+            - generic [ref=e1971]:
+              - img [ref=e1973]
+              - generic [ref=e1981]:
+                - heading "Mar 31, 2026" [level=2] [ref=e1983]
+                - generic [ref=e1984]:
+                  - generic [ref=e1985]:
+                    - generic [ref=e1986]:
+                      - heading "Today's Progress" [level=3] [ref=e1987]
+                      - generic [ref=e1988]: 0%
+                    - paragraph [ref=e1990]: 0 of 0 tasks completed
+                  - generic [ref=e1992]:
+                    - img [ref=e1994]
+                    - generic [ref=e1997]:
+                      - generic [ref=e1998]: "0"
+                      - paragraph [ref=e1999]: Completed Today
+                  - generic [ref=e2001]:
+                    - img [ref=e2003]
+                    - generic [ref=e2005]:
+                      - generic [ref=e2006]: "0"
+                      - paragraph [ref=e2007]: Tasks Due Today
+                - generic [ref=e2008]:
+                  - heading "Tasks Due Today" [level=3] [ref=e2009]
+                  - generic [ref=e2010]:
+                    - img [ref=e2011]
+                    - paragraph [ref=e2013]: No tasks due today
+                    - paragraph [ref=e2014]: Enjoy your day or plan ahead!
+                - generic [ref=e2015]:
+                  - heading "Recurring Tasks" [level=3] [ref=e2016]
+                  - generic [ref=e2019]:
+                    - button [ref=e2020] [cursor=pointer]:
+                      - img [ref=e2021]
+                    - generic [ref=e2023]:
+                      - generic [ref=e2024]:
+                        - heading "Walk 2 kms in 20 minutes or less" [level=4] [ref=e2025]
+                        - generic [ref=e2026]: 🔁 Recurring
+                      - generic [ref=e2027]:
+                        - generic [ref=e2028]:
+                          - img [ref=e2029]
+                          - text: medium
+                        - generic [ref=e2031]:
+                          - img [ref=e2032]
+                          - text: Walk 10 kms per week
+            - generic [ref=e2035]:
+              - img [ref=e2037]
+              - generic [ref=e2044]:
+                - heading "Activity Over Time" [level=3] [ref=e2045]:
+                  - img [ref=e2046]
+                  - text: Activity Over Time
+                - generic [ref=e2050]:
+                  - generic [ref=e2051]:
+                    - generic [ref=e2052]: "0"
+                    - generic [ref=e2053]: Ideas
+                  - generic [ref=e2054]:
+                    - generic [ref=e2055]: "0"
+                    - generic [ref=e2056]: Mind Maps
+                  - generic [ref=e2057]:
+                    - generic [ref=e2058]: 0m
+                    - generic [ref=e2059]: Time Active
+                - generic [ref=e2061]:
+                  - generic [ref=e2063]: Ideas
+                  - generic [ref=e2066]: Mind Maps
+                  - generic [ref=e2069]: Time Spent
+            - generic [ref=e2071]:
+              - img [ref=e2073]
+              - generic [ref=e2080]:
+                - generic [ref=e2081]:
+                  - generic [ref=e2082]:
+                    - img [ref=e2083]
+                    - heading "Emotions Over Time" [level=3] [ref=e2085]
+                  - generic [ref=e2086]: Last 3 months
+                - generic [ref=e2089]:
+                  - img [ref=e2090]:
+                    - generic [ref=e2092]: "45"
+                    - generic [ref=e2094]: "60"
+                    - generic [ref=e2096]: "75"
+                    - generic [ref=e2098]: "90"
+                    - generic [ref=e2100]: "95"
+                    - generic [ref=e2104]:
+                      - 'generic "excitement: 85% Wed, Dec 31" [ref=e2105] [cursor=pointer]'
+                      - 'generic "excitement: 50% Sat, Jan 17" [ref=e2106] [cursor=pointer]'
+                    - 'generic "happiness: 90% Wed, Dec 31" [ref=e2108] [cursor=pointer]'
+                    - 'generic "optimism: 80% Wed, Dec 31" [ref=e2110] [cursor=pointer]'
+                    - 'generic "anticipation: 75% Wed, Dec 31" [ref=e2112] [cursor=pointer]'
+                    - 'generic "satisfaction: 70% Wed, Dec 31" [ref=e2114] [cursor=pointer]'
+                    - 'generic "pride: 70% Sat, Jan 17" [ref=e2116] [cursor=pointer]'
+                    - 'generic "anxiety: 60% Sat, Jan 17" [ref=e2118] [cursor=pointer]'
+                    - 'generic "uncertainty: 65% Sat, Jan 17" [ref=e2120] [cursor=pointer]'
+                    - generic [ref=e2121]: Dec 31
+                    - generic [ref=e2122]: Jan 17
+                  - generic [ref=e2123]:
+                    - generic [ref=e2124]:
+                      - generic [ref=e2126]: excitement
+                      - generic [ref=e2127]: (2)
+                    - generic [ref=e2128]:
+                      - generic [ref=e2130]: happiness
+                      - generic [ref=e2131]: (1)
+                    - generic [ref=e2132]:
+                      - generic [ref=e2134]: optimism
+                      - generic [ref=e2135]: (1)
+                    - generic [ref=e2136]:
+                      - generic [ref=e2138]: anticipation
+                      - generic [ref=e2139]: (1)
+                    - generic [ref=e2140]:
+                      - generic [ref=e2142]: satisfaction
+                      - generic [ref=e2143]: (1)
+                    - generic [ref=e2144]:
+                      - generic [ref=e2146]: pride
+                      - generic [ref=e2147]: (1)
+                    - generic [ref=e2148]:
+                      - generic [ref=e2150]: anxiety
+                      - generic [ref=e2151]: (1)
+                    - generic [ref=e2152]:
+                      - generic [ref=e2154]: uncertainty
+                      - generic [ref=e2155]: (1)
+          - generic [ref=e2156]:
+            - generic [ref=e2157]:
+              - img [ref=e2159]
+              - generic [ref=e2166]:
+                - generic [ref=e2168]:
+                  - img [ref=e2170]
+                  - generic [ref=e2172]:
+                    - heading "Upcoming Deadlines" [level=2] [ref=e2173]
+                    - paragraph [ref=e2174]: What needs your attention soon
+                - generic [ref=e2176]:
+                  - img [ref=e2177]
+                  - paragraph [ref=e2179]: No upcoming deadlines
+                  - paragraph [ref=e2180]: You're all caught up!
+            - generic [ref=e2181]:
+              - img [ref=e2183]
+              - generic [ref=e2190]:
+                - generic [ref=e2191]:
+                  - img [ref=e2193]
+                  - generic [ref=e2195]:
+                    - generic [ref=e2196]:
+                      - img [ref=e2197]
+                      - generic [ref=e2199]: Ideas Generated
+                    - generic [ref=e2200]: "23"
+                    - generic [ref=e2201]: 0 this day
+                - generic [ref=e2202]:
+                  - img [ref=e2204]
+                  - generic [ref=e2209]:
+                    - generic [ref=e2210]:
+                      - img [ref=e2211]
+                      - generic [ref=e2216]: Mind Maps
+                    - generic [ref=e2217]: "34"
+                    - generic [ref=e2218]: 0 this day
+                - generic [ref=e2219]:
+                  - img [ref=e2221]
+                  - generic [ref=e2224]:
+                    - generic [ref=e2225]:
+                      - img [ref=e2226]
+                      - generic [ref=e2229]: Time Spent
+                    - generic [ref=e2230]: 0m
+                    - generic [ref=e2231]: 0m this day
+            - generic [ref=e2232]:
+              - img [ref=e2234]
+              - generic [ref=e2241]:
+                - heading "Status Distribution" [level=3] [ref=e2242]:
+                  - img [ref=e2243]
+                  - text: Status Distribution
+                - generic [ref=e2246]:
+                  - generic [ref=e2247]:
+                    - button "2 Vision" [ref=e2248] [cursor=pointer]:
+                      - img [ref=e2249]
+                      - generic [ref=e2252]: "2"
+                      - generic [ref=e2253]: Vision
+                    - button "3 Goal" [ref=e2254] [cursor=pointer]:
+                      - img [ref=e2255]
+                      - generic [ref=e2259]: "3"
+                      - generic [ref=e2260]: Goal
+                    - button "6 Objective" [ref=e2261] [cursor=pointer]:
+                      - img [ref=e2262]
+                      - generic [ref=e2264]: "6"
+                      - generic [ref=e2265]: Objective
+                    - button "8 Task" [ref=e2266] [cursor=pointer]:
+                      - img [ref=e2267]
+                      - generic [ref=e2270]: "8"
+                      - generic [ref=e2271]: Task
+                  - generic [ref=e2272]:
+                    - generic [ref=e2273]:
+                      - generic [ref=e2274]:
+                        - generic [ref=e2275]:
+                          - img [ref=e2276]
+                          - generic [ref=e2278]: Not Started
+                        - generic [ref=e2279]: "4"
+                      - generic [ref=e2280]:
+                        - button "Build a Network of Wellbeing apps" [ref=e2281] [cursor=pointer]:
+                          - img [ref=e2283]
+                          - generic [ref=e2287]: Build a Network of Wellbeing apps
+                        - button "An app for meditation and relaxation" [ref=e2288] [cursor=pointer]:
+                          - img [ref=e2290]
+                          - generic [ref=e2292]: An app for meditation and relaxation
+                        - button "Mental Well-being" [ref=e2293] [cursor=pointer]:
+                          - img [ref=e2295]
+                          - generic [ref=e2297]: Mental Well-being
+                        - button "Launch the app as a service and monetize it" [ref=e2298] [cursor=pointer]:
+                          - img [ref=e2300]
+                          - generic [ref=e2302]: Launch the app as a service and monetize it
+                    - generic [ref=e2303]:
+                      - generic [ref=e2304]:
+                        - generic [ref=e2305]:
+                          - img [ref=e2306]
+                          - generic [ref=e2309]: In Progress
+                        - generic [ref=e2310]: "8"
+                      - generic [ref=e2311]:
+                        - button "Live longer" [ref=e2312] [cursor=pointer]:
+                          - img [ref=e2314]
+                          - generic [ref=e2317]: Live longer
+                        - button "Earn financial freedom" [ref=e2318] [cursor=pointer]:
+                          - img [ref=e2320]
+                          - generic [ref=e2323]: Earn financial freedom
+                        - button "Develop Healthspan" [ref=e2324] [cursor=pointer]:
+                          - img [ref=e2326]
+                          - generic [ref=e2330]: Develop Healthspan
+                        - button "Build and monetize a Productivity App" [ref=e2331] [cursor=pointer]:
+                          - img [ref=e2333]
+                          - generic [ref=e2337]: Build and monetize a Productivity App
+                        - button "Walk 10 kms per week" [ref=e2338] [cursor=pointer]:
+                          - img [ref=e2340]
+                          - generic [ref=e2342]: Walk 10 kms per week
+                        - button "Learn Calculus" [ref=e2343] [cursor=pointer]:
+                          - img [ref=e2345]
+                          - generic [ref=e2347]: Learn Calculus
+                        - button "Research methodologies for launching a new app and monetize it" [ref=e2348] [cursor=pointer]:
+                          - img [ref=e2350]
+                          - generic [ref=e2353]: Research methodologies for launching a new app and monetize it
+                        - button "Walk 2 kms in 20 minutes or less 🔁" [ref=e2354] [cursor=pointer]:
+                          - img [ref=e2356]
+                          - generic [ref=e2359]: Walk 2 kms in 20 minutes or less
+                          - generic [ref=e2360]: 🔁
+                    - generic [ref=e2361]:
+                      - generic [ref=e2362]:
+                        - generic [ref=e2363]:
+                          - img [ref=e2364]
+                          - generic [ref=e2367]: On Hold
+                        - generic [ref=e2368]: "2"
+                      - generic [ref=e2369]:
+                        - button "Research Nutrition Fundamentals" [ref=e2370] [cursor=pointer]:
+                          - img [ref=e2372]
+                          - generic [ref=e2375]: Research Nutrition Fundamentals
+                        - button "Prototype a guided meditation app module" [ref=e2376] [cursor=pointer]:
+                          - img [ref=e2378]
+                          - generic [ref=e2381]: Prototype a guided meditation app module
+                    - generic [ref=e2382]:
+                      - generic [ref=e2383]:
+                        - generic [ref=e2384]:
+                          - img [ref=e2385]
+                          - generic [ref=e2388]: Completed
+                        - generic [ref=e2389]: "5"
+                      - generic [ref=e2390]:
+                        - button "Design and launch and APP based on the COMMIT method" [ref=e2391] [cursor=pointer]:
+                          - img [ref=e2393]
+                          - generic [ref=e2395]: Design and launch and APP based on the COMMIT method
+                        - button "Write the foundation of the COMMIT Method" [ref=e2396] [cursor=pointer]:
+                          - img [ref=e2398]
+                          - generic [ref=e2401]: Write the foundation of the COMMIT Method
+                        - button "Fine Tune the code" [ref=e2402] [cursor=pointer]:
+                          - img [ref=e2404]
+                          - generic [ref=e2407]: Fine Tune the code
+                        - button "Research best books to learn" [ref=e2408] [cursor=pointer]:
+                          - img [ref=e2410]
+                          - generic [ref=e2413]: Research best books to learn
+                        - button "Make the app go Live" [ref=e2414] [cursor=pointer]:
+                          - img [ref=e2416]
+                          - generic [ref=e2419]: Make the app go Live
+            - generic [ref=e2420]:
+              - img [ref=e2422]
+              - generic [ref=e2429]:
+                - generic [ref=e2430]:
+                  - img [ref=e2431]
+                  - heading "Word Density" [level=3] [ref=e2434]
+                - generic [ref=e2435]:
+                  - img [ref=e2436]
+                  - paragraph [ref=e2439]: No journal entries found
+                  - paragraph [ref=e2440]: Start journaling to see word frequency
+  - navigation [ref=e259]:
+    - generic [ref=e260]:
+      - link "Journal" [ref=e261] [cursor=pointer]:
+        - /url: /journal
+        - img [ref=e263]
+        - generic [ref=e266]: Journal
+      - link "Goals" [ref=e267] [cursor=pointer]:
+        - /url: /goals
+        - img [ref=e269]
+        - generic [ref=e271]: Goals
+      - link "Maps" [ref=e272] [cursor=pointer]:
+        - /url: /boards
+        - img [ref=e274]
+        - generic [ref=e279]: Maps
+      - link "Ideate" [ref=e280] [cursor=pointer]:
+        - /url: /ideate
+        - img [ref=e282]
+        - generic [ref=e284]: Ideate
+      - link "Tracking" [active] [ref=e285] [cursor=pointer]:
+        - /url: /track
+        - img [ref=e287]
+        - generic [ref=e290]: Tracking
+      - button "Jarvis Suggestions" [ref=e291] [cursor=pointer]:
+        - img [ref=e293]
+        - generic [ref=e296]: Jarvis
+      - button "Settings" [ref=e297] [cursor=pointer]:
+        - img [ref=e299]
+        - generic [ref=e302]: Me

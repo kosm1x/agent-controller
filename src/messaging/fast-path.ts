@@ -31,7 +31,7 @@ const SAFE_PATTERNS = [
 /** Keywords that indicate the message needs tools — disqualifies fast-path. */
 const TOOL_TRIGGERS = [
   /\b(hora|tiempo|fecha|calendario|agenda|schedule|cron)\b/i,
-  /\b(tareas?|metas?|objetivos?|goals?|tasks?|visio\w+|visions?|journal|diario|commit)\b/i,
+  /\b(tareas?|metas?|objetivos?|goals?|tasks?|visio\w+|visions?|journal|diario)\b/i,
   /\b(busca|search|publica|publish|env[ií]a|send|crea|create|genera)\b/i,
   /\b(correo|email|gmail|drive|sheets?|wordpress|wp|blog)\b/i,
   /\b(recuerda|remember|guarda|save|anota|registra)\b/i,

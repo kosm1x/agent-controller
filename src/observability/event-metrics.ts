@@ -1,5 +1,5 @@
 /**
- * COMMIT event webhook response metrics — count by table, response latency.
+ * Event webhook response metrics — count by table, response latency.
  *
  * Rolling window (last 200 entries). Resets on restart.
  * NOTE: Latency measures webhook response time only (parsing + DB insert +
@@ -17,7 +17,7 @@ const WINDOW_SIZE = 200;
 class EventMetrics {
   private readonly entries: EventEntry[] = [];
 
-  /** Record a COMMIT event webhook response. */
+  /** Record an event webhook response. */
   record(table: string, latencyMs: number): void {
     this.entries.push({ table, latencyMs, timestamp: Date.now() });
     if (this.entries.length > WINDOW_SIZE) {

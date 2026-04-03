@@ -7,14 +7,5 @@
     "command": "node",
     "args": ["./mcp-servers/weather.js"],
     "enabled": false
-  },
-  "commit": {
-    "command": "node",
-    "args": ["./mcp-servers/commit-bridge/dist/index.js"],
-    "env": {
-      "SUPABASE_URL": "<your-supabase-project-url>",
-      "SUPABASE_SERVICE_ROLE_KEY": "<your-supabase-service-role-key>",
-      "COMMIT_USER_ID": "<your-user-uuid>"
-    }
   }
 }

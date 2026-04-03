@@ -1,5 +1,5 @@
 /**
- * Seed NorthStar files into jarvis_files from COMMIT data.
+ * Seed NorthStar files into jarvis_files.
  * Run once: npx tsx scripts/seed-northstar.ts
  */
 
@@ -52,9 +52,9 @@ Status: in_progress
 Description: Design and build an App that helps people reach their objectives
 
 #### Objectives
-- Design and launch and APP based on the COMMIT method [COMPLETED]
+- Design and launch a Productivity App [COMPLETED]
   - Task: Make the app go Live [COMPLETED] (due: 2026-01-17)
-  - Task: Write the foundation of the COMMIT Method [COMPLETED]
+  - Task: Write the foundation of the Productivity Method [COMPLETED]
   - Task: Fine Tune the code [COMPLETED]
 - Launch the app as a service and monetize it (not_started, target: 2026-01-31)
   - Task: Research methodologies for launching a new app and monetize it (in_progress)

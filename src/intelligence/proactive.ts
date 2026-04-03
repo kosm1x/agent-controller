@@ -93,7 +93,7 @@ async function runProactiveScan(): Promise<void> {
   const currentHour = parseInt(mxHour, 10);
   const isEvening = currentHour >= 18; // 6PM+
 
-  // Submit a proactive scan task — the LLM will use commit tools
+  // Submit a proactive scan task — the LLM will use NorthStar files
   // to check deadlines, overdue tasks, stale goals, and project-goal sync
   try {
     const result = await submitTask({

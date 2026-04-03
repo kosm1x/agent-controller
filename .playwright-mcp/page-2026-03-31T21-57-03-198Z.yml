@@ -1,0 +1,129 @@
+- generic [ref=e7]:
+  - main [ref=e8]:
+    - generic [ref=e666]:
+      - generic [ref=e668]:
+        - generic [ref=e670]:
+          - heading "Journal" [level=1] [ref=e671]
+          - paragraph [ref=e672]: Jan 17
+        - generic [ref=e674]:
+          - generic [ref=e675]:
+            - button "Journal" [ref=e676] [cursor=pointer]:
+              - img [ref=e677]
+              - generic [ref=e680]: Journal
+            - button "Planner" [ref=e681] [cursor=pointer]:
+              - img [ref=e682]
+              - generic [ref=e685]: Planner
+          - generic [ref=e686]:
+            - button "Recent Entries" [ref=e687] [cursor=pointer]:
+              - img [ref=e688]
+            - button "New Entry" [ref=e690] [cursor=pointer]:
+              - img [ref=e691]
+      - generic [ref=e692]:
+        - generic [ref=e694]:
+          - generic [ref=e695]:
+            - heading "Recent Entries" [level=3] [ref=e696]
+            - button "New Entry" [ref=e697] [cursor=pointer]:
+              - img [ref=e698]
+          - generic [ref=e699]:
+            - button "Jan 17 Determined It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective." [ref=e700] [cursor=pointer]:
+              - generic [ref=e701]:
+                - generic [ref=e702]: Jan 17
+                - generic [ref=e703]: Determined
+              - paragraph [ref=e704]: It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective.
+            - button "Jan 17 pride Today is the day I upload the app into a live server. Still an alpha version, but usability is complete. I wish to find a prettier UI for the beta" [ref=e705] [cursor=pointer]:
+              - generic [ref=e706]:
+                - generic [ref=e707]: Jan 17
+                - generic [ref=e708]: pride
+              - paragraph [ref=e709]: Today is the day I upload the app into a live server. Still an alpha version, but usability is complete. I wish to find a prettier UI for the beta
+            - button "Dec 31 happiness Today is the last day of the year. Happy and thrilled for the things that are coming my way. App is on track Fundacion is brewing Lucha libre sounds amazing Good day" [ref=e710] [cursor=pointer]:
+              - generic [ref=e711]:
+                - generic [ref=e712]: Dec 31
+                - generic [ref=e713]: happiness
+              - paragraph [ref=e714]: Today is the last day of the year. Happy and thrilled for the things that are coming my way. App is on track Fundacion is brewing Lucha libre sounds amazing Good day
+            - button "Dec 26 pride It's a good day to keep improving the COMMIT app. Maybe I should contemplate future improvements. Soon I'll start with the México Necesario Site. The first iteration of the COMMIT app is almost complete. Feeling proud of the advance of the day." [ref=e715] [cursor=pointer]:
+              - generic [ref=e716]:
+                - generic [ref=e717]: Dec 26
+                - generic [ref=e718]: pride
+              - paragraph [ref=e719]: It's a good day to keep improving the COMMIT app. Maybe I should contemplate future improvements. Soon I'll start with the México Necesario Site. The first iteration of the COMMIT app is almost complete. Feeling proud of the advance of the day.
+            - button "Dec 24 optimism Today is Christmas and it's a good day to fine-tune the COMMIT app. I feel good and optimistic about the future. I am grateful for the opportunity to be alive." [ref=e720] [cursor=pointer]:
+              - generic [ref=e721]:
+                - generic [ref=e722]: Dec 24
+                - generic [ref=e723]: optimism
+              - paragraph [ref=e724]: Today is Christmas and it's a good day to fine-tune the COMMIT app. I feel good and optimistic about the future. I am grateful for the opportunity to be alive.
+            - button "Dec 22 Gratitude Life always has a surprise around the corner, even when you think everything has been settled. Grateful for the opportunity to move forward and keep pushing. My SaaS will definitely will have to do with enabling individuals to reach their maximum potential in life, and have a better, more fulfilling life. Still on the fine-tuning of the app and learning on marketing and launch. My emotions are clearer and I feel sound and solid moving forward." [ref=e725] [cursor=pointer]:
+              - generic [ref=e726]:
+                - generic [ref=e727]: Dec 22
+                - generic [ref=e728]: Gratitude
+              - paragraph [ref=e729]: Life always has a surprise around the corner, even when you think everything has been settled. Grateful for the opportunity to move forward and keep pushing. My SaaS will definitely will have to do with enabling individuals to reach their maximum potential in life, and have a better, more fulfilling life. Still on the fine-tuning of the app and learning on marketing and launch. My emotions are clearer and I feel sound and solid moving forward.
+            - button "Dec 7 Determined This is just the beggining of the rest of my life. Things are slowly comming to fruition. I'm sure of my path. Finally." [ref=e730] [cursor=pointer]:
+              - generic [ref=e731]:
+                - generic [ref=e732]: Dec 7
+                - generic [ref=e733]: Determined
+              - paragraph [ref=e734]: This is just the beggining of the rest of my life. Things are slowly comming to fruition. I'm sure of my path. Finally.
+        - generic [ref=e736]:
+          - generic [ref=e737]:
+            - generic [ref=e738]:
+              - textbox "Select date" [ref=e739] [cursor=pointer]: 2026-01-17
+              - generic [ref=e740]: Auto-saved
+            - generic [ref=e741]:
+              - button "Analyze Entry" [ref=e742] [cursor=pointer]:
+                - img [ref=e743]
+                - generic [ref=e745]: Analyze Entry
+              - button "AI Insights" [ref=e746] [cursor=pointer]:
+                - img [ref=e747]
+              - button "Delete" [ref=e749] [cursor=pointer]:
+                - img [ref=e750]
+          - textbox "Write about your day, your thoughts, your feelings..." [ref=e753]: It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective.
+        - generic [ref=e755]:
+          - generic [ref=e756]:
+            - heading "Emotions" [level=4] [ref=e757]
+            - generic [ref=e758]:
+              - generic [ref=e759]:
+                - img [ref=e760]
+                - generic [ref=e762]: Determined
+              - generic [ref=e765]:
+                - img [ref=e766]
+                - generic [ref=e769]: Hopeful
+              - generic [ref=e772]:
+                - img [ref=e773]
+                - generic [ref=e775]: Focused
+          - generic [ref=e778]:
+            - heading "Patterns" [level=4] [ref=e779]
+            - list [ref=e780]:
+              - listitem [ref=e781]: Consistent focus on personal development and growth
+              - listitem [ref=e783]: Balancing multiple priorities and commitments
+              - listitem [ref=e785]: Strong motivation toward achieving goals
+          - generic [ref=e787]:
+            - heading "Coping Strategies" [level=4] [ref=e788]
+            - list [ref=e789]:
+              - listitem [ref=e790]: Break down large goals into smaller, manageable daily actions
+              - listitem [ref=e792]: Schedule regular breaks to maintain energy and focus
+              - listitem [ref=e794]: Practice mindfulness or deep breathing when feeling overwhelmed
+  - navigation [ref=e622]:
+    - generic [ref=e623]:
+      - link "Journal" [active] [ref=e624] [cursor=pointer]:
+        - /url: /journal
+        - img [ref=e626]
+        - generic [ref=e629]: Journal
+      - link "Goals" [ref=e630] [cursor=pointer]:
+        - /url: /goals
+        - img [ref=e632]
+        - generic [ref=e634]: Goals
+      - link "Maps" [ref=e635] [cursor=pointer]:
+        - /url: /boards
+        - img [ref=e637]
+        - generic [ref=e642]: Maps
+      - link "Ideate" [ref=e643] [cursor=pointer]:
+        - /url: /ideate
+        - img [ref=e645]
+        - generic [ref=e647]: Ideate
+      - link "Tracking" [ref=e648] [cursor=pointer]:
+        - /url: /track
+        - img [ref=e650]
+        - generic [ref=e653]: Tracking
+      - button "Jarvis Suggestions" [ref=e654] [cursor=pointer]:
+        - img [ref=e656]
+        - generic [ref=e659]: Jarvis
+      - button "Settings" [ref=e660] [cursor=pointer]:
+        - img [ref=e662]
+        - generic [ref=e665]: Me

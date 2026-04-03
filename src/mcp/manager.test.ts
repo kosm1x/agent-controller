@@ -214,11 +214,11 @@ describe("McpManager", () => {
     const manager = new McpManager();
     manager.setAlertFn(alertSpy);
 
-    await manager.init({ commit: { command: "bad" } }, registry);
+    await manager.init({ weather: { command: "bad" } }, registry);
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
     expect(alertSpy.mock.calls[0][0]).toContain("DEGRADED");
-    expect(alertSpy.mock.calls[0][0]).toContain("commit");
+    expect(alertSpy.mock.calls[0][0]).toContain("weather");
   });
 
   it("should clear failed servers and timer on shutdown", async () => {

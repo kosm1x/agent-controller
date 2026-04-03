@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS user_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category);
 
--- Projects — first-class project entity with credentials, config, and COMMIT goal linking
+-- Projects — first-class project entity with credentials, config, and NorthStar goal linking
 CREATE TABLE IF NOT EXISTS projects (
   id              TEXT PRIMARY KEY,
   slug            TEXT UNIQUE NOT NULL,
@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS projects (
   urls            TEXT DEFAULT '{}',   -- JSON: { site, admin, repo, dashboard }
   credentials     TEXT DEFAULT '{}',   -- JSON: { wp_user, wp_pass, ftp_host, api_keys }
   config          TEXT DEFAULT '{}',   -- JSON: arbitrary project config
-  commit_goal_id  TEXT,                -- COMMIT goal UUID (links project to a strategic goal)
+  commit_goal_id  TEXT,                -- NorthStar goal UUID (links project to a strategic goal; column name is legacy)
   created_at      TEXT DEFAULT (datetime('now')),
   updated_at      TEXT DEFAULT (datetime('now'))
 );
@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS project_log (
 );
 CREATE INDEX IF NOT EXISTS idx_project_log_project ON project_log(project_id);
 
--- COMMIT event log — received from COMMIT webhook for reactive processing
+-- Legacy event log — table retained for schema compatibility (no longer actively used)
 CREATE TABLE IF NOT EXISTS commit_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type  TEXT NOT NULL,  -- INSERT, UPDATE, DELETE

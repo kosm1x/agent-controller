@@ -163,10 +163,10 @@ const embeddingsTotal = new client.Gauge({
   help: "Total conversation embeddings stored",
 });
 
-// --- COMMIT events ---
-const commitEventsTotal = new client.Gauge({
-  name: "mc_commit_events_total",
-  help: "Total COMMIT webhook events processed",
+// --- Webhook events ---
+const webhookEventsTotal = new client.Gauge({
+  name: "mc_webhook_events_total",
+  help: "Total webhook events processed",
 });
 
 // ---------------------------------------------------------------------------
@@ -209,9 +209,9 @@ export function collectMetrics(): void {
   }
   toolCallsTotal.set({ tool: "_total" }, toolSummary.totalCalls);
 
-  // COMMIT events
+  // Webhook events
   const eventSummary = eventMetrics.getSummary();
-  commitEventsTotal.set(eventSummary.totalProcessed);
+  webhookEventsTotal.set(eventSummary.totalProcessed);
 
   // SQLite queries (lightweight — cached by DB page cache)
   try {

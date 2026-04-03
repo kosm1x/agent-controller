@@ -16,7 +16,7 @@ export class McpToolSource implements ToolSource {
   readonly manifest: ToolSourceManifest = {
     name: "mcp",
     version: "1.0.0",
-    description: "MCP server tools (commit-bridge, etc.)",
+    description: "MCP server tools",
   };
 
   private manager: McpManager | null = null;

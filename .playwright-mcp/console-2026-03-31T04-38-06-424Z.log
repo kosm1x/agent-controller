@@ -1,0 +1,2 @@
+[    1184ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ https://app.mycommit.net/:0
+[   40007ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://eqwdmscuwgnftosqrcdy.supabase.co/rest/v1/rpc/prune_completed_tasks:0

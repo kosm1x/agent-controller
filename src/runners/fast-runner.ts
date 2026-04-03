@@ -53,7 +53,7 @@ function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
         const condLower = f.condition.toLowerCase();
         const matches =
           (condLower.includes("crm") && scopedTools.includes("crm_query")) ||
-          (condLower.includes("commit") &&
+          (condLower.includes("northstar") &&
             scopedTools.includes("jarvis_file_read")) ||
           (condLower.includes("google") &&
             scopedTools.includes("gmail_send")) ||
@@ -119,7 +119,7 @@ const DELETION_ASK_PATTERN =
  *  Three forms:
  *  1. Explicit target: "elimina lo que" / "delete those"
  *  2. Clitic pronoun: "elimínala" / "bórralas"
- *  3. Delete verb + optional adjectives + COMMIT noun: "delete completed tasks" */
+ *  3. Delete verb + optional adjectives + task noun: "delete completed tasks" */
 const DIRECT_DELETE_COMMAND =
   /\b(?:elimina|borra|delete|quita|remueve)\w*\s+(?:lo que|las? que|los que|todo lo que|tareas? que|what|those|them|the ones|(?:\S+\s+){0,3}(?:tareas?|tasks?|metas?|goals?|objetivos?|objectives?|ideas?))|\b(?:elim[ií]nal[aoe]s?|b[oó]rral[aoe]s?|qu[ií]tal[aoe]s?)\b/i;
 

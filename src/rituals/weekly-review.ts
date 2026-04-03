@@ -2,7 +2,7 @@
  * Weekly review ritual template.
  *
  * Submitted Sunday 8PM as a Heavy runner task.
- * Performs a comprehensive weekly scan of COMMIT hierarchy, projects,
+ * Performs a comprehensive weekly scan of NorthStar hierarchy, projects,
  * accomplishments, and generates a strategic focus for the coming week.
  */
 
@@ -23,14 +23,14 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 
 ## Análisis requerido
 
-### 1. Salud del sistema COMMIT
+### 1. Salud del sistema NorthStar
 - Metas huérfanas (sin objetivos activos)
 - Objetivos estancados (sin actividad en 7+ días)
 - Tareas vencidas (overdue)
 - Tareas completadas esta semana (celebrar logros)
 
 ### 2. Salud de proyectos
-- Para cada proyecto activo: estado actual + progreso de la meta COMMIT vinculada
+- Para cada proyecto activo: estado actual + progreso de la meta NorthStar vinculada
 - Proyectos sin actividad esta semana
 - Desincronización proyecto ↔ meta
 
@@ -40,7 +40,7 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 - Hitos alcanzados (objetivos o metas completadas)
 
 ### 4. Enfoque de la próxima semana
-- Top 3 prioridades derivadas del estado de COMMIT + proyectos
+- Top 3 prioridades derivadas del estado de NorthStar + proyectos
 - Tareas críticas que requieren atención
 - Sugerencias estratégicas (replanteamiento de metas estancadas, nuevos objetivos)
 

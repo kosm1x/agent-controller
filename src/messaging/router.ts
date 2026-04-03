@@ -52,7 +52,7 @@ import { nowMexDate, nowMexTime } from "../lib/timezone.js";
 import {
   detectToolFlags,
   identitySection,
-  commitSection,
+  northStarSection,
   capabilitiesSection,
   personalDataSection,
   confirmationSection,
@@ -71,9 +71,6 @@ import {
   detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
-  COMMIT_WRITE_TOOLS,
-  COMMIT_JOURNAL_TOOLS,
-  COMMIT_DESTRUCTIVE_TOOLS,
   SCHEDULE_TOOLS,
   GOOGLE_TOOLS,
   CODING_TOOLS,
@@ -115,7 +112,7 @@ function buildJarvisSystemPrompt(
 
   // Always-on sections
   sections.push(identitySection(mxDate, mxTime));
-  if (flags.hasCommit) sections.push(commitSection());
+  if (flags.hasNorthStar) sections.push(northStarSection());
   sections.push(capabilitiesSection(flags));
   sections.push(personalDataSection());
   sections.push(confirmationSection(flags));
@@ -195,10 +192,7 @@ function scopeToolsForMessage(
   );
 
   const fullCount =
-    CORE_TOOLS.length + // already includes COMMIT_READ_TOOLS
-    COMMIT_WRITE_TOOLS.length +
-    COMMIT_JOURNAL_TOOLS.length +
-    COMMIT_DESTRUCTIVE_TOOLS.length +
+    CORE_TOOLS.length +
     SCHEDULE_TOOLS.length +
     MISC_TOOLS.length +
     BROWSER_TOOLS.length +
@@ -443,11 +437,11 @@ const POISONED_RESPONSE_PATTERNS = [
   // Inference cascade failures
   /inference.*failed/i,
   /timeout.*inference/i,
-  // Narrated update claim — LLM claims to have updated COMMIT without tools.
+  // Narrated update claim — LLM claims to have updated NorthStar without tools.
   // NOTE: "Acciones Ejecutadas" removed from here — it's a legitimate header
   // when tools actually ran. The hallucination guard (fast-runner Layer 2)
   // handles it with tool-call context; the poison filter cannot distinguish.
-  /acabo de actualizar\s+COMMIT/i,
+  /acabo de actualizar\s+NorthStar/i,
 ];
 
 function isPoisonedExchange(jarvisResponse: string): boolean {

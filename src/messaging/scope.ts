@@ -11,14 +11,6 @@ import type { ScopePattern } from "../tuning/types.js";
 // Tool groups — organized for dynamic scoping
 // ---------------------------------------------------------------------------
 
-/** COMMIT tool arrays — RETIRED. Visions/goals/objectives/tasks now live
- *  as plain text in Jarvis file system under NorthStar/. Jarvis reads them
- *  with jarvis_file_read like any other file. No special tools needed. */
-export const COMMIT_READ_TOOLS: string[] = [];
-export const COMMIT_WRITE_TOOLS: string[] = [];
-export const COMMIT_JOURNAL_TOOLS: string[] = [];
-export const COMMIT_DESTRUCTIVE_TOOLS: string[] = [];
-
 /** Always included: essential tools for every conversation. */
 export const CORE_TOOLS = [
   "user_fact_set",
@@ -160,46 +152,46 @@ export const BROWSER_TOOLS = [
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|commit|productiv|priorid|sprint|COMMIT|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?)/i,
-    group: "commit_read",
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?)/i,
+    group: "northstar_read",
   },
-  // commit_write — split into small patterns to avoid catastrophic regex backtracking.
+  // northstar_write — split into small patterns to avoid catastrophic regex backtracking.
   // Multiple entries with the same group are OR'd (any match activates the group).
   {
     // Create: "crea una tarea", "haz una tarea", "trackea", "quiero lograr"
     pattern:
       /\b(crea(r|me|te)?\s+(una?\s+)?(tarea|meta|objetivo|goal|task)|trackea|pon esto|agrega.*pendiente|haz una tarea|quiero lograr|me propongo)/i,
-    group: "commit_write",
+    group: "northstar_write",
   },
   {
     // Verb-first: "actualiza la tarea", "cambia el status", "renombra el objetivo"
     pattern:
-      /\b(?:actual[ií]za|c[aá]mbia|ren[oó]mbra|mod[ií]fica|sincroniza|update|change|rename|modify)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|name|title|commit|repo)/i,
-    group: "commit_write",
+      /\b(?:actual[ií]za|c[aá]mbia|ren[oó]mbra|mod[ií]fica|sincroniza|update|change|rename|modify)\S*(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task|status|estado|nombre|name|title|repo)/i,
+    group: "northstar_write",
   },
   {
     // Clitic pronouns: "cámbialo", "actualízalo", "renómbralo"
     pattern:
       /\b(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)(?:lo|la|los|las|rlo|rla|rlos|rlas)\b/i,
-    group: "commit_write",
+    group: "northstar_write",
   },
   {
     // Completion: "marca como completada", "pon como done", "márcalo"
     pattern:
       /\b(marc(?:a|ar|ála|alo)\s.*(complet|hech|done|termin)|pon(?:er|la|lo)?\s.*(complet|hech|done|termin|in.progress|on.hold|not.started)|m[aá]rcal[ao])/i,
-    group: "commit_write",
+    group: "northstar_write",
   },
   {
     // Completion + noun: "completé la tarea", "terminé el objetivo", "done esta task"
     pattern:
       /\b(complet(?:a|ar|ada|ado|é)|termin[aé]|hecha|hecho|\bdone)(\s+\S+){0,3}\s*(tarea|meta|objetivo|goal|task)/i,
-    group: "commit_write",
+    group: "northstar_write",
   },
   {
     // Noun-before-verb: "el objetivo... cámbialo", "la tarea... actualízala"
     pattern:
       /\b(tarea|meta|objetivo|goal|task)(\s+\S+){0,8}\s*(?:c[aá]mbia|actual[ií]za|ren[oó]mbra|mod[ií]fica|change|update|rename|modify)\S*/i,
-    group: "commit_write",
+    group: "northstar_write",
   },
   {
     pattern:
@@ -214,12 +206,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
       /\b(escrib[eiao]\w*\s.*(diario|journal)|anota\w*\s.*(diario|journal)|registra\w*\s.*(diario|journal)|agrega\w*\s.*(diario|journal)|pon\w*\s.*(diario|journal)|crea\w*\s.*(entrada|entry).*(diario|journal)|journal\s*entry|diario.*escrib|write.*journal)/i,
-    group: "commit_journal",
+    group: "northstar_journal",
   },
   {
     pattern:
       /\b(elimina(r|la|las|lo|los)?|borra(r|la|las|lo|los)?|delete|quita(r)?|remove)\b/i,
-    group: "commit_destructive",
+    group: "destructive",
   },
   {
     pattern:
@@ -331,10 +323,10 @@ export function scopeToolsForMessage(
   // Meta: user asked about capabilities/diagnostics → load ALL groups
   // so the LLM sees every tool and can give an accurate inventory.
   if (activeGroups.has("meta")) {
-    activeGroups.add("commit_read");
-    activeGroups.add("commit_write");
-    activeGroups.add("commit_journal");
-    activeGroups.add("commit_destructive");
+    activeGroups.add("northstar_read");
+    activeGroups.add("northstar_write");
+    activeGroups.add("northstar_journal");
+    activeGroups.add("destructive");
     activeGroups.add("specialty");
     activeGroups.add("research");
     activeGroups.add("schedule");
@@ -345,24 +337,11 @@ export function scopeToolsForMessage(
     activeGroups.add("crm");
   }
 
-  // COMMIT write + destructive — load when any COMMIT context is present.
-  // Read tools are already in CORE_TOOLS (always-on). Write and destructive
-  // are scope-gated to save ~4,500 tokens on non-COMMIT messages.
-  if (
-    activeGroups.has("commit_write") ||
-    activeGroups.has("commit_read") ||
-    activeGroups.has("commit_destructive")
-  ) {
-    tools.push(...COMMIT_WRITE_TOOLS, ...COMMIT_DESTRUCTIVE_TOOLS);
-  }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
   }
   if (activeGroups.has("research")) {
     tools.push(...RESEARCH_TOOLS);
-  }
-  if (activeGroups.has("commit_journal")) {
-    tools.push(...COMMIT_JOURNAL_TOOLS);
   }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);

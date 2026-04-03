@@ -18,10 +18,6 @@ import {
   getRecentTelemetry,
 } from "../intelligence/scope-telemetry.js";
 import {
-  COMMIT_READ_TOOLS,
-  COMMIT_WRITE_TOOLS,
-  COMMIT_JOURNAL_TOOLS,
-  COMMIT_DESTRUCTIVE_TOOLS,
   SCHEDULE_TOOLS,
   GOOGLE_TOOLS,
   CODING_TOOLS,
@@ -41,10 +37,6 @@ function buildToolToGroupMap(): void {
   if (TOOL_TO_GROUP.size > 0) return;
 
   const groups: Array<[string, readonly string[]]> = [
-    ["commit_read", COMMIT_READ_TOOLS],
-    ["commit_write", COMMIT_WRITE_TOOLS],
-    ["commit_journal", COMMIT_JOURNAL_TOOLS],
-    ["commit_destructive", COMMIT_DESTRUCTIVE_TOOLS],
     ["schedule", SCHEDULE_TOOLS],
     ["google", GOOGLE_TOOLS],
     ["coding", CODING_TOOLS],

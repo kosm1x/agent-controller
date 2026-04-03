@@ -1,0 +1,190 @@
+- generic [ref=e2]:
+  - generic [ref=e44]:
+    - generic [ref=e45]:
+      - button "Close" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+      - generic [ref=e50]:
+        - img "COMMIT" [ref=e52]
+        - generic [ref=e53]:
+          - heading "Welcome to COMMIT" [level=2] [ref=e54]
+          - paragraph [ref=e55]: Your Personal Growth & Productivity Framework
+    - generic [ref=e56]:
+      - paragraph [ref=e58]: The COMMIT method is a personal growth and productivity framework. It helps you move from abstract goals to consistent, actionable habits.
+      - generic [ref=e59]:
+        - heading "The Five Core Pillars" [level=3] [ref=e60]
+        - generic [ref=e61]:
+          - img [ref=e64]
+          - generic [ref=e67]:
+            - heading "1. Context (Journaling)" [level=4] [ref=e68]
+            - paragraph [ref=e69]: The foundation is Self-Awareness. By maintaining a daily journal, you capture reflections, thoughts, and feelings. This "Context" allows you to understand your current state, identify patterns in your behavior, and ensure that your goals are aligned with your internal values.
+        - generic [ref=e70]:
+          - img [ref=e73]
+          - generic [ref=e77]:
+            - heading "2. Objectives (Long-term Aspirations)" [level=4] [ref=e78]
+            - paragraph [ref=e79]: This pillar focuses on Intentionality. Instead of just managing daily tasks, you define long-term goals and aspirations. This section helps you visualize where you want to be in the future, providing a "North Star" for your daily actions.
+        - generic [ref=e80]:
+          - img [ref=e83]
+          - generic [ref=e85]:
+            - heading "3. Maps (Visual Management)" [level=4] [ref=e86]
+            - paragraph [ref=e87]: "The framework uses visual tools to bridge the gap between ideas and execution: Kanban Boards for workflow management and Mind Maps for ideation and connecting complex thoughts, helping you see the \"big picture\" of how different projects or habits relate to one another."
+        - generic [ref=e88]:
+          - img [ref=e91]
+          - generic [ref=e93]:
+            - heading "4. Ideation (Exploration)" [level=4] [ref=e94]
+            - paragraph [ref=e95]: The "Ideate" phase is dedicated to Brainstorming. It encourages "divergent thinking"—exploring new avenues of thought and possibilities without the immediate pressure of execution. This prevents stagnation and keeps your growth process dynamic.
+        - generic [ref=e96]:
+          - img [ref=e99]
+          - generic [ref=e102]:
+            - heading "5. Tracking (Progress Monitoring)" [level=4] [ref=e103]
+            - paragraph [ref=e104]: The final pillar is Accountability. By monitoring your growth over time, the framework provides data-driven insights into your progress. This feedback loop is essential for maintaining motivation and making necessary adjustments to your strategy.
+      - generic [ref=e105]:
+        - heading "Why It Works" [level=3] [ref=e106]
+        - paragraph [ref=e107]: "The COMMIT framework is effective because it moves through a logical flow:"
+        - list [ref=e108]:
+          - listitem [ref=e109]:
+            - generic [ref=e110]: "1"
+            - generic [ref=e111]: Understand where you are (Journal)
+          - listitem [ref=e112]:
+            - generic [ref=e113]: "2"
+            - generic [ref=e114]: Decide where you want to go (Objectives)
+          - listitem [ref=e115]:
+            - generic [ref=e116]: "3"
+            - generic [ref=e117]: Organize how to get there (Maps)
+          - listitem [ref=e118]:
+            - generic [ref=e119]: "4"
+            - generic [ref=e120]: Explore new ways to improve (Ideation)
+          - listitem [ref=e121]:
+            - generic [ref=e122]: "5"
+            - generic [ref=e123]: Measure your success (Tracking)
+    - button "Get Started →" [ref=e125] [cursor=pointer]:
+      - text: Get Started
+      - generic [ref=e126]: →
+  - generic [ref=e127]:
+    - main [ref=e128]:
+      - generic [ref=e129]:
+        - generic [ref=e131]:
+          - generic [ref=e133]:
+            - heading "Journal" [level=1] [ref=e134]
+            - paragraph [ref=e135]: Jan 17
+          - generic [ref=e137]:
+            - generic [ref=e138]:
+              - button "Journal" [ref=e139] [cursor=pointer]:
+                - img [ref=e140]
+                - generic [ref=e143]: Journal
+              - button "Planner" [ref=e144] [cursor=pointer]:
+                - img [ref=e145]
+                - generic [ref=e148]: Planner
+            - generic [ref=e149]:
+              - button "Recent Entries" [ref=e150] [cursor=pointer]:
+                - img [ref=e151]
+              - button "New Entry" [ref=e153] [cursor=pointer]:
+                - img [ref=e154]
+        - generic [ref=e155]:
+          - generic [ref=e157]:
+            - generic [ref=e158]:
+              - heading "Recent Entries" [level=3] [ref=e159]
+              - button "New Entry" [ref=e160] [cursor=pointer]:
+                - img [ref=e161]
+            - generic [ref=e162]:
+              - button "Jan 17 Determined It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective." [ref=e163] [cursor=pointer]:
+                - generic [ref=e164]:
+                  - generic [ref=e165]: Jan 17
+                  - generic [ref=e166]: Determined
+                - paragraph [ref=e167]: It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective.
+              - button "Jan 17 pride Today is the day I upload the app into a live server. Still an alpha version, but usability is complete. I wish to find a prettier UI for the beta" [ref=e168] [cursor=pointer]:
+                - generic [ref=e169]:
+                  - generic [ref=e170]: Jan 17
+                  - generic [ref=e171]: pride
+                - paragraph [ref=e172]: Today is the day I upload the app into a live server. Still an alpha version, but usability is complete. I wish to find a prettier UI for the beta
+              - button "Dec 31 happiness Today is the last day of the year. Happy and thrilled for the things that are coming my way. App is on track Fundacion is brewing Lucha libre sounds amazing Good day" [ref=e173] [cursor=pointer]:
+                - generic [ref=e174]:
+                  - generic [ref=e175]: Dec 31
+                  - generic [ref=e176]: happiness
+                - paragraph [ref=e177]: Today is the last day of the year. Happy and thrilled for the things that are coming my way. App is on track Fundacion is brewing Lucha libre sounds amazing Good day
+              - button "Dec 26 pride It's a good day to keep improving the COMMIT app. Maybe I should contemplate future improvements. Soon I'll start with the México Necesario Site. The first iteration of the COMMIT app is almost complete. Feeling proud of the advance of the day." [ref=e178] [cursor=pointer]:
+                - generic [ref=e179]:
+                  - generic [ref=e180]: Dec 26
+                  - generic [ref=e181]: pride
+                - paragraph [ref=e182]: It's a good day to keep improving the COMMIT app. Maybe I should contemplate future improvements. Soon I'll start with the México Necesario Site. The first iteration of the COMMIT app is almost complete. Feeling proud of the advance of the day.
+              - button "Dec 24 optimism Today is Christmas and it's a good day to fine-tune the COMMIT app. I feel good and optimistic about the future. I am grateful for the opportunity to be alive." [ref=e183] [cursor=pointer]:
+                - generic [ref=e184]:
+                  - generic [ref=e185]: Dec 24
+                  - generic [ref=e186]: optimism
+                - paragraph [ref=e187]: Today is Christmas and it's a good day to fine-tune the COMMIT app. I feel good and optimistic about the future. I am grateful for the opportunity to be alive.
+              - button "Dec 22 Gratitude Life always has a surprise around the corner, even when you think everything has been settled. Grateful for the opportunity to move forward and keep pushing. My SaaS will definitely will have to do with enabling individuals to reach their maximum potential in life, and have a better, more fulfilling life. Still on the fine-tuning of the app and learning on marketing and launch. My emotions are clearer and I feel sound and solid moving forward." [ref=e188] [cursor=pointer]:
+                - generic [ref=e189]:
+                  - generic [ref=e190]: Dec 22
+                  - generic [ref=e191]: Gratitude
+                - paragraph [ref=e192]: Life always has a surprise around the corner, even when you think everything has been settled. Grateful for the opportunity to move forward and keep pushing. My SaaS will definitely will have to do with enabling individuals to reach their maximum potential in life, and have a better, more fulfilling life. Still on the fine-tuning of the app and learning on marketing and launch. My emotions are clearer and I feel sound and solid moving forward.
+              - button "Dec 7 Determined This is just the beggining of the rest of my life. Things are slowly comming to fruition. I'm sure of my path. Finally." [ref=e193] [cursor=pointer]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]: Dec 7
+                  - generic [ref=e196]: Determined
+                - paragraph [ref=e197]: This is just the beggining of the rest of my life. Things are slowly comming to fruition. I'm sure of my path. Finally.
+          - generic [ref=e199]:
+            - generic [ref=e200]:
+              - generic [ref=e201]:
+                - textbox "Select date" [ref=e202] [cursor=pointer]: 2026-01-17
+                - generic [ref=e203]: Auto-saved
+              - generic [ref=e204]:
+                - button "Analyze Entry" [ref=e205] [cursor=pointer]:
+                  - img [ref=e206]
+                  - generic [ref=e208]: Analyze Entry
+                - button "AI Insights" [ref=e209] [cursor=pointer]:
+                  - img [ref=e210]
+                - button "Delete" [ref=e212] [cursor=pointer]:
+                  - img [ref=e213]
+            - textbox "Write about your day, your thoughts, your feelings..." [ref=e216]: It has taken some time for me to return to the project. I should move faster. Strange days. Interesting days.. Today was a good day and the commit app is finally out. I feel proud. It took about six weeks is finally ready at least from a prototype perspective.
+          - generic [ref=e218]:
+            - generic [ref=e219]:
+              - heading "Emotions" [level=4] [ref=e220]
+              - generic [ref=e221]:
+                - generic [ref=e222]:
+                  - img [ref=e223]
+                  - generic [ref=e225]: Determined
+                - generic [ref=e228]:
+                  - img [ref=e229]
+                  - generic [ref=e232]: Hopeful
+                - generic [ref=e235]:
+                  - img [ref=e236]
+                  - generic [ref=e238]: Focused
+            - generic [ref=e241]:
+              - heading "Patterns" [level=4] [ref=e242]
+              - list [ref=e243]:
+                - listitem [ref=e244]: Consistent focus on personal development and growth
+                - listitem [ref=e246]: Balancing multiple priorities and commitments
+                - listitem [ref=e248]: Strong motivation toward achieving goals
+            - generic [ref=e250]:
+              - heading "Coping Strategies" [level=4] [ref=e251]
+              - list [ref=e252]:
+                - listitem [ref=e253]: Break down large goals into smaller, manageable daily actions
+                - listitem [ref=e255]: Schedule regular breaks to maintain energy and focus
+                - listitem [ref=e257]: Practice mindfulness or deep breathing when feeling overwhelmed
+    - navigation [ref=e259]:
+      - generic [ref=e260]:
+        - link "Journal" [ref=e261] [cursor=pointer]:
+          - /url: /journal
+          - img [ref=e263]
+          - generic [ref=e266]: Journal
+        - link "Goals" [ref=e267] [cursor=pointer]:
+          - /url: /goals
+          - img [ref=e269]
+          - generic [ref=e271]: Goals
+        - link "Maps" [ref=e272] [cursor=pointer]:
+          - /url: /boards
+          - img [ref=e274]
+          - generic [ref=e279]: Maps
+        - link "Ideate" [ref=e280] [cursor=pointer]:
+          - /url: /ideate
+          - img [ref=e282]
+          - generic [ref=e284]: Ideate
+        - link "Tracking" [ref=e285] [cursor=pointer]:
+          - /url: /track
+          - img [ref=e287]
+          - generic [ref=e290]: Tracking
+        - button "Jarvis Suggestions" [ref=e291] [cursor=pointer]:
+          - img [ref=e293]
+          - generic [ref=e296]: Jarvis
+        - button "Settings" [ref=e297] [cursor=pointer]:
+          - img [ref=e299]
+          - generic [ref=e302]: Me

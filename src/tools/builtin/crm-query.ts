@@ -53,7 +53,7 @@ ENDPOINTS:
 
 DO NOT USE WHEN:
 - You need to CREATE or MODIFY CRM data (this is read-only)
-- The question is about COMMIT tasks, goals, or personal productivity`,
+- The question is about NorthStar tasks, goals, or personal productivity`,
       parameters: {
         type: "object",
         properties: {

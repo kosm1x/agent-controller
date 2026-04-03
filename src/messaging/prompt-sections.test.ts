@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectToolFlags,
   identitySection,
-  commitSection,
+  northStarSection,
   capabilitiesSection,
   wordpressSection,
   codingSection,
@@ -45,7 +45,7 @@ describe("detectToolFlags", () => {
 
   it("detects NorthStar via jarvis_file_read", () => {
     const flags = detectToolFlags(["jarvis_file_read"]);
-    expect(flags.hasCommit).toBe(true);
+    expect(flags.hasNorthStar).toBe(true);
   });
 
   it("detects research tools by name match", () => {
@@ -59,7 +59,7 @@ describe("detectToolFlags", () => {
     expect(flags.hasWordpress).toBe(false);
     expect(flags.hasCoding).toBe(false);
     expect(flags.hasGoogle).toBe(false);
-    expect(flags.hasCommit).toBe(false);
+    expect(flags.hasNorthStar).toBe(false);
     expect(flags.hasResearch).toBe(false);
   });
 
@@ -82,8 +82,8 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("Jarvis");
   });
 
-  it("commitSection mentions NorthStar and jarvis files", () => {
-    const s = commitSection();
+  it("northStarSection mentions NorthStar and jarvis files", () => {
+    const s = northStarSection();
     expect(s).toContain("NorthStar");
     expect(s).toContain("jarvis_file_read");
   });

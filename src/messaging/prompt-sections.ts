@@ -14,7 +14,7 @@ export interface PromptToolFlags {
   hasWordpress: boolean;
   hasCoding: boolean;
   hasGoogle: boolean;
-  hasCommit: boolean;
+  hasNorthStar: boolean;
   hasResearch: boolean;
 }
 
@@ -36,7 +36,7 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
     hasGoogle: tools.some((t) =>
       ["gmail_send", "calendar_list", "gdrive_list"].includes(t),
     ),
-    hasCommit: tools.includes("jarvis_file_read"), // NorthStar visions live in jarvis files
+    hasNorthStar: tools.includes("jarvis_file_read"), // NorthStar visions live in jarvis files
     hasResearch: tools.some((t) =>
       ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
     ),
@@ -64,7 +64,7 @@ Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las ro
 Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, NorthStar, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
 }
 
-export function commitSection(): string {
+export function northStarSection(): string {
   return `## NorthStar (visiones y metas de Fede)
 Las visiones, metas, objetivos y tareas de Fede viven en tu file system bajo NorthStar/. Usa jarvis_file_read para leerlas y jarvis_file_write para actualizarlas. Son archivos de texto plano — la verdad tal cual Fede la escribió.
 
