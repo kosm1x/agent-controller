@@ -77,6 +77,10 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
       let url = `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)&orderBy=modifiedTime desc`;
       url += `&q=${encodeURIComponent(queryParts.join(" and "))}`;
 
+      console.log(
+        `[gdrive_list] query=${queryParts.join(" and ")} pageSize=${maxResults}`,
+      );
+
       const result = await googleFetch<{
         files: Array<{
           id: string;
@@ -100,6 +104,9 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
         total: result.files.length,
       });
     } catch (err) {
+      console.log(
+        `[gdrive_list] ERROR: ${err instanceof Error ? err.message : err}`,
+      );
       return JSON.stringify({
         error: `Drive list failed: ${err instanceof Error ? err.message : err}`,
       });
