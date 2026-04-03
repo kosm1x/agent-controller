@@ -871,7 +871,8 @@ cmd_intel() {
         ORDER BY signals DESC;"
       ;;
     signals)
-      local hours="${1:-24}"
+      local hours
+      hours=$(printf '%d' "${1:-24}" 2>/dev/null) || hours=24
       echo -e "${BOLD}=== Signals (last ${hours}h) ===${NC}"
       sql "SELECT id, source, domain, signal_type, key,
         COALESCE(value_numeric, '') as val_num,

@@ -2,7 +2,7 @@
  * Baselines tests — rolling stats computation and z-score.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 const mockStmt = {
   run: vi.fn(),
@@ -41,8 +41,8 @@ import {
 } from "./baselines.js";
 
 describe("baselines", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  afterEach(() => {
+    vi.restoreAllMocks();
     mockStmt.run.mockReturnValue({ changes: 1 });
     mockStmt.get.mockReturnValue(undefined);
     mockStmt.all.mockReturnValue([]);

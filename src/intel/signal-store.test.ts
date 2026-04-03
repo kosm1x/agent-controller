@@ -2,7 +2,7 @@
  * Signal store tests — CRUD operations on signals and snapshots.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 const mockStmt = {
   run: vi.fn(),
@@ -32,8 +32,8 @@ import {
 import type { Signal } from "./types.js";
 
 describe("signal-store", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  afterEach(() => {
+    vi.restoreAllMocks();
     mockStmt.run.mockReturnValue({ changes: 1 });
     mockStmt.get.mockReturnValue(undefined);
     mockStmt.all.mockReturnValue([]);

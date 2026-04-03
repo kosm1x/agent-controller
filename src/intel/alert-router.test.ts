@@ -2,7 +2,7 @@
  * Alert router tests — tier evaluation, cross-domain correlation, dedup.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Delta } from "./types.js";
 
 const mockDb = {
@@ -30,8 +30,8 @@ import {
 } from "./alert-router.js";
 
 describe("alert-router", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  afterEach(() => {
+    vi.restoreAllMocks();
     mockDb.prepare.mockReturnValue({
       run: vi.fn().mockReturnValue({ lastInsertRowid: 1, changes: 1 }),
       get: vi.fn().mockReturnValue(undefined),

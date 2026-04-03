@@ -163,12 +163,16 @@ export function getAllSnapshots(): SnapshotRow[] {
 /** Prune signals older than N days. Returns deleted count. */
 export function pruneOldSignals(days: number = 30): number {
   const db = getDatabase();
-  const result = db
-    .prepare(
-      "DELETE FROM signals WHERE collected_at < datetime('now', '-' || ? || ' days')",
-    )
-    .run(days);
-  return result.changes;
+  let changes = 0;
+  writeWithRetry(() => {
+    const result = db
+      .prepare(
+        "DELETE FROM signals WHERE collected_at < datetime('now', '-' || ? || ' days')",
+      )
+      .run(days);
+    changes = result.changes;
+  });
+  return changes;
 }
 
 // ---------------------------------------------------------------------------

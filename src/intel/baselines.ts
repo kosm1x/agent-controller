@@ -33,15 +33,18 @@ export function computeBaseline(source: string, key: string): void {
   const db = getDatabase();
 
   for (const w of WINDOWS) {
+    // Algebraic identity: STDDEV = SQRT(E[x^2] - E[x]^2) — avoids correlated subqueries
     const row = db
       .prepare(
         `SELECT
            AVG(value_numeric) as mean,
-           COALESCE(
-             CASE WHEN COUNT(*) > 1
-               THEN SQRT(SUM((value_numeric - (SELECT AVG(value_numeric) FROM signals WHERE source = ?1 AND key = ?2 AND value_numeric IS NOT NULL AND collected_at >= datetime('now', '-' || ?3 || ' hours'))) * (value_numeric - (SELECT AVG(value_numeric) FROM signals WHERE source = ?1 AND key = ?2 AND value_numeric IS NOT NULL AND collected_at >= datetime('now', '-' || ?3 || ' hours')))) / (COUNT(*) - 1))
-               ELSE 0
-             END, 0) as stddev,
+           CASE WHEN COUNT(*) > 1
+             THEN SQRT(
+               (SUM(value_numeric * value_numeric) - SUM(value_numeric) * SUM(value_numeric) / COUNT(*))
+               / (COUNT(*) - 1)
+             )
+             ELSE 0
+           END as stddev,
            MIN(value_numeric) as min_val,
            MAX(value_numeric) as max_val,
            COUNT(*) as sample_count
