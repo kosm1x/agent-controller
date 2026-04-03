@@ -5,6 +5,13 @@
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
 
+/** Root folders that gdrive_delete refuses to trash. Case-insensitive. */
+const PROTECTED_FOLDER_NAMES = new Set([
+  "jarvis knowledge base",
+  "jarvis-kb",
+  "jarvis kb",
+]);
+
 const MIME_TYPES: Record<string, string> = {
   doc: "application/vnd.google-apps.document",
   sheet: "application/vnd.google-apps.spreadsheet",
@@ -271,6 +278,23 @@ NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.
     if (!fileId) return JSON.stringify({ error: "file_id is required" });
 
     try {
+      // Pre-flight: fetch file metadata to check for protected folders
+      const meta = await googleFetch<{
+        id: string;
+        name: string;
+        mimeType: string;
+      }>(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType`,
+      );
+
+      // Block deletion of root knowledge base folders
+      const isFolder = meta.mimeType === "application/vnd.google-apps.folder";
+      if (isFolder && PROTECTED_FOLDER_NAMES.has(meta.name.toLowerCase())) {
+        return JSON.stringify({
+          error: `BLOCKED: '${meta.name}' is a protected root folder. Delete individual files inside it, not the folder itself.`,
+        });
+      }
+
       // Move to trash (recoverable) rather than permanent delete
       await googleFetch<{ id: string; trashed: boolean }>(
         `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`,
