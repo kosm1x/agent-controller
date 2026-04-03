@@ -73,6 +73,7 @@ export const GOOGLE_TOOLS = [
   "gdrive_create",
   "gdrive_share",
   "gdrive_delete",
+  "gdrive_move",
   "calendar_list",
   "calendar_create",
   "calendar_update",

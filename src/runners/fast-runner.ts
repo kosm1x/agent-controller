@@ -175,6 +175,7 @@ export const WRITE_TOOLS = new Set([
   "gdrive_create",
   "gdrive_share",
   "gdrive_delete",
+  "gdrive_move",
   "calendar_create",
   "calendar_update",
   "gdocs_write",

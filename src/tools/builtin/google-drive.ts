@@ -292,3 +292,93 @@ NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// gdrive_move
+// ---------------------------------------------------------------------------
+
+export const gdriveMoveTool: Tool = {
+  name: "gdrive_move",
+  definition: {
+    type: "function",
+    function: {
+      name: "gdrive_move",
+      description: `Move a file or folder to a different parent folder in Google Drive.
+
+USE WHEN:
+- Reorganizing files between folders
+- Moving a file from root to a subfolder
+- Fixing misplaced files
+
+WORKFLOW:
+1. Call gdrive_list to find the file ID and its current parent
+2. Call gdrive_list to find the destination folder ID
+3. Call gdrive_move with file_id, from the current parent to the new parent
+
+Also supports renaming — pass new_name to rename while moving (or rename in place).`,
+      parameters: {
+        type: "object",
+        properties: {
+          file_id: {
+            type: "string",
+            description: "File or folder ID to move (get from gdrive_list)",
+          },
+          new_parent_id: {
+            type: "string",
+            description: "Destination folder ID (get from gdrive_list)",
+          },
+          old_parent_id: {
+            type: "string",
+            description:
+              "Current parent folder ID to remove from (optional — if omitted, file stays in old location too)",
+          },
+          new_name: {
+            type: "string",
+            description: "New file name (optional — only if renaming)",
+          },
+        },
+        required: ["file_id", "new_parent_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const fileId = args.file_id as string;
+    const newParentId = args.new_parent_id as string;
+    const oldParentId = args.old_parent_id as string | undefined;
+    const newName = args.new_name as string | undefined;
+
+    if (!fileId) return JSON.stringify({ error: "file_id is required" });
+    if (!newParentId)
+      return JSON.stringify({ error: "new_parent_id is required" });
+
+    try {
+      let url = `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(newParentId)}&fields=id,name,parents`;
+      if (oldParentId) {
+        url += `&removeParents=${encodeURIComponent(oldParentId)}`;
+      }
+
+      const body: Record<string, unknown> = {};
+      if (newName) body.name = newName;
+
+      const result = await googleFetch<{
+        id: string;
+        name: string;
+        parents: string[];
+      }>(url, {
+        method: "PATCH",
+        body: Object.keys(body).length > 0 ? body : undefined,
+      });
+
+      return JSON.stringify({
+        moved: true,
+        file_id: result.id,
+        name: result.name,
+        parents: result.parents,
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Drive move failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
