@@ -188,11 +188,20 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
         error: `Deletion blocked: '${absPath}' is outside allowed paths (${ALLOW_DELETE_PREFIXES.join(", ")})`,
       });
     }
-    // Prevent deleting the prefix root itself (e.g., /root/claude/ or /tmp/)
+    // Prevent deleting the prefix root or top-level project directories
     const relative = absPath.slice(matchedPrefix.length);
     if (!relative || relative === "/") {
       return JSON.stringify({
         error: `Deletion blocked: cannot delete root prefix '${matchedPrefix}'`,
+      });
+    }
+    // For /root/claude/, require depth >= 2 (prevent deleting project roots like /root/claude/mission-control)
+    if (
+      matchedPrefix === "/root/claude/" &&
+      relative.split("/").filter(Boolean).length < 2
+    ) {
+      return JSON.stringify({
+        error: `Deletion blocked: cannot delete top-level project directory '${absPath}'. Target a subdirectory or file instead.`,
       });
     }
 

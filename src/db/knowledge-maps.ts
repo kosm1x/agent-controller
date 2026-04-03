@@ -92,7 +92,8 @@ export function searchMaps(query: string): KnowledgeMap[] {
   const keywords = query
     .toLowerCase()
     .split(/\s+/)
-    .filter((w) => w.length > 3);
+    .filter((w) => w.length > 3)
+    .slice(0, 4); // Cap to prevent AND-explosion on long descriptions
   if (keywords.length === 0) return [];
 
   const conditions = keywords.map(() => "topic LIKE ?");
