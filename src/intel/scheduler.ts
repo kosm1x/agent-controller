@@ -14,6 +14,7 @@ import { deliverPendingAlerts } from "./alert-delivery.js";
 
 const timers = new Map<string, ReturnType<typeof setInterval>>();
 const health = new Map<string, CollectorHealth>();
+const collecting = new Set<string>(); // guards against overlapping cycles
 let broadcastFn: ((text: string) => Promise<void>) | null = null;
 
 /** Set the broadcast function for alert delivery (called from index.ts after messaging init). */
@@ -26,6 +27,10 @@ export function setIntelBroadcast(fn: (text: string) => Promise<void>): void {
  * Inserts signals, computes deltas, evaluates alerts, delivers if needed.
  */
 async function runCollector(adapter: CollectorAdapter): Promise<void> {
+  // Prevent overlapping cycles if previous collect() is still running
+  if (collecting.has(adapter.source)) return;
+  collecting.add(adapter.source);
+
   const h = health.get(adapter.source) ?? {
     source: adapter.source,
     lastSuccess: null,
@@ -82,6 +87,7 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
   }
 
   health.set(adapter.source, h);
+  collecting.delete(adapter.source);
 }
 
 /**

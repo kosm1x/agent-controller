@@ -15,7 +15,7 @@ import { getSnapshot, upsertSnapshot } from "./signal-store.js";
 // ---------------------------------------------------------------------------
 
 export const METRICS: MetricDefinition[] = [
-  // Financial
+  // Financial (finnhub/oilprice adapters planned for when API keys are configured)
   {
     source: "finnhub",
     key: "VIX",
@@ -97,6 +97,7 @@ export const METRICS: MetricDefinition[] = [
     riskSensitive: false,
   },
   {
+    // placeholder — nvd adapter planned (needs free API key)
     source: "nvd",
     key: "critical_cves_24h",
     type: "count",
@@ -118,7 +119,7 @@ export const METRICS: MetricDefinition[] = [
     threshold: 10,
     riskSensitive: false,
   },
-  // Health
+  // Health (who adapter planned — no auth, 6h polling)
   {
     source: "who",
     key: "new_outbreaks",
@@ -126,7 +127,7 @@ export const METRICS: MetricDefinition[] = [
     threshold: 2,
     riskSensitive: false,
   },
-  // Infrastructure
+  // Infrastructure (cloudflare needs API key, ioda is free)
   {
     source: "cloudflare",
     key: "anomalies_24h",

@@ -25,12 +25,31 @@ vi.mock("./adapters/index.js", () => ({
 }));
 
 // Mock signal store and delta engine
+const mockInsertSignals = vi.fn().mockReturnValue(1);
+const mockPruneOldSignals = vi.fn().mockReturnValue(0);
 vi.mock("./signal-store.js", () => ({
-  insertSignals: vi.fn().mockReturnValue(1),
+  insertSignals: (...args: unknown[]) => mockInsertSignals(...args),
+  pruneOldSignals: (...args: unknown[]) => mockPruneOldSignals(...args),
 }));
 
+const mockProcessSignals = vi.fn().mockReturnValue([]);
 vi.mock("./delta-engine.js", () => ({
-  processSignals: vi.fn().mockReturnValue([]),
+  processSignals: (...args: unknown[]) => mockProcessSignals(...args),
+}));
+
+const mockEvaluateDeltas = vi.fn().mockReturnValue([]);
+const mockShouldSuppress = vi.fn().mockReturnValue(false);
+const mockCreateAlert = vi.fn().mockReturnValue(1);
+vi.mock("./alert-router.js", () => ({
+  evaluateDeltas: (...args: unknown[]) => mockEvaluateDeltas(...args),
+  shouldSuppress: (...args: unknown[]) => mockShouldSuppress(...args),
+  createAlert: (...args: unknown[]) => mockCreateAlert(...args),
+}));
+
+const mockDeliverPendingAlerts = vi.fn().mockResolvedValue(0);
+vi.mock("./alert-delivery.js", () => ({
+  deliverPendingAlerts: (...args: unknown[]) =>
+    mockDeliverPendingAlerts(...args),
 }));
 
 import {
@@ -43,12 +62,17 @@ import {
 describe("intel scheduler", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    stopIntelCollectors(); // ensure clean state
+    stopIntelCollectors();
+    mockProcessSignals.mockReturnValue([]);
+    mockEvaluateDeltas.mockReturnValue([]);
+    mockShouldSuppress.mockReturnValue(false);
+    mockCreateAlert.mockReturnValue(1);
+    mockDeliverPendingAlerts.mockResolvedValue(0);
   });
 
   afterEach(() => {
     stopIntelCollectors();
-    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("starts collectors and reports running", () => {
@@ -78,5 +102,63 @@ describe("intel scheduler", () => {
     startIntelCollectors();
     const healths = getCollectorHealth();
     expect(healths).toHaveLength(1);
+  });
+
+  it("evaluates deltas and creates alerts when deltas are non-empty", async () => {
+    const delta = {
+      source: "test_source",
+      key: "test_metric",
+      previous: 10,
+      current: 42,
+      changeRatio: 3.2,
+      severity: "critical" as const,
+    };
+    mockProcessSignals.mockReturnValue([delta]);
+    mockEvaluateDeltas.mockReturnValue([
+      {
+        tier: "FLASH",
+        domain: "test",
+        title: "test alert",
+        body: "test",
+        signalIds: [],
+        contentHash: "abc",
+      },
+    ]);
+
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mockEvaluateDeltas).toHaveBeenCalledWith([delta]);
+    expect(mockCreateAlert).toHaveBeenCalled();
+  });
+
+  it("suppresses duplicate alerts", async () => {
+    mockProcessSignals.mockReturnValue([
+      {
+        source: "test_source",
+        key: "test_metric",
+        previous: 10,
+        current: 42,
+        changeRatio: 3.2,
+        severity: "critical",
+      },
+    ]);
+    mockEvaluateDeltas.mockReturnValue([
+      {
+        tier: "FLASH",
+        domain: "test",
+        title: "test",
+        body: "test",
+        signalIds: [],
+        contentHash: "abc",
+      },
+    ]);
+    mockShouldSuppress.mockReturnValue(true);
+
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mockShouldSuppress).toHaveBeenCalled();
+    expect(mockCreateAlert).not.toHaveBeenCalled();
   });
 });

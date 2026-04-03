@@ -222,7 +222,7 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1188                                     | Done                         |
+| Tests               | 903                       | 1190                                     | Done                         |
 | Test files          | 74                        | 94                                       | Done                         |
 | Tools               | 137                       | 138                                      | ~145 (+video)                |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
