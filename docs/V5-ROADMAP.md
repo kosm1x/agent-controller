@@ -214,9 +214,9 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1097                                     | ~1,200+                      |
+| Tests               | 903                       | 1092                                     | ~1,200+                      |
 | Test files          | 74                        | 88                                       | ~90+                         |
-| Tools               | 137                       | 156                                      | ~165 (+video, intel)         |
+| Tools               | 137                       | 134                                      | ~145 (+video, intel)         |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
 | Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
 | Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |

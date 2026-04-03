@@ -14,9 +14,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source files  | 193                                                                                                                                                                                                            |
 | Test files    | 88                                                                                                                                                                                                             |
-| Tests passing | 1097                                                                                                                                                                                                           |
+| Tests passing | 1092                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
-| Total tools   | 156 (55 builtin + 77 MCP [22 COMMIT + 10 browser + 21 playwright + 24 other] + 19 Google + 3 memory + 2 skill)                                                                                                 |
+| Total tools   | 134 (55 builtin + 55 MCP [10 browser + 21 playwright + 24 other] + 19 Google + 3 memory + 2 skill)                                                                                                             |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status

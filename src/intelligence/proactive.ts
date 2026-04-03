@@ -111,7 +111,7 @@ async function runProactiveScan(): Promise<void> {
 - **Deadlines en los próximos 2 días** → recordatorio
 - **Metas estancadas** (14+ días sin movimiento en objetivos/tareas) → "Tu meta X lleva 2+ semanas sin movimiento. ¿La replanteamos?"
 - **Objetivos completables** → si todas las tareas de un objetivo están completadas, sugiere marcar el objetivo como completado
-- **Proyecto-meta desincronizado** → si un proyecto tiene actividad reciente pero su meta COMMIT vinculada no se mueve (o viceversa)
+- **Proyecto-meta desincronizado** → si un proyecto tiene actividad reciente pero su meta vinculada en NorthStar no se mueve (o viceversa)
 ${isEvening ? `- **Protección de racha**: Son las ${currentHour}h. Si no hay completaciones hoy, sugiere la tarea pendiente más fácil para mantener la racha.` : ""}
 
 Genera un mensaje BREVE (máximo 4-5 líneas) SOLO si encuentras algo importante.
