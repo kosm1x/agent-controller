@@ -1,13 +1,4 @@
 {
-  "commit": {
-    "command": "node",
-    "args": ["./mcp-servers/commit-bridge/dist/index.js"],
-    "env": {
-      "SUPABASE_URL": "https://eqwdmscuwgnftosqrcdy.supabase.co",
-      "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxd2Rtc2N1d2duZnRvc3FyY2R5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTEzNzAwMywiZXhwIjoyMDgwNzEzMDAzfQ.ONhbpOGieacGD8dXTsuD7BFhXktadYZ1oyaZoSoKa1U",
-      "COMMIT_USER_ID": "a8ad98e1-b9c6-4447-ab80-bac467835b3a"
-    }
-  },
   "browser": {
     "command": "./bin/lightpanda",
     "args": ["mcp"]

@@ -5,7 +5,7 @@
  * and fire-and-forget — errors are logged but never block the webhook response.
  */
 
-import { toolRegistry } from "../tools/registry.js";
+import { createSuggestion } from "../db/commit.js";
 import { getProjectByGoalId } from "../db/projects.js";
 import { getRouter } from "../messaging/index.js";
 import { createLogger } from "../lib/logger.js";
@@ -29,7 +29,7 @@ export async function onTaskCreated(
   log.info({ rowId, title }, "orphan task created — no objective linked");
 
   try {
-    await toolRegistry.execute("commit__create_suggestion", {
+    createSuggestion({
       type: "link_task",
       target_table: "tasks",
       target_id: rowId,
@@ -54,25 +54,17 @@ export async function onTaskCompleted(
   const objectiveId = changes.objective_id as string | undefined;
   if (!objectiveId) return;
 
-  // Fetch all tasks under this objective
-  let tasksResult: string;
+  // Fetch all tasks under this objective (direct SQLite)
+  let tasks: Array<{ id: string; status: string; title: string }>;
   try {
-    tasksResult = await toolRegistry.execute("commit__list_tasks", {
-      objective_id: objectiveId,
-    });
+    const { getDatabase } = await import("../db/index.js");
+    tasks = getDatabase()
+      .prepare(
+        "SELECT id, status, title FROM commit_tasks WHERE objective_id = ?",
+      )
+      .all(objectiveId) as Array<{ id: string; status: string; title: string }>;
   } catch (err) {
     log.error({ err, objectiveId }, "failed to list tasks for objective");
-    return;
-  }
-
-  // Parse the result to check completion status
-  let tasks: Array<{ id: string; status: string; title?: string }>;
-  try {
-    const parsed = JSON.parse(tasksResult);
-    tasks = Array.isArray(parsed)
-      ? parsed
-      : (parsed.tasks ?? parsed.data ?? []);
-  } catch {
     return;
   }
 
@@ -84,18 +76,11 @@ export async function onTaskCompleted(
     // Fetch the objective name for a meaningful title
     let objectiveName = "objetivo";
     try {
-      const objResult = await toolRegistry.execute(
-        "commit__list_objectives",
-        {},
-      );
-      const objs = JSON.parse(objResult);
-      const objList = Array.isArray(objs)
-        ? objs
-        : (objs.objectives ?? objs.data ?? []);
-      const obj = objList.find(
-        (o: Record<string, unknown>) => o.id === objectiveId,
-      );
-      if (obj?.title) objectiveName = obj.title as string;
+      const { getDatabase } = await import("../db/index.js");
+      const row = getDatabase()
+        .prepare("SELECT title FROM commit_objectives WHERE id = ?")
+        .get(objectiveId) as { title: string } | undefined;
+      if (row?.title) objectiveName = row.title;
     } catch {
       /* use fallback */
     }
@@ -105,7 +90,7 @@ export async function onTaskCompleted(
       "all tasks under objective are done — suggesting completion",
     );
     try {
-      await toolRegistry.execute("commit__create_suggestion", {
+      createSuggestion({
         type: "complete_objective",
         target_table: "objectives",
         target_id: objectiveId,
@@ -130,18 +115,29 @@ export async function onRecurringTaskCompleted(
   const isRecurring = changes.is_recurring === true;
   if (!isRecurring) return;
 
-  // Check current streak via daily snapshot
-  let snapshotRaw: string;
-  try {
-    snapshotRaw = await toolRegistry.execute("commit__get_daily_snapshot", {});
-  } catch {
-    return;
-  }
-
+  // Calculate streak directly from SQLite
   let streak = 0;
   try {
-    const snapshot = JSON.parse(snapshotRaw);
-    streak = snapshot.streak ?? snapshot.current_streak ?? 0;
+    const { getDatabase } = await import("../db/index.js");
+    const db = getDatabase();
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: "America/Mexico_City",
+    });
+    const dates = db
+      .prepare(
+        "SELECT DISTINCT completion_date FROM commit_completions ORDER BY completion_date DESC LIMIT 30",
+      )
+      .all() as Array<{ completion_date: string }>;
+    const cursor = new Date(today + "T12:00:00");
+    for (const { completion_date } of dates) {
+      const expected = cursor.toLocaleDateString("en-CA", {
+        timeZone: "America/Mexico_City",
+      });
+      if (completion_date === expected) {
+        streak++;
+        cursor.setDate(cursor.getDate() - 1);
+      } else if (completion_date < expected) break;
+    }
   } catch {
     return;
   }
@@ -197,7 +193,7 @@ export async function onGoalCompleted(
       "goal linked to project — suggesting archive",
     );
     try {
-      await toolRegistry.execute("commit__create_suggestion", {
+      createSuggestion({
         type: "archive_project",
         target_table: "goals",
         target_id: rowId,
@@ -226,24 +222,15 @@ export async function onObjectiveCompleted(
   const goalId = changes.goal_id as string | undefined;
   if (!goalId) return;
 
-  // Fetch remaining objectives under the goal
-  let objectivesResult: string;
-  try {
-    objectivesResult = await toolRegistry.execute("commit__list_objectives", {
-      goal_id: goalId,
-    });
-  } catch (err) {
-    log.error({ err, goalId }, "failed to list objectives for goal");
-    return;
-  }
-
+  // Fetch remaining objectives under the goal (direct SQLite)
   let objectives: Array<{ id: string; status: string }>;
   try {
-    const parsed = JSON.parse(objectivesResult);
-    objectives = Array.isArray(parsed)
-      ? parsed
-      : (parsed.objectives ?? parsed.data ?? []);
-  } catch {
+    const { getDatabase } = await import("../db/index.js");
+    objectives = getDatabase()
+      .prepare("SELECT id, status FROM commit_objectives WHERE goal_id = ?")
+      .all(goalId) as Array<{ id: string; status: string }>;
+  } catch (err) {
+    log.error({ err, goalId }, "failed to list objectives for goal");
     return;
   }
 
@@ -258,13 +245,11 @@ export async function onObjectiveCompleted(
   let resolvedGoalName = goalName ?? "meta";
   if (!goalName) {
     try {
-      const goalsResult = await toolRegistry.execute("commit__list_goals", {});
-      const goalsList = JSON.parse(goalsResult);
-      const gList = Array.isArray(goalsList)
-        ? goalsList
-        : (goalsList.goals ?? goalsList.data ?? []);
-      const g = gList.find((gl: Record<string, unknown>) => gl.id === goalId);
-      if (g?.title) resolvedGoalName = g.title as string;
+      const { getDatabase } = await import("../db/index.js");
+      const row = getDatabase()
+        .prepare("SELECT title FROM commit_goals WHERE id = ?")
+        .get(goalId) as { title: string } | undefined;
+      if (row?.title) resolvedGoalName = row.title;
     } catch {
       /* use fallback */
     }
@@ -276,7 +261,7 @@ export async function onObjectiveCompleted(
       "all objectives under goal are done — suggesting goal completion",
     );
     try {
-      await toolRegistry.execute("commit__create_suggestion", {
+      createSuggestion({
         type: "complete_goal",
         target_table: "goals",
         target_id: goalId,
@@ -294,7 +279,7 @@ export async function onObjectiveCompleted(
       "objective completed, remaining under goal",
     );
     try {
-      await toolRegistry.execute("commit__create_suggestion", {
+      createSuggestion({
         type: "focus_next_objective",
         target_table: "goals",
         target_id: goalId,

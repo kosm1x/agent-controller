@@ -9,7 +9,12 @@
 import { z } from "zod";
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
-import { toolRegistry } from "../tools/registry.js";
+import {
+  getSnapshot,
+  listGoals,
+  upsertAiAnalysis,
+  createSuggestion,
+} from "../db/commit.js";
 import { getMemoryService } from "../memory/index.js";
 import { createLogger } from "../lib/logger.js";
 
@@ -51,11 +56,8 @@ export async function analyzeJournalDeep(
 
   // Load context in parallel (all fire-and-forget, failures return defaults)
   const [snapshotRaw, goalsRaw, memoryItems] = await Promise.allSettled([
-    toolRegistry.execute("commit__get_daily_snapshot", {}),
-    toolRegistry.execute("commit__list_goals", {
-      status: "in_progress",
-      limit: 5,
-    }),
+    Promise.resolve(getSnapshot()),
+    Promise.resolve(listGoals("in_progress", 5)),
     getMemoryService()
       .recall(content.slice(0, 200), {
         bank: "mc-jarvis",
@@ -142,8 +144,8 @@ Respond in the same language as the journal entry.`;
     // Write analysis to COMMIT's ai_analysis table
     {
       try {
-        await toolRegistry.execute("commit__upsert_ai_analysis", {
-          journal_entry_id: journalId,
+        upsertAiAnalysis({
+          entry_id: journalId,
           emotions: analysis.emotions,
           patterns: analysis.patterns,
           coping_strategies: analysis.coping_strategies,
@@ -171,7 +173,7 @@ Respond in the same language as the journal entry.`;
           : "";
 
       try {
-        await toolRegistry.execute("commit__create_suggestion", {
+        createSuggestion({
           type: "create_task",
           title: analysis.suggested_action,
           suggestion: {

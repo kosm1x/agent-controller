@@ -13,6 +13,7 @@ import type Database from "better-sqlite3";
 import { seedDirectives } from "./jarvis-fs.js";
 import { ensureTuningTables } from "../tuning/schema.js";
 import { activateBestVariant } from "../tuning/activation.js";
+import { ensureCommitTables } from "./commit-schema.js";
 
 let _db: Database.Database | null = null;
 
@@ -181,6 +182,9 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_provenance_goal ON task_provenance(goal_id)",
   );
+
+  // COMMIT productivity framework — native SQLite (migrated from Supabase)
+  ensureCommitTables();
 
   // Seed Jarvis file system on first boot
   seedDirectives();
