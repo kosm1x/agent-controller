@@ -8,9 +8,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpConfig, McpServerConfig } from "./types.js";
+import { MCP_NAMESPACE_SEP } from "./types.js";
 import { createMcpTool } from "./bridge.js";
 import type { McpCallResult } from "./bridge.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { Tool } from "../tools/types.js";
 
 /** Internal state for a connected MCP server. */
 interface ServerEntry {
@@ -19,12 +21,20 @@ interface ServerEntry {
   toolNames: string[];
 }
 
+/** State for a lazy server pending first tool call. */
+interface LazyServerEntry {
+  config: McpServerConfig;
+  toolNames: string[];
+  connecting?: Promise<void>;
+}
+
 const CONNECT_TIMEOUT_MS = 10_000;
 const RECONNECT_INTERVAL_MS = 60_000; // retry failed servers every 60s
 const MAX_RECONNECT_ATTEMPTS = 10; // stop retrying after 10 failures
 
 export class McpManager {
   private servers = new Map<string, ServerEntry>();
+  private lazyServers = new Map<string, LazyServerEntry>();
   private failedServers = new Map<
     string,
     { config: McpServerConfig; attempts: number }
@@ -60,10 +70,24 @@ export class McpManager {
     let connected = 0;
     let totalTools = 0;
 
+    let lazyCount = 0;
+
     for (const serverId of serverIds) {
       const serverConfig = config[serverId];
       if (serverConfig.enabled === false) {
         console.log(`[mcp] ${serverId}: skipped (disabled)`);
+        continue;
+      }
+
+      // Lazy servers: register proxy tools without spawning the process
+      if (serverConfig.lazy && serverConfig.tools?.length) {
+        const toolNames = this.registerLazyServer(
+          serverId,
+          serverConfig,
+          registry,
+        );
+        lazyCount++;
+        totalTools += toolNames.length;
         continue;
       }
 
@@ -83,9 +107,10 @@ export class McpManager {
     }
 
     const total = serverIds.filter((id) => config[id].enabled !== false).length;
-    console.log(
-      `[mcp] Connected to ${connected}/${total} servers, ${totalTools} tools registered`,
-    );
+    const parts = [`${connected}/${total - lazyCount} servers`];
+    if (lazyCount > 0) parts.push(`${lazyCount} lazy`);
+    parts.push(`${totalTools} tools registered`);
+    console.log(`[mcp] ${parts.join(", ")}`);
 
     // Alert on startup degradation
     if (this.failedServers.size > 0) {
@@ -167,6 +192,87 @@ export class McpManager {
   }
 
   /**
+   * Register proxy tools for a lazy server without spawning its process.
+   * The actual connection happens on first tool invocation.
+   */
+  private registerLazyServer(
+    serverId: string,
+    config: McpServerConfig,
+    registry: ToolRegistry,
+  ): string[] {
+    const toolDefs = config.tools ?? [];
+    const toolNames: string[] = [];
+
+    for (const toolDef of toolDefs) {
+      const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${toolDef.name}`;
+      const tool: Tool = {
+        name: namespacedName,
+        definition: {
+          type: "function",
+          function: {
+            name: namespacedName,
+            description: toolDef.description,
+            parameters: toolDef.inputSchema ?? {
+              type: "object",
+              properties: {},
+            },
+          },
+        },
+        execute: async (args: Record<string, unknown>): Promise<string> => {
+          // On first call, connect the server and re-execute via the real tool
+          await this.activateLazyServer(serverId);
+          const realTool = registry.get(namespacedName);
+          if (!realTool) {
+            return JSON.stringify({
+              error: `Tool ${namespacedName} not found after lazy activation`,
+            });
+          }
+          return realTool.execute(args);
+        },
+      };
+      registry.register(tool);
+      toolNames.push(namespacedName);
+    }
+
+    this.lazyServers.set(serverId, { config, toolNames });
+    console.log(
+      `[mcp] ${serverId}: lazy-registered ${toolDefs.length} tools (will connect on first use)`,
+    );
+    return toolNames;
+  }
+
+  /**
+   * Activate a lazy server: connect and replace proxy tools with real ones.
+   * Safe for concurrent calls — only connects once.
+   */
+  private async activateLazyServer(serverId: string): Promise<void> {
+    const lazy = this.lazyServers.get(serverId);
+    if (!lazy) return; // already activated or not lazy
+
+    // Deduplicate concurrent activations
+    if (lazy.connecting) {
+      await lazy.connecting;
+      return;
+    }
+
+    const doConnect = async () => {
+      console.log(`[mcp] ${serverId}: lazy activation — connecting...`);
+      try {
+        await this.connectServer(serverId, lazy.config, this.registry!);
+        this.lazyServers.delete(serverId);
+        console.log(`[mcp] ${serverId}: lazy activation complete`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.alert(`[mcp] ⚠️ ${serverId}: lazy activation failed — ${msg}`);
+        throw err;
+      }
+    };
+
+    lazy.connecting = doConnect();
+    await lazy.connecting;
+  }
+
+  /**
    * Periodically retry failed MCP server connections.
    * Stops when all servers are connected or max attempts exhausted.
    */
@@ -233,13 +339,17 @@ export class McpManager {
       }
     }
     this.servers.clear();
+    this.lazyServers.clear();
     this.failedServers.clear();
     console.log("[mcp] All servers disconnected");
   }
 
-  /** Get connected server IDs. */
+  /** Get connected server IDs (includes lazy-registered). */
   getServerIds(): string[] {
-    return Array.from(this.servers.keys());
+    return [
+      ...Array.from(this.servers.keys()),
+      ...Array.from(this.lazyServers.keys()),
+    ];
   }
 
   /** Get failed server IDs (pending reconnection). */
@@ -247,10 +357,13 @@ export class McpManager {
     return Array.from(this.failedServers.keys());
   }
 
-  /** Get total number of MCP tools registered. */
+  /** Get total number of MCP tools registered (connected + lazy). */
   getToolCount(): number {
     let count = 0;
     for (const entry of this.servers.values()) {
+      count += entry.toolNames.length;
+    }
+    for (const entry of this.lazyServers.values()) {
       count += entry.toolNames.length;
     }
     return count;

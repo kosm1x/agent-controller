@@ -12,6 +12,14 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   /** Whether this server is enabled (default: true). */
   enabled?: boolean;
+  /** Lazy-load: register placeholder tools at startup, connect on first call. */
+  lazy?: boolean;
+  /** Tool definitions for lazy-loaded servers (avoids spawning process to discover). */
+  tools?: Array<{
+    name: string;
+    description: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
 }
 
 /** Full MCP configuration file schema: serverId → config. */
