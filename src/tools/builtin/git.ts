@@ -8,12 +8,8 @@
 import { execSync } from "child_process";
 import type { Tool } from "../types.js";
 
-const PROJECT_ROOT = "/root/claude/mission-control";
-const EXEC_OPTS = {
-  cwd: PROJECT_ROOT,
-  encoding: "utf-8" as const,
-  timeout: 30_000,
-};
+const DEFAULT_CWD = "/root/claude/mission-control";
+const ALLOWED_CWD_PREFIXES = ["/root/claude/"];
 const SENSITIVE_PATTERNS = [
   ".env",
   "credentials",
@@ -23,8 +19,22 @@ const SENSITIVE_PATTERNS = [
   "token",
 ];
 
-function run(cmd: string, timeout = 30_000): string {
-  return execSync(cmd, { ...EXEC_OPTS, timeout }).trim();
+function resolveWorkDir(cwd?: string): string {
+  if (!cwd) return DEFAULT_CWD;
+  if (!ALLOWED_CWD_PREFIXES.some((p) => cwd.startsWith(p))) {
+    throw new Error(
+      `Working directory must be under /root/claude/. Got: ${cwd}`,
+    );
+  }
+  return cwd;
+}
+
+function run(cmd: string, timeout = 30_000, cwd?: string): string {
+  return execSync(cmd, {
+    cwd: resolveWorkDir(cwd),
+    encoding: "utf-8" as const,
+    timeout,
+  }).trim();
 }
 
 export const gitStatusTool: Tool = {
@@ -41,14 +51,24 @@ USE WHEN:
 - After making code changes, to verify what was modified
 
 Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
-      parameters: { type: "object", properties: {} },
+      parameters: {
+        type: "object",
+        properties: {
+          cwd: {
+            type: "string",
+            description:
+              "Project directory (default: /root/claude/mission-control). Set to the repo you're working on.",
+          },
+        },
+      },
     },
   },
 
-  async execute(): Promise<string> {
+  async execute(args: Record<string, unknown>): Promise<string> {
     try {
-      const status = run("git status --short");
-      const branch = run("git branch --show-current");
+      const cwd = args.cwd as string | undefined;
+      const status = run("git status --short", 30_000, cwd);
+      const branch = run("git branch --show-current", 30_000, cwd);
       if (!status) return `On branch ${branch}. Working tree clean.`;
       return `Branch: ${branch}\n\n${status}`;
     } catch (err) {
@@ -82,6 +102,11 @@ Returns unified diff. Use staged=true to see staged changes.`,
             type: "string",
             description: "Limit diff to a specific file path (optional)",
           },
+          cwd: {
+            type: "string",
+            description:
+              "Project directory (default: /root/claude/mission-control)",
+          },
         },
       },
     },
@@ -89,9 +114,10 @@ Returns unified diff. Use staged=true to see staged changes.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
+      const cwd = args.cwd as string | undefined;
       const staged = args.staged ? "--cached" : "";
       const file = args.file ? `-- ${args.file}` : "";
-      const diff = run(`git diff ${staged} ${file}`.trim(), 15_000);
+      const diff = run(`git diff ${staged} ${file}`.trim(), 15_000, cwd);
       if (!diff) return "No changes.";
       return diff.length > 5000
         ? diff.slice(0, 5000) + "\n... (truncated)"
@@ -133,6 +159,11 @@ Always write a descriptive commit message that explains WHY, not just WHAT.`,
             description:
               "Commit message. Be descriptive — explain the purpose of the change.",
           },
+          cwd: {
+            type: "string",
+            description:
+              "Project directory (default: /root/claude/mission-control). MUST match the repo you wrote files to.",
+          },
         },
         required: ["files", "message"],
       },
@@ -143,6 +174,7 @@ Always write a descriptive commit message that explains WHY, not just WHAT.`,
     try {
       const files = args.files as string[];
       const message = args.message as string;
+      const cwd = args.cwd as string | undefined;
 
       if (!files?.length) return "Error: files array is required.";
       if (!message) return "Error: commit message is required.";
@@ -157,15 +189,19 @@ Always write a descriptive commit message that explains WHY, not just WHAT.`,
 
       // Stage files
       const fileList = files.join(" ");
-      run(`git add ${fileList}`);
+      run(`git add ${fileList}`, 30_000, cwd);
 
       // Check there's something to commit
-      const staged = run("git diff --cached --stat");
+      const staged = run("git diff --cached --stat", 30_000, cwd);
       if (!staged)
         return "Nothing staged to commit. Did you specify the right files?";
 
       // Commit
-      const result = run(`git commit -m "${message.replace(/"/g, '\\"')}"`);
+      const result = run(
+        `git commit -m "${message.replace(/"/g, '\\"')}"`,
+        30_000,
+        cwd,
+      );
       return result;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
@@ -186,12 +222,23 @@ USE WHEN:
 - After creating a PR branch
 
 Verifies GitHub auth before pushing. Pushes current branch to origin.`,
-      parameters: { type: "object", properties: {} },
+      parameters: {
+        type: "object",
+        properties: {
+          cwd: {
+            type: "string",
+            description:
+              "Project directory (default: /root/claude/mission-control). MUST match the repo you committed to.",
+          },
+        },
+      },
     },
   },
 
-  async execute(): Promise<string> {
+  async execute(args: Record<string, unknown>): Promise<string> {
     try {
+      const cwd = args.cwd as string | undefined;
+
       // Verify auth
       try {
         run("gh auth status 2>&1");
@@ -201,9 +248,8 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
 
       // Verify remote exists
       try {
-        const remote = run("git remote get-url origin 2>&1");
+        const remote = run("git remote get-url origin 2>&1", 30_000, cwd);
         if (remote.includes("github.com")) {
-          // Extract owner/repo and verify it exists
           const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
           if (match) {
             try {
@@ -218,24 +264,24 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
       }
 
       // Ensure branch is named 'main' (git init defaults to 'master')
-      let branch = run("git branch --show-current");
+      let branch = run("git branch --show-current", 30_000, cwd);
       if (branch === "master") {
-        run("git branch -M main");
+        run("git branch -M main", 30_000, cwd);
         branch = "main";
       }
 
       // Fetch + rebase to avoid push rejection from diverged remote
       try {
-        run("git fetch origin 2>&1", 15_000);
-        const remoteBranches = run("git branch -r 2>&1");
+        run("git fetch origin 2>&1", 15_000, cwd);
+        const remoteBranches = run("git branch -r 2>&1", 30_000, cwd);
         if (remoteBranches.includes(`origin/${branch}`)) {
-          run(`git rebase origin/${branch} 2>&1`, 30_000);
+          run(`git rebase origin/${branch} 2>&1`, 30_000, cwd);
         }
       } catch {
         // First push to empty repo — no remote branch yet, safe to proceed
       }
 
-      const result = run(`git push -u origin ${branch} 2>&1`, 60_000);
+      const result = run(`git push -u origin ${branch} 2>&1`, 60_000, cwd);
       return result || `Pushed ${branch} to origin.`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
