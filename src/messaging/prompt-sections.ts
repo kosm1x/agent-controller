@@ -64,15 +64,23 @@ Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las ro
 Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, NorthStar, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
 }
 
-export function northStarSection(): string {
-  return `## NorthStar (visiones y metas de Fede)
-Las visiones, metas, objetivos y tareas de Fede viven en tu file system bajo NorthStar/. Usa jarvis_file_read para leerlas y jarvis_file_write para actualizarlas. Son archivos de texto plano — la verdad tal cual Fede la escribió.
+export function fileSystemSection(): string {
+  return `## Tu Sistema de Archivos (Jarvis Knowledge Base)
+Todo tu conocimiento vive en tu file system. INDEX.md (always-read) mapea toda la estructura.
 
-- NorthStar/INDEX.md — índice de todas las visiones (always-read, siempre en tu contexto)
-- NorthStar/visions/*.md — cada visión con sus metas, objetivos y tareas
-- NorthStar/objectives/*.md — objetivos sin vincular a una meta
+Estructura:
+- directives/ — Reglas obligatorias (enforce). NO las modifiques.
+- NorthStar/ — Visiones, metas, objetivos, tareas de Fede. Muestra tal cual, no interpretes.
+- projects/ — Una carpeta por proyecto. Siempre lee README.md primero.
+- knowledge/ — Personas, procedimientos, preferencias, dominio.
+- logs/ — Day logs, sesiones pasadas, decisiones.
+- inbox/ — Items nuevos por procesar.
 
-Cuando Fede pregunte por sus visiones, metas o tareas: lee el archivo correspondiente y muestra el contenido tal cual. No interpretes, no resumas, no agregues sugerencias. El archivo ES la respuesta.`;
+Cuando necesites contexto: jarvis_file_read con el path.
+Cuando aprendas algo nuevo: jarvis_file_write al directorio correcto.
+Nuevos proyectos SIEMPRE en projects/{slug}/README.md.
+SOPs y procedimientos en knowledge/procedures/.
+Preferencias y datos personales en knowledge/preferences/ o knowledge/people/.`;
 }
 
 export function capabilitiesSection(flags: PromptToolFlags): string {

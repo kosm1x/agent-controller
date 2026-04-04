@@ -115,28 +115,40 @@ export const jarvisFileWriteTool: Tool = {
     type: "function",
     function: {
       name: "jarvis_file_write",
-      description: `Create or overwrite a file in your internal knowledge base.
+      description: `Create or overwrite a file in the Jarvis Knowledge Base.
 
 USE WHEN:
-- You learn something important about the user, a project, or a procedure
-- You need to store directives or SOPs for future reference
-- You're organizing information for structured retrieval
+- You learn something about a person, project, or domain → write to knowledge/
+- New project info → projects/{slug}/README.md or projects/{slug}/notes/
+- User preferences or personal data → knowledge/preferences/ or knowledge/people/
+- SOPs or procedures → knowledge/procedures/
+- Decision records → logs/decisions/
 
-ALL FILES MUST BE MARKDOWN (.md). Use descriptive paths like "context/crm-pipeline.md".
+PATHS — follow the hierarchy:
+- "directives/*.md" — standing orders (enforce). DO NOT create new ones without user approval.
+- "NorthStar/**/*.md" — visions, goals, objectives, tasks
+- "projects/{slug}/*.md" — project-specific files. README.md in each project.
+- "knowledge/people/*.md" — contacts, relationships
+- "knowledge/procedures/*.md" — SOPs, protocols
+- "knowledge/preferences/*.md" — user preferences
+- "knowledge/domain/*.md" — domain knowledge
+- "logs/day-logs/*.md" — daily interaction logs (mechanical, don't write manually)
+- "logs/sessions/*.md" — auto-persist session data (mechanical, don't write manually)
+- "logs/decisions/*.md" — decision records
+- "inbox/*.md" — new info to process
 
 QUALIFIERS:
-- "enforce" — MANDATORY rules. Injected with "MANDATORY:" prefix every task.
-- "always-read" — Important context. Auto-injected every task (use sparingly).
-- "conditional" — Injected when condition matches scope (e.g. "when CRM context active").
-- "reference" — Available via jarvis_file_read but not auto-injected.
-- "workspace" — Scratch space for ongoing work.`,
+- "enforce" — MANDATORY rules (auto-injected, prefix "MANDATORY:")
+- "always-read" — Auto-injected every task (use VERY sparingly — budget is tight)
+- "reference" — Available via jarvis_file_read (DEFAULT — use this for most files)
+- "workspace" — Scratch space for ongoing work`,
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description:
-              'File path ending in .md (e.g. "DIRECTIVES.md", "context/user-profile.md")',
+              'File path ending in .md. Follow the hierarchy: "projects/my-project/README.md", "knowledge/people/name.md", etc.',
           },
           title: {
             type: "string",

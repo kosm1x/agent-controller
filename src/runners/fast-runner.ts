@@ -82,6 +82,14 @@ function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
     }
 
     if (sections.length === 0) return null;
+
+    // Safety: warn if enforce + always-read exceeds budget headroom
+    if (totalChars > 6000) {
+      console.warn(
+        `[fast-runner] KB injection at ${totalChars} chars — enforce+always-read files may be too large`,
+      );
+    }
+
     return `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
   } catch {
     // DB not ready or table missing — non-fatal

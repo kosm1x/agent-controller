@@ -97,7 +97,7 @@ export async function autoPersistConversation(
   try {
     const date = new Date().toISOString().slice(0, 10);
     const shortId = taskId.slice(0, 8);
-    const path = `auto-persist/${date}-${shortId}.md`;
+    const path = `logs/sessions/${date}-${shortId}.md`;
     upsertFile(
       path,
       userText.slice(0, 60),

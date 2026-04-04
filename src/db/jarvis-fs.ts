@@ -89,6 +89,11 @@ export function upsertFile(
     JSON.stringify(relatedTo),
   );
   mirrorToDisk(path, content);
+
+  // Debounced INDEX.md regeneration (skip if we're writing INDEX.md itself)
+  if (path !== "INDEX.md") {
+    import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
+  }
 }
 
 /** Get a file by path. Returns null if not found. */
@@ -238,13 +243,15 @@ export function seedDirectives(): void {
   try {
     const db = getDatabase();
 
-    // DIRECTIVES.md — core persona and SOPs
+    // directives/core.md — core persona and SOPs (Unified FS)
     const directivesExist = db
-      .prepare("SELECT 1 FROM jarvis_files WHERE path = 'DIRECTIVES.md'")
+      .prepare(
+        "SELECT 1 FROM jarvis_files WHERE path = 'directives/core.md' OR path = 'DIRECTIVES.md'",
+      )
       .get();
     if (!directivesExist) {
       upsertFile(
-        "DIRECTIVES.md",
+        "directives/core.md",
         "Jarvis Core Directives",
         `# Jarvis Core Directives
 
@@ -263,15 +270,15 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
       );
     }
 
-    // context-management.md — context pressure awareness SOP
+    // directives/context-management.md — context pressure awareness (Unified FS)
     const ctxExists = db
       .prepare(
-        "SELECT 1 FROM jarvis_files WHERE path = 'sop/context-management.md'",
+        "SELECT 1 FROM jarvis_files WHERE path = 'directives/context-management.md' OR path = 'sop/context-management.md'",
       )
       .get();
     if (!ctxExists) {
       upsertFile(
-        "sop/context-management.md",
+        "directives/context-management.md",
         "Context Management SOP",
         `# Gestión de Contexto
 
@@ -301,6 +308,11 @@ Después de una compactación, el contexto anterior se resume. Los datos clave s
         5,
       );
     }
+
+    // Generate INDEX.md on boot
+    import("./jarvis-index.js")
+      .then((m) => m.regenerateIndex())
+      .catch(() => {});
   } catch {
     // DB may not have the table yet on very first init
   }

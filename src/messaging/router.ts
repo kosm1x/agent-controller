@@ -64,7 +64,7 @@ import { nowMexDate, nowMexTime } from "../lib/timezone.js";
 import {
   detectToolFlags,
   identitySection,
-  northStarSection,
+  fileSystemSection,
   capabilitiesSection,
   personalDataSection,
   confirmationSection,
@@ -124,7 +124,7 @@ function buildJarvisSystemPrompt(
 
   // Always-on sections
   sections.push(identitySection(mxDate, mxTime));
-  if (flags.hasNorthStar) sections.push(northStarSection());
+  if (flags.hasNorthStar) sections.push(fileSystemSection());
   sections.push(capabilitiesSection(flags));
   sections.push(personalDataSection());
   sections.push(confirmationSection(flags));
@@ -581,7 +581,7 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
       hour12: false,
     });
 
-    const path = `memory/day-logs/${date}.md`;
+    const path = `logs/day-logs/${date}.md`;
     const entry = `- [${time}] **${role}**: ${text.slice(0, 500).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)

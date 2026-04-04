@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectToolFlags,
   identitySection,
-  northStarSection,
+  fileSystemSection,
   capabilitiesSection,
   wordpressSection,
   codingSection,
@@ -82,8 +82,8 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("Jarvis");
   });
 
-  it("northStarSection mentions NorthStar and jarvis files", () => {
-    const s = northStarSection();
+  it("fileSystemSection mentions NorthStar and jarvis files", () => {
+    const s = fileSystemSection();
     expect(s).toContain("NorthStar");
     expect(s).toContain("jarvis_file_read");
   });
