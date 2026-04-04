@@ -15,6 +15,7 @@ import {
   deleteFile,
   listFiles,
   moveFile,
+  searchFiles,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
 
@@ -441,5 +442,60 @@ For batch moves, call this tool multiple times (one per file).`,
       return JSON.stringify({ error: `File not found: ${oldPath}` });
     }
     return JSON.stringify({ success: true, moved: `${oldPath} → ${newPath}` });
+  },
+};
+
+export const jarvisFileSearchTool: Tool = {
+  name: "jarvis_file_search",
+  definition: {
+    type: "function",
+    function: {
+      name: "jarvis_file_search",
+      description: `Search across ALL files in your Knowledge Base by keyword. Searches file content, titles, and paths.
+
+USE WHEN:
+- You need to find which files mention a topic, project, person, or concept
+- jarvis_file_list found nothing by path but you suspect the info exists somewhere
+- User asks "qué sabes sobre X?" or "dónde hay info de X?"
+
+Returns: matching file paths + short snippet around the match. Does NOT return full content — use jarvis_file_read on specific results to get details.
+
+This is a CONTENT search, not a path search. Use jarvis_file_list for path-based browsing.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Keyword to search for in file content, titles, and paths",
+          },
+          limit: {
+            type: "number",
+            description: "Max results (default: 15)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const query = args.query as string;
+    if (!query) return JSON.stringify({ error: "query is required" });
+
+    const limit = Math.min(Math.max(Number(args.limit) || 15, 1), 30);
+    const results = searchFiles(query, limit);
+
+    if (results.length === 0) {
+      return `No files found matching "${query}" in the Knowledge Base.`;
+    }
+
+    const lines = [`🔍 ${results.length} files matching "${query}":`, ""];
+    for (const r of results) {
+      lines.push(`[${r.path}] (${r.size} bytes)`);
+      lines.push(`  ${r.snippet}`);
+      lines.push("");
+    }
+    return lines.join("\n");
   },
 };

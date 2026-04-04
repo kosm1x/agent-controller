@@ -273,6 +273,53 @@ export function listFiles(filters?: {
   }));
 }
 
+/**
+ * Search files by content keyword. Returns paths + matching snippet.
+ * Does NOT return full content — keeps LLM context light.
+ */
+export function searchFiles(
+  query: string,
+  limit: number = 20,
+): Array<{ path: string; title: string; snippet: string; size: number }> {
+  const db = getDatabase();
+  const escaped = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
+  const rows = db
+    .prepare(
+      `SELECT path, title, content, LENGTH(content) as size
+       FROM jarvis_files
+       WHERE content LIKE ? OR title LIKE ? OR path LIKE ?
+       ORDER BY
+         CASE WHEN path LIKE ? THEN 0
+              WHEN title LIKE ? THEN 1
+              ELSE 2 END,
+         path ASC
+       LIMIT ?`,
+    )
+    .all(
+      `%${escaped}%`,
+      `%${escaped}%`,
+      `%${escaped}%`,
+      `%${escaped}%`,
+      `%${escaped}%`,
+      limit,
+    ) as Array<{ path: string; title: string; content: string; size: number }>;
+
+  return rows.map((r) => {
+    // Extract a snippet around the first match
+    const idx = r.content.toLowerCase().indexOf(query.toLowerCase());
+    const start = Math.max(0, idx - 50);
+    const end = Math.min(r.content.length, idx + query.length + 50);
+    const snippet =
+      idx >= 0
+        ? (start > 0 ? "..." : "") +
+          r.content.slice(start, end).replace(/\n/g, " ") +
+          (end < r.content.length ? "..." : "")
+        : r.title;
+
+    return { path: r.path, title: r.title, snippet, size: r.size };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Seed — called from initDatabase() on first boot
 // ---------------------------------------------------------------------------

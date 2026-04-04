@@ -75,6 +75,7 @@ import {
   jarvisFileListTool,
   jarvisFileDeleteTool,
   jarvisFileMoveTool,
+  jarvisFileSearchTool,
 } from "../builtin/jarvis-files.js";
 import { jarvisInitTool } from "../builtin/jarvis-init.js";
 import {
@@ -162,6 +163,7 @@ const BUILTIN_TOOLS: Tool[] = [
   jarvisFileListTool,
   jarvisFileDeleteTool,
   jarvisFileMoveTool,
+  jarvisFileSearchTool,
   jarvisInitTool,
   knowledgeMapTool,
   knowledgeMapExpandTool,
