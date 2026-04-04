@@ -664,35 +664,42 @@ export class MessageRouter {
       return;
     }
 
-    // Prompt enhancer: if waiting for answers, build enhanced prompt
+    // Prompt enhancer: if waiting for answers, build enhanced prompt or skip
     if (isWaitingForAnswers(msg.channel)) {
       const original = getOriginalMessage(msg.channel)!;
       const questions = getQuestions(msg.channel);
       clearEnhancerState(msg.channel);
 
-      // Pass last 2 turns as context to the builder
-      const threadTurns = getThreadTurns(msg.channel);
-      const builderContext = threadTurns
-        .slice(-4)
-        .map((t) => `${t.role}: ${t.content.slice(0, 300)}`)
-        .join("\n");
+      // Skip enhancer if user says "skip", "hazlo", "procede", "sin preguntas"
+      // or sends a short dismissal — just pass the original through
+      const SKIP_RE =
+        /^(skip|hazlo|procede|sin preguntas|no importa|ya|dale|solo hazlo|just do it)\b/i;
+      if (SKIP_RE.test(msg.text.trim())) {
+        console.log("[enhancer] User skipped questions. Passing original.");
+        this.sendToChannel(msg.channel, msg.from, "🔍 Procesando...");
+        msg.text = original;
+      } else {
+        // Build enhanced prompt from user's answers/clarification
+        const threadTurns = getThreadTurns(msg.channel);
+        const builderContext = threadTurns
+          .slice(-4)
+          .map((t) => `${t.role}: ${t.content.slice(0, 300)}`)
+          .join("\n");
 
-      console.log(
-        `[enhancer] Building enhanced prompt from answers: "${msg.text.slice(0, 60)}"`,
-      );
-      const enhanced = await buildEnhancedPrompt(
-        original,
-        questions,
-        msg.text,
-        builderContext,
-      );
-      console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
+        console.log(
+          `[enhancer] Building enhanced prompt from answers: "${msg.text.slice(0, 60)}"`,
+        );
+        const enhanced = await buildEnhancedPrompt(
+          original,
+          questions,
+          msg.text,
+          builderContext,
+        );
+        console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
 
-      // Show the enhanced prompt and acknowledge
-      this.sendToChannel(msg.channel, msg.from, `🔍 Procesando...`);
-
-      // Replace the message text with the enhanced version
-      msg.text = enhanced;
+        this.sendToChannel(msg.channel, msg.from, "🔍 Procesando...");
+        msg.text = enhanced;
+      }
     }
     // Prompt enhancer: check if new message needs enhancement
     else if (shouldEnhance(msg.text)) {

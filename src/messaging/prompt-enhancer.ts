@@ -25,7 +25,7 @@ interface EnhancerState {
 }
 
 const channelState = new Map<string, EnhancerState>();
-const TIMEOUT_MS = 5 * 60_000; // 5 min — if no answer, pass original through
+const TIMEOUT_MS = 2 * 60_000; // 2 min — if no answer, pass original through
 let enabled = (process.env.PROMPT_ENHANCER_ENABLED ?? "true") !== "false";
 
 // ---------------------------------------------------------------------------
