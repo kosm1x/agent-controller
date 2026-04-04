@@ -12,7 +12,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric        | Value                                                                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 204                                                                                                                                                                                                            |
+| Source files  | 205                                                                                                                                                                                                            |
 | Test files    | 96                                                                                                                                                                                                             |
 | Tests passing | 1204                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
