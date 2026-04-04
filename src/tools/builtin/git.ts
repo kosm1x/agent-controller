@@ -144,7 +144,8 @@ DO NOT USE WHEN:
 - Tests are failing (fix first, then commit)
 - Changes include .env or credential files (will be blocked)
 
-Always write a descriptive commit message that explains WHY, not just WHAT.`,
+Always write a descriptive commit message that explains WHY, not just WHAT.
+CRITICAL: cwd MUST be set to the project directory you wrote files to. Do NOT omit it.`,
       parameters: {
         type: "object",
         properties: {
@@ -165,7 +166,7 @@ Always write a descriptive commit message that explains WHY, not just WHAT.`,
               "Project directory (default: /root/claude/mission-control). MUST match the repo you wrote files to.",
           },
         },
-        required: ["files", "message"],
+        required: ["files", "message", "cwd"],
       },
     },
   },
