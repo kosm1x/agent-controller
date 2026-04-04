@@ -9,8 +9,9 @@ import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 
-// Jarvis's git domain — project workspaces only. NOT mission-control (its own source).
+// Jarvis's git domain — EurekaMD org projects. NOT mission-control (its own source).
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
+const GITHUB_ORG = "EurekaMD-net";
 const ALLOWED_CWD_PREFIXES = [
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
@@ -324,21 +325,22 @@ export const ghRepoCreateTool: Tool = {
     type: "function",
     function: {
       name: "gh_repo_create",
-      description: `Create a new GitHub repository. MUST be called before git_push if the remote repo doesn't exist yet.
+      description: `Create a new GitHub repository under the EurekaMD-net organization.
+MUST be called before git_push if the remote repo doesn't exist yet.
 
 USE WHEN:
 - Starting a new project that needs a GitHub repo
 - Before first git_push on a new codebase
 - User asks to "create a repo" or "push to a new repo"
 
-Creates the repo on GitHub and sets the remote origin. Does NOT push code — use git_push after.`,
+Creates the repo under EurekaMD-net org by default. Does NOT push code — use git_push after.`,
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
             description:
-              "Repository name (e.g. 'my-project'). For org repos use 'org-name/repo-name'.",
+              "Repository name (e.g. 'my-project'). Created under EurekaMD-net org by default.",
           },
           description: {
             type: "string",
@@ -356,8 +358,11 @@ Creates the repo on GitHub and sets the remote origin. Does NOT push code — us
 
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
-      const name = args.name as string;
-      if (!name) return "Error: name is required.";
+      const rawName = args.name as string;
+      if (!rawName) return "Error: name is required.";
+
+      // Default to EurekaMD-net org if no org prefix given
+      const name = rawName.includes("/") ? rawName : `${GITHUB_ORG}/${rawName}`;
 
       const ghArgs = ["repo", "create", name];
       ghArgs.push(args.private ? "--private" : "--public");
