@@ -42,6 +42,7 @@ export class McpManager {
   private registry: ToolRegistry | null = null;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
   private alertFn: ((msg: string) => void) | null = null;
+  private isShutdown = false;
 
   /** Set alert callback for degradation/recovery notifications. */
   setAlertFn(fn: (msg: string) => void): void {
@@ -205,6 +206,8 @@ export class McpManager {
 
     for (const toolDef of toolDefs) {
       const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${toolDef.name}`;
+      // Tag proxy tools so we can detect self-referencing after activation
+      const proxyMarker = Symbol("lazy-proxy");
       const tool: Tool = {
         name: namespacedName,
         definition: {
@@ -219,17 +222,28 @@ export class McpManager {
           },
         },
         execute: async (args: Record<string, unknown>): Promise<string> => {
-          // On first call, connect the server and re-execute via the real tool
+          if (this.isShutdown) {
+            return JSON.stringify({
+              error: `MCP server ${serverId} is shut down`,
+            });
+          }
+          // Connect the server on first call
           await this.activateLazyServer(serverId);
           const realTool = registry.get(namespacedName);
-          if (!realTool) {
+          // Guard against infinite recursion: if the tool is still a proxy, fail
+          if (
+            !realTool ||
+            (realTool as unknown as Record<symbol, boolean>)[proxyMarker]
+          ) {
             return JSON.stringify({
-              error: `Tool ${namespacedName} not found after lazy activation`,
+              error: `Tool ${namespacedName} not available after lazy activation (server may expose different tool names)`,
             });
           }
           return realTool.execute(args);
         },
       };
+      // Attach the proxy marker
+      (tool as unknown as Record<symbol, boolean>)[proxyMarker] = true;
       registry.register(tool);
       toolNames.push(namespacedName);
     }
@@ -262,6 +276,8 @@ export class McpManager {
         this.lazyServers.delete(serverId);
         console.log(`[mcp] ${serverId}: lazy activation complete`);
       } catch (err) {
+        // Reset so next call retries instead of replaying cached rejection
+        lazy.connecting = undefined;
         const msg = err instanceof Error ? err.message : String(err);
         this.alert(`[mcp] ⚠️ ${serverId}: lazy activation failed — ${msg}`);
         throw err;
@@ -328,6 +344,7 @@ export class McpManager {
 
   /** Disconnect all MCP servers gracefully. */
   async shutdown(): Promise<void> {
+    this.isShutdown = true;
     this.stopReconnectLoop();
     for (const [serverId, entry] of this.servers) {
       try {

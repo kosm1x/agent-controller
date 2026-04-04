@@ -37,7 +37,7 @@ services:
     image: grafana/grafana-oss:latest
     container_name: mc-grafana
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

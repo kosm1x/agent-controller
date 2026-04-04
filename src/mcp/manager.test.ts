@@ -271,3 +271,329 @@ describe("McpManager", () => {
     });
   });
 });
+
+describe("McpManager lazy-load", () => {
+  it("should register lazy tools without spawning a process", async () => {
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        playwright: {
+          command: "npx",
+          args: ["@playwright/mcp"],
+          lazy: true,
+          tools: [
+            { name: "browser_click", description: "Click an element" },
+            { name: "browser_navigate", description: "Navigate to URL" },
+          ],
+        },
+      },
+      registry,
+    );
+
+    // Tools are registered in the registry
+    expect(registry.has("playwright__browser_click")).toBe(true);
+    expect(registry.has("playwright__browser_navigate")).toBe(true);
+
+    // Server is listed as active (lazy counts)
+    expect(manager.getServerIds()).toContain("playwright");
+    expect(manager.getToolCount()).toBe(2);
+
+    // No connection was attempted (mockConnect never called)
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockListTools).not.toHaveBeenCalled();
+  });
+
+  it("should activate lazy server on first tool call", async () => {
+    // After activation, connectServer will discover real tools
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([
+        {
+          name: "browser_click",
+          description: "Click an element (real)",
+          inputSchema: {
+            type: "object",
+            properties: { selector: { type: "string" } },
+          },
+        },
+        {
+          name: "browser_navigate",
+          description: "Navigate to URL (real)",
+          inputSchema: {
+            type: "object",
+            properties: { url: { type: "string" } },
+          },
+        },
+      ]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        playwright: {
+          command: "npx",
+          args: ["@playwright/mcp"],
+          lazy: true,
+          tools: [
+            { name: "browser_click", description: "Click an element" },
+            { name: "browser_navigate", description: "Navigate to URL" },
+          ],
+        },
+      },
+      registry,
+    );
+
+    expect(mockConnect).not.toHaveBeenCalled();
+
+    // Execute the lazy proxy tool — triggers activation
+    const tool = registry.get("playwright__browser_click");
+    expect(tool).toBeDefined();
+    await tool!.execute({ selector: "#btn" });
+
+    // Server was connected
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(mockListTools).toHaveBeenCalledTimes(1);
+
+    // Lazy server removed from tracking
+    expect(manager.getServerIds()).toContain("playwright");
+    // Server is now in connected (not lazy) state
+    expect(manager.getToolCount()).toBe(2);
+  });
+
+  it("should deduplicate concurrent activation calls", async () => {
+    let resolveConnect: (() => void) | null = null;
+    mockConnect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConnect = resolve;
+        }),
+    );
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "tool_a", description: "Tool A" }]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        slow: {
+          command: "node",
+          args: ["slow.js"],
+          lazy: true,
+          tools: [{ name: "tool_a", description: "Tool A" }],
+        },
+      },
+      registry,
+    );
+
+    // Fire two concurrent calls to the same lazy tool
+    const call1 = registry.get("slow__tool_a")!.execute({});
+    const call2 = registry.get("slow__tool_a")!.execute({});
+
+    // Resolve the pending connection
+    expect(resolveConnect).not.toBeNull();
+    resolveConnect!();
+
+    await Promise.all([call1, call2]);
+
+    // connectServer (and thus mockConnect) should only be called once
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("should handle lazy activation failure gracefully", async () => {
+    mockConnect.mockRejectedValue(new Error("Playwright not installed"));
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+    const alertSpy = vi.fn();
+    manager.setAlertFn(alertSpy);
+
+    await manager.init(
+      {
+        playwright: {
+          command: "npx",
+          args: ["@playwright/mcp"],
+          lazy: true,
+          tools: [{ name: "browser_click", description: "Click" }],
+        },
+      },
+      registry,
+    );
+
+    const tool = registry.get("playwright__browser_click")!;
+
+    // The proxy execute should throw (activation failed)
+    await expect(tool.execute({})).rejects.toThrow("Playwright not installed");
+
+    // Alert was fired
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toContain("lazy activation failed");
+  });
+
+  it("should treat lazy:true with empty tools array as a normal server", async () => {
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "discovered_tool", description: "Found" }]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        server: {
+          command: "node",
+          args: ["s.js"],
+          lazy: true,
+          tools: [], // empty tools array -> length is 0 -> falsy
+        },
+      },
+      registry,
+    );
+
+    // Falls through to normal connectServer path
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(registry.has("server__discovered_tool")).toBe(true);
+  });
+
+  it("should treat lazy:true without tools field as a normal server", async () => {
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "discovered_tool", description: "Found" }]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        server: {
+          command: "node",
+          args: ["s.js"],
+          lazy: true,
+          // no tools field at all
+        },
+      },
+      registry,
+    );
+
+    // Falls through to normal connectServer path
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(registry.has("server__discovered_tool")).toBe(true);
+  });
+
+  it("should skip lazy server when enabled:false even if lazy:true", async () => {
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        disabled_lazy: {
+          command: "node",
+          args: ["s.js"],
+          lazy: true,
+          enabled: false,
+          tools: [{ name: "tool1", description: "T1" }],
+        },
+      },
+      registry,
+    );
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(registry.has("disabled_lazy__tool1")).toBe(false);
+    expect(manager.getServerIds()).toEqual([]);
+  });
+
+  it("should leave stale proxy when tool names mismatch (documents known bug)", async () => {
+    // BUG: If lazy config lists "browser_click" but server reports "click",
+    // the proxy tool "pw__browser_click" is never overwritten by connectServer
+    // (which registers "pw__click" instead). After activation, calling the
+    // proxy re-fetches itself from the registry and recurses infinitely.
+    // This test verifies the structural precondition without triggering the
+    // stack overflow — the proxy remains in the registry pointing to itself.
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "click", description: "Click (different name)" }]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        pw: {
+          command: "npx",
+          args: ["mcp"],
+          lazy: true,
+          tools: [{ name: "browser_click", description: "Click" }],
+        },
+      },
+      registry,
+    );
+
+    // Manually trigger activation (without calling the proxy's execute)
+    // Access activateLazyServer indirectly via the proxy's dependencies
+    // We can simulate by connecting directly
+    expect(registry.has("pw__browser_click")).toBe(true);
+
+    // Force the connection by calling the internal method via the proxy setup
+    // The lazy entry exists; after connection it gets deleted
+    const lazyIds = manager.getServerIds();
+    expect(lazyIds).toContain("pw");
+
+    // After lazy activation would complete, the real tool is pw__click,
+    // but pw__browser_click still has the original proxy.
+    // With the proxy marker fix, calling the stale proxy returns an error
+    // instead of infinite recursion.
+    expect(registry.has("pw__click")).toBe(false); // not yet connected
+
+    // Simulate: activate server (registers pw__click, not pw__browser_click)
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "click", description: "Click" }]),
+    );
+
+    // The proxy for pw__browser_click detects it's still a proxy after activation
+    const tool = registry.get("pw__browser_click")!;
+    const result = await tool.execute({});
+    expect(JSON.parse(result).error).toMatch(
+      /not available after lazy activation/,
+    );
+  });
+
+  it("should return error from proxy after shutdown instead of recursing", async () => {
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools([{ name: "tool1", description: "T1" }]),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        srv: {
+          command: "node",
+          args: ["s.js"],
+          lazy: true,
+          tools: [{ name: "tool1", description: "T1" }],
+        },
+      },
+      registry,
+    );
+
+    expect(registry.has("srv__tool1")).toBe(true);
+    await manager.shutdown();
+
+    // Proxy still exists in registry but should error gracefully
+    const tool = registry.get("srv__tool1")!;
+    const result = await tool.execute({});
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toMatch(/shut down/);
+  });
+});

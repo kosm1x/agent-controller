@@ -48,6 +48,16 @@ export function loadMcpConfig(): McpConfig | null {
         `MCP server "${serverId}": "command" must be a non-empty string`,
       );
     }
+    // Validate lazy tool definitions
+    if (config.lazy && config.tools) {
+      for (const [i, tool] of config.tools.entries()) {
+        if (!tool || typeof tool.name !== "string" || !tool.name) {
+          throw new Error(
+            `MCP server "${serverId}": tools[${i}].name must be a non-empty string`,
+          );
+        }
+      }
+    }
   }
 
   return parsed as McpConfig;
