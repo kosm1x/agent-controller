@@ -1114,22 +1114,12 @@ export async function inferWithTools(
       }
 
       // First-round tool-skip guard: if the LLM responds without calling ANY
-      // tools on the very first round when tools are available, it's lazily
-      // responding from context or fabricating results. Nudge it to use tools.
-      // Triggers on: ✅ claims, fabricated errors (fatal:, error:, 403),
-      // or git/push/commit narration without actual tool calls.
-      // Skip when: short replies (<300 chars), or no write tools in scope.
-      const hasFabricatedOutput =
-        content.includes("✅") ||
-        /\b(fatal|error|failed|push|commit|creado|pushed|committed)\b/i.test(
-          content,
-        );
-      if (
-        round === 0 &&
-        availableNonReadOnly.size > 0 &&
-        hasFabricatedOutput &&
-        content.length > 300
-      ) {
+      // tools on the very first round when tools are available, nudge it.
+      // The weaker fallback model (qwen3-coder-plus) consistently skips tools
+      // and fabricates responses. This guard catches ALL first-round skips
+      // when the response is substantial (>200 chars) and tools exist.
+      const hasTools = (tools?.length ?? 0) > 0;
+      if (round === 0 && hasTools && content.length > 200) {
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );
