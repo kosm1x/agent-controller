@@ -178,6 +178,39 @@ export function deleteFile(path: string): boolean {
   return result.changes > 0;
 }
 
+/**
+ * Move/rename a file atomically. Content never passes through the LLM.
+ * Returns true if successful, false if source doesn't exist.
+ */
+export function moveFile(oldPath: string, newPath: string): boolean {
+  const db = getDatabase();
+  const existing = db
+    .prepare("SELECT * FROM jarvis_files WHERE path = ?")
+    .get(oldPath) as JarvisFile | undefined;
+  if (!existing) return false;
+
+  // Check target doesn't already exist
+  const targetExists = db
+    .prepare("SELECT 1 FROM jarvis_files WHERE path = ?")
+    .get(newPath);
+  if (targetExists) {
+    // Delete target first (overwrite)
+    db.prepare("DELETE FROM jarvis_files WHERE path = ?").run(newPath);
+  }
+
+  db.prepare("UPDATE jarvis_files SET path = ?, id = ? WHERE path = ?").run(
+    newPath,
+    newPath,
+    oldPath,
+  );
+  mirrorToDisk(newPath, existing.content);
+
+  if (newPath !== "INDEX.md") {
+    import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
+  }
+  return true;
+}
+
 /** List all files, optionally filtered. */
 export function listFiles(filters?: {
   prefix?: string;

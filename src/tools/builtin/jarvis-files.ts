@@ -14,6 +14,7 @@ import {
   updateMetadata,
   deleteFile,
   listFiles,
+  moveFile,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
 
@@ -393,5 +394,52 @@ CAUTION: This permanently removes the file.`,
       return JSON.stringify({ error: `File not found: ${path}` });
     }
     return JSON.stringify({ success: true, deleted: path });
+  },
+};
+
+export const jarvisFileMoveTool: Tool = {
+  name: "jarvis_file_move",
+  definition: {
+    type: "function",
+    function: {
+      name: "jarvis_file_move",
+      description: `Move/rename a file in your knowledge base. Atomic operation — content never passes through the LLM.
+
+USE WHEN:
+- Reorganizing the file system (moving files between directories)
+- Renaming a file to a better path
+- Migrating files from old paths to new ones
+
+THIS IS A TRANSPORT OPERATION — use it instead of jarvis_file_read + jarvis_file_write when you only need to move a file without modifying its content. It's faster and doesn't consume context.
+
+For batch moves, call this tool multiple times (one per file).`,
+      parameters: {
+        type: "object",
+        properties: {
+          old_path: {
+            type: "string",
+            description: "Current file path",
+          },
+          new_path: {
+            type: "string",
+            description: "Destination file path",
+          },
+        },
+        required: ["old_path", "new_path"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const oldPath = args.old_path as string;
+    const newPath = args.new_path as string;
+    if (!oldPath || !newPath)
+      return JSON.stringify({ error: "old_path and new_path are required" });
+
+    const moved = moveFile(oldPath, newPath);
+    if (!moved) {
+      return JSON.stringify({ error: `File not found: ${oldPath}` });
+    }
+    return JSON.stringify({ success: true, moved: `${oldPath} → ${newPath}` });
   },
 };
