@@ -58,6 +58,15 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   },
   { pattern: /\bmkfs\b/, reason: "filesystem format" },
   { pattern: /\bdd\s+/, reason: "disk destroyer" },
+  {
+    pattern: /\bgit\s+remote\s+(set-url|add|remove|rename)\b/,
+    reason: "git remote modification blocked — use git tools instead",
+  },
+  {
+    pattern: /\bgit\s+(push|commit|add)\b/,
+    reason:
+      "git operations blocked in shell_exec — use git_commit/git_push tools",
+  },
 ];
 
 /** Safe path prefixes for write operations. */
