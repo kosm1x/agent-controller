@@ -84,6 +84,13 @@ import { intelQueryTool } from "../builtin/intel-query.js";
 import { intelStatusTool } from "../builtin/intel-status.js";
 import { intelAlertHistoryTool } from "../builtin/intel-alert-history.js";
 import { intelBaselineTool } from "../builtin/intel-baseline.js";
+import {
+  gitStatusTool,
+  gitDiffTool,
+  gitCommitTool,
+  gitPushTool,
+  ghCreatePrTool,
+} from "../builtin/git.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -127,6 +134,11 @@ const BUILTIN_TOOLS: Tool[] = [
   intelStatusTool,
   intelAlertHistoryTool,
   intelBaselineTool,
+  gitStatusTool,
+  gitDiffTool,
+  gitCommitTool,
+  gitPushTool,
+  ghCreatePrTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,

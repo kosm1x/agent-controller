@@ -49,6 +49,8 @@ export interface SpawnContainerOptions {
   timeoutMs?: number;
   /** Override the container's default CMD (e.g. ["node", "dist/runners/heavy-worker.js"]). */
   command?: string[];
+  /** Volume mounts (e.g. ["/host/path:/container/path:rw"]). */
+  volumes?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +93,13 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   if (opts.envVars) {
     for (const [key, value] of Object.entries(opts.envVars)) {
       args.push("-e", `${key}=${value}`);
+    }
+  }
+
+  // Add volume mounts
+  if (opts.volumes) {
+    for (const vol of opts.volumes) {
+      args.push("-v", vol);
     }
   }
 

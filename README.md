@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v5.0 S8 complete + NorthStar.** 203 source files, 1192 tests passing, zero type errors, 138 tools.
+**v5.0 S8 complete + NorthStar + Coding.** 205 source files, 1204 tests passing, zero type errors, 143 tools.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -389,6 +389,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v5.0 S5c     | Done   | Research verification (provenance tracking, source anchoring, condensation)                                                                                          |
 | v5.0 S5      | Done   | Classifier calibration (dynamic messaging tier, rephrase fix, feedback quality loop, weighted eval scoring)                                                          |
 | v5.0 S6–S8   | Done   | Intelligence Depot (8 sources, delta engine, alert router, baselines, z-scores, 4 Jarvis tools, ritual integration)                                                  |
+| Coding       | Done   | 5 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support                                                         |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
 See `docs/V5-ROADMAP.md` for full roadmap and `docs/V5-INTELLIGENCE-DEPOT.md` for upcoming intelligence features.
@@ -397,7 +398,9 @@ See `docs/V5-ROADMAP.md` for full roadmap and `docs/V5-INTELLIGENCE-DEPOT.md` fo
 
 Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the agent controller:
 
-- **138 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
+- **143 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
+- **Coding capability** — Jarvis can write code, run tests, commit, push to GitHub, and create PRs
+- **NanoClaw sandbox** — Docker-isolated coding environment (nanoclaw-coding:latest) with Node.js, git, gh CLI
 - **NorthStar** — visions, goals, objectives, tasks as plain markdown files in Jarvis's file system. No database, no framework — just text files Jarvis reads and writes
 - **8 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log)
 - **Dynamic tool scoping** — 34-100 tools per message based on conversation keywords

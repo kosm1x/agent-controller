@@ -62,6 +62,11 @@ export const CODING_TOOLS = [
   "grep",
   "glob",
   "list_dir",
+  "git_status",
+  "git_diff",
+  "git_commit",
+  "git_push",
+  "gh_create_pr",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */

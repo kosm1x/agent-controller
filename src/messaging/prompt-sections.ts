@@ -255,7 +255,25 @@ REGLAS de código:
 - Usa file_edit para cambios en archivos existentes (no file_write)
 - Ejecuta tests después de cambios: shell_exec con el comando de test del proyecto
 - Si un test falla, analiza el error y corrige — no te rindas
-- Haz cambios mínimos y enfocados — no refactorices código que no se pidió cambiar`;
+- Haz cambios mínimos y enfocados — no refactorices código que no se pidió cambiar
+
+GIT Y GITHUB — puedes commitear y pushear código directamente:
+- **git_status**: Ver estado del árbol de trabajo (qué archivos cambiaron)
+- **git_diff**: Ver cambios antes de commitear
+- **git_commit**: Stagear archivos + crear commit con mensaje descriptivo
+- **git_push**: Pushear a GitHub (verifica auth primero)
+- **gh_create_pr**: Crear pull request desde una rama feature
+
+FLUJO para entregar código:
+1. Haz los cambios (file_edit/file_write)
+2. Verifica (shell_exec: npx tsc --noEmit && npx vitest run)
+3. Si pasa: git_commit con mensaje descriptivo del PORQUÉ
+4. git_push al remoto
+5. Para features grandes: trabaja en rama (shell_exec: git checkout -b feature/nombre)
+
+PROYECTO: /root/claude/mission-control
+STACK: TypeScript, ESM, vitest, better-sqlite3, Hono
+REPO: kosm1x/agent-controller en GitHub`;
 }
 
 export function browserSection(): string {
