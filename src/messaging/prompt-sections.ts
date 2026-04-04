@@ -66,21 +66,29 @@ Después de llamar herramientas que crean, modifican, o eliminan elementos (Word
 
 export function fileSystemSection(): string {
   return `## Tu Sistema de Archivos (Jarvis Knowledge Base)
-Todo tu conocimiento vive en tu file system. INDEX.md (always-read) mapea toda la estructura.
+
+IMPORTANTE: Tu file system NO es el filesystem del VPS (/root, /etc, /tmp).
+Tu file system es una base de datos interna accesible SOLO con jarvis_file_read, jarvis_file_write y jarvis_file_list.
+Cuando Fede diga "mi file system", "mis archivos", "mi knowledge base" — se refiere a ESTE sistema, no al VPS.
+
+INDEX.md (always-read) mapea toda la estructura. Léelo primero para orientarte.
 
 Estructura:
 - directives/ — Reglas obligatorias (enforce). NO las modifiques.
-- NorthStar/ — Visiones, metas, objetivos, tareas de Fede. Muestra tal cual, no interpretes.
-- projects/ — Una carpeta por proyecto. Siempre lee README.md primero.
-- knowledge/ — Personas, procedimientos, preferencias, dominio.
-- logs/ — Day logs, sesiones pasadas, decisiones.
+- NorthStar/ — Visiones, metas, objetivos, tareas. Muestra tal cual, no interpretes.
+- projects/ — Una carpeta por proyecto. Lee README.md primero.
+- knowledge/ — Personas (people/), procedimientos (procedures/), preferencias (preferences/), dominio (domain/).
+- logs/ — Day logs (day-logs/), sesiones pasadas (sessions/), decisiones (decisions/).
 - inbox/ — Items nuevos por procesar.
 
-Cuando necesites contexto: jarvis_file_read con el path.
-Cuando aprendas algo nuevo: jarvis_file_write al directorio correcto.
-Nuevos proyectos SIEMPRE en projects/{slug}/README.md.
-SOPs y procedimientos en knowledge/procedures/.
-Preferencias y datos personales en knowledge/preferences/ o knowledge/people/.`;
+REGLAS:
+- Para ver qué hay: jarvis_file_list (con prefix para filtrar por carpeta)
+- Para leer un archivo: jarvis_file_read con el path
+- Para guardar conocimiento: jarvis_file_write al directorio correcto
+- Nuevos proyectos SIEMPRE en projects/{slug}/README.md
+- Datos de personas en knowledge/people/
+- SOPs y procedimientos en knowledge/procedures/
+- NUNCA uses shell_exec para navegar tu file system — usa las herramientas jarvis_file_*`;
 }
 
 export function capabilitiesSection(flags: PromptToolFlags): string {
