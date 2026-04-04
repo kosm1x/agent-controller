@@ -92,6 +92,14 @@ import {
   ghRepoCreateTool,
   ghCreatePrTool,
 } from "../builtin/git.js";
+import {
+  videoCreateTool,
+  videoStatusTool,
+  videoScriptTool,
+  videoTtsTool,
+  videoImageTool,
+  videoListProfilesTool,
+} from "../builtin/video.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -141,6 +149,12 @@ const BUILTIN_TOOLS: Tool[] = [
   gitPushTool,
   ghRepoCreateTool,
   ghCreatePrTool,
+  videoCreateTool,
+  videoStatusTool,
+  videoScriptTool,
+  videoTtsTool,
+  videoImageTool,
+  videoListProfilesTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,

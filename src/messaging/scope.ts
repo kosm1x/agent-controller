@@ -149,6 +149,16 @@ export const BROWSER_TOOLS = [
   "playwright__browser_close",
 ];
 
+/** Video production tools — scope-gated: only when video/clip keywords detected. */
+export const VIDEO_TOOLS = [
+  "video_create",
+  "video_status",
+  "video_script",
+  "video_tts",
+  "video_image",
+  "video_list_profiles",
+];
+
 /** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
 export const INTEL_TOOLS = [
   "intel_query",
@@ -263,6 +273,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "intel",
   },
   {
+    pattern:
+      /\b(video|pel[ií]cula|clip|render|mp4|youtube|tiktok|reels|graba(r|ci[oó]n)?|hazme un video)\b/i,
+    group: "video",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -348,6 +363,7 @@ export function scopeToolsForMessage(
     activeGroups.add("specialty");
     activeGroups.add("research");
     activeGroups.add("intel");
+    activeGroups.add("video");
     activeGroups.add("schedule");
     activeGroups.add("google");
     activeGroups.add("browser");
@@ -364,6 +380,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("intel")) {
     tools.push(...INTEL_TOOLS);
+  }
+  if (activeGroups.has("video")) {
+    tools.push(...VIDEO_TOOLS);
   }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);
