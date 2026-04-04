@@ -134,6 +134,19 @@ describe("validateShellCommand", () => {
       expect(validateShellCommand("git diff HEAD")).toEqual({ allowed: true });
     });
 
+    it("blocks git --work-tree /path push (long-flag bypass)", () => {
+      const result = validateShellCommand(
+        "git --work-tree=/root/claude/cuatro-flor push",
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("git operations blocked");
+    });
+
+    it("blocks git --no-verify commit (long-flag bypass)", () => {
+      const result = validateShellCommand('git --no-verify commit -m "msg"');
+      expect(result.allowed).toBe(false);
+    });
+
     it("blocks git remote set-url", () => {
       const result = validateShellCommand(
         "git remote set-url origin https://example.com",

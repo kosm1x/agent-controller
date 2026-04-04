@@ -1,7 +1,7 @@
 /**
  * Git/GitHub tools — enables Jarvis to commit, push, and create PRs.
  *
- * All operations run in the project root (/root/claude/mission-control).
+ * All operations run in the project root (/root/claude/cuatro-flor by default).
  * Uses execSync with timeouts. Refuses to stage sensitive files.
  */
 
@@ -92,7 +92,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/mission-control). Set to the repo you're working on.",
+              "Project directory (default: /root/claude/cuatro-flor). Set to the repo you're working on.",
           },
         },
       },
@@ -140,7 +140,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/mission-control)",
+              "Project directory (default: /root/claude/cuatro-flor)",
           },
         },
       },
@@ -199,7 +199,7 @@ CRITICAL: cwd MUST be set to the project directory you wrote files to. Do NOT om
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/mission-control). MUST match the repo you wrote files to.",
+              "Project directory (default: /root/claude/cuatro-flor). MUST match the repo you wrote files to.",
           },
         },
         required: ["files", "message", "cwd"],
@@ -260,7 +260,7 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/mission-control). MUST match the repo you committed to.",
+              "Project directory (default: /root/claude/cuatro-flor). MUST match the repo you committed to.",
           },
         },
       },
@@ -297,6 +297,9 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
 
       // Ensure branch is named 'main' (git init defaults to 'master')
       let branch = run("git branch --show-current", 30_000, cwd);
+      if (!branch) {
+        return "Error: detached HEAD state. Checkout a branch before pushing.";
+      }
       if (branch === "master") {
         run("git branch -M main", 30_000, cwd);
         branch = "main";

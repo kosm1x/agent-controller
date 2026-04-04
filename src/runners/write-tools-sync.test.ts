@@ -9,7 +9,11 @@
 
 import { describe, it, expect } from "vitest";
 import { WRITE_TOOLS } from "./fast-runner.js";
-import { GOOGLE_TOOLS, WORDPRESS_TOOLS } from "../messaging/scope.js";
+import {
+  GOOGLE_TOOLS,
+  WORDPRESS_TOOLS,
+  CODING_TOOLS,
+} from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
 const GOOGLE_READ_ONLY = new Set([
@@ -44,6 +48,25 @@ describe("WRITE_TOOLS sync", () => {
   it("includes all write-capable WordPress tools", () => {
     const wpWriteTools = WORDPRESS_TOOLS.filter((t) => !WP_READ_ONLY.has(t));
     for (const tool of wpWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable coding tools", () => {
+    const CODING_READ_ONLY = new Set([
+      "shell_exec",
+      "grep",
+      "glob",
+      "list_dir",
+      "git_status",
+      "git_diff",
+    ]);
+    const codingWriteTools = CODING_TOOLS.filter(
+      (t) => !CODING_READ_ONLY.has(t),
+    );
+    for (const tool of codingWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

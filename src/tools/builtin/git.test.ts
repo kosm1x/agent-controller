@@ -99,13 +99,52 @@ describe("git tools", () => {
   });
 
   describe("git_push", () => {
-    it("checks auth before pushing", async () => {
+    it("pushes successfully with new commits", async () => {
       mockExecSync
         .mockReturnValueOnce("✓ Logged in") // gh auth status
-        .mockReturnValueOnce("main") // git branch
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main") // git branch --show-current
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("origin/main") // git branch -r
+        .mockReturnValueOnce("") // git rebase
+        .mockReturnValueOnce("") // git status --short (clean)
+        .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
+      const result = await gitPushTool.execute({});
+      expect(result).toContain("ba2005e");
+    });
+
+    it("warns about uncommitted changes when nothing to push", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main") // git branch --show-current
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("origin/main") // git branch -r
+        .mockReturnValueOnce("") // git rebase
+        .mockReturnValueOnce(" M src/foo.ts\n?? src/bar.ts") // git status --short (dirty)
         .mockReturnValueOnce("Everything up-to-date"); // git push
       const result = await gitPushTool.execute({});
-      expect(result).toContain("up-to-date");
+      expect(result).toContain("WARNING");
+      expect(result).toContain("uncommitted changes");
+      expect(result).toContain("git_commit first");
+      expect(result).toContain("src/foo.ts");
+    });
+
+    it("returns clean message when up-to-date with clean tree", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main") // git branch --show-current
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("origin/main") // git branch -r
+        .mockReturnValueOnce("") // git rebase
+        .mockReturnValueOnce("") // git status --short (clean)
+        .mockReturnValueOnce("Everything up-to-date"); // git push
+      const result = await gitPushTool.execute({});
+      expect(result).toBe("Already up-to-date — no new commits to push.");
     });
 
     it("returns error when auth fails", async () => {
@@ -114,6 +153,16 @@ describe("git tools", () => {
       });
       const result = await gitPushTool.execute({});
       expect(result).toContain("Error");
+    });
+
+    it("returns error on detached HEAD", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce(""); // git branch --show-current (detached)
+      const result = await gitPushTool.execute({});
+      expect(result).toContain("detached HEAD");
     });
   });
 
