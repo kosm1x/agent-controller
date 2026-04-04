@@ -6,8 +6,6 @@
  * Ritual: completed ritual tasks → broadcast to all active channels
  */
 
-import { appendFileSync, mkdirSync, existsSync } from "fs";
-import { resolve } from "path";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
@@ -555,16 +553,13 @@ function hydrateThreadIfNeeded(channel: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Day log — mechanical append of every user + Jarvis exchange to daily file.
-// No LLM involvement, no scheduled task — direct fs write on every message.
+// Day log — mechanical append of every user + Jarvis exchange to jarvis_files DB.
+// No LLM involvement, no scheduled task — direct DB write on every message.
+// Writes to jarvis_files table (where jarvis_file_read reads from) + disk mirror.
 // ---------------------------------------------------------------------------
-
-const DAY_LOG_DIR = resolve("memory", "day-logs");
 
 function appendDayLog(role: "USER" | "JARVIS", text: string): void {
   try {
-    if (!existsSync(DAY_LOG_DIR)) mkdirSync(DAY_LOG_DIR, { recursive: true });
-
     const now = new Date();
     const date = now.toLocaleDateString("en-CA", {
       timeZone: "America/Mexico_City",
@@ -573,15 +568,23 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
       timeZone: "America/Mexico_City",
       hour12: false,
     });
-    const filePath = resolve(DAY_LOG_DIR, `${date}.md`);
 
-    // Create file with header if new
-    if (!existsSync(filePath)) {
-      appendFileSync(filePath, `# Day Log: ${date}\n\n`);
-    }
-
+    const path = `memory/day-logs/${date}.md`;
     const entry = `- [${time}] **${role}**: ${text.slice(0, 500).replace(/\n/g, " ")}\n`;
-    appendFileSync(filePath, entry);
+
+    // Dynamic import to avoid circular deps at module load
+    import("../db/jarvis-fs.js")
+      .then(({ getFile, upsertFile }) => {
+        const existing = getFile(path);
+        const content = existing
+          ? existing.content + entry
+          : `# Day Log: ${date}\n\n${entry}`;
+
+        upsertFile(path, `Day Log: ${date}`, content, ["day-log"], "workspace");
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
   } catch {
     // Non-fatal — never block message processing for logging
   }
