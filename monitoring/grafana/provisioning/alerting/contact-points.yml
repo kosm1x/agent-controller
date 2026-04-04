@@ -1,0 +1,20 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram-jarvis
+    receivers:
+      - uid: telegram-jarvis-1
+        type: telegram
+        settings:
+          bottoken: "8643042240:AAEZHLvZEGwGX5b358ii4DpciY7-8DGCaYM"
+          chatid: "6535368701"
+          parse_mode: HTML
+          disable_web_page_preview: true
+          message: |
+            {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b>
+            {{ range .Alerts }}
+            <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
+            {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            {{ end }}

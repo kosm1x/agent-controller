@@ -1,4 +1,16 @@
 services:
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: mc-node-exporter
+    command:
+      - "--path.rootfs=/host"
+      - "--no-collector.hwmon"
+    volumes:
+      - /:/host:ro,rslave
+    pid: host
+    mem_limit: 64m
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:latest
     container_name: mc-prometheus
@@ -6,6 +18,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -14,6 +27,10 @@ services:
       - "--storage.tsdb.retention.size=1GB"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - supabase
+    mem_limit: 256m
     restart: unless-stopped
 
   grafana:
@@ -30,8 +47,17 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-jarvis2026}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_OWNER_CHAT_ID}
+    mem_limit: 256m
     restart: unless-stopped
 
 volumes:
   prometheus-data:
   grafana-data:
+
+networks:
+  supabase:
+    external: true
+    name: supabase_default

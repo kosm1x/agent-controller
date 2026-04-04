@@ -1,0 +1,124 @@
+groups:
+  - name: vps-system
+    rules:
+      # CPU usage above 80% for 5 minutes
+      - alert: HighCPU
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage above 80% for 5 minutes"
+          description: 'Current CPU usage: {{ $value | printf "%.1f" }}%'
+
+      # CPU usage above 95% for 2 minutes (critical)
+      - alert: CriticalCPU
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU usage above 95% for 2 minutes"
+          description: 'Current CPU usage: {{ $value | printf "%.1f" }}%. System is likely unresponsive.'
+
+      # Available memory below 500 MB for 5 minutes
+      - alert: LowMemory
+        expr: node_memory_MemAvailable_bytes / 1024 / 1024 < 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Available memory below 500 MB"
+          description: 'Available: {{ $value | printf "%.0f" }} MB'
+
+      # Available memory below 200 MB (critical)
+      - alert: CriticalMemory
+        expr: node_memory_MemAvailable_bytes / 1024 / 1024 < 200
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Available memory below 200 MB — OOM risk"
+          description: 'Available: {{ $value | printf "%.0f" }} MB. System may start killing processes.'
+
+      # Disk usage above 85%
+      - alert: HighDiskUsage
+        expr: 100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85%"
+          description: 'Current disk usage: {{ $value | printf "%.1f" }}%'
+
+      # Disk usage above 95% (critical)
+      - alert: CriticalDiskUsage
+        expr: 100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk usage above 95% — imminent full"
+          description: 'Current disk usage: {{ $value | printf "%.1f" }}%'
+
+      # High load average (> 2x CPU cores for 10 min)
+      - alert: HighLoadAverage
+        expr: node_load5 > 4
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Load average above 4 for 10 minutes (2-core VPS)"
+          description: '5-min load avg: {{ $value | printf "%.1f" }}'
+
+      # Swap usage above 50%
+      - alert: HighSwapUsage
+        expr: (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes * 100 > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Swap usage above 50%"
+          description: 'Swap used: {{ $value | printf "%.0f" }}%'
+
+      # High steal time (hypervisor overcommit)
+      - alert: HighStealTime
+        expr: avg(rate(node_cpu_seconds_total{mode="steal"}[5m])) * 100 > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU steal time above 20% — VPS host overcommitted"
+          description: 'Steal: {{ $value | printf "%.1f" }}%'
+
+  - name: mission-control
+    rules:
+      # MC process using too much memory (> 500 MB)
+      - alert: MCHighMemory
+        expr: mc_process_resident_memory_bytes / 1024 / 1024 > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mission Control using more than 500 MB RAM"
+          description: 'Current: {{ $value | printf "%.0f" }} MB'
+
+      # MC event loop lag above 500ms
+      - alert: MCEventLoopLag
+        expr: mc_nodejs_eventloop_lag_p99_seconds > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MC event loop p99 lag above 500ms"
+          description: 'p99 lag: {{ $value | printf "%.3f" }}s'
+
+      # MC tasks stuck running for more than 30 minutes
+      - alert: MCStuckTasks
+        expr: mc_tasks_active > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MC has tasks running for more than 30 minutes"
+          description: "Active tasks: {{ $value }}"
