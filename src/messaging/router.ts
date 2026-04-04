@@ -6,6 +6,8 @@
  * Ritual: completed ritual tasks → broadcast to all active channels
  */
 
+import { appendFileSync, mkdirSync, existsSync } from "fs";
+import { resolve } from "path";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
@@ -552,6 +554,39 @@ function hydrateThreadIfNeeded(channel: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Day log — mechanical append of every user + Jarvis exchange to daily file.
+// No LLM involvement, no scheduled task — direct fs write on every message.
+// ---------------------------------------------------------------------------
+
+const DAY_LOG_DIR = resolve("data", "jarvis", "day-logs");
+
+function appendDayLog(role: "USER" | "JARVIS", text: string): void {
+  try {
+    if (!existsSync(DAY_LOG_DIR)) mkdirSync(DAY_LOG_DIR, { recursive: true });
+
+    const now = new Date();
+    const date = now.toLocaleDateString("en-CA", {
+      timeZone: "America/Mexico_City",
+    }); // YYYY-MM-DD
+    const time = now.toLocaleTimeString("es-MX", {
+      timeZone: "America/Mexico_City",
+      hour12: false,
+    });
+    const filePath = resolve(DAY_LOG_DIR, `${date}.md`);
+
+    // Create file with header if new
+    if (!existsSync(filePath)) {
+      appendFileSync(filePath, `# Day Log: ${date}\n\n`);
+    }
+
+    const entry = `- [${time}] **${role}**: ${text.slice(0, 500).replace(/\n/g, " ")}\n`;
+    appendFileSync(filePath, entry);
+  } catch {
+    // Non-fatal — never block message processing for logging
+  }
+}
+
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
   private pendingReplies = new Map<string, PendingReply>();
@@ -606,6 +641,9 @@ export class MessageRouter {
   async handleInbound(msg: IncomingMessage): Promise<void> {
     this.lastMessageTime = Date.now();
 
+    // Day log: record user message (mechanical, no LLM)
+    appendDayLog("USER", msg.text);
+
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
@@ -650,6 +688,7 @@ export class MessageRouter {
         const response = await fastPathRespond(msg.text, threadTurns);
 
         this.sendToChannel(msg.channel, msg.from, response);
+        appendDayLog("JARVIS", response);
 
         const cappedResponse =
           response.length > THREAD_RESPONSE_CAP
@@ -954,6 +993,8 @@ export class MessageRouter {
 
     const resultText = this.extractResultText(data.result);
     if (resultText) {
+      appendDayLog("JARVIS", resultText);
+
       // Finalize streaming message or send fresh
       if (pending.streamController) {
         pending.streamController.finalize(resultText).catch((err) => {
