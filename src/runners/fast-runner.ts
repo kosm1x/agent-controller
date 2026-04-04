@@ -199,6 +199,11 @@ export const WRITE_TOOLS = new Set([
   "jarvis_file_write",
   "jarvis_file_update",
   "jarvis_file_delete",
+  // Git / GitHub
+  "git_commit",
+  "git_push",
+  "gh_repo_create",
+  "gh_create_pr",
   // Other
   "schedule_task",
   "delete_schedule",
@@ -215,7 +220,7 @@ export const WRITE_TOOLS = new Set([
  */
 const WRITE_CLAIM_PATTERNS = [
   // Spanish first-person past tense write verbs
-  /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé)\s/i,
+  /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i,
   // Tool-mediated subjects (unambiguous — these can't be "state descriptions")
   /(?:sheet|hoja|filas?|celdas?|email|correo|tarea|meta|goal|objetivo|evento|calendario).*(?:actualizada?s?|escrit[oa]s?|completad[oa]s?|enviad[oa]s?|eliminad[oa]s?|creada?s?|publicada?s?|guardada?s?|modificada?s?|subida?s?)/i,
   // Passive voice with explicit verb (catches "artículo fue publicado", "imagen fue subida")
@@ -225,7 +230,7 @@ const WRITE_CLAIM_PATTERNS = [
   // Quantity + action claims ("50 celdas actualizadas", "5 filas escritas")
   /\d+\s+(?:celdas?|filas?|rows?|cells?|entries?|registros?|artículos?|archivos?|eventos?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated|created|deleted|sent|saved)/i,
   // English first-person claims
-  /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|configured|installed|scheduled|cleaned|modified)\s/i,
+  /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|configured|installed|scheduled|cleaned|modified|pushed|committed)\s/i,
   // English passive claims
   /(?:has been|was|were)\s+(?:written|updated|published|uploaded|deleted|sent|created|saved|edited|configured|installed|scheduled)/i,
   // "Acción realizada" / "Acciones realizadas" (common hallucination opener)
@@ -331,10 +336,18 @@ export function detectsHallucinatedExecution(
   ) {
     const claimsAction =
       // First-person past tense (always hallucination)
-      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué)\s/i.test(
+      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i.test(
         text,
       ) ||
-      /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited)\s/i.test(
+      /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i.test(
+        text,
+      ) ||
+      // Git-specific claims (Spanish + English)
+      /(?:PUSH|COMMIT)\s+EXITOSO/i.test(text) ||
+      /(?:push|commit)\s+\w*\s*(?:exitosamente|correctamente|con éxito|successfully)/i.test(
+        text,
+      ) ||
+      /(?:cambios|changes)\s+\S*\s*(?:subidos?|pushed|enviados?)\s+(?:a|to)\s+(?:GitHub|origin|remote)/i.test(
         text,
       ) ||
       // Passive + success adverb (claim, not observation)

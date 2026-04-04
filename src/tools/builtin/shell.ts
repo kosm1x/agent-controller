@@ -63,7 +63,7 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     reason: "git remote modification blocked — use git tools instead",
   },
   {
-    pattern: /\bgit\s+(push|commit|add)\b/,
+    pattern: /\bgit\s+(?:-[a-zA-Z]\s+\S+\s+)*(push|commit|add)\b/,
     reason:
       "git operations blocked in shell_exec — use git_commit/git_push tools",
   },

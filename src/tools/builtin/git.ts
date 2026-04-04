@@ -313,8 +313,19 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
         // First push to empty repo — no remote branch yet, safe to proceed
       }
 
-      const result = run(`git push -u origin ${branch} 2>&1`, 60_000, cwd);
-      return result || `Pushed ${branch} to origin.`;
+      // Check for uncommitted changes — warn before the LLM claims success
+      const status = run("git status --short", 30_000, cwd);
+      const pushResult = run(`git push -u origin ${branch} 2>&1`, 60_000, cwd);
+
+      // "Everything up-to-date" means nothing was pushed — distinguish from actual push
+      if (pushResult.includes("Everything up-to-date")) {
+        if (status) {
+          return `WARNING: Nothing was pushed — there are uncommitted changes in the working directory. You must run git_commit first to stage and commit these changes before they can be pushed.\n\nUncommitted changes:\n${status}`;
+        }
+        return "Already up-to-date — no new commits to push.";
+      }
+
+      return pushResult || `Pushed ${branch} to origin.`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
     }

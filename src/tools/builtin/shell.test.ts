@@ -88,6 +88,61 @@ describe("validateShellCommand", () => {
     });
   });
 
+  describe("git command blocking", () => {
+    it("blocks git push", () => {
+      const result = validateShellCommand("git push -u origin main");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("git operations blocked");
+    });
+
+    it("blocks git commit", () => {
+      const result = validateShellCommand('git commit -m "test"');
+      expect(result.allowed).toBe(false);
+    });
+
+    it("blocks git add", () => {
+      const result = validateShellCommand("git add .");
+      expect(result.allowed).toBe(false);
+    });
+
+    it("blocks git -C /path push (flag-before-subcommand bypass)", () => {
+      const result = validateShellCommand(
+        "git -C /root/claude/cuatro-flor push",
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("git operations blocked");
+    });
+
+    it("blocks git -C /path commit", () => {
+      const result = validateShellCommand(
+        'git -C /root/claude/cuatro-flor commit -m "msg"',
+      );
+      expect(result.allowed).toBe(false);
+    });
+
+    it("allows git status (read-only)", () => {
+      expect(validateShellCommand("git status")).toEqual({ allowed: true });
+    });
+
+    it("allows git log (read-only)", () => {
+      expect(validateShellCommand("git log --oneline -5")).toEqual({
+        allowed: true,
+      });
+    });
+
+    it("allows git diff (read-only)", () => {
+      expect(validateShellCommand("git diff HEAD")).toEqual({ allowed: true });
+    });
+
+    it("blocks git remote set-url", () => {
+      const result = validateShellCommand(
+        "git remote set-url origin https://example.com",
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("git remote modification");
+    });
+  });
+
   describe("write path enforcement", () => {
     it("should block writes outside allowed paths", () => {
       const result = validateShellCommand("echo x > /var/log/test.log");

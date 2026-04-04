@@ -359,6 +359,70 @@ describe("detectsHallucinatedExecution", () => {
   });
 });
 
+describe("git hallucination detection", () => {
+  it("detects PUSH EXITOSO claim without git_push called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "## ✅ **PUSH EXITOSO**\nCambios subidos a GitHub.",
+        ["git_status"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'I pushed the changes' without git_push called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "I pushed the changes to the remote repository.",
+        ["git_status"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'cambios subidos a GitHub' without git_push called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Los cambios subidos a GitHub correctamente.",
+        ["git_status"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'hice push' without git_push called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Ya hice push de los archivos al repositorio.",
+        ["git_status"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'commit exitosamente' without git_commit called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Commit realizado exitosamente con los archivos nuevos.",
+        ["git_status"],
+      ),
+    ).toBe(true);
+  });
+
+  it("allows push claim when git_push was actually called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "## ✅ **PUSH EXITOSO**\nCambios subidos a GitHub.",
+        ["git_status", "git_push"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows commit claim when git_commit was actually called", () => {
+    expect(
+      detectsHallucinatedExecution("## ✅ **COMMIT EXITOSO**\nHash: ba2005e", [
+        "git_commit",
+      ]),
+    ).toBe(false);
+  });
+});
+
 describe("hasUserConfirmedDeletion", () => {
   it("returns true when assistant asked and user confirmed (Spanish)", () => {
     expect(
