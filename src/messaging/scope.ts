@@ -93,6 +93,7 @@ export const MISC_TOOLS = [
   "jarvis_file_write",
   "jarvis_file_update",
   "jarvis_file_delete",
+  "jarvis_file_move",
   "jarvis_init",
   "http_fetch",
   "list_schedules",
