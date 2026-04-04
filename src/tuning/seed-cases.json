@@ -601,5 +601,61 @@
     "expected": { "agent_type": "fast" },
     "weight": 1.0,
     "source": "manual"
+  },
+  {
+    "case_id": "sc-northstar-read-01",
+    "category": "scope_accuracy",
+    "input": { "message": "lista mis visiones abiertas" },
+    "expected": { "scope_groups": ["northstar_read"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-northstar-read-02",
+    "category": "scope_accuracy",
+    "input": { "message": "qué tareas tengo pendientes esta semana" },
+    "expected": { "scope_groups": ["northstar_read"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-intel-01",
+    "category": "scope_accuracy",
+    "input": { "message": "qué señales hay del mercado hoy" },
+    "expected": { "scope_groups": ["intel"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-intel-02",
+    "category": "scope_accuracy",
+    "input": { "message": "hubo alertas de inteligencia anoche" },
+    "expected": { "scope_groups": ["intel"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-coding-git-01",
+    "category": "scope_accuracy",
+    "input": { "message": "haz commit de los cambios y pushea a github" },
+    "expected": { "scope_groups": ["coding"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-intel-query-01",
+    "category": "tool_selection",
+    "input": { "message": "cómo va el bitcoin hoy" },
+    "expected": { "tools": ["intel_query"] },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-git-commit-01",
+    "category": "tool_selection",
+    "input": { "message": "commitea los cambios con mensaje 'fix: typo'" },
+    "expected": { "tools": ["git_commit"] },
+    "weight": 1.0,
+    "source": "manual"
   }
 ]

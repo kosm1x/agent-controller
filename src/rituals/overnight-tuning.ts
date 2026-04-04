@@ -15,6 +15,7 @@ import { countTestCases } from "../tuning/schema.js";
 import { runOvernightTuning } from "../tuning/overnight-loop.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { mineTestCases } from "../tuning/case-miner.js";
+import { computeAllBaselines } from "../intel/baselines.js";
 
 /**
  * Execute the overnight tuning run.
@@ -42,6 +43,14 @@ export async function executeOvernightTuning(): Promise<void> {
     mineTestCases();
   } catch (err) {
     console.warn("[rituals] case mining failed (non-fatal):", err);
+  }
+
+  // Compute Intel Depot baselines (rolling stats for z-score anomaly detection)
+  try {
+    computeAllBaselines();
+    console.log("[rituals] overnight-tuning: Intel baselines computed");
+  } catch (err) {
+    console.warn("[rituals] baseline computation failed (non-fatal):", err);
   }
 
   try {
