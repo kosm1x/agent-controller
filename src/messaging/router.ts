@@ -221,9 +221,9 @@ interface PendingReply {
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
 const THREAD_BUFFER_SIZE = 15;
 /** Max chars per Jarvis response stored in the thread buffer.
- *  Recent cap is higher to preserve state for multi-step workflows
- *  (e.g. "Continúa" chains where the LLM needs to know what it just did). */
-const THREAD_RESPONSE_CAP = 1600;
+ *  Higher cap preserves more context for multi-turn workflows where
+ *  Jarvis needs to remember file contents, data, or analysis from prior turns. */
+const THREAD_RESPONSE_CAP = 3000;
 
 interface ThreadEntry {
   text: string; // "User: ...\nJarvis: ..."

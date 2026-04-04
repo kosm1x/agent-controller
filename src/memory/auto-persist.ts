@@ -46,6 +46,14 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
   // Rule 2: browser sessions are expensive — always persist
   if (hasPlaywrightTool(toolCalls)) return true;
 
+  // Rule 2b: document reads — persist so follow-up turns recall the content
+  if (
+    toolCalls.some(
+      (t) => t === "gsheets_read" || t === "gdocs_read" || t === "file_read",
+    )
+  )
+    return true;
+
   // Rule 3: explanatory question with meaningful response
   if (isQuestion(userText) && responseText.length > 1000) return true;
 
@@ -67,8 +75,8 @@ export async function autoPersistConversation(
   // Build a compact summary (no LLM call — keep it mechanical and fast)
   const toolList = [...new Set(toolCalls)].slice(0, 10).join(", ");
   const responsePreview =
-    responseText.length > 500
-      ? responseText.slice(0, 500) + "..."
+    responseText.length > 2000
+      ? responseText.slice(0, 2000) + "..."
       : responseText;
 
   const summary =
