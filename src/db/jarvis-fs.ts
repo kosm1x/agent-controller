@@ -135,6 +135,10 @@ export function appendToFile(path: string, content: string): boolean {
     "UPDATE jarvis_files SET content = ?, updated_at = datetime('now') WHERE path = ?",
   ).run(newContent, path);
   mirrorToDisk(path, newContent);
+
+  if (path !== "INDEX.md") {
+    import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
+  }
   return true;
 }
 

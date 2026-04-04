@@ -8,7 +8,7 @@
 
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
-import { upsertFile, listFiles } from "../../db/jarvis-fs.js";
+import { upsertFile } from "../../db/jarvis-fs.js";
 
 export const jarvisInitTool: Tool = {
   name: "jarvis_init",
@@ -37,9 +37,9 @@ IDEMPOTENT: Safe to re-run — updates existing files.`,
     const db = getDatabase();
     const created: string[] = [];
 
-    // 1. DIRECTIVES.md — core persona and SOPs
+    // 1. directives/core.md — core persona and SOPs (Unified FS)
     upsertFile(
-      "DIRECTIVES.md",
+      "directives/core.md",
       "Jarvis Core Directives",
       `# Jarvis Core Directives
 
@@ -49,7 +49,7 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
 ## SOPs
 1. **Verifica antes de afirmar.** Usa task_history para verificar qué hiciste, no inventes.
 2. **No alucines acciones.** Si no llamaste un tool, no digas que lo hiciste.
-3. **Usa tu sistema de archivos.** Lee DIRECTIVES.md y archivos relevantes antes de actuar.
+3. **Usa tu sistema de archivos.** Lee directives/core.md y archivos relevantes antes de actuar.
 4. **Reporta limitaciones.** Si algo falló, dilo. No encubras errores.
 5. **Actualiza tu conocimiento.** Cuando aprendas algo nuevo sobre Fede o sus proyectos, guárdalo en jarvis_file_write.
 
@@ -63,7 +63,7 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
       "enforce",
       0,
     );
-    created.push("DIRECTIVES.md");
+    created.push("directives/core.md");
 
     // 2. User profile from user_facts
     try {
@@ -76,14 +76,14 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
           "# User Profile — Fede\n\n" +
           facts.map((f) => `- **${f.key}**: ${f.value}`).join("\n");
         upsertFile(
-          "context/user-profile.md",
+          "knowledge/people/fede-profile.md",
           "User Profile",
           content,
           ["user", "profile"],
           "reference",
           40,
         );
-        created.push("context/user-profile.md");
+        created.push("knowledge/people/fede-profile.md");
       }
     } catch {
       /* table may not exist */
@@ -110,14 +110,14 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n\n---\n\n");
         upsertFile(
-          "context/projects.md",
+          "knowledge/domain/active-projects.md",
           "Active Projects",
           content,
           ["project", "context"],
-          "always-read",
+          "reference",
           10,
         );
-        created.push("context/projects.md");
+        created.push("knowledge/domain/active-projects.md");
       }
     } catch {
       /* table may not exist */
@@ -147,14 +147,14 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n\n---\n\n");
         upsertFile(
-          "schedules/active.md",
+          "knowledge/domain/active-schedules.md",
           "Active Schedules",
           content,
           ["schedule", "automation"],
-          "always-read",
+          "reference",
           10,
         );
-        created.push("schedules/active.md");
+        created.push("knowledge/domain/active-schedules.md");
       }
     } catch {
       /* table may not exist */
@@ -178,14 +178,14 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             .map((p) => `- **${p.tool_chain}** — ${p.cnt} times`)
             .join("\n");
         upsertFile(
-          "context/tool-patterns.md",
+          "knowledge/domain/tool-patterns.md",
           "Common Tool Patterns",
           content,
           ["tools", "patterns"],
           "reference",
           40,
         );
-        created.push("context/tool-patterns.md");
+        created.push("knowledge/domain/tool-patterns.md");
       }
     } catch {
       /* table may not exist */
@@ -219,40 +219,27 @@ Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en esp
             )
             .join("\n");
         upsertFile(
-          "context/execution-patterns.md",
+          "knowledge/domain/execution-patterns.md",
           "Execution Patterns",
           content,
           ["execution", "patterns"],
           "reference",
           45,
         );
-        created.push("context/execution-patterns.md");
+        created.push("knowledge/domain/execution-patterns.md");
       }
     } catch {
       /* table may not exist */
     }
 
-    // 7. MEMORY.md — index of all files
-    const allFiles = listFiles();
-    const memContent =
-      "# Jarvis Knowledge Base Index\n\n" +
-      "| Path | Title | Qualifier | Priority | Size |\n|------|-------|-----------|----------|------|\n" +
-      allFiles
-        .map(
-          (f) =>
-            `| ${f.path} | ${f.title} | ${f.qualifier} | ${f.priority} | ${f.size} |`,
-        )
-        .join("\n");
-
-    upsertFile(
-      "MEMORY.md",
-      "Knowledge Base Index",
-      memContent,
-      ["index", "memory"],
-      "always-read",
-      1,
-    );
-    created.push("MEMORY.md");
+    // 7. Regenerate INDEX.md (auto-generated, always-read)
+    try {
+      const { regenerateIndex } = await import("../../db/jarvis-index.js");
+      regenerateIndex();
+      created.push("INDEX.md");
+    } catch {
+      /* non-fatal */
+    }
 
     return JSON.stringify({
       success: true,

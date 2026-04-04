@@ -196,7 +196,10 @@ async function main(): Promise<void> {
     // 4. Teardown MCP + tool sources
     await sourceManager.teardownAll();
 
-    // 5. WAL checkpoint + close database
+    // 5. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
+    import("./db/jarvis-index.js")
+      .then((m) => m.cancelPendingRegeneration())
+      .catch(() => {});
     closeDatabase();
 
     process.exit(0);

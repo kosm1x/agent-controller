@@ -42,7 +42,7 @@ If searching by tags, returns all matching files with previews.`,
           path: {
             type: "string",
             description:
-              'Virtual file path (e.g. "DIRECTIVES.md", "context/crm-pipeline.md"). Omit to search by tags.',
+              'Virtual file path (e.g. "directives/core.md", "projects/cuatro-flor/README.md"). Omit to search by tags.',
           },
           tags: {
             type: "array",
@@ -327,7 +327,7 @@ USE WHEN:
           prefix: {
             type: "string",
             description:
-              'Filter by path prefix (e.g. "context/", "schedules/")',
+              'Filter by path prefix (e.g. "projects/", "knowledge/", "logs/")',
           },
           qualifier: {
             type: "string",
