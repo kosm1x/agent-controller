@@ -124,7 +124,7 @@ export function setWaiting(
 
 const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un agente autónomo de AI con 150 herramientas.
 
-Tu trabajo: analizar el mensaje del usuario EN CONTEXTO de la conversación reciente y decidir si necesita clarificación.
+Tu trabajo: analizar el mensaje del usuario EN CONTEXTO de la conversación reciente y decidir si necesita clarificación O si necesita ser dividido en partes más pequeñas.
 
 REGLAS:
 1. PRIMERO lee el contexto de los últimos 2 turnos. Si la conversación ya aclara paths, repos, o datos → "PASS"
@@ -135,6 +135,15 @@ REGLAS:
 6. NO preguntes sobre cosas que el contexto ya resolvió o que Jarvis puede inferir
 7. Si el contexto menciona un proyecto, sheet, o repo — asume que es el mismo
 
+REGLA CRÍTICA — DETECCIÓN DE TAREAS COMPLEJAS:
+8. Si la tarea implica MÁS DE 5 archivos, MÁS DE 10 tool calls, o operaciones batch (migrar, mover, copiar muchos archivos) → NO digas PASS. En su lugar, sugiere dividir la tarea en bloques de máximo 5 items por mensaje.
+   Ejemplo: "Esta tarea involucra ~23 archivos. Sugiero dividir en bloques:
+   1. Primero los 6 archivos de agent-controller
+   2. Luego los 15 de cuatro-flor/research
+   3. Finalmente cmll y reddit-scraper (1 cada uno)
+   ¿Con cuál empezamos?"
+9. Si el usuario dice "migra todo", "haz todos", "procede con todos" → SIEMPRE sugiere dividir. Jarvis tiene un máximo de 35 rounds por tarea — cada archivo que lee+escribe consume 2 rounds. Más de 10 archivos en un mensaje FALLARÁ.
+
 CONTEXTO DEL SISTEMA:
 - Jarvis Knowledge Base: jarvis_file_read/write/list (directives/, NorthStar/, projects/, knowledge/, logs/)
 - Proyecto CuatroFlor: /root/claude/cuatro-flor/ → EurekaMD-net/cuatro-flor
@@ -142,10 +151,12 @@ CONTEXTO DEL SISTEMA:
 - GitHub org: EurekaMD-net (default para repos nuevos)
 - Intel Depot: 8 fuentes (mercados, clima, geopolítica, cyber, noticias)
 - Google Sheets: gsheets_read (NO fetch desde browser por CORS)
+- LÍMITES: 35 rounds/tarea, 50K tokens. Cada file read+write = 2 rounds. Max ~5 archivos por mensaje.
 
 RESPONDE SOLO con:
-- "PASS" si no necesita preguntas (incluyendo cuando el contexto ya aclara todo)
-- O las preguntas numeradas (1. 2. 3.) sin explicación adicional`;
+- "PASS" si no necesita preguntas Y la tarea es de tamaño manejable
+- Preguntas numeradas (1. 2. 3.) si hay ambigüedades
+- Plan de división si la tarea es demasiado grande (con bloques concretos)`;
 
 /**
  * Analyze a user message and return questions or "PASS".
@@ -203,6 +214,8 @@ REGLAS DE CONSTRUCCIÓN:
 - Incluye cwd= para operaciones git
 - Si involucra datos externos: agrega "Cero datos hardcodeados. Usa EXCLUSIVAMENTE los datos de la fuente."
 - Termina con un paso de verificación ("Muéstrame..." o "Verifica con...")
+- LÍMITE CRÍTICO: el prompt debe involucrar MÁXIMO 5 archivos o 10 tool calls. Si la tarea es más grande, construye SOLO el primer bloque y agrega al final: "Cuando termines, avísame para continuar con el siguiente bloque."
+- Para operaciones con jarvis_file_*: usa jarvis_file_write (NO file_write) para la Knowledge Base
 - Si es un task complejo (>15 pasos): divídelo con "PASO 1:" y "PASO 2: (siguiente mensaje)"
 - Escribe el prompt en el mismo idioma que el usuario (español por defecto)
 - NO agregues explicaciones — solo el prompt optimizado
