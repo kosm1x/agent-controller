@@ -792,6 +792,41 @@ export const fastRunner: Runner = {
         }
       }
 
+      // Fallback: if the LLM's final response is a refusal but tools DID execute
+      // and return results, use the last successful tool result as the response.
+      // This catches the fallback model pattern: calls tool → gets results → says
+      // "no tengo esa herramienta" or gives a short refusal instead of the data.
+      const REFUSAL_RE =
+        /\b(no tengo|no puedo|no disponible|not available|cannot|unable to)\b/i;
+      if (
+        parsed.cleanContent.length < 100 &&
+        REFUSAL_RE.test(parsed.cleanContent) &&
+        toolsCalled.length > 0
+      ) {
+        // Find the last successful tool result
+        const toolResults = result.messages.filter(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.length > 50,
+        );
+        if (toolResults.length > 0) {
+          const lastResult = toolResults[toolResults.length - 1]
+            .content as string;
+          console.log(
+            `[fast-runner] LLM refused after tool success. Using tool result directly (${lastResult.length} chars)`,
+          );
+          parsed = {
+            ...parsed,
+            cleanContent: lastResult,
+            status: "DONE_WITH_CONCERNS",
+            concerns: [
+              "LLM refused to format tool results. Raw tool output shown.",
+            ],
+          };
+        }
+      }
+
       return {
         success:
           parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
