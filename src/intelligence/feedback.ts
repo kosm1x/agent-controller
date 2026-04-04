@@ -12,8 +12,7 @@
  * by the router to avoid spawning a full task for a simple "gracias".
  */
 
-const POSITIVE_PATTERNS =
-  /^(gracias|perfecto|exacto|excelente|bien hecho|genial|ok|listo|va|sale|órale|chido|correcto|sí|si|👍|🙏|💪)\b/i;
+const POSITIVE_PATTERNS = /^(excelente)\b/i;
 
 const NEGATIVE_PATTERNS =
   /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;

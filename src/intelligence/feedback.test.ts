@@ -12,12 +12,16 @@ import {
 describe("feedback", () => {
   describe("detectFeedbackSignal", () => {
     it("should detect positive signals", () => {
-      expect(detectFeedbackSignal("gracias")).toBe("positive");
-      expect(detectFeedbackSignal("Perfecto")).toBe("positive");
-      expect(detectFeedbackSignal("exacto, eso")).toBe("positive");
-      expect(detectFeedbackSignal("ok")).toBe("positive");
-      expect(detectFeedbackSignal("listo")).toBe("positive");
-      expect(detectFeedbackSignal("genial")).toBe("positive");
+      expect(detectFeedbackSignal("excelente")).toBe("positive");
+      expect(detectFeedbackSignal("Excelente")).toBe("positive");
+      expect(detectFeedbackSignal("excelente, eso")).toBe("positive");
+    });
+
+    it("should NOT treat common words as positive feedback", () => {
+      expect(detectFeedbackSignal("gracias")).toBe("neutral");
+      expect(detectFeedbackSignal("ok")).toBe("neutral");
+      expect(detectFeedbackSignal("sí")).toBe("neutral");
+      expect(detectFeedbackSignal("perfecto")).toBe("neutral");
     });
 
     it("should detect negative signals", () => {
@@ -49,10 +53,8 @@ describe("feedback", () => {
 
   describe("isFeedbackMessage", () => {
     it("should identify short feedback messages", () => {
-      expect(isFeedbackMessage("gracias")).toBe(true);
-      expect(isFeedbackMessage("perfecto")).toBe(true);
+      expect(isFeedbackMessage("excelente")).toBe(true);
       expect(isFeedbackMessage("no")).toBe(true);
-      expect(isFeedbackMessage("ok")).toBe(true);
     });
 
     it("should not intercept long messages", () => {
