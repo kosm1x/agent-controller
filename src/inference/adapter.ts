@@ -293,7 +293,11 @@ async function callProvider(
     body.tool_choice = "auto";
   }
   // Disable reasoning/thinking mode for faster responses (Qwen 3.5+, GLM-5+)
-  if (provider.model.startsWith("qwen3") || provider.model.startsWith("glm-")) {
+  if (
+    provider.model.startsWith("qwen3") ||
+    provider.model.startsWith("glm-") ||
+    provider.model.startsWith("kimi")
+  ) {
     body.enable_thinking = false;
   }
 
