@@ -1113,16 +1113,22 @@ export async function inferWithTools(
         break;
       }
 
-      // First-round tool-skip guard: if the LLM claims success (✅) without
-      // calling ANY tools on the very first round, it's lazily responding from
-      // conversation context instead of executing. Nudge it to use tools.
-      // Skip when: short replies (<500 chars), or no write tools in scope
-      // (conversational messages with only core tools don't need tool calls).
+      // First-round tool-skip guard: if the LLM responds without calling ANY
+      // tools on the very first round when tools are available, it's lazily
+      // responding from context or fabricating results. Nudge it to use tools.
+      // Triggers on: ✅ claims, fabricated errors (fatal:, error:, 403),
+      // or git/push/commit narration without actual tool calls.
+      // Skip when: short replies (<300 chars), or no write tools in scope.
+      const hasFabricatedOutput =
+        content.includes("✅") ||
+        /\b(fatal|error|failed|push|commit|creado|pushed|committed)\b/i.test(
+          content,
+        );
       if (
         round === 0 &&
         availableNonReadOnly.size > 0 &&
-        content.includes("✅") &&
-        content.length > 500
+        hasFabricatedOutput &&
+        content.length > 300
       ) {
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
