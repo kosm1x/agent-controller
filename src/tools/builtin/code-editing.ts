@@ -14,8 +14,11 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 import type { Tool } from "../types.js";
+
+// Same write boundaries as file.ts
+const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
 
 export const fileEditTool: Tool = {
   name: "file_edit",
@@ -72,6 +75,14 @@ RULES:
     const replaceAll = args.replace_all === true;
 
     if (!path) return JSON.stringify({ error: "path is required" });
+
+    // Enforce write boundaries
+    const resolved = resolve(path);
+    if (DENY_EDIT_PREFIXES.some((p) => resolved.startsWith(p))) {
+      return JSON.stringify({
+        error: `Edit blocked: ${resolved} is protected. Jarvis cannot modify its own source code.`,
+      });
+    }
     if (oldString === undefined || oldString === null)
       return JSON.stringify({ error: "old_string is required" });
     if (newString === undefined || newString === null)

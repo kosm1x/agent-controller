@@ -18,9 +18,9 @@ describe("validateShellCommand", () => {
       "curl https://example.com",
       'python3 -c "print(1+1)"',
       "ls -la | grep .ts | wc -l",
-      "echo hello > /root/claude/test.txt",
+      "echo hello > /root/claude/cuatro-flor/test.txt",
       "echo hello > /tmp/test.txt",
-      "cp /root/claude/a.txt /root/claude/b.txt",
+      "cp /root/claude/projects/a.txt /root/claude/projects/b.txt",
       "tee /workspace/output.log",
     ];
 
@@ -95,10 +95,10 @@ describe("validateShellCommand", () => {
       expect(result.reason).toContain("outside allowed paths");
     });
 
-    it("should allow writes to /root/claude/", () => {
-      expect(validateShellCommand("echo x > /root/claude/test.txt")).toEqual({
-        allowed: true,
-      });
+    it("should allow writes to project dirs under /root/claude/", () => {
+      expect(
+        validateShellCommand("echo x > /root/claude/cuatro-flor/test.txt"),
+      ).toEqual({ allowed: true });
     });
 
     it("should allow writes to /tmp/", () => {
@@ -112,9 +112,11 @@ describe("validateShellCommand", () => {
       expect(result.allowed).toBe(false);
     });
 
-    it("should allow cp within project", () => {
+    it("should allow cp within project dirs", () => {
       expect(
-        validateShellCommand("cp /root/claude/a.ts /root/claude/b.ts"),
+        validateShellCommand(
+          "cp /root/claude/projects/a.ts /root/claude/projects/b.ts",
+        ),
       ).toEqual({ allowed: true });
     });
   });

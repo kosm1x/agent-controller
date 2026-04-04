@@ -69,8 +69,21 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   },
 ];
 
-/** Safe path prefixes for write operations. */
-const ALLOW_WRITE_PREFIXES = ["/root/claude/", "/tmp/", "/workspace/"];
+/** Safe path prefixes for write operations.
+ *  Jarvis can read anything but writes are restricted to project dirs.
+ *  /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code). */
+const ALLOW_WRITE_PREFIXES = [
+  "/root/claude/cuatro-flor/",
+  "/root/claude/projects/",
+  "/tmp/",
+  "/workspace/",
+];
+const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
+  {
+    pattern: /\/root\/claude\/mission-control\//,
+    reason: "Jarvis cannot modify its own source code via shell_exec",
+  },
+];
 
 /** Heuristic tokens that indicate a write to a path. */
 const WRITE_INDICATORS =
@@ -138,6 +151,12 @@ export function validateShellCommand(command: string): {
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(command)) !== null) {
     const targetPath = match[1];
+    // Check deny list first (mission-control is protected)
+    for (const deny of DENY_WRITE_PATTERNS) {
+      if (deny.pattern.test(targetPath)) {
+        return { allowed: false, reason: deny.reason };
+      }
+    }
     const isSafe = ALLOW_WRITE_PREFIXES.some((prefix) =>
       targetPath.startsWith(prefix),
     );

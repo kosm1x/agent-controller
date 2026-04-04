@@ -9,8 +9,14 @@ import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 
-const DEFAULT_CWD = "/root/claude/mission-control";
-const ALLOWED_CWD_PREFIXES = ["/root/claude/"];
+// Jarvis's git domain — project workspaces only. NOT mission-control (its own source).
+const DEFAULT_CWD = "/root/claude/cuatro-flor";
+const ALLOWED_CWD_PREFIXES = [
+  "/root/claude/cuatro-flor/",
+  "/root/claude/projects/",
+  "/tmp/",
+];
+const DENIED_CWD = ["/root/claude/mission-control/"];
 const SENSITIVE_PATTERNS = [
   ".env",
   "credentials",
@@ -22,11 +28,18 @@ const SENSITIVE_PATTERNS = [
 
 function resolveWorkDir(cwd?: string): string {
   if (!cwd) return DEFAULT_CWD;
-  // Resolve to absolute, then check prefix (prevents ../../../ etc traversal)
   const resolved = resolve(cwd);
+  // Deny list first — mission-control is protected
+  for (const deny of DENIED_CWD) {
+    if (resolved.startsWith(deny)) {
+      throw new Error(
+        `Git operations blocked on ${deny} — Jarvis cannot modify its own source code. Use a project directory.`,
+      );
+    }
+  }
   if (!ALLOWED_CWD_PREFIXES.some((p) => resolved.startsWith(p))) {
     throw new Error(
-      `Working directory must be under /root/claude/. Got: ${resolved}`,
+      `Working directory must be under an allowed project path. Got: ${resolved}. Allowed: ${ALLOWED_CWD_PREFIXES.join(", ")}`,
     );
   }
   return resolved;

@@ -8,6 +8,42 @@ import type { Tool } from "../types.js";
 
 const MAX_READ = 50_000; // chars
 
+// Jarvis write boundaries — can read anything, writes restricted to project dirs.
+// /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code).
+// Granted: project workspaces, tmp, user directories.
+const ALLOW_WRITE_PREFIXES = [
+  "/root/claude/cuatro-flor/",
+  "/root/claude/projects/",
+  "/tmp/",
+  "/workspace/",
+];
+const DENY_WRITE_PREFIXES = [
+  "/root/claude/mission-control/",
+  "/root/.claude/",
+  "/etc/",
+  "/usr/",
+  "/var/",
+];
+
+function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
+  const resolved = resolve(path);
+  for (const deny of DENY_WRITE_PREFIXES) {
+    if (resolved.startsWith(deny)) {
+      return {
+        allowed: false,
+        reason: `Write blocked: ${deny} is protected. Jarvis cannot modify its own source code or system files.`,
+      };
+    }
+  }
+  if (ALLOW_WRITE_PREFIXES.some((p) => resolved.startsWith(p))) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: `Write blocked: ${resolved} is outside Jarvis's allowed write directories. Allowed: ${ALLOW_WRITE_PREFIXES.join(", ")}`,
+  };
+}
+
 /** Convert .docx to plain text using mammoth (lazy-loaded). */
 async function readDocx(filePath: string): Promise<string> {
   const mammoth = await import("mammoth");
@@ -121,6 +157,12 @@ instead of inline content. The tool reads the salvaged file and writes it to the
       });
     }
 
+    // Enforce write boundaries
+    const writeCheck = isWriteAllowed(path);
+    if (!writeCheck.allowed) {
+      return JSON.stringify({ error: writeCheck.reason });
+    }
+
     try {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content, "utf-8");
@@ -139,7 +181,8 @@ instead of inline content. The tool reads the salvaged file and writes it to the
 // Allowed paths for deletion — same as shell_exec write prefixes
 // ---------------------------------------------------------------------------
 
-const ALLOW_DELETE_PREFIXES = ["/root/claude/", "/tmp/", "/workspace/"];
+// Delete uses same boundaries as write
+const ALLOW_DELETE_PREFIXES = ALLOW_WRITE_PREFIXES;
 
 export const fileDeleteTool: Tool = {
   name: "file_delete",
