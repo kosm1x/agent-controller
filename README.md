@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v5.0 complete + NorthStar + Coding + Prompt Enhancer.** 205 source files, 1204 tests passing, zero type errors, 144 tools.
+**v5.0 complete + NorthStar + Coding + Prompt Enhancer.** 205 source files, 1219 tests passing, zero type errors, 144 tools.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -389,7 +389,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v5.0 S5c     | Done   | Research verification (provenance tracking, source anchoring, condensation)                                                                                          |
 | v5.0 S5      | Done   | Classifier calibration (dynamic messaging tier, rephrase fix, feedback quality loop, weighted eval scoring)                                                          |
 | v5.0 S6–S8   | Done   | Intelligence Depot (8 sources, delta engine, alert router, baselines, z-scores, 4 Jarvis tools, ritual integration)                                                  |
-| Coding       | Done   | 5 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support                                                         |
+| Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support                                                         |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
 See `docs/V5-ROADMAP.md` for full roadmap and `docs/V5-INTELLIGENCE-DEPOT.md` for upcoming intelligence features.

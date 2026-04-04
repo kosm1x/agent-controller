@@ -117,6 +117,49 @@ describe("git tools", () => {
     });
   });
 
+  describe("resolveWorkDir path validation", () => {
+    it("accepts exact allowed path without trailing slash", async () => {
+      mockExecSync
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main"); // git branch
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/cuatro-flor",
+      });
+      expect(result).toContain("clean");
+    });
+
+    it("accepts subdirectory of allowed path", async () => {
+      mockExecSync
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main"); // git branch
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/cuatro-flor/src",
+      });
+      expect(result).toContain("clean");
+    });
+
+    it("rejects similar-prefix path outside allowed list", async () => {
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/cuatro-flor-other",
+      });
+      expect(result).toContain("must be under an allowed project path");
+    });
+
+    it("blocks mission-control exact path", async () => {
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/mission-control",
+      });
+      expect(result).toContain("blocked");
+    });
+
+    it("blocks mission-control subdirectory", async () => {
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/mission-control/src",
+      });
+      expect(result).toContain("blocked");
+    });
+  });
+
   describe("gh_create_pr", () => {
     it("requires title and body", async () => {
       const r1 = await ghCreatePrTool.execute({ body: "desc" });

@@ -30,15 +30,17 @@ const SENSITIVE_PATTERNS = [
 function resolveWorkDir(cwd?: string): string {
   if (!cwd) return DEFAULT_CWD;
   const resolved = resolve(cwd);
+  // Append slash for prefix matching — "cuatro-flor" must match "cuatro-flor/" but not "cuatro-flor-other/"
+  const withSlash = resolved.endsWith("/") ? resolved : resolved + "/";
   // Deny list first — mission-control is protected
   for (const deny of DENIED_CWD) {
-    if (resolved.startsWith(deny)) {
+    if (withSlash.startsWith(deny)) {
       throw new Error(
         `Git operations blocked on ${deny} — Jarvis cannot modify its own source code. Use a project directory.`,
       );
     }
   }
-  if (!ALLOWED_CWD_PREFIXES.some((p) => resolved.startsWith(p))) {
+  if (!ALLOWED_CWD_PREFIXES.some((p) => withSlash.startsWith(p))) {
     throw new Error(
       `Working directory must be under an allowed project path. Got: ${resolved}. Allowed: ${ALLOWED_CWD_PREFIXES.join(", ")}`,
     );
