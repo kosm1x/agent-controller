@@ -150,12 +150,12 @@
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 8 },
       "id": 5,
       "options": { "tooltip": { "mode": "single" } },
-      "title": "Steal Time (%)",
+      "title": "Provider Success Rate",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "avg(rate(node_cpu_seconds_total{mode=\"steal\"}[5m])) * 100",
-          "legendFormat": "Steal %"
+          "expr": "mc_provider_success_rate",
+          "legendFormat": "{{provider}}"
         }
       ]
     },

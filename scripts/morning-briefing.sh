@@ -2,14 +2,25 @@
 # Morning briefing — sends daily summary to Telegram at 8 AM Mexico City.
 # Cron: 0 14 * * * /root/claude/mission-control/scripts/morning-briefing.sh >> /var/log/mc-briefing.log 2>&1
 
-set -euo pipefail
+set -uo pipefail
 
+# Check dependencies
+for cmd in sqlite3 bc curl; do
+  if ! command -v "$cmd" > /dev/null 2>&1; then
+    echo "[$(date)] ERROR: $cmd not installed, aborting briefing"
+    exit 1
+  fi
+done
+
+# Load Telegram credentials (eval + || true prevents abort on missing pattern)
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_OWNER_CHAT_ID="${TELEGRAM_OWNER_CHAT_ID:-}"
 if [ -f /root/claude/mission-control/.env ]; then
-  export $(grep -E '^TELEGRAM_BOT_TOKEN=|^TELEGRAM_OWNER_CHAT_ID=' /root/claude/mission-control/.env | xargs)
+  eval "$(grep -E '^TELEGRAM_BOT_TOKEN=|^TELEGRAM_OWNER_CHAT_ID=' /root/claude/mission-control/.env 2>/dev/null || true)"
 fi
 
-if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_OWNER_CHAT_ID:-}" ]; then
-  echo "Missing Telegram credentials, skipping briefing"
+if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_OWNER_CHAT_ID}" ]; then
+  echo "[$(date)] Missing Telegram credentials, skipping briefing"
   exit 0
 fi
 
@@ -19,18 +30,22 @@ TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
 
 # --- MC Data ---
-TASKS_COMPLETED=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM tasks WHERE status IN ('completed','completed_with_concerns') AND completed_at >= '${YESTERDAY}' AND completed_at < '${TODAY}';" 2>/dev/null || echo "0")
-TASKS_FAILED=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND completed_at >= '${YESTERDAY}' AND completed_at < '${TODAY}';" 2>/dev/null || echo "0")
+if [ -f "$MC_DB" ]; then
+  TASKS_COMPLETED=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM tasks WHERE status IN ('completed','completed_with_concerns') AND completed_at >= '${YESTERDAY}' AND completed_at < '${TODAY}';" 2>/dev/null || echo "0")
+  TASKS_FAILED=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND completed_at >= '${YESTERDAY}' AND completed_at < '${TODAY}';" 2>/dev/null || echo "0")
+  COST_YESTERDAY=$(sqlite3 "$MC_DB" "SELECT COALESCE(printf('%.2f', SUM(cost_usd)), '0.00') FROM cost_ledger WHERE created_at >= '${YESTERDAY}' AND created_at < '${TODAY}';" 2>/dev/null || echo "0.00")
+  TOP_MODEL=$(sqlite3 "$MC_DB" "SELECT COALESCE(model || ' (\$' || printf('%.2f', SUM(cost_usd)) || ')', 'none') FROM cost_ledger WHERE created_at >= '${YESTERDAY}' AND created_at < '${TODAY}' GROUP BY model ORDER BY SUM(cost_usd) DESC LIMIT 1;" 2>/dev/null || echo "none")
+  CONVERSATIONS=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM conversations WHERE created_at >= '${YESTERDAY}';" 2>/dev/null || echo "0")
+else
+  TASKS_COMPLETED="0"; TASKS_FAILED="0"; COST_YESTERDAY="0.00"; TOP_MODEL="none"; CONVERSATIONS="0"
+fi
+
 TASKS_TOTAL=$((TASKS_COMPLETED + TASKS_FAILED))
 if [ "$TASKS_TOTAL" -gt 0 ]; then
   SUCCESS_PCT=$(echo "scale=1; $TASKS_COMPLETED * 100 / $TASKS_TOTAL" | bc 2>/dev/null || echo "0")
 else
   SUCCESS_PCT="N/A"
 fi
-
-COST_YESTERDAY=$(sqlite3 "$MC_DB" "SELECT COALESCE(printf('%.2f', SUM(cost_usd)), '0.00') FROM cost_ledger WHERE created_at >= '${YESTERDAY}' AND created_at < '${TODAY}';" 2>/dev/null || echo "0.00")
-TOP_MODEL=$(sqlite3 "$MC_DB" "SELECT COALESCE(model || ' (\$' || printf('%.2f', SUM(cost_usd)) || ')', 'none') FROM cost_ledger WHERE created_at >= '${YESTERDAY}' AND created_at < '${TODAY}' GROUP BY model ORDER BY SUM(cost_usd) DESC LIMIT 1;" 2>/dev/null || echo "none")
-CONVERSATIONS=$(sqlite3 "$MC_DB" "SELECT COUNT(*) FROM conversations WHERE created_at >= '${YESTERDAY}';" 2>/dev/null || echo "0")
 
 # --- CRM Data ---
 if [ -f "$CRM_DB" ]; then
@@ -39,10 +54,7 @@ if [ -f "$CRM_DB" ]; then
   PIPELINE_VALUE=$(sqlite3 "$CRM_DB" "SELECT COALESCE(printf('%.1f', SUM(valor_estimado)/1000000.0), '0') FROM propuesta WHERE etapa NOT IN ('completada','perdida','cancelada');" 2>/dev/null || echo "0")
   PIPELINE_COUNT=$(sqlite3 "$CRM_DB" "SELECT COUNT(*) FROM propuesta WHERE etapa NOT IN ('completada','perdida','cancelada');" 2>/dev/null || echo "0")
 else
-  CRM_ACTIVITIES="N/A"
-  CRM_PROPOSALS="N/A"
-  PIPELINE_VALUE="0"
-  PIPELINE_COUNT="0"
+  CRM_ACTIVITIES="N/A"; CRM_PROPOSALS="N/A"; PIPELINE_VALUE="0"; PIPELINE_COUNT="0"
 fi
 
 # --- System Data ---
@@ -53,7 +65,7 @@ UPTIME_DAYS=$(awk '{printf "%.1f", $1/86400}' /proc/uptime)
 # --- Hindsight ---
 HS_STATUS=$(curl -sf http://localhost:8888/health 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unreachable")
 
-# --- Alerts fired yesterday ---
+# --- Alerts currently firing ---
 ALERTS_FIRED=$(curl -s "http://localhost:9090/api/v1/query?query=ALERTS{alertstate='firing'}" 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('data',{}).get('result',[])))" 2>/dev/null || echo "0")
 
 # --- Build message ---

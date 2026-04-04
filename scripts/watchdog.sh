@@ -3,11 +3,18 @@
 # Runs every 5 minutes via cron. Alerts via Telegram ONLY when it intervenes.
 # Cron: */5 * * * * /root/claude/mission-control/scripts/watchdog.sh >> /var/log/watchdog.log 2>&1
 
-set -euo pipefail
+# Lock to prevent concurrent instances
+exec 200>/var/lock/watchdog.lock
+flock -n 200 || exit 0
 
-# Load Telegram credentials
+set -uo pipefail
+# NOTE: not using set -e — we want all checks to run even if one fails
+
+# Load Telegram credentials (grep || true prevents set -u abort on missing pattern)
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_OWNER_CHAT_ID="${TELEGRAM_OWNER_CHAT_ID:-}"
 if [ -f /root/claude/mission-control/.env ]; then
-  export $(grep -E '^TELEGRAM_BOT_TOKEN=|^TELEGRAM_OWNER_CHAT_ID=' /root/claude/mission-control/.env | xargs)
+  eval "$(grep -E '^TELEGRAM_BOT_TOKEN=|^TELEGRAM_OWNER_CHAT_ID=' /root/claude/mission-control/.env 2>/dev/null || true)"
 fi
 
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
@@ -17,11 +24,15 @@ alert() {
   local msg="$1"
   ACTIONS+=("$msg")
   echo "$LOG_PREFIX ACTION: $msg"
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_OWNER_CHAT_ID:-}" ]; then
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_OWNER_CHAT_ID}" ]; then
+    local rc
+    rc=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
       -d chat_id="${TELEGRAM_OWNER_CHAT_ID}" \
       -d parse_mode=HTML \
-      -d text="<b>Watchdog</b>: ${msg}" > /dev/null 2>&1 || true
+      -d text="<b>Watchdog</b>: ${msg}" 2>/dev/null || echo "000")
+    if [ "$rc" != "200" ]; then
+      echo "$LOG_PREFIX WARNING: Telegram alert failed (HTTP $rc)"
+    fi
   fi
 }
 
@@ -43,21 +54,22 @@ MC_HEALTH=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8080/health
 if [ "$MC_HEALTH" != "200" ]; then
   systemctl restart mission-control
   sleep 5
-  alert "Mission Control health check failed (HTTP $MC_HEALTH), restarted"
+  MC_HEALTH2=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
+  alert "MC health failed (HTTP $MC_HEALTH), restarted. Now: HTTP $MC_HEALTH2"
 fi
 
 # --- Check 3: Hindsight health ---
 HS_HEALTH=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8888/health 2>/dev/null || echo "000")
 if [ "$HS_HEALTH" != "200" ]; then
-  docker restart crm-hindsight
+  docker restart crm-hindsight 2>/dev/null || true
   sleep 10
-  alert "Hindsight health check failed (HTTP $HS_HEALTH), container restarted"
+  alert "Hindsight health failed (HTTP $HS_HEALTH), container restarted"
 fi
 
-# --- Check 4: Hindsight CPU ---
-HS_CPU=$(docker stats --no-stream --format "{{.CPUPerc}}" crm-hindsight 2>/dev/null | tr -d '%' | cut -d. -f1)
+# --- Check 4: Hindsight CPU (with timeout to prevent hang on stopped container) ---
+HS_CPU=$(timeout 10 docker stats --no-stream --format "{{.CPUPerc}}" crm-hindsight 2>/dev/null | tr -d '%' | cut -d. -f1 || echo "0")
 if [ -n "$HS_CPU" ] && [ "$HS_CPU" -gt 95 ] 2>/dev/null; then
-  docker restart crm-hindsight
+  docker restart crm-hindsight 2>/dev/null || true
   sleep 10
   alert "Hindsight CPU at ${HS_CPU}%, container restarted"
 fi
@@ -65,7 +77,6 @@ fi
 # --- Check 5: Disk usage ---
 DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
 if [ "$DISK_PCT" -gt 90 ]; then
-  # Auto-remediate: run retention + prune docker
   /root/claude/mission-control/scripts/retention.sh > /dev/null 2>&1 || true
   docker system prune -f > /dev/null 2>&1 || true
   NEW_DISK=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
