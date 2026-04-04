@@ -199,9 +199,84 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
         return "Error: GitHub auth not configured. Run `gh auth login` first.";
       }
 
+      // Verify remote exists
+      try {
+        const remote = run("git remote get-url origin 2>&1");
+        if (remote.includes("github.com")) {
+          // Extract owner/repo and verify it exists
+          const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+          if (match) {
+            try {
+              run(`gh repo view ${match[1]} --json name 2>&1`);
+            } catch {
+              return `Error: Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`;
+            }
+          }
+        }
+      } catch {
+        return "Error: No remote 'origin' configured. Use shell_exec to add one.";
+      }
+
       const branch = run("git branch --show-current");
       const result = run(`git push origin ${branch} 2>&1`, 60_000);
       return result || `Pushed ${branch} to origin.`;
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+export const ghRepoCreateTool: Tool = {
+  name: "gh_repo_create",
+  definition: {
+    type: "function",
+    function: {
+      name: "gh_repo_create",
+      description: `Create a new GitHub repository. MUST be called before git_push if the remote repo doesn't exist yet.
+
+USE WHEN:
+- Starting a new project that needs a GitHub repo
+- Before first git_push on a new codebase
+- User asks to "create a repo" or "push to a new repo"
+
+Creates the repo on GitHub and sets the remote origin. Does NOT push code — use git_push after.`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Repository name (e.g. 'my-project'). Will be created under the authenticated user.",
+          },
+          description: {
+            type: "string",
+            description: "Short repo description (optional).",
+          },
+          private: {
+            type: "boolean",
+            description: "Create as private repo (default: false = public).",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    try {
+      const name = args.name as string;
+      if (!name) return "Error: name is required.";
+
+      const desc = args.description
+        ? `--description "${(args.description as string).replace(/"/g, '\\"')}"`
+        : "";
+      const visibility = args.private ? "--private" : "--public";
+
+      const result = run(
+        `gh repo create ${name} ${visibility} ${desc} --confirm 2>&1`.trim(),
+        30_000,
+      );
+      return result || `Created repository ${name}.`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
     }

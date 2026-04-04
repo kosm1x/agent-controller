@@ -89,6 +89,7 @@ import {
   gitDiffTool,
   gitCommitTool,
   gitPushTool,
+  ghRepoCreateTool,
   ghCreatePrTool,
 } from "../builtin/git.js";
 import type { Tool } from "../types.js";
@@ -138,6 +139,7 @@ const BUILTIN_TOOLS: Tool[] = [
   gitDiffTool,
   gitCommitTool,
   gitPushTool,
+  ghRepoCreateTool,
   ghCreatePrTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,

@@ -66,6 +66,7 @@ export const CODING_TOOLS = [
   "git_diff",
   "git_commit",
   "git_push",
+  "gh_repo_create",
   "gh_create_pr",
 ];
 
