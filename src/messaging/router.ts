@@ -10,6 +10,17 @@ import { submitTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { getFile, upsertFile } from "../db/jarvis-fs.js";
+import {
+  shouldEnhance,
+  checkToggle,
+  isWaitingForAnswers,
+  getOriginalMessage,
+  getQuestions,
+  clearEnhancerState,
+  setWaiting,
+  analyzePrompt,
+  buildEnhancedPrompt,
+} from "./prompt-enhancer.js";
 import type { Event } from "../lib/events/types.js";
 import type {
   TaskCompletedPayload,
@@ -641,6 +652,67 @@ export class MessageRouter {
 
     // Day log: record user message (mechanical, no LLM)
     appendDayLog("USER", msg.text);
+
+    // Prompt enhancer toggle commands
+    const toggleResult = checkToggle(msg.text);
+    if (toggleResult !== null) {
+      this.sendToChannel(
+        msg.channel,
+        msg.from,
+        `🔍 Prompt enhancer: ${toggleResult ? "ACTIVADO" : "DESACTIVADO"}`,
+      );
+      return;
+    }
+
+    // Prompt enhancer: if waiting for answers, build enhanced prompt
+    if (isWaitingForAnswers(msg.channel)) {
+      const original = getOriginalMessage(msg.channel)!;
+      const questions = getQuestions(msg.channel);
+      clearEnhancerState(msg.channel);
+
+      console.log(
+        `[enhancer] Building enhanced prompt from answers: "${msg.text.slice(0, 60)}"`,
+      );
+      const enhanced = await buildEnhancedPrompt(original, questions, msg.text);
+      console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
+
+      // Show the user what Jarvis will receive
+      this.sendToChannel(
+        msg.channel,
+        msg.from,
+        `🔍 *Prompt optimizado:*\n${enhanced.slice(0, 500)}${enhanced.length > 500 ? "..." : ""}`,
+      );
+
+      // Replace the message text with the enhanced version
+      msg.text = enhanced;
+    }
+    // Prompt enhancer: check if new message needs enhancement
+    else if (shouldEnhance(msg.text)) {
+      const threadTurns = getThreadTurns(msg.channel);
+      const recentContext = threadTurns
+        .slice(-4)
+        .map((t) => `${t.role}: ${t.content.slice(0, 200)}`)
+        .join("\n");
+
+      console.log(`[enhancer] Analyzing: "${msg.text.slice(0, 60)}"`);
+      const analysis = await analyzePrompt(msg.text, recentContext);
+
+      if (analysis !== "PASS" && !analysis.startsWith("PASS")) {
+        // Send questions to user, wait for answers
+        setWaiting(msg.channel, msg.text, analysis);
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          `🔍 Antes de proceder:\n\n${analysis}`,
+        );
+        console.log(
+          `[enhancer] Asking ${analysis.split("\n").length} questions`,
+        );
+        return;
+      }
+      // PASS — continue with original message
+      console.log("[enhancer] PASS — message is clear enough");
+    }
 
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
