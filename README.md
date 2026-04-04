@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v5.0 COMPLETE.** 214 source files, 1244 tests passing, zero type errors, 150 tools. Unified FS, Intel Depot, Video Production, Coding, Self-Tuning, Prompt Enhancer — all shipped.
+**v5.0 COMPLETE.** 214 source files, 1250 tests passing, zero type errors, 150 tools. Unified FS, Intel Depot, Video Production, Coding, Self-Tuning, Prompt Enhancer — all shipped.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
