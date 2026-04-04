@@ -1116,10 +1116,11 @@ export async function inferWithTools(
       // First-round tool-skip guard: if the LLM responds without calling ANY
       // tools on the very first round when tools are available, nudge it.
       // The weaker fallback model (qwen3-coder-plus) consistently skips tools
-      // and fabricates responses. This guard catches ALL first-round skips
-      // when the response is substantial (>200 chars) and tools exist.
+      // and gives short refusals ("no tengo esa herramienta", 52 chars).
+      // Catch ALL first-round text responses when tools are available.
+      // Only skip truly tiny responses (<20 chars — emoji acks, "ok", etc.)
       const hasTools = (tools?.length ?? 0) > 0;
-      if (round === 0 && hasTools && content.length > 200) {
+      if (round === 0 && hasTools && content.length > 20) {
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );
