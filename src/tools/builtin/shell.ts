@@ -73,6 +73,7 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
  *  Jarvis can read anything but writes are restricted to project dirs.
  *  /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code). */
 const ALLOW_WRITE_PREFIXES = [
+  "/root/claude/jarvis-kb/",
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
   "/tmp/",

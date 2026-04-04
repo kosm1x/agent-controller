@@ -12,6 +12,7 @@ const MAX_READ = 50_000; // chars
 // /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code).
 // Granted: project workspaces, tmp, user directories.
 const ALLOW_WRITE_PREFIXES = [
+  "/root/claude/jarvis-kb/",
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
   "/tmp/",

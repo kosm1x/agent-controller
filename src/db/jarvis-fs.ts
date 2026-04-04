@@ -13,7 +13,9 @@ import { getDatabase } from "./index.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-const MIRROR_DIR = join(process.cwd(), "data", "jarvis");
+// Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
+// This is readable/writable by Jarvis's file_read/file_write tools.
+const MIRROR_DIR = "/root/claude/jarvis-kb";
 
 // ---------------------------------------------------------------------------
 // Types
