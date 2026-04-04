@@ -217,8 +217,25 @@ Verifies GitHub auth before pushing. Pushes current branch to origin.`,
         return "Error: No remote 'origin' configured. Use shell_exec to add one.";
       }
 
-      const branch = run("git branch --show-current");
-      const result = run(`git push origin ${branch} 2>&1`, 60_000);
+      // Ensure branch is named 'main' (git init defaults to 'master')
+      let branch = run("git branch --show-current");
+      if (branch === "master") {
+        run("git branch -M main");
+        branch = "main";
+      }
+
+      // Fetch + rebase to avoid push rejection from diverged remote
+      try {
+        run("git fetch origin 2>&1", 15_000);
+        const remoteBranches = run("git branch -r 2>&1");
+        if (remoteBranches.includes(`origin/${branch}`)) {
+          run(`git rebase origin/${branch} 2>&1`, 30_000);
+        }
+      } catch {
+        // First push to empty repo — no remote branch yet, safe to proceed
+      }
+
+      const result = run(`git push -u origin ${branch} 2>&1`, 60_000);
       return result || `Pushed ${branch} to origin.`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
