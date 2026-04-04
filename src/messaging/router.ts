@@ -688,12 +688,8 @@ export class MessageRouter {
       );
       console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
 
-      // Show the user what Jarvis will receive
-      this.sendToChannel(
-        msg.channel,
-        msg.from,
-        `🔍 *Prompt optimizado:*\n${enhanced.slice(0, 500)}${enhanced.length > 500 ? "..." : ""}`,
-      );
+      // Show the enhanced prompt and acknowledge
+      this.sendToChannel(msg.channel, msg.from, `🔍 Procesando...`);
 
       // Replace the message text with the enhanced version
       msg.text = enhanced;
