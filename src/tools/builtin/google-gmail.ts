@@ -21,11 +21,18 @@ export const gmailSendTool: Tool = {
       description: `Send an email from Jarvis's Gmail account.
 
 USE WHEN:
-- The user asks to send an email, forward information, or share something via email
-- You need to notify someone on behalf of the user
+- The user EXPLICITLY asks to send an email ("envía un correo a...", "manda un email")
+- You need to share research results or reports BY USER REQUEST
 
 DO NOT USE WHEN:
-- The user is asking about received emails (use gmail_search instead)`,
+- The user asks about received emails (use gmail_search)
+- The user asks to "verify" or "check" email status (use gmail_search, NEVER send)
+- You are doing research (NEVER send emails to researchers/contacts during research tasks)
+- The user did not explicitly ask you to send an email
+
+CRITICAL: Sending unsolicited emails is a SERIOUS violation. NEVER send an email
+unless the user explicitly requested it in the current message. "Verify the email"
+means SEARCH, not SEND.`,
       parameters: {
         type: "object",
         properties: {
@@ -127,6 +134,11 @@ export const gmailSearchTool: Tool = {
 USE WHEN:
 - The user asks about received emails, recent messages, or to find a specific email
 - You need to check if an email was received from someone
+- User asks to "verify" email status
+
+CRITICAL: Report ONLY what the search returns. If the result is 0 emails, say "0 results found."
+NEVER fabricate, infer, or claim emails exist that weren't in the search results.
+If no emails match, the answer is "no emails found" — not a story about what might have been sent.
 
 Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unread, has:attachment`,
       parameters: {
