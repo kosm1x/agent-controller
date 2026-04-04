@@ -5,7 +5,8 @@
  * Uses execSync with timeouts. Refuses to stage sensitive files.
  */
 
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
+import { resolve } from "path";
 import type { Tool } from "../types.js";
 
 const DEFAULT_CWD = "/root/claude/mission-control";
@@ -21,14 +22,32 @@ const SENSITIVE_PATTERNS = [
 
 function resolveWorkDir(cwd?: string): string {
   if (!cwd) return DEFAULT_CWD;
-  if (!ALLOWED_CWD_PREFIXES.some((p) => cwd.startsWith(p))) {
+  // Resolve to absolute, then check prefix (prevents ../../../ etc traversal)
+  const resolved = resolve(cwd);
+  if (!ALLOWED_CWD_PREFIXES.some((p) => resolved.startsWith(p))) {
     throw new Error(
-      `Working directory must be under /root/claude/. Got: ${cwd}`,
+      `Working directory must be under /root/claude/. Got: ${resolved}`,
     );
   }
-  return cwd;
+  return resolved;
 }
 
+/** Safe exec: uses execFileSync with array args to prevent shell injection. */
+function runArgs(
+  cmd: string,
+  args: string[],
+  timeout = 30_000,
+  cwd?: string,
+): string {
+  return execFileSync(cmd, args, {
+    cwd: resolveWorkDir(cwd),
+    encoding: "utf-8" as const,
+    timeout,
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+}
+
+/** Shell exec for simple commands with no user input (safe). */
 function run(cmd: string, timeout = 30_000, cwd?: string): string {
   return execSync(cmd, {
     cwd: resolveWorkDir(cwd),
@@ -115,9 +134,10 @@ Returns unified diff. Use staged=true to see staged changes.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
       const cwd = args.cwd as string | undefined;
-      const staged = args.staged ? "--cached" : "";
-      const file = args.file ? `-- ${args.file}` : "";
-      const diff = run(`git diff ${staged} ${file}`.trim(), 15_000, cwd);
+      const diffArgs = ["diff"];
+      if (args.staged) diffArgs.push("--cached");
+      if (args.file) diffArgs.push("--", args.file as string);
+      const diff = runArgs("git", diffArgs, 15_000, cwd);
       if (!diff) return "No changes.";
       return diff.length > 5000
         ? diff.slice(0, 5000) + "\n... (truncated)"
@@ -188,21 +208,16 @@ CRITICAL: cwd MUST be set to the project directory you wrote files to. Do NOT om
         }
       }
 
-      // Stage files
-      const fileList = files.join(" ");
-      run(`git add ${fileList}`, 30_000, cwd);
+      // Stage files (execFileSync — no shell injection from file paths)
+      runArgs("git", ["add", ...files], 30_000, cwd);
 
       // Check there's something to commit
       const staged = run("git diff --cached --stat", 30_000, cwd);
       if (!staged)
         return "Nothing staged to commit. Did you specify the right files?";
 
-      // Commit
-      const result = run(
-        `git commit -m "${message.replace(/"/g, '\\"')}"`,
-        30_000,
-        cwd,
-      );
+      // Commit (execFileSync — message as arg, no shell injection)
+      const result = runArgs("git", ["commit", "-m", message], 30_000, cwd);
       return result;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
@@ -331,15 +346,13 @@ Creates the repo on GitHub and sets the remote origin. Does NOT push code — us
       const name = args.name as string;
       if (!name) return "Error: name is required.";
 
-      const desc = args.description
-        ? `--description "${(args.description as string).replace(/"/g, '\\"')}"`
-        : "";
-      const visibility = args.private ? "--private" : "--public";
+      const ghArgs = ["repo", "create", name];
+      ghArgs.push(args.private ? "--private" : "--public");
+      if (args.description)
+        ghArgs.push("--description", args.description as string);
+      ghArgs.push("--confirm");
 
-      const result = run(
-        `gh repo create ${name} ${visibility} ${desc} --confirm 2>&1`.trim(),
-        30_000,
-      );
+      const result = runArgs("gh", ghArgs, 30_000);
       return result || `Created repository ${name}.`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
@@ -391,8 +404,9 @@ Returns the PR URL on success.`,
       if (!title) return "Error: title is required.";
       if (!body) return "Error: body is required.";
 
-      const result = run(
-        `gh pr create --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" --base ${base} 2>&1`,
+      const result = runArgs(
+        "gh",
+        ["pr", "create", "--title", title, "--body", body, "--base", base],
         60_000,
       );
       return result;

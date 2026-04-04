@@ -96,9 +96,19 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
     }
   }
 
-  // Add volume mounts
+  // Add volume mounts (validated: host path must be under /root/claude/ or /tmp/)
   if (opts.volumes) {
     for (const vol of opts.volumes) {
+      const hostPath = vol.split(":")[0];
+      if (
+        !hostPath.startsWith("/root/claude/") &&
+        !hostPath.startsWith("/tmp/")
+      ) {
+        console.warn(
+          `[container] Blocked volume mount outside allowed paths: ${vol}`,
+        );
+        continue;
+      }
       args.push("-v", vol);
     }
   }

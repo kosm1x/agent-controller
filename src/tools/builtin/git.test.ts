@@ -5,8 +5,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 const mockExecSync = vi.fn().mockReturnValue("");
+const mockExecFileSync = vi.fn().mockReturnValue("");
 vi.mock("child_process", () => ({
   execSync: (...args: unknown[]) => mockExecSync(...args),
+  execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 }));
 
 import {
@@ -21,6 +23,7 @@ describe("git tools", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     mockExecSync.mockReturnValue("");
+    mockExecFileSync.mockReturnValue("");
   });
 
   describe("git_status", () => {
@@ -43,13 +46,13 @@ describe("git tools", () => {
 
   describe("git_diff", () => {
     it("returns diff output", async () => {
-      mockExecSync.mockReturnValue("diff --git a/foo.ts\n+new line");
+      mockExecFileSync.mockReturnValue("diff --git a/foo.ts\n+new line");
       const result = await gitDiffTool.execute({});
       expect(result).toContain("+new line");
     });
 
     it("truncates long diffs", async () => {
-      mockExecSync.mockReturnValue("x".repeat(6000));
+      mockExecFileSync.mockReturnValue("x".repeat(6000));
       const result = await gitDiffTool.execute({});
       expect(result).toContain("truncated");
       expect(result.length).toBeLessThan(5200);
@@ -83,10 +86,10 @@ describe("git tools", () => {
     });
 
     it("stages and commits when valid", async () => {
-      mockExecSync
-        .mockReturnValueOnce("") // git add
-        .mockReturnValueOnce("1 file changed") // git diff --cached --stat
-        .mockReturnValueOnce("[main abc1234] test commit"); // git commit
+      mockExecFileSync
+        .mockReturnValueOnce("") // git add (execFileSync)
+        .mockReturnValueOnce("[main abc1234] test commit"); // git commit (execFileSync)
+      mockExecSync.mockReturnValueOnce("1 file changed"); // git diff --cached --stat (execSync)
       const result = await gitCommitTool.execute({
         files: ["src/foo.ts"],
         message: "test commit",
@@ -124,7 +127,7 @@ describe("git tools", () => {
     });
 
     it("creates PR with correct args", async () => {
-      mockExecSync.mockReturnValue(
+      mockExecFileSync.mockReturnValue(
         "https://github.com/kosm1x/agent-controller/pull/42",
       );
       const result = await ghCreatePrTool.execute({

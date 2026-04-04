@@ -155,18 +155,25 @@ export async function analyzePrompt(
 ): Promise<string> {
   try {
     const { infer } = await import("../inference/adapter.js");
-    const result = await infer({
-      messages: [
-        { role: "system", content: ENHANCER_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: recentContext
-            ? `Contexto reciente:\n${recentContext}\n\nMensaje del usuario:\n${userMessage}`
-            : `Mensaje del usuario:\n${userMessage}`,
-        },
-      ],
-      max_tokens: 200,
-    });
+    // 10s deadline — if LLM is slow, pass through rather than block
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("enhancer timeout")), 10_000),
+    );
+    const result = await Promise.race([
+      infer({
+        messages: [
+          { role: "system", content: ENHANCER_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: recentContext
+              ? `Contexto reciente:\n${recentContext}\n\nMensaje del usuario:\n${userMessage}`
+              : `Mensaje del usuario:\n${userMessage}`,
+          },
+        ],
+        max_tokens: 200,
+      }),
+      deadline,
+    ]);
 
     return (result.content ?? "PASS").trim();
   } catch {
@@ -208,16 +215,22 @@ export async function buildEnhancedPrompt(
 ): Promise<string> {
   try {
     const { infer } = await import("../inference/adapter.js");
-    const result = await infer({
-      messages: [
-        { role: "system", content: BUILDER_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `MENSAJE ORIGINAL:\n${originalMessage}\n\nPREGUNTAS QUE SE HICIERON:\n${questions}\n\nRESPUESTAS DEL USUARIO:\n${answers}`,
-        },
-      ],
-      max_tokens: 500,
-    });
+    const builderDeadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("builder timeout")), 15_000),
+    );
+    const result = await Promise.race([
+      infer({
+        messages: [
+          { role: "system", content: BUILDER_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `MENSAJE ORIGINAL:\n${originalMessage}\n\nPREGUNTAS QUE SE HICIERON:\n${questions}\n\nRESPUESTAS DEL USUARIO:\n${answers}`,
+          },
+        ],
+        max_tokens: 500,
+      }),
+      builderDeadline,
+    ]);
 
     return (result.content ?? "").trim() || originalMessage;
   } catch {
