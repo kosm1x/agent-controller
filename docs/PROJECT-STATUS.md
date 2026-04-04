@@ -12,11 +12,11 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric        | Value                                                                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 205                                                                                                                                                                                                            |
-| Test files    | 96                                                                                                                                                                                                             |
-| Tests passing | 1204                                                                                                                                                                                                           |
+| Source files  | 214                                                                                                                                                                                                            |
+| Test files    | 98                                                                                                                                                                                                             |
+| Tests passing | 1228                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
-| Total tools   | 144 (65 builtin + 55 MCP [10 browser + 21 playwright + 24 other] + 19 Google + 3 memory + 2 skill)                                                                                                             |
+| Total tools   | 150 (71 builtin + 55 MCP [10 browser + 21 playwright + 24 other] + 19 Google + 3 memory + 2 skill)                                                                                                             |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status

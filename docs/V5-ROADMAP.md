@@ -2,7 +2,7 @@
 
 > Based on [V5-NORTHSTAR.md](./V5-NORTHSTAR.md) (full design doc with code examples, open questions, and external pattern sources) + v4.0.18 QA audit findings + 4 external repo evaluations.
 >
-> Last updated: 2026-04-03 — S1a, S1b, S2, S4, S5, S5b, S5c, S6, S7, S8 complete. Intelligence Depot fully shipped (8 sources, alerts, baselines, 4 Jarvis tools, ritual integration).
+> Last updated: 2026-04-04 — **v5.0 COMPLETE.** All sessions shipped: S1a, S1b, S2, S4, S5, S5b, S5c, S5d, S6, S7, S8 + NorthStar + Unified FS + Coding + Self-Tuning + Prompt Enhancer + Video Production.
 
 ## Status Key
 
@@ -183,15 +183,14 @@
 
 > Source: [OpenMontage](https://github.com/calesthio/OpenMontage) — clean-room TS reimplementation (no AGPLv3).
 
-| Item                                                                                                                                                                             | Source      | Effort | Status  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------ | ------- |
-| VideoToolSource (~10 tools): video_create, video_status, video_script, video_tts, video_image, video_compose, video_stitch, video_audio_mix, video_subtitle, video_list_profiles | OpenMontage | 2d     | Planned |
-| Remotion composer (React/TS) — image sequence + audio + subtitles + transitions                                                                                                  | OpenMontage | 1d     | Planned |
-| Provider cascade: Tier 0 (Pexels+Piper, free) → Tier 1 (FLUX) → Tier 2 (ElevenLabs) → Tier 3 (AI video)                                                                          | OpenMontage | Incl.  | Planned |
-| SQLite `video_jobs` table, CONFIRMATION_REQUIRED, 24h auto-cleanup                                                                                                               | —           | 0.5d   | Planned |
-| `video` scope group with keyword gating                                                                                                                                          | —           | 1h     | Planned |
+| Item                                                                                         | Source      | Effort | Status   |
+| -------------------------------------------------------------------------------------------- | ----------- | ------ | -------- |
+| 6 video tools (create, status, script, tts, image, list_profiles) + FFmpeg compose pipeline  | OpenMontage | 1d     | **Done** |
+| Tier 0 provider cascade: Pexels stock + Gemini/edge-tts + FFmpeg compose (free, no API keys) | OpenMontage | Incl.  | **Done** |
+| video_jobs SQLite table, CONFIRMATION_REQUIRED, concurrency gate (max 2), 24h TTL cleanup    | —           | 0.5d   | **Done** |
+| VIDEO_TOOLS scope group with keyword gating                                                  | —           | 0.5h   | **Done** |
 
-**Exit criteria:** "Hazme un video de 60s explicando X" → MP4 delivered via Telegram.
+**Exit criteria:** "Hazme un video de 60s explicando X" → MP4. Shipped with FFmpeg-only composition (Remotion deferred to Tier 1 upgrade).
 
 ---
 
@@ -222,9 +221,9 @@
 
 | Metric              | v4.0 Final                | v5.0 Current                             | v5.0 Target                  |
 | ------------------- | ------------------------- | ---------------------------------------- | ---------------------------- |
-| Tests               | 903                       | 1192                                     | Done                         |
-| Test files          | 74                        | 95                                       | Done                         |
-| Tools               | 137                       | 138                                      | ~145 (+video)                |
+| Tests               | 903                       | 1228                                     | Done                         |
+| Test files          | 74                        | 98                                       | Done                         |
+| Tools               | 137                       | 150                                      | Done                         |
 | Doom-loop detection | String-match              | 4-layer (JSON, cycles, chant, n-gram)    | Done                         |
 | Escalation          | Binary (nudge→wrap)       | 4-level ladder                           | Done                         |
 | Circuit breakers    | None                      | Per-service CLOSED/OPEN/HALF_OPEN        | Done                         |
