@@ -559,7 +559,7 @@ function hydrateThreadIfNeeded(channel: string): void {
 // No LLM involvement, no scheduled task — direct fs write on every message.
 // ---------------------------------------------------------------------------
 
-const DAY_LOG_DIR = resolve("data", "jarvis", "day-logs");
+const DAY_LOG_DIR = resolve("memory", "day-logs");
 
 function appendDayLog(role: "USER" | "JARVIS", text: string): void {
   try {
