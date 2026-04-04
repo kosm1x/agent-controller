@@ -11,6 +11,8 @@ import { getDatabase, writeWithRetry } from "../../db/index.js";
 import type { VideoJobRow } from "../../video/types.js";
 import { VIDEO_PROFILES } from "../../video/types.js";
 
+const MAX_CONCURRENT_JOBS = 2;
+
 // ---------------------------------------------------------------------------
 // DB helpers
 // ---------------------------------------------------------------------------
@@ -45,12 +47,22 @@ function updateJob(
   }>,
 ): void {
   const db = getDatabase();
+  const ALLOWED_COLUMNS = new Set([
+    "status",
+    "script_json",
+    "assets_json",
+    "output_file",
+    "error_message",
+    "completed_at",
+  ]);
   const sets: string[] = [];
   const values: unknown[] = [];
   for (const [key, val] of Object.entries(updates)) {
+    if (!ALLOWED_COLUMNS.has(key)) continue; // skip unknown columns
     sets.push(`${key} = ?`);
     values.push(val);
   }
+  if (sets.length === 0) return;
   values.push(jobId);
   writeWithRetry(() =>
     db
@@ -117,6 +129,39 @@ Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels)
   async execute(args: Record<string, unknown>): Promise<string> {
     const topic = args.topic as string;
     if (!topic) return JSON.stringify({ error: "topic is required" });
+
+    // Lazy cleanup of expired jobs (24h TTL)
+    try {
+      const expired = getDatabase()
+        .prepare(
+          "SELECT job_id FROM video_jobs WHERE expires_at < datetime('now') AND status IN ('completed','failed')",
+        )
+        .all() as Array<{ job_id: string }>;
+      for (const { job_id } of expired) {
+        import("../../video/composer.js")
+          .then((m) => m.cleanupJob(job_id))
+          .catch(() => {});
+        getDatabase()
+          .prepare("DELETE FROM video_jobs WHERE job_id = ?")
+          .run(job_id);
+      }
+    } catch {
+      /* non-fatal */
+    }
+
+    // Concurrency gate
+    const activeCount = (
+      getDatabase()
+        .prepare(
+          "SELECT COUNT(*) as cnt FROM video_jobs WHERE status IN ('scripting','generating_assets','composing')",
+        )
+        .get() as { cnt: number }
+    ).cnt;
+    if (activeCount >= MAX_CONCURRENT_JOBS) {
+      return JSON.stringify({
+        error: `Too many active video jobs (${activeCount}/${MAX_CONCURRENT_JOBS}). Wait for current jobs to finish.`,
+      });
+    }
 
     const duration = Math.min(120, Math.max(15, Number(args.duration) || 60));
     const template = (args.template as string) || "landscape";

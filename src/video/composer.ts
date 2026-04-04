@@ -3,7 +3,7 @@
  */
 
 import { execFileSync } from "child_process";
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import type { VideoScript } from "./types.js";
 import { VIDEO_PROFILES } from "./types.js";
@@ -111,9 +111,14 @@ export function composeVideo(opts: {
 
   // Burn subtitles if the file exists and has content
   if (existsSync(subtitleFile)) {
+    // Escape path for FFmpeg filter syntax (colons, backslashes, single quotes)
+    const escapedPath = subtitleFile
+      .replace(/\\/g, "\\\\")
+      .replace(/:/g, "\\:")
+      .replace(/'/g, "\\'");
     ffmpegArgs.push(
       "-vf",
-      `subtitles=${subtitleFile}:force_style='FontSize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,Outline=2'`,
+      `subtitles=${escapedPath}:force_style='FontSize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,Outline=2'`,
     );
   }
 
@@ -133,7 +138,6 @@ export function composeVideo(opts: {
 export function cleanupJob(jobId: string): void {
   const workDir = join("/tmp", "video-jobs", jobId);
   try {
-    const { rmSync } = require("fs");
     rmSync(workDir, { recursive: true, force: true });
   } catch {
     // non-fatal
