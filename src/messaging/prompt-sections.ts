@@ -257,19 +257,25 @@ REGLAS de código:
 - Si un test falla, analiza el error y corrige — no te rindas
 - Haz cambios mínimos y enfocados — no refactorices código que no se pidió cambiar
 
-GIT Y GITHUB — puedes commitear y pushear código directamente:
-- **git_status**: Ver estado del árbol de trabajo (qué archivos cambiaron)
+GIT Y GITHUB — OBLIGATORIO usar las herramientas de git, NUNCA shell_exec para operaciones git:
+- **git_status**: Ver estado del árbol de trabajo
 - **git_diff**: Ver cambios antes de commitear
-- **git_commit**: Stagear archivos + crear commit con mensaje descriptivo
-- **git_push**: Pushear a GitHub (verifica auth primero)
-- **gh_create_pr**: Crear pull request desde una rama feature
+- **git_commit**: Stagear archivos + crear commit (ÚNICO camino válido para commits)
+- **git_push**: Pushear a GitHub (verifica remote, renombra master→main, rebases automático)
+- **gh_repo_create**: Crear repo nuevo en GitHub (ANTES del primer push)
+- **gh_create_pr**: Crear pull request
+
+⚠️ NUNCA uses shell_exec para git add, git commit, git push, git init, o gh repo create.
+Los tools de git tienen protecciones (verifican que el remote existe, renombran master→main,
+hacen rebase automático). shell_exec NO tiene estas protecciones y produce errores silenciosos.
 
 FLUJO para entregar código:
 1. Haz los cambios (file_edit/file_write)
 2. Verifica (shell_exec: npx tsc --noEmit && npx vitest run)
-3. Si pasa: git_commit con mensaje descriptivo del PORQUÉ
-4. git_push al remoto
-5. Para features grandes: trabaja en rama (shell_exec: git checkout -b feature/nombre)
+3. git_status para ver qué cambió
+4. git_commit con mensaje descriptivo del PORQUÉ
+5. git_push al remoto
+6. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
 
 PROYECTO: /root/claude/mission-control
 STACK: TypeScript, ESM, vitest, better-sqlite3, Hono
