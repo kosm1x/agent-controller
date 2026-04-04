@@ -9,6 +9,7 @@
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
 import { getEventBus } from "../lib/event-bus.js";
+import { getFile, upsertFile } from "../db/jarvis-fs.js";
 import type { Event } from "../lib/events/types.js";
 import type {
   TaskCompletedPayload,
@@ -572,19 +573,13 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
     const path = `memory/day-logs/${date}.md`;
     const entry = `- [${time}] **${role}**: ${text.slice(0, 500).replace(/\n/g, " ")}\n`;
 
-    // Dynamic import to avoid circular deps at module load
-    import("../db/jarvis-fs.js")
-      .then(({ getFile, upsertFile }) => {
-        const existing = getFile(path);
-        const content = existing
-          ? existing.content + entry
-          : `# Day Log: ${date}\n\n${entry}`;
+    // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
+    const existing = getFile(path);
+    const content = existing
+      ? existing.content + entry
+      : `# Day Log: ${date}\n\n${entry}`;
 
-        upsertFile(path, `Day Log: ${date}`, content, ["day-log"], "workspace");
-      })
-      .catch(() => {
-        /* non-fatal */
-      });
+    upsertFile(path, `Day Log: ${date}`, content, ["day-log"], "workspace");
   } catch {
     // Non-fatal — never block message processing for logging
   }
