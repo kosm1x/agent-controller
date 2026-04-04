@@ -476,7 +476,14 @@ export const fastRunner: Runner = {
       t.startsWith("playwright__"),
     );
     const hasCodingTools = input.tools?.some((t) =>
-      ["file_edit", "grep", "glob"].includes(t),
+      [
+        "file_edit",
+        "grep",
+        "glob",
+        "git_commit",
+        "git_push",
+        "shell_exec",
+      ].includes(t),
     );
     const maxRounds = hasPlaywright
       ? MAX_ROUNDS_BROWSER
