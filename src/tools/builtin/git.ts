@@ -246,7 +246,7 @@ Creates the repo on GitHub and sets the remote origin. Does NOT push code — us
           name: {
             type: "string",
             description:
-              "Repository name (e.g. 'my-project'). Will be created under the authenticated user.",
+              "Repository name (e.g. 'my-project'). For org repos use 'org-name/repo-name'.",
           },
           description: {
             type: "string",
