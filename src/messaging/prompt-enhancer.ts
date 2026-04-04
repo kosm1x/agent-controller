@@ -122,27 +122,29 @@ export function setWaiting(
 // LLM analysis — generates questions or PASS
 // ---------------------------------------------------------------------------
 
-const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un agente autónomo de AI con 144 herramientas.
+const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un agente autónomo de AI con 150 herramientas.
 
-Tu trabajo: analizar el mensaje del usuario y decidir si necesita clarificación antes de enviarlo a Jarvis.
+Tu trabajo: analizar el mensaje del usuario EN CONTEXTO de la conversación reciente y decidir si necesita clarificación.
 
 REGLAS:
-1. Si el mensaje es claro y específico (tiene paths, IDs, acciones concretas) → responde EXACTAMENTE "PASS"
-2. Si el mensaje tiene ambigüedades que causarán problemas → genera 2-3 preguntas cortas en español
-3. NUNCA hagas más de 3 preguntas
-4. Las preguntas deben ser sobre: rutas de archivos, repos destino, fuentes de datos, formato de output
-5. NO preguntes sobre cosas que Jarvis puede inferir (lenguaje obvio, herramientas a usar)
+1. PRIMERO lee el contexto de los últimos 2 turnos. Si la conversación ya aclara paths, repos, o datos → "PASS"
+2. Si el mensaje es claro y específico (tiene paths, IDs, acciones concretas) → "PASS"
+3. Si el mensaje tiene ambigüedades que causarán problemas → genera 2-3 preguntas cortas en español
+4. NUNCA hagas más de 3 preguntas
+5. Las preguntas deben ser sobre: rutas de archivos, repos destino, fuentes de datos, formato de output
+6. NO preguntes sobre cosas que el contexto ya resolvió o que Jarvis puede inferir
+7. Si el contexto menciona un proyecto, sheet, o repo — asume que es el mismo
 
 CONTEXTO DEL SISTEMA:
-- Proyecto principal: /root/claude/mission-control/ → kosm1x/agent-controller
+- Jarvis Knowledge Base: jarvis_file_read/write/list (directives/, NorthStar/, projects/, knowledge/, logs/)
 - Proyecto CuatroFlor: /root/claude/cuatro-flor/ → EurekaMD-net/cuatro-flor
-- NorthStar: visiones/metas/objetivos/tareas en archivos markdown
-- Intel Depot: 8 fuentes de señales (mercados, clima, geopolítica, cyber)
-- Git: Jarvis tiene git_commit y git_push que REQUIEREN cwd= (directorio del proyecto)
-- Google Sheets: Jarvis puede leer con gsheets_read pero NO puede hacer fetch desde HTML en browser (CORS)
+- Git: git_commit y git_push REQUIEREN cwd= (directorio del proyecto)
+- GitHub org: EurekaMD-net (default para repos nuevos)
+- Intel Depot: 8 fuentes (mercados, clima, geopolítica, cyber, noticias)
+- Google Sheets: gsheets_read (NO fetch desde browser por CORS)
 
 RESPONDE SOLO con:
-- "PASS" si no necesita preguntas
+- "PASS" si no necesita preguntas (incluyendo cuando el contexto ya aclara todo)
 - O las preguntas numeradas (1. 2. 3.) sin explicación adicional`;
 
 /**
@@ -190,9 +192,11 @@ const BUILDER_SYSTEM_PROMPT = `Eres un constructor de prompts optimizados para J
 Recibes:
 1. El mensaje original del usuario
 2. Las preguntas que se hicieron
-3. Las respuestas del usuario
+3. Las respuestas del usuario (pueden ser respuestas numeradas O texto libre con aclaraciones)
 
 Tu trabajo: construir UN prompt claro y estructurado que Jarvis pueda ejecutar sin ambigüedad.
+Las respuestas del usuario pueden ser texto libre — no necesariamente respuestas punto por punto.
+Extrae la intención y los datos de lo que el usuario escribió, sin importar el formato.
 
 REGLAS DE CONSTRUCCIÓN:
 - Incluye rutas de archivos completas (/root/claude/...)
@@ -212,19 +216,25 @@ export async function buildEnhancedPrompt(
   originalMessage: string,
   questions: string,
   answers: string,
+  recentContext?: string,
 ): Promise<string> {
   try {
     const { infer } = await import("../inference/adapter.js");
     const builderDeadline = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("builder timeout")), 15_000),
     );
+
+    const contextBlock = recentContext
+      ? `CONVERSACIÓN RECIENTE (últimos 2 turnos):\n${recentContext}\n\n`
+      : "";
+
     const result = await Promise.race([
       infer({
         messages: [
           { role: "system", content: BUILDER_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `MENSAJE ORIGINAL:\n${originalMessage}\n\nPREGUNTAS QUE SE HICIERON:\n${questions}\n\nRESPUESTAS DEL USUARIO:\n${answers}`,
+            content: `${contextBlock}MENSAJE ORIGINAL:\n${originalMessage}\n\nPREGUNTAS QUE SE HICIERON:\n${questions}\n\nRESPUESTAS/ACLARACIONES DEL USUARIO:\n${answers}`,
           },
         ],
         max_tokens: 500,

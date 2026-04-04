@@ -670,10 +670,22 @@ export class MessageRouter {
       const questions = getQuestions(msg.channel);
       clearEnhancerState(msg.channel);
 
+      // Pass last 2 turns as context to the builder
+      const threadTurns = getThreadTurns(msg.channel);
+      const builderContext = threadTurns
+        .slice(-4)
+        .map((t) => `${t.role}: ${t.content.slice(0, 300)}`)
+        .join("\n");
+
       console.log(
         `[enhancer] Building enhanced prompt from answers: "${msg.text.slice(0, 60)}"`,
       );
-      const enhanced = await buildEnhancedPrompt(original, questions, msg.text);
+      const enhanced = await buildEnhancedPrompt(
+        original,
+        questions,
+        msg.text,
+        builderContext,
+      );
       console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
 
       // Show the user what Jarvis will receive
