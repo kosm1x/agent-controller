@@ -167,14 +167,9 @@ QUALIFIERS:
           },
           qualifier: {
             type: "string",
-            enum: [
-              "always-read",
-              "enforce",
-              "conditional",
-              "reference",
-              "workspace",
-            ],
-            description: "How this file should be used. Default: reference",
+            enum: ["always-read", "conditional", "reference", "workspace"],
+            description:
+              'How this file should be used. Default: reference. "enforce" is reserved for user-created directives only — not available here.',
           },
           condition: {
             type: "string",
@@ -202,10 +197,15 @@ QUALIFIERS:
     const title = args.title as string;
     const content = args.content as string;
     const tags = (args.tags as string[]) ?? [];
-    const qualifier = (args.qualifier as string) ?? "reference";
+    let qualifier = (args.qualifier as string) ?? "reference";
     const condition = (args.condition as string) ?? null;
     const priority = (args.priority as number) ?? 50;
     const relatedTo = (args.related_to as string[]) ?? [];
+
+    // Prevent LLM from self-promoting files to enforce — reserved for user
+    if (qualifier === "enforce") {
+      qualifier = "reference";
+    }
 
     if (!path.endsWith(".md")) {
       return JSON.stringify({ error: "All files must end with .md" });
@@ -279,8 +279,13 @@ USE WHEN:
     const path = args.path as string;
     const append = args.append as string | undefined;
     const tags = args.tags as string[] | undefined;
-    const qualifier = args.qualifier as string | undefined;
+    let qualifier = args.qualifier as string | undefined;
     const priority = args.priority as number | undefined;
+
+    // Prevent LLM from self-promoting files to enforce — reserved for user
+    if (qualifier === "enforce") {
+      qualifier = "reference";
+    }
 
     const existing = getFile(path);
     if (!existing) {

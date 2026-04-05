@@ -7,7 +7,7 @@ groups:
     interval: 1m
     rules:
       - uid: vps-high-cpu
-        title: "High CPU Usage (>80%)"
+        title: "High CPU Usage (>90%)"
         condition: B
         data:
           - refId: A
@@ -24,17 +24,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [80] }
+                - evaluator: { type: gt, params: [90] }
         noDataState: OK
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "CPU usage above 80%"
+          summary: "CPU usage above 90%"
         labels:
           severity: warning
 
       - uid: vps-critical-cpu
-        title: "Critical CPU (>95%)"
+        title: "Critical CPU (>98%)"
         condition: B
         data:
           - refId: A
@@ -51,17 +51,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [95] }
+                - evaluator: { type: gt, params: [98] }
         noDataState: OK
         execErrState: Alerting
         for: 2m
         annotations:
-          summary: "CPU above 95% — system unresponsive"
+          summary: "CPU above 98% — system unresponsive"
         labels:
           severity: critical
 
       - uid: vps-low-memory
-        title: "Low Memory (<500MB)"
+        title: "Low Memory (<300MB)"
         condition: B
         data:
           - refId: A
@@ -78,17 +78,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: lt, params: [500] }
+                - evaluator: { type: lt, params: [300] }
         noDataState: OK
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "Available memory below 500 MB"
+          summary: "Available memory below 300 MB"
         labels:
           severity: warning
 
       - uid: vps-critical-memory
-        title: "Critical Memory (<200MB)"
+        title: "Critical Memory (<100MB)"
         condition: B
         data:
           - refId: A
@@ -105,17 +105,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: lt, params: [200] }
+                - evaluator: { type: lt, params: [100] }
         noDataState: OK
         execErrState: Alerting
         for: 2m
         annotations:
-          summary: "Memory below 200 MB — OOM imminent"
+          summary: "Memory below 100 MB — OOM imminent"
         labels:
           severity: critical
 
       - uid: vps-high-disk
-        title: "High Disk Usage (>85%)"
+        title: "High Disk Usage (>90%)"
         condition: B
         data:
           - refId: A
@@ -132,17 +132,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [85] }
+                - evaluator: { type: gt, params: [90] }
         noDataState: OK
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "Disk usage above 85%"
+          summary: "Disk usage above 90%"
         labels:
           severity: warning
 
       - uid: vps-high-load
-        title: "High Load Average (>4)"
+        title: "High Load Average (>6)"
         condition: B
         data:
           - refId: A
@@ -159,17 +159,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [4] }
+                - evaluator: { type: gt, params: [6] }
         noDataState: OK
         execErrState: Alerting
         for: 10m
         annotations:
-          summary: "Load avg above 4 on 2-core VPS"
+          summary: "Load avg above 6 on 2-core VPS"
         labels:
           severity: warning
 
       - uid: vps-steal-time
-        title: "High Steal Time (>20%)"
+        title: "High Steal Time (>30%)"
         condition: B
         data:
           - refId: A
@@ -186,17 +186,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [20] }
+                - evaluator: { type: gt, params: [30] }
         noDataState: OK
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "CPU steal above 20% — VPS host overcommitted"
+          summary: "CPU steal above 30% — VPS host overcommitted"
         labels:
           severity: warning
 
       - uid: vps-swap-usage
-        title: "High Swap Usage (>50%)"
+        title: "High Swap Usage (>70%)"
         condition: B
         data:
           - refId: A
@@ -213,12 +213,12 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [50] }
+                - evaluator: { type: gt, params: [70] }
         noDataState: OK
         execErrState: Alerting
         for: 10m
         annotations:
-          summary: "Swap usage above 50%"
+          summary: "Swap usage above 70%"
         labels:
           severity: warning
 
@@ -228,7 +228,7 @@ groups:
     interval: 1m
     rules:
       - uid: mc-high-memory
-        title: "MC High Memory (>500MB)"
+        title: "MC High Memory (>700MB)"
         condition: B
         data:
           - refId: A
@@ -245,17 +245,17 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [500] }
+                - evaluator: { type: gt, params: [700] }
         noDataState: OK
         execErrState: Alerting
         for: 10m
         annotations:
-          summary: "Mission Control using more than 500 MB"
+          summary: "Mission Control using more than 700 MB"
         labels:
           severity: warning
 
       - uid: mc-event-loop-lag
-        title: "MC Event Loop Lag (>500ms)"
+        title: "MC Event Loop Lag (>1s)"
         condition: B
         data:
           - refId: A
@@ -272,11 +272,11 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [0.5] }
+                - evaluator: { type: gt, params: [1] }
         noDataState: OK
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "MC event loop p99 lag above 500ms"
+          summary: "MC event loop p99 lag above 1 second"
         labels:
           severity: warning

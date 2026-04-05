@@ -639,12 +639,44 @@ export const fastRunner: Runner = {
         .pop()?.content;
 
       // Build failed write tools list for hallucination guard.
-      // Exclude tools that failed once but succeeded on a later call within
-      // the same execution (first call gets CONFIRMATION_REQUIRED, LLM
-      // retries, second call succeeds).
+      // Track which write tools failed with a real error (not CONFIRMATION_REQUIRED).
+      // CONFIRMATION_REQUIRED is a gate, not a real failure — the tool retries
+      // and succeeds on the next call, so exclude those.
+      // But "File not found", "Invalid arguments", etc. are real failures —
+      // even if a later call with the same tool name succeeds (different args),
+      // the first target was never written/deleted.
+      const confirmationRetries = new Set<string>();
+      for (let ci = 0; ci < result.messages.length; ci++) {
+        const cmsg = result.messages[ci];
+        if (cmsg.role === "tool" && typeof cmsg.content === "string") {
+          if (cmsg.content.includes("CONFIRMATION_REQUIRED")) {
+            // Find the tool call that produced this result
+            for (let cj = ci - 1; cj >= 0; cj--) {
+              const amsg = result.messages[cj];
+              if (amsg.role === "assistant" && amsg.tool_calls) {
+                for (const tc of amsg.tool_calls) {
+                  if (tc.id === cmsg.tool_call_id) {
+                    confirmationRetries.add(tc.function?.name ?? "");
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
       const failedWriteTools = [...failedToolCalls].filter(
-        (t) => WRITE_TOOLS.has(t) && !toolsCalled.includes(t),
+        (t) =>
+          WRITE_TOOLS.has(t) &&
+          // Exclude only confirmation-retry tools that later succeeded
+          !(confirmationRetries.has(t) && toolsCalled.includes(t)),
       );
+
+      if (failedWriteTools.length > 0) {
+        console.log(
+          `[fast-runner] Guard input: failedWriteTools=[${failedWriteTools.join(", ")}], toolsCalled=[${toolsCalled.join(", ")}], contentLen=${parsed.cleanContent.length}`,
+        );
+      }
 
       // Hallucination guard: if the LLM narrated tool execution without calling
       // the right tools, retry once if budget has headroom, else replace.

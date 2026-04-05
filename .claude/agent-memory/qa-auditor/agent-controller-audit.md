@@ -11,7 +11,7 @@ type: project
 - 5 runner types: fast (90%+ of tasks), nanoclaw, heavy, swarm, a2a
 - Messaging channels: Telegram, WhatsApp (grammy, baileys)
 - MCP tools (~156 total as of Google Drive CRUD), singleton pattern for DB/registry/eventbus/config
-- 88 test files, 1097 tests (as of 2026-04-03 Google Drive CRUD audit)
+- 88+ test files, 1204 tests (as of 2026-04-04 session audit)
 - Centralized inference constants: src/config/constants.ts (env var overridable)
 - Zod v4.3.6 for tool arg validation (added v4.0 S2)
 - FTS5 + embedding hybrid search for memory recall (added v4.0 S3)
@@ -507,6 +507,45 @@ New files: src/db/provenance.ts (7 tests), src/prometheus/provenance.ts (12 test
 - Knowledge maps DB: src/db/knowledge-maps.ts
 - Knowledge map tools: src/tools/builtin/knowledge-map.ts
 - MCP config: mcp-servers.json
+- Video tools: src/tools/builtin/video.ts (6 tools)
+- Video modules: src/video/ (composer, tts, images, subtitles, script-generator, types)
+- Video schema: src/db/video-schema.ts
+
+## Issues Found (2026-04-04 Audit — v5.0 S5d Video Production, 05ffcd4)
+
+Critical:
+
+- require("fs") in ESM module (composer.ts:136) — cleanupJob uses CommonJS require, violates project ESM-only rule (C1-S5d)
+- SQL column interpolation without allowlist in updateJob (video.ts:50-57) — object keys injected into SQL string directly (C2-S5d)
+- FFmpeg -vf subtitle path injection (composer.ts:114-117) — subtitleFile interpolated into filter string, colon/quote chars break syntax (C3-S5d)
+
+Warnings:
+
+- No concurrency limit on video jobs — unbounded parallel FFmpeg pipelines (W1-S5d)
+- expires_at TTL never enforced, cleanupJob never called — /tmp/video-jobs grows unbounded (W2-S5d)
+- FFmpeg 240s timeout may be insufficient for 120s@1080p on single-core VPS (W3-S5d)
+- execFileSync blocks event loop — entire process unresponsive during renders (W4-S5d)
+- updateJob throw inside .catch handler = unhandled rejection → process crash (W5-S5d)
+- Pexels API requires auth — without PEXELS_API_KEY every image is solid-color fallback (W6-S5d)
+- "video" scope pattern in specialty group (line 221) AND video group (line 277) — double activation, 11 extra tools (W7-S5d)
+- "render" keyword in video scope false-positives on React rendering context (W8-S5d)
+
+Standards:
+
+- video_create (most complex tool) has zero test coverage (S1-S5d)
+- src/video/ directory has zero test files — subtitles.ts and script-generator.ts are pure/testable (S2-S5d)
+- All 6 tools return JSON instead of pre-formatted text (S3-S5d, per feedback_preformat_over_prompt.md)
+- generateScript doesn't validate scene.duration > 0 — negative durations pass validation (S4-S5d)
+
+Recommendations:
+
+- R1: Remove unused resolution column or wire it to VIDEO_PROFILES
+- R2: formatSrtTime Math.round can produce 1000ms — use Math.floor or clamp
+- R3: tts.ts comment says "Primary: Gemini TTS" but Gemini code is absent
+- R4: randomUUID().slice(0,8) collision on UNIQUE constraint would crash pipeline
+
+Verdict: FAIL — 3 critical (ESM require, SQL interpolation, FFmpeg filter injection), zero test coverage on core modules, uncapped concurrency, dead TTL cleanup, event-loop-blocking subprocesses.
+
 - Google tool source: src/tools/sources/google.ts
 - Web read tool: src/tools/builtin/web-read.ts
 - Eviction output: data/tool-results/
@@ -544,3 +583,63 @@ Recommendations:
 - R4: Add inverse test to write-tools-sync.test.ts — verify no phantom names in WRITE_TOOLS
 
 Verdict: PASS WITH WARNINGS — 88 test files, 1097 tests pass, typecheck clean. WRITE_TOOLS sync correct. Stale loop signature fix sound. Primary risks: content_file unrestricted reads (W1), missing requiresConfirmation (W2), 1,345 lines untested (S1)
+
+## Issues Found (2026-04-04 Audit — v5.0 S5+S6 session, 25 commits 8941d6f..2505bcb)
+
+Session: Prompt enhancer, git tools, shell guard, Intel Depot activation, coding headroom, dead code cleanup, shutdown/crash handlers.
+
+Critical:
+
+- Shell injection in git_commit via $() and backtick in message arg — execSync double-quote escaping doesn't block command substitution (C1-0404)
+- Shell injection in git_add via unsanitized file list join (C2-0404)
+- Shell injection in git_diff via unsanitized `file` arg (C3-0404)
+- Path traversal bypasses ALLOWED_CWD_PREFIXES — startsWith on raw path, no resolve() (C4-0404)
+- Volume mount injection in container.ts — no host-path validation on new volumes option (C5-0404)
+- Same shell injection in gh_create_pr title/body and gh_repo_create description — $() in double-quoted execSync (C1 variant)
+
+High:
+
+- hasFabricatedOutput regex in adapter.ts:1122 matches "error"/"failed"/"push"/"commit"/"creado" — extreme false-positive rate on legitimate first-round responses (H1-0404)
+- Prompt enhancer infer() calls have no timeout/AbortController — can block handleInbound indefinitely (H2-0404)
+- Scope pattern "commit" and "push" false-positive in non-coding English contexts (H3-0404)
+- Alert delivery partial-delivery: markDelivered not transactional — broadcast succeeds but SQLite write can leave alerts unmarked (H4-0404)
+- cancelTask recursive call inside transaction — subtask events emit before outer transaction commits (H5-0404, low practical risk due to better-sqlite3 savepoints)
+
+Warnings:
+
+- Prompt enhancer uses default provider, not cheap/flash tier as documented (W1-0404)
+- Prompt enhancer state race — concurrent messages during LLM analysis can overwrite state (W2-0404)
+- THREAD_RESPONSE_CAP 1600→3000 — thread buffer can reach 45K chars (~11K tokens) (W3-0404)
+- MAX_ROUNDS_CODING 22→35, TOKEN_BUDGET_CODING 30K→50K — worst-case $2-15 per coding task (W4-0404)
+- git_push rebase failure silently swallowed — leaves REBASE_IN_PROGRESS state (W5-0404)
+- Shell guard git deny patterns bypassable with flag-before-subcommand (git -C path push) (W6-0404)
+- appendDayLog read-modify-write non-atomic — safe for single-thread but fragile for future async (W7-0404)
+- Intel adapters return [] for both HTTP errors and no-data — broken health tracking (W8-0404)
+- formatChange division-by-zero: previous=0 gives pct=0 regardless of current (W9-0404)
+
+Standards:
+
+- gh_repo_create has zero test coverage (S1-0404)
+- Prompt enhancer (231 lines) has zero test files (S2-0404)
+- vi.clearAllMocks() in intel-tools.test.ts instead of vi.restoreAllMocks() (S3-0404)
+- Dead code removal clean — no dangling imports for 4 deleted files (S4-0404, positive)
+- FTS5 incremental backfill optimization correct (S5-0404, positive)
+
+New files: src/messaging/prompt-enhancer.ts (0 tests), src/tools/builtin/git.ts (137 lines tests), src/intel/alert-delivery.test.ts (4 tests), src/tools/builtin/intel-tools.test.ts (7 tests), Dockerfile.nanoclaw, scripts/build-nanoclaw.sh, src/tuning/seed-cases.json (56 lines)
+
+Deleted files: src/db/strategy-bullets.ts (clean), src/db/strategy-bullets.test.ts (clean), src/lib/db.ts (clean), src/lib/dispatch/idempotency.ts (clean), src/memory/bank-init.ts (clean)
+
+Verdict: FAIL — 5 critical shell injection and path traversal vulnerabilities in new git tools. Fix required: replace execSync string interpolation with execFileSync array args, add path.resolve() to CWD validation, add volume mount path allowlist.
+
+## Key File Locations (updated 2026-04-04)
+
+- Git tools: src/tools/builtin/git.ts (6 tools, 403 lines)
+- Prompt enhancer: src/messaging/prompt-enhancer.ts (231 lines, 0 tests)
+- Intel scheduler: src/intel/scheduler.ts
+- Intel adapters: src/intel/adapters/ (8 adapters)
+- Intel signal store: src/intel/signal-store.ts
+- Intel alert router: src/intel/alert-router.ts
+- Intel alert delivery: src/intel/alert-delivery.ts
+- Intel baselines: src/intel/baselines.ts
+- Intel delta engine: src/intel/delta-engine.ts
+- Container runner: src/runners/container.ts (new volumes option)
