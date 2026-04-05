@@ -78,6 +78,7 @@ import {
   jarvisFileSearchTool,
 } from "../builtin/jarvis-files.js";
 import { jarvisInitTool } from "../builtin/jarvis-init.js";
+import { northstarSyncTool } from "../builtin/northstar-sync.js";
 import {
   knowledgeMapTool,
   knowledgeMapExpandTool,
@@ -165,6 +166,7 @@ const BUILTIN_TOOLS: Tool[] = [
   jarvisFileMoveTool,
   jarvisFileSearchTool,
   jarvisInitTool,
+  northstarSyncTool,
   knowledgeMapTool,
   knowledgeMapExpandTool,
 ];

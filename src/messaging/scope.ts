@@ -95,6 +95,7 @@ export const MISC_TOOLS = [
   "jarvis_file_delete",
   "jarvis_file_move",
   "jarvis_file_search",
+  "northstar_sync",
   "jarvis_init",
   "http_fetch",
   "list_schedules",
