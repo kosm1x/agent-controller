@@ -6,7 +6,7 @@
  * Ritual: completed ritual tasks → broadcast to all active channels
  */
 
-import { submitTask } from "../dispatch/dispatcher.js";
+import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
 import {
   findRecentCheckpoint,
@@ -668,6 +668,181 @@ export class MessageRouter {
       return;
     }
 
+    // Background agents: "lanza un agente", "investiga en background"
+    const BACKGROUND_AGENT_RE =
+      /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
+    if (BACKGROUND_AGENT_RE.test(msg.text)) {
+      try {
+        const db = getDatabase();
+        const running = db
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM tasks WHERE spawn_type='user-background' AND status IN ('pending','running','queued')`,
+          )
+          .get() as { cnt: number };
+
+        if (running.cnt >= 3) {
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            "⚠�� Ya hay 3 agentes activos. Espera a que terminen o cancela uno con 'cancela agente'.",
+          );
+          return;
+        }
+
+        // Strip the trigger phrase to get the actual task
+        const taskText = msg.text
+          .replace(BACKGROUND_AGENT_RE, "")
+          .replace(/^[,.:;\s]+/, "")
+          .trim();
+
+        if (!taskText) {
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            "¿Qué quieres que investigue el agente? Ejemplo: 'lanza un agente e investiga el tráfico de livingjoyfully.art'",
+          );
+          return;
+        }
+
+        const { tools: scopedTools } = scopeToolsForMessage(taskText, []);
+        const enrichment = await enrichContext(taskText, msg.channel);
+        const mxDate = nowMexDate();
+        const mxTime = nowMexTime();
+        const systemPrompt = buildJarvisSystemPrompt(
+          mxDate,
+          mxTime,
+          scopedTools,
+          "",
+          enrichment.contextBlock,
+        );
+
+        const result = await submitTask({
+          title: `🤖 Agente: ${taskText.slice(0, 50)}`,
+          description:
+            systemPrompt +
+            `\n\nTarea del agente (background):\n${taskText}\n\n` +
+            `Guarda tus hallazgos en workspace/ con jarvis_file_write (qualifier: workspace). ` +
+            `El usuario revisará los resultados después.`,
+          agentType: "auto",
+          tools: scopedTools,
+          spawnType: "user-background",
+          tags: ["messaging", msg.channel, "background-agent"],
+        });
+
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          `🤖 Agente lanzado: "${taskText.slice(0, 60)}"\nID: ${result.taskId.slice(0, 8)}\nTe aviso cuando termine. Puedes seguir hablando conmigo.`,
+        );
+
+        // Track for completion notification
+        this.pendingReplies.set(result.taskId, {
+          channel: msg.channel,
+          to: msg.from,
+          originalText: taskText,
+          interimTimer: setTimeout(() => {}, 0),
+          finalTimer: setTimeout(() => {
+            this.pendingReplies.delete(result.taskId);
+          }, 60 * 60_000), // 60 min — background agents can run long
+        });
+
+        console.log(
+          `[router] Background agent spawned: ${result.taskId} — "${taskText.slice(0, 60)}"`,
+        );
+        return;
+      } catch (err) {
+        console.error("[router] Background agent spawn failed:", err);
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          "Error lanzando agente. Intenta de nuevo.",
+        );
+        return;
+      }
+    }
+
+    // Background agent management commands
+    const agentMgmtText = msg.text.trim().toLowerCase();
+    if (
+      agentMgmtText === "mis agentes" ||
+      agentMgmtText === "agentes" ||
+      agentMgmtText === "agents"
+    ) {
+      try {
+        const db = getDatabase();
+        const agents = db
+          .prepare(
+            `SELECT task_id, title, status, created_at FROM tasks
+             WHERE spawn_type='user-background'
+             ORDER BY created_at DESC LIMIT 10`,
+          )
+          .all() as Array<{
+          task_id: string;
+          title: string;
+          status: string;
+          created_at: string;
+        }>;
+
+        if (agents.length === 0) {
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            "No hay agentes recientes.",
+          );
+        } else {
+          const lines = ["🤖 **Agentes recientes:**"];
+          for (const a of agents) {
+            const icon =
+              a.status === "running"
+                ? "🔄"
+                : a.status === "completed"
+                  ? "✅"
+                  : "❌";
+            lines.push(
+              `${icon} ${a.title.replace("🤖 Agente: ", "")} — ${a.status} (${a.task_id.slice(0, 8)})`,
+            );
+          }
+          this.sendToChannel(msg.channel, msg.from, lines.join("\n"));
+        }
+      } catch {
+        this.sendToChannel(msg.channel, msg.from, "Error consultando agentes.");
+      }
+      return;
+    }
+
+    if (/^cancela\s+agente/i.test(agentMgmtText)) {
+      try {
+        const db = getDatabase();
+        // Cancel the most recent running background agent
+        const agent = db
+          .prepare(
+            `SELECT task_id, title FROM tasks
+             WHERE spawn_type='user-background' AND status IN ('running','pending','queued')
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get() as { task_id: string; title: string } | undefined;
+
+        if (!agent) {
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            "No hay agentes activos para cancelar.",
+          );
+        } else {
+          cancelTask(agent.task_id);
+          this.pendingReplies.delete(agent.task_id);
+          this.sendToChannel(
+            msg.channel,
+            msg.from,
+            `🛑 Agente cancelado: ${agent.title.replace("🤖 Agente: ", "")}`,
+          );
+        }
+      } catch {
+        this.sendToChannel(msg.channel, msg.from, "Error cancelando agente.");
+      }
+      return;
+    }
+
     // Prompt enhancer: if waiting for answers, build enhanced prompt or skip
     if (isWaitingForAnswers(msg.channel)) {
       const original = getOriginalMessage(msg.channel)!;
@@ -1110,16 +1285,42 @@ export class MessageRouter {
 
     const resultText = this.extractResultText(data.result);
     if (resultText) {
-      appendDayLog("JARVIS", resultText);
+      // Background agent notification: different format
+      let isBackground = false;
+      let bgTitle = "";
+      try {
+        const task = getDatabase()
+          .prepare("SELECT spawn_type, title FROM tasks WHERE task_id = ?")
+          .get(taskId) as { spawn_type: string; title: string } | undefined;
+        isBackground = task?.spawn_type === "user-background";
+        bgTitle = task?.title?.replace("🤖 Agente: ", "") ?? "";
+      } catch {
+        // DB not available (e.g. in tests) — treat as normal task
+      }
 
-      // Finalize streaming message or send fresh
-      if (pending.streamController) {
-        pending.streamController.finalize(resultText).catch((err) => {
-          console.error("[router] Stream finalize failed:", err);
-          this.sendToChannel(pending.channel, pending.to, resultText);
-        });
+      if (isBackground) {
+        const summary =
+          resultText.length > 500
+            ? resultText.slice(0, 500) + "..."
+            : resultText;
+        const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}\n\n_Escribe "mis agentes" para ver el historial._`;
+        this.sendToChannel(pending.channel, pending.to, notification);
+        appendDayLog(
+          "JARVIS",
+          `[Agente background] ${notification.slice(0, 200)}`,
+        );
       } else {
-        this.sendToChannel(pending.channel, pending.to, resultText);
+        appendDayLog("JARVIS", resultText);
+
+        // Finalize streaming message or send fresh
+        if (pending.streamController) {
+          pending.streamController.finalize(resultText).catch((err) => {
+            console.error("[router] Stream finalize failed:", err);
+            this.sendToChannel(pending.channel, pending.to, resultText);
+          });
+        } else {
+          this.sendToChannel(pending.channel, pending.to, resultText);
+        }
       }
 
       // Push to in-memory conversation thread (chronological, instant)
@@ -1215,11 +1416,20 @@ export class MessageRouter {
     clearTimeout(pending.finalTimer);
     this.pendingReplies.delete(taskId);
 
-    this.sendToChannel(
-      pending.channel,
-      pending.to,
-      "No pude completar eso. Revisa el dashboard para más detalles.",
-    );
+    // Background-agent-aware failure notification
+    let failMsg =
+      "No pude completar eso. Revisa el dashboard para más detalles.";
+    try {
+      const task = getDatabase()
+        .prepare("SELECT spawn_type, title FROM tasks WHERE task_id = ?")
+        .get(taskId) as { spawn_type: string; title: string } | undefined;
+      if (task?.spawn_type === "user-background") {
+        failMsg = `🤖❌ **Agente falló:** ${task.title.replace("🤖 Agente: ", "")}\nError: ${data.error ?? "desconocido"}`;
+      }
+    } catch {
+      // DB not available — use generic message
+    }
+    this.sendToChannel(pending.channel, pending.to, failMsg);
 
     // Track failed outcome
     trackTaskOutcome(taskId, 0, false, pending.channel);

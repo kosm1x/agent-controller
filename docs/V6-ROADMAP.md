@@ -110,7 +110,7 @@ Jarvis gets smarter over time. After each successful task, extract 1-2 lessons a
 
 ---
 
-## v6.1 — User-Spawned Background Agents
+## v6.1 — User-Spawned Background Agents — **Done**
 
 Today Jarvis is single-threaded from the user's perspective — one message = one blocking task. v6.1 adds parallel execution lanes the user controls.
 

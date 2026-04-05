@@ -35,7 +35,7 @@ export interface TaskSubmission {
   tools?: string[];
   input?: unknown;
   parentTaskId?: string;
-  spawnType?: "root" | "subtask";
+  spawnType?: "root" | "subtask" | "user-background";
   /** Prior conversation turns for thread continuity (chat tasks). */
   conversationHistory?: import("../runners/types.js").ConversationTurn[];
   /** Tools that MUST appear in toolCalls for the task to be considered successful. */
