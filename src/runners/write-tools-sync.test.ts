@@ -65,6 +65,9 @@ describe("WRITE_TOOLS sync", () => {
       "code_search",
       "jarvis_diagnose",
       "jarvis_test_run",
+      "vps_status",
+      "vps_backup",
+      "vps_logs",
     ]);
     const codingWriteTools = CODING_TOOLS.filter(
       (t) => !CODING_READ_ONLY.has(t),

@@ -206,6 +206,7 @@ export const WRITE_TOOLS = new Set([
   "gh_repo_create",
   "gh_create_pr",
   "jarvis_dev",
+  "vps_deploy",
   // Other
   "schedule_task",
   "delete_schedule",

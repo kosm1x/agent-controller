@@ -53,7 +53,7 @@ Jarvis can propose changes to his own SOPs and directives.
 - **Constraint:** Can only propose, never apply without explicit approval
 - **Exit:** Jarvis notices recurring nudge pattern → proposes new directive → user approves
 
-### S4 — VPS Management (~2d)
+### S4 — VPS Management (~2d) — **Done**
 
 Jarvis can monitor, back up, and manage VPS infrastructure.
 

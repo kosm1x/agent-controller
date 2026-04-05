@@ -73,6 +73,10 @@ export const CODING_TOOLS = [
   "code_search",
   "jarvis_diagnose",
   "jarvis_test_run",
+  "vps_status",
+  "vps_deploy",
+  "vps_backup",
+  "vps_logs",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */

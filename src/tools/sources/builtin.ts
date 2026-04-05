@@ -106,6 +106,12 @@ import {
   jarvisTestRunTool,
 } from "../builtin/jarvis-self-repair.js";
 import {
+  vpsStatusTool,
+  vpsDeployTool,
+  vpsBackupTool,
+  vpsLogsTool,
+} from "../builtin/vps-management.js";
+import {
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,
@@ -166,6 +172,10 @@ const BUILTIN_TOOLS: Tool[] = [
   jarvisDevTool,
   jarvisDiagnoseTool,
   jarvisTestRunTool,
+  vpsStatusTool,
+  vpsDeployTool,
+  vpsBackupTool,
+  vpsLogsTool,
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,
