@@ -192,18 +192,29 @@ export async function analyzePrompt(
               : `Mensaje del usuario:\n${userMessage}`,
           },
         ],
-        max_tokens: 100,
+        max_tokens: 150,
       }),
       deadline,
     ]);
 
     const raw = (result.content ?? "PASS").trim();
-    // Mechanical guard: if LLM returned questions, cap at 2
     if (raw.toUpperCase() === "PASS") return "PASS";
-    const lines = raw.split("\n").filter((l) => /^\d+[\.\)]/.test(l.trim()));
-    if (lines.length > 2) {
-      return lines.slice(0, 2).join("\n");
+
+    // Mechanical guard: cap at 2 questions regardless of format.
+    // Split on any line that looks like a question (numbered, bulleted, or starts with ¿/?)
+    const questionLines = raw
+      .split("\n")
+      .filter(
+        (l) =>
+          l.trim().length > 5 &&
+          (/^\d+[\.\)]\s/.test(l.trim()) ||
+            /^[-•*]\s/.test(l.trim()) ||
+            /[¿?]/.test(l)),
+      );
+    if (questionLines.length > 2) {
+      return questionLines.slice(0, 2).join("\n");
     }
+    // If we couldn't parse questions but text is long, it's likely a batch-split suggestion — pass as-is
     return raw;
   } catch {
     return "PASS";
