@@ -44,7 +44,7 @@ Jarvis can fix bugs in his own code when identified.
 - **Scope limit:** `src/tools/`, `src/intel/`, `src/messaging/scope.ts`, `src/messaging/prompt-sections.ts`. Core infrastructure stays human-only
 - **Exit:** Overnight tuning detects scope regex regression → Jarvis creates fix PR → user merges
 
-### S3 — Directive Evolution (~1d)
+### S3 — Directive Evolution (~1d) — **Done**
 
 Jarvis can propose changes to his own SOPs and directives.
 

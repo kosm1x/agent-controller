@@ -112,6 +112,10 @@ import {
   vpsLogsTool,
 } from "../builtin/vps-management.js";
 import {
+  jarvisProposeTool,
+  jarvisApplyProposalTool,
+} from "../builtin/jarvis-directives.js";
+import {
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,
@@ -176,6 +180,8 @@ const BUILTIN_TOOLS: Tool[] = [
   vpsDeployTool,
   vpsBackupTool,
   vpsLogsTool,
+  jarvisProposeTool,
+  jarvisApplyProposalTool,
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,

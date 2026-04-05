@@ -68,6 +68,7 @@ describe("WRITE_TOOLS sync", () => {
       "vps_status",
       "vps_backup",
       "vps_logs",
+      "jarvis_propose_directive",
     ]);
     const codingWriteTools = CODING_TOOLS.filter(
       (t) => !CODING_READ_ONLY.has(t),

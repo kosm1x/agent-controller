@@ -77,6 +77,8 @@ export const CODING_TOOLS = [
   "vps_deploy",
   "vps_backup",
   "vps_logs",
+  "jarvis_propose_directive",
+  "jarvis_apply_proposal",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */

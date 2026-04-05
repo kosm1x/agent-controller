@@ -207,6 +207,7 @@ export const WRITE_TOOLS = new Set([
   "gh_create_pr",
   "jarvis_dev",
   "vps_deploy",
+  "jarvis_apply_proposal",
   // Other
   "schedule_task",
   "delete_schedule",
