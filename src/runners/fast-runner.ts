@@ -18,6 +18,7 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
+import { writeCheckpoint } from "./checkpoint.js";
 import { getFilesByQualifier } from "../db/jarvis-fs.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
@@ -857,6 +858,32 @@ export const fastRunner: Runner = {
               "LLM refused to format tool results. Raw tool output shown.",
             ],
           };
+        }
+      }
+
+      // Task continuity: save checkpoint when hitting max_rounds or token_budget
+      // so user can say "continúa" and resume where we left off.
+      if (
+        result.exitReason === "max_rounds" ||
+        result.exitReason === "token_budget"
+      ) {
+        try {
+          const lastUserMsg =
+            input.conversationHistory?.filter((t) => t.role === "user").pop()
+              ?.content ?? input.description;
+          writeCheckpoint({
+            taskId: input.taskId,
+            title: input.title,
+            userMessage: lastUserMsg,
+            toolsCalled,
+            scopeGroups: [], // Re-derived from message on continuation
+            exitReason: result.exitReason,
+            roundsCompleted: result.roundsCompleted,
+            maxRounds,
+            responseText: parsed.cleanContent,
+          });
+        } catch {
+          // Non-fatal — checkpoint is best-effort
         }
       }
 

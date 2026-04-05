@@ -171,7 +171,7 @@ User waits 15-60s with only "Un momento..." Every modern agent streams tokens in
 - Perceived latency drops from 30s to 2s
 - **Exit:** User sees Jarvis thinking in real-time as tokens arrive
 
-### Task Continuity / Checkpoints (~1.5d)
+### Task Continuity / Checkpoints (~1.5d) — **Done**
 
 When Jarvis hits max_rounds, the work is lost. The user has to re-explain the task.
 

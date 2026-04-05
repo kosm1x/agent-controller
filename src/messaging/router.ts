@@ -8,6 +8,10 @@
 
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getDatabase } from "../db/index.js";
+import {
+  findRecentCheckpoint,
+  clearCheckpoint,
+} from "../runners/checkpoint.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { getFile, upsertFile } from "../db/jarvis-fs.js";
 import {
@@ -907,9 +911,37 @@ export class MessageRouter {
       enrichment.contextBlock,
     );
 
+    // Task continuity: check for a recent checkpoint ONLY on continuation messages.
+    // Gate on intent to prevent unrelated messages from consuming the checkpoint.
+    const CONTINUATION_RE =
+      /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
+    let taskDescription = systemPrompt;
+    if (CONTINUATION_RE.test(msg.text.trim())) {
+      try {
+        const cp = findRecentCheckpoint();
+        if (cp) {
+          taskDescription =
+            systemPrompt +
+            `\n\n## CONTINUACIÓN DE TAREA ANTERIOR\n` +
+            `La tarea anterior (${cp.taskId}) no terminó (${cp.exitReason}, round ${cp.roundsCompleted}/${cp.maxRounds}).\n` +
+            `**Lo que ya se hizo:** ${cp.toolsCalled.join(", ") || "nada"}\n` +
+            `**Lo que falta:** Completar lo que el usuario pidió originalmente.\n\n` +
+            `**Solicitud original:**\n${cp.userMessage.slice(0, 2000)}\n\n` +
+            `**Último resultado parcial:**\n${cp.summary.slice(0, 500)}\n\n` +
+            `INSTRUCCIÓN: Continúa desde donde se quedó. NO repitas lo que ya se hizo. Enfócate en lo pendiente.`;
+          console.log(
+            `[router] Checkpoint injected for task ${cp.taskId} (${cp.exitReason})`,
+          );
+          clearCheckpoint(cp.taskId);
+        }
+      } catch {
+        // Non-fatal — checkpoint system is best-effort
+      }
+    }
+
     const result = await submitTask({
       title: `Chat: ${titleText}`,
-      description: systemPrompt,
+      description: taskDescription,
       agentType: "auto",
       tools,
       conversationHistory,
