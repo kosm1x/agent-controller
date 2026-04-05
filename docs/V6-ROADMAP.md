@@ -13,14 +13,17 @@ Jarvis evolves from assistant to engineer. Can code, test, deploy, and improve h
 
 ### Capability Levels
 
-| Level | Capability                              | Safety                        | Session     |
-| ----- | --------------------------------------- | ----------------------------- | ----------- |
-| 0     | Tune tool descriptions (overnight loop) | Variant archive + rollback    | Done (v5.0) |
-| 1     | Write new tools, adapters, tests        | Branch + PR + human merge     | **Done**    |
-| 2     | Modify existing code (bug fixes)        | Branch + PR + test suite pass | **S2**      |
-| 3     | Modify own directives/SOPs              | Changelog + user notification | **S3**      |
-| 4     | Manage VPS (deploy, restart, monitor)   | Audit log + confirmation      | **S4**      |
-| 5     | Full autonomy (architect → deploy)      | Budget gates + kill switch    | **S5**      |
+| Level | Capability                               | Safety                         | Session     |
+| ----- | ---------------------------------------- | ------------------------------ | ----------- |
+| 0     | Tune tool descriptions (overnight loop)  | Variant archive + rollback     | Done (v5.0) |
+| 1     | Write new tools, adapters, tests         | Branch + PR + human merge      | **Done**    |
+| 2     | Modify existing code (bug fixes)         | Branch + PR + test suite pass  | **S2**      |
+| 3     | Modify own directives/SOPs               | Changelog + user notification  | **S3**      |
+| 4     | Manage VPS (deploy, restart, monitor)    | Audit log + confirmation       | **S4**      |
+| 5     | Full autonomy (architect → deploy)       | Budget gates + kill switch     | **S5**      |
+| 6     | Faithful data relay (no narrativization) | Typed result schemas           | **S6**      |
+| 7     | Intelligent code navigation              | Pre-built index, read-only     | **S7**      |
+| 8     | Learn from execution history             | Pattern extraction + injection | **S8**      |
 
 ### S1 — Branch + PR Workflow (~2d)
 
@@ -69,6 +72,33 @@ Tie it all together: identify → code → test → deploy → monitor.
 - Post-deploy monitoring: error logs every 15 min for 1 hour, auto-revert on spike
 - **Safety:** Max 3 PRs/day, $5/cycle, scope-limited, revertable, kill switch
 - **Exit:** Jarvis autonomously writes a new intel adapter, tests, deploys, monitors — end to end
+
+### S6 — Structured Tool Result Pipelines (~2d)
+
+Eliminate LLM narrativization of data. When tools return data (sheets, APIs, intel), it goes through a formatter that produces the EXACT output the user sees. The LLM adds commentary AFTER, never inside the data block.
+
+- Apply pre-formatted pattern to top 10 data-returning tools (gsheets_read, intel_query, web_search, etc.)
+- Typed result schemas per tool category
+- Same pattern that fixed the CRM jarvis_pull data-meshing problem
+- **Exit:** gsheets_read returns a formatted table that reaches the user unchanged
+
+### S7 — Semantic Code Search (~2d)
+
+Index the mission-control codebase for intelligent code navigation. Query: "where is hallucination detection?" → `fast-runner.ts:250 detectsHallucinatedExecution()`.
+
+- New tool: `code_search` — function definitions, imports, type references
+- Tree-sitter or regex-based indexer over .ts files, stored in SQLite
+- Refresh on git pull / branch switch
+- **Exit:** Jarvis self-repair finds the exact function to fix in 1 round instead of reading 8 files
+
+### S8 — Execution Pattern Memory (~2d)
+
+Jarvis gets smarter over time. After each successful task, extract 1-2 lessons and store them for future use.
+
+- Auto-extract patterns: "For livingjoyfully analytics, use GA4 ID G-XXXXX via gsheets_read"
+- Store in `knowledge/execution-patterns/`
+- Inject into context when similar tasks appear (scope group + keyword match)
+- **Exit:** Repeat tasks execute faster and more accurately without user re-explaining
 
 ### Safety Invariants (v6.0)
 
@@ -132,6 +162,25 @@ No new runner type. Background agents are regular fast/heavy tasks with a flag.
 5. **Management commands** — "mis agentes", "cancela", "status" in scope + fast-path (~4h)
 6. **Workspace → KB promotion** — user-triggered write after review (~2h)
 
+### Streaming Responses (~1d)
+
+User waits 15-60s with only "Un momento..." Every modern agent streams tokens in real-time.
+
+- Wire `onTextChunk` through to Telegram for all task types (not just fast-path)
+- TelegramStreamController already exists from v2.30 — progressive editMessageText with throttling
+- Perceived latency drops from 30s to 2s
+- **Exit:** User sees Jarvis thinking in real-time as tokens arrive
+
+### Task Continuity / Checkpoints (~1.5d)
+
+When Jarvis hits max_rounds, the work is lost. The user has to re-explain the task.
+
+- At round N-5 (before max_rounds), auto-persist checkpoint to `workspace/checkpoints/{task-id}.md`
+- Checkpoint: what was done, what's pending, which files were modified
+- On "continúa", router detects pending checkpoint and injects it as context
+- Jarvis picks up where it left off instead of starting over
+- **Exit:** User says "continúa" after a max_rounds coding task → Jarvis reads checkpoint → finishes git commit/push
+
 ---
 
 ## Enhancements (Tier 1 — build when opportunity arises)
@@ -148,7 +197,7 @@ Route different task types to different LLMs. Claude for reasoning, GPT-4 for to
 
 ### Unified FS Maturation
 
-- user_facts → knowledge/ migration (H3, 98 facts)
+- ~~user_facts → knowledge/ migration~~ **Done** (H3, 69 facts migrated, 30 credentials remain)
 - Day recaps from nightly ritual
 - Auto-persist to meaningful paths (not session IDs)
 - INDEX.md project summaries
@@ -159,7 +208,7 @@ Route different task types to different LLMs. Claude for reasoning, GPT-4 for to
 
 | Item                            | Why                                            | Effort |
 | ------------------------------- | ---------------------------------------------- | ------ |
-| Structured outputs              | Eliminates LLM narrativization of data         | 2-3d   |
+| ~~Structured outputs~~          | **Moved to v6.0 S6** (structured tool results) | —      |
 | NanoClaw production activation  | Sandbox for untrusted code, long test suites   | 1d     |
 | Embedding-based scoping         | Replace regex when accuracy drops below 80%    | 3-5d   |
 | Task cancellation from Telegram | No way to abort running tasks today            | 1d     |
