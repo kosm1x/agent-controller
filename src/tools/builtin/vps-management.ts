@@ -5,15 +5,8 @@
  * vps_deploy requires tests to pass before restarting.
  */
 
-import { execFileSync, execSync } from "child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-  unlinkSync,
-} from "fs";
+import { execFileSync } from "child_process";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
 
@@ -208,39 +201,22 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
       return `❌ Deploy aborted: tests failed\n${stdout}`;
     }
 
-    // 3. Restart
+    // 3. Restart — NOTE: this kills the current process.
+    // The response is returned BEFORE the restart takes effect via
+    // systemctl's --no-block flag. Jarvis should call vps_status after
+    // to confirm health.
+    lines.push("✅ Build + tests passed. Initiating restart...");
+    lines.push(
+      "⚠️ The service will restart momentarily. Call vps_status in ~10s to confirm health.",
+    );
+
     try {
-      execSync("sudo systemctl restart mission-control", {
-        timeout: 15_000,
+      execFileSync("systemctl", ["restart", "--no-block", "mission-control"], {
+        timeout: 5_000,
         stdio: "pipe",
       });
-      lines.push("✅ Service restarted");
     } catch {
-      return "❌ Deploy failed: systemctl restart failed";
-    }
-
-    // 4. Health check (wait 5s)
-    await new Promise((r) => setTimeout(r, 5000));
-    try {
-      const code = execFileSync(
-        "curl",
-        [
-          "-s",
-          "-o",
-          "/dev/null",
-          "-w",
-          "%{http_code}",
-          "http://localhost:8080/health",
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      ).trim();
-      if (code === "200") {
-        lines.push("✅ Health check: 200 OK");
-      } else {
-        lines.push(`⚠️ Health check: ${code} — check logs`);
-      }
-    } catch {
-      lines.push("⚠️ Health check: could not reach endpoint");
+      lines.push("❌ systemctl restart failed");
     }
 
     return lines.join("\n");
@@ -283,7 +259,10 @@ AFTER BACKUP: Report the backup file path and size.`,
     const backupPath = join(BACKUP_DIR, `mc.db.${timestamp}`);
 
     try {
-      copyFileSync(DB_PATH, backupPath);
+      // Use SQLite backup API for WAL-safe consistent snapshots
+      const { getDatabase } = await import("../../db/index.js");
+      const db = getDatabase();
+      await db.backup(backupPath);
       const sizeKB = Math.round(statSync(backupPath).size / 1024);
 
       // Prune old backups
@@ -291,6 +270,7 @@ AFTER BACKUP: Report the backup file path and size.`,
       const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 86400_000;
       for (const f of readdirSync(BACKUP_DIR)) {
         const full = join(BACKUP_DIR, f);
+        if (full === backupPath) continue; // never delete what we just created
         if (statSync(full).mtimeMs < cutoff) {
           unlinkSync(full);
           pruned++;
