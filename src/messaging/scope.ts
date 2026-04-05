@@ -70,6 +70,7 @@ export const CODING_TOOLS = [
   "gh_repo_create",
   "gh_create_pr",
   "jarvis_dev",
+  "code_search",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */

@@ -37,7 +37,12 @@ import {
   evolutionDeactivateSkillTool,
 } from "../builtin/evolution-data.js";
 import { fileEditTool } from "../builtin/code-editing.js";
-import { grepTool, globTool, listDirTool } from "../builtin/code-search.js";
+import {
+  grepTool,
+  globTool,
+  listDirTool,
+  codeSearchTool,
+} from "../builtin/code-search.js";
 import {
   wpPublishTool,
   wpMediaUploadTool,
@@ -116,6 +121,7 @@ const BUILTIN_TOOLS: Tool[] = [
   grepTool,
   globTool,
   listDirTool,
+  codeSearchTool,
   webSearchTool,
   webReadTool,
   weatherForecastTool,

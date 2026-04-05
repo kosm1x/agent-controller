@@ -82,7 +82,7 @@ Eliminate LLM narrativization of data. When tools return data (sheets, APIs, int
 - Same pattern that fixed the CRM jarvis_pull data-meshing problem
 - **Exit:** gsheets_read returns a formatted table that reaches the user unchanged
 
-### S7 — Semantic Code Search (~2d)
+### S7 — Semantic Code Search (~2d) — **Done**
 
 Index the mission-control codebase for intelligent code navigation. Query: "where is hallucination detection?" → `fast-runner.ts:250 detectsHallucinatedExecution()`.
 

@@ -62,6 +62,7 @@ describe("WRITE_TOOLS sync", () => {
       "list_dir",
       "git_status",
       "git_diff",
+      "code_search",
     ]);
     const codingWriteTools = CODING_TOOLS.filter(
       (t) => !CODING_READ_ONLY.has(t),

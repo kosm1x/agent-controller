@@ -346,3 +346,90 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// code_search — semantic search of mission-control's own codebase
+// ---------------------------------------------------------------------------
+
+import { searchCode, symbolsInFile, type SymbolKind } from "./code-index.js";
+
+export const codeSearchTool: Tool = {
+  name: "code_search",
+  definition: {
+    type: "function",
+    function: {
+      name: "code_search",
+      description: `Search your own codebase (mission-control) for functions, classes, types, constants by name or keyword.
+
+USE WHEN:
+- You need to find where a function is defined before fixing it
+- You need to understand what a module exports
+- User asks "where is X?" about your own code
+- Before using file_read on mission-control — find the right file first
+
+Returns: file path, line number, and signature for each match.
+
+WORKFLOW:
+1. code_search query="detectsHallucinatedExecution" → finds fast-runner.ts:250
+2. file_read the file around that line
+3. file_edit to make the fix
+
+AFTER SEARCHING: Report the matches found with file:line references.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Symbol name or keyword to search for (case-insensitive).",
+          },
+          kind: {
+            type: "string",
+            enum: ["function", "class", "interface", "type", "const", "enum"],
+            description: "Optional: filter by symbol kind.",
+          },
+          file: {
+            type: "string",
+            description:
+              'Optional: list all symbols in a specific file (relative path, e.g. "src/runners/fast-runner.ts").',
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const query = args.query as string;
+    const kind = args.kind as SymbolKind | undefined;
+    const file = args.file as string | undefined;
+
+    if (file) {
+      const symbols = symbolsInFile(file);
+      if (symbols.length === 0) return `No symbols indexed for "${file}".`;
+      const lines = [`📄 **${file}** — ${symbols.length} symbols`];
+      for (const s of symbols) {
+        const icon = s.exported ? "📤" : "  ";
+        lines.push(`${icon} ${s.kind} **${s.name}** (line ${s.line})`);
+      }
+      return lines.join("\n");
+    }
+
+    if (!query || query.length < 2)
+      return "Query must be at least 2 characters.";
+
+    const results = searchCode(query, { kind, limit: 15 });
+    if (results.length === 0)
+      return `🔍 No matches for "${query}"${kind ? ` (kind: ${kind})` : ""}.`;
+
+    const lines = [
+      `🔍 **"${query}"** — ${results.length} match${results.length > 1 ? "es" : ""}`,
+    ];
+    for (const s of results) {
+      lines.push(
+        `\n${s.exported ? "📤" : "🔒"} **${s.name}** (${s.kind}) — ${s.file}:${s.line}\n\`${s.signature}\``,
+      );
+    }
+    return lines.join("\n");
+  },
+};

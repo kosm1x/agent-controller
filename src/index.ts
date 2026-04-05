@@ -104,6 +104,14 @@ async function main(): Promise<void> {
     );
   }
 
+  // Build code index for code_search tool (S7 semantic code search)
+  try {
+    const { rebuildIndex } = await import("./tools/builtin/code-index.js");
+    rebuildIndex();
+  } catch (err) {
+    console.warn("[code-index] Build failed (non-fatal)");
+  }
+
   // Initialize tool sources (plugin system)
   const sourceManager = new ToolSourceManager();
   sourceManager.addSource(new BuiltinToolSource());
