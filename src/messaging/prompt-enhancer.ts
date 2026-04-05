@@ -41,13 +41,13 @@ const PASSTHROUGH_PATTERNS = [
   /^(enhancer\s*(on|off|estado))\b/i,
   // Emoji responses
   /^👍|^🙏|^💪|^✅/,
-  // Clear action verbs — these are unambiguous commands, don't question them
-  /^(lista|listar|muestra|mostrar|busca|buscar|lee|leer|abre|abrir|monitor(ea)?|sincroniza|sync|estado|status|resume|resumen|describe|consulta|dame|dime)\b/i,
+  // Read-only action verbs — these never need clarification
+  /^(lista|listar|muestra|mostrar|lee|leer|abre|abrir|monitor(ea)?|estado|status|resume|resumen|describe|consulta|dame|dime)\b/i,
   // Skip / skip enhancer signals
   /\b(hazlo|procede|skip|sin preguntas|ejecuta|haz(lo)?\s+ya)\b/i,
 ];
 
-const MIN_ENHANCE_LENGTH = 80; // Messages shorter than this pass through
+const MIN_ENHANCE_LENGTH = 40; // Messages shorter than this pass through
 
 /**
  * Should this message be enhanced?
