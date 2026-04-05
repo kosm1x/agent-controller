@@ -1,7 +1,7 @@
 /**
  * Weekly review ritual template.
  *
- * Submitted Sunday 8PM as a Heavy runner task.
+ * Submitted Sunday 8PM as a fast runner task.
  * Performs a comprehensive weekly scan of NorthStar hierarchy, projects,
  * accomplishments, and generates a strategic focus for the coming week.
  */
@@ -75,7 +75,7 @@ export function createWeeklyReview(dateLabel: string): TaskSubmission {
 7. Envía el reporte via gmail_send a fede@eurekamd.net con asunto "Revisión Semanal — ${dateLabel}".
 
 IMPORTANTE: Do NOT write to the journal. The journal is exclusively for the user's personal input.`,
-    agentType: "heavy",
+    agentType: "fast",
     tools: ["jarvis_file_read", "project_list", "memory_search", "gmail_send"],
     requiredTools: ["jarvis_file_read", "gmail_send"],
   };

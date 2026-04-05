@@ -51,7 +51,7 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 
 Do NOT modify existing entries. Only append.
 If there were zero interactions today, still write an entry noting the quiet day.`,
-    agentType: "heavy",
+    agentType: "fast",
     tools: [
       "jarvis_file_read",
       "memory_search",

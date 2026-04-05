@@ -1,7 +1,7 @@
 /**
  * Morning briefing task template.
  *
- * Submitted to the dispatcher as a Heavy runner task.
+ * Submitted to the dispatcher as a fast runner task.
  * The LLM reads NorthStar/ files via jarvis_file_read to build a structured
  * daily briefing, then emails it to the user.
  */
@@ -62,7 +62,7 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
 3. ...
 
 Racha actual: X días consecutivos.`,
-    agentType: "heavy",
+    agentType: "fast",
     tools: [
       "jarvis_file_read",
       "memory_search",

@@ -1,7 +1,7 @@
 /**
  * Nightly close task template.
  *
- * Submitted to the dispatcher as a Heavy runner task.
+ * Submitted to the dispatcher as a fast runner task.
  * The LLM reviews the day, prepares tomorrow, and emails the report.
  * Journal is user-only — the agent does NOT write there.
  */

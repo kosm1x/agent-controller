@@ -12,7 +12,7 @@ const { mockSchedule, mockGet, mockPrepare, mockSubmitTask } = vi.hoisted(
     mockPrepare: vi.fn().mockReturnValue({ get: vi.fn() }),
     mockSubmitTask: vi.fn().mockResolvedValue({
       taskId: "test-task-id",
-      agentType: "heavy",
+      agentType: "fast",
       classification: { score: 0.9, reason: "test", explicit: true },
     }),
   }),
@@ -45,6 +45,8 @@ import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createSignalIntelligence } from "./signal-intelligence.js";
+import { createEvolutionLogEntry } from "./evolution-log.js";
+import { createWeeklyReview } from "./weekly-review.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -117,7 +119,7 @@ describe("task templates", () => {
   it("morning briefing has correct structure", () => {
     const task = createMorningBriefing("2026-03-13");
     expect(task.title).toBe("Morning briefing — 2026-03-13");
-    expect(task.agentType).toBe("heavy");
+    expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.description).toContain("Jarvis");
     expect(task.description).toContain("Eisenhower");
@@ -137,7 +139,7 @@ describe("task templates", () => {
   it("signal intelligence has correct structure", () => {
     const task = createSignalIntelligence("2026-03-25");
     expect(task.title).toBe("Signal intelligence — 2026-03-25");
-    expect(task.agentType).toBe("heavy");
+    expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("exa_search");
     expect(task.tools).toContain("web_search");
     expect(task.tools).toContain("user_fact_set");
@@ -154,5 +156,21 @@ describe("task templates", () => {
     expect(task.tools).toContain("evolution_deactivate_skill");
     expect(task.tools).toContain("memory_store");
     expect(task.description).toContain("evolution mode");
+  });
+
+  it("evolution log has correct structure", () => {
+    const task = createEvolutionLogEntry("2026-04-05");
+    expect(task.title).toBe("Evolution log — 2026-04-05");
+    expect(task.agentType).toBe("fast");
+    expect(task.tools).toContain("jarvis_file_read");
+    expect(task.tools).toContain("file_read");
+  });
+
+  it("weekly review has correct structure", () => {
+    const task = createWeeklyReview("2026-04-05");
+    expect(task.title).toBe("Weekly review — 2026-04-05");
+    expect(task.agentType).toBe("fast");
+    expect(task.tools).toContain("jarvis_file_read");
+    expect(task.tools).toContain("gmail_send");
   });
 });

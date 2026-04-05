@@ -8,7 +8,7 @@
  * Inspired by DevPulse signal intelligence architecture:
  * - Collection is mechanical (web_search, rss_read, exa_search)
  * - Scoring uses relevance × risk multiplier
- * - Synthesis uses the strongest model (heavy runner)
+ * - Synthesis uses the fast runner (sequential tool chain)
  *
  * The morning briefing can then reference the digest via user_fact_list.
  */
@@ -119,7 +119,7 @@ IMPORTANT:
 - If a search returns no useful results, skip it. Quality over quantity.
 - Prefer actionable intelligence over general news.
 - Do NOT write to the journal.`,
-    agentType: "heavy",
+    agentType: "fast",
     tools: [
       "user_fact_list",
       "user_fact_set",
