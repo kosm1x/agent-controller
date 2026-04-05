@@ -69,24 +69,15 @@ async function edgeTts(
 
   try {
     execFileSync(
-      "npx",
-      [
-        "edge-tts",
-        "--voice",
-        voice,
-        "--file",
-        textFile,
-        "--write-media",
-        outputPath,
-      ],
+      "edge-tts",
+      ["--voice", voice, "--file", textFile, "--write-media", outputPath],
       { timeout: TIMEOUT_MS, stdio: "pipe" },
     );
   } catch (err) {
     // Try with --text directly if --file fails
     execFileSync(
-      "npx",
+      "edge-tts",
       [
-        "edge-tts",
         "--voice",
         voice,
         "--text",

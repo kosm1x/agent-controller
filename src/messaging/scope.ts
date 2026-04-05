@@ -103,6 +103,7 @@ export const MISC_TOOLS = [
   "project_get",
   "project_update",
   "pdf_read",
+  "video_status", // Always available — follow-ups about video status don't re-trigger video scope
   // Lightpanda browser — fast, lightweight, for content reading + simple forms
   "browser__goto",
   "browser__markdown",
