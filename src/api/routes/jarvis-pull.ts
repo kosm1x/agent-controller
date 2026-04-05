@@ -57,6 +57,11 @@ jarvisPull.post("/jarvis-pull", async (c) => {
   let systemPrompt =
     "Eres Jarvis, asistente estratégico de inteligencia. Un agente del CRM te está solicitando análisis.\n\n";
   systemPrompt += `INSTRUCCIONES DE FORMATO (rol: ${role}):\n${ROLE_INSTRUCTIONS[role]}\n\n`;
+  systemPrompt +=
+    "OBLIGATORIO: Termina SIEMPRE con una línea '📎 Fuentes: [lista las fuentes usadas]'. " +
+    "Si usaste Intel Depot señales, di qué fuentes (GDELT, CoinGecko, etc.). " +
+    "Si usaste KB files, di los paths. Si es conocimiento general, di 'Análisis propio'. " +
+    "Esta línea es lo primero que el agente CRM ve — sin ella, el agente no puede citar la fuente.\n\n";
 
   // Inject knowledge base for context (enforce + always-read files)
   try {
