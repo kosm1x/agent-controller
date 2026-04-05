@@ -22,6 +22,7 @@ export const CORE_TOOLS = [
   "skill_save",
   "skill_list",
   "file_read", // Always available — reads .txt, .docx, downloaded attachments
+  "list_dir", // Always available — browse VPS filesystem when user says "local"
   "task_history", // Always available — LLM can query its own past executions
   "jarvis_file_read", // NorthStar visions/goals live here
   "jarvis_file_list", // List files in Jarvis file system

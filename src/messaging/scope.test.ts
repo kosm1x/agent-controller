@@ -148,9 +148,10 @@ describe("scope pattern matching", () => {
 
   it("no false positives on casual Spanish conversation", () => {
     const tools = scope("Hola, buenos días. Cómo estás?");
-    // Should only have core + misc tools
+    // Should only have core + misc tools (list_dir + file_read are in CORE, so exclude from check)
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
-    expect(hasNone(tools, CODING_TOOLS)).toBe(true);
+    const codingExclusive = CODING_TOOLS.filter((t) => !CORE_TOOLS.includes(t));
+    expect(hasNone(tools, codingExclusive)).toBe(true);
   });
 });
 
@@ -294,7 +295,8 @@ describe("two-phase scope isolation", () => {
     expect(hasAll(tools, CORE_TOOLS)).toBe(true);
     expect(hasAll(tools, MISC_TOOLS)).toBe(true);
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
-    expect(hasNone(tools, CODING_TOOLS)).toBe(true);
+    const codingExclusive = CODING_TOOLS.filter((t) => !CORE_TOOLS.includes(t));
+    expect(hasNone(tools, codingExclusive)).toBe(true);
   });
 });
 
