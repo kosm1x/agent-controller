@@ -35,7 +35,7 @@ Jarvis can create branches, write code, push, and open PRs on his own repo.
 - Auto-labeled PRs (`jarvis-authored`)
 - **Exit:** Jarvis writes a new intel adapter → branch → tests pass → PR → user gets Telegram notification
 
-### S2 — Self-Repair (~1.5d)
+### S2 — Self-Repair (~1.5d) — **Done**
 
 Jarvis can fix bugs in his own code when identified.
 

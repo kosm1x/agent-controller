@@ -102,6 +102,10 @@ import {
 } from "../builtin/git.js";
 import { jarvisDevTool } from "../builtin/jarvis-dev.js";
 import {
+  jarvisDiagnoseTool,
+  jarvisTestRunTool,
+} from "../builtin/jarvis-self-repair.js";
+import {
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,
@@ -160,6 +164,8 @@ const BUILTIN_TOOLS: Tool[] = [
   ghRepoCreateTool,
   ghCreatePrTool,
   jarvisDevTool,
+  jarvisDiagnoseTool,
+  jarvisTestRunTool,
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,

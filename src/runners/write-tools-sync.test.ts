@@ -63,6 +63,8 @@ describe("WRITE_TOOLS sync", () => {
       "git_status",
       "git_diff",
       "code_search",
+      "jarvis_diagnose",
+      "jarvis_test_run",
     ]);
     const codingWriteTools = CODING_TOOLS.filter(
       (t) => !CODING_READ_ONLY.has(t),

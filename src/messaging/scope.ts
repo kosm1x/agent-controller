@@ -71,6 +71,8 @@ export const CODING_TOOLS = [
   "gh_create_pr",
   "jarvis_dev",
   "code_search",
+  "jarvis_diagnose",
+  "jarvis_test_run",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */
