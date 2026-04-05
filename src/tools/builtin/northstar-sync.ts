@@ -1,51 +1,33 @@
 /**
- * NorthStar Sync — connects to COMMIT db.mycommit.net and syncs
- * visions/goals/objectives/tasks into NorthStar/ files.
+ * NorthStar Sync — bidirectional sync with COMMIT db.mycommit.net.
  *
- * Strictly a service: external DB → NorthStar files. On demand only.
+ * Reads visions/goals/objectives/tasks from both NorthStar files and COMMIT DB.
+ * Latest entry wins (compare updated_at timestamps).
+ * COMMIT UUIDs embedded in file content for deterministic matching.
+ *
  * User: fede@eurekamd.net (a8ad98e1-b9c6-4447-ab80-bac467835b3a)
  */
 
 import type { Tool } from "../types.js";
-import { upsertFile } from "../../db/jarvis-fs.js";
+import { upsertFile, getFile } from "../../db/jarvis-fs.js";
 
 const BASE_URL = "https://db.mycommit.net/rest/v1";
 const USER_ID = "a8ad98e1-b9c6-4447-ab80-bac467835b3a";
 const TIMEOUT_MS = 15_000;
 
-interface Vision {
+interface CommitItem {
   id: string;
   title: string;
   status: string;
   description: string;
-  target_date: string | null;
-}
-interface Goal {
-  id: string;
-  title: string;
-  status: string;
-  description: string;
-  target_date: string | null;
-  vision_id: string | null;
-}
-interface Objective {
-  id: string;
-  title: string;
-  status: string;
-  priority: string;
-  description: string;
-  target_date: string | null;
-  goal_id: string | null;
-}
-interface Task {
-  id: string;
-  title: string;
-  status: string;
-  priority: string;
-  description: string;
-  due_date: string | null;
-  notes: string | null;
-  objective_id: string | null;
+  priority?: string;
+  target_date?: string | null;
+  due_date?: string | null;
+  notes?: string | null;
+  vision_id?: string | null;
+  goal_id?: string | null;
+  objective_id?: string | null;
+  updated_at: string;
 }
 
 function slugify(text: string): string {
@@ -58,19 +40,72 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
-async function fetchTable<T>(
+async function fetchTable(
   table: string,
   apiKey: string,
-  extraFilter?: string,
-): Promise<T[]> {
-  const filter = extraFilter ? `&${extraFilter}` : "";
+  statusFilter: string,
+): Promise<CommitItem[]> {
+  const filter = statusFilter ? `&${statusFilter}` : "";
   const url = `${BASE_URL}/${table}?select=*&user_id=eq.${USER_ID}${filter}&order=order.asc`;
   const res = await fetch(url, {
     headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`${table}: HTTP ${res.status}`);
-  return (await res.json()) as T[];
+  return (await res.json()) as CommitItem[];
+}
+
+async function patchItem(
+  table: string,
+  id: string,
+  updates: Record<string, unknown>,
+  apiKey: string,
+): Promise<boolean> {
+  const url = `${BASE_URL}/${table}?id=eq.${id}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      apikey: apiKey,
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(updates),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  return res.ok;
+}
+
+/** Extract a field value from file content */
+function extractField(content: string, field: string): string | null {
+  const match = content.match(new RegExp(`^${field}:\\s*(.+)$`, "m"));
+  return match ? match[1].trim() : null;
+}
+
+/** Build NorthStar file content with COMMIT_ID embedded */
+function buildFileContent(
+  item: CommitItem,
+  type: string,
+  parentTitle?: string,
+  children?: string,
+): string {
+  const lines = [
+    `# ${item.title}`,
+    `COMMIT_ID: ${item.id}`,
+    `Status: ${item.status}`,
+  ];
+  if (item.priority) lines.push(`Priority: ${item.priority}`);
+  if (parentTitle)
+    lines.push(
+      `${type === "goal" ? "Vision" : type === "objective" ? "Goal" : "Objective"}: ${parentTitle}`,
+    );
+  if (item.target_date) lines.push(`Target: ${item.target_date}`);
+  if (item.due_date) lines.push(`Due: ${item.due_date}`);
+  if (item.description) lines.push(`Description: ${item.description}`);
+  if (item.notes) lines.push(`Notes: ${item.notes}`);
+  if (children) lines.push("", children);
+  lines.push("", `Last sync: ${new Date().toISOString()}`);
+  return lines.join("\n");
 }
 
 export const northstarSyncTool: Tool = {
@@ -80,21 +115,28 @@ export const northstarSyncTool: Tool = {
     type: "function",
     function: {
       name: "northstar_sync",
-      description: `Sync visions, goals, objectives, and tasks from the COMMIT database (db.mycommit.net) into NorthStar/ files.
+      description: `Bidirectional sync between NorthStar files and COMMIT database (db.mycommit.net).
+
+Latest entry wins: compares updated_at timestamps. If NorthStar file is newer, pushes to COMMIT DB. If COMMIT DB is newer, updates NorthStar file.
 
 USE WHEN:
-- User asks to sync or refresh NorthStar from the COMMIT database
-- User asks "sincroniza NorthStar", "actualiza desde COMMIT"
+- User asks to sync or refresh NorthStar: "sincroniza NorthStar", "actualiza desde COMMIT"
+- User updated tasks in COMMIT and wants NorthStar to reflect changes
+- User updated NorthStar files and wants COMMIT DB to reflect changes
 
-This is a one-way sync: COMMIT DB → NorthStar files. Overwrites existing files.
 Requires COMMIT_DB_KEY env var.`,
       parameters: {
         type: "object",
         properties: {
           include_completed: {
             type: "boolean",
+            description: "Include completed items (default: false)",
+          },
+          direction: {
+            type: "string",
+            enum: ["both", "pull", "push"],
             description:
-              "Include completed items (default: false, only active items)",
+              "Sync direction: both (default), pull (COMMIT→NorthStar), push (NorthStar→COMMIT)",
           },
         },
       },
@@ -111,183 +153,160 @@ Requires COMMIT_DB_KEY env var.`,
     }
 
     const includeCompleted = args.include_completed === true;
+    const direction = (args.direction as string) || "both";
     const statusFilter = includeCompleted ? "" : "status=neq.completed";
 
     try {
-      // Fetch all data
-      const [visions, goals, objectives, tasks] = await Promise.all([
-        fetchTable<Vision>("visions", apiKey, statusFilter),
-        fetchTable<Goal>("goals", apiKey, statusFilter),
-        fetchTable<Objective>("objectives", apiKey, statusFilter),
-        fetchTable<Task>("tasks", apiKey, statusFilter),
-      ]);
+      const tables = ["visions", "goals", "objectives", "tasks"] as const;
+      const typeMap = {
+        visions: "vision",
+        goals: "goal",
+        objectives: "objective",
+        tasks: "task",
+      } as const;
+      const pathMap = {
+        visions: "NorthStar/visions",
+        goals: "NorthStar/goals",
+        objectives: "NorthStar/objectives",
+        tasks: "NorthStar/tasks",
+      } as const;
 
-      let filesWritten = 0;
-
-      // Write vision files
-      for (const v of visions) {
-        const slug = slugify(v.title);
-        const visionGoals = goals.filter((g) => g.vision_id === v.id);
-        const goalList = visionGoals
-          .map(
-            (g) =>
-              `- [${g.title}](NorthStar/goals/${slugify(g.title)}.md) — ${g.status}`,
-          )
-          .join("\n");
-
-        const content = `# ${v.title}
-Status: ${v.status}
-${v.target_date ? `Target: ${v.target_date}` : ""}
-${v.description ? `Description: ${v.description}` : ""}
-
-## Goals
-${goalList || "- (none)"}
-`;
-        upsertFile(
-          `NorthStar/visions/${slug}.md`,
-          v.title,
-          content,
-          ["northstar", "vision"],
-          "reference",
-          30,
-        );
-        filesWritten++;
+      // Fetch all COMMIT data
+      const commitData: Record<string, CommitItem[]> = {};
+      for (const table of tables) {
+        commitData[table] = await fetchTable(table, apiKey, statusFilter);
       }
 
-      // Write goal files
-      for (const g of goals) {
-        const slug = slugify(g.title);
-        const vision = visions.find((v) => v.id === g.vision_id);
-        const goalObjectives = objectives.filter((o) => o.goal_id === g.id);
-        const goalTasks = tasks.filter((t) => {
-          const obj = objectives.find((o) => o.id === t.objective_id);
-          return obj?.goal_id === g.id;
-        });
+      let pulled = 0;
+      let pushed = 0;
+      let unchanged = 0;
 
-        const objList = goalObjectives
-          .map(
-            (o) =>
-              `- [${o.title}](NorthStar/objectives/${slugify(o.title)}.md) — ${o.status} (${o.priority})`,
-          )
-          .join("\n");
-        const taskList = goalTasks
-          .map(
-            (t) =>
-              `- [${t.title}](NorthStar/tasks/${slugify(t.title)}.md) — ${t.status} (${t.priority})`,
-          )
-          .join("\n");
+      for (const table of tables) {
+        const items = commitData[table];
+        const type = typeMap[table];
+        const basePath = pathMap[table];
 
-        const content = `# ${g.title}
-Status: ${g.status}
-Vision: ${vision?.title ?? "unlinked"}
-${g.target_date ? `Target: ${g.target_date}` : ""}
-${g.description ? `Description: ${g.description}` : ""}
+        for (const item of items) {
+          const slug = slugify(item.title);
+          const filePath = `${basePath}/${slug}.md`;
+          const existing = getFile(filePath);
 
-## Objectives
-${objList || "- (none)"}
+          // Find parent title for context
+          let parentTitle: string | undefined;
+          if ("vision_id" in item && item.vision_id) {
+            parentTitle = commitData.visions.find(
+              (v) => v.id === item.vision_id,
+            )?.title;
+          } else if ("goal_id" in item && item.goal_id) {
+            parentTitle = commitData.goals.find(
+              (g) => g.id === item.goal_id,
+            )?.title;
+          } else if ("objective_id" in item && item.objective_id) {
+            parentTitle = commitData.objectives.find(
+              (o) => o.id === item.objective_id,
+            )?.title;
+          }
 
-## Tasks
-${taskList || "- (none)"}
-`;
-        upsertFile(
-          `NorthStar/goals/${slug}.md`,
-          g.title,
-          content,
-          ["northstar", "goal"],
-          "reference",
-          30,
-        );
-        filesWritten++;
-      }
+          if (!existing) {
+            // File doesn't exist — pull from COMMIT
+            if (direction !== "push") {
+              const content = buildFileContent(item, type, parentTitle);
+              upsertFile(
+                filePath,
+                item.title,
+                content,
+                ["northstar", type],
+                "reference",
+                30,
+              );
+              pulled++;
+            }
+            continue;
+          }
 
-      // Write objective files
-      for (const o of objectives) {
-        const slug = slugify(o.title);
-        const goal = goals.find((g) => g.id === o.goal_id);
-        const objTasks = tasks.filter((t) => t.objective_id === o.id);
-        const taskList = objTasks
-          .map(
-            (t) =>
-              `- [${t.title}](NorthStar/tasks/${slugify(t.title)}.md) — ${t.status} (${t.priority})`,
-          )
-          .join("\n");
+          // Both exist — compare timestamps
+          const commitTime = new Date(item.updated_at).getTime();
+          const fileTime = new Date(existing.updated_at).getTime();
 
-        const content = `# ${o.title}
-Status: ${o.status}
-Priority: ${o.priority}
-Goal: ${goal?.title ?? "unlinked"}
-${o.target_date ? `Target: ${o.target_date}` : ""}
-${o.description ? `Description: ${o.description}` : ""}
+          if (commitTime > fileTime && direction !== "push") {
+            // COMMIT is newer — pull
+            const content = buildFileContent(item, type, parentTitle);
+            upsertFile(
+              filePath,
+              item.title,
+              content,
+              ["northstar", type],
+              "reference",
+              30,
+            );
+            pulled++;
+          } else if (fileTime > commitTime && direction !== "pull") {
+            // NorthStar is newer — push to COMMIT
+            const newStatus = extractField(existing.content, "Status");
+            const newPriority = extractField(existing.content, "Priority");
+            const newDescription = extractField(
+              existing.content,
+              "Description",
+            );
+            const newNotes = extractField(existing.content, "Notes");
 
-## Tasks
-${taskList || "- (none)"}
-`;
-        upsertFile(
-          `NorthStar/objectives/${slug}.md`,
-          o.title,
-          content,
-          ["northstar", "objective"],
-          "reference",
-          30,
-        );
-        filesWritten++;
-      }
+            const updates: Record<string, unknown> = {
+              updated_at: new Date().toISOString(),
+            };
+            if (newStatus && newStatus !== item.status)
+              updates.status = newStatus;
+            if (newPriority && newPriority !== item.priority)
+              updates.priority = newPriority;
+            if (newDescription && newDescription !== item.description)
+              updates.description = newDescription;
+            if (newNotes && newNotes !== item.notes) updates.notes = newNotes;
 
-      // Write task files
-      for (const t of tasks) {
-        const slug = slugify(t.title);
-        const objective = objectives.find((o) => o.id === t.objective_id);
-
-        const content = `# ${t.title}
-Status: ${t.status}
-Priority: ${t.priority}
-Objective: ${objective?.title ?? "unlinked"}
-${t.due_date ? `Due: ${t.due_date}` : ""}
-${t.notes ? `Notes: ${t.notes}` : ""}
-${t.description ? `Description: ${t.description}` : ""}
-`;
-        upsertFile(
-          `NorthStar/tasks/${slug}.md`,
-          t.title,
-          content,
-          ["northstar", "task"],
-          "reference",
-          30,
-        );
-        filesWritten++;
+            if (Object.keys(updates).length > 1) {
+              const ok = await patchItem(table, item.id, updates, apiKey);
+              if (ok) pushed++;
+              else
+                console.warn(
+                  `[northstar-sync] Failed to push ${item.title} to ${table}`,
+                );
+            } else {
+              unchanged++;
+            }
+          } else {
+            unchanged++;
+          }
+        }
       }
 
       // Regenerate NorthStar INDEX
-      const indexContent = `# NorthStar — Hierarchy
-
-## Visions (${visions.length})
-${visions.map((v) => `- [${v.title}](NorthStar/visions/${slugify(v.title)}.md) — ${v.status}`).join("\n")}
-
-## Goals (${goals.length})
-${goals.map((g) => `- [${g.title}](NorthStar/goals/${slugify(g.title)}.md) — ${g.status}`).join("\n")}
-
-## Objectives (${objectives.length})
-${objectives.map((o) => `- [${o.title}](NorthStar/objectives/${slugify(o.title)}.md) — ${o.status} (${o.priority})`).join("\n")}
-
-## Tasks (${tasks.length})
-${tasks.map((t) => `- [${t.title}](NorthStar/tasks/${slugify(t.title)}.md) — ${t.status} (${t.priority})`).join("\n")}
-
----
-Last sync: ${new Date().toISOString()}
-Source: db.mycommit.net (user fede@eurekamd.net)
-`;
+      const indexLines = ["# NorthStar — Hierarchy\n"];
+      for (const table of tables) {
+        const items = commitData[table];
+        const basePath = pathMap[table];
+        indexLines.push(
+          `## ${table.charAt(0).toUpperCase() + table.slice(1)} (${items.length})`,
+        );
+        for (const item of items) {
+          const slug = slugify(item.title);
+          indexLines.push(
+            `- [${item.title}](${basePath}/${slug}.md) — ${item.status}${item.priority ? ` (${item.priority})` : ""}`,
+          );
+        }
+        indexLines.push("");
+      }
+      indexLines.push(
+        `---\nLast sync: ${new Date().toISOString()}\nSource: db.mycommit.net (user fede@eurekamd.net)\nDirection: ${direction}`,
+      );
 
       upsertFile(
         "NorthStar/INDEX.md",
         "NorthStar Hierarchy",
-        indexContent,
+        indexLines.join("\n"),
         ["northstar", "index"],
         "reference",
         5,
       );
-      filesWritten++;
 
-      return `NorthStar sync complete. ${filesWritten} files written: ${visions.length} visions, ${goals.length} goals, ${objectives.length} objectives, ${tasks.length} tasks.`;
+      return `NorthStar sync complete (${direction}). Pulled: ${pulled}, Pushed: ${pushed}, Unchanged: ${unchanged}. Total: ${Object.values(commitData).flat().length} items.`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,
