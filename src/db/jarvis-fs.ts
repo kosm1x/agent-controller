@@ -75,8 +75,8 @@ export function upsertFile(
   db.prepare(
     `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET
-       path = excluded.path, title = excluded.title, content = excluded.content,
+     ON CONFLICT(path) DO UPDATE SET
+       id = excluded.id, title = excluded.title, content = excluded.content,
        tags = excluded.tags, qualifier = excluded.qualifier, condition = excluded.condition,
        priority = excluded.priority, related_to = excluded.related_to, updated_at = datetime('now')`,
   ).run(
