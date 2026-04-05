@@ -73,7 +73,7 @@ Tie it all together: identify → code → test → deploy → monitor.
 - **Safety:** Max 3 PRs/day, $5/cycle, scope-limited, revertable, kill switch
 - **Exit:** Jarvis autonomously writes a new intel adapter, tests, deploys, monitors — end to end
 
-### S6 — Structured Tool Result Pipelines (~2d)
+### S6 — Structured Tool Result Pipelines (~2d) — **Done**
 
 Eliminate LLM narrativization of data. When tools return data (sheets, APIs, intel), it goes through a formatter that produces the EXACT output the user sees. The LLM adds commentary AFTER, never inside the data block.
 

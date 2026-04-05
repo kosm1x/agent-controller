@@ -209,11 +209,15 @@ Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unrea
         }),
       );
 
-      return JSON.stringify({
-        results: emails,
-        total: list.resultSizeEstimate ?? emails.length,
-        query,
-      });
+      // Pre-formatted: numbered email list with from, subject, date, snippet.
+      if (emails.length === 0) return `📧 "${query}" — 0 results`;
+      const lines = [`📧 **"${query}"** — ${emails.length} emails`];
+      for (const e of emails) {
+        lines.push(
+          `\n**${e.subject}**\nDe: ${e.from}\nFecha: ${e.date}\n> ${e.snippet}`,
+        );
+      }
+      return lines.join("\n");
     } catch (err) {
       return JSON.stringify({
         error: `Gmail search failed: ${err instanceof Error ? err.message : err}`,

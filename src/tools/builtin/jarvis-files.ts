@@ -376,7 +376,15 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
       qualifier: args.qualifier as string | undefined,
       tags: args.tags as string[] | undefined,
     });
-    return JSON.stringify({ files: results, total: results.length });
+    // Pre-formatted: file listing with path, size, qualifier
+    if (results.length === 0) return "📂 No files found.";
+    const lines = [`📂 **${results.length} files**`];
+    for (const f of results) {
+      const sizeStr =
+        f.size > 1024 ? `${(f.size / 1024).toFixed(1)}K` : `${f.size}B`;
+      lines.push(`  ${f.path} (${sizeStr}, ${f.qualifier})`);
+    }
+    return lines.join("\n");
   },
 };
 

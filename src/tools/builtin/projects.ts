@@ -52,19 +52,21 @@ NOTE: This returns DB project metadata (status, URLs, credentials). For project 
     const status = args.status as string | undefined;
     const projects = listProjects(status);
 
-    return JSON.stringify({
-      count: projects.length,
-      projects: projects.map((p) => ({
-        slug: p.slug,
-        name: p.name,
-        status: p.status,
-        description: p.description?.slice(0, 100) || "",
-        site_url: p.urls.site ?? null,
-        commit_goal_id: p.commit_goal_id,
-        has_credentials: Object.keys(p.credentials).length > 0,
-        credential_keys: Object.keys(p.credentials),
-      })),
-    });
+    // Pre-formatted: markdown table of projects
+    if (projects.length === 0) return "📁 No projects found.";
+    const lines = [`📁 **${projects.length} projects** (${status ?? "all"})`];
+    lines.push("");
+    lines.push("| Slug | Name | Status | URL | Credentials |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const p of projects) {
+      const url = p.urls.site ?? "—";
+      const creds =
+        Object.keys(p.credentials).length > 0
+          ? Object.keys(p.credentials).join(", ")
+          : "—";
+      lines.push(`| ${p.slug} | ${p.name} | ${p.status} | ${url} | ${creds} |`);
+    }
+    return lines.join("\n");
   },
 };
 
@@ -116,14 +118,30 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
 
     const recentLog = getProjectLog(project.id, 5);
 
-    return JSON.stringify({
-      ...project,
-      recent_activity: recentLog.map((e) => ({
-        action: e.action,
-        details: e.details,
-        date: e.created_at,
-      })),
-    });
+    // Pre-formatted: readable project details
+    const lines = [
+      `📁 **${project.name}** (\`${project.slug}\`)`,
+      `Status: ${project.status}`,
+    ];
+    if (project.description) lines.push(`${project.description}`);
+    if (project.urls?.site) lines.push(`URL: ${project.urls.site}`);
+    if (project.urls?.repo) lines.push(`Repo: ${project.urls.repo}`);
+    if (project.commit_goal_id)
+      lines.push(`NorthStar goal: ${project.commit_goal_id}`);
+    const credKeys = Object.keys(project.credentials ?? {});
+    if (credKeys.length > 0) {
+      lines.push(`\n**Credentials:** ${credKeys.join(", ")}`);
+      for (const [k, v] of Object.entries(project.credentials)) {
+        lines.push(`  ${k}: ${String(v)}`);
+      }
+    }
+    if (recentLog.length > 0) {
+      lines.push(`\n**Recent activity:**`);
+      for (const e of recentLog) {
+        lines.push(`  ${e.created_at} — ${e.action}: ${e.details}`);
+      }
+    }
+    return lines.join("\n");
   },
 };
 

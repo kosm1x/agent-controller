@@ -57,17 +57,24 @@ AFTER READING: Report the spreadsheet name and range read. Only report data that
       const rangeMatch = result.range.match(/!.*?(\d+)/);
       const startRow = rangeMatch ? parseInt(rangeMatch[1], 10) : 1;
 
-      const rows = values.map((row, i) => ({
-        row: startRow + i,
-        cells: row,
-      }));
-
-      return JSON.stringify({
-        range: result.range,
-        total_rows: values.length,
-        start_row: startRow,
-        data: rows,
-      });
+      // Pre-formatted output: markdown table so LLM relays data as-is.
+      // First row = headers, rest = data rows with row numbers.
+      if (values.length === 0) {
+        return `📊 Sheet: ${result.range}\nNo data found.`;
+      }
+      const headers = values[0];
+      const dataRows = values.slice(1);
+      const lines = [
+        `📊 **${result.range}** (${values.length} rows)`,
+        "",
+        `| Row | ${headers.join(" | ")} |`,
+        `| --- | ${headers.map(() => "---").join(" | ")} |`,
+        ...dataRows.map(
+          (row, i) =>
+            `| ${startRow + 1 + i} | ${row.map((c) => (c ?? "").slice(0, 100)).join(" | ")} |`,
+        ),
+      ];
+      return lines.join("\n");
     } catch (err) {
       return JSON.stringify({
         error: `Sheets read failed: ${err instanceof Error ? err.message : err}`,

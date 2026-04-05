@@ -114,13 +114,17 @@ AFTER SEARCHING: Cite specific sources (title + URL) when reporting findings. Ne
           }
         : null;
 
-      return JSON.stringify({
-        query,
-        results,
-        total: results.length,
-        ...(snippet ? { featured_snippet: snippet } : {}),
-        ...(knowledge ? { knowledge_graph: knowledge } : {}),
-      });
+      // Pre-formatted: numbered results with title, URL, description.
+      const lines = [`🔍 **"${query}"** — ${results.length} results`];
+      if (snippet) lines.push(`\n> ${snippet}\n`);
+      if (knowledge)
+        lines.push(`📖 **${knowledge.title}**: ${knowledge.description}\n`);
+      for (let i = 0; i < results.length; i++) {
+        lines.push(
+          `${i + 1}. **${results[i].title}**\n   ${results[i].url}\n   ${results[i].description}`,
+        );
+      }
+      return lines.join("\n");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return JSON.stringify({ error: `Search failed: ${message}` });

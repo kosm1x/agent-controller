@@ -185,9 +185,9 @@ describe("jarvis_file_list", () => {
     ]);
 
     const result = await jarvisFileListTool.execute({});
-    const parsed = JSON.parse(result);
-    expect(parsed.total).toBe(1);
-    expect(parsed.files[0].tags).toEqual(["directive"]);
+    // Now returns pre-formatted text, not JSON
+    expect(result).toContain("1 files");
+    expect(result).toContain("DIRECTIVES.md");
   });
 
   it("filters by qualifier", async () => {
