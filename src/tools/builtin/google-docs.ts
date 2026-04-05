@@ -17,7 +17,9 @@ export const gsheetsReadTool: Tool = {
       name: "gsheets_read",
       description: `Read data from a Google Spreadsheet.
 
-WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first to find the file ID.`,
+WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first to find the file ID.
+
+AFTER READING: Report the spreadsheet name and range read. Only report data that was actually returned — never fill gaps with assumed values.`,
       parameters: {
         type: "object",
         properties: {
@@ -97,7 +99,9 @@ MODES:
 
 ROW TARGETING: When updating specific cells, use the "row" number from gsheets_read results directly in your range. Example: gsheets_read returns {row: 30, cells: [...]} → write to "Sheet1!K30:L30". NEVER count rows manually — always use the row number from the read result.
 
-WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.`,
+WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.
+
+AFTER WRITING: Report the spreadsheet name, range written, and number of rows affected.`,
       parameters: {
         type: "object",
         properties: {
@@ -358,7 +362,9 @@ when the content is too long to fit in tool arguments.
 
 WORKFLOW for long documents:
 1. Write content to a temp file with file_write (e.g., /tmp/doc-content.txt)
-2. Call gdocs_write with document_id and content_file=<that path>`,
+2. Call gdocs_write with document_id and content_file=<that path>
+
+AFTER WRITING: Report the document title and what was appended.`,
       parameters: {
         type: "object",
         properties: {
@@ -465,7 +471,9 @@ DIFFERENCE FROM gdocs_write:
 - gdocs_write APPENDS to the end (additive)
 - gdocs_replace CLEARS everything and writes fresh (destructive)
 
-LARGE CONTENT: Pass content_file=<path> instead of inline text.`,
+LARGE CONTENT: Pass content_file=<path> instead of inline text.
+
+AFTER REPLACING: Report the document title and confirm the content was replaced.`,
       parameters: {
         type: "object",
         properties: {

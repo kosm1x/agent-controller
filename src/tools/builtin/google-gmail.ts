@@ -32,7 +32,9 @@ DO NOT USE WHEN:
 
 CRITICAL: Sending unsolicited emails is a SERIOUS violation. NEVER send an email
 unless the user explicitly requested it in the current message. "Verify the email"
-means SEARCH, not SEND.`,
+means SEARCH, not SEND.
+
+AFTER SENDING: Report the recipient, subject, and confirmation that the email was sent.`,
       parameters: {
         type: "object",
         properties: {

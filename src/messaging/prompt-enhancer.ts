@@ -33,13 +33,21 @@ let enabled = (process.env.PROMPT_ENHANCER_ENABLED ?? "true") !== "false";
 // ---------------------------------------------------------------------------
 
 const PASSTHROUGH_PATTERNS = [
+  // Greetings
   /^(hola|hey|buenos?\s*d[ií]as?|buenas?\s*(tardes?|noches?)|qu[eé]\s*tal|saludos?)\b/i,
+  // Short confirmations
   /^(s[ií]|no|ok|dale|va|sale|listo|perfecto|gracias|exacto|genial|procede|adelante|continua|confirma(do)?)\b/i,
+  // Toggle commands
   /^(enhancer\s*(on|off|estado))\b/i,
+  // Emoji responses
   /^👍|^🙏|^💪|^✅/,
+  // Clear action verbs — these are unambiguous commands, don't question them
+  /^(lista|listar|muestra|mostrar|busca|buscar|lee|leer|abre|abrir|monitor(ea)?|sincroniza|sync|estado|status|resume|resumen|describe|consulta|dame|dime)\b/i,
+  // Skip / skip enhancer signals
+  /\b(hazlo|procede|skip|sin preguntas|ejecuta|haz(lo)?\s+ya)\b/i,
 ];
 
-const MIN_ENHANCE_LENGTH = 40; // Messages shorter than this pass through
+const MIN_ENHANCE_LENGTH = 80; // Messages shorter than this pass through
 
 /**
  * Should this message be enhanced?
@@ -127,13 +135,13 @@ const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un a
 Tu trabajo: analizar el mensaje del usuario EN CONTEXTO de la conversación reciente y decidir si necesita clarificación O si necesita ser dividido en partes más pequeñas.
 
 REGLAS:
-1. PRIMERO lee el contexto de los últimos 2 turnos. Si la conversación ya aclara paths, repos, o datos → "PASS"
-2. Si el mensaje es claro y específico (tiene paths, IDs, acciones concretas) → "PASS"
-3. Si el mensaje tiene ambigüedades que causarán problemas → genera 2-3 preguntas cortas en español
-4. NUNCA hagas más de 3 preguntas
-5. Las preguntas deben ser sobre: rutas de archivos, repos destino, fuentes de datos, formato de output
-6. NO preguntes sobre cosas que el contexto ya resolvió o que Jarvis puede inferir
-7. Si el contexto menciona un proyecto, sheet, o repo — asume que es el mismo
+1. Tu DEFAULT es "PASS". Solo preguntas cuando la ambigüedad causará un ERROR GRAVE (archivo equivocado borrado, datos enviados a destino incorrecto)
+2. Si la conversación reciente aclara paths, repos, o datos → "PASS"
+3. Si el mensaje es claro y específico → "PASS"
+4. Si Jarvis PUEDE inferir la respuesta de su contexto → "PASS"
+5. Si hay ambigüedad grave → genera EXACTAMENTE 2 preguntas (nunca 1, nunca 3+)
+6. Las preguntas SOLO sobre: destino incorrecto posible, datos que se perderían, acción destructiva ambigua
+7. Si el contexto menciona un proyecto, sheet, o repo — asume que es el mismo → "PASS"
 
 REGLA CRÍTICA — DETECCIÓN DE TAREAS COMPLEJAS:
 8. Si la tarea implica MÁS DE 5 archivos, MÁS DE 10 tool calls, o operaciones batch (migrar, mover, copiar muchos archivos) → NO digas PASS. En su lugar, sugiere dividir la tarea en bloques de máximo 5 items por mensaje.
@@ -154,9 +162,10 @@ CONTEXTO DEL SISTEMA:
 - LÍMITES: 35 rounds/tarea, 50K tokens. Cada file read+write = 2 rounds. Max ~5 archivos por mensaje.
 
 RESPONDE SOLO con:
-- "PASS" si no necesita preguntas Y la tarea es de tamaño manejable
-- Preguntas numeradas (1. 2. 3.) si hay ambigüedades
-- Plan de división si la tarea es demasiado grande (con bloques concretos)`;
+- "PASS" (en caso de duda, di PASS — es mejor ejecutar que preguntar de más)
+- EXACTAMENTE 2 preguntas numeradas si la ambigüedad causaría un error grave
+- Plan de división si la tarea es batch (>5 archivos)
+En el 80% de los casos la respuesta correcta es "PASS".`;
 
 /**
  * Analyze a user message and return questions or "PASS".
@@ -183,12 +192,19 @@ export async function analyzePrompt(
               : `Mensaje del usuario:\n${userMessage}`,
           },
         ],
-        max_tokens: 200,
+        max_tokens: 100,
       }),
       deadline,
     ]);
 
-    return (result.content ?? "PASS").trim();
+    const raw = (result.content ?? "PASS").trim();
+    // Mechanical guard: if LLM returned questions, cap at 2
+    if (raw.toUpperCase() === "PASS") return "PASS";
+    const lines = raw.split("\n").filter((l) => /^\d+[\.\)]/.test(l.trim()));
+    if (lines.length > 2) {
+      return lines.slice(0, 2).join("\n");
+    }
+    return raw;
   } catch {
     return "PASS";
   }

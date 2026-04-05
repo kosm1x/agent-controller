@@ -48,7 +48,9 @@ TIPS:
 - Keep values concise but complete
 - If the user corrects a fact, update it (same category+key overwrites)
 - PROACTIVELY save facts — don't wait for the user to ask you to remember
-- When the user provides ANY technical ID, key, token, or credential → IMMEDIATELY store it. These are easy to lose and hard to recover.`,
+- When the user provides ANY technical ID, key, token, or credential → IMMEDIATELY store it. These are easy to lose and hard to recover.
+
+BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, credentials). For longer knowledge (procedures, analyses, project docs), use jarvis_file_write instead.`,
       parameters: {
         type: "object",
         properties: {

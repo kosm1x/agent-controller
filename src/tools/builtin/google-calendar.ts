@@ -104,7 +104,9 @@ USE WHEN:
 - The user says "agenda", "programa", "pon en calendario"
 
 Times must be in ISO 8601 format with timezone offset (e.g., '2026-03-18T10:00:00-06:00' for Mexico City).
-Use the current date/time from the prompt to calculate correct dates.`,
+Use the current date/time from the prompt to calculate correct dates.
+
+AFTER CREATING: Report the event title, date/time, and calendar link.`,
       parameters: {
         type: "object",
         properties: {

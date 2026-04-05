@@ -27,7 +27,9 @@ DO NOT USE WHEN:
 
 Returns pre-formatted text summary of recent signals with severity levels.
 Available domains: financial, weather, geopolitical, cyber, news.
-Available sources: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news.`,
+Available sources: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news.
+
+AFTER QUERYING: Report which sources returned data and the time window covered. Don't extrapolate beyond what the signals show.`,
       parameters: {
         type: "object",
         properties: {

@@ -38,7 +38,12 @@ Cron format: minute hour day-of-month month day-of-week
 - "0 9,18 * * *" = twice daily at 9:00 AM and 6:00 PM
 - "30 7 * * 1" = every Monday at 7:30 AM
 
-All times are in the user's timezone (Mexico City).`,
+All times are in the user's timezone (Mexico City).
+
+DO NOT schedule tasks that send emails or modify data without explicit user request.
+Scheduled tasks run AUTONOMOUSLY — only schedule read/report tasks unless the user specifically asks for write actions.
+
+AFTER CREATING: Report the schedule name, cron in human-readable form, and delivery method.`,
       parameters: {
         type: "object",
         properties: {

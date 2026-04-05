@@ -431,7 +431,9 @@ include "content" or "content_file". The "content" field REPLACES the entire art
 ALWAYS use content_file for any substantial content (new or existing). Write the HTML to a file
 with file_write first, then pass the path here. Inline "content" is only safe for very short text.
 
-DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, report the actual error.`,
+DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, report the actual error.
+
+AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post ID.`,
       parameters: {
         type: "object",
         properties: {

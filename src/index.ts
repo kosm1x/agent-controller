@@ -8,7 +8,7 @@ import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { getConfig } from "./config.js";
-import { initDatabase, closeDatabase } from "./db/index.js";
+import { initDatabase, getDatabase, closeDatabase } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
 import {
@@ -196,7 +196,22 @@ async function main(): Promise<void> {
     // 4. Teardown MCP + tool sources
     await sourceManager.teardownAll();
 
-    // 5. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
+    // 5. Mark running tasks as failed (prevents orphaned tasks blocking new work)
+    try {
+      const db = getDatabase();
+      const orphaned = db
+        .prepare(
+          `UPDATE tasks SET status='failed', error='Service shutdown', completed_at=datetime('now') WHERE status IN ('running','pending','queued')`,
+        )
+        .run();
+      if (orphaned.changes > 0) {
+        log.info(`marked ${orphaned.changes} orphaned task(s) as failed`);
+      }
+    } catch {
+      // Non-fatal — DB may already be closed
+    }
+
+    // 6. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
     import("./db/jarvis-index.js")
       .then((m) => m.cancelPendingRegeneration())
       .catch(() => {});

@@ -37,7 +37,9 @@ USE WHEN:
 - You want to check what you've stored about a topic
 
 RETURNS: File content + metadata (tags, qualifier, priority, related files).
-If searching by tags, returns all matching files with previews.`,
+If searching by tags, returns all matching files with previews.
+
+AFTER READING: When reporting data from this file, cite the path. If the data is time-sensitive, note when it was last updated.`,
       parameters: {
         type: "object",
         properties: {
@@ -143,7 +145,9 @@ QUALIFIERS:
 - "enforce" — MANDATORY rules (auto-injected, prefix "MANDATORY:")
 - "always-read" — Auto-injected every task (use VERY sparingly — budget is tight)
 - "reference" — Available via jarvis_file_read (DEFAULT — use this for most files)
-- "workspace" — Scratch space for ongoing work`,
+- "workspace" — Scratch space for ongoing work
+
+AFTER WRITING: Report what you did — path, title, qualifier. If updating an existing file, mention what changed.`,
       parameters: {
         type: "object",
         properties: {
@@ -327,7 +331,16 @@ export const jarvisFileListTool: Tool = {
 USE WHEN:
 - You want to see what's in your knowledge base
 - You're looking for files on a topic
-- You need to check which files are auto-injected (always-read/enforce)`,
+- You need to check which files are auto-injected (always-read/enforce)
+
+NAVIGATION GUIDE — use these prefixes:
+- "projects/" — all active project folders (README.md in each)
+- "NorthStar/visions/" / "NorthStar/goals/" / "NorthStar/objectives/" / "NorthStar/tasks/" — goal hierarchy
+- "knowledge/people/" — contacts and relationships
+- "knowledge/procedures/" — SOPs
+- "directives/" — enforce rules (don't modify)
+
+TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search instead — it searches content, not just paths.`,
       parameters: {
         type: "object",
         properties: {
@@ -462,10 +475,11 @@ USE WHEN:
 - You need to find which files mention a topic, project, person, or concept
 - jarvis_file_list found nothing by path but you suspect the info exists somewhere
 - User asks "qué sabes sobre X?" or "dónde hay info de X?"
+- PREFER THIS over jarvis_file_list when you know WHAT you want but not WHERE it is
 
 Returns: matching file paths + short snippet around the match. Does NOT return full content — use jarvis_file_read on specific results to get details.
 
-This is a CONTENT search, not a path search. Use jarvis_file_list for path-based browsing.`,
+WORKFLOW: search → pick best match → jarvis_file_read to get full content. Never narrate from snippet alone.`,
       parameters: {
         type: "object",
         properties: {

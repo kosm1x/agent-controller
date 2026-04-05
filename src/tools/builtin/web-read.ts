@@ -59,7 +59,9 @@ DO NOT USE WHEN:
 
 Returns clean Markdown with headings, code blocks, and links preserved.
 Works with: GitHub repos, news articles, documentation, blogs, PDFs.
-For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).`,
+For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).
+
+AFTER READING: Cite the URL when reporting content. Distinguish between what the page says and your own analysis.`,
       parameters: {
         type: "object",
         properties: {

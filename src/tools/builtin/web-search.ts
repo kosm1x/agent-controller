@@ -33,7 +33,9 @@ DO NOT USE WHEN:
 - The user is giving you a command to manage tasks/goals (use jarvis_file_read/jarvis_file_write)
 - You already have the information from conversation memory or mental models
 
-ALWAYS prefer searching over guessing. If you're unsure, search.`,
+ALWAYS prefer searching over guessing. If you're unsure, search.
+
+AFTER SEARCHING: Cite specific sources (title + URL) when reporting findings. Never present search results as your own knowledge.`,
       parameters: {
         type: "object",
         properties: {

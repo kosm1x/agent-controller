@@ -181,7 +181,9 @@ DO NOT USE WHEN:
 - Changes include .env or credential files (will be blocked)
 
 Always write a descriptive commit message that explains WHY, not just WHAT.
-CRITICAL: cwd MUST be set to the project directory you wrote files to. Do NOT omit it.`,
+CRITICAL: cwd MUST be set to the project directory you wrote files to. Do NOT omit it.
+
+AFTER COMMIT: Report the commit hash, branch, files committed, and commit message.`,
       parameters: {
         type: "object",
         properties: {
@@ -253,7 +255,9 @@ USE WHEN:
 - After committing changes that should be shared
 - After creating a PR branch
 
-Verifies GitHub auth before pushing. Pushes current branch to origin.`,
+Verifies GitHub auth before pushing. Pushes current branch to origin.
+
+AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       parameters: {
         type: "object",
         properties: {

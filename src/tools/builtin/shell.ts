@@ -184,11 +184,22 @@ export const shellTool: Tool = {
       name: "shell_exec",
       description: `Execute a shell command and return its output. Use for running system queries, scripts, or CLI tools.
 
+USE WHEN:
+- Running build commands (npm test, npx tsc, python scripts)
+- System queries (ls, df, cat, which, dpkg)
+- Project-specific CLI tools
+
+DO NOT USE for:
+- Git operations → use git_status, git_commit, git_push instead
+- Reading files → use file_read instead
+- Writing KB files → use jarvis_file_write instead
+- Modifying /root/claude/mission-control/ → BLOCKED (your own source)
+
 RESTRICTIONS:
-- Destructive commands are blocked (rm, mkfs, dd, kill, shutdown, systemctl, etc.)
-- File writes are restricted to project directories (/root/claude/, /tmp/, /workspace/)
-- Writes to system directories (/etc, /boot, /usr, /proc, /sys, /dev) are blocked
-- Max execution time: 60 seconds. Max output: 10,000 characters.`,
+- Destructive commands blocked (rm, mkfs, dd, kill, shutdown, systemctl)
+- File writes restricted to project dirs (/root/claude/, /tmp/, /workspace/)
+- System directories blocked (/etc, /boot, /usr, /proc, /sys, /dev)
+- Max 60 seconds, max 10,000 chars output.`,
       parameters: {
         type: "object",
         properties: {

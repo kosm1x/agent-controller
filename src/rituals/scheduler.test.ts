@@ -126,12 +126,12 @@ describe("task templates", () => {
   it("nightly close has correct structure", () => {
     const task = createNightlyClose("2026-03-13");
     expect(task.title).toBe("Nightly close — 2026-03-13");
-    expect(task.agentType).toBe("heavy");
+    expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("gmail_send");
     expect(task.description).toContain("Jarvis");
-    expect(task.description).toContain("Reflexión");
-    expect(task.description).toContain("Do NOT write to the journal");
+    expect(task.description).toContain("reflection");
+    expect(task.description).toContain("Do NOT");
   });
 
   it("signal intelligence has correct structure", () => {

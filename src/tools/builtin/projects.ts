@@ -31,7 +31,9 @@ USE WHEN:
 - User asks about their projects or what's active
 - You need to find a project's slug before calling project_get
 - Morning/nightly briefing needs project context
-- User mentions a project name and you need to verify it exists`,
+- User mentions a project name and you need to verify it exists
+
+NOTE: This returns DB project metadata (status, URLs, credentials). For project FILES and docs, also check jarvis_file_list with prefix "projects/{slug}/".`,
       parameters: {
         type: "object",
         properties: {
@@ -86,7 +88,9 @@ USE WHEN:
 
 ALWAYS call this when the user mentions a project by name — it loads the full context
 (credentials, URLs, config) so you don't need to ask the user for information they've
-already provided.`,
+already provided.
+
+For project documentation and notes, also read jarvis_file_read("projects/{slug}/README.md").`,
       parameters: {
         type: "object",
         properties: {

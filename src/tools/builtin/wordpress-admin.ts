@@ -454,10 +454,14 @@ export const wpDeleteTool: Tool = {
       description: `Delete a WordPress post, page, or media item by ID.
 
 USE WHEN:
-- User asks to remove a post, page, or uploaded image
-- Cleaning up test content
+- User EXPLICITLY asks to remove a post, page, or uploaded image
+- Cleaning up test content the user identifies by name/ID
 
-By default sends to trash. Use force=true to permanently delete.`,
+DO NOT USE unless the user specifically requested deletion. "Clean up" or "organize" does NOT mean delete.
+
+By default sends to trash (recoverable). Use force=true only when user says "permanently delete".
+
+AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to trash or was permanent.`,
       parameters: {
         type: "object",
         properties: {

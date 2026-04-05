@@ -105,10 +105,18 @@ export const fileWriteTool: Tool = {
     type: "function",
     function: {
       name: "file_write",
-      description: `Write content to a file. Creates parent directories if needed. Overwrites existing files.
+      description: `Write content to a VPS file. Creates parent directories if needed. Overwrites existing files.
 
-For large content that was salvaged from a truncated tool call, pass content_file=<salvage path>
-instead of inline content. The tool reads the salvaged file and writes it to the target path.`,
+USE WHEN:
+- Writing source code to project directories (/root/claude/cuatro-flor/, etc.)
+- Creating temp files for tool pipelines (/tmp/wp_content/, etc.)
+
+DO NOT USE for your Knowledge Base — use jarvis_file_write instead.
+DO NOT USE for /root/claude/mission-control/ — that is your own source code and is blocked.
+
+For large content salvaged from a truncated tool call, pass content_file=<salvage path>.
+
+AFTER WRITING: Report the file path written.`,
       parameters: {
         type: "object",
         properties: {
