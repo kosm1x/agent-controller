@@ -13,6 +13,10 @@ import {
   clearCheckpoint,
 } from "../runners/checkpoint.js";
 import { getEventBus } from "../lib/event-bus.js";
+import {
+  extractPattern,
+  findRelevantPatterns,
+} from "../intelligence/execution-patterns.js";
 import { getFile, upsertFile } from "../db/jarvis-fs.js";
 import {
   shouldEnhance,
@@ -228,6 +232,7 @@ interface PendingReply {
   to: string;
   originalText: string;
   imageUrl?: string; // preserved for thread continuity (vision follow-ups)
+  scopeGroups?: string[]; // for execution pattern extraction on completion
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
   streamController?: TelegramStreamController;
@@ -1086,11 +1091,16 @@ export class MessageRouter {
       enrichment.contextBlock,
     );
 
+    // Execution pattern memory: inject relevant past lessons
+    const patternBlock = findRelevantPatterns(msg.text, [...activeGroups]);
+    const systemPromptWithPatterns = patternBlock
+      ? systemPrompt + "\n\n" + patternBlock
+      : systemPrompt;
+
     // Task continuity: check for a recent checkpoint ONLY on continuation messages.
-    // Gate on intent to prevent unrelated messages from consuming the checkpoint.
     const CONTINUATION_RE =
       /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
-    let taskDescription = systemPrompt;
+    let taskDescription = systemPromptWithPatterns;
     if (CONTINUATION_RE.test(msg.text.trim())) {
       try {
         const cp = findRecentCheckpoint();
@@ -1161,6 +1171,7 @@ export class MessageRouter {
       to: msg.from,
       originalText: msg.text,
       imageUrl: msg.imageUrl,
+      scopeGroups: [...activeGroups],
       interimTimer,
       finalTimer,
       ...(streamController && { streamController }),
@@ -1346,6 +1357,41 @@ export class MessageRouter {
             source: "router",
           })
           .catch(() => {});
+      } catch {
+        // Non-fatal
+      }
+
+      // Execution pattern extraction (async, fire-and-forget)
+      // Execution pattern extraction (async, fire-and-forget)
+      try {
+        const db = getDatabase();
+        const task = db
+          .prepare("SELECT title, spawn_type FROM tasks WHERE task_id = ?")
+          .get(taskId) as { title: string; spawn_type: string } | undefined;
+        // Read toolCalls from runs table (RunnerOutput.toolCalls), not data.result
+        let toolCalls: string[] = [];
+        const run = db
+          .prepare(
+            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(taskId) as { output: string | null } | undefined;
+        if (run?.output) {
+          try {
+            toolCalls = JSON.parse(run.output).toolCalls ?? [];
+          } catch {
+            /* malformed */
+          }
+        }
+        if (task && !isBackground && toolCalls.length >= 2) {
+          extractPattern({
+            taskId,
+            title: task.title,
+            toolsCalled: toolCalls,
+            scopeGroups: pending.scopeGroups ?? [],
+            userMessage: pending.originalText,
+            result: resultText.slice(0, 500),
+          }).catch(() => {});
+        }
       } catch {
         // Non-fatal
       }

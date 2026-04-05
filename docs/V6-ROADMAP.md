@@ -91,7 +91,7 @@ Index the mission-control codebase for intelligent code navigation. Query: "wher
 - Refresh on git pull / branch switch
 - **Exit:** Jarvis self-repair finds the exact function to fix in 1 round instead of reading 8 files
 
-### S8 — Execution Pattern Memory (~2d)
+### S8 — Execution Pattern Memory (~2d) — **Done**
 
 Jarvis gets smarter over time. After each successful task, extract 1-2 lessons and store them for future use.
 
