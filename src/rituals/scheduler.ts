@@ -120,6 +120,33 @@ export function startRitualScheduler(): void {
       `[rituals] ${ritual.id}: scheduled (${ritual.cron}, tz=${RITUALS_TIMEZONE})`,
     );
   }
+
+  // Mechanical backups (no LLM)
+  scheduleKbBackup();
+}
+
+/** Mechanical KB backup — no LLM, just pushes jarvis_files to Postgres. */
+function scheduleKbBackup(): void {
+  // 10:30 PM daily — right after nightly close
+  const job = cron.schedule(
+    "30 22 * * *",
+    async () => {
+      try {
+        const { syncKbToRemote } = await import("../db/kb-backup.js");
+        const result = await syncKbToRemote();
+        console.log(
+          `[rituals] kb-backup: ${result.pushed} files synced to db.mycommit.net (${result.duration_ms}ms)`,
+        );
+      } catch (err) {
+        console.error("[rituals] kb-backup failed:", err);
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
 }
 
 export function stopRitualScheduler(): void {
