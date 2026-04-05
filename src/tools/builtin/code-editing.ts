@@ -14,11 +14,25 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { execFileSync } from "child_process";
 import { dirname, resolve } from "path";
 import type { Tool } from "../types.js";
 
-// Same write boundaries as file.ts
+// Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
+
+function isOnJarvisBranch(): boolean {
+  try {
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: "/root/claude/mission-control",
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
+  } catch {
+    return false;
+  }
+}
 
 export const fileEditTool: Tool = {
   name: "file_edit",
@@ -78,7 +92,11 @@ RULES:
 
     // Enforce write boundaries
     const resolved = resolve(path);
-    if (DENY_EDIT_PREFIXES.some((p) => resolved.startsWith(p))) {
+    const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));
+    if (
+      denied &&
+      !(denied === "/root/claude/mission-control/" && isOnJarvisBranch())
+    ) {
       return JSON.stringify({
         error: `Edit blocked: ${resolved} is protected. Jarvis cannot modify its own source code.`,
       });

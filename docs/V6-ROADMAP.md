@@ -16,7 +16,7 @@ Jarvis evolves from assistant to engineer. Can code, test, deploy, and improve h
 | Level | Capability                              | Safety                        | Session     |
 | ----- | --------------------------------------- | ----------------------------- | ----------- |
 | 0     | Tune tool descriptions (overnight loop) | Variant archive + rollback    | Done (v5.0) |
-| 1     | Write new tools, adapters, tests        | Branch + PR + human merge     | **S1**      |
+| 1     | Write new tools, adapters, tests        | Branch + PR + human merge     | **Done**    |
 | 2     | Modify existing code (bug fixes)        | Branch + PR + test suite pass | **S2**      |
 | 3     | Modify own directives/SOPs              | Changelog + user notification | **S3**      |
 | 4     | Manage VPS (deploy, restart, monitor)   | Audit log + confirmation      | **S4**      |

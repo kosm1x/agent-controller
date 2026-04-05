@@ -15,21 +15,41 @@ const ALLOW_WRITE_PREFIXES = [
   "/root/claude/jarvis-kb/",
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
+  "/root/claude/mission-control/", // allowed only on jarvis/* branches
   "/tmp/",
   "/workspace/",
 ];
 const DENY_WRITE_PREFIXES = [
-  "/root/claude/mission-control/",
+  "/root/claude/mission-control/", // dynamic — overridden on jarvis/* branches
   "/root/.claude/",
   "/etc/",
   "/usr/",
   "/var/",
 ];
 
+function isOnJarvisBranch(): boolean {
+  try {
+    const { execFileSync } =
+      require("child_process") as typeof import("child_process");
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: "/root/claude/mission-control",
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
+  } catch {
+    return false;
+  }
+}
+
 function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
   const resolved = resolve(path);
   for (const deny of DENY_WRITE_PREFIXES) {
     if (resolved.startsWith(deny)) {
+      // Dynamic override for mission-control on jarvis/* branches
+      if (deny === "/root/claude/mission-control/" && isOnJarvisBranch()) {
+        continue;
+      }
       return {
         allowed: false,
         reason: `Write blocked: ${deny} is protected. Jarvis cannot modify its own source code or system files.`,

@@ -71,19 +71,37 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
 
 /** Safe path prefixes for write operations.
  *  Jarvis can read anything but writes are restricted to project dirs.
- *  /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code). */
+ *  /root/claude/mission-control/ is OFF LIMITS unless on a jarvis/* branch. */
 const ALLOW_WRITE_PREFIXES = [
   "/root/claude/jarvis-kb/",
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
+  "/root/claude/mission-control/", // allowed only on jarvis/* branches — checked dynamically
   "/tmp/",
   "/workspace/",
 ];
+
+function isMissionControlWriteAllowed(): boolean {
+  try {
+    const { execFileSync } =
+      require("child_process") as typeof import("child_process");
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: "/root/claude/mission-control",
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
+  } catch {
+    return false;
+  }
+}
+
 const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\/root\/claude\/mission-control\//,
     reason: "Jarvis cannot modify its own source code via shell_exec",
-  },
+    // Dynamic override: allowed on jarvis/* branches (checked at runtime)
+  } as { pattern: RegExp; reason: string },
 ];
 
 /** Heuristic tokens that indicate a write to a path. */
@@ -152,9 +170,16 @@ export function validateShellCommand(command: string): {
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(command)) !== null) {
     const targetPath = match[1];
-    // Check deny list first (mission-control is protected)
+    // Check deny list first (mission-control is protected unless on jarvis/* branch)
     for (const deny of DENY_WRITE_PATTERNS) {
       if (deny.pattern.test(targetPath)) {
+        // Dynamic override for mission-control on jarvis/* branches
+        if (
+          targetPath.includes("/mission-control/") &&
+          isMissionControlWriteAllowed()
+        ) {
+          continue;
+        }
         return { allowed: false, reason: deny.reason };
       }
     }

@@ -9,15 +9,16 @@ import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 
-// Jarvis's git domain — EurekaMD org projects. NOT mission-control (its own source).
+// Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
 const GITHUB_ORG = "EurekaMD-net";
+const MC_DIR = "/root/claude/mission-control/";
 const ALLOWED_CWD_PREFIXES = [
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
   "/tmp/",
+  MC_DIR, // allowed only on jarvis/* branches — checked at runtime
 ];
-const DENIED_CWD = ["/root/claude/mission-control/"];
 const SENSITIVE_PATTERNS = [
   ".env",
   "credentials",
@@ -26,25 +27,53 @@ const SENSITIVE_PATTERNS = [
   ".pem",
   "token",
 ];
+const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
+
+/**
+ * Get the current git branch for a directory.
+ * Returns the branch name or "HEAD" if detached.
+ */
+export function getCurrentBranch(cwd: string): string {
+  try {
+    return execFileSync("git", ["branch", "--show-current"], {
+      cwd,
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    return "HEAD";
+  }
+}
+
+/**
+ * Check if cwd is mission-control and enforce branch safety.
+ * Returns true if allowed, throws if blocked.
+ */
+function checkMissionControlAccess(resolved: string): boolean {
+  const withSlash = resolved.endsWith("/") ? resolved : resolved + "/";
+  if (!withSlash.startsWith(MC_DIR)) return true; // not MC, allow
+
+  const branch = getCurrentBranch(resolved);
+  if (!JARVIS_BRANCH_RE.test(branch)) {
+    throw new Error(
+      `Git operations on mission-control blocked on branch "${branch}". ` +
+        `Use jarvis_dev to create a jarvis/{feat|fix|refactor}/{slug} branch first.`,
+    );
+  }
+  return true;
+}
 
 function resolveWorkDir(cwd?: string): string {
   if (!cwd) return DEFAULT_CWD;
   const resolved = resolve(cwd);
-  // Append slash for prefix matching — "cuatro-flor" must match "cuatro-flor/" but not "cuatro-flor-other/"
   const withSlash = resolved.endsWith("/") ? resolved : resolved + "/";
-  // Deny list first — mission-control is protected
-  for (const deny of DENIED_CWD) {
-    if (withSlash.startsWith(deny)) {
-      throw new Error(
-        `Git operations blocked on ${deny} — Jarvis cannot modify its own source code. Use a project directory.`,
-      );
-    }
-  }
   if (!ALLOWED_CWD_PREFIXES.some((p) => withSlash.startsWith(p))) {
     throw new Error(
       `Working directory must be under an allowed project path. Got: ${resolved}. Allowed: ${ALLOWED_CWD_PREFIXES.join(", ")}`,
     );
   }
+  // Mission-control requires jarvis/* branch
+  checkMissionControlAccess(resolved);
   return resolved;
 }
 
@@ -309,20 +338,34 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         branch = "main";
       }
 
+      // Safety: block pushing main from mission-control — only jarvis/* branches allowed
+      const resolvedCwd = resolve(cwd ?? DEFAULT_CWD);
+      if (
+        resolvedCwd.startsWith("/root/claude/mission-control") &&
+        branch === "main"
+      ) {
+        return "Error: Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.";
+      }
+
       // Fetch + rebase to avoid push rejection from diverged remote
       try {
-        run("git fetch origin 2>&1", 15_000, cwd);
-        const remoteBranches = run("git branch -r 2>&1", 30_000, cwd);
+        runArgs("git", ["fetch", "origin"], 15_000, cwd);
+        const remoteBranches = runArgs("git", ["branch", "-r"], 30_000, cwd);
         if (remoteBranches.includes(`origin/${branch}`)) {
-          run(`git rebase origin/${branch} 2>&1`, 30_000, cwd);
+          runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
         }
       } catch {
         // First push to empty repo — no remote branch yet, safe to proceed
       }
 
       // Check for uncommitted changes — warn before the LLM claims success
-      const status = run("git status --short", 30_000, cwd);
-      const pushResult = run(`git push -u origin ${branch} 2>&1`, 60_000, cwd);
+      const status = runArgs("git", ["status", "--short"], 30_000, cwd);
+      const pushResult = runArgs(
+        "git",
+        ["push", "-u", "origin", branch],
+        60_000,
+        cwd,
+      );
 
       // "Everything up-to-date" means nothing was pushed — distinguish from actual push
       if (pushResult.includes("Everything up-to-date")) {

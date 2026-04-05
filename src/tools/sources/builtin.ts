@@ -95,6 +95,7 @@ import {
   ghRepoCreateTool,
   ghCreatePrTool,
 } from "../builtin/git.js";
+import { jarvisDevTool } from "../builtin/jarvis-dev.js";
 import {
   videoCreateTool,
   videoStatusTool,
@@ -152,6 +153,7 @@ const BUILTIN_TOOLS: Tool[] = [
   gitPushTool,
   ghRepoCreateTool,
   ghCreatePrTool,
+  jarvisDevTool,
   videoCreateTool,
   videoStatusTool,
   videoScriptTool,

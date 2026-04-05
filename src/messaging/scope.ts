@@ -69,6 +69,7 @@ export const CODING_TOOLS = [
   "git_push",
   "gh_repo_create",
   "gh_create_pr",
+  "jarvis_dev",
 ];
 
 /** WordPress tools — content + admin, only when blog/site management discussed. */
@@ -253,7 +254,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita(r)?\s+(el\s+)?(archivo|código|script)|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git\b|github|commit|push(ea)?|npm\b|build\b|test\b|lint\b|bug\b|debug|typescript|javascript|python|react|node\.?js|funci[oó]n|rutina|programa(r|ción)?|repositori|repo\b|refactor|implementa|escrib[eiao]\w*\s+(?:\S+\s+){0,2}(?:c[oó]digo|script|rutina|funci[oó]n|programa|clase|m[oó]dulo))/i,
+      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita(r)?\s+(el\s+)?(archivo|código|script)|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git\b|github|commit|push(ea)?|npm\b|build\b|test\b|lint\b|bug\b|debug|typescript|javascript|python|react|node\.?js|funci[oó]n|rutina|programa(r|ción)?|repositori|repo\b|refactor|implementa|escrib[eiao]\w*\s+(?:\S+\s+){0,2}(?:c[oó]digo|script|rutina|funci[oó]n|programa|clase|m[oó]dulo)|jarvis_dev|mejora\s+tu|fix\s+your|arregla\s+tu|agrega\s+(?:un\s+)?(?:adapter|adaptador|tool|herramienta)|crea\s+(?:un\s+)?branch|abre\s+(?:un\s+)?pr)/i,
     group: "coding",
   },
   {
