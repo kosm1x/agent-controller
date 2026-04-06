@@ -213,3 +213,165 @@ export async function runBackgroundExtraction(
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Crystal → Lesson Pipeline (v6.2 M3)
+// ---------------------------------------------------------------------------
+
+const CRYSTALLIZATION_PROMPT = `Extract 1-3 LESSONS from this task execution. A lesson is different from a fact — it's about what WORKED, what FAILED, and what to DO DIFFERENTLY next time.
+
+Rules:
+- Each lesson: one actionable sentence
+- Focus on: approaches that succeeded/failed, tool usage patterns, user preferences revealed, mistakes to avoid
+- Skip obvious lessons ("the task completed successfully")
+- If nothing is worth learning from this execution, respond with "NONE"
+
+Format: one lesson per line, no numbering, no bullets.`;
+
+/**
+ * Determine if a task is worth crystallizing into lessons.
+ * Higher bar than fact extraction: ≥5 tool calls AND >30s duration.
+ */
+export function shouldCrystallize(opts: {
+  toolCalls: string[];
+  durationMs: number;
+  spawnType?: string;
+  isRitual: boolean;
+  isProactive: boolean;
+}): boolean {
+  if (!isPgvectorEnabled()) return false;
+  if (opts.isRitual || opts.isProactive) return false;
+  if (opts.spawnType === "user-background") return false;
+
+  return opts.toolCalls.length >= 5 && opts.durationMs > 30_000;
+}
+
+/**
+ * Extract lessons from a task execution via LLM crystallization.
+ * Returns 0-3 lesson strings. Never throws.
+ */
+export async function extractLessons(
+  userMessage: string,
+  responseText: string,
+  toolCalls: string[],
+  durationMs: number,
+): Promise<string[]> {
+  try {
+    const toolList = [...new Set(toolCalls)].slice(0, 15).join(", ");
+    const context =
+      `User: ${userMessage.slice(0, 500)}\n` +
+      `Tools (${toolCalls.length}): ${toolList}\n` +
+      `Duration: ${Math.round(durationMs / 1000)}s\n` +
+      `Response: ${responseText.slice(0, 2000)}`;
+
+    const result = await infer(
+      {
+        messages: [
+          { role: "system", content: CRYSTALLIZATION_PROMPT },
+          { role: "user", content: context },
+        ],
+        temperature: 0.3,
+        max_tokens: 300,
+      },
+      { providerName: "fallback" },
+    );
+
+    const text = result.content?.trim() ?? "";
+    if (!text || text === "NONE" || text.length < 10) return [];
+
+    return text
+      .split("\n")
+      .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+      .filter((line) => line.length > 15)
+      .slice(0, 3);
+  } catch (err) {
+    console.warn(
+      "[crystal] LLM crystallization failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+/**
+ * Store extracted lessons in pgvector with type="pattern" and higher salience.
+ * Reuses storeFacts infrastructure but with different type/salience.
+ */
+async function storeLessons(
+  lessons: string[],
+  taskId: string,
+): Promise<{ stored: number; reinforced: number }> {
+  let stored = 0;
+  let reinforced = 0;
+
+  for (const lesson of lessons) {
+    try {
+      const hash = contentHash(lesson);
+      const existing = await pgFindByHash(hash);
+
+      if (existing) {
+        await pgReinforce(existing.path);
+        reinforced++;
+      } else {
+        const embedding = await generateEmbedding(lesson);
+        const date = new Date().toISOString().slice(0, 10);
+        const shortHash = hash.slice(0, 16);
+        const path = `lessons/${date}-${shortHash}.md`;
+
+        await pgUpsert({
+          path,
+          title: lesson.slice(0, 80),
+          content: lesson,
+          content_hash: hash,
+          embedding: embedding ?? undefined,
+          type: "pattern", // lessons are patterns, not facts
+          qualifier: "workspace",
+          salience: 0.7, // higher salience than facts (0.5)
+          source_task_id: taskId,
+        });
+        stored++;
+        console.log(`[crystal] Stored lesson: ${path}`);
+      }
+    } catch (err) {
+      console.warn(
+        `[crystal] Failed to store lesson:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return { stored, reinforced };
+}
+
+/**
+ * Run crystallization for a completed task (fire-and-forget).
+ */
+export async function runCrystallization(
+  userMessage: string,
+  responseText: string,
+  toolCalls: string[],
+  durationMs: number,
+  taskId: string,
+): Promise<void> {
+  try {
+    const lessons = await extractLessons(
+      userMessage,
+      responseText,
+      toolCalls,
+      durationMs,
+    );
+    if (lessons.length === 0) return;
+
+    const result = await storeLessons(lessons, taskId);
+    if (result.stored + result.reinforced > 0) {
+      console.log(
+        `[crystal] Task ${taskId.slice(0, 8)}: ${result.stored} new lessons, ${result.reinforced} reinforced`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[crystal] Crystallization failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}

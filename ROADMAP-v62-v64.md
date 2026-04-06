@@ -30,7 +30,7 @@
 | M0.5    | Background Memory Extractor — **DONE**   | Post-task LLM extraction (1-3 facts), content-hash dedup, pgvector storage with embeddings, pgvector hybrid search in enrichment pipeline. 17 new tests        |
 | M1      | Lesson Fingerprinting + Dedup — **DONE** | Content-hash dedup in write path (reinforce vs duplicate), weekly decay sweep cron (Sundays 2 AM), KB health stats in /health endpoint. 7 new tests            |
 | M2      | Ebbinghaus Retention Scoring — **DONE**  | kb_retention_sweep RPC (hot/warm/cold/evictable tiers), nightly 3 AM cron, enforce/always-read protected. 4 new tests                                          |
-| M3      | Crystal → Lesson Pipeline                | agentmemory. Post-task LLM crystallization, 1-3 atomic lessons, fingerprint dedup                                                                              |
+| M3      | Crystal → Lesson Pipeline — **DONE**     | crystallizeTask: lesson-focused LLM extraction (≥5 tools, >30s), type=pattern, salience=0.7, content-hash dedup. 9 new tests                                   |
 
 ### Workstream 3: Content Factory Foundation (3.5 sessions)
 

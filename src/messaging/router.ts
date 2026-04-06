@@ -1541,6 +1541,40 @@ export class MessageRouter {
         // Non-fatal — extraction is best-effort
       }
 
+      // v6.2 M3: Crystal → Lesson pipeline (fire-and-forget)
+      // Higher bar than M0.5 fact extraction: ≥5 tools AND >30s duration.
+      // Extracts lessons (what worked/failed) vs facts (what happened).
+      try {
+        import("../memory/background-extractor.js")
+          .then(({ shouldCrystallize, runCrystallization }) => {
+            if (
+              shouldCrystallize({
+                toolCalls: taskToolCalls,
+                durationMs: data.duration_ms,
+                spawnType: isBackground ? "user-background" : undefined,
+                isRitual: false,
+                isProactive: false,
+              })
+            ) {
+              runCrystallization(
+                pending.originalText,
+                resultText,
+                taskToolCalls,
+                data.duration_ms,
+                taskId,
+              ).catch((err) => {
+                console.warn(
+                  "[router] Crystallization failed:",
+                  err instanceof Error ? err.message : err,
+                );
+              });
+            }
+          })
+          .catch(() => {});
+      } catch {
+        // Non-fatal
+      }
+
       // Track outcome for adaptive intelligence
       trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
     }

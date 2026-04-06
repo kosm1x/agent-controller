@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   shouldExtract,
+  shouldCrystallize,
   extractFacts,
+  extractLessons,
   storeFacts,
 } from "./background-extractor.js";
 
@@ -279,5 +281,113 @@ describe("storeFacts", () => {
 
     expect(result.stored).toBe(1);
     expect(pgUpsert).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: Crystal → Lesson Pipeline
+// ---------------------------------------------------------------------------
+
+describe("shouldCrystallize (M3)", () => {
+  it("returns true for ≥5 tools AND >30s", () => {
+    expect(
+      shouldCrystallize({
+        toolCalls: ["a", "b", "c", "d", "e"],
+        durationMs: 45_000,
+        isRitual: false,
+        isProactive: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false for <5 tools", () => {
+    expect(
+      shouldCrystallize({
+        toolCalls: ["a", "b", "c", "d"],
+        durationMs: 60_000,
+        isRitual: false,
+        isProactive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for <30s duration", () => {
+    expect(
+      shouldCrystallize({
+        toolCalls: ["a", "b", "c", "d", "e"],
+        durationMs: 20_000,
+        isRitual: false,
+        isProactive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for rituals", () => {
+    expect(
+      shouldCrystallize({
+        toolCalls: ["a", "b", "c", "d", "e", "f"],
+        durationMs: 60_000,
+        isRitual: true,
+        isProactive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for background agents", () => {
+    expect(
+      shouldCrystallize({
+        toolCalls: ["a", "b", "c", "d", "e"],
+        durationMs: 60_000,
+        spawnType: "user-background",
+        isRitual: false,
+        isProactive: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("extractLessons (M3)", () => {
+  it("parses lesson output from LLM", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content:
+        "Using per-scene TTS with voice selection produces better results than single narration.\nAlways verify the background video is cached before starting overlay composition.",
+    });
+
+    const lessons = await extractLessons(
+      "hazme un video sobre IA",
+      "Video creado exitosamente...",
+      ["video_create", "video_tts", "video_image", "video_status", "file_read"],
+      45_000,
+    );
+
+    expect(lessons.length).toBeGreaterThanOrEqual(1);
+    expect(lessons.length).toBeLessThanOrEqual(3);
+    expect(mockInfer).toHaveBeenCalledOnce();
+  });
+
+  it("returns empty when LLM says NONE", async () => {
+    mockInfer.mockResolvedValueOnce({ content: "NONE" });
+    const lessons = await extractLessons(
+      "test",
+      "ok",
+      ["a", "b", "c", "d", "e"],
+      60_000,
+    );
+    expect(lessons).toEqual([]);
+  });
+
+  it("returns empty on LLM failure", async () => {
+    mockInfer.mockRejectedValueOnce(new Error("timeout"));
+    const lessons = await extractLessons("test", "ok", ["a"], 60_000);
+    expect(lessons).toEqual([]);
+  });
+
+  it("includes duration in context sent to LLM", async () => {
+    mockInfer.mockResolvedValueOnce({ content: "NONE" });
+    await extractLessons("test", "response", ["a", "b", "c"], 120_000);
+
+    const call = mockInfer.mock.calls[0][0];
+    const userMsg = call.messages[1].content;
+    expect(userMsg).toContain("Duration: 120s");
   });
 });
