@@ -3,8 +3,10 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync } from "fs";
+import { execFileSync } from "child_process";
 import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
+import { isImmutableCorePath } from "./immutable-core.js";
 
 const MAX_READ = 50_000; // chars
 
@@ -38,8 +40,6 @@ const SELF_IMPROVEMENT_ALLOWED = [
 
 function getJarvisBranchFile(): string {
   try {
-    const { execFileSync } =
-      require("child_process") as typeof import("child_process");
     return execFileSync("git", ["branch", "--show-current"], {
       cwd: "/root/claude/mission-control",
       timeout: 5000,
@@ -56,6 +56,14 @@ function isOnJarvisBranch(): boolean {
 
 function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
   const resolved = resolve(path);
+  // SG3: Immutable core — blocked even on jarvis/* branches
+  const immCheck = isImmutableCorePath(resolved);
+  if (immCheck.immutable) {
+    return {
+      allowed: false,
+      reason: `Write blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
+    };
+  }
   for (const deny of DENY_WRITE_PREFIXES) {
     if (resolved.startsWith(deny)) {
       // Dynamic override for mission-control on jarvis/* branches

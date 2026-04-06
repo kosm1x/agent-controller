@@ -13,9 +13,11 @@ import {
   deleteFile,
   listFiles,
 } from "../../db/jarvis-fs.js";
+import { getDatabase } from "../../db/index.js";
 
 const PROPOSALS_PREFIX = "knowledge/proposals/";
 const DECISIONS_PREFIX = "logs/decisions/";
+const COOLDOWN_KEY = "directive_last_proposal_at";
 
 // ---------------------------------------------------------------------------
 // jarvis_propose_directive
@@ -85,6 +87,36 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    // SG4: Directive cooldown — max 1 proposal per DIRECTIVE_COOLDOWN_HOURS (default 48)
+    const cooldownHours = parseInt(
+      process.env.DIRECTIVE_COOLDOWN_HOURS ?? "48",
+      10,
+    );
+    if (cooldownHours > 0) {
+      try {
+        const db = getDatabase();
+        const lastProposal = db
+          .prepare("SELECT value FROM safeguard_state WHERE key = ?")
+          .get(COOLDOWN_KEY) as { value: string } | undefined;
+
+        if (lastProposal) {
+          const lastTime = new Date(lastProposal.value).getTime();
+          const elapsedHours = (Date.now() - lastTime) / (1000 * 60 * 60);
+          if (elapsedHours < cooldownHours) {
+            const remaining = (cooldownHours - elapsedHours).toFixed(1);
+            return [
+              `⏳ Cooldown active.`,
+              `Last proposal was ${elapsedHours.toFixed(1)}h ago.`,
+              `Next allowed in ${remaining}h.`,
+              `(Cooldown: ${cooldownHours}h)`,
+            ].join("\n");
+          }
+        }
+      } catch {
+        // safeguard_state table may not exist yet — proceed without cooldown
+      }
+    }
+
     const title = args.title as string;
     const targetPath = args.target_path as string;
     const changeType = args.change_type as "add" | "modify" | "remove";
@@ -140,6 +172,18 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
       "reference",
       10,
     );
+
+    // SG4: Record proposal timestamp for cooldown enforcement
+    try {
+      const db = getDatabase();
+      db.prepare(
+        `INSERT INTO safeguard_state (key, value, updated_at)
+         VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      ).run(COOLDOWN_KEY, new Date().toISOString());
+    } catch {
+      // Non-fatal — cooldown tracking failure shouldn't block proposals
+    }
 
     return [
       `📝 **Propuesta creada:** ${title}`,

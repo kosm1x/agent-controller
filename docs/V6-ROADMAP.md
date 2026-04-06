@@ -1,7 +1,7 @@
 # v6 Roadmap — Self-Improving Jarvis + Parallel Agents
 
-> Status: v6.0 COMPLETE, v6.1 COMPLETE
-> Last updated: 2026-04-05
+> Status: v6.0 COMPLETE, v6.1 COMPLETE, Safeguards SG1-SG5 COMPLETE
+> Last updated: 2026-04-06
 
 ---
 
@@ -100,13 +100,27 @@ Jarvis gets smarter over time. After each successful task, extract 1-2 lessons a
 - Inject into context when similar tasks appear (scope group + keyword match)
 - **Exit:** Repeat tasks execute faster and more accurately without user re-explaining
 
+### Autonomous Improvement Safeguards (SG1-SG5) — **Done**
+
+Built before enabling AUTONOMOUS_IMPROVEMENT_ENABLED. Five mechanical safeguards:
+
+| ID  | Safeguard          | What                                                                                          | Where                                    |
+| --- | ------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| SG1 | Weekly Diff Digest | Sunday 8 PM Telegram: PRs, directives, patterns, commits from past 7 days                     | `src/rituals/diff-digest.ts`             |
+| SG2 | HTTP Kill Switch   | POST /api/admin/kill-autonomous — disables loop + cancels running tasks                       | `src/api/routes/admin.ts`                |
+| SG3 | Immutable Core     | 10 files + src/api/ blocked in file_write, file_edit, shell_exec — even on jarvis/\* branches | `src/tools/builtin/immutable-core.ts`    |
+| SG4 | Directive Cooldown | Max 1 proposal per 48h (DIRECTIVE_COOLDOWN_HOURS env)                                         | `src/tools/builtin/jarvis-directives.ts` |
+| SG5 | Pre-Cycle Git Tag  | pre-auto-YYYY-MM-DD before each improvement. Prune >30d, keep min 10                          | `src/rituals/scheduler.ts`               |
+
 ### Safety Invariants (v6.0)
 
 1. Jarvis CANNOT push to `main` — branches + PRs only
 2. Jarvis CANNOT modify `directives/` without user approval
 3. Jarvis CANNOT remove safety guards — guards require PR review
 4. Jarvis CANNOT restart without passing tests
-5. All actions audited
+5. Jarvis CANNOT modify immutable core files (SG3) — even on jarvis/\* branches
+6. Jarvis CANNOT propose directives more than once per 48h (SG4)
+7. All actions audited
 
 ---
 

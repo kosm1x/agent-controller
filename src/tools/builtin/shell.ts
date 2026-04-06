@@ -7,6 +7,7 @@
 
 import { execSync } from "child_process";
 import type { Tool } from "../types.js";
+import { isImmutableCorePath } from "./immutable-core.js";
 
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds
@@ -170,6 +171,13 @@ export function validateShellCommand(command: string): {
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(command)) !== null) {
     const targetPath = match[1];
+    // SG3: Immutable core — blocked even on jarvis/* branches
+    if (isImmutableCorePath(targetPath).immutable) {
+      return {
+        allowed: false,
+        reason: `write to immutable core file blocked: ${targetPath}`,
+      };
+    }
     // Check deny list first (mission-control is protected unless on jarvis/* branch)
     for (const deny of DENY_WRITE_PATTERNS) {
       if (deny.pattern.test(targetPath)) {

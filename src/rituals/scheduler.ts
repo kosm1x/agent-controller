@@ -6,6 +6,7 @@
  */
 
 import cron, { type ScheduledTask } from "node-cron";
+import { execFileSync } from "child_process";
 import { getDatabase } from "../db/index.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
@@ -121,9 +122,79 @@ export function startRitualScheduler(): void {
     );
   }
 
-  // Mechanical backups + autonomous improvement
+  // Mechanical backups + autonomous improvement + safeguards
   scheduleKbBackup();
   scheduleAutonomousImprovement();
+  scheduleDiffDigest();
+}
+
+// ---------------------------------------------------------------------------
+// SG5: Pre-cycle git tags for autonomous improvement rollback
+// ---------------------------------------------------------------------------
+
+const MC_DIR = "/root/claude/mission-control";
+
+/** Create an annotated git tag before autonomous improvement. Non-fatal. */
+export function createPreCycleTag(): void {
+  const date = new Date().toISOString().slice(0, 10);
+  const tagName = `pre-auto-${date}`;
+
+  try {
+    const existing = execFileSync("git", ["tag", "-l", tagName], {
+      cwd: MC_DIR,
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+    if (existing) {
+      console.log(
+        `[rituals] pre-cycle tag ${tagName} already exists, skipping`,
+      );
+      return;
+    }
+
+    execFileSync(
+      "git",
+      ["tag", "-a", tagName, "-m", "Pre-autonomous-improvement snapshot"],
+      { cwd: MC_DIR, timeout: 10_000, encoding: "utf-8" },
+    );
+    console.log(`[rituals] Created pre-cycle tag: ${tagName}`);
+
+    pruneOldTags();
+  } catch (err) {
+    console.error("[rituals] Failed to create pre-cycle tag:", err);
+  }
+}
+
+/** Prune pre-auto-* tags: keep last 10, delete any older than 30 days. */
+export function pruneOldTags(): void {
+  try {
+    const raw = execFileSync(
+      "git",
+      ["tag", "-l", "pre-auto-*", "--sort=-version:refname"],
+      { cwd: MC_DIR, timeout: 5000, encoding: "utf-8" },
+    ).trim();
+    const tags = raw ? raw.split("\n").filter(Boolean) : [];
+
+    if (tags.length <= 10) return;
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    for (const tag of tags.slice(10)) {
+      const dateStr = tag.replace("pre-auto-", "");
+      const tagDate = new Date(dateStr);
+      if (tagDate < thirtyDaysAgo) {
+        execFileSync("git", ["tag", "-d", tag], {
+          cwd: MC_DIR,
+          timeout: 5000,
+          encoding: "utf-8",
+        });
+        console.log(`[rituals] Pruned old tag: ${tag}`);
+      }
+    }
+  } catch (err) {
+    console.error("[rituals] Tag pruning failed:", err);
+  }
 }
 
 /** Autonomous improvement — detects issues, creates fix branch + PR. */
@@ -133,6 +204,9 @@ function scheduleAutonomousImprovement(): void {
     "30 1 * * 2,4,6",
     async () => {
       try {
+        // SG5: Create pre-cycle snapshot tag
+        createPreCycleTag();
+
         const { createImprovementTask } =
           await import("./autonomous-improvement.js");
         const task = createImprovementTask();
@@ -180,6 +254,30 @@ function scheduleKbBackup(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/** Weekly diff digest — SG1 safeguard. Summarizes autonomous activity. */
+function scheduleDiffDigest(): void {
+  // Sunday 8 PM — same timezone as weekly review
+  const job = cron.schedule(
+    "0 20 * * 0",
+    async () => {
+      try {
+        const { executeDiffDigest } = await import("./diff-digest.js");
+        const result = await executeDiffDigest();
+        console.log(
+          `[rituals] diff-digest: sent=${result.sent}, sections=${result.sections}`,
+        );
+      } catch (err) {
+        console.error("[rituals] diff-digest failed:", err);
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] diff-digest: scheduled (0 20 * * 0, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

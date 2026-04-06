@@ -11,6 +11,7 @@ import { tasks } from "./routes/tasks.js";
 import { agents } from "./routes/agents.js";
 import { events } from "./routes/events.js";
 import { jarvisPull } from "./routes/jarvis-pull.js";
+import { admin } from "./routes/admin.js";
 import { buildAgentCard } from "../a2a/agent-card.js";
 import { a2a } from "../a2a/server.js";
 import {
@@ -45,6 +46,7 @@ export function createApp(): Hono {
   api.route("/agents", agents);
   api.route("/events", events);
   api.route("/", jarvisPull);
+  api.route("/admin", admin);
 
   app.route("/api", api);
 

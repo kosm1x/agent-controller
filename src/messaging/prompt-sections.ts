@@ -88,7 +88,9 @@ REGLAS:
 - Nuevos proyectos SIEMPRE en projects/{slug}/README.md
 - Datos de personas en knowledge/people/
 - SOPs y procedimientos en knowledge/procedures/
-- NUNCA uses shell_exec para navegar tu file system — usa las herramientas jarvis_file_*`;
+- NUNCA uses shell_exec para navegar tu file system — usa las herramientas jarvis_file_*
+
+"LOCAL" = este VPS. Los proyectos de Fede están en /root/claude/ (cuatro-flor/, jarvis-kb/, pipesong/, etc.). Cuando diga "archivos locales", "en local", "proyectos locales" — usa list_dir o file_read en /root/claude/, NO le pidas rutas.`;
 }
 
 export function capabilitiesSection(flags: PromptToolFlags): string {

@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, resolve } from "path";
 import type { Tool } from "../types.js";
+import { isImmutableCorePath } from "./immutable-core.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -114,6 +115,13 @@ RULES:
 
     // Enforce write boundaries
     const resolved = resolve(path);
+    // SG3: Immutable core — blocked even on jarvis/* branches
+    const immCheck = isImmutableCorePath(resolved);
+    if (immCheck.immutable) {
+      return JSON.stringify({
+        error: `Edit blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
+      });
+    }
     const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));
     if (
       denied &&

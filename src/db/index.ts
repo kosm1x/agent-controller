@@ -152,6 +152,13 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_jarvis_files_priority ON jarvis_files(priority)",
   );
 
+  // SG4: Safeguard state — generic key-value for safeguard enforcement
+  _db.exec(`CREATE TABLE IF NOT EXISTS safeguard_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // v5.0 S5b: Knowledge maps for Prometheus
   _db.exec(`CREATE TABLE IF NOT EXISTS knowledge_maps (
     id          TEXT PRIMARY KEY,
