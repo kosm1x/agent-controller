@@ -42,14 +42,27 @@ export function syncToPgvector(
       const hash = contentHash(content);
 
       // M1 dedup: if content hash exists at a DIFFERENT path, reinforce
-      // instead of creating a duplicate. Saves embedding API calls.
-      // Same-path updates (edits to existing file) still go through full upsert.
+      // the existing entry AND still create the new entry (without
+      // regenerating the embedding — reuse the existing one's embedding).
+      // C2 audit fix: no longer skips the new path entirely.
       const existing = await pgFindByHash(hash);
       if (existing && existing.path !== path) {
         await pgReinforce(existing.path);
         console.log(
-          `[pgvector-sync] Dedup: ${path} matches ${existing.path}, reinforced`,
+          `[pgvector-sync] Dedup: ${path} matches ${existing.path}, reinforced. Creating new entry without embedding.`,
         );
+        // Still create the entry but skip embedding generation (cost saving)
+        await pgUpsert({
+          path,
+          title,
+          content,
+          content_hash: hash,
+          qualifier,
+          condition: condition ?? undefined,
+          tags,
+          priority,
+          salience: qualifierToSalience(qualifier),
+        });
         return;
       }
 

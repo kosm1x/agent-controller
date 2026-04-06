@@ -13,21 +13,13 @@
  * Also provides KB health stats via kb_health_stats RPC.
  */
 
-import { isPgvectorEnabled } from "../db/pgvector.js";
+import {
+  isPgvectorEnabled,
+  getApiKey,
+  supabaseHeaders,
+} from "../db/pgvector.js";
 
 const SUPABASE_RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
-
-function getApiKey(): string | null {
-  return process.env.COMMIT_DB_KEY ?? null;
-}
-
-function headers(apiKey: string): Record<string, string> {
-  return {
-    apikey: apiKey,
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Decay sweep
@@ -47,7 +39,7 @@ export async function runDecaySweep(
   try {
     const res = await fetch(`${SUPABASE_RPC_URL}/kb_decay_sweep`, {
       method: "POST",
-      headers: headers(apiKey),
+      headers: supabaseHeaders(apiKey),
       body: JSON.stringify({
         min_age_days: minAgeDays,
         confidence_threshold: confidenceThreshold,
@@ -100,7 +92,7 @@ export async function getKbHealthStats(): Promise<KbHealthStats | null> {
   try {
     const res = await fetch(`${SUPABASE_RPC_URL}/kb_health_stats`, {
       method: "POST",
-      headers: headers(apiKey),
+      headers: supabaseHeaders(apiKey),
       body: "{}",
       signal: AbortSignal.timeout(10_000),
     });

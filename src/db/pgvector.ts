@@ -11,11 +11,11 @@ import { createHash } from "crypto";
 const SUPABASE_URL = "https://db.mycommit.net/rest/v1";
 const RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
 
-function getApiKey(): string | null {
+export function getApiKey(): string | null {
   return process.env.COMMIT_DB_KEY ?? null;
 }
 
-function headers(apiKey: string): Record<string, string> {
+export function supabaseHeaders(apiKey: string): Record<string, string> {
   return {
     apikey: apiKey,
     Authorization: `Bearer ${apiKey}`,
@@ -107,7 +107,7 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
     const res = await fetch(`${SUPABASE_URL}/kb_entries?on_conflict=path`, {
       method: "POST",
       headers: {
-        ...headers(apiKey),
+        ...supabaseHeaders(apiKey),
         Prefer: "resolution=merge-duplicates",
       },
       body: JSON.stringify(row),
@@ -168,7 +168,7 @@ export async function pgBatchUpsert(
       const res = await fetch(`${SUPABASE_URL}/kb_entries?on_conflict=path`, {
         method: "POST",
         headers: {
-          ...headers(apiKey),
+          ...supabaseHeaders(apiKey),
           Prefer: "resolution=merge-duplicates",
         },
         body: JSON.stringify(rows),
@@ -205,7 +205,7 @@ export async function pgDelete(path: string): Promise<boolean> {
       `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
       {
         method: "DELETE",
-        headers: headers(apiKey),
+        headers: supabaseHeaders(apiKey),
         signal: AbortSignal.timeout(10_000),
       },
     );
@@ -235,7 +235,7 @@ export async function pgHybridSearch(
   try {
     const res = await fetch(`${RPC_URL}/kb_hybrid_search`, {
       method: "POST",
-      headers: headers(apiKey),
+      headers: supabaseHeaders(apiKey),
       body: JSON.stringify({
         query_embedding: `[${queryEmbedding.join(",")}]`,
         query_text: queryText,
@@ -276,7 +276,7 @@ export async function pgRecordAccess(path: string): Promise<void> {
     // Atomic server-side increment via RPC (C1 audit fix)
     await fetch(`${RPC_URL}/kb_record_access`, {
       method: "POST",
-      headers: headers(apiKey),
+      headers: supabaseHeaders(apiKey),
       body: JSON.stringify({ p_path: path }),
       signal: AbortSignal.timeout(5_000),
     });
@@ -299,7 +299,7 @@ export async function pgFindByHash(
     const res = await fetch(
       `${SUPABASE_URL}/kb_entries?content_hash=eq.${encodeURIComponent(hash)}&select=path,confidence&limit=1`,
       {
-        headers: headers(apiKey),
+        headers: supabaseHeaders(apiKey),
         signal: AbortSignal.timeout(5_000),
       },
     );
@@ -327,7 +327,7 @@ export async function pgReinforce(path: string): Promise<boolean> {
   try {
     const res = await fetch(`${RPC_URL}/kb_reinforce`, {
       method: "POST",
-      headers: headers(apiKey),
+      headers: supabaseHeaders(apiKey),
       body: JSON.stringify({ p_path: path }),
       signal: AbortSignal.timeout(5_000),
     });

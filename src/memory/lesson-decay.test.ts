@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-// Mock pgvector
+// Mock pgvector — include all exports used by lesson-decay
 vi.mock("../db/pgvector.js", () => ({
   isPgvectorEnabled: vi.fn(() => true),
+  getApiKey: vi.fn(() => process.env.COMMIT_DB_KEY ?? null),
+  supabaseHeaders: vi.fn((key: string) => ({
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+  })),
 }));
 
 // Mock fetch for RPC calls

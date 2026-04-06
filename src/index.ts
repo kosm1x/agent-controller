@@ -174,7 +174,12 @@ async function main(): Promise<void> {
   // v6.2 M1: Register weekly KB confidence decay sweep
   import("./memory/lesson-decay.js")
     .then(({ registerDecayCron }) => registerDecayCron())
-    .catch(() => {});
+    .catch((err) => {
+      console.warn(
+        "[lesson-decay] Registration failed (non-fatal):",
+        err instanceof Error ? err.message : err,
+      );
+    });
 
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
