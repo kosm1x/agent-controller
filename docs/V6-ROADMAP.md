@@ -1,281 +1,210 @@
 # v6 Roadmap — Self-Improving Jarvis + Parallel Agents
 
-> Status: v6.0 COMPLETE, v6.1 COMPLETE, Safeguards SG1-SG5 COMPLETE
-> Last updated: 2026-04-06
+> Last updated: 2026-04-06 — **v6.0 COMPLETE, v6.1 COMPLETE, Behavioral Coherence COMPLETE.**
+> Forward roadmap (v6.2→v6.4): see [ROADMAP-v62-v64.md](../ROADMAP-v62-v64.md)
+
+## Status Key
+
+- **Done** — Implemented, tested, shipped
+- **Active** — Currently in progress
+- **Planned** — Scoped and sequenced (see ROADMAP-v62-v64.md)
 
 ---
 
-## v6.0 — Self-Improving Jarvis
+## Execution Tiers
 
-Jarvis evolves from assistant to engineer. Can code, test, deploy, and improve himself — safely, within bounds, with human review.
+| Tier               | Sessions                  | Priority              | Rationale                                                 |
+| ------------------ | ------------------------- | --------------------- | --------------------------------------------------------- |
+| 0 — Self-Improving | S1–S8                     | Ship first            | Jarvis codes, tests, deploys, improves himself            |
+| 1 — Safeguards     | SG1–SG5                   | Before activation     | Mechanical safety before autonomous improvement goes live |
+| 2 — Background     | v6.1 agents + checkpoints | User-visible value    | Parallel execution lanes the user controls                |
+| 3 — Coherence      | 10 OpenClaude patterns    | Behavioral foundation | Prevents drift, improves long-session reliability         |
 
-**Core principle: Jarvis proposes, humans approve.** No self-modification without review.
+---
 
-### Capability Levels
+## v6.0 S1 — Branch + PR Workflow (~2d) — **Done**
 
-| Level | Capability                               | Safety                         | Session     |
-| ----- | ---------------------------------------- | ------------------------------ | ----------- |
-| 0     | Tune tool descriptions (overnight loop)  | Variant archive + rollback     | Done (v5.0) |
-| 1     | Write new tools, adapters, tests         | Branch + PR + human merge      | **Done**    |
-| 2     | Modify existing code (bug fixes)         | Branch + PR + test suite pass  | **S2**      |
-| 3     | Modify own directives/SOPs               | Changelog + user notification  | **S3**      |
-| 4     | Manage VPS (deploy, restart, monitor)    | Audit log + confirmation       | **S4**      |
-| 5     | Full autonomy (architect → deploy)       | Budget gates + kill switch     | **S5**      |
-| 6     | Faithful data relay (no narrativization) | Typed result schemas           | **S6**      |
-| 7     | Intelligent code navigation              | Pre-built index, read-only     | **S7**      |
-| 8     | Learn from execution history             | Pattern extraction + injection | **S8**      |
+| Item                                                    | Source       | Status   |
+| ------------------------------------------------------- | ------------ | -------- |
+| Unlock mission-control for branch operations (not main) | Architecture | **Done** |
+| Branch naming: `jarvis/{type}/{slug}`                   | —            | **Done** |
+| NanoClaw sandbox for code + tests                       | —            | **Done** |
+| Auto-labeled PRs (`jarvis-authored`)                    | —            | **Done** |
 
-### S1 — Branch + PR Workflow (~2d)
+**Exit criteria:** Jarvis writes a new intel adapter → branch → tests pass → PR → Telegram notification.
 
-Jarvis can create branches, write code, push, and open PRs on his own repo.
+---
 
-- Unlock mission-control for branch operations only (not main)
-- Branch naming: `jarvis/{type}/{slug}`
-- NanoClaw sandbox for code + tests
-- Auto-labeled PRs (`jarvis-authored`)
-- **Exit:** Jarvis writes a new intel adapter → branch → tests pass → PR → user gets Telegram notification
+## v6.0 S2 — Self-Repair (~1.5d) — **Done**
 
-### S2 — Self-Repair (~1.5d) — **Done**
+| Item                                                                                    | Source | Status   |
+| --------------------------------------------------------------------------------------- | ------ | -------- |
+| Diagnosis tools: `jarvis_diagnose`, `jarvis_test_run`                                   | —      | **Done** |
+| Repair workflow: identify → branch → fix → test → PR                                    | —      | **Done** |
+| Scope limit: `src/tools/`, `src/intel/`, `src/messaging/scope.ts`, `prompt-sections.ts` | —      | **Done** |
 
-Jarvis can fix bugs in his own code when identified.
+---
 
-- Diagnosis tools: `jarvis_diagnose` (reads error logs), `jarvis_test_run` (runs test suite)
-- Repair workflow: identify → branch → fix → test → PR
-- **Scope limit:** `src/tools/`, `src/intel/`, `src/messaging/scope.ts`, `src/messaging/prompt-sections.ts`. Core infrastructure stays human-only
-- **Exit:** Overnight tuning detects scope regex regression → Jarvis creates fix PR → user merges
+## v6.0 S3 — Directive Evolution (~1d) — **Done**
 
-### S3 — Directive Evolution (~1d) — **Done**
+| Item                                                                        | Source | Status   |
+| --------------------------------------------------------------------------- | ------ | -------- |
+| `jarvis_propose_directive` — writes to `knowledge/proposals/`, notifies     | —      | **Done** |
+| User approves in Telegram → Jarvis applies → changelog in `logs/decisions/` | —      | **Done** |
+| Rate limit: can only propose, never apply without approval                  | —      | **Done** |
 
-Jarvis can propose changes to his own SOPs and directives.
+---
 
-- New tool: `jarvis_propose_directive` — writes to `knowledge/proposals/`, notifies user
-- User approves in Telegram → Jarvis applies change → changelog in `logs/decisions/`
-- **Constraint:** Can only propose, never apply without explicit approval
-- **Exit:** Jarvis notices recurring nudge pattern → proposes new directive → user approves
+## v6.0 S4 — VPS Management (~2d) — **Done**
 
-### S4 — VPS Management (~2d) — **Done**
+| Item                                                                | Source | Status   |
+| ------------------------------------------------------------------- | ------ | -------- |
+| `vps_status` — CPU, memory, disk, Docker, services, error count     | —      | **Done** |
+| `vps_deploy` — build + restart (gates on test suite + health check) | —      | **Done** |
+| `vps_backup` — mc.db backup with 7-day rotation                     | —      | **Done** |
+| `vps_logs` — filtered journalctl                                    | —      | **Done** |
 
-Jarvis can monitor, back up, and manage VPS infrastructure.
+---
 
-- `vps_status` — CPU, memory, disk, Docker, services, error count
-- `vps_deploy` — build + restart (gates on test suite, health check after)
-- `vps_backup` — mc.db backup with 7-day rotation
-- `vps_logs` — filtered journalctl
-- **Exit:** "haz deploy" → tests → build → restart → health check → report
+## v6.0 S5 — Autonomous Improvement Loop (~3d) — **Done**
 
-### S5 — Autonomous Improvement Loop (~3d) — **Done**
+| Item                                                                    | Source | Status   |
+| ----------------------------------------------------------------------- | ------ | -------- |
+| Overnight tuning or user report triggers improvement                    | —      | **Done** |
+| Plan → branch → code → tests → PR → user merge → deploy                 | —      | **Done** |
+| Post-deploy monitoring: error logs every 15 min for 1 hour, auto-revert | —      | **Done** |
+| Safety: max 3 PRs/day, $5/cycle, scope-limited, revertable, kill switch | —      | **Done** |
 
-Tie it all together: identify → code → test → deploy → monitor.
+---
 
-- Overnight tuning or user report triggers improvement
-- Jarvis creates plan → branch → code → tests → PR → user merge → deploy
-- Post-deploy monitoring: error logs every 15 min for 1 hour, auto-revert on spike
-- **Safety:** Max 3 PRs/day, $5/cycle, scope-limited, revertable, kill switch
-- **Exit:** Jarvis autonomously writes a new intel adapter, tests, deploys, monitors — end to end
+## v6.0 S6–S8 — Tool Results, Code Search, Pattern Memory — **Done**
 
-### S6 — Structured Tool Result Pipelines (~2d) — **Done**
+| Session | What                                                                       | Status   |
+| ------- | -------------------------------------------------------------------------- | -------- |
+| S6      | Structured tool result pipelines — pre-formatted data bypasses LLM         | **Done** |
+| S7      | Semantic code search — `code_search` tool, tree-sitter index, SQLite store | **Done** |
+| S8      | Execution pattern memory — auto-extract lessons, inject on similar tasks   | **Done** |
 
-Eliminate LLM narrativization of data. When tools return data (sheets, APIs, intel), it goes through a formatter that produces the EXACT output the user sees. The LLM adds commentary AFTER, never inside the data block.
+---
 
-- Apply pre-formatted pattern to top 10 data-returning tools (gsheets_read, intel_query, web_search, etc.)
-- Typed result schemas per tool category
-- Same pattern that fixed the CRM jarvis_pull data-meshing problem
-- **Exit:** gsheets_read returns a formatted table that reaches the user unchanged
+## Autonomous Improvement Safeguards (SG1–SG5) — **Done**
 
-### S7 — Semantic Code Search (~2d) — **Done**
+Built before enabling `AUTONOMOUS_IMPROVEMENT_ENABLED=true`. Five mechanical safeguards:
 
-Index the mission-control codebase for intelligent code navigation. Query: "where is hallucination detection?" → `fast-runner.ts:250 detectsHallucinatedExecution()`.
+| ID  | Safeguard          | What                                                            | Where                                    |
+| --- | ------------------ | --------------------------------------------------------------- | ---------------------------------------- |
+| SG1 | Weekly Diff Digest | Sunday 8 PM Telegram: all Jarvis-authored changes, 7-day window | `src/rituals/diff-digest.ts`             |
+| SG2 | HTTP Kill Switch   | POST /api/admin/kill-autonomous — disables loop + cancels tasks | `src/api/routes/admin.ts`                |
+| SG3 | Immutable Core     | 15 files + src/api/ blocked in all write paths                  | `src/tools/builtin/immutable-core.ts`    |
+| SG4 | Directive Cooldown | Max 1 proposal per 48h (DIRECTIVE_COOLDOWN_HOURS env)           | `src/tools/builtin/jarvis-directives.ts` |
+| SG5 | Pre-Cycle Git Tag  | pre-auto-YYYY-MM-DD before each cycle. Prune >30d, keep min 10  | `src/rituals/scheduler.ts`               |
 
-- New tool: `code_search` — function definitions, imports, type references
-- Tree-sitter or regex-based indexer over .ts files, stored in SQLite
-- Refresh on git pull / branch switch
-- **Exit:** Jarvis self-repair finds the exact function to fix in 1 round instead of reading 8 files
+---
 
-### S8 — Execution Pattern Memory (~2d) — **Done**
+## v6.1 — Background Agents + Task Continuity — **Done**
 
-Jarvis gets smarter over time. After each successful task, extract 1-2 lessons and store them for future use.
+| Item                                                                                 | Source       | Status   |
+| ------------------------------------------------------------------------------------ | ------------ | -------- |
+| Trigger detection: "lanza un agente", "investiga en background", "averigua mientras" | Router       | **Done** |
+| Max 3 concurrent agents, workspace/ scratch writes, completion notification          | Architecture | **Done** |
+| Fork child boilerplate: identity + 6 rules + structured output (Alcance/Resultado)   | OpenClaude   | **Done** |
+| Worker isolation: no conversationHistory, scoped tools, 60-min timeout               | OpenClaude   | **Done** |
+| Task continuity: checkpoint on max_rounds, "continúa" resumes with context           | Architecture | **Done** |
 
-- Auto-extract patterns: "For livingjoyfully analytics, use GA4 ID G-XXXXX via gsheets_read"
-- Store in `knowledge/execution-patterns/`
-- Inject into context when similar tasks appear (scope group + keyword match)
-- **Exit:** Repeat tasks execute faster and more accurately without user re-explaining
+---
 
-### Autonomous Improvement Safeguards (SG1-SG5) — **Done**
+## Behavioral Coherence (10 OpenClaude Patterns) — **Done**
 
-Built before enabling AUTONOMOUS_IMPROVEMENT_ENABLED. Five mechanical safeguards:
+Shipped in 4 batches + 2 audit fixes. Source: Claude Code CLI architecture analysis.
 
-| ID  | Safeguard          | What                                                                                          | Where                                    |
-| --- | ------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| SG1 | Weekly Diff Digest | Sunday 8 PM Telegram: PRs, directives, patterns, commits from past 7 days                     | `src/rituals/diff-digest.ts`             |
-| SG2 | HTTP Kill Switch   | POST /api/admin/kill-autonomous — disables loop + cancels running tasks                       | `src/api/routes/admin.ts`                |
-| SG3 | Immutable Core     | 10 files + src/api/ blocked in file_write, file_edit, shell_exec — even on jarvis/\* branches | `src/tools/builtin/immutable-core.ts`    |
-| SG4 | Directive Cooldown | Max 1 proposal per 48h (DIRECTIVE_COOLDOWN_HOURS env)                                         | `src/tools/builtin/jarvis-directives.ts` |
-| SG5 | Pre-Cycle Git Tag  | pre-auto-YYYY-MM-DD before each improvement. Prune >30d, keep min 10                          | `src/rituals/scheduler.ts`               |
+| #   | Pattern                          | File                                            | Status   |
+| --- | -------------------------------- | ----------------------------------------------- | -------- |
+| 1   | Critical System Reminder         | `adapter.ts`                                    | **Done** |
+| 2   | 9-section structured compact     | `context-compressor.ts`                         | **Done** |
+| 3   | Verification discipline nudge    | `fast-runner.ts`                                | **Done** |
+| 4   | Tool deferral                    | `registry.ts` + `adapter.ts` + `fast-runner.ts` | **Done** |
+| 5   | KB omission for read-only tasks  | `fast-runner.ts`                                | **Done** |
+| 6   | NO_TOOLS_PREAMBLE sandwich       | `context-compressor.ts`                         | **Done** |
+| 7   | Fork child injection boilerplate | `router.ts`                                     | **Done** |
+| 8   | Continue-vs-spawn matrix         | `planner.ts`                                    | **Done** |
+| 9   | Memory drift verification        | `enrichment.ts`                                 | **Done** |
+| 10  | "Never delegate understanding"   | `planner.ts`                                    | **Done** |
 
-### Safety Invariants (v6.0)
+---
+
+## Path Safety Pipeline — **Done**
+
+Ported from Claude Code's `validatePath()`. Wired into file_write, file_edit, file_delete.
+
+| Check | What                                                                                     | Status   |
+| ----- | ---------------------------------------------------------------------------------------- | -------- |
+| 1     | Quote stripping + tilde expansion                                                        | **Done** |
+| 2     | UNC path block (SMB credential leak prevention)                                          | **Done** |
+| 3     | Tilde variant block (~user, ~+, ~-)                                                      | **Done** |
+| 4     | Shell expansion syntax block ($) — TOCTOU prevention                                     | **Done** |
+| 5     | Glob block for write/delete operations                                                   | **Done** |
+| 6     | Dangerous files (.env.\*, .bashrc, .npmrc, .netrc) + directories (.git/, .ssh/, .gnupg/) | **Done** |
+| 7     | isDangerousRemovalPath — root, home, top-level dirs, wildcards                           | **Done** |
+
+58 tests covering all checks.
+
+---
+
+## Pre-v6.0 Hardening — **Done**
+
+| Item | What                                                 | Status   |
+| ---- | ---------------------------------------------------- | -------- |
+| H1   | Flatten project paths (38 files migrated)            | **Done** |
+| H2   | Tighten prompt enhancer (MIN_LENGTH, 2-question cap) | **Done** |
+| H3   | Migrate user_facts — 27 to KB, 6 credentials remain  | **Done** |
+| H4   | Video pipeline E2E — PASS (5.3s MP4, video+audio)    | **Done** |
+| H5   | Self-tuning verified — baseline 79.3%                | **Done** |
+| H6   | Provider health baseline — 7-day metrics in KB       | **Done** |
+
+---
+
+## Safety Invariants
 
 1. Jarvis CANNOT push to `main` — branches + PRs only
 2. Jarvis CANNOT modify `directives/` without user approval
-3. Jarvis CANNOT remove safety guards — guards require PR review
+3. Jarvis CANNOT remove safety guards — SG3 immutable core
 4. Jarvis CANNOT restart without passing tests
-5. Jarvis CANNOT modify immutable core files (SG3) — even on jarvis/\* branches
+5. Jarvis CANNOT modify immutable core files — even on jarvis/\* branches
 6. Jarvis CANNOT propose directives more than once per 48h (SG4)
-7. All actions audited
-
----
-
-## v6.1 — User-Spawned Background Agents — **Done**
-
-Today Jarvis is single-threaded from the user's perspective — one message = one blocking task. v6.1 adds parallel execution lanes the user controls.
-
-### How It Works
-
-```
-User: "lanza un agente e investiga el tráfico de livingjoyfully.art"
-Jarvis: "Excelente. Agente lanzado."
-[User continues chatting normally]
-[5 min later, Telegram: "Agente terminó. Resumen: 1,200 visitas/mes, bounce 62%, top page: /meditation-guide"]
-User: "guárdalo en el KB"
-Jarvis: [writes to projects/livingjoyfully/traffic-report.md]
-```
-
-### Design Decisions
-
-| Decision              | Choice                                | Rationale                            |
-| --------------------- | ------------------------------------- | ------------------------------------ |
-| Max concurrent agents | 3                                     | Token budget protection              |
-| KB access             | Read freely, write to workspace/ only | User reviews before promoting to KB  |
-| Context               | Clean slate + memory enrichment       | Fast, focused, no conversation bleed |
-| Notification          | Summary on completion via Telegram    | User can ask for progress anytime    |
-
-### Architecture (thin approach)
-
-No new runner type. Background agents are regular fast/heavy tasks with a flag.
-
-- **Detection:** Router recognizes "lanza un agente", "investiga en background", "averigua mientras"
-- **Routing:** Creates task with `spawn_type: "user-background"`, returns immediately
-- **Execution:** Runs on existing fast/heavy runner with separate thread
-- **Delivery:** Reaction engine sends Telegram notification with summary on completion
-- **Results:** Written to `workspace/` scratch files, promoted to KB on user approval
-
-### Agent Management Commands
-
-| Command                        | Action                                     |
-| ------------------------------ | ------------------------------------------ |
-| "mis agentes" / "agents"       | List running background agents with status |
-| "status agente X"              | Progress report for specific agent         |
-| "cancela agente X"             | Cancel by name or ID                       |
-| "guarda resultado de agente X" | Promote workspace/ results to KB           |
-
-### Implementation (~2d)
-
-1. **Router trigger detection** — scope pattern + spawn logic (~4h)
-2. **Background task flag** — `spawn_type: "user-background"` in tasks table, immediate return to user (~2h)
-3. **Concurrency gate** — max 3 check before spawn (~1h)
-4. **Completion notification** — reaction rule that sends summary to Telegram (~3h)
-5. **Management commands** — "mis agentes", "cancela", "status" in scope + fast-path (~4h)
-6. **Workspace → KB promotion** — user-triggered write after review (~2h)
-
-### Streaming Responses (~1d)
-
-User waits 15-60s with only "Un momento..." Every modern agent streams tokens in real-time.
-
-- Wire `onTextChunk` through to Telegram for all task types (not just fast-path)
-- TelegramStreamController already exists from v2.30 — progressive editMessageText with throttling
-- Perceived latency drops from 30s to 2s
-- **Exit:** User sees Jarvis thinking in real-time as tokens arrive
-
-### Task Continuity / Checkpoints (~1.5d) — **Done**
-
-When Jarvis hits max_rounds, the work is lost. The user has to re-explain the task.
-
-- At round N-5 (before max_rounds), auto-persist checkpoint to `workspace/checkpoints/{task-id}.md`
-- Checkpoint: what was done, what's pending, which files were modified
-- On "continúa", router detects pending checkpoint and injects it as context
-- Jarvis picks up where it left off instead of starting over
-- **Exit:** User says "continúa" after a max_rounds coding task → Jarvis reads checkpoint → finishes git commit/push
-
----
-
-## Enhancements (Tier 1 — build when opportunity arises)
-
-### Multi-Model Routing
-
-Route different task types to different LLMs. Claude for reasoning, GPT-4 for tool calling, fast model for classification.
-
-**Why:** Single-vendor (DashScope) means when primary degrades, everything degrades. Tonight showed primary+fallback down for 30+ minutes.
-
-### More Intel Adapters
-
-8 no-auth sources ready: IODA, WHO DON, OilPriceAPI, CelesTrak, Safecast, disease.sh, OONI, HN Firebase. 6 API-key sources: Finnhub, FRED, NVD, Cloudflare Radar, ACLED, NewsData.io.
-
-### Unified FS Maturation
-
-- ~~user_facts → knowledge/ migration~~ **Done** (H3, 69 facts migrated, 30 credentials remain)
-- Day recaps from nightly ritual
-- Auto-persist to meaningful paths (not session IDs)
-- INDEX.md project summaries
-
----
-
-## Enhancements (Tier 2 — design needed)
-
-| Item                               | Why                                                             | Effort |
-| ---------------------------------- | --------------------------------------------------------------- | ------ |
-| ~~Structured outputs~~             | **Moved to v6.0 S6** (structured tool results)                  | —      |
-| ~~NanoClaw production activation~~ | **Done** — autonomous improvement runs on NanoClaw (2026-04-06) | —      |
-| Embedding-based scoping            | Replace regex when accuracy drops below 80%                     | 3-5d   |
-| Task cancellation from Telegram    | No way to abort running tasks today                             | 1d     |
-| Protected paths for file_delete    | Prevent deletion of git-tracked research docs                   | 0.5d   |
-| Per-task mutation log              | Audit what files were created/modified/deleted                  | 1d     |
+7. Jarvis CANNOT write to .env, .bashrc, .ssh/, .git/ — path safety pipeline
+8. All actions audited
 
 ---
 
 ## Deferred to v7.0+
 
-| Capability                         | Why deferred                         |
-| ---------------------------------- | ------------------------------------ |
-| Multi-VPS management               | Single VPS for now                   |
-| Self-modifying core infrastructure | Too risky for autonomous changes     |
-| Training other agents              | Requires multi-agent architecture    |
-| Agent-to-agent communication       | Background agents don't need it yet  |
-| Full VPS provisioning              | Hostinger API supports it, premature |
-| Remove human review gate           | Never — alignment constraint         |
-| Persistent agent sessions          | Thin approach first, fat if needed   |
-| Agent progress streaming           | Status polling sufficient for v6.1   |
+| Capability                         | Why deferred                                            |
+| ---------------------------------- | ------------------------------------------------------- |
+| Multi-VPS management               | Single VPS for now                                      |
+| Self-modifying core infrastructure | Too risky for autonomous changes                        |
+| Agent-to-agent communication       | Background agents don't need it yet                     |
+| Full VPS provisioning              | Hostinger API supports it, premature                    |
+| Remove human review gate           | Never — alignment constraint                            |
+| Persistent agent sessions          | Thin approach first, fat if needed                      |
+| Embedding-based scoping            | Regex 92%+ accuracy, pgvector in v6.2 may enable hybrid |
 
 ---
 
 ## Metrics
 
-| Metric                           | v5.0 Final | v6.0 Target | v6.1 Target |
-| -------------------------------- | ---------- | ----------- | ----------- |
-| Self-authored PRs                | 0          | 10+/month   | —           |
-| Self-fixed bugs                  | 0          | 5+/month    | —           |
-| Autonomous deploys               | 0          | 10+/month   | —           |
-| Human review turnaround          | N/A        | <1 hour     | —           |
-| Post-deploy revert rate          | N/A        | <10%        | —           |
-| Directive proposals              | 0          | 2-3/week    | —           |
-| Concurrent background agents     | 0          | —           | 3 max       |
-| Background agent completion rate | N/A        | —           | >90%        |
-| Avg background agent duration    | N/A        | —           | <5 min      |
+| Metric                  | v5.0 Final | v6.0+v6.1 Final | Notes                                         |
+| ----------------------- | ---------- | --------------- | --------------------------------------------- |
+| Tests                   | 1228       | 1377            | +58 path safety, +behavioral coherence tests  |
+| Source files            | 214        | 228             |                                               |
+| Tools                   | 150        | 163             | +video, +git, +intel, +KB tools               |
+| Safeguards              | 0          | 5 (SG1–SG5)     | All mechanical, no LLM in enforcement         |
+| Behavioral patterns     | 0          | 10              | From Claude Code architecture analysis        |
+| Background agents (max) | 0          | 3               |                                               |
+| Provider cascade        | 2-model    | 3-model         | qwen → kimi → groq (different infrastructure) |
+| Immutable core files    | 0          | 15              | + src/api/ directory                          |
+| Path safety checks      | 0          | 7               | validatePathSafety + isDangerousRemovalPath   |
+| Rituals                 | 7          | 9               | +diff digest, +proactive scanner              |
 
 ---
 
-## Dependencies
-
-| Dependency                          | Status                 |
-| ----------------------------------- | ---------------------- |
-| Git tools with cwd + branch support | Done                   |
-| NanoClaw Docker image               | Done                   |
-| GitHub org access (EurekaMD-net)    | Done                   |
-| Shell guard blocking main push      | Needs branch exception |
-| hapi CLI (Hostinger)                | Bookmarked             |
-| systemd access                      | Available              |
-| Backup directory                    | Created                |
-| Task table spawn_type column        | Exists                 |
-| Reaction engine Telegram delivery   | Done                   |
-
----
-
-_v6.0 is where Jarvis stops being a tool and starts being an engineer. v6.1 is where the user stops waiting and starts delegating. The human stays in the loop — not as operator, but as reviewer._
+_v6.0 is where Jarvis stopped being a tool and became an engineer. v6.1 is where the user stopped waiting and started delegating. The behavioral coherence layer ensures Jarvis stays coherent as sessions get longer, conversations get deeper, and the tool count keeps growing. Next: v6.2 — the reliable foundation._
