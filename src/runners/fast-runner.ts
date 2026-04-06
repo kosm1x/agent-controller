@@ -920,17 +920,9 @@ export const fastRunner: Runner = {
         parsed.status === "DONE" &&
         result.exitReason === "natural"
       ) {
-        const hasWriteTools = toolsCalled.some(
-          (t) =>
-            t.startsWith("file_write") ||
-            t.startsWith("file_edit") ||
-            t.startsWith("shell_exec") ||
-            t.startsWith("wp_") ||
-            t.startsWith("gmail_") ||
-            t.startsWith("gsheets_write") ||
-            t.startsWith("gdocs_write") ||
-            t.startsWith("social_publish"),
-        );
+        // Use the curated READ_ONLY_TOOLS set (inverted) instead of a manual
+        // write-tool list — covers git, Drive, Calendar, video, and future tools.
+        const hasWriteTools = toolsCalled.some((t) => !isReadOnlyTool(t));
         if (hasWriteTools) {
           parsed = {
             ...parsed,

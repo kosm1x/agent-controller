@@ -956,11 +956,21 @@ export async function inferWithTools(
     // Nudges and advisories from prior rounds should not leak into replay.
     if (round > 0) stripStaleSignals(conversation);
 
-    // Critical System Reminder — re-inject every round (after round 0) to
-    // prevent behavioral drift in long tool-loop sessions. Inspired by
-    // OpenClaude's criticalSystemReminder_EXPERIMENTAL pattern.
-    // Unlike turn-scoped nudges, this is persistent and NOT stripped.
+    // Critical System Reminder — re-inject every 3 rounds to prevent
+    // behavioral drift in long tool-loop sessions. Inspired by OpenClaude's
+    // criticalSystemReminder_EXPERIMENTAL pattern.
+    // Remove previous reminder before adding new one to avoid accumulation
+    // (QA audit: up to 11 copies in 35-round coding tasks = ~1.2K wasted tokens).
     if (round > 0 && round % 3 === 0) {
+      for (let i = conversation.length - 1; i >= 0; i--) {
+        if (
+          conversation[i].role === "system" &&
+          conversation[i].content === CRITICAL_SYSTEM_REMINDER
+        ) {
+          conversation.splice(i, 1);
+          break; // only the most recent one
+        }
+      }
       conversation.push({
         role: "system",
         content: CRITICAL_SYSTEM_REMINDER,

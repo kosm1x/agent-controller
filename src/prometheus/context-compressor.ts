@@ -184,7 +184,7 @@ ${middleText}`;
         { role: "user", content: NO_TOOLS },
       ],
       temperature: 0.2,
-      max_tokens: 800,
+      max_tokens: 1200, // 9 sections + analysis scratchpad overhead needs headroom
     });
 
     let raw =
