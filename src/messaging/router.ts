@@ -734,10 +734,14 @@ export class MessageRouter {
           tags: ["messaging", msg.channel, "background-agent"],
         });
 
-        this.sendToChannel(
+        const agentNotification = `🤖 Agente lanzado: "${taskText.slice(0, 60)}"\nID: ${result.taskId.slice(0, 8)}\nTe aviso cuando termine. Puedes seguir hablando conmigo.`;
+        this.sendToChannel(msg.channel, msg.from, agentNotification);
+
+        // Push to thread so next task knows this was a REAL router action
+        // (prevents false hallucination self-diagnosis)
+        pushToThread(
           msg.channel,
-          msg.from,
-          `🤖 Agente lanzado: "${taskText.slice(0, 60)}"\nID: ${result.taskId.slice(0, 8)}\nTe aviso cuando termine. Puedes seguir hablando conmigo.`,
+          `User: ${msg.text}\nJarvis: ${agentNotification}`,
         );
 
         // Track for completion notification

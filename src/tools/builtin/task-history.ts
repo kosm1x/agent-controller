@@ -35,7 +35,7 @@ Returns the last N executions matching the query, with: title, status, tools cal
           query: {
             type: "string",
             description:
-              "Search term to match against task titles. Use keywords from the schedule name or task description. Example: 'Conducta Humana', 'Pharma', 'daily report'.",
+              "Search term to match against task titles OR task ID prefix. Use keywords from the task name, or the ID shown in agent notifications. Example: 'aviación', 'daily report', '1e8b10b1'.",
           },
           limit: {
             type: "number",
@@ -60,9 +60,11 @@ Returns the last N executions matching the query, with: title, status, tools cal
 
     const db = getDatabase();
 
+    // Search by title OR task_id prefix — prevents false negatives when
+    // querying by ID fragment (e.g. from "🤖 Agente lanzado" notifications)
     const titleFilter = scheduledOnly
-      ? "t.title LIKE '%[Scheduled]%' AND t.title LIKE @query"
-      : "t.title LIKE @query";
+      ? "t.title LIKE '%[Scheduled]%' AND (t.title LIKE @query OR t.task_id LIKE @query)"
+      : "(t.title LIKE @query OR t.task_id LIKE @query)";
 
     const rows = db
       .prepare(
