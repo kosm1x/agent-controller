@@ -157,12 +157,16 @@ export async function orchestrate(
       });
 
       const summary = graph.summary();
-      emitProgress(
-        taskId,
-        Phase.EXECUTE,
-        70,
-        `Executed: ${summary.completed}/${summary.total} completed, ${summary.failed} failed`,
-      );
+      // Progress label: count + last completed goal description (git-commit-subject style)
+      // Pattern from Claude Code's ToolUseSummary: short, past-tense, names the thing.
+      const lastCompleted = graph
+        .getAll()
+        .filter((g) => g.status === "completed")
+        .pop();
+      const progressLabel = lastCompleted
+        ? `${summary.completed}/${summary.total} — ${lastCompleted.description.slice(0, 50)}`
+        : `${summary.completed}/${summary.total} completed, ${summary.failed} failed`;
+      emitProgress(taskId, Phase.EXECUTE, 70, progressLabel);
 
       console.log(
         `[orchestrator] Task ${taskId}: execution done — ${JSON.stringify(summary)}`,

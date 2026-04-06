@@ -740,6 +740,10 @@ REGLAS (no negociables):
    - Archivos creados: paths de los archivos guardados en workspace/
    - Pendientes: qué queda por hacer (si aplica)`;
 
+        // Worker isolation (OpenClaude InProcessBackend pattern):
+        // - No conversationHistory passed (parent context NOT leaked)
+        // - Scoped tools only (no parent tool leakage beyond scope)
+        // - 60-min hard timeout on pendingReplies (existing)
         const result = await submitTask({
           title: `🤖 Agente: ${taskText.slice(0, 50)}`,
           description:

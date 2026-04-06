@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, resolve } from "path";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath } from "./immutable-core.js";
+import { isImmutableCorePath, validatePathSafety } from "./immutable-core.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -112,6 +112,12 @@ RULES:
     const replaceAll = args.replace_all === true;
 
     if (!path) return JSON.stringify({ error: "path is required" });
+
+    // Path safety pipeline (Claude Code pattern)
+    const safety = validatePathSafety(path, "write");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `Edit blocked: ${safety.reason}` });
+    }
 
     // Enforce write boundaries
     const resolved = resolve(path);

@@ -6,7 +6,11 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath } from "./immutable-core.js";
+import {
+  isImmutableCorePath,
+  validatePathSafety,
+  isDangerousRemovalPath,
+} from "./immutable-core.js";
 
 const MAX_READ = 50_000; // chars
 
@@ -55,6 +59,12 @@ function isOnJarvisBranch(): boolean {
 }
 
 function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
+  // Path safety pipeline (Claude Code pattern): TOCTOU, shell expansion, dangerous files
+  const safety = validatePathSafety(path, "write");
+  if (!safety.safe) {
+    return { allowed: false, reason: `Write blocked: ${safety.reason}` };
+  }
+
   const resolved = resolve(path);
   // SG3: Immutable core — blocked even on jarvis/* branches
   const immCheck = isImmutableCorePath(resolved);
@@ -281,6 +291,18 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const rawPath = (args.path ?? args.file_path) as string;
     if (!rawPath) return JSON.stringify({ error: "path is required" });
+
+    // Path safety pipeline + dangerous removal check (Claude Code pattern)
+    const safety = validatePathSafety(rawPath, "delete");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `Deletion blocked: ${safety.reason}` });
+    }
+    const dangerCheck = isDangerousRemovalPath(rawPath);
+    if (dangerCheck.dangerous) {
+      return JSON.stringify({
+        error: `Deletion blocked: ${dangerCheck.reason}`,
+      });
+    }
 
     const absPath = resolve(rawPath);
 

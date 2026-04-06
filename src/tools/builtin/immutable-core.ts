@@ -66,3 +66,155 @@ export function isImmutableCorePath(absolutePath: string): {
 
   return { immutable: false };
 }
+
+// ---------------------------------------------------------------------------
+// Path Safety Pipeline — ported from Claude Code's validatePath()
+// ---------------------------------------------------------------------------
+
+/**
+ * Sensitive dotfiles that should never be auto-edited by Jarvis.
+ * Matches Claude Code's DANGEROUS_FILES list.
+ */
+const DANGEROUS_FILES = new Set([
+  ".gitconfig",
+  ".gitmodules",
+  ".bashrc",
+  ".bash_profile",
+  ".zshrc",
+  ".zprofile",
+  ".profile",
+  ".env",
+  ".env.local",
+  ".env.production",
+]);
+
+/** Directories whose contents should not be auto-edited. */
+const DANGEROUS_DIRECTORIES = [".git/", ".ssh/", ".gnupg/"];
+
+/**
+ * Validate a file path for safety before write/delete operations.
+ * 6-check pipeline from Claude Code's validatePath():
+ *
+ * 1. Quote stripping + tilde expansion
+ * 2. UNC path block (SMB credential leak prevention)
+ * 3. Tilde variant block (~user, ~+, ~-)
+ * 4. Shell expansion syntax block ($, %, =) — TOCTOU prevention
+ * 5. Glob block for write operations
+ * 6. Dangerous file/directory check
+ *
+ * Returns { safe: true } or { safe: false, reason: string }.
+ */
+export function validatePathSafety(
+  rawPath: string,
+  operation: "read" | "write" | "delete",
+): { safe: boolean; reason?: string } {
+  if (!rawPath || rawPath.trim().length === 0) {
+    return { safe: false, reason: "Empty path" };
+  }
+
+  // 1. Strip surrounding quotes
+  let path = rawPath.trim().replace(/^['"]|['"]$/g, "");
+
+  // 2. UNC path block — prevents SMB credential leaks on Windows/WSL
+  if (path.startsWith("\\\\") || path.startsWith("//")) {
+    return { safe: false, reason: "UNC/network paths are blocked" };
+  }
+
+  // 3. Tilde expansion — expand ~/ to HOME, block ~user variants
+  if (path.startsWith("~/")) {
+    path = path.replace("~/", `${process.env.HOME ?? "/root"}/`);
+  } else if (path.startsWith("~")) {
+    return {
+      safe: false,
+      reason:
+        "Tilde expansion variants (~user, ~+, ~-) are blocked — use absolute paths",
+    };
+  }
+
+  // 4. Shell expansion syntax block — TOCTOU prevention
+  // These create gaps between validation time and execution time:
+  // $VAR, ${var}, $(cmd) expand at runtime to different paths than validated
+  if (/[$%]/.test(path)) {
+    return {
+      safe: false,
+      reason:
+        "Shell expansion syntax ($, %) in paths is blocked ��� use resolved absolute paths",
+    };
+  }
+  if (path.startsWith("=")) {
+    return {
+      safe: false,
+      reason: "Zsh equals expansion (=cmd) in paths is blocked",
+    };
+  }
+
+  // 5. Glob patterns in write/delete operations
+  if (operation !== "read" && /[*?[\]{}]/.test(path)) {
+    return {
+      safe: false,
+      reason: "Glob patterns in write/delete paths are blocked",
+    };
+  }
+
+  // 6. Dangerous files and directories
+  const basename = path.split("/").pop() ?? "";
+  if (operation !== "read" && DANGEROUS_FILES.has(basename)) {
+    return {
+      safe: false,
+      reason: `'${basename}' is a sensitive dotfile — manual edit required`,
+    };
+  }
+  if (
+    operation !== "read" &&
+    DANGEROUS_DIRECTORIES.some((d) => path.includes(d))
+  ) {
+    const matched = DANGEROUS_DIRECTORIES.find((d) => path.includes(d));
+    return {
+      safe: false,
+      reason: `'${matched}' is a protected directory — manual edit required`,
+    };
+  }
+
+  return { safe: true };
+}
+
+/**
+ * Check if a path is dangerous to delete (rm/rmdir).
+ * Blocks: root, home, direct children of /, glob wildcards.
+ * Ported from Claude Code's isDangerousRemovalPath().
+ */
+export function isDangerousRemovalPath(path: string): {
+  dangerous: boolean;
+  reason?: string;
+} {
+  const resolved = resolve(path);
+
+  // Root filesystem
+  if (resolved === "/") {
+    return { dangerous: true, reason: "Cannot delete root filesystem" };
+  }
+
+  // Home directory
+  if (resolved === (process.env.HOME ?? "/root")) {
+    return { dangerous: true, reason: "Cannot delete home directory" };
+  }
+
+  // Glob wildcard in path
+  if (/[*?]/.test(resolved)) {
+    return {
+      dangerous: true,
+      reason: "Wildcard deletion is blocked — specify exact paths",
+    };
+  }
+
+  // Direct children of / (e.g., /usr, /tmp, /var, /etc, /opt)
+  const parts = resolved.split("/").filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      dangerous: true,
+      reason: `Cannot delete top-level directory /${parts[0]}`,
+    };
+  }
+
+  return { dangerous: false };
+}
