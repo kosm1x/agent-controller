@@ -256,6 +256,8 @@ interface PendingReply {
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
   streamController?: TelegramStreamController;
+  /** Abort controller for task cancellation (v6.2 S2). */
+  abortController?: AbortController;
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -875,6 +877,57 @@ export class MessageRouter {
       return;
     }
 
+    // --- v6.2 S2: Task cancellation from Telegram ---
+    // Detect cancel intent: "cancela", "detente", "para", "stop", "cancel"
+    // Aborts the running task for this channel, extracts partial result, notifies user.
+    const CANCEL_INTENT_RE =
+      /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
+    if (CANCEL_INTENT_RE.test(msg.text.trim())) {
+      // Find the active pending reply for this channel
+      let cancelledTaskId: string | null = null;
+      for (const [taskId, pending] of this.pendingReplies.entries()) {
+        if (pending.channel === msg.channel) {
+          // Abort the running inference loop
+          if (pending.abortController) {
+            pending.abortController.abort();
+          }
+          // Cancel in the DB (cascades to subtasks)
+          cancelTask(taskId);
+          // Clean up timers
+          clearTimeout(pending.interimTimer);
+          clearTimeout(pending.finalTimer);
+          // Stop streaming if active
+          if (pending.streamController) {
+            pending.streamController
+              .finalize("🛑 Tarea cancelada.")
+              .catch(() => {});
+          }
+          this.pendingReplies.delete(taskId);
+          cancelledTaskId = taskId;
+          break;
+        }
+      }
+
+      if (cancelledTaskId) {
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          `🛑 Tarea cancelada (${cancelledTaskId.slice(0, 8)}). ¿En qué más te ayudo?`,
+        );
+        pushToThread(
+          msg.channel,
+          `User: ${msg.text}\nJarvis: Tarea cancelada.`,
+        );
+      } else {
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          "No hay tarea activa para cancelar.",
+        );
+      }
+      return;
+    }
+
     // Prompt enhancer: if waiting for answers, build enhanced prompt or skip
     if (isWaitingForAnswers(msg.channel)) {
       const original = getOriginalMessage(msg.channel)!;
@@ -1151,6 +1204,9 @@ export class MessageRouter {
       }
     }
 
+    // Create abort controller for task cancellation (v6.2 S2)
+    const taskAbort = new AbortController();
+
     const result = await submitTask({
       title: `Chat: ${titleText}`,
       description: taskDescription,
@@ -1165,6 +1221,7 @@ export class MessageRouter {
       onTextChunk: streamController
         ? (chunk: string) => streamController!.appendChunk(chunk)
         : undefined,
+      abortController: taskAbort,
     });
 
     // Link scope telemetry to this task
@@ -1202,6 +1259,7 @@ export class MessageRouter {
       interimTimer,
       finalTimer,
       ...(streamController && { streamController }),
+      abortController: taskAbort,
     });
 
     console.log(

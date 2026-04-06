@@ -42,6 +42,8 @@ export interface TaskSubmission {
   requiredTools?: string[];
   /** Streaming callback — receives text chunks as the LLM generates them. */
   onTextChunk?: (text: string) => void;
+  /** Abort controller for task cancellation (v6.2 S2). Caller creates and retains it. */
+  abortController?: AbortController;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
 }
@@ -358,6 +360,7 @@ async function dispatchWithSlot(
     modelTier: getModelTierFromTask(taskId),
     conversationHistory: submission.conversationHistory,
     onTextChunk: submission.onTextChunk,
+    signal: submission.abortController?.signal,
   };
 
   taskStarted(agentType);

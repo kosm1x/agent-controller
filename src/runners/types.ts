@@ -36,6 +36,8 @@ export interface RunnerInput {
   conversationHistory?: ConversationTurn[];
   /** Streaming callback — receives text chunks as the LLM generates them. */
   onTextChunk?: (text: string) => void;
+  /** Abort signal for task cancellation (v6.2 S2). */
+  signal?: AbortSignal;
 }
 
 /** Output returned by a runner after execution. */

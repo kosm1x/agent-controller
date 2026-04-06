@@ -628,6 +628,7 @@ export const fastRunner: Runner = {
         providerName,
         tokenBudget,
         onTextChunk: input.onTextChunk,
+        signal: input.signal,
       });
 
       let parsed = parseRunnerStatus(result.content);
