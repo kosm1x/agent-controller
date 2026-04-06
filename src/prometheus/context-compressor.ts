@@ -17,6 +17,53 @@ import { upsertFile } from "../db/jarvis-fs.js";
 /** Prefix marker for compression summaries — enables PRESERVE+ADD on subsequent compressions. */
 export const SUMMARY_PREFIX = "[CONTEXT SUMMARY]";
 
+/**
+ * Structured 9-section compact prompt — guides the LLM to produce organized
+ * summaries that preserve intent, key facts, and pending work across compression
+ * cycles. Inspired by OpenClaude's compact format with analysis scratchpad.
+ *
+ * The structured sections prevent information loss that occurs with freeform
+ * "summarize this" prompts, especially for multi-step tool conversations.
+ */
+const STRUCTURED_COMPACT_PROMPT = `Compress the following conversation into a structured summary. Use ONLY these sections (skip empty ones). Be concise but preserve ALL key facts.
+
+<analysis>
+Draft your reasoning here — identify what matters and what can be dropped. This block will be stripped from the output.
+</analysis>
+
+Write the final summary using these sections:
+
+## Intent
+What the user originally asked for and why. One sentence.
+
+## Key Facts
+Technical concepts, decisions made, constraints discovered. Bullet list.
+
+## Files & Code
+File paths read/written/modified, with key code snippets if they affect pending work. Only include if relevant to unfinished tasks.
+
+## Errors & Fixes
+Errors encountered and how they were resolved (or not). Skip if none.
+
+## User Messages
+Preserve the user's exact words for any instructions, corrections, or preferences — these define intent and must not be paraphrased.
+
+## Actions Completed
+What was done successfully. Bullet list with specifics (tool names, IDs, results).
+
+## Pending Work
+What remains to be done. Be specific — include file paths and next steps.
+
+## Current State
+The most recent action or result. What was the conversation doing when it was compressed?
+
+RULES:
+- Do NOT call any tools. Produce ONLY text.
+- Strip the <analysis> block from your final output.
+- Keep total output under 600 words.
+- Preserve file paths, error messages, and IDs verbatim.
+- If the user gave corrections or preferences, quote them exactly.`;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -106,22 +153,36 @@ export async function compress(
     })
     .join("\n");
 
-  // Try to summarize (or update existing summary)
+  // Try to summarize (or update existing summary) using structured 9-section format.
+  // Inspired by OpenClaude's compact format: structured sections preserve intent
+  // and key facts better than freeform summaries during multi-cycle compression.
   let summaryContent: string;
   try {
     const prompt = existingSummary
-      ? `Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions.\n\nExisting summary:\n${existingSummary}\n\nNew messages:\n${middleText}`
-      : `Summarize the following tool conversation concisely, preserving key results and decisions:\n\n${middleText}`;
+      ? `Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions. Keep the same structured section format.
+
+Existing summary:
+${existingSummary}
+
+New messages:
+${middleText}`
+      : `${STRUCTURED_COMPACT_PROMPT}
+
+Messages to compress:
+${middleText}`;
 
     const summaryResponse = await infer({
       messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: 800,
     });
 
-    summaryContent =
+    let raw =
       summaryResponse.content ??
       `[Earlier conversation compressed — ${middle.length} messages removed]`;
+    // Strip <analysis> scratchpad block if the LLM included it in output
+    raw = raw.replace(/<analysis>[\s\S]*?<\/analysis>\s*/g, "").trim();
+    summaryContent = raw;
   } catch {
     // Fallback: drop without summary
     summaryContent = `[Earlier conversation compressed — ${middle.length} messages removed]`;

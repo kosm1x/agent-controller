@@ -98,6 +98,22 @@ function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
   }
 }
 
+/**
+ * Verification nudge appended to multi-step task results (≥3 tool calls with
+ * write operations). Inspired by OpenClaude's verification agent discipline:
+ * two named failure patterns and an adversarial probe checklist.
+ *
+ * NOT a blocker — just a reminder appended to the response text so the user
+ * (or Jarvis in autonomous mode) is aware verification is warranted.
+ */
+const VERIFICATION_NUDGE = `
+
+---
+⚠ **Verificación pendiente** — Esta tarea usó múltiples herramientas de escritura. Antes de considerar completado:
+- Leer ≠ verificar: confirma que los cambios surtieron efecto (lee el resultado, no asumas).
+- No caigas en el 80%: el happy path funciona, pero ¿qué pasa con edge cases, entradas vacías, o errores?
+- Si modificaste código: ¿corrieron los tests? ¿typecheck pasa?`;
+
 /** Status suffix appended to chat system prompts. */
 const STATUS_SUFFIX = `
 
@@ -859,6 +875,36 @@ export const fastRunner: Runner = {
             concerns: [
               "LLM refused to format tool results. Raw tool output shown.",
             ],
+          };
+        }
+      }
+
+      // Verification discipline: for multi-step tasks (≥3 tool calls), append
+      // a verification nudge to the result. Inspired by OpenClaude's verification
+      // agent pattern: "reading is not verification — run it."
+      // Two named failure modes:
+      //   1. Verification avoidance: reading code instead of testing it
+      //   2. First-80% seduction: stopping after the happy path works
+      if (
+        toolsCalled.length >= 3 &&
+        parsed.status === "DONE" &&
+        result.exitReason === "natural"
+      ) {
+        const hasWriteTools = toolsCalled.some(
+          (t) =>
+            t.startsWith("file_write") ||
+            t.startsWith("file_edit") ||
+            t.startsWith("shell_exec") ||
+            t.startsWith("wp_") ||
+            t.startsWith("gmail_") ||
+            t.startsWith("gsheets_write") ||
+            t.startsWith("gdocs_write") ||
+            t.startsWith("social_publish"),
+        );
+        if (hasWriteTools) {
+          parsed = {
+            ...parsed,
+            cleanContent: parsed.cleanContent + VERIFICATION_NUDGE,
           };
         }
       }

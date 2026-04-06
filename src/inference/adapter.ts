@@ -620,6 +620,27 @@ import {
 } from "./guards.js";
 
 // ---------------------------------------------------------------------------
+// Critical System Reminder — re-injected every 3 rounds to prevent drift
+// ---------------------------------------------------------------------------
+
+/**
+ * Short behavioral invariants re-injected periodically into the conversation
+ * during multi-round tool loops. Prevents the model from drifting away from
+ * critical rules in long sessions (10+ rounds).
+ *
+ * Inspired by OpenClaude's criticalSystemReminder_EXPERIMENTAL pattern:
+ * a fixed string re-injected at intervals to maintain behavioral coherence.
+ *
+ * NOT stripped by stripStaleSignals — this is persistent, not turn-scoped.
+ */
+const CRITICAL_SYSTEM_REMINDER = `[RECORDATORIO CRÍTICO]
+1. Solo llama herramientas que existen en tu lista de funciones. NO narres ni inventes llamadas.
+2. Verificar > asumir: antes de reportar éxito, confirma el resultado con una lectura o verificación real.
+3. Reporta acciones primero: qué se creó/modificó/eliminó, con nombres e IDs. Limitaciones después.
+4. Respeta el scope: si una herramienta no está en tu lista, di que no la tienes. No improvises.
+5. Sé conciso: rondas restantes son limitadas. Ejecuta, no planifiques.`;
+
+// ---------------------------------------------------------------------------
 // Turn-scoped signal cleanup (Hermes v0.5 pattern)
 // ---------------------------------------------------------------------------
 
@@ -934,6 +955,17 @@ export async function inferWithTools(
     // Strip stale turn-scoped signals before the next LLM call.
     // Nudges and advisories from prior rounds should not leak into replay.
     if (round > 0) stripStaleSignals(conversation);
+
+    // Critical System Reminder — re-inject every round (after round 0) to
+    // prevent behavioral drift in long tool-loop sessions. Inspired by
+    // OpenClaude's criticalSystemReminder_EXPERIMENTAL pattern.
+    // Unlike turn-scoped nudges, this is persistent and NOT stripped.
+    if (round > 0 && round % 3 === 0) {
+      conversation.push({
+        role: "system",
+        content: CRITICAL_SYSTEM_REMINDER,
+      });
+    }
 
     // Context pressure awareness — compute before compaction check
     const config = getConfig();
