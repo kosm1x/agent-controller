@@ -34,12 +34,12 @@
 
 ### Workstream 3: Content Factory Foundation (3.5 sessions)
 
-| Session | Deliverable                | Source                                                                                        |
-| ------- | -------------------------- | --------------------------------------------------------------------------------------------- |
-| V1      | TTS Engine Upgrade         | RedditVideoMakerBot. Per-scene TTS, voice selection, long text splitting, OpenAI TTS optional |
-| V2      | Background Media Library   | RedditVideoMakerBot. yt-dlp cache, random subclip, royalty-free pre-seed                      |
-| V3      | Overlay Composition Engine | RedditVideoMakerBot. FFmpeg between(t,x,y) timing, audio mixing, portrait-first               |
-| V3.5    | Integration + Polish       | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                       |
+| Session | Deliverable                   | Source                                                                                                                                             |
+| ------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1      | TTS Engine Upgrade — **DONE** | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
+| V2      | Background Media Library      | RedditVideoMakerBot. yt-dlp cache, random subclip, royalty-free pre-seed                                                                           |
+| V3      | Overlay Composition Engine    | RedditVideoMakerBot. FFmpeg between(t,x,y) timing, audio mixing, portrait-first                                                                    |
+| V3.5    | Integration + Polish          | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
 
 ### v6.2 Week Plan
 

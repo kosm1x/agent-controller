@@ -381,16 +381,28 @@ export const videoTtsTool: Tool = {
     type: "function",
     function: {
       name: "video_tts",
-      description: `Generate narration audio from text using TTS.
+      description: `Generate narration audio from text using TTS (v6.2 V1).
 
 USE WHEN:
 - Need a voice-over audio file from text
-- Testing narration before full video render`,
+- Testing narration before full video render
+
+Supports 324 edge-tts voices. Use video_list_voices to see available options.
+Long texts (>2000 chars) are automatically split at sentence boundaries with silence gaps.`,
       parameters: {
         type: "object",
         properties: {
           text: { type: "string", description: "Text to convert to speech" },
-          language: { type: "string", description: "Language (default: es)" },
+          language: {
+            type: "string",
+            description:
+              "Language code (default: es). Used to select default voice if voice not specified.",
+          },
+          voice: {
+            type: "string",
+            description:
+              "Edge-tts voice name (e.g. es-MX-DaliaNeural, en-US-BrianNeural). Use video_list_voices to see options.",
+          },
         },
         required: ["text"],
       },
@@ -402,12 +414,71 @@ USE WHEN:
     if (!text) return JSON.stringify({ error: "text is required" });
 
     const language = (args.language as string) || "es";
+    const voice = args.voice as string | undefined;
     const outputPath = join("/tmp", `tts-${Date.now()}.mp3`);
 
     try {
-      const { generateNarration } = await import("../../video/tts.js");
-      const path = await generateNarration(text, outputPath, language);
-      return JSON.stringify({ path, text: text.slice(0, 100) });
+      const { generateNarration, probeAudioDuration } =
+        await import("../../video/tts.js");
+      const path = await generateNarration(text, outputPath, language, voice);
+      const duration = probeAudioDuration(path);
+      return JSON.stringify({
+        path,
+        duration_seconds: Math.round(duration * 10) / 10,
+        voice:
+          voice ??
+          (language === "es" ? "es-MX-DaliaNeural" : "en-US-AriaNeural"),
+        text: text.slice(0, 100),
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+};
+
+export const videoListVoicesTool: Tool = {
+  name: "video_list_voices",
+  definition: {
+    type: "function",
+    function: {
+      name: "video_list_voices",
+      description: `List available TTS voices for video narration.
+
+USE WHEN:
+- User wants to hear available voice options
+- Choosing a voice for video_tts or video_create
+
+Returns voice names, genders, and locales. Filter by language to narrow results.`,
+      parameters: {
+        type: "object",
+        properties: {
+          language: {
+            type: "string",
+            description:
+              "Language filter prefix (e.g. 'es' for Spanish, 'en' for English). Omit to list all 324 voices.",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    try {
+      const { listVoices } = await import("../../video/tts.js");
+      const language = args.language as string | undefined;
+      const voices = listVoices(language);
+      if (voices.length === 0) {
+        return JSON.stringify({
+          error: "No voices found. Is edge-tts installed?",
+        });
+      }
+      return JSON.stringify({
+        count: voices.length,
+        filter: language ?? "all",
+        voices: voices.map((v) => `${v.name} (${v.gender})`),
+      });
     } catch (err) {
       return JSON.stringify({
         error: err instanceof Error ? err.message : String(err),
