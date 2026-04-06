@@ -63,12 +63,13 @@ jarvisPull.post("/jarvis-pull", async (c) => {
     "Si usaste KB files, di los paths. Si es conocimiento general, di 'Análisis propio'. " +
     "Esta línea es lo primero que el agente CRM ve — sin ella, el agente no puede citar la fuente.\n\n";
 
-  // Inject knowledge base for context (enforce + always-read files)
+  // Inject minimal KB context — only enforce files, capped at 1500 chars.
+  // Full KB (4000+) causes DashScope timeouts on large prompts.
   try {
-    const files = getFilesByQualifier("enforce", "always-read");
+    const files = getFilesByQualifier("enforce");
     let kbChars = 0;
     for (const f of files) {
-      if (kbChars + f.content.length > 4000) break;
+      if (kbChars + f.content.length > 1500) break;
       systemPrompt += `---\n${f.content}\n`;
       kbChars += f.content.length;
     }
@@ -81,7 +82,9 @@ jarvisPull.post("/jarvis-pull", async (c) => {
     : body.query;
 
   try {
-    const result = await infer({
+    // Retry once if the model returns a near-empty response (<20 chars).
+    // Some providers (kimi) occasionally return 2-4 tokens on valid queries.
+    let result = await infer({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -89,6 +92,20 @@ jarvisPull.post("/jarvis-pull", async (c) => {
       max_tokens: ROLE_MAX_TOKENS[role],
       temperature: 0.3,
     });
+
+    if ((result.content ?? "").length < 20) {
+      console.log(
+        `[jarvis-pull] Near-empty response (${(result.content ?? "").length} chars), retrying`,
+      );
+      result = await infer({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        max_tokens: ROLE_MAX_TOKENS[role],
+        temperature: 0.5,
+      });
+    }
 
     return c.json({
       response: result.content ?? "",
