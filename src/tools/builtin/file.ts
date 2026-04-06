@@ -27,19 +27,31 @@ const DENY_WRITE_PREFIXES = [
   "/var/",
 ];
 
-function isOnJarvisBranch(): boolean {
+const SELF_IMPROVEMENT_ALLOWED = [
+  "src/tools/",
+  "src/intel/",
+  "src/messaging/scope.ts",
+  "src/messaging/prompt-sections.ts",
+  "src/messaging/prompt-enhancer.ts",
+  "src/video/",
+];
+
+function getJarvisBranchFile(): string {
   try {
     const { execFileSync } =
       require("child_process") as typeof import("child_process");
-    const branch = execFileSync("git", ["branch", "--show-current"], {
+    return execFileSync("git", ["branch", "--show-current"], {
       cwd: "/root/claude/mission-control",
       timeout: 5000,
       encoding: "utf-8",
     }).trim();
-    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
   } catch {
-    return false;
+    return "";
   }
+}
+
+function isOnJarvisBranch(): boolean {
+  return /^jarvis\/(feat|fix|refactor)\/.+$/.test(getJarvisBranchFile());
 }
 
 function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
@@ -54,6 +66,19 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
         allowed: false,
         reason: `Write blocked: ${deny} is protected. Jarvis cannot modify its own source code or system files.`,
       };
+    }
+  }
+  // S5 safety: on jarvis/fix/* branches, restrict to allowed paths
+  if (resolved.startsWith("/root/claude/mission-control/")) {
+    const branch = getJarvisBranchFile();
+    if (branch.startsWith("jarvis/fix/")) {
+      const rel = resolved.replace("/root/claude/mission-control/", "");
+      if (!SELF_IMPROVEMENT_ALLOWED.some((p) => rel.startsWith(p))) {
+        return {
+          allowed: false,
+          reason: `Write blocked: outside self-improvement scope. Allowed: ${SELF_IMPROVEMENT_ALLOWED.join(", ")}`,
+        };
+      }
     }
   }
   if (ALLOW_WRITE_PREFIXES.some((p) => resolved.startsWith(p))) {

@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis + Parallel Agents
 
-> Status: DESIGN
+> Status: v6.0 COMPLETE, v6.1 COMPLETE
 > Last updated: 2026-04-05
 
 ---
@@ -63,7 +63,7 @@ Jarvis can monitor, back up, and manage VPS infrastructure.
 - `vps_logs` — filtered journalctl
 - **Exit:** "haz deploy" → tests → build → restart → health check → report
 
-### S5 — Autonomous Improvement Loop (~3d)
+### S5 — Autonomous Improvement Loop (~3d) — **Done**
 
 Tie it all together: identify → code → test → deploy → monitor.
 

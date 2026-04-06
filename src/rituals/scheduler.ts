@@ -121,8 +121,42 @@ export function startRitualScheduler(): void {
     );
   }
 
-  // Mechanical backups (no LLM)
+  // Mechanical backups + autonomous improvement
   scheduleKbBackup();
+  scheduleAutonomousImprovement();
+}
+
+/** Autonomous improvement — detects issues, creates fix branch + PR. */
+function scheduleAutonomousImprovement(): void {
+  // 1:30 AM Tue/Thu/Sat — right after overnight tuning (1:00 AM)
+  const job = cron.schedule(
+    "30 1 * * 2,4,6",
+    async () => {
+      try {
+        const { createImprovementTask } =
+          await import("./autonomous-improvement.js");
+        const task = createImprovementTask();
+        if (!task) return; // no candidates or gates blocked
+
+        const result = await submitTask(task);
+        console.log(
+          `[rituals] autonomous-improvement: submitted task ${result.taskId} (agent: ${result.agentType})`,
+        );
+
+        const router = getRouter();
+        if (router) {
+          router.watchRitualTask(result.taskId, "autonomous-improvement");
+        }
+      } catch (err) {
+        console.error("[rituals] autonomous-improvement failed:", err);
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] autonomous-improvement: scheduled (30 1 * * 2,4,6, tz=${RITUALS_TIMEZONE})`,
+  );
 }
 
 /** Mechanical KB backup — no LLM, just pushes jarvis_files to Postgres. */

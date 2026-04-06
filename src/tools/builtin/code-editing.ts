@@ -21,17 +21,39 @@ import type { Tool } from "../types.js";
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
 
-function isOnJarvisBranch(): boolean {
+// Jarvis self-improvement path restrictions (S5 safety gate)
+const SELF_IMPROVEMENT_ALLOWED = [
+  "src/tools/",
+  "src/intel/",
+  "src/messaging/scope.ts",
+  "src/messaging/prompt-sections.ts",
+  "src/messaging/prompt-enhancer.ts",
+  "src/video/",
+];
+
+function getJarvisBranch(): string {
   try {
-    const branch = execFileSync("git", ["branch", "--show-current"], {
+    return execFileSync("git", ["branch", "--show-current"], {
       cwd: "/root/claude/mission-control",
       timeout: 5000,
       encoding: "utf-8",
     }).trim();
-    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
   } catch {
-    return false;
+    return "";
   }
+}
+
+function isOnJarvisBranch(): boolean {
+  return /^jarvis\/(feat|fix|refactor)\/.+$/.test(getJarvisBranch());
+}
+
+/** On jarvis/fix/* branches, restrict edits to ALLOWED_PATHS. */
+function isPathAllowedForSelfImprovement(filePath: string): boolean {
+  const branch = getJarvisBranch();
+  // Only restrict on fix branches (autonomous improvement)
+  if (!branch.startsWith("jarvis/fix/")) return true;
+  const rel = filePath.replace("/root/claude/mission-control/", "");
+  return SELF_IMPROVEMENT_ALLOWED.some((p) => rel.startsWith(p));
 }
 
 export const fileEditTool: Tool = {
@@ -99,6 +121,15 @@ RULES:
     ) {
       return JSON.stringify({
         error: `Edit blocked: ${resolved} is protected. Jarvis cannot modify its own source code.`,
+      });
+    }
+    // S5 safety: on jarvis/fix/* branches, restrict to allowed paths
+    if (
+      resolved.startsWith("/root/claude/mission-control/") &&
+      !isPathAllowedForSelfImprovement(resolved)
+    ) {
+      return JSON.stringify({
+        error: `Edit blocked: ${resolved} is outside self-improvement scope. Allowed: ${SELF_IMPROVEMENT_ALLOWED.join(", ")}`,
       });
     }
     if (oldString === undefined || oldString === null)
