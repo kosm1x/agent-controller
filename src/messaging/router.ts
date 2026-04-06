@@ -111,6 +111,26 @@ import { autoPersistConversation } from "../memory/auto-persist.js";
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
 
+/**
+ * Fork child injection boilerplate for background agents (OpenClaude pattern).
+ * Explicit identity, numbered rules, structured output. Module-level constant
+ * to avoid re-allocation on every spawn.
+ */
+const BACKGROUND_AGENT_BOILERPLATE = `
+IMPORTANTE: Eres un agente de background. NO eres el agente principal de Jarvis.
+
+REGLAS (no negociables):
+1. NO converses con el usuario — solo ejecuta y reporta.
+2. NO lances sub-agentes ni tareas adicionales.
+3. Guarda TODOS los hallazgos en workspace/ con jarvis_file_write (qualifier: workspace).
+4. Si necesitas información que no puedes obtener, documenta qué falta y por qué.
+5. Sé conciso — el usuario revisará los resultados después.
+6. Tu respuesta DEBE incluir estas secciones:
+   - Alcance: qué investigaste/ejecutaste
+   - Resultado: hallazgos principales (datos concretos, no narrativa)
+   - Archivos creados: paths de los archivos guardados en workspace/
+   - Pendientes: qué queda por hacer (si aplica)`;
+
 // ---------------------------------------------------------------------------
 // Jarvis system prompt builder — conditional sections based on scoped tools
 // ---------------------------------------------------------------------------
@@ -720,25 +740,6 @@ export class MessageRouter {
           "",
           enrichment.contextBlock,
         );
-
-        // Fork child injection boilerplate (OpenClaude pattern):
-        // Background agents get explicit identity ("You are NOT the main agent"),
-        // numbered non-negotiable rules, and structured output requirements.
-        // Prevents recursive confusion and ensures predictable result format.
-        const BACKGROUND_AGENT_BOILERPLATE = `
-IMPORTANTE: Eres un agente de background. NO eres el agente principal de Jarvis.
-
-REGLAS (no negociables):
-1. NO converses con el usuario — solo ejecuta y reporta.
-2. NO lances sub-agentes ni tareas adicionales.
-3. Guarda TODOS los hallazgos en workspace/ con jarvis_file_write (qualifier: workspace).
-4. Si necesitas información que no puedes obtener, documenta qué falta y por qué.
-5. Sé conciso — el usuario revisará los resultados después.
-6. Tu respuesta DEBE incluir estas secciones:
-   - Alcance: qué investigaste/ejecutaste
-   - Resultado: hallazgos principales (datos concretos, no narrativa)
-   - Archivos creados: paths de los archivos guardados en workspace/
-   - Pendientes: qué queda por hacer (si aplica)`;
 
         // Worker isolation (OpenClaude InProcessBackend pattern):
         // - No conversationHistory passed (parent context NOT leaked)
