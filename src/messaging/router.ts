@@ -1488,25 +1488,27 @@ export class MessageRouter {
         // Non-fatal
       }
 
-      // Mechanical auto-persist: store noteworthy exchanges based on heuristics
+      // Read tool calls once — shared by auto-persist + background extraction
+      let taskToolCalls: string[] = [];
       try {
-        let apToolCalls: string[] = [];
-        const apRow = getDatabase()
+        const toolRow = getDatabase()
           .prepare(
             "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
           )
           .get(taskId) as { output: string | null } | undefined;
-        if (apRow?.output) {
-          try {
-            apToolCalls = JSON.parse(apRow.output).toolCalls ?? [];
-          } catch {
-            /* ignore */
-          }
+        if (toolRow?.output) {
+          taskToolCalls = JSON.parse(toolRow.output).toolCalls ?? [];
         }
+      } catch {
+        /* DB or JSON parse failure — proceed with empty tool list */
+      }
+
+      // Mechanical auto-persist: store noteworthy exchanges based on heuristics
+      try {
         autoPersistConversation({
           userText: pending.originalText,
           responseText: resultText,
-          toolCalls: apToolCalls,
+          toolCalls: taskToolCalls,
           channel: pending.channel,
           taskId,
         }).catch((err) => {
@@ -1517,6 +1519,40 @@ export class MessageRouter {
         });
       } catch {
         // Non-fatal
+      }
+
+      // v6.2 M0.5: Background memory extraction (fire-and-forget)
+      // Extracts 1-3 atomic facts from noteworthy exchanges via LLM,
+      // stores in pgvector with embeddings for semantic enrichment.
+      // Dynamic import + .then() because handleTaskCompleted is not async.
+      try {
+        import("../memory/background-extractor.js")
+          .then(({ shouldExtract, runBackgroundExtraction }) => {
+            if (
+              shouldExtract({
+                toolCalls: taskToolCalls,
+                responseLength: resultText.length,
+                spawnType: isBackground ? "user-background" : undefined,
+                isRitual: false, // rituals return early above
+                isProactive: false, // proactive tasks return early above
+              })
+            ) {
+              runBackgroundExtraction(
+                pending.originalText,
+                resultText,
+                taskToolCalls,
+                taskId,
+              ).catch((err) => {
+                console.warn(
+                  "[router] Background extraction failed:",
+                  err instanceof Error ? err.message : err,
+                );
+              });
+            }
+          })
+          .catch(() => {});
+      } catch {
+        // Non-fatal — extraction is best-effort
       }
 
       // Track outcome for adaptive intelligence

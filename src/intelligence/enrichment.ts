@@ -116,6 +116,45 @@ export async function enrichContext(
     // Non-fatal — drift check is best-effort
   }
 
+  // v6.2 M0.5: pgvector semantic search — supplements FTS5 keyword recall
+  // with vector similarity for paraphrased queries, multilingual matches,
+  // and conceptual connections the keyword index would miss.
+  try {
+    const { isPgvectorEnabled, pgHybridSearch, pgRecordAccess } =
+      await import("../db/pgvector.js");
+    const { generateEmbedding } = await import("../inference/embeddings.js");
+
+    if (isPgvectorEnabled()) {
+      const queryEmbedding = await generateEmbedding(messageText);
+      if (queryEmbedding && queryEmbedding.length > 0) {
+        const results = await pgHybridSearch(
+          queryEmbedding,
+          messageText,
+          5,
+          0.25,
+        );
+        if (results.length > 0) {
+          const lines: string[] = [];
+          for (const r of results) {
+            let line = `- [${r.combined_score.toFixed(2)}] **${r.title}**: ${r.content.slice(0, 200)}`;
+            // Staleness warning for entries >7 days old
+            if (r.stale) {
+              line += " ⚠ STALE";
+            }
+            lines.push(line);
+            // Record access for retention scoring (fire-and-forget)
+            pgRecordAccess(r.path).catch(() => {});
+          }
+          sections.push(
+            `## Contexto semántico (pgvector)\n${lines.join("\n")}`,
+          );
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — pgvector search is best-effort
+  }
+
   // Tool effectiveness from SQLite outcomes (sync, single query for both)
   try {
     const { hints, topTools: top } = getToolHintsAndTopTools();
