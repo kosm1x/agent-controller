@@ -13,6 +13,7 @@ import type { TaskExecutionContext } from "../inference/execution-context.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ToolExecutor } from "../inference/adapter.js";
 import { createLogger } from "../lib/logger.js";
+import { classifyMutation, recordMutation } from "../db/task-mutations.js";
 
 const log = createLogger("task-executor");
 
@@ -61,6 +62,29 @@ export function createTaskExecutor(
     }
 
     // Delegate actual execution to the registry (read-only singleton)
-    return registry.execute(name, args);
+    const result = await registry.execute(name, args);
+
+    // v6.2 S3: Record file mutations after successful tool execution.
+    // Centralized here so individual tool handlers don't need modification.
+    // Only records if the tool is a file-mutating tool and didn't return an error.
+    try {
+      const isError =
+        result.startsWith('{"error"') || result.startsWith("Error:");
+      if (!isError) {
+        const mutation = classifyMutation(name, args);
+        if (mutation) {
+          recordMutation(
+            context.taskId,
+            name,
+            mutation.operation,
+            mutation.filePath,
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — mutation log is best-effort
+    }
+
+    return result;
   };
 }

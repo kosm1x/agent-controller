@@ -18,7 +18,7 @@
 | ------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S1      | Smart Provider Routing — **DONE** | Health classification (healthy/degraded/unhealthy), baseline-derived thresholds (90s/3%/180s/10%), per-model cost tracking, auto-demotion on degradation |
 | S2      | Task Cancellation — **DONE**      | "cancela"/"detente" from Telegram. AbortController wired through dispatcher → fast-runner → inferWithTools. Cancel intent regex + cleanup + notification |
-| S3      | Per-Task Mutation Log             | Every file created/modified/deleted logged per task. Rollback awareness                                                                                  |
+| S3      | Per-Task Mutation Log — **DONE**  | task_mutations table, classifyMutation for 8 tool types, centralized recording in task executor, getMutationSummary. 15 new tests                        |
 | S4      | Unified FS Maturation             | Auto-persist paths, day recaps, INDEX.md regen, stale cleanup                                                                                            |
 | S5      | Protected Paths + Path Safety     | validatePathSafety 6-check pipeline, isDangerousRemovalPath, DANGEROUS_FILES                                                                             |
 
