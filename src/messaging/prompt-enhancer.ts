@@ -36,13 +36,15 @@ const PASSTHROUGH_PATTERNS = [
   // Greetings
   /^(hola|hey|buenos?\s*d[ií]as?|buenas?\s*(tardes?|noches?)|qu[eé]\s*tal|saludos?)\b/i,
   // Short confirmations
-  /^(s[ií]|no|ok|dale|va|sale|listo|perfecto|gracias|exacto|genial|procede|adelante|continua|confirma(do)?)\b/i,
+  /^(s[ií]|no|ok|dale|va|sale|listo|perfecto|gracias|exacto|genial|procede|adelante|contin[uú]a|confirma(do)?)\b/i,
   // Toggle commands
   /^(enhancer\s*(on|off|estado))\b/i,
   // Emoji responses
   /^👍|^🙏|^💪|^✅/,
   // Read-only action verbs — these never need clarification
   /^(lista|listar|muestra|mostrar|lee|leer|abre|abrir|monitor(ea)?|estado|status|resume|resumen|describe|consulta|dame|dime)\b/i,
+  // Continuation / follow-up — user is telling Jarvis to keep going, not starting a new task
+  /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba)\b/i,
   // Skip / skip enhancer signals
   /\b(hazlo|procede|skip|sin preguntas|ejecuta|haz(lo)?\s+ya)\b/i,
 ];
@@ -200,21 +202,20 @@ export async function analyzePrompt(
     const raw = (result.content ?? "PASS").trim();
     if (raw.toUpperCase() === "PASS") return "PASS";
 
-    // Mechanical guard: cap at 2 questions regardless of format.
-    // Split on any line that looks like a question (numbered, bulleted, or starts with ¿/?)
+    // max_tokens: 150 already limits total output.
+    // Only cap if it's clearly a question list (>3 numbered/bulleted items).
     const questionLines = raw
       .split("\n")
-      .filter(
-        (l) =>
-          l.trim().length > 5 &&
-          (/^\d+[\.\)]\s/.test(l.trim()) ||
-            /^[-•*]\s/.test(l.trim()) ||
-            /[¿?]/.test(l)),
-      );
+      .filter((l) => /^\s*(\d+[\.\)]|[-•*])\s/.test(l));
     if (questionLines.length > 2) {
-      return questionLines.slice(0, 2).join("\n");
+      // Too many questions — keep first 2 + any non-question context
+      const nonQuestions = raw
+        .split("\n")
+        .filter(
+          (l) => l.trim().length > 0 && !/^\s*(\d+[\.\)]|[-•*])\s/.test(l),
+        );
+      return [...nonQuestions, ...questionLines.slice(0, 2)].join("\n");
     }
-    // If we couldn't parse questions but text is long, it's likely a batch-split suggestion — pass as-is
     return raw;
   } catch {
     return "PASS";
