@@ -171,6 +171,11 @@ async function main(): Promise<void> {
   // Start dynamic (user-defined) scheduled tasks
   startDynamicScheduler();
 
+  // v6.2 M1: Register weekly KB confidence decay sweep
+  import("./memory/lesson-decay.js")
+    .then(({ registerDecayCron }) => registerDecayCron())
+    .catch(() => {});
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 

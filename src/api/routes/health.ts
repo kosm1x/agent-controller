@@ -11,6 +11,7 @@ import { getThreeWindowStatus } from "../../budget/service.js";
 import { getBudgetStatus } from "../../budget/service.js";
 import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
+import { getKbHealthStats } from "../../memory/lesson-decay.js";
 
 const health = new Hono();
 
@@ -55,6 +56,7 @@ health.get("/health", async (c) => {
 
   const providers = providerMetrics.getAllStats();
   const budget = getBudgetStatus();
+  const kbStats = await getKbHealthStats().catch(() => null);
 
   return c.json(
     {
@@ -73,6 +75,7 @@ health.get("/health", async (c) => {
       tools: toolMetrics.getSummary(),
       commitEvents: eventMetrics.getSummary(),
       circuitBreakers: circuitRegistry.getAllStatus(),
+      ...(kbStats && { knowledgeBase: kbStats }),
     },
     code,
   );

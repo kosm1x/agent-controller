@@ -14,6 +14,8 @@ import { generateEmbedding } from "../inference/embeddings.js";
 import {
   pgUpsert,
   pgDelete,
+  pgFindByHash,
+  pgReinforce,
   isPgvectorEnabled,
   contentHash,
 } from "./pgvector.js";
@@ -37,6 +39,20 @@ export function syncToPgvector(
   // Async, non-blocking — embedding + upsert happens in background
   (async () => {
     try {
+      const hash = contentHash(content);
+
+      // M1 dedup: if content hash exists at a DIFFERENT path, reinforce
+      // instead of creating a duplicate. Saves embedding API calls.
+      // Same-path updates (edits to existing file) still go through full upsert.
+      const existing = await pgFindByHash(hash);
+      if (existing && existing.path !== path) {
+        await pgReinforce(existing.path);
+        console.log(
+          `[pgvector-sync] Dedup: ${path} matches ${existing.path}, reinforced`,
+        );
+        return;
+      }
+
       // Generate embedding from title + first 8K of content
       const embeddingText = `${title}\n\n${content.slice(0, 8000)}`;
       const embedding = await generateEmbedding(embeddingText);
@@ -45,7 +61,7 @@ export function syncToPgvector(
         path,
         title,
         content,
-        content_hash: contentHash(content),
+        content_hash: hash,
         embedding: embedding ?? undefined,
         qualifier,
         condition: condition ?? undefined,
