@@ -100,9 +100,9 @@ POST /api/tasks           POST /a2a (JSON-RPC)
 
 ### Fast runner
 
-Calls an LLM with tools, loops until text-only response. Parallel tool execution. Max 10 rounds. 60-second timeout.
+Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 35 rounds (coding) / 10 default. Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
 
-Built-in tools: `shell_exec`, `http_fetch`, `file_read`, `file_write`.
+163 tools across builtin (84), MCP (55), Google Workspace (19), memory (3), skills (2). Tool deferral pattern: rarely-used tools load schemas on demand.
 
 ### NanoClaw runner
 
@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v5.0 COMPLETE.** 214 source files, 1250 tests passing, zero type errors, 150 tools. Unified FS, Intel Depot, Video Production, Coding, Self-Tuning, Prompt Enhancer — all shipped.
+**v6.1 COMPLETE.** 228 source files, 1377 tests passing, zero type errors, 163 tools. v6.0 self-improving agent (SG1-SG5 safeguards, autonomous improvement), v6.1 background agents + behavioral coherence (10 OpenClaude patterns shipped). Roadmap: v6.2→v6.4 (28 sessions, ~14 weeks).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -392,27 +392,31 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support                                                         |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
-See `docs/V5-ROADMAP.md` for full roadmap and `docs/V5-INTELLIGENCE-DEPOT.md` for upcoming intelligence features.
+See `ROADMAP-v62-v64.md` for the v6.2→v6.4 roadmap and `docs/PROJECT-STATUS.md` for detailed phase history.
 
 ### Jarvis — the user-facing persona
 
-Jarvis is a strategic AI assistant accessible via Telegram. Built on top of the agent controller:
+Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
 
-- **143 tools** across 5 source plugins (builtin, MCP, Google, memory, skills)
-- **Coding capability** — Jarvis can write code, run tests, commit, push to GitHub, and create PRs
-- **NanoClaw sandbox** — Docker-isolated coding environment (nanoclaw-coding:latest) with Node.js, git, gh CLI
-- **NorthStar** — visions, goals, objectives, tasks as plain markdown files in Jarvis's file system. No database, no framework — just text files Jarvis reads and writes
-- **8 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log)
-- **Dynamic tool scoping** — 34-100 tools per message based on conversation keywords
-- **7-layer hallucination defense** with retry and honest failure messages
+- **163 tools** across 5 source plugins (builtin 84, MCP 55, Google 19, memory 3, skills 2)
+- **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
+- **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)
+- **Video production** — 6 tools: script → TTS → stock images → FFmpeg compose → MP4 (portrait/landscape/square)
+- **NorthStar** — visions, goals, objectives, tasks as plain markdown files in Jarvis's file system
+- **9 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log, diff digest)
+- **Dynamic tool scoping** — 20-80 tools per message based on conversation keywords, with KB omission for read-only tasks
+- **7-layer hallucination defense** + verification discipline nudge + critical system reminder (re-injected every 3 rounds)
+- **Path safety pipeline** — 6-check validatePathSafety + isDangerousRemovalPath + DANGEROUS_FILES/DIRECTORIES
+- **Behavioral coherence** — 10 patterns from Claude Code architecture (tool deferral, structured compaction, never-delegate-understanding, continue-vs-spawn, memory drift verification)
 - **Streaming responses** — progressive Telegram message updates
 - **Fast-path** — conversational messages skip full pipeline (~2s vs 15s)
 - **Hybrid memory** — FTS5 full-text + embedding semantic search + trust-tier decay
-- **Media generation** — images, speech, video, music via HuggingFace Spaces (free with Pro)
-- **Document research** — Gemini-powered deep analysis, summaries, study guides, quizzes, podcast generation (NotebookLM-equivalent)
-- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks
-- **WordPress multi-site** — content management with destruction safeguards
-- **Zod schema validation** — validates all tool call arguments before execution
+- **Intel Depot** — 8 signal sources, delta engine, z-score anomaly detection, 4 Jarvis tools
+- **Document research** — Gemini-powered deep analysis, summaries, study guides, quizzes, podcast generation
+- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (19 tools)
+- **WordPress multi-site** — content management with destruction safeguards (10 tools)
+- **Autonomous improvement** — SG1-SG5 safeguards (diff digest, kill switch, immutable core, directive cooldown, pre-cycle git tags)
+- **3-provider cascade** — qwen3.5-plus → kimi-k2.5 → llama-3.3-70b (Groq). Different infrastructure per tier
 
 ---
 
