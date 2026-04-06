@@ -429,6 +429,38 @@ export function detectsHallucinatedExecution(
   ];
   if (impossibleNarration.some((p) => p.test(text))) return true;
 
+  // --- Layer 4: Domain-specific claim mismatch ---
+  // Claims about git/PR/branch/push/commit are only valid if git tools were called.
+  // Jarvis can write a file to KB (jarvis_file_write) and claim "PR CREADO" —
+  // the write tool call makes Layer 2 pass, but the claim domain (git) doesn't
+  // match the tool domain (KB). This catches that specific hallucination pattern.
+  const GIT_TOOLS = new Set([
+    "git_status",
+    "git_diff",
+    "git_commit",
+    "git_push",
+    "gh_repo_create",
+    "gh_create_pr",
+  ]);
+  const calledAnyGitTool = toolsCalled.some((t) => GIT_TOOLS.has(t));
+  if (!calledAnyGitTool) {
+    const claimsGitAction =
+      /\bPR\s+CREAD[OA]\b/i.test(text) ||
+      /\bPR\s+(?:created|opened|submitted)\b/i.test(text) ||
+      /\b(?:branch|rama)\s+(?:cread[oa]|created|pushed)\b/i.test(text) ||
+      /\b(?:PUSH|COMMIT)\s+(?:EXITOSO|exitosamente|correctamente|successfully)\b/i.test(
+        text,
+      ) ||
+      /\bhttps:\/\/github\.com\/\S+\/pull\/\d+/i.test(text) ||
+      /\bgh\s+pr\s+create\b/i.test(text);
+    if (claimsGitAction) {
+      console.log(
+        `[fast-runner] Git claim hallucination: claims PR/branch/push but no git tool called. Tools: [${toolsCalled.join(", ")}]`,
+      );
+      return true;
+    }
+  }
+
   // --- Layer 3b: Completion claims (only fire when NO write tools called) ---
   // "acabo de actualizar", "he verificado", "just updated" are legitimate when
   // the LLM actually called write tools. Only flag when tools weren't called.

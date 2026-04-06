@@ -423,6 +423,89 @@ describe("git hallucination detection", () => {
   });
 });
 
+describe("Layer 4: domain-specific claim mismatch (git claims without git tools)", () => {
+  it("detects 'PR CREADO' when only jarvis_file_write called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ PROPUESTA GUARDADA + PR CREADO\n\n## ARCHIVO CREADO\n- Path: projects/braid/propuesta.md",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'PR created' in English when only jarvis_file_write called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "PR created successfully. Changes are ready for review.",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'branch creada' without git tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Branch creada: jarvis/feat/braid-enhancer. Lista para push.",
+        ["jarvis_file_write", "jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'PUSH EXITOSO' when KB write tools called but no git tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ PUSH EXITOSO\nRama main sincronizada con origin/main",
+        ["jarvis_file_write", "web_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects fabricated GitHub PR URL without git tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "PR abierto: https://github.com/kosm1x/agent-controller/pull/42",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'gh pr create' claim without git tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Ejecuté gh pr create con título 'feat: BRAID integration'",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(true);
+  });
+
+  it("allows PR CREADO when gh_create_pr was actually called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ PR CREADO\nhttps://github.com/kosm1x/agent-controller/pull/1",
+        ["git_commit", "git_push", "gh_create_pr"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows branch claim when git_push was called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Branch creada y pushed: jarvis/feat/braid-enhancer",
+        ["git_status", "git_commit", "git_push"],
+      ),
+    ).toBe(false);
+  });
+
+  it("does not false-positive on mentioning PRs without claiming creation", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Para crear el PR necesito que autorices el branch. ¿Autorizas?",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("hasUserConfirmedDeletion", () => {
   it("returns true when assistant asked and user confirmed (Spanish)", () => {
     expect(
