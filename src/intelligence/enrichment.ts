@@ -96,10 +96,15 @@ export async function enrichContext(
   try {
     const { existsSync } = await import("fs");
     for (let i = 0; i < sections.length; i++) {
-      const pathMatches = sections[i].match(
-        /(?:\/(?:root|home|opt|tmp|var|etc)\/[\w./-]+)/g,
-      );
-      if (pathMatches) {
+      // Word-boundary anchor prevents false-positives on URLs like
+      // https://example.com/var/logs → would extract /var/logs without anchor
+      const pathRegex = /(?:^|\s)(\/(?:root|home|opt|tmp|var|etc)\/[\w./-]+)/gm;
+      const pathMatches: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = pathRegex.exec(sections[i])) !== null) {
+        pathMatches.push(m[1]); // capture group 1 = path without leading space
+      }
+      if (pathMatches.length > 0) {
         const stalePaths = pathMatches.filter((p) => !existsSync(p));
         if (stalePaths.length > 0) {
           sections[i] +=

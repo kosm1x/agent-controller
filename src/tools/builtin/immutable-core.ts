@@ -75,7 +75,7 @@ export function isImmutableCorePath(absolutePath: string): {
  * Sensitive dotfiles that should never be auto-edited by Jarvis.
  * Matches Claude Code's DANGEROUS_FILES list.
  */
-const DANGEROUS_FILES = new Set([
+const DANGEROUS_FILES_EXACT = new Set([
   ".gitconfig",
   ".gitmodules",
   ".bashrc",
@@ -83,10 +83,12 @@ const DANGEROUS_FILES = new Set([
   ".zshrc",
   ".zprofile",
   ".profile",
-  ".env",
-  ".env.local",
-  ".env.production",
+  ".npmrc", // npm auth tokens
+  ".netrc", // credentials for curl/git
 ]);
+
+/** Prefix patterns — any file starting with these is dangerous. */
+const DANGEROUS_FILE_PREFIXES = [".env"]; // .env, .env.local, .env.production, .env.*, etc.
 
 /** Directories whose contents should not be auto-edited. */
 const DANGEROUS_DIRECTORIES = [".git/", ".ssh/", ".gnupg/"];
@@ -134,11 +136,11 @@ export function validatePathSafety(
   // 4. Shell expansion syntax block — TOCTOU prevention
   // These create gaps between validation time and execution time:
   // $VAR, ${var}, $(cmd) expand at runtime to different paths than validated
-  if (/[$%]/.test(path)) {
+  if (/[$]/.test(path)) {
     return {
       safe: false,
       reason:
-        "Shell expansion syntax ($, %) in paths is blocked ��� use resolved absolute paths",
+        "Shell expansion syntax ($) in paths is blocked -- use resolved absolute paths",
     };
   }
   if (path.startsWith("=")) {
@@ -158,10 +160,13 @@ export function validatePathSafety(
 
   // 6. Dangerous files and directories
   const basename = path.split("/").pop() ?? "";
-  if (operation !== "read" && DANGEROUS_FILES.has(basename)) {
+  const isDangerousFile =
+    DANGEROUS_FILES_EXACT.has(basename) ||
+    DANGEROUS_FILE_PREFIXES.some((p) => basename.startsWith(p));
+  if (operation !== "read" && isDangerousFile) {
     return {
       safe: false,
-      reason: `'${basename}' is a sensitive dotfile — manual edit required`,
+      reason: `'${basename}' is a sensitive dotfile -- manual edit required`,
     };
   }
   if (
