@@ -119,12 +119,14 @@ Week 4:  D4 + D4.5 (calendar + stealth) + DB2 (dashboard serving)
 
 **Duration**: 6 sessions, ~3 weeks
 
-### Workstream 7: Prompt Enhancer v2 (1.5 sessions)
+### Workstream 7: Prompt Enhancer v2 + BRAID (2 sessions)
 
-| Session | Deliverable                           | Source                                                                                                                      |
-| ------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| PE1     | CIRICD-Aware Gatekeeper               | prompt-in-context-learning. Detect missing CIRICD components, ask targeted questions. Meta-Prompting + Rephrase-and-Respond |
-| PE1.5   | Self-Tuning Seed Expansion + APE Loop | prompt-in-context-learning. Harvest 40+ templates, APE-style variant scoring, STaR bootstrapping                            |
+BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). Two-stage Generator-Solver architecture maps to prompt enhancer → fast runner split.
+
+| Session | Deliverable                               | Source                                                                                                                                                                                                                                                                                                                                                           |
+| ------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PE1     | CIRICD-Aware Gatekeeper + BRAID Generator | prompt-in-context-learning + BRAID paper. Detect missing CIRICD components, ask targeted questions. Generate Mermaid reasoning scaffolds for complex workflows (scope classification, tool orchestration, replan decisions). Generator uses expensive model once per SOP, scaffolds stored in KB for reuse. Numerical Masking Protocol to prevent answer leakage |
+| PE1.5   | BRAID Solver Integration + APE Loop       | BRAID paper + prompt-in-context-learning. Fast runner receives Mermaid scaffolds as system guidance (cheap model, per task). APE-style variant scoring: Mermaid vs CoT vs raw prompt on 73+ seed cases. Fair baseline: CoT WITH explicit triggers. Harvest 40+ templates as new seeds. STaR bootstrapping for self-improvement                                   |
 
 ### Workstream 8: Memory Maturation (1.5 sessions)
 
@@ -150,16 +152,18 @@ Week 4:  D4 + D4.5 (calendar + stealth) + DB2 (dashboard serving)
 ### v6.4 Week Plan
 
 ```
-Week 1:  PE1 (CIRICD gatekeeper)    +  G1 (cascading staleness)
-Week 2:  PE1.5 (seed expansion)     +  G1.5 (query expansion)
-Week 3:  A1 (autoresearch)          +  SK1 (batch skill)
+Week 1:  PE1 (CIRICD + BRAID generator)  +  G1 (cascading staleness)
+Week 2:  PE1.5 (BRAID solver + APE)      +  G1.5 (query expansion)
+Week 3:  A1 (autoresearch)               +  SK1 (batch skill)
          OH1 + OH1.5 (if time, fold into week 3)
 ```
 
 ### v6.4 Success Criteria
 
 - [ ] Prompt enhancer detects missing CIRICD components, asks targeted questions
-- [ ] Self-tuning seed set expanded from 73 to 100+ with APE-style scoring
+- [ ] BRAID Mermaid scaffolds generated for 3+ complex workflows (scope, orchestration, replan)
+- [ ] Fast runner uses Mermaid scaffolds as system guidance — PPD >5x vs CoT baseline
+- [ ] Self-tuning seed set expanded from 73 to 100+ with APE-style scoring (Mermaid vs CoT vs raw)
 - [ ] Superseded KB entries cascade staleness to related entries
 - [ ] `/autoresearch` rejects overfitting changes and rewards simplification
 - [ ] `/batch` decomposes large tasks into parallel isolated units with tracking
@@ -240,5 +244,5 @@ v6.4 (Intelligence) — depends on v6.2 Memory (M0, M1)
 | --------- | -------------------- | -------- | ------- |
 | v6.2      | Reliable Foundation  | 14       | ~7      |
 | v6.3      | Content Distribution | 8        | ~4      |
-| v6.4      | Intelligence Layer   | 6        | ~3      |
-| **Total** |                      | **28**   | **~14** |
+| v6.4      | Intelligence Layer   | 6.5      | ~3      |
+| **Total** |                      | **28.5** | **~14** |
