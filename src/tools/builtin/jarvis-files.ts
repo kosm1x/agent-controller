@@ -390,6 +390,7 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
 
 export const jarvisFileDeleteTool: Tool = {
   name: "jarvis_file_delete",
+  requiresConfirmation: true, // S5: precious paths need user confirmation
   definition: {
     type: "function",
     function: {
