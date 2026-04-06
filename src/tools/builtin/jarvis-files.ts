@@ -400,13 +400,20 @@ USE WHEN:
 - A file is outdated and no longer relevant
 - You're cleaning up workspace files after completing a task
 
-CAUTION: This permanently removes the file.`,
+CAUTION: Files in knowledge/, projects/, NorthStar/, directives/ require user confirmation.
+First call returns CONFIRMATION_REQUIRED — present the file to the user, ask to confirm.
+After user confirms, call again with confirmed:true to proceed.`,
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description: "Path of the file to delete",
+          },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true after user has confirmed deletion of a precious file",
           },
         },
         required: ["path"],
@@ -416,6 +423,21 @@ CAUTION: This permanently removes the file.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const path = args.path as string;
+    const confirmed = args.confirmed === true;
+
+    // S5: Precious path protection — require confirmation for valuable KB content
+    if (!confirmed) {
+      const { isPreciousPath } = await import("./immutable-core.js");
+      const precious = isPreciousPath(path);
+      if (precious.precious) {
+        return JSON.stringify({
+          error: "CONFIRMATION_REQUIRED",
+          message: `This file is in a protected area (${precious.reason}). Present the file path to the user and ask: '¿Lo elimino?' After confirmation, call again with confirmed:true.`,
+          path,
+        });
+      }
+    }
+
     const deleted = deleteFile(path);
     if (!deleted) {
       return JSON.stringify({ error: `File not found: ${path}` });

@@ -223,3 +223,42 @@ export function isDangerousRemovalPath(path: string): {
 
   return { dangerous: false };
 }
+
+// ---------------------------------------------------------------------------
+// Precious path protection (v6.2 S5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Path prefixes for Jarvis KB entries that require user confirmation
+ * before deletion. Softer than SG3 immutable core (which hard-blocks) —
+ * precious files CAN be deleted, but only after explicit confirmation.
+ *
+ * Covers: user-created KB content, project docs, research, directives.
+ */
+const PRECIOUS_JARVIS_PREFIXES = [
+  "knowledge/",
+  "projects/",
+  "NorthStar/",
+  "directives/",
+];
+
+/**
+ * Check if a Jarvis KB path is precious (requires confirmation to delete).
+ * Only applies to jarvis:// paths (internal KB), not filesystem paths.
+ *
+ * Returns { precious: false } or { precious: true, reason: string }.
+ */
+export function isPreciousPath(jarvisPath: string): {
+  precious: boolean;
+  reason?: string;
+} {
+  for (const prefix of PRECIOUS_JARVIS_PREFIXES) {
+    if (jarvisPath.startsWith(prefix)) {
+      return {
+        precious: true,
+        reason: `'${prefix}' contains valuable KB content — confirm deletion first`,
+      };
+    }
+  }
+  return { precious: false };
+}

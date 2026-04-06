@@ -3,6 +3,7 @@ import {
   isImmutableCorePath,
   validatePathSafety,
   isDangerousRemovalPath,
+  isPreciousPath,
 } from "./immutable-core.js";
 
 const MC = "/root/claude/mission-control/";
@@ -409,5 +410,49 @@ describe("isDangerousRemovalPath", () => {
         false,
       );
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isPreciousPath (v6.2 S5)
+// ---------------------------------------------------------------------------
+
+describe("isPreciousPath", () => {
+  describe("precious Jarvis KB prefixes", () => {
+    const preciousPaths = [
+      "knowledge/domain/test.md",
+      "knowledge/people/fede.md",
+      "projects/agent-controller/status.md",
+      "projects/crm-azteca/README.md",
+      "NorthStar/goals/q2-2026.md",
+      "NorthStar/visions/core.md",
+      "directives/core.md",
+      "directives/no-delete.md",
+    ];
+
+    for (const path of preciousPaths) {
+      it(`flags ${path} as precious`, () => {
+        const result = isPreciousPath(path);
+        expect(result.precious).toBe(true);
+        expect(result.reason).toBeTruthy();
+      });
+    }
+  });
+
+  describe("non-precious paths", () => {
+    const safePaths = [
+      "workspace/temp-report.md",
+      "logs/sessions/2026-04-06.md",
+      "extracted/2026-04-06-abc.md",
+      "lessons/2026-04-06-def.md",
+      "INDEX.md",
+      "inbox/new-item.md",
+    ];
+
+    for (const path of safePaths) {
+      it(`allows ${path} without confirmation`, () => {
+        expect(isPreciousPath(path).precious).toBe(false);
+      });
+    }
   });
 });

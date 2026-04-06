@@ -14,13 +14,13 @@
 
 ### Workstream 1: Inference Resilience (5 sessions)
 
-| Session | Deliverable                       | Why                                                                                                                                                      |
-| ------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1      | Smart Provider Routing — **DONE** | Health classification (healthy/degraded/unhealthy), baseline-derived thresholds (90s/3%/180s/10%), per-model cost tracking, auto-demotion on degradation |
-| S2      | Task Cancellation — **DONE**      | "cancela"/"detente" from Telegram. AbortController wired through dispatcher → fast-runner → inferWithTools. Cancel intent regex + cleanup + notification |
-| S3      | Per-Task Mutation Log — **DONE**  | task_mutations table, classifyMutation for 8 tool types, centralized recording in task executor, getMutationSummary. 15 new tests                        |
-| S4      | Unified FS Maturation — **DONE**  | Topic-slug auto-persist paths, nightly INDEX.md regen, stop-word filtering. 6 new tests                                                                  |
-| S5      | Protected Paths + Path Safety     | validatePathSafety 6-check pipeline, isDangerousRemovalPath, DANGEROUS_FILES                                                                             |
+| Session | Deliverable                              | Why                                                                                                                                                      |
+| ------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1      | Smart Provider Routing — **DONE**        | Health classification (healthy/degraded/unhealthy), baseline-derived thresholds (90s/3%/180s/10%), per-model cost tracking, auto-demotion on degradation |
+| S2      | Task Cancellation — **DONE**             | "cancela"/"detente" from Telegram. AbortController wired through dispatcher → fast-runner → inferWithTools. Cancel intent regex + cleanup + notification |
+| S3      | Per-Task Mutation Log — **DONE**         | task_mutations table, classifyMutation for 8 tool types, centralized recording in task executor, getMutationSummary. 15 new tests                        |
+| S4      | Unified FS Maturation — **DONE**         | Topic-slug auto-persist paths, nightly INDEX.md regen, stop-word filtering. 6 new tests                                                                  |
+| S5      | Protected Paths + Path Safety — **DONE** | isPreciousPath for KB prefixes (knowledge/projects/NorthStar/directives), CONFIRMATION_REQUIRED flow with confirmed:true param. 14 new tests             |
 
 ### Workstream 2: Memory Reinforcement (5 sessions)
 
