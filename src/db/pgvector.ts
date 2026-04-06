@@ -273,22 +273,13 @@ export async function pgRecordAccess(path: string): Promise<void> {
   if (!apiKey) return;
 
   try {
-    // PostgREST PATCH with raw SQL for atomic increment
-    await fetch(
-      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
-      {
-        method: "PATCH",
-        headers: {
-          ...headers(apiKey),
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({
-          access_count: "access_count + 1", // Won't work as raw SQL via PostgREST
-          last_accessed_at: new Date().toISOString(),
-        }),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
+    // Atomic server-side increment via RPC (C1 audit fix)
+    await fetch(`${RPC_URL}/kb_record_access`, {
+      method: "POST",
+      headers: headers(apiKey),
+      body: JSON.stringify({ p_path: path }),
+      signal: AbortSignal.timeout(5_000),
+    });
   } catch {
     // Fire-and-forget
   }
@@ -306,7 +297,7 @@ export async function pgFindByHash(
 
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/kb_entries?content_hash=eq.${hash}&select=path,confidence&limit=1`,
+      `${SUPABASE_URL}/kb_entries?content_hash=eq.${encodeURIComponent(hash)}&select=path,confidence&limit=1`,
       {
         headers: headers(apiKey),
         signal: AbortSignal.timeout(5_000),
@@ -326,51 +317,21 @@ export async function pgFindByHash(
 
 /**
  * Strengthen an existing entry (M1 reinforcement pattern).
- * confidence += 0.1 * (1 - current), reinforcement_count++
+ * Atomic server-side: confidence += 0.1 * (1 - current), reinforcement_count++
+ * (C2 audit fix: eliminates read-modify-write race condition)
  */
 export async function pgReinforce(path: string): Promise<boolean> {
   const apiKey = getApiKey();
   if (!apiKey) return false;
 
   try {
-    // Read current confidence first (PostgREST doesn't support computed PATCH)
-    const getRes = await fetch(
-      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}&select=confidence,reinforcement_count`,
-      {
-        headers: headers(apiKey),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    if (!getRes.ok) return false;
-    const rows = (await getRes.json()) as Array<{
-      confidence: number;
-      reinforcement_count: number;
-    }>;
-    if (rows.length === 0) return false;
-
-    const current = rows[0];
-    const newConfidence = Math.min(
-      1.0,
-      current.confidence + 0.1 * (1 - current.confidence),
-    );
-
-    const patchRes = await fetch(
-      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
-      {
-        method: "PATCH",
-        headers: {
-          ...headers(apiKey),
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({
-          confidence: newConfidence,
-          reinforcement_count: current.reinforcement_count + 1,
-          last_reinforced_at: new Date().toISOString(),
-        }),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    return patchRes.ok;
+    const res = await fetch(`${RPC_URL}/kb_reinforce`, {
+      method: "POST",
+      headers: headers(apiKey),
+      body: JSON.stringify({ p_path: path }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    return res.ok;
   } catch {
     return false;
   }

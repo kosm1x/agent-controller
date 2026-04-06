@@ -1,12 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { contentHash, isPgvectorEnabled } from "./pgvector.js";
 
 // Mock fetch globally for all pgvector tests
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-beforeEach(() => {
-  vi.clearAllMocks();
+// Save original env for restoration
+const originalCommitDbKey = process.env.COMMIT_DB_KEY;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  mockFetch.mockReset();
+  // Restore env
+  if (originalCommitDbKey !== undefined) {
+    process.env.COMMIT_DB_KEY = originalCommitDbKey;
+  } else {
+    delete process.env.COMMIT_DB_KEY;
+  }
 });
 
 describe("contentHash", () => {
@@ -188,26 +198,21 @@ describe("pgFindByHash", () => {
 });
 
 describe("pgReinforce", () => {
-  it("reads current confidence and patches with boosted value", async () => {
+  it("calls atomic RPC function for reinforcement", async () => {
     process.env.COMMIT_DB_KEY = "test-key";
-    // First call: GET current confidence
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve([{ confidence: 0.5, reinforcement_count: 2 }]),
-    });
-    // Second call: PATCH with new values
+    // Single RPC call (C2 audit fix: atomic server-side update)
     mockFetch.mockResolvedValueOnce({ ok: true });
 
     const { pgReinforce } = await import("./pgvector.js");
     const result = await pgReinforce("test.md");
 
     expect(result).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledOnce();
 
-    // Verify PATCH body has increased confidence
-    const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-    expect(patchBody.confidence).toBeCloseTo(0.55); // 0.5 + 0.1*(1-0.5) = 0.55
-    expect(patchBody.reinforcement_count).toBe(3);
+    // Verify RPC call to kb_reinforce
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toContain("/rpc/kb_reinforce");
+    const body = JSON.parse(opts.body);
+    expect(body.p_path).toBe("test.md");
   });
 });

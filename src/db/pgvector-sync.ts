@@ -75,7 +75,7 @@ export function syncDeleteToPgvector(path: string): void {
  * Map qualifier to salience weight for retention scoring.
  * Higher salience = decays slower.
  */
-function qualifierToSalience(qualifier: string): number {
+export function qualifierToSalience(qualifier: string): number {
   switch (qualifier) {
     case "enforce":
       return 0.95;

@@ -11,6 +11,7 @@ import { getDatabase } from "./index.js";
 import { generateEmbeddings } from "../inference/embeddings.js";
 import { pgBatchUpsert, contentHash } from "./pgvector.js";
 import type { KbEntry } from "./pgvector.js";
+import { qualifierToSalience } from "./pgvector-sync.js";
 
 interface JarvisFileRow {
   path: string;
@@ -125,20 +126,7 @@ export async function backfillToPgvector(): Promise<{
   };
 }
 
-function qualifierToSalience(qualifier: string): number {
-  switch (qualifier) {
-    case "enforce":
-      return 0.95;
-    case "always-read":
-      return 0.9;
-    case "conditional":
-      return 0.7;
-    case "workspace":
-      return 0.3;
-    default:
-      return 0.5;
-  }
-}
+// qualifierToSalience imported from pgvector-sync.ts (W2 audit fix: deduplicated)
 
 // CLI entry point
 if (
