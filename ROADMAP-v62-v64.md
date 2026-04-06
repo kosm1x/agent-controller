@@ -39,7 +39,7 @@
 | V1      | TTS Engine Upgrade — **DONE**         | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
 | V2      | Background Media Library — **DONE**   | yt-dlp download + cache, FFmpeg subclip extraction (skip 180s, random start), 5 royalty-free catalog, video_background_download tool. 6 new tests  |
 | V3      | Overlay Composition Engine — **DONE** | composeOverlayVideo: FFmpeg between(t,x,y) timed overlays, bg crop, audio concat+mix. video_create mode:"overlay" wired. 5 new tests               |
-| V3.5    | Integration + Polish                  | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
+| V3.5    | Integration + Polish — **DONE**       | E2E overlay test PASS (4.6s), ACI workflow docs, scope keywords (overlay/fondo/background). 1 E2E test                                             |
 
 ### v6.2 Week Plan
 

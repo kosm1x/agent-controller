@@ -99,8 +99,15 @@ Requires confirmation before starting. Returns a job ID to check progress with v
 Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels), square (Instagram).
 
 Modes:
-- slideshow (default): static image per scene, concatenated
-- overlay: images overlaid on background video with timed visibility (requires background download first via video_background_download)`,
+- slideshow (default): static image per scene, concatenated. Simple and fast.
+- overlay: images overlaid on background video with timed visibility. Produces professional-looking content.
+
+OVERLAY MODE WORKFLOW:
+1. First: video_background_download name:"ocean-waves" (or any catalog name)
+2. Then: video_create topic:"..." mode:"overlay" background:"ocean-waves" template:"portrait"
+3. Optional: voice:"es-MX-JorgeNeural" for male voice (use video_list_voices to browse)
+
+The overlay engine uses per-scene TTS with individual timing, so each image appears exactly when its narration plays.`,
       parameters: {
         type: "object",
         properties: {
