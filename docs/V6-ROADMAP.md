@@ -220,14 +220,14 @@ Route different task types to different LLMs. Claude for reasoning, GPT-4 for to
 
 ## Enhancements (Tier 2 — design needed)
 
-| Item                            | Why                                            | Effort |
-| ------------------------------- | ---------------------------------------------- | ------ |
-| ~~Structured outputs~~          | **Moved to v6.0 S6** (structured tool results) | —      |
-| NanoClaw production activation  | Sandbox for untrusted code, long test suites   | 1d     |
-| Embedding-based scoping         | Replace regex when accuracy drops below 80%    | 3-5d   |
-| Task cancellation from Telegram | No way to abort running tasks today            | 1d     |
-| Protected paths for file_delete | Prevent deletion of git-tracked research docs  | 0.5d   |
-| Per-task mutation log           | Audit what files were created/modified/deleted | 1d     |
+| Item                               | Why                                                             | Effort |
+| ---------------------------------- | --------------------------------------------------------------- | ------ |
+| ~~Structured outputs~~             | **Moved to v6.0 S6** (structured tool results)                  | —      |
+| ~~NanoClaw production activation~~ | **Done** — autonomous improvement runs on NanoClaw (2026-04-06) | —      |
+| Embedding-based scoping            | Replace regex when accuracy drops below 80%                     | 3-5d   |
+| Task cancellation from Telegram    | No way to abort running tasks today                             | 1d     |
+| Protected paths for file_delete    | Prevent deletion of git-tracked research docs                   | 0.5d   |
+| Per-task mutation log              | Audit what files were created/modified/deleted                  | 1d     |
 
 ---
 
