@@ -133,17 +133,74 @@ export async function getKbHealthStats(): Promise<KbHealthStats | null> {
  * Runs every Sunday at 2:00 AM Mexico City time.
  * Call this from the ritual scheduler initialization.
  */
+// ---------------------------------------------------------------------------
+// Retention sweep (v6.2 M2 — Ebbinghaus)
+// ---------------------------------------------------------------------------
+
+export interface RetentionSweepResult {
+  swept: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  evictable: number;
+}
+
+/**
+ * Run the nightly Ebbinghaus retention sweep.
+ * Computes retention score for each active entry, marks evictable as stale.
+ * Returns tier counts + swept count, or null on failure.
+ */
+export async function runRetentionSweep(
+  evictionThreshold = 0.15,
+): Promise<RetentionSweepResult | null> {
+  const apiKey = getApiKey();
+  if (!apiKey || !isPgvectorEnabled()) return null;
+
+  try {
+    const res = await fetch(`${SUPABASE_RPC_URL}/kb_retention_sweep`, {
+      method: "POST",
+      headers: supabaseHeaders(apiKey),
+      body: JSON.stringify({ eviction_threshold: evictionThreshold }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[retention] Sweep failed: ${res.status}`);
+      return null;
+    }
+
+    const rows = (await res.json()) as RetentionSweepResult[];
+    if (rows.length === 0) return null;
+
+    const result = rows[0];
+    console.log(
+      `[retention] Sweep: ${result.swept} evicted | hot=${result.hot} warm=${result.warm} cold=${result.cold} evictable=${result.evictable}`,
+    );
+    return result;
+  } catch (err) {
+    console.warn(
+      "[retention] Sweep error:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cron registration (M1 weekly decay + M2 nightly retention)
+// ---------------------------------------------------------------------------
+
 export function registerDecayCron(): void {
   if (!isPgvectorEnabled()) {
-    console.log("[lesson-decay] pgvector not enabled, skipping cron");
+    console.log("[lesson-decay] pgvector not enabled, skipping crons");
     return;
   }
 
-  // Dynamic import to avoid circular deps with node-cron
   import("node-cron")
     .then((cron) => {
+      // M1: Weekly confidence decay (Sundays 2 AM)
       cron.default.schedule(
-        "0 2 * * 0", // Sunday 2 AM
+        "0 2 * * 0",
         () => {
           runDecaySweep().catch((err) => {
             console.warn(
@@ -154,11 +211,26 @@ export function registerDecayCron(): void {
         },
         { timezone: "America/Mexico_City" },
       );
+
+      // M2: Nightly retention scoring (daily 3 AM)
+      cron.default.schedule(
+        "0 3 * * *",
+        () => {
+          runRetentionSweep().catch((err) => {
+            console.warn(
+              "[retention] Nightly sweep failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
+        },
+        { timezone: "America/Mexico_City" },
+      );
+
       console.log(
-        "[lesson-decay] Decay sweep scheduled: Sundays 2:00 AM Mexico City",
+        "[lesson-decay] Crons scheduled: M1 Sundays 2 AM + M2 nightly 3 AM",
       );
     })
     .catch(() => {
-      console.warn("[lesson-decay] Failed to register cron");
+      console.warn("[lesson-decay] Failed to register crons");
     });
 }

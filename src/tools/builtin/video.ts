@@ -557,3 +557,107 @@ USE WHEN:
     return JSON.stringify(VIDEO_PROFILES, null, 2);
   },
 };
+
+// ---------------------------------------------------------------------------
+// video_background_download — background media library (v6.2 V2)
+// ---------------------------------------------------------------------------
+
+export const videoBackgroundDownloadTool: Tool = {
+  name: "video_background_download",
+  definition: {
+    type: "function",
+    function: {
+      name: "video_background_download",
+      description: `Download and cache a background video for overlay composition.
+
+USE WHEN:
+- Preparing background footage for a video with overlay mode
+- Pre-caching backgrounds before a batch of video renders
+
+Available backgrounds: ocean-waves, city-timelapse, abstract-particles, nature-forest, clouds-sky.
+Or provide a custom Pexels/YouTube URL.
+
+Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same name skip the download.`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Background name from catalog (ocean-waves, city-timelapse, abstract-particles, nature-forest, clouds-sky) or a custom name for URL downloads.",
+          },
+          url: {
+            type: "string",
+            description:
+              "Custom video URL (Pexels or YouTube). Not needed if using a catalog name.",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const name = args.name as string;
+    if (!name) return JSON.stringify({ error: "name is required" });
+
+    try {
+      const {
+        BACKGROUND_CATALOG,
+        downloadBackground,
+        listCachedBackgrounds,
+        isCached,
+      } = await import("../../video/backgrounds.js");
+
+      // Check catalog first
+      const catalogEntry = BACKGROUND_CATALOG.find(
+        (e: { name: string }) => e.name === name,
+      );
+      const url = (args.url as string) ?? catalogEntry?.url;
+      const credit = catalogEntry?.credit ?? "Custom";
+
+      if (!url) {
+        // List available backgrounds
+        const cached = listCachedBackgrounds();
+        return JSON.stringify({
+          error: `Background "${name}" not in catalog and no URL provided.`,
+          catalog: BACKGROUND_CATALOG.map(
+            (e: { name: string; description: string }) =>
+              `${e.name}: ${e.description}`,
+          ),
+          cached: cached.map(
+            (c: { name: string; durationSeconds: number }) =>
+              `${c.name} (${Math.round(c.durationSeconds)}s)`,
+          ),
+        });
+      }
+
+      if (isCached(name)) {
+        return JSON.stringify({
+          status: "already_cached",
+          name,
+          message: "Background already downloaded and cached.",
+        });
+      }
+
+      const result = downloadBackground(name, url, credit);
+      if (!result) {
+        return JSON.stringify({
+          error: `Failed to download background "${name}". Check the URL.`,
+        });
+      }
+
+      return JSON.stringify({
+        status: "downloaded",
+        name: result.name,
+        duration_seconds: Math.round(result.durationSeconds),
+        credit: result.credit,
+        path: result.filePath,
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+};

@@ -123,6 +123,7 @@ import {
   videoImageTool,
   videoListProfilesTool,
   videoListVoicesTool,
+  videoBackgroundDownloadTool,
 } from "../builtin/video.js";
 import type { Tool } from "../types.js";
 
@@ -190,6 +191,7 @@ const BUILTIN_TOOLS: Tool[] = [
   videoImageTool,
   videoListProfilesTool,
   videoListVoicesTool,
+  videoBackgroundDownloadTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,

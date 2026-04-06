@@ -119,3 +119,63 @@ describe("getKbHealthStats", () => {
     expect(stats).toBeNull();
   });
 });
+
+describe("runRetentionSweep (M2)", () => {
+  it("calls kb_retention_sweep RPC and returns tier counts", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          { swept: 3, hot: 100, warm: 50, cold: 30, evictable: 5 },
+        ]),
+    });
+
+    const { runRetentionSweep } = await import("./lesson-decay.js");
+    const result = await runRetentionSweep();
+
+    expect(result).toEqual({
+      swept: 3,
+      hot: 100,
+      warm: 50,
+      cold: 30,
+      evictable: 5,
+    });
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toContain("/rpc/kb_retention_sweep");
+  });
+
+  it("returns null when API key missing", async () => {
+    delete process.env.COMMIT_DB_KEY;
+    const { runRetentionSweep } = await import("./lesson-decay.js");
+    const result = await runRetentionSweep();
+    expect(result).toBeNull();
+  });
+
+  it("returns null on API error", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const { runRetentionSweep } = await import("./lesson-decay.js");
+    const result = await runRetentionSweep();
+    expect(result).toBeNull();
+  });
+
+  it("passes custom eviction threshold", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          { swept: 0, hot: 200, warm: 80, cold: 20, evictable: 0 },
+        ]),
+    });
+
+    const { runRetentionSweep } = await import("./lesson-decay.js");
+    await runRetentionSweep(0.3);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.eviction_threshold).toBe(0.3);
+  });
+});

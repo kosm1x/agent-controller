@@ -29,17 +29,17 @@
 | M0      | pgvector KB Migration — **DONE**         | Supabase self-hosted. `kb_entries` table, HNSW index, Spanish tsvector, dual-write adapter. 315/315 backfilled with Gemini embeddings. Hybrid search RPC live. |
 | M0.5    | Background Memory Extractor — **DONE**   | Post-task LLM extraction (1-3 facts), content-hash dedup, pgvector storage with embeddings, pgvector hybrid search in enrichment pipeline. 17 new tests        |
 | M1      | Lesson Fingerprinting + Dedup — **DONE** | Content-hash dedup in write path (reinforce vs duplicate), weekly decay sweep cron (Sundays 2 AM), KB health stats in /health endpoint. 7 new tests            |
-| M2      | Ebbinghaus Retention Scoring             | agentmemory. Postgres function, type-salience map, hot/warm/cold/evictable tiers, pg_cron nightly                                                              |
+| M2      | Ebbinghaus Retention Scoring — **DONE**  | kb_retention_sweep RPC (hot/warm/cold/evictable tiers), nightly 3 AM cron, enforce/always-read protected. 4 new tests                                          |
 | M3      | Crystal → Lesson Pipeline                | agentmemory. Post-task LLM crystallization, 1-3 atomic lessons, fingerprint dedup                                                                              |
 
 ### Workstream 3: Content Factory Foundation (3.5 sessions)
 
-| Session | Deliverable                   | Source                                                                                                                                             |
-| ------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V1      | TTS Engine Upgrade — **DONE** | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
-| V2      | Background Media Library      | RedditVideoMakerBot. yt-dlp cache, random subclip, royalty-free pre-seed                                                                           |
-| V3      | Overlay Composition Engine    | RedditVideoMakerBot. FFmpeg between(t,x,y) timing, audio mixing, portrait-first                                                                    |
-| V3.5    | Integration + Polish          | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
+| Session | Deliverable                         | Source                                                                                                                                             |
+| ------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1      | TTS Engine Upgrade — **DONE**       | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
+| V2      | Background Media Library — **DONE** | yt-dlp download + cache, FFmpeg subclip extraction (skip 180s, random start), 5 royalty-free catalog, video_background_download tool. 6 new tests  |
+| V3      | Overlay Composition Engine          | RedditVideoMakerBot. FFmpeg between(t,x,y) timing, audio mixing, portrait-first                                                                    |
+| V3.5    | Integration + Polish                | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
 
 ### v6.2 Week Plan
 
