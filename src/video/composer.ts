@@ -183,6 +183,14 @@ export function composeOverlayVideo(opts: {
     opacity = 0.9,
   } = opts;
 
+  // Validate inputs (C1 + C3 audit fixes)
+  if (imageFiles.length === 0) throw new Error("No image files provided");
+  if (audioFiles.length === 0) throw new Error("No audio files provided");
+  if (durations.length < imageFiles.length) {
+    const lastDur = durations[durations.length - 1] ?? 5;
+    while (durations.length < imageFiles.length) durations.push(lastDur);
+  }
+
   const profile = VIDEO_PROFILES[template];
   const workDir = join("/tmp", "video-jobs", jobId);
   mkdirSync(workDir, { recursive: true });
@@ -231,32 +239,20 @@ export function composeOverlayVideo(opts: {
   );
 
   // Step 3: Build overlay filter graph with timed enable
-  // Each image is scaled to 45% of video width, overlaid centered,
-  // visible only during its scene's time window.
+  // C2 audit fix: delegate to buildOverlayFilterGraph (single source of truth)
   const overlayWidth = Math.round(profile.width * 0.45);
   const filterInputs: string[] = ["-i", croppedBg];
-  const filterParts: string[] = [];
-  let currentLabel = "0:v";
-
-  let timeOffset = 0;
-  for (let i = 0; i < imageFiles.length; i++) {
-    filterInputs.push("-i", imageFiles[i]);
-    const inputIdx = i + 1; // 0 is background
-    const start = timeOffset;
-    const end = timeOffset + durations[i];
-    const outLabel = `v${i}`;
-
-    filterParts.push(
-      `[${inputIdx}:v]scale=${overlayWidth}:-1,format=rgba,colorchannelmixer=aa=${opacity}[img${i}]`,
-    );
-    filterParts.push(
-      `[${currentLabel}][img${i}]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:enable='between(t,${start.toFixed(2)},${end.toFixed(2)})'[${outLabel}]`,
-    );
-    currentLabel = outLabel;
-    timeOffset = end;
+  for (const img of imageFiles) {
+    filterInputs.push("-i", img);
   }
 
-  const filterGraph = filterParts.join(";");
+  const filterGraph = buildOverlayFilterGraph(
+    imageFiles.length,
+    durations,
+    overlayWidth,
+    opacity,
+  );
+  const currentLabel = `v${imageFiles.length - 1}`;
 
   // Step 4: Mix audio (narration + optional background music)
   let audioInput: string;
