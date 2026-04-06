@@ -24,13 +24,13 @@
 
 ### Workstream 2: Memory Reinforcement (5 sessions)
 
-| Session | Deliverable                   | Source                                                                                                                                             |
-| ------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M0      | pgvector KB Migration         | Supabase self-hosted. `kb_entries` table, HNSW index, Spanish tsvector, dual-write adapter                                                         |
-| M0.5    | Background Memory Extractor   | OpenClaude extractMemories + autoDream. Turn-triggered, cursor-based, 5-gate trigger, progressive disclosure, session summary, two-turn efficiency |
-| M1      | Lesson Fingerprinting + Dedup | agentmemory. SHA-256 content_hash, strengthen on re-encounter, weekly decay sweep                                                                  |
-| M2      | Ebbinghaus Retention Scoring  | agentmemory. Postgres function, type-salience map, hot/warm/cold/evictable tiers, pg_cron nightly                                                  |
-| M3      | Crystal → Lesson Pipeline     | agentmemory. Post-task LLM crystallization, 1-3 atomic lessons, fingerprint dedup                                                                  |
+| Session | Deliverable                      | Source                                                                                                                                                         |
+| ------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0      | pgvector KB Migration — **DONE** | Supabase self-hosted. `kb_entries` table, HNSW index, Spanish tsvector, dual-write adapter. 315/315 backfilled with Gemini embeddings. Hybrid search RPC live. |
+| M0.5    | Background Memory Extractor      | OpenClaude extractMemories + autoDream. Turn-triggered, cursor-based, 5-gate trigger, progressive disclosure, session summary, two-turn efficiency             |
+| M1      | Lesson Fingerprinting + Dedup    | agentmemory. SHA-256 content_hash, strengthen on re-encounter, weekly decay sweep                                                                              |
+| M2      | Ebbinghaus Retention Scoring     | agentmemory. Postgres function, type-salience map, hot/warm/cold/evictable tiers, pg_cron nightly                                                              |
+| M3      | Crystal → Lesson Pipeline        | agentmemory. Post-task LLM crystallization, 1-3 atomic lessons, fingerprint dedup                                                                              |
 
 ### Workstream 3: Content Factory Foundation (3.5 sessions)
 

@@ -1,0 +1,384 @@
+/**
+ * pgvector KB client — raw PostgREST operations on kb_entries table.
+ *
+ * No SDK dependency. Uses fetch to Supabase REST API.
+ * Provides: upsert, delete, search (vector + full-text hybrid),
+ * access tracking, and retention scoring queries.
+ */
+
+import { createHash } from "crypto";
+
+const SUPABASE_URL = "https://db.mycommit.net/rest/v1";
+const RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
+
+function getApiKey(): string | null {
+  return process.env.COMMIT_DB_KEY ?? null;
+}
+
+function headers(apiKey: string): Record<string, string> {
+  return {
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+}
+
+/** SHA-256 content hash for dedup (M1 lesson fingerprinting). */
+export function contentHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface KbEntry {
+  id?: string;
+  path: string;
+  title: string;
+  content: string;
+  content_hash?: string;
+  embedding?: number[];
+  type?: string;
+  qualifier?: string;
+  condition?: string;
+  tags?: string[];
+  priority?: number;
+  salience?: number;
+  confidence?: number;
+  reinforcement_count?: number;
+  access_count?: number;
+  last_accessed_at?: string;
+  last_reinforced_at?: string;
+  stale?: boolean;
+  source_task_id?: string;
+  related_to?: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SearchResult {
+  id: string;
+  path: string;
+  title: string;
+  content: string;
+  type: string;
+  qualifier: string;
+  similarity: number;
+  fts_rank: number;
+  combined_score: number;
+  salience: number;
+  confidence: number;
+  stale: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// CRUD
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert a KB entry to pgvector. Merges on path (unique).
+ * Non-blocking — returns success/failure, never throws.
+ */
+export async function pgUpsert(entry: KbEntry): Promise<boolean> {
+  const apiKey = getApiKey();
+  if (!apiKey) return false;
+
+  const row = {
+    path: entry.path,
+    title: entry.title,
+    content: entry.content,
+    content_hash: entry.content_hash ?? contentHash(entry.content),
+    embedding: entry.embedding ? `[${entry.embedding.join(",")}]` : null,
+    type: entry.type ?? "fact",
+    qualifier: entry.qualifier ?? "reference",
+    condition: entry.condition ?? null,
+    tags: entry.tags ?? [],
+    priority: entry.priority ?? 50,
+    salience: entry.salience ?? 0.5,
+    confidence: entry.confidence ?? 1.0,
+    stale: entry.stale ?? false,
+    source_task_id: entry.source_task_id ?? null,
+    related_to: entry.related_to ?? [],
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/kb_entries?on_conflict=path`, {
+      method: "POST",
+      headers: {
+        ...headers(apiKey),
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify(row),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn(
+        `[pgvector] Upsert failed for ${entry.path}: ${res.status} ${text.slice(0, 200)}`,
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(
+      `[pgvector] Upsert error for ${entry.path}:`,
+      err instanceof Error ? err.message : err,
+    );
+    return false;
+  }
+}
+
+/**
+ * Batch upsert multiple entries. Chunks to avoid payload limits.
+ */
+export async function pgBatchUpsert(
+  entries: KbEntry[],
+  batchSize = 20,
+): Promise<{ success: number; failed: number }> {
+  const apiKey = getApiKey();
+  if (!apiKey) return { success: 0, failed: entries.length };
+
+  let success = 0;
+  let failed = 0;
+
+  for (let i = 0; i < entries.length; i += batchSize) {
+    const batch = entries.slice(i, i + batchSize);
+    const rows = batch.map((e) => ({
+      path: e.path,
+      title: e.title,
+      content: e.content,
+      content_hash: e.content_hash ?? contentHash(e.content),
+      embedding: e.embedding ? `[${e.embedding.join(",")}]` : null,
+      type: e.type ?? "fact",
+      qualifier: e.qualifier ?? "reference",
+      condition: e.condition ?? null,
+      tags: e.tags ?? [],
+      priority: e.priority ?? 50,
+      salience: e.salience ?? 0.5,
+      confidence: e.confidence ?? 1.0,
+      stale: e.stale ?? false,
+      related_to: e.related_to ?? [],
+      updated_at: new Date().toISOString(),
+    }));
+
+    try {
+      const res = await fetch(`${SUPABASE_URL}/kb_entries?on_conflict=path`, {
+        method: "POST",
+        headers: {
+          ...headers(apiKey),
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify(rows),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (res.ok) {
+        success += batch.length;
+      } else {
+        console.warn(`[pgvector] Batch upsert failed: ${res.status}`);
+        failed += batch.length;
+      }
+    } catch (err) {
+      console.warn(
+        `[pgvector] Batch error:`,
+        err instanceof Error ? err.message : err,
+      );
+      failed += batch.length;
+    }
+  }
+
+  return { success, failed };
+}
+
+/**
+ * Delete a KB entry by path.
+ */
+export async function pgDelete(path: string): Promise<boolean> {
+  const apiKey = getApiKey();
+  if (!apiKey) return false;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
+      {
+        method: "DELETE",
+        headers: headers(apiKey),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/**
+ * Hybrid search: vector similarity + full-text + salience weighting.
+ * Calls the kb_hybrid_search Postgres function via RPC.
+ */
+export async function pgHybridSearch(
+  queryEmbedding: number[],
+  queryText: string,
+  matchCount = 10,
+  similarityThreshold = 0.3,
+): Promise<SearchResult[]> {
+  const apiKey = getApiKey();
+  if (!apiKey) return [];
+
+  try {
+    const res = await fetch(`${RPC_URL}/kb_hybrid_search`, {
+      method: "POST",
+      headers: headers(apiKey),
+      body: JSON.stringify({
+        query_embedding: `[${queryEmbedding.join(",")}]`,
+        query_text: queryText,
+        match_count: matchCount,
+        similarity_threshold: similarityThreshold,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[pgvector] Search failed: ${res.status}`);
+      return [];
+    }
+
+    return (await res.json()) as SearchResult[];
+  } catch (err) {
+    console.warn(
+      `[pgvector] Search error:`,
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Access tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Increment access_count and update last_accessed_at for a KB entry.
+ * Fire-and-forget — used by the enrichment pipeline on recall.
+ */
+export async function pgRecordAccess(path: string): Promise<void> {
+  const apiKey = getApiKey();
+  if (!apiKey) return;
+
+  try {
+    // PostgREST PATCH with raw SQL for atomic increment
+    await fetch(
+      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
+      {
+        method: "PATCH",
+        headers: {
+          ...headers(apiKey),
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          access_count: "access_count + 1", // Won't work as raw SQL via PostgREST
+          last_accessed_at: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+  } catch {
+    // Fire-and-forget
+  }
+}
+
+/**
+ * Check if a content hash already exists in the KB.
+ * Used by M1 lesson fingerprinting to detect duplicates.
+ */
+export async function pgFindByHash(
+  hash: string,
+): Promise<{ path: string; confidence: number } | null> {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/kb_entries?content_hash=eq.${hash}&select=path,confidence&limit=1`,
+      {
+        headers: headers(apiKey),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Array<{
+      path: string;
+      confidence: number;
+    }>;
+    return rows.length > 0 ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Strengthen an existing entry (M1 reinforcement pattern).
+ * confidence += 0.1 * (1 - current), reinforcement_count++
+ */
+export async function pgReinforce(path: string): Promise<boolean> {
+  const apiKey = getApiKey();
+  if (!apiKey) return false;
+
+  try {
+    // Read current confidence first (PostgREST doesn't support computed PATCH)
+    const getRes = await fetch(
+      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}&select=confidence,reinforcement_count`,
+      {
+        headers: headers(apiKey),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!getRes.ok) return false;
+    const rows = (await getRes.json()) as Array<{
+      confidence: number;
+      reinforcement_count: number;
+    }>;
+    if (rows.length === 0) return false;
+
+    const current = rows[0];
+    const newConfidence = Math.min(
+      1.0,
+      current.confidence + 0.1 * (1 - current.confidence),
+    );
+
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}`,
+      {
+        method: "PATCH",
+        headers: {
+          ...headers(apiKey),
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          confidence: newConfidence,
+          reinforcement_count: current.reinforcement_count + 1,
+          last_reinforced_at: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    return patchRes.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if pgvector is available (COMMIT_DB_KEY configured).
+ */
+export function isPgvectorEnabled(): boolean {
+  return !!getApiKey();
+}

@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.1 COMPLETE.** 228 source files, 1377 tests passing, zero type errors, 163 tools. v6.0 self-improving agent (SG1-SG5 safeguards, autonomous improvement), v6.1 background agents + behavioral coherence (10 OpenClaude patterns shipped). Roadmap: v6.2→v6.4 (28 sessions, ~14 weeks).
+**v6.2 IN PROGRESS.** 232 source files, 1400 tests passing, zero type errors, 163 tools. M0 (pgvector KB migration) DONE — 315 entries with Gemini embeddings on Supabase, hybrid search live. Roadmap: v6.2→v6.4 (28.5 sessions, ~14 weeks).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

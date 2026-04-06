@@ -12,6 +12,7 @@
 import { getDatabase } from "./index.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
@@ -92,6 +93,9 @@ export function upsertFile(
   );
   mirrorToDisk(path, content);
 
+  // Dual-write to pgvector (fire-and-forget, async, non-blocking)
+  syncToPgvector(path, title, content, tags, qualifier, priority, condition);
+
   // Debounced INDEX.md regeneration (skip if we're writing INDEX.md itself)
   if (path !== "INDEX.md") {
     import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
@@ -138,6 +142,25 @@ export function appendToFile(path: string, content: string): boolean {
   ).run(newContent, path);
   mirrorToDisk(path, newContent);
 
+  // Sync appended content to pgvector (re-embeds the full content)
+  const meta = db
+    .prepare(
+      "SELECT title, qualifier, priority FROM jarvis_files WHERE path = ?",
+    )
+    .get(path) as
+    | { title: string; qualifier: string; priority: number }
+    | undefined;
+  if (meta) {
+    syncToPgvector(
+      path,
+      meta.title,
+      newContent,
+      [],
+      meta.qualifier,
+      meta.priority,
+    );
+  }
+
   if (path !== "INDEX.md") {
     import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
   }
@@ -175,6 +198,9 @@ export function deleteFile(path: string): boolean {
   const result = db
     .prepare("DELETE FROM jarvis_files WHERE path = ?")
     .run(path);
+  if (result.changes > 0) {
+    syncDeleteToPgvector(path);
+  }
   return result.changes > 0;
 }
 
@@ -204,6 +230,17 @@ export function moveFile(oldPath: string, newPath: string): boolean {
     oldPath,
   );
   mirrorToDisk(newPath, existing.content);
+
+  // Sync move to pgvector: delete old path, upsert new path
+  syncDeleteToPgvector(oldPath);
+  syncToPgvector(
+    newPath,
+    existing.title,
+    existing.content,
+    JSON.parse(existing.tags ?? "[]"),
+    existing.qualifier,
+    existing.priority,
+  );
 
   if (newPath !== "INDEX.md") {
     import("./jarvis-index.js").then((m) => m.markIndexDirty()).catch(() => {});
