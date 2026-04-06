@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { shouldExtract, extractFacts } from "./background-extractor.js";
+import {
+  shouldExtract,
+  extractFacts,
+  storeFacts,
+} from "./background-extractor.js";
 
 // Mock pgvector — isPgvectorEnabled controls the gate
 vi.mock("../db/pgvector.js", () => ({
@@ -221,5 +225,59 @@ describe("extractFacts", () => {
     for (const f of facts) {
       expect(f).not.toMatch(/^[-•*]/);
     }
+  });
+});
+
+describe("storeFacts", () => {
+  it("reinforces existing fact when hash matches", async () => {
+    const { pgFindByHash, pgReinforce } = await import("../db/pgvector.js");
+    vi.mocked(pgFindByHash).mockResolvedValueOnce({
+      path: "extracted/2026-04-06-abc12345.md",
+      confidence: 0.5,
+    });
+
+    const result = await storeFacts(
+      ["User prefers dark theme dashboards with ECharts."],
+      "task-123",
+    );
+
+    expect(result.reinforced).toBe(1);
+    expect(result.stored).toBe(0);
+    expect(pgReinforce).toHaveBeenCalledWith(
+      "extracted/2026-04-06-abc12345.md",
+    );
+  });
+
+  it("stores new fact with embedding when hash not found", async () => {
+    const { pgFindByHash, pgUpsert } = await import("../db/pgvector.js");
+    vi.mocked(pgFindByHash).mockResolvedValueOnce(null);
+
+    // Mock embedding generation
+    vi.doMock("../inference/embeddings.js", () => ({
+      generateEmbedding: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+    }));
+
+    const result = await storeFacts(
+      ["The CRM pipeline has 45 active prospects."],
+      "task-456",
+    );
+
+    expect(result.stored).toBe(1);
+    expect(result.reinforced).toBe(0);
+    expect(pgUpsert).toHaveBeenCalled();
+  });
+
+  it("stores fact even when embedding generation returns null", async () => {
+    const { pgFindByHash, pgUpsert } = await import("../db/pgvector.js");
+    vi.mocked(pgFindByHash).mockResolvedValueOnce(null);
+
+    vi.doMock("../inference/embeddings.js", () => ({
+      generateEmbedding: vi.fn().mockResolvedValue(null),
+    }));
+
+    const result = await storeFacts(["Fact without embedding."], "task-789");
+
+    expect(result.stored).toBe(1);
+    expect(pgUpsert).toHaveBeenCalled();
   });
 });

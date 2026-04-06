@@ -153,7 +153,7 @@ export async function storeFacts(
         // New fact — generate embedding and store
         const embedding = await generateEmbedding(fact);
         const date = new Date().toISOString().slice(0, 10);
-        const shortHash = hash.slice(0, 8);
+        const shortHash = hash.slice(0, 16);
         const path = `extracted/${date}-${shortHash}.md`;
 
         await pgUpsert({

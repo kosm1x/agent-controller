@@ -1446,32 +1446,33 @@ export class MessageRouter {
         // Non-fatal
       }
 
-      // Execution pattern extraction (async, fire-and-forget)
+      // Read tool calls once — shared by extractPattern + auto-persist + background extraction
+      // (C1 audit fix: hoisted above all consumers to eliminate duplicate DB read)
+      let taskToolCalls: string[] = [];
+      try {
+        const toolRow = getDatabase()
+          .prepare(
+            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(taskId) as { output: string | null } | undefined;
+        if (toolRow?.output) {
+          taskToolCalls = JSON.parse(toolRow.output).toolCalls ?? [];
+        }
+      } catch {
+        /* DB or JSON parse failure — proceed with empty tool list */
+      }
+
       // Execution pattern extraction (async, fire-and-forget)
       try {
         const db = getDatabase();
         const task = db
           .prepare("SELECT title, spawn_type FROM tasks WHERE task_id = ?")
           .get(taskId) as { title: string; spawn_type: string } | undefined;
-        // Read toolCalls from runs table (RunnerOutput.toolCalls), not data.result
-        let toolCalls: string[] = [];
-        const run = db
-          .prepare(
-            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
-          )
-          .get(taskId) as { output: string | null } | undefined;
-        if (run?.output) {
-          try {
-            toolCalls = JSON.parse(run.output).toolCalls ?? [];
-          } catch {
-            /* malformed */
-          }
-        }
-        if (task && !isBackground && toolCalls.length >= 2) {
+        if (task && !isBackground && taskToolCalls.length >= 2) {
           extractPattern({
             taskId,
             title: task.title,
-            toolsCalled: toolCalls,
+            toolsCalled: taskToolCalls,
             scopeGroups: pending.scopeGroups ?? [],
             userMessage: pending.originalText,
             result: resultText.slice(0, 500),
@@ -1486,21 +1487,6 @@ export class MessageRouter {
         ensureCriticalDataPersisted(pending.originalText, taskId);
       } catch {
         // Non-fatal
-      }
-
-      // Read tool calls once — shared by auto-persist + background extraction
-      let taskToolCalls: string[] = [];
-      try {
-        const toolRow = getDatabase()
-          .prepare(
-            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
-          )
-          .get(taskId) as { output: string | null } | undefined;
-        if (toolRow?.output) {
-          taskToolCalls = JSON.parse(toolRow.output).toolCalls ?? [];
-        }
-      } catch {
-        /* DB or JSON parse failure — proceed with empty tool list */
       }
 
       // Mechanical auto-persist: store noteworthy exchanges based on heuristics
