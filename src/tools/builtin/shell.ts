@@ -5,7 +5,7 @@
  * The guard prevents accidental destructive commands — not an adversarial sandbox.
  */
 
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
 
@@ -41,6 +41,7 @@ const DENY_COMMANDS = new Set([
   "fdisk",
   "parted",
   "crontab",
+  "sqlite3", // SG4: all DB access goes through getDatabase() — no raw SQL bypass
 ]);
 
 /** Patterns checked against the full command string. */
@@ -84,8 +85,6 @@ const ALLOW_WRITE_PREFIXES = [
 
 function isMissionControlWriteAllowed(): boolean {
   try {
-    const { execFileSync } =
-      require("child_process") as typeof import("child_process");
     const branch = execFileSync("git", ["branch", "--show-current"], {
       cwd: "/root/claude/mission-control",
       timeout: 5000,

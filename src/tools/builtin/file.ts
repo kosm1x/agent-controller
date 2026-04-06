@@ -284,6 +284,14 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
 
     const absPath = resolve(rawPath);
 
+    // SG3: Immutable core — blocked even on jarvis/* branches
+    const immCheck = isImmutableCorePath(absPath);
+    if (immCheck.immutable) {
+      return JSON.stringify({
+        error: `Deletion blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
+      });
+    }
+
     // Safety: only allow deletion under known safe prefixes, at least 1 level deep
     const matchedPrefix = ALLOW_DELETE_PREFIXES.find((p) =>
       absPath.startsWith(p),
