@@ -112,28 +112,98 @@ interface LatencyEntry {
   completionTokens: number;
 }
 
-interface ProviderStats {
+/** Provider health classification (v6.2 S1). */
+export type ProviderHealth = "healthy" | "degraded" | "unhealthy";
+
+export interface ProviderStats {
   count: number;
   avgLatencyMs: number;
   p95LatencyMs: number;
   successRate: number;
+  /** Health classification based on baseline thresholds. */
+  health: ProviderHealth;
+  /** Estimated cost in USD for this window. */
+  costUsd: number;
+  /** Total tokens in this window. */
+  totalTokens: number;
+}
+
+// ---------------------------------------------------------------------------
+// Health thresholds — derived from provider health baseline (2026-04-06)
+// Baseline: qwen 98.8%/59.4s avg, kimi 100%/76.6s avg
+// ---------------------------------------------------------------------------
+
+/** Avg latency below this = healthy. */
+const LATENCY_HEALTHY_MS = 90_000;
+/** Avg latency above this = unhealthy. */
+const LATENCY_UNHEALTHY_MS = 180_000;
+/** Error rate below this = healthy. */
+const ERROR_RATE_HEALTHY = 0.03;
+/** Error rate above this = unhealthy. */
+const ERROR_RATE_UNHEALTHY = 0.1;
+/** Minimum samples before health classification applies. */
+const MIN_HEALTH_SAMPLES = 5;
+/** Rolling window for degradation checks (10 min). */
+const HEALTH_WINDOW_MS = 600_000;
+
+// ---------------------------------------------------------------------------
+// Per-model pricing (USD per 1M tokens) — update as prices change
+// ---------------------------------------------------------------------------
+
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // DashScope
+  "qwen3.5-plus": { input: 0.8, output: 2.0 },
+  "qwen3-coder-plus": { input: 0.8, output: 2.0 },
+  "kimi-k2.5": { input: 1.0, output: 3.0 },
+  "glm-5": { input: 0.5, output: 1.5 },
+  // Groq
+  "llama-3.3-70b-versatile": { input: 0.59, output: 0.79 },
+  // Default for unknown models
+  _default: { input: 1.0, output: 3.0 },
+};
+
+function estimateCost(
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+): number {
+  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING._default;
+  return (
+    (promptTokens / 1_000_000) * pricing.input +
+    (completionTokens / 1_000_000) * pricing.output
+  );
+}
+
+function classifyHealth(
+  avgLatencyMs: number,
+  errorRate: number,
+  sampleCount: number,
+): ProviderHealth {
+  if (sampleCount < MIN_HEALTH_SAMPLES) return "healthy"; // not enough data
+  if (avgLatencyMs > LATENCY_UNHEALTHY_MS || errorRate > ERROR_RATE_UNHEALTHY)
+    return "unhealthy";
+  if (avgLatencyMs > LATENCY_HEALTHY_MS || errorRate > ERROR_RATE_HEALTHY)
+    return "degraded";
+  return "healthy";
 }
 
 class ProviderMetrics {
   private entries = new Map<string, LatencyEntry[]>();
   private readonly windowSize = 50;
+  /** Model name per provider — set on first successful call. */
+  private models = new Map<string, string>();
 
-  record(provider: string, entry: LatencyEntry): void {
+  record(provider: string, entry: LatencyEntry, model?: string): void {
     let list = this.entries.get(provider);
     if (!list) {
       list = [];
       this.entries.set(provider, list);
     }
     list.push(entry);
-    // Evict oldest when window exceeded
     if (list.length > this.windowSize) {
       list.splice(0, list.length - this.windowSize);
     }
+    if (model) this.models.set(provider, model);
   }
 
   getStats(provider: string): ProviderStats | null {
@@ -146,14 +216,23 @@ class ProviderMetrics {
       Math.floor(latencies.length * 0.95),
       latencies.length - 1,
     );
+    const avgLatencyMs = Math.round(
+      latencies.reduce((a, b) => a + b, 0) / latencies.length,
+    );
+    const errorRate = 1 - successes / list.length;
+
+    const model = this.models.get(provider) ?? "";
+    const totalPrompt = list.reduce((s, e) => s + e.promptTokens, 0);
+    const totalCompletion = list.reduce((s, e) => s + e.completionTokens, 0);
 
     return {
       count: list.length,
-      avgLatencyMs: Math.round(
-        latencies.reduce((a, b) => a + b, 0) / latencies.length,
-      ),
+      avgLatencyMs,
       p95LatencyMs: latencies[p95Idx],
       successRate: successes / list.length,
+      health: classifyHealth(avgLatencyMs, errorRate, list.length),
+      costUsd: estimateCost(model, totalPrompt, totalCompletion),
+      totalTokens: totalPrompt + totalCompletion,
     };
   }
 
@@ -167,31 +246,29 @@ class ProviderMetrics {
   }
 
   /**
-   * True if provider avg latency exceeds threshold AND has enough recent samples.
-   * Only considers entries within `windowMs` (default 10 min) so degraded providers
-   * automatically get retried after the window expires — prevents permanent death spiral.
+   * True if provider should be skipped (degraded or unhealthy).
+   * Uses baseline-derived thresholds (v6.2 S1):
+   *   - avg latency > 90s OR error rate > 10% → skip
+   * Only considers entries within windowMs (default 10 min) so degraded
+   * providers automatically get retried — prevents permanent death spiral.
    */
-  isDegraded(
-    provider: string,
-    thresholdMs = 15_000,
-    minSamples = 10,
-    windowMs = 600_000,
-  ): boolean {
+  isDegraded(provider: string): boolean {
     const list = this.entries.get(provider);
     if (!list || list.length === 0) return false;
 
-    const cutoff = Date.now() - windowMs;
+    const cutoff = Date.now() - HEALTH_WINDOW_MS;
     const recent = list.filter((e) => e.timestamp >= cutoff);
-    if (recent.length < minSamples) return false;
+    if (recent.length < MIN_HEALTH_SAMPLES) return false;
 
-    const latencies = recent.map((e) => e.latencyMs).sort((a, b) => a - b);
-    const successes = recent.filter((e) => e.success).length;
     const avgLatencyMs = Math.round(
-      latencies.reduce((a, b) => a + b, 0) / latencies.length,
+      recent.reduce((s, e) => s + e.latencyMs, 0) / recent.length,
     );
-    const successRate = successes / recent.length;
+    const successes = recent.filter((e) => e.success).length;
+    const errorRate = 1 - successes / recent.length;
 
-    return avgLatencyMs > thresholdMs || successRate < 0.5;
+    return (
+      avgLatencyMs > LATENCY_HEALTHY_MS || errorRate > ERROR_RATE_UNHEALTHY
+    );
   }
 }
 
@@ -358,14 +435,18 @@ async function callProvider(
       `[inference] ${provider.name}/${provider.model} ${result.latency_ms}ms prompt=${result.usage.prompt_tokens} completion=${result.usage.completion_tokens} tools=${result.tool_calls?.length ?? 0}`,
     );
 
-    // Record success metrics
-    providerMetrics.record(provider.name, {
-      timestamp: Date.now(),
-      latencyMs: result.latency_ms,
-      success: true,
-      promptTokens: result.usage.prompt_tokens,
-      completionTokens: result.usage.completion_tokens,
-    });
+    // Record success metrics (with model for cost tracking — v6.2 S1)
+    providerMetrics.record(
+      provider.name,
+      {
+        timestamp: Date.now(),
+        latencyMs: result.latency_ms,
+        success: true,
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+      },
+      provider.model,
+    );
 
     return result;
   } finally {

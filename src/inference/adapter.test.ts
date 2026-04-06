@@ -116,25 +116,25 @@ describe("ProviderMetrics", () => {
 
   it("should not report degraded with insufficient samples", () => {
     const name = "test_degraded_few";
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       providerMetrics.record(name, {
         timestamp: Date.now(),
-        latencyMs: 20_000, // very slow
+        latencyMs: 100_000, // above 90s healthy threshold
         success: true,
         promptTokens: 100,
         completionTokens: 50,
       });
     }
-    // Only 5 samples, minSamples=10, should NOT be degraded
+    // Only 3 samples, minSamples=5, should NOT be degraded
     expect(providerMetrics.isDegraded(name)).toBe(false);
   });
 
-  it("should report degraded when avg latency exceeds threshold", () => {
+  it("should report degraded when avg latency exceeds 90s threshold", () => {
     const name = "test_degraded_slow";
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 8; i++) {
       providerMetrics.record(name, {
         timestamp: Date.now(),
-        latencyMs: 20_000,
+        latencyMs: 100_000, // 100s > 90s healthy threshold
         success: true,
         promptTokens: 100,
         completionTokens: 50,
@@ -143,18 +143,82 @@ describe("ProviderMetrics", () => {
     expect(providerMetrics.isDegraded(name)).toBe(true);
   });
 
-  it("should report degraded when success rate is below 50%", () => {
+  it("should report degraded when error rate exceeds 10%", () => {
     const name = "test_degraded_failures";
     for (let i = 0; i < 12; i++) {
       providerMetrics.record(name, {
         timestamp: Date.now(),
         latencyMs: 1000, // fast
-        success: i < 4, // only 4/12 success = 33%
+        success: i < 10, // 10/12 success = 83%, error rate 17% > 10%
         promptTokens: 100,
         completionTokens: 50,
       });
     }
     expect(providerMetrics.isDegraded(name)).toBe(true);
+  });
+
+  it("classifies health as healthy/degraded/unhealthy", () => {
+    // Healthy provider
+    const healthy = "test_health_good";
+    for (let i = 0; i < 10; i++) {
+      providerMetrics.record(healthy, {
+        timestamp: Date.now(),
+        latencyMs: 30_000, // 30s < 90s
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    const goodStats = providerMetrics.getStats(healthy);
+    expect(goodStats?.health).toBe("healthy");
+
+    // Degraded provider
+    const degraded = "test_health_degraded";
+    for (let i = 0; i < 10; i++) {
+      providerMetrics.record(degraded, {
+        timestamp: Date.now(),
+        latencyMs: 120_000, // 120s — between 90s and 180s
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    const degradedStats = providerMetrics.getStats(degraded);
+    expect(degradedStats?.health).toBe("degraded");
+
+    // Unhealthy provider
+    const unhealthy = "test_health_bad";
+    for (let i = 0; i < 10; i++) {
+      providerMetrics.record(unhealthy, {
+        timestamp: Date.now(),
+        latencyMs: 200_000, // 200s > 180s
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    const badStats = providerMetrics.getStats(unhealthy);
+    expect(badStats?.health).toBe("unhealthy");
+  });
+
+  it("tracks cost per provider", () => {
+    const name = "test_cost";
+    for (let i = 0; i < 5; i++) {
+      providerMetrics.record(
+        name,
+        {
+          timestamp: Date.now(),
+          latencyMs: 5000,
+          success: true,
+          promptTokens: 10_000,
+          completionTokens: 500,
+        },
+        "qwen3.5-plus",
+      );
+    }
+    const stats = providerMetrics.getStats(name);
+    expect(stats?.costUsd).toBeGreaterThan(0);
+    expect(stats?.totalTokens).toBe(52_500); // 5 * (10000 + 500)
   });
 
   it("getAllStats returns stats for all recorded providers", () => {
