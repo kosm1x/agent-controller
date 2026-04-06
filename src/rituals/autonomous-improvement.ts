@@ -113,7 +113,7 @@ ${candidateText}
 ## AFTER COMPLETION
 
 Report: what you fixed, which file(s), the PR link, and test results.`,
-    agentType: "fast",
+    agentType: "nanoclaw",
     tools: [
       "jarvis_dev",
       "jarvis_diagnose",
