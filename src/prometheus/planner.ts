@@ -39,6 +39,7 @@ Rules:
 - Each goal should have 1-3 completion criteria.
 - IDs must be sequential: g-1, g-2, g-3, etc.
 - If the task involves an unfamiliar or specialized domain, make the first goal "Build domain overview using knowledge_map tool" before detailed execution goals.
+- NEVER delegate understanding: each goal description must be specific enough to execute without guessing. Include file paths, function names, or concrete targets when known. Never write "based on findings from g-1, do X" — instead, make g-2 depend_on g-1 and describe exactly what g-2 must do with its own terms.
 - Emit ONLY valid JSON. No markdown, no commentary.`;
 
 const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A previous plan partially executed but needs revision.
@@ -46,6 +47,16 @@ const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A p
 You receive: the original task, the current goal graph with statuses, and the reason for replanning.
 Keep completed goals unchanged. Adjust pending/blocked/failed goals as needed.
 You may add new goals, remove failed goals, or change dependencies.
+
+## Continue vs. Rebuild Decision (apply before modifying the graph)
+
+| Situation | Action | Why |
+|-----------|--------|-----|
+| Execution found the exact files/data needed | Revise minimally — keep context | Prior work is directly usable |
+| Execution was broad but remaining work is narrow | Rebuild pending goals from scratch | Avoid dragging exploration noise into focused execution |
+| A goal failed but the approach is sound | Revise the failed goal only | Don't discard working goals |
+| The approach is fundamentally wrong | Rebuild all pending goals | Wrong-context poisons all downstream goals |
+| Tool failure rate is high | Add diagnostic/fallback goals | The tools may need different parameters or alternatives |
 
 Respond with a revised goal graph in the same JSON schema:
 {

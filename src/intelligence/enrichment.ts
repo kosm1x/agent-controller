@@ -89,6 +89,28 @@ export async function enrichContext(
   // Wait for all recalls to complete
   await Promise.all(recallPromises);
 
+  // Memory drift verification (OpenClaude pattern): recalled memories that
+  // name specific file paths may be stale. Verify referenced paths exist
+  // and flag stale entries so the LLM doesn't act on outdated claims.
+  // "A memory that names a file path is a claim it existed when written."
+  try {
+    const { existsSync } = await import("fs");
+    for (let i = 0; i < sections.length; i++) {
+      const pathMatches = sections[i].match(
+        /(?:\/(?:root|home|opt|tmp|var|etc)\/[\w./-]+)/g,
+      );
+      if (pathMatches) {
+        const stalePaths = pathMatches.filter((p) => !existsSync(p));
+        if (stalePaths.length > 0) {
+          sections[i] +=
+            `\n⚠ DRIFT: paths may be stale: ${stalePaths.join(", ")}`;
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — drift check is best-effort
+  }
+
   // Tool effectiveness from SQLite outcomes (sync, single query for both)
   try {
     const { hints, topTools: top } = getToolHintsAndTopTools();

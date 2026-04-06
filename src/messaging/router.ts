@@ -721,13 +721,31 @@ export class MessageRouter {
           enrichment.contextBlock,
         );
 
+        // Fork child injection boilerplate (OpenClaude pattern):
+        // Background agents get explicit identity ("You are NOT the main agent"),
+        // numbered non-negotiable rules, and structured output requirements.
+        // Prevents recursive confusion and ensures predictable result format.
+        const BACKGROUND_AGENT_BOILERPLATE = `
+IMPORTANTE: Eres un agente de background. NO eres el agente principal de Jarvis.
+
+REGLAS (no negociables):
+1. NO converses con el usuario — solo ejecuta y reporta.
+2. NO lances sub-agentes ni tareas adicionales.
+3. Guarda TODOS los hallazgos en workspace/ con jarvis_file_write (qualifier: workspace).
+4. Si necesitas información que no puedes obtener, documenta qué falta y por qué.
+5. Sé conciso — el usuario revisará los resultados después.
+6. Tu respuesta DEBE incluir estas secciones:
+   - Alcance: qué investigaste/ejecutaste
+   - Resultado: hallazgos principales (datos concretos, no narrativa)
+   - Archivos creados: paths de los archivos guardados en workspace/
+   - Pendientes: qué queda por hacer (si aplica)`;
+
         const result = await submitTask({
           title: `🤖 Agente: ${taskText.slice(0, 50)}`,
           description:
             systemPrompt +
             `\n\nTarea del agente (background):\n${taskText}\n\n` +
-            `Guarda tus hallazgos en workspace/ con jarvis_file_write (qualifier: workspace). ` +
-            `El usuario revisará los resultados después.`,
+            BACKGROUND_AGENT_BOILERPLATE,
           agentType: "auto",
           tools: scopedTools,
           spawnType: "user-background",
