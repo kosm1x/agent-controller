@@ -33,7 +33,7 @@ const TOOL_TRIGGERS = [
   /\b(hora|tiempo|fecha|calendario|agenda|schedule|cron)\b/i,
   /\b(tareas?|metas?|objetivos?|goals?|tasks?|visio\w+|visions?|journal|diario)\b/i,
   /\b(busca|search|publica|publish|env[ií]a|send|crea|create|genera)\b/i,
-  /\b(correos?|emails?|gmail|drive|sheets?|wordpress|wp|blogs?)\b/i,
+  /\b(correos?|emails?|mails?|gmail|drive|sheets?|wordpress|wp|blogs?|mand[aá]|env[ií]a)\b/i,
   /\b(recuerda|remember|guarda|save|anota|registra)\b/i,
   /\b(lee|read|lista|list|muestra|show|analiza|analyze|revisa|check|verifica|audita)\b/i,
   /\b(programas?|configura|setup|instala|deploy)\b/i,
