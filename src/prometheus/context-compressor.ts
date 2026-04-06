@@ -171,8 +171,18 @@ ${middleText}`
 Messages to compress:
 ${middleText}`;
 
+    // NO_TOOLS_PREAMBLE sandwich: suppress tool calls during compression.
+    // On Sonnet 4.6+, adaptive-thinking models sometimes attempt tool calls
+    // despite instructions. Placing the prohibition FIRST and LAST prevents this.
+    // Pattern from OpenClaude: measured 2.79% failure rate without it.
+    const NO_TOOLS =
+      "CRITICAL: Do NOT call any tools. Produce ONLY text output. Any tool call will be rejected.";
     const summaryResponse = await infer({
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        { role: "system", content: NO_TOOLS },
+        { role: "user", content: prompt },
+        { role: "user", content: NO_TOOLS },
+      ],
       temperature: 0.2,
       max_tokens: 800,
     });

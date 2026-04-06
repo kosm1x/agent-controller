@@ -111,15 +111,47 @@ export class ToolRegistry {
     return best;
   }
 
-  /** Get tool definitions for LLM function calling. Optionally filter by name list. */
-  getDefinitions(names?: string[]): ToolDefinition[] {
+  /**
+   * Get tool definitions for LLM function calling. Optionally filter by name list.
+   * When `excludeDeferred` is true, tools marked `deferred: true` are omitted —
+   * use `getDeferredCatalog()` to include them as a text summary instead.
+   */
+  getDefinitions(names?: string[], excludeDeferred = false): ToolDefinition[] {
+    let tools: Tool[];
     if (names && names.length > 0) {
-      return names
+      tools = names
         .map((n) => this.tools.get(n))
-        .filter((t): t is Tool => t !== undefined)
-        .map((t) => t.definition);
+        .filter((t): t is Tool => t !== undefined);
+    } else {
+      tools = Array.from(this.tools.values());
     }
-    return Array.from(this.tools.values()).map((t) => t.definition);
+    if (excludeDeferred) {
+      tools = tools.filter((t) => !t.deferred);
+    }
+    return tools.map((t) => t.definition);
+  }
+
+  /**
+   * Build a text catalog of deferred tools (name + description only).
+   * Injected as a system message so the LLM knows these tools exist
+   * but doesn't carry their full parameter schemas in context.
+   * Returns null if no deferred tools match the scope.
+   */
+  getDeferredCatalog(names?: string[]): string | null {
+    let tools: Tool[];
+    if (names && names.length > 0) {
+      tools = names
+        .map((n) => this.tools.get(n))
+        .filter((t): t is Tool => t !== undefined && t.deferred === true);
+    } else {
+      tools = Array.from(this.tools.values()).filter((t) => t.deferred);
+    }
+    if (tools.length === 0) return null;
+    const lines = tools.map(
+      (t) =>
+        `- **${t.name}**: ${t.definition.function.description.slice(0, 120)}`,
+    );
+    return `[DEFERRED TOOLS] The following tools are available but their full schemas are not loaded. Call any of them by name — the system will return the parameter schema so you can retry with correct arguments.\n\n${lines.join("\n")}`;
   }
 
   /** MCP tools that require confirmation (can't be tagged via interface). */

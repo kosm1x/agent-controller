@@ -1292,13 +1292,35 @@ export async function inferWithTools(
             // Scope enforcement: reject tool calls outside the scoped definitions.
             // DashScope/Qwen doesn't enforce strict tool calling — the LLM may
             // call tools not in its definitions, causing phantom tool operations.
+            //
+            // Tool deferral expansion: if the tool exists in the registry but was
+            // deferred (not in the scoped definitions), return its full schema
+            // so the LLM can retry with correct arguments on the next round.
             if (!allowedToolNames.has(toolName)) {
-              console.warn(
-                `[inference] Tool ${toolName} rejected: not in scoped tool list`,
-              );
-              result = JSON.stringify({
-                error: `Tool "${toolName}" is not available in the current context. Use only the tools provided in your tool definitions.`,
-              });
+              const registeredTool = toolRegistry.get(toolName);
+              if (registeredTool?.deferred) {
+                // Deferred tool expansion — return full schema for retry
+                const schema = JSON.stringify(
+                  registeredTool.definition.function.parameters,
+                  null,
+                  2,
+                );
+                console.log(
+                  `[inference] Deferred tool ${toolName} expanded — returning schema for retry`,
+                );
+                result = JSON.stringify({
+                  deferred_expansion: true,
+                  message: `Tool "${toolName}" is a deferred tool. Here is its full parameter schema. Call it again with the correct arguments.`,
+                  parameters: JSON.parse(schema),
+                });
+              } else {
+                console.warn(
+                  `[inference] Tool ${toolName} rejected: not in scoped tool list`,
+                );
+                result = JSON.stringify({
+                  error: `Tool "${toolName}" is not available in the current context. Use only the tools provided in your tool definitions.`,
+                });
+              }
             } else {
               // Normalize common parameter aliases before validation.
               // LLMs frequently confuse "path" vs "file_path" vs "filepath",

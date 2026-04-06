@@ -18,6 +18,7 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
+import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import { getFilesByQualifier } from "../db/jarvis-fs.js";
 
@@ -39,9 +40,14 @@ STATUS: BLOCKED — [what is preventing completion]`;
  * Build the knowledge base injection section from jarvis_files.
  * Fetches always-read + enforce files, plus conditional files matching scope.
  */
-function buildKnowledgeBaseSection(scopedTools: string[]): string | null {
+function buildKnowledgeBaseSection(
+  scopedTools: string[],
+  enforceOnly = false,
+): string | null {
   try {
-    const files = getFilesByQualifier("always-read", "enforce", "conditional");
+    const files = enforceOnly
+      ? getFilesByQualifier("enforce")
+      : getFilesByQualifier("always-read", "enforce", "conditional");
     if (files.length === 0) return null;
 
     const sections: string[] = [];
@@ -456,9 +462,17 @@ export const fastRunner: Runner = {
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
 
-    // Get tool definitions for requested tools (or all if none specified)
-    const definitions = toolRegistry.getDefinitions(input.tools);
-    if (definitions.length === 0) {
+    // Get tool definitions for requested tools (or all if none specified).
+    // Tool deferral pattern (OpenClaude): deferred tools are NOT included
+    // as full schema definitions — only their names + descriptions are sent
+    // as a text catalog. This saves significant context tokens when many
+    // tools are in scope. When the LLM calls a deferred tool, the executor
+    // returns the full schema so the LLM can retry with correct arguments.
+    const definitions = toolRegistry.getDefinitions(input.tools, true);
+    const deferredCatalog = toolRegistry.getDeferredCatalog(input.tools);
+    // Count all available (deferred + non-deferred) for the empty check
+    const totalTools = toolRegistry.getDefinitions(input.tools).length;
+    if (totalTools === 0) {
       return {
         success: false,
         error: "No tools available. Register tools before running fast tasks.",
@@ -480,10 +494,23 @@ export const fastRunner: Runner = {
         content: input.description + STATUS_SUFFIX,
       });
 
-      // Inject Jarvis knowledge base files (always-read, enforce, conditional)
-      const kb = buildKnowledgeBaseSection(input.tools ?? []);
+      // Inject Jarvis knowledge base files (always-read, enforce, conditional).
+      // omitKB pattern (OpenClaude): read-only subagents skip KB to save tokens.
+      // If ALL scoped tools are read-only, the task is pure research/observation —
+      // KB sections (NorthStar visions, directives, conditional files) add ~500-1000
+      // tokens of context that won't be acted on. Enforce files are ALWAYS included
+      // since they contain safety-critical rules even for read-only operations.
+      const scopedTools = input.tools ?? [];
+      const isReadOnlyTask =
+        scopedTools.length > 0 && scopedTools.every((t) => isReadOnlyTool(t));
+      const kb = buildKnowledgeBaseSection(scopedTools, isReadOnlyTask);
       if (kb) {
         messages.push({ role: "system", content: kb });
+      }
+
+      // Inject deferred tool catalog (names + descriptions only, no schemas)
+      if (deferredCatalog) {
+        messages.push({ role: "system", content: deferredCatalog });
       }
 
       for (const turn of input.conversationHistory) {
@@ -503,6 +530,9 @@ export const fastRunner: Runner = {
     } else {
       // Non-chat task: generic system prompt + description as user message
       messages.push({ role: "system", content: GENERIC_SYSTEM_PROMPT });
+      if (deferredCatalog) {
+        messages.push({ role: "system", content: deferredCatalog });
+      }
       messages.push({
         role: "user",
         content: `Task: ${input.title}\n\n${input.description}`,

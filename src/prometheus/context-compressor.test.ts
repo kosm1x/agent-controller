@@ -2,7 +2,7 @@
  * Context compressor tests — compression trigger, tool pair sanitization, fallback.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatMessage } from "../inference/adapter.js";
 
 vi.mock("../inference/adapter.js", () => ({
@@ -25,7 +25,9 @@ beforeEach(() => {
 });
 
 describe("estimateTokens", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should return 0 for empty array", () => {
     expect(estimateTokens([])).toBe(0);
   });
@@ -196,9 +198,10 @@ describe("compress", () => {
 
     // Should use update prompt with existing summary
     const inferCall = mockInfer.mock.calls[0][0];
+    // messages[0] is the NO_TOOLS preamble; messages[1] is the actual prompt
     const prompt =
-      typeof inferCall.messages[0].content === "string"
-        ? inferCall.messages[0].content
+      typeof inferCall.messages[1].content === "string"
+        ? inferCall.messages[1].content
         : "";
     expect(prompt).toContain("Update this existing summary");
     expect(prompt).toContain("Previous summary of events");
