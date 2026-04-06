@@ -268,7 +268,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(schedules?|reportes?|programa(r|dos?|ción)?|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]|peri[oó]dic|recordatorio|rem[ií]nder|avi[sś]ame\s+(cada|en\s+\d))/i,
+      /\b(schedules?|reportes?|programa(r|dos?|ción)?|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]r?\s+cada|peri[oó]dica(?:mente)?|recordatorio|reminder|av[ií]same\s+(cada|en\s+\d))/i,
     group: "schedule",
   },
   {
