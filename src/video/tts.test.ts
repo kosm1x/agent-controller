@@ -36,13 +36,15 @@ describe("splitTextAtSentences", () => {
     expect(rejoined).toContain("E.");
   });
 
-  it("handles text with no sentence boundaries", () => {
+  it("hard-splits text with no sentence boundaries at maxChars", () => {
     const text =
       "This is a very long text without any periods that just keeps going and going";
     const result = splitTextAtSentences(text, 30);
-    // Without periods, the whole text is one "sentence" — can't split further
-    expect(result.length).toBe(1);
-    expect(result[0]).toBe(text);
+    // V1 audit fix: oversized sentences get hard-split at maxChars
+    expect(result.length).toBeGreaterThan(1);
+    for (const chunk of result) {
+      expect(chunk.length).toBeLessThanOrEqual(30);
+    }
   });
 
   it("handles question marks and exclamation marks as boundaries", () => {

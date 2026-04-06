@@ -63,6 +63,32 @@ export function splitTextAtSentences(
   let current = "";
 
   for (const sentence of sentences) {
+    // Hard-split fallback: if a single sentence exceeds maxChars,
+    // split at commas/semicolons or word boundaries (V1 audit fix)
+    if (sentence.length > maxChars) {
+      if (current.trim()) chunks.push(current.trim());
+      current = "";
+      const subParts = sentence.split(/(?<=[,;])\s+/);
+      let sub = "";
+      for (const part of subParts) {
+        if (sub.length + part.length + 1 > maxChars && sub.length > 0) {
+          chunks.push(sub.trim());
+          sub = part;
+        } else {
+          sub += (sub ? " " : "") + part;
+        }
+      }
+      if (sub.trim()) {
+        // If still over limit, hard-cut at maxChars
+        while (sub.length > maxChars) {
+          chunks.push(sub.slice(0, maxChars));
+          sub = sub.slice(maxChars);
+        }
+        if (sub.trim()) chunks.push(sub.trim());
+      }
+      continue;
+    }
+
     if (current.length + sentence.length + 1 > maxChars && current.length > 0) {
       chunks.push(current.trim());
       current = sentence;
@@ -339,7 +365,7 @@ export function listVoices(languageFilter?: string): VoiceInfo[] {
       encoding: "utf-8",
     });
 
-    const lines = output.split("\n").slice(1); // skip header
+    const lines = output.split("\n").slice(2); // skip header + dashes separator
     const voices: VoiceInfo[] = [];
 
     for (const line of lines) {
