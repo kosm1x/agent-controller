@@ -68,8 +68,16 @@ export function createTaskExecutor(
     // Centralized here so individual tool handlers don't need modification.
     // Only records if the tool is a file-mutating tool and didn't return an error.
     try {
-      const isError =
-        result.startsWith('{"error"') || result.startsWith("Error:");
+      // Detect error results — don't record failed mutations (C1 audit fix)
+      let isError = result.startsWith("Error:");
+      if (!isError) {
+        try {
+          const parsed = JSON.parse(result);
+          if (parsed.error || parsed.success === false) isError = true;
+        } catch {
+          // Non-JSON result — not an error
+        }
+      }
       if (!isError) {
         const mutation = classifyMutation(name, args);
         if (mutation) {

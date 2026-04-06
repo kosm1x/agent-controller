@@ -3,12 +3,12 @@ import { classifyMutation } from "./task-mutations.js";
 
 describe("classifyMutation", () => {
   describe("filesystem tools", () => {
-    it("classifies file_write as create", () => {
+    it("classifies file_write as modify (may be create or overwrite)", () => {
       const result = classifyMutation("file_write", {
         path: "/tmp/test.txt",
       });
       expect(result).toEqual({
-        operation: "create",
+        operation: "modify",
         filePath: "/tmp/test.txt",
       });
     });
@@ -18,7 +18,7 @@ describe("classifyMutation", () => {
         file_path: "/tmp/test.txt",
       });
       expect(result).toEqual({
-        operation: "create",
+        operation: "modify",
         filePath: "/tmp/test.txt",
       });
     });

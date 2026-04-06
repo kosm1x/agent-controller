@@ -47,8 +47,9 @@ export function classifyMutation(
   if (toolName === "file_write") {
     const path = (args.path ?? args.file_path) as string | undefined;
     if (!path) return null;
-    // Could be create or modify — we record as "create" (conservative)
-    return { operation: "create", filePath: path };
+    // file_write overwrites existing files — "modify" is safer for audit
+    // (a "create" that was actually an overwrite masks data loss)
+    return { operation: "modify", filePath: path };
   }
 
   if (toolName === "file_edit") {
@@ -165,21 +166,21 @@ export function getMutationSummary(taskId: string): string {
   const deletes = mutations.filter((m) => m.operation === "delete");
 
   const lines: string[] = [
-    `📋 Mutations for task ${taskId.slice(0, 8)}: ${mutations.length} total`,
+    `Mutations for task ${taskId.slice(0, 8)}: ${mutations.length} total`,
   ];
   if (creates.length > 0) {
     lines.push(
-      `  ✨ Created (${creates.length}): ${creates.map((m) => m.file_path).join(", ")}`,
+      `  [+] Created (${creates.length}): ${creates.map((m) => m.file_path).join(", ")}`,
     );
   }
   if (modifies.length > 0) {
     lines.push(
-      `  ✏️ Modified (${modifies.length}): ${modifies.map((m) => m.file_path).join(", ")}`,
+      `  [~] Modified (${modifies.length}): ${modifies.map((m) => m.file_path).join(", ")}`,
     );
   }
   if (deletes.length > 0) {
     lines.push(
-      `  🗑️ Deleted (${deletes.length}): ${deletes.map((m) => m.file_path).join(", ")}`,
+      `  [-] Deleted (${deletes.length}): ${deletes.map((m) => m.file_path).join(", ")}`,
     );
   }
 
