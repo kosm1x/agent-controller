@@ -173,19 +173,33 @@ export function downloadBackground(
 
   try {
     console.log(`[backgrounds] Downloading ${name} from ${url}...`);
-    execFileSync(
-      "yt-dlp",
-      [
-        "-f",
-        "bestvideo[height<=1080][ext=mp4]/best[height<=1080]",
-        "-o",
-        outputPath,
-        "--no-playlist",
-        "--quiet",
-        url,
-      ],
-      { timeout: 120_000, stdio: "pipe" },
-    );
+
+    // Pexels direct download URLs use curl (yt-dlp has no Pexels extractor).
+    // YouTube/other URLs fall back to yt-dlp.
+    const isPexelsOrDirect =
+      url.includes("pexels.com") || url.match(/\.(mp4|webm|mov)(\?|$)/i);
+
+    if (isPexelsOrDirect) {
+      execFileSync(
+        "curl",
+        ["-L", "-o", outputPath, "-s", "--max-time", "120", url],
+        { timeout: 130_000, stdio: "pipe" },
+      );
+    } else {
+      execFileSync(
+        "yt-dlp",
+        [
+          "-f",
+          "bestvideo[height<=1080][ext=mp4]/best[height<=1080]",
+          "-o",
+          outputPath,
+          "--no-playlist",
+          "--quiet",
+          url,
+        ],
+        { timeout: 120_000, stdio: "pipe" },
+      );
+    }
 
     if (!existsSync(outputPath)) {
       console.warn(`[backgrounds] Download produced no file: ${name}`);
@@ -235,7 +249,10 @@ export function extractSubclip(
     return null;
   }
 
-  const available = meta.durationSeconds - SKIP_SECONDS;
+  // Dynamic skip: use full SKIP_SECONDS for long videos, 10% for short ones
+  // (C2 audit fix: stock clips are often 15-60s, 180s skip makes them unusable)
+  const skipActual = Math.min(SKIP_SECONDS, meta.durationSeconds * 0.1);
+  const available = meta.durationSeconds - skipActual;
   if (available <= 0) {
     console.warn(`[backgrounds] ${name} too short for subclip`);
     return null;
@@ -243,7 +260,7 @@ export function extractSubclip(
 
   // Random start within available range
   const maxStart = Math.max(0, available - targetDurationSec);
-  const startOffset = SKIP_SECONDS + Math.random() * maxStart;
+  const startOffset = skipActual + Math.random() * maxStart;
   const duration = Math.min(targetDurationSec, available);
 
   try {
