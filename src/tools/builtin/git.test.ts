@@ -88,6 +88,7 @@ describe("git tools", () => {
     it("stages and commits when valid", async () => {
       mockExecFileSync
         .mockReturnValueOnce("") // git add (execFileSync)
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
         .mockReturnValueOnce("[main abc1234] test commit"); // git commit (execFileSync)
       mockExecSync.mockReturnValueOnce("1 file changed"); // git diff --cached --stat (execSync)
       const result = await gitCommitTool.execute({
@@ -110,6 +111,7 @@ describe("git tools", () => {
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
         .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push (runArgs)
       const result = await gitPushTool.execute({});
       expect(result).toContain("ba2005e");
@@ -126,6 +128,7 @@ describe("git tools", () => {
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce(" M src/foo.ts\n?? src/bar.ts") // git status --short (runArgs)
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
         .mockReturnValueOnce("Everything up-to-date"); // git push (runArgs)
       const result = await gitPushTool.execute({});
       expect(result).toContain("WARNING");
@@ -145,6 +148,7 @@ describe("git tools", () => {
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
         .mockReturnValueOnce("Everything up-to-date"); // git push (runArgs)
       const result = await gitPushTool.execute({});
       expect(result).toBe("Already up-to-date — no new commits to push.");

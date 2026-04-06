@@ -29,6 +29,21 @@ const SENSITIVE_PATTERNS = [
 ];
 const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
 
+// Jarvis's GitHub identity — used for commits, pushes, and PRs on jarvis/* branches.
+// Configured via .env: JARVIS_GH_TOKEN, JARVIS_GH_USER, JARVIS_GH_EMAIL.
+const JARVIS_GH_TOKEN = process.env.JARVIS_GH_TOKEN;
+const JARVIS_GH_USER = process.env.JARVIS_GH_USER ?? "PiotrCoderDroid";
+const JARVIS_GH_EMAIL = process.env.JARVIS_GH_EMAIL ?? "peter.blades@gmail.com";
+
+/**
+ * Check if this is a Jarvis-authored branch and Piotr's token is configured.
+ * Returns true if git operations should use Jarvis's identity.
+ */
+function isJarvisBranch(cwd?: string): boolean {
+  const branch = getCurrentBranch(cwd ?? DEFAULT_CWD);
+  return JARVIS_BRANCH_RE.test(branch) && !!JARVIS_GH_TOKEN;
+}
+
 /**
  * Get the current git branch for a directory.
  * Returns the branch name or "HEAD" if detached.
@@ -263,8 +278,13 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
       if (!staged)
         return "Nothing staged to commit. Did you specify the right files?";
 
-      // Commit (execFileSync — message as arg, no shell injection)
-      const result = runArgs("git", ["commit", "-m", message], 30_000, cwd);
+      // Commit — on jarvis/* branches, use Piotr's identity as author.
+      // Committer stays as root (VPS operator), author shows as PiotrCoderDroid.
+      const commitArgs = ["commit", "-m", message];
+      if (isJarvisBranch(cwd)) {
+        commitArgs.push("--author", `${JARVIS_GH_USER} <${JARVIS_GH_EMAIL}>`);
+      }
+      const result = runArgs("git", commitArgs, 30_000, cwd);
       return result;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
@@ -360,12 +380,31 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       // Check for uncommitted changes — warn before the LLM claims success
       const status = runArgs("git", ["status", "--short"], 30_000, cwd);
-      const pushResult = runArgs(
-        "git",
-        ["push", "-u", "origin", branch],
-        60_000,
-        cwd,
-      );
+      // On jarvis/* branches, push using Piotr's PAT so GitHub attributes
+      // the push to PiotrCoderDroid instead of kosm1x.
+      let pushResult: string;
+      if (isJarvisBranch(cwd) && JARVIS_GH_TOKEN) {
+        const remoteUrl = run("git remote get-url origin", 10_000, cwd);
+        const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+        if (match) {
+          const tokenUrl = `https://${JARVIS_GH_USER}:${JARVIS_GH_TOKEN}@github.com/${match[1]}.git`;
+          pushResult = runArgs("git", ["push", tokenUrl, branch], 60_000, cwd);
+        } else {
+          pushResult = runArgs(
+            "git",
+            ["push", "-u", "origin", branch],
+            60_000,
+            cwd,
+          );
+        }
+      } else {
+        pushResult = runArgs(
+          "git",
+          ["push", "-u", "origin", branch],
+          60_000,
+          cwd,
+        );
+      }
 
       // "Everything up-to-date" means nothing was pushed — distinguish from actual push
       if (pushResult.includes("Everything up-to-date")) {
@@ -485,11 +524,27 @@ Returns the PR URL on success.`,
       if (!title) return "Error: title is required.";
       if (!body) return "Error: body is required.";
 
-      const result = runArgs(
-        "gh",
-        ["pr", "create", "--title", title, "--body", body, "--base", base],
-        60_000,
-      );
+      // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
+      const prArgs = [
+        "pr",
+        "create",
+        "--title",
+        title,
+        "--body",
+        body,
+        "--base",
+        base,
+      ];
+      let result: string;
+      if (isJarvisBranch() && JARVIS_GH_TOKEN) {
+        result = execFileSync("gh", prArgs, {
+          timeout: 60_000,
+          encoding: "utf-8",
+          env: { ...process.env, GH_TOKEN: JARVIS_GH_TOKEN },
+        }).trim();
+      } else {
+        result = runArgs("gh", prArgs, 60_000);
+      }
       return result;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : err}`;
