@@ -212,7 +212,7 @@ export function registerDecayCron(): void {
         { timezone: "America/Mexico_City" },
       );
 
-      // M2: Nightly retention scoring (daily 3 AM)
+      // M2: Nightly retention scoring + S4 INDEX.md regen (daily 3 AM)
       cron.default.schedule(
         "0 3 * * *",
         () => {
@@ -222,12 +222,16 @@ export function registerDecayCron(): void {
               err instanceof Error ? err.message : err,
             );
           });
+          // S4: Force INDEX.md regen if stale
+          import("../db/jarvis-index.js")
+            .then(({ regenerateIndex }) => regenerateIndex())
+            .catch(() => {});
         },
         { timezone: "America/Mexico_City" },
       );
 
       console.log(
-        "[lesson-decay] Crons scheduled: M1 Sundays 2 AM + M2 nightly 3 AM",
+        "[lesson-decay] Crons scheduled: M1 Sundays 2 AM + M2+S4 nightly 3 AM",
       );
     })
     .catch(() => {

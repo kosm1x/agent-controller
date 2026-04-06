@@ -96,7 +96,11 @@ USE WHEN:
 - User wants a video explainer, presentation, or content piece
 
 Requires confirmation before starting. Returns a job ID to check progress with video_status.
-Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels), square (Instagram).`,
+Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels), square (Instagram).
+
+Modes:
+- slideshow (default): static image per scene, concatenated
+- overlay: images overlaid on background video with timed visibility (requires background download first via video_background_download)`,
       parameters: {
         type: "object",
         properties: {
@@ -119,6 +123,22 @@ Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels)
           language: {
             type: "string",
             description: "Narration language (default: es for Spanish)",
+          },
+          mode: {
+            type: "string",
+            enum: ["slideshow", "overlay"],
+            description:
+              "Composition mode. slideshow (default): static images. overlay: images over background video with timed visibility.",
+          },
+          voice: {
+            type: "string",
+            description:
+              "Edge-tts voice name (e.g. es-MX-JorgeNeural). Use video_list_voices to see options.",
+          },
+          background: {
+            type: "string",
+            description:
+              "Background name for overlay mode (e.g. ocean-waves). Must be pre-downloaded via video_background_download.",
           },
         },
         required: ["topic"],
@@ -166,12 +186,19 @@ Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels)
     const duration = Math.min(120, Math.max(15, Number(args.duration) || 60));
     const template = (args.template as string) || "landscape";
     const language = (args.language as string) || "es";
+    const mode = (args.mode as string) || "slideshow";
+    const voice = args.voice as string | undefined;
+    const background = args.background as string | undefined;
     const jobId = randomUUID().slice(0, 8);
 
     createJob(jobId, topic, duration, template);
 
     // Run pipeline async (don't block the tool response)
-    runPipeline(jobId, topic, duration, template, language).catch((err) => {
+    runPipeline(jobId, topic, duration, template, language, {
+      mode: mode as "slideshow" | "overlay",
+      voice,
+      background,
+    }).catch((err) => {
       console.error(`[video] Pipeline failed for ${jobId}:`, err);
       updateJob(jobId, {
         status: "failed",
@@ -196,6 +223,11 @@ async function runPipeline(
   duration: number,
   template: string,
   language: string,
+  options?: {
+    mode?: "slideshow" | "overlay";
+    voice?: string;
+    background?: string;
+  },
 ): Promise<void> {
   const workDir = join("/tmp", "video-jobs", jobId);
   mkdirSync(workDir, { recursive: true });
@@ -206,57 +238,118 @@ async function runPipeline(
   const script = await generateScript(topic, duration, language);
   updateJob(jobId, { script_json: JSON.stringify(script) });
 
-  // Step 2: Generate assets in parallel
+  // Step 2: Generate assets
   updateJob(jobId, { status: "generating_assets" });
-  const { generateNarration } = await import("../../video/tts.js");
   const { fetchImage } = await import("../../video/images.js");
   const { generateSubtitles } = await import("../../video/subtitles.js");
 
-  const audioFile = join(workDir, "narration.mp3");
   const subtitleFile = join(workDir, "subtitles.srt");
+  const templateTyped = template as "landscape" | "portrait" | "square";
+  const mode = options?.mode ?? "slideshow";
 
-  // Full narration text
-  const fullText = script.scenes.map((s) => s.text).join(". ");
-
-  const [audioPath, , subtitlePath] = await Promise.all([
-    generateNarration(fullText, audioFile, language),
-    // Fetch images for each scene
-    Promise.all(
-      script.scenes.map((scene, i) =>
-        fetchImage(
-          scene.imageQuery,
-          join(workDir, `scene-${String(i).padStart(3, "0")}.jpg`),
-          template === "portrait" ? 1080 : 1920,
-          template === "portrait" ? 1920 : 1080,
-        ),
+  // Fetch images for each scene (shared by both modes)
+  await Promise.all(
+    script.scenes.map((scene, i) =>
+      fetchImage(
+        scene.imageQuery,
+        join(workDir, `scene-${String(i).padStart(3, "0")}.jpg`),
+        template === "portrait" ? 1080 : 1920,
+        template === "portrait" ? 1920 : 1080,
       ),
     ),
-    Promise.resolve(generateSubtitles(script, subtitleFile)),
-  ]);
-
+  );
   const imageFiles = script.scenes.map((_, i) =>
     join(workDir, `scene-${String(i).padStart(3, "0")}.jpg`),
   );
 
-  updateJob(jobId, {
-    assets_json: JSON.stringify({
-      audio: audioPath,
-      images: imageFiles,
-      subtitles: subtitlePath,
-    }),
-  });
+  generateSubtitles(script, subtitleFile);
 
-  // Step 3: Compose video
-  updateJob(jobId, { status: "composing" });
-  const { composeVideo } = await import("../../video/composer.js");
-  const outputFile = composeVideo({
-    jobId,
-    script,
-    imageFiles,
-    audioFile: audioPath,
-    subtitleFile: subtitlePath,
-    template: template as "landscape" | "portrait" | "square",
-  });
+  let outputFile: string;
+
+  if (mode === "overlay") {
+    // V3 overlay mode: per-scene TTS + background subclip + timed overlays
+    const { generatePerSceneTTS } = await import("../../video/tts.js");
+    const { extractSubclip, getCachedMeta } =
+      await import("../../video/backgrounds.js");
+
+    // Per-scene TTS with voice selection
+    const ttsResult = await generatePerSceneTTS(script.scenes, workDir, {
+      language,
+      voice: options?.voice,
+    });
+
+    // Extract background subclip matching total TTS duration
+    const bgName = options?.background ?? "ocean-waves";
+    const bgMeta = getCachedMeta(bgName);
+    if (!bgMeta) {
+      throw new Error(
+        `Background "${bgName}" not cached. Run video_background_download first.`,
+      );
+    }
+    const bgSubclip = join(workDir, "bg-subclip.mp4");
+    const subclipResult = extractSubclip(
+      bgName,
+      ttsResult.totalDuration,
+      bgSubclip,
+    );
+    if (!subclipResult) {
+      throw new Error(
+        `Failed to extract subclip from "${bgName}". Video may be too short.`,
+      );
+    }
+
+    updateJob(jobId, {
+      assets_json: JSON.stringify({
+        audio: ttsResult.files,
+        images: imageFiles,
+        subtitles: subtitleFile,
+        background: bgSubclip,
+        durations: ttsResult.durations,
+      }),
+    });
+
+    // Compose with overlay engine
+    updateJob(jobId, { status: "composing" });
+    const { composeOverlayVideo } = await import("../../video/composer.js");
+    outputFile = composeOverlayVideo({
+      jobId,
+      backgroundVideo: bgSubclip,
+      imageFiles,
+      audioFiles: ttsResult.files,
+      durations: ttsResult.durations,
+      template: templateTyped,
+    });
+  } else {
+    // Slideshow mode (original, backward-compatible)
+    const { generateNarration } = await import("../../video/tts.js");
+    const audioFile = join(workDir, "narration.mp3");
+    const fullText = script.scenes.map((s) => s.text).join(". ");
+    const audioPath = await generateNarration(
+      fullText,
+      audioFile,
+      language,
+      options?.voice,
+    );
+
+    updateJob(jobId, {
+      assets_json: JSON.stringify({
+        audio: audioPath,
+        images: imageFiles,
+        subtitles: subtitleFile,
+      }),
+    });
+
+    updateJob(jobId, { status: "composing" });
+    const { composeVideo } = await import("../../video/composer.js");
+    outputFile = composeVideo({
+      jobId,
+      script,
+      imageFiles,
+      audioFile: audioPath,
+      subtitleFile,
+      template: templateTyped,
+    });
+  }
 
   updateJob(jobId, {
     status: "completed",
@@ -264,7 +357,7 @@ async function runPipeline(
     completed_at: new Date().toISOString(),
   });
 
-  console.log(`[video] Job ${jobId} completed: ${outputFile}`);
+  console.log(`[video] Job ${jobId} completed (${mode}): ${outputFile}`);
 }
 
 // ---------------------------------------------------------------------------

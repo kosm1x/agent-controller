@@ -27,6 +27,96 @@ function isQuestion(text: string): boolean {
   return QUESTION_RE.test(text.trim()) || text.trim().endsWith("?");
 }
 
+/** Stop words filtered from topic slugs (ES + EN). */
+const STOP_WORDS = new Set([
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "de",
+  "del",
+  "en",
+  "con",
+  "por",
+  "para",
+  "que",
+  "qué",
+  "como",
+  "cómo",
+  "es",
+  "son",
+  "está",
+  "este",
+  "esta",
+  "the",
+  "a",
+  "an",
+  "of",
+  "in",
+  "to",
+  "for",
+  "and",
+  "is",
+  "are",
+  "was",
+  "me",
+  "mi",
+  "te",
+  "se",
+  "lo",
+  "le",
+  "nos",
+  "les",
+  "yo",
+  "tu",
+  "su",
+  "my",
+  "your",
+  "his",
+  "her",
+  "its",
+  "our",
+  "their",
+  "this",
+  "that",
+  "do",
+  "does",
+  "did",
+  "will",
+  "can",
+  "could",
+  "should",
+  "would",
+  "hay",
+  "no",
+  "si",
+  "sí",
+  "ya",
+  "más",
+  "muy",
+  "pero",
+  "o",
+  "y",
+]);
+
+/**
+ * Derive a filesystem-safe topic slug from user text (v6.2 S4).
+ * Extracts first 3 significant words, lowercased, hyphenated.
+ * Falls back to "misc" if no meaningful words found.
+ */
+export function deriveTopicSlug(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-záéíóúüñ0-9\s]/gi, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w))
+    .slice(0, 3);
+
+  return words.length > 0 ? words.join("-") : "misc";
+}
+
 function hasPlaywrightTool(toolCalls: string[]): boolean {
   return toolCalls.some(
     (t) => t.startsWith("playwright__") || t.startsWith("browser_"),
@@ -93,11 +183,11 @@ export async function autoPersistConversation(
     source: "auto-persist",
   });
 
-  // Also persist to jarvis_files for structured retrieval
+  // Also persist to jarvis_files with meaningful topic-based paths (v6.2 S4)
   try {
     const date = new Date().toISOString().slice(0, 10);
-    const shortId = taskId.slice(0, 8);
-    const path = `logs/sessions/${date}-${shortId}.md`;
+    const topicSlug = deriveTopicSlug(userText);
+    const path = `workspace/${topicSlug}-${date}.md`;
     upsertFile(
       path,
       userText.slice(0, 60),

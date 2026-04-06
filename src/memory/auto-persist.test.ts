@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { shouldAutoPersist } from "./auto-persist.js";
+import { shouldAutoPersist, deriveTopicSlug } from "./auto-persist.js";
 import type { AutoPersistInput } from "./auto-persist.js";
 
 afterEach(() => {
@@ -106,5 +106,41 @@ describe("shouldAutoPersist", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("deriveTopicSlug (v6.2 S4)", () => {
+  it("extracts first 3 significant words", () => {
+    // "dame" is not a stop word, "un" is too short, "resumen" "del" filtered, "pipeline" kept
+    expect(deriveTopicSlug("Dame un resumen del pipeline de ventas")).toBe(
+      "dame-resumen-pipeline",
+    );
+  });
+
+  it("filters stop words", () => {
+    expect(deriveTopicSlug("Cómo es el sistema de scope?")).toBe(
+      "sistema-scope",
+    );
+  });
+
+  it("returns 'misc' for empty/stop-word-only input", () => {
+    expect(deriveTopicSlug("")).toBe("misc");
+    expect(deriveTopicSlug("el la los")).toBe("misc");
+  });
+
+  it("handles English text", () => {
+    expect(deriveTopicSlug("Show me the dashboard for revenue")).toBe(
+      "show-dashboard-revenue",
+    );
+  });
+
+  it("strips special characters", () => {
+    // "qué" is stop word, "hay" is 3 chars (filtered by >2), "el" is stop
+    // → "misc" because no significant words remain
+    expect(deriveTopicSlug("¿Qué hay en el KB?")).toBe("misc");
+  });
+
+  it("lowercases output", () => {
+    expect(deriveTopicSlug("ANÁLISIS del PIPELINE")).toBe("análisis-pipeline");
   });
 });

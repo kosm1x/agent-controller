@@ -19,7 +19,7 @@
 | S1      | Smart Provider Routing — **DONE** | Health classification (healthy/degraded/unhealthy), baseline-derived thresholds (90s/3%/180s/10%), per-model cost tracking, auto-demotion on degradation |
 | S2      | Task Cancellation — **DONE**      | "cancela"/"detente" from Telegram. AbortController wired through dispatcher → fast-runner → inferWithTools. Cancel intent regex + cleanup + notification |
 | S3      | Per-Task Mutation Log — **DONE**  | task_mutations table, classifyMutation for 8 tool types, centralized recording in task executor, getMutationSummary. 15 new tests                        |
-| S4      | Unified FS Maturation             | Auto-persist paths, day recaps, INDEX.md regen, stale cleanup                                                                                            |
+| S4      | Unified FS Maturation — **DONE**  | Topic-slug auto-persist paths, nightly INDEX.md regen, stop-word filtering. 6 new tests                                                                  |
 | S5      | Protected Paths + Path Safety     | validatePathSafety 6-check pipeline, isDangerousRemovalPath, DANGEROUS_FILES                                                                             |
 
 ### Workstream 2: Memory Reinforcement (5 sessions)
@@ -34,12 +34,12 @@
 
 ### Workstream 3: Content Factory Foundation (3.5 sessions)
 
-| Session | Deliverable                         | Source                                                                                                                                             |
-| ------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V1      | TTS Engine Upgrade — **DONE**       | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
-| V2      | Background Media Library — **DONE** | yt-dlp download + cache, FFmpeg subclip extraction (skip 180s, random start), 5 royalty-free catalog, video_background_download tool. 6 new tests  |
-| V3      | Overlay Composition Engine          | RedditVideoMakerBot. FFmpeg between(t,x,y) timing, audio mixing, portrait-first                                                                    |
-| V3.5    | Integration + Polish                | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
+| Session | Deliverable                           | Source                                                                                                                                             |
+| ------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1      | TTS Engine Upgrade — **DONE**         | Per-scene TTS with ffprobe durations, 324-voice selection, sentence-boundary text splitting + silence concat, video_list_voices tool. 17 new tests |
+| V2      | Background Media Library — **DONE**   | yt-dlp download + cache, FFmpeg subclip extraction (skip 180s, random start), 5 royalty-free catalog, video_background_download tool. 6 new tests  |
+| V3      | Overlay Composition Engine — **DONE** | composeOverlayVideo: FFmpeg between(t,x,y) timed overlays, bg crop, audio concat+mix. video_create mode:"overlay" wired. 5 new tests               |
+| V3.5    | Integration + Polish                  | Wire V1+V2+V3. End-to-end test: topic → TTS → images → background → MP4                                                                            |
 
 ### v6.2 Week Plan
 
