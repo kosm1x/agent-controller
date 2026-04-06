@@ -210,8 +210,15 @@ class ProviderMetrics {
     const list = this.entries.get(provider);
     if (!list || list.length === 0) return null;
 
-    const latencies = list.map((e) => e.latencyMs).sort((a, b) => a - b);
-    const successes = list.filter((e) => e.success).length;
+    // Use time-windowed data (C2 audit fix: match isDegraded's window
+    // so health classification and routing decisions use the same data)
+    const cutoff = Date.now() - HEALTH_WINDOW_MS;
+    const recent = list.filter((e) => e.timestamp >= cutoff);
+    // Fall back to full list if no recent entries (show stale stats vs nothing)
+    const data = recent.length > 0 ? recent : list;
+
+    const latencies = data.map((e) => e.latencyMs).sort((a, b) => a - b);
+    const successes = data.filter((e) => e.success).length;
     const p95Idx = Math.min(
       Math.floor(latencies.length * 0.95),
       latencies.length - 1,
@@ -219,18 +226,18 @@ class ProviderMetrics {
     const avgLatencyMs = Math.round(
       latencies.reduce((a, b) => a + b, 0) / latencies.length,
     );
-    const errorRate = 1 - successes / list.length;
+    const errorRate = 1 - successes / data.length;
 
     const model = this.models.get(provider) ?? "";
-    const totalPrompt = list.reduce((s, e) => s + e.promptTokens, 0);
-    const totalCompletion = list.reduce((s, e) => s + e.completionTokens, 0);
+    const totalPrompt = data.reduce((s, e) => s + e.promptTokens, 0);
+    const totalCompletion = data.reduce((s, e) => s + e.completionTokens, 0);
 
     return {
-      count: list.length,
+      count: data.length,
       avgLatencyMs,
       p95LatencyMs: latencies[p95Idx],
-      successRate: successes / list.length,
-      health: classifyHealth(avgLatencyMs, errorRate, list.length),
+      successRate: successes / data.length,
+      health: classifyHealth(avgLatencyMs, errorRate, data.length),
       costUsd: estimateCost(model, totalPrompt, totalCompletion),
       totalTokens: totalPrompt + totalCompletion,
     };
@@ -266,9 +273,7 @@ class ProviderMetrics {
     const successes = recent.filter((e) => e.success).length;
     const errorRate = 1 - successes / recent.length;
 
-    return (
-      avgLatencyMs > LATENCY_HEALTHY_MS || errorRate > ERROR_RATE_UNHEALTHY
-    );
+    return avgLatencyMs > LATENCY_HEALTHY_MS || errorRate > ERROR_RATE_HEALTHY;
   }
 }
 

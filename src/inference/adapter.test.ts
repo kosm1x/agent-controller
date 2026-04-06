@@ -217,7 +217,8 @@ describe("ProviderMetrics", () => {
       );
     }
     const stats = providerMetrics.getStats(name);
-    expect(stats?.costUsd).toBeGreaterThan(0);
+    // 5 calls * (10K prompt/$0.80/M + 500 completion/$2.00/M) = 5 * $0.009 = $0.045
+    expect(stats?.costUsd).toBeCloseTo(0.045, 4);
     expect(stats?.totalTokens).toBe(52_500); // 5 * (10000 + 500)
   });
 
