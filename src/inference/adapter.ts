@@ -80,6 +80,8 @@ export interface InferenceRequest {
   tools?: ToolDefinition[];
   temperature?: number;
   max_tokens?: number;
+  /** Task ID for per-task failure dedup in provider metrics (v6.4 OH1.5). */
+  taskId?: string;
 }
 
 export interface InferenceResponse {
@@ -110,6 +112,8 @@ interface LatencyEntry {
   success: boolean;
   promptTokens: number;
   completionTokens: number;
+  /** Optional task ID for per-task failure dedup in isDegraded(). */
+  taskId?: string;
 }
 
 /** Provider health classification (v6.2 S1). */
@@ -279,11 +283,34 @@ class ProviderMetrics {
     const recent = list.filter((e) => e.timestamp >= cutoff);
     if (recent.length < MIN_HEALTH_SAMPLES) return false;
 
+    // v6.4 OH1.5: Per-task failure cap — a single failing task that produces
+    // 10 timeout entries shouldn't flood the degradation window. Cap failures
+    // at 2 per taskId so one bad scheduled task can't mark a provider degraded.
+    const MAX_FAILURES_PER_TASK = 2;
+    const failureCountByTask = new Map<string, number>();
+    let cappedFailures = 0;
+    let totalCapped = 0;
+    for (const e of recent) {
+      if (e.success) {
+        totalCapped++;
+        continue;
+      }
+      const key = e.taskId ?? "unknown";
+      const count = failureCountByTask.get(key) ?? 0;
+      if (count < MAX_FAILURES_PER_TASK) {
+        failureCountByTask.set(key, count + 1);
+        cappedFailures++;
+        totalCapped++;
+      }
+      // else: skip this failure — already counted 2 from this task
+    }
+
+    if (totalCapped < MIN_HEALTH_SAMPLES) return false;
+
     const avgLatencyMs = Math.round(
       recent.reduce((s, e) => s + e.latencyMs, 0) / recent.length,
     );
-    const successes = recent.filter((e) => e.success).length;
-    const errorRate = 1 - successes / recent.length;
+    const errorRate = cappedFailures / totalCapped;
 
     return (
       avgLatencyMs > LATENCY_UNHEALTHY_MS ||
@@ -662,6 +689,7 @@ export async function infer(
           success: false,
           promptTokens: 0,
           completionTokens: 0,
+          taskId: request.taskId,
         });
 
         if (status === 429 || (status >= 500 && status < 600)) {
@@ -963,6 +991,12 @@ export interface InferWithToolsOptions {
    * read-only rounds (web_search) before calling gmail_send. (v6.4 ST1)
    */
   exemptAnalysisParalysis?: boolean;
+  /**
+   * Task ID for per-task failure dedup in provider metrics.
+   * Prevents a single failing task from flooding the degradation window.
+   * (v6.4 OH1.5)
+   */
+  taskId?: string;
 }
 
 /**
@@ -1172,7 +1206,7 @@ export async function inferWithTools(
     let response: InferenceResponse;
     try {
       response = await infer(
-        { messages: conversation, tools },
+        { messages: conversation, tools, taskId: options?.taskId },
         {
           onTextChunk,
           signal,
@@ -1220,7 +1254,7 @@ export async function inferWithTools(
           `The system encountered an error continuing tool execution. Tools you called before the error: [${midToolList}]. Do NOT claim success for any action whose tool is NOT in that list. Provide your final response based ONLY on actual tool results. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what went wrong]`,
         );
         const wrapUp = await infer(
-          { messages: leanContext },
+          { messages: leanContext, taskId: options?.taskId },
           {
             onTextChunk,
             signal,
@@ -1672,7 +1706,7 @@ CRITICAL: You ONLY called these tools: [${toolInventory}]. Do NOT claim to have 
 Provide your final response based ONLY on actual tool results. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [what was incomplete]`,
     );
     const wrapUp = await infer(
-      { messages: leanContext },
+      { messages: leanContext, taskId: options?.taskId },
       { onTextChunk, signal },
     );
     totalPrompt += wrapUp.usage.prompt_tokens;

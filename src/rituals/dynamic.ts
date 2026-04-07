@@ -131,6 +131,46 @@ function markExecuted(scheduleId: string): void {
   ).run(scheduleId);
 }
 
+/**
+ * Execute a schedule immediately (v6.4 OH1.5).
+ * Called after schedule creation so the user gets instant feedback
+ * that the report works without waiting for the next cron match.
+ */
+export async function executeScheduleNow(
+  scheduleId: string,
+): Promise<string | null> {
+  const schedule = getSchedule(scheduleId);
+  if (!schedule) return null;
+
+  const now = new Date();
+  const todayLabel = now.toLocaleDateString("en-CA", {
+    timeZone: process.env.RITUALS_TIMEZONE ?? "America/Mexico_City",
+  });
+  const tools = JSON.parse(schedule.tools) as string[];
+
+  let deliveryInstructions = "";
+  if (schedule.delivery === "email" || schedule.delivery === "both") {
+    deliveryInstructions += `\n\nEnvía el resultado por email usando gmail_send a ${schedule.email_to ?? "fede@eurekamd.net"} con asunto "${schedule.email_subject ?? schedule.name} — ${todayLabel}".`;
+    if (!tools.includes("gmail_send")) tools.push("gmail_send");
+  }
+  if (schedule.delivery === "telegram" || schedule.delivery === "both") {
+    deliveryInstructions +=
+      "\n\nEl resultado será enviado automáticamente por Telegram.";
+  }
+
+  const result = await submitTask({
+    title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
+    description: `${schedule.description}${deliveryInstructions}`,
+    agentType: "fast",
+    tools,
+    tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
+  });
+
+  watchScheduledTask(result.taskId, schedule);
+  markExecuted(schedule.schedule_id);
+  return result.taskId;
+}
+
 // ---------------------------------------------------------------------------
 // Execution engine
 // ---------------------------------------------------------------------------

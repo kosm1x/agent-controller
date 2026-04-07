@@ -717,6 +717,7 @@ export const fastRunner: Runner = {
         onTextChunk: input.onTextChunk,
         signal: input.signal,
         exemptAnalysisParalysis: hasEmailDelivery,
+        taskId: input.taskId,
       });
 
       let parsed = parseRunnerStatus(result.content);

@@ -185,6 +185,70 @@ describe("ProviderMetrics", () => {
     expect(providerMetrics.isDegraded(name)).toBe(false);
   });
 
+  it("caps failures per taskId — single task with 10 failures counts as 2 (v6.4 OH1.5)", () => {
+    const name = "test_per_task_cap";
+    // 5 successes from interactive traffic
+    for (let i = 0; i < 5; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 1000,
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    // 10 failures from a single scheduled task — should be capped at 2
+    for (let i = 0; i < 10; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 32000,
+        success: false,
+        promptTokens: 0,
+        completionTokens: 0,
+        taskId: "scheduled-task-abc",
+      });
+    }
+    // Without cap: 10/15 = 67% error rate → degraded
+    // With cap: 2/(5+2) = 28.6% error rate → just over 25% threshold
+    // BUT: this is close to the boundary. Let's add one more success to make it clear.
+    providerMetrics.record(name, {
+      timestamp: Date.now(),
+      latencyMs: 1000,
+      success: true,
+      promptTokens: 100,
+      completionTokens: 50,
+    });
+    // With cap: 2/(6+2) = 25% = NOT degraded (threshold is >25%, not >=)
+    expect(providerMetrics.isDegraded(name)).toBe(false);
+  });
+
+  it("degrades when failures come from multiple tasks (not capped)", () => {
+    const name = "test_multi_task_failures";
+    // 3 successes
+    for (let i = 0; i < 3; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 1000,
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    // 4 failures from 4 different tasks (1 each, all counted)
+    for (let i = 0; i < 4; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 32000,
+        success: false,
+        promptTokens: 0,
+        completionTokens: 0,
+        taskId: `task-${i}`,
+      });
+    }
+    // 4/7 = 57% error rate → degraded
+    expect(providerMetrics.isDegraded(name)).toBe(true);
+  });
+
   it("classifies health as healthy/degraded/unhealthy", () => {
     // Healthy provider
     const healthy = "test_health_good";

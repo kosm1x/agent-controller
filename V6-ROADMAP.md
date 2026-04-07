@@ -303,11 +303,11 @@ Reordered after v6.3.2 learnings: reliability before intelligence. PE1.5 (BRAID 
 
 ### Workstream 7: Operational Hardening — Ship First (3 sessions)
 
-| Session | Deliverable                                    | What                                                                                                                                                                                                        |
-| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| OH2     | Hallucination Guard Precision + Deferral Tests | Remove status data-label false positive, expand diagnostic exemptions. 8 deferred expansion tests. 25 scope regression tests. **1618 tests.**                                                               | **Done** |
-| ST1     | Scheduled Task Resilience                      | Delivery retry on delivery miss (auto re-execute once). analysis_paralysis exemption for email-delivery tasks. Kimi containment: restrict to tools=0 wrap-up only. Per-task cap on provider failure records |
-| OH1.5   | Execute-Then-Schedule + Provider Routing v2    | Immediate execution on schedule creation. Prevent LLM auto-invoking expensive skills. Provider metrics namespaces (scheduled vs interactive) or per-task failure cap                                        |
+| Session | Deliverable                                    | What                                                                                                                                                             |
+| ------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| OH2     | Hallucination Guard Precision + Deferral Tests | Remove status data-label false positive, expand diagnostic exemptions. 8 deferred expansion tests. 25 scope regression tests. **1618 tests.**                    | **Done** |
+| ST1     | Scheduled Task Resilience                      | Auto-retry on delivery miss (1 attempt). analysis_paralysis exemption for gmail_send tasks. Kimi tools stripped in callProvider().                               | **Done** |
+| OH1.5   | Execute-Then-Schedule + Provider Routing v2    | Immediate execution on schedule_task creation. Per-task failure cap (max 2 per taskId) in isDegraded(). taskId threaded through inference chain. **1620 tests.** | **Done** |
 
 ### Workstream 8: Prompt Enhancer v2 (1 session)
 

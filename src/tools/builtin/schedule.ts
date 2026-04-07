@@ -8,6 +8,7 @@ import {
   createSchedule,
   listSchedules,
   deleteSchedule,
+  executeScheduleNow,
   type ScheduledTaskRow,
 } from "../../rituals/dynamic.js";
 import { toMexTime } from "../../lib/timezone.js";
@@ -127,13 +128,22 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
         emailSubject,
       });
 
+      // v6.4 OH1.5: Execute immediately so the user gets instant feedback
+      // that the schedule works. Runs asynchronously — doesn't block the
+      // tool response. Errors are logged, not propagated.
+      executeScheduleNow(scheduleId).catch((err) => {
+        console.error(
+          `[schedule_task] Immediate execution failed: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+
       return JSON.stringify({
         success: true,
         schedule_id: scheduleId,
         name,
         cron: cronExpr,
         delivery,
-        message: `Schedule "${name}" created. It will run on cron "${cronExpr}" (Mexico City time) and deliver via ${delivery}.`,
+        message: `Schedule "${name}" created and executing now. It will also run on cron "${cronExpr}" (Mexico City time) and deliver via ${delivery}.`,
       });
     } catch (err) {
       return JSON.stringify({
