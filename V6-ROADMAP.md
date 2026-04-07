@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-07 — **v6.0 DONE, v6.1 DONE, v6.2 DONE, v6.3 7/8, v6.3.1 DONE. Next: D3+D4 (OAuth), then v6.4.**
+> Last updated: 2026-04-07 — **v6.0 DONE, v6.1 DONE, v6.2 DONE, v6.3 7/8, v6.3.1 DONE, v6.3.2 DONE. Next: v6.4 (OH2 first), then D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -12,16 +12,17 @@
 
 ## Execution Tiers
 
-| Tier               | Sessions                  | Priority              | Rationale                                                 |
-| ------------------ | ------------------------- | --------------------- | --------------------------------------------------------- |
-| 0 — Self-Improving | v6.0 S1–S8                | Ship first            | Jarvis codes, tests, deploys, improves himself            |
-| 1 — Safeguards     | SG1–SG5                   | Before activation     | Mechanical safety before autonomous improvement goes live |
-| 2 — Background     | v6.1 agents + checkpoints | User-visible value    | Parallel execution lanes the user controls                |
-| 3 — Coherence      | 10 OpenClaude patterns    | Behavioral foundation | Prevents drift, improves long-session reliability         |
-| 4 — Foundation     | v6.2 (14 sessions)        | Reliability           | Never go silent, remember everything, produce video       |
-| 5 — Distribution   | v6.3 (8 sessions)         | Content pipeline      | Source to published post, writing quality, dashboards     |
-| 6 — Optimization   | v6.3.1                    | Performance           | 52% prompt token reduction, fast-path hardening           |
-| 7 — Intelligence   | v6.4 (6.5 sessions)       | Smarter prompting     | BRAID, memory maturation, autoresearch                    |
+| Tier               | Sessions                  | Priority              | Rationale                                                  |
+| ------------------ | ------------------------- | --------------------- | ---------------------------------------------------------- |
+| 0 — Self-Improving | v6.0 S1–S8                | Ship first            | Jarvis codes, tests, deploys, improves himself             |
+| 1 — Safeguards     | SG1–SG5                   | Before activation     | Mechanical safety before autonomous improvement goes live  |
+| 2 — Background     | v6.1 agents + checkpoints | User-visible value    | Parallel execution lanes the user controls                 |
+| 3 — Coherence      | 10 OpenClaude patterns    | Behavioral foundation | Prevents drift, improves long-session reliability          |
+| 4 — Foundation     | v6.2 (14 sessions)        | Reliability           | Never go silent, remember everything, produce video        |
+| 5 — Distribution   | v6.3 (8 sessions)         | Content pipeline      | Source to published post, writing quality, dashboards      |
+| 6 — Optimization   | v6.3.1                    | Performance           | 52% prompt token reduction, fast-path hardening            |
+| 6.5 — Resilience   | v6.3.2                    | Report delivery       | Deferral bypass for small tool sets, degradation isolation |
+| 7 — Intelligence   | v6.4 (8 sessions)         | Reliability + smarts  | OH2 first, then CIRICD, memory maturation, autoresearch    |
 
 ---
 
@@ -278,52 +279,78 @@ Key bug fixes:
 
 ---
 
+## v6.3.2 — Scheduled Report Resilience — **Done**
+
+Single session. Fixed compounding failures causing daily report delivery misses (Mercados & Biotecnología, Pharma & Cáncer).
+
+| Change                          | Before                                 | After                                        |
+| ------------------------------- | -------------------------------------- | -------------------------------------------- |
+| gmail_send deferral             | Deferred (extra round + timeout risk)  | **Non-deferred** (critical delivery tool)    |
+| Deferral for small tool sets    | Always applied (even 2-3 tools)        | **Skipped when ≤6 tools** (scheduled/ritual) |
+| Provider degradation window     | 10 min / 3% error → skip               | **3 min / 25% error** (routing decisions)    |
+| Provider degradation latency    | >90s avg → skip                        | **>180s avg** → skip (matches unhealthy)     |
+| Dashboard health classification | Unchanged (10 min / 3% for visibility) | Unchanged                                    |
+
+Root cause chain: gmail_send deferred → extra round after 8K context → timeout → provider cascade → all 3 fail → degradation persists 10 min → interactive traffic affected.
+
+---
+
 ## v6.4 — Intelligence Layer — **Planned**
 
 **Theme**: Jarvis gets smarter at prompting, self-improving, orchestrating, and managing its own complexity.
 
-### Workstream 7: Prompt Enhancer v2 + BRAID (2 sessions)
+Reordered after v6.3.2 learnings: reliability before intelligence. PE1.5 (BRAID Solver/APE/STaR) dropped — Mermaid scaffolds + variant scoring are academic overhead for a system where the enhancer already PASses 80% of messages correctly. OH1 reframed — Jarvis has no qa-auditor agent; QA is distributed across 5 layers (inference guards, hallucination detection, Prometheus reflector, outcome tracker, overnight tuning). "3 parallel review agents" was a Claude Code pattern that doesn't map here. Replaced with fast-runner post-task quality pipeline.
 
-BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). Two-stage Generator-Solver maps to prompt enhancer → fast runner.
+### Workstream 7: Operational Hardening — Ship First (3 sessions)
 
-| Session | Deliverable                               | What                                                                                                                            |
-| ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| PE1     | CIRICD-Aware Gatekeeper + BRAID Generator | Detect missing CIRICD components, ask targeted questions. Generate Mermaid reasoning scaffolds. Expensive model once per SOP    |
-| PE1.5   | BRAID Solver Integration + APE Loop       | Fast runner uses Mermaid scaffolds as system guidance (cheap model). APE-style variant scoring on 73+ seeds. STaR bootstrapping |
+| Session | Deliverable                                    | What                                                                                                                                                                                                        |
+| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OH2     | Hallucination Guard Precision + Deferral Tests | Fix write-claim false positive (LLM text before write calls ≠ hallucination). Test coverage for deferred tool expansion path. Scope pattern regression test suite (20+ cases from v6.3.1 scope bugs)        |
+| ST1     | Scheduled Task Resilience                      | Delivery retry on delivery miss (auto re-execute once). analysis_paralysis exemption for email-delivery tasks. Kimi containment: restrict to tools=0 wrap-up only. Per-task cap on provider failure records |
+| OH1.5   | Execute-Then-Schedule + Provider Routing v2    | Immediate execution on schedule creation. Prevent LLM auto-invoking expensive skills. Provider metrics namespaces (scheduled vs interactive) or per-task failure cap                                        |
 
-### Workstream 8: Memory Maturation (1.5 sessions)
+### Workstream 8: Prompt Enhancer v2 (1 session)
+
+PE1 validated against Jarvis's enhancer architecture: CIRICD dimensions already exist implicitly (clarity gates, ERROR GRAVE risk detection, batch decomposition, context from last 4 turns). This session formalizes them as explicit scoring dimensions in the analyzer prompt.
+
+| Session | Deliverable             | What                                                                                                                                                               |
+| ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| PE1     | CIRICD-Aware Gatekeeper | Explicit CIRICD scoring in analyzePrompt(): Clarity (0-10), Intent (extract), Risk (high/low), Context (verify), Impact (count items), Decompose (split threshold) |
+
+### Workstream 9: Memory Maturation (1.5 sessions)
 
 | Session | Deliverable                         | What                                                                  |
 | ------- | ----------------------------------- | --------------------------------------------------------------------- |
 | G1      | Cascading Staleness Propagation     | Track source_observation_ids, flag related entries stale on supersede |
 | G1.5    | Query Expansion + Session Diversity | LLM generates 3-5 reformulations, cap results per session             |
 
-### Workstream 9: Autoresearch + Skill Refinement (1.5 sessions)
+### Workstream 10: Autoresearch + Skill Refinement (1.5 sessions)
 
 | Session | Deliverable                            | What                                                                            |
 | ------- | -------------------------------------- | ------------------------------------------------------------------------------- |
 | A1      | Anti-Overfitting + Simplicity Criteria | "Would this still be worthwhile if the task disappeared?" + simpler code = keep |
 | SK1     | Batch Orchestration Skill              | `/batch`: plan-approve-execute-track cycle for large multi-tool tasks           |
 
-### Workstream 10: Operational Hardening (2.5 sessions)
+### Workstream 11: Fast-Runner Quality Pipeline (1 session)
 
-| Session | Deliverable                                         | What                                                                                                                                                                                         |
-| ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OH1     | Decomposed QA Review                                | 3 parallel review agents (reuse, quality, efficiency) instead of single qa-auditor                                                                                                           |
-| OH1.5   | Loop Execute-Then-Schedule + disableModelInvocation | Immediate execution on schedule + prevent LLM auto-invoking expensive skills                                                                                                                 |
-| OH2     | Hallucination Guard Precision + Deferral Tests      | Fix write-claim false positive (LLM text before write calls ≠ hallucination). Add test coverage for deferred tool expansion path (S1 from v6.3.1 audit). Scope pattern regression test suite |
+Replaces OH1 (decomposed QA). Jarvis's fast-runner handles 90%+ of tasks but has no post-execution quality validation beyond hallucination detection. The Prometheus reflector only runs on heavy-runner tasks.
+
+| Session | Deliverable             | What                                                                                                                                                                                                            |
+| ------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| QP1     | Post-Task Quality Check | Lightweight post-completion scan: delivery miss detection (email tasks without gmail_send), tool coverage gaps (required tools not called), hallucination residue (claims not backed by tool results). 10 tests |
 
 ### v6.4 Success Criteria
 
-- [ ] Prompt enhancer detects missing CIRICD components, asks targeted questions
-- [ ] BRAID Mermaid scaffolds generated for 3+ complex workflows
-- [ ] Fast runner uses Mermaid scaffolds — PPD >5x vs CoT baseline
-- [ ] Self-tuning seed set expanded 73 → 100+
-- [ ] Superseded KB entries cascade staleness to related entries
-- [ ] `/batch` decomposes large tasks into parallel isolated units
-- [ ] QA review runs 3 specialized agents in parallel
 - [ ] Hallucination guard no longer fires on write-claim-before-write-call pattern
 - [ ] Deferred tool expansion path has full test coverage
+- [ ] Scope pattern regression test suite covers 20+ historical bugs
+- [ ] Scheduled tasks auto-retry once on delivery miss
+- [ ] Kimi restricted to tools=0 wrap-up (no tool schemas sent)
+- [ ] Prompt enhancer scores CIRICD dimensions explicitly, asks targeted questions
+- [ ] Superseded KB entries cascade staleness to related entries
+- [ ] `/batch` decomposes large tasks into parallel isolated units
+- [ ] Fast-runner delivery miss detected and flagged within 30s of task completion
+- [ ] Self-tuning seed set expanded 73 → 100+
 
 ---
 
@@ -343,16 +370,18 @@ BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). 
 
 ## Deliberately Skipped
 
-| Pattern                         | Source                     | Why                                |
-| ------------------------------- | -------------------------- | ---------------------------------- |
-| Remotion composition engine     | OpenMontage                | FFmpeg sufficient for overlay mode |
-| AI video generation (Kling/Veo) | OpenMontage                | $3-10/video, not until monetized   |
-| P2P memory sync                 | agentmemory                | Single-instance Jarvis             |
-| Anton full integration          | Anton (MindsDB)            | CLI-only, AGPL, Python sidecar     |
-| ICL few-shot selection          | prompt-in-context-learning | Requires labeled eval sets         |
-| Multi-VPS management            | Hostinger API              | Single VPS for now                 |
-| Self-modifying core infra       | —                          | Too risky for autonomous changes   |
-| Embedding-based scoping         | —                          | Regex 92%+ accuracy, deferred      |
+| Pattern                         | Source                     | Why                                                                        |
+| ------------------------------- | -------------------------- | -------------------------------------------------------------------------- |
+| Remotion composition engine     | OpenMontage                | FFmpeg sufficient for overlay mode                                         |
+| AI video generation (Kling/Veo) | OpenMontage                | $3-10/video, not until monetized                                           |
+| P2P memory sync                 | agentmemory                | Single-instance Jarvis                                                     |
+| Anton full integration          | Anton (MindsDB)            | CLI-only, AGPL, Python sidecar                                             |
+| ICL few-shot selection          | prompt-in-context-learning | Requires labeled eval sets                                                 |
+| Multi-VPS management            | Hostinger API              | Single VPS for now                                                         |
+| Self-modifying core infra       | —                          | Too risky for autonomous changes                                           |
+| Embedding-based scoping         | —                          | Regex 92%+ accuracy, deferred                                              |
+| BRAID Solver + APE Loop (PE1.5) | arxiv 2512.15959           | Enhancer already PASses 80%; Mermaid scaffolds + STaR = academic overhead  |
+| Decomposed QA (3 agents)        | Claude Code qa-auditor     | Jarvis has no qa-auditor; QA is 5 distributed layers, not 1 agent to split |
 
 ---
 
@@ -370,12 +399,12 @@ BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). 
 
 ## Metrics
 
-| Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.3.1 (current)   |
+| Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.3.2 (current)   |
 | ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1577               |
+| Tests                   | 1228       | 1377      | 1576 | 1579               |
 | Source files            | 214        | 228       | 232  | 232                |
 | Test files              | 85         | 105       | 120  | 120                |
-| Tools                   | 150        | 163       | 169  | 169 (109 deferred) |
+| Tools                   | 150        | 163       | 169  | 169 (108 deferred) |
 | Safeguards              | 0          | 5         | 5    | 5                  |
 | Behavioral patterns     | 0          | 10        | 10   | 10                 |
 | Background agents (max) | 0          | 3         | 3    | 3                  |
@@ -392,12 +421,13 @@ BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). 
 | Version   | Theme                  | Sessions | Status       |
 | --------- | ---------------------- | -------- | ------------ |
 | v6.0      | Self-improving Jarvis  | 8        | **Done**     |
-| SG1–SG5   | Safeguards             | 1        | **Done**     |
+| SG1-SG5   | Safeguards             | 1        | **Done**     |
 | v6.1      | Background agents      | 3        | **Done**     |
 | Coherence | 10 OpenClaude patterns | 2        | **Done**     |
 | Hardening | Pre-v6.2               | 1        | **Done**     |
 | v6.2      | Reliable foundation    | 14       | **Done**     |
 | v6.3      | Content distribution   | 8        | **7/8 done** |
 | v6.3.1    | Context optimization   | 1        | **Done**     |
-| v6.4      | Intelligence layer     | 6.5      | **Planned**  |
-| **Total** |                        | **44.5** |              |
+| v6.3.2    | Scheduled report fix   | 1        | **Done**     |
+| v6.4      | Intelligence layer     | 8        | **Planned**  |
+| **Total** |                        | **47**   |              |
