@@ -101,6 +101,7 @@ import {
   RESEARCH_TOOLS,
 } from "./scope.js";
 import { classifyScopeGroups } from "./scope-classifier.js";
+import { normalizeForMatching, wasNormalized } from "./normalize.js";
 
 import {
   recordScopeDecision,
@@ -1160,8 +1161,6 @@ export class MessageRouter {
     }
 
     // v6.4 CL1.5: Normalize input for better matching (typo correction)
-    const { normalizeForMatching, wasNormalized } =
-      await import("./normalize.js");
     const normalizedText = normalizeForMatching(msg.text);
     if (wasNormalized(msg.text, normalizedText)) {
       console.log(
@@ -1180,9 +1179,10 @@ export class MessageRouter {
       recentContext || undefined,
     );
 
-    // Dynamic tool scoping — uses semantic groups if available, regex fallback
+    // Dynamic tool scoping — uses semantic groups if available, regex fallback.
+    // Pass normalizedText so regex fallback benefits from typo corrections.
     const { tools, activeGroups } = scopeToolsForMessage(
-      msg.text,
+      normalizedText,
       conversationHistory,
       semanticGroups,
     );

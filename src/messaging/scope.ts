@@ -349,7 +349,8 @@ export function scopeToolsForMessage(
   // This bypasses the regex matching entirely — the LLM already understood intent.
   // Regex is only used when the classifier is unavailable (timeout, parse failure).
   let activeGroups: Set<string>;
-  if (preClassifiedGroups && preClassifiedGroups.size >= 0) {
+  // Empty set = classifier said "no groups needed" (greetings). Null/undefined = fallback.
+  if (preClassifiedGroups !== undefined && preClassifiedGroups !== null) {
     activeGroups = preClassifiedGroups;
   } else {
     activeGroups = new Set<string>();
