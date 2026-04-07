@@ -696,6 +696,32 @@ export class MessageRouter {
       return;
     }
 
+    // Context clear: "limpia tu contexto", "clear context", "contexto limpio"
+    // Mechanical: purges in-memory thread buffer + strips poisoned DB entries.
+    // If the message continues after the phrase, process the rest as a fresh task.
+    const CONTEXT_CLEAR_RE =
+      /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
+    if (CONTEXT_CLEAR_RE.test(msg.text)) {
+      conversationThreads.delete(msg.channel);
+      hydratedChannels.delete(msg.channel);
+      console.log(
+        `[router] Context cleared for ${msg.channel} (thread buffer purged)`,
+      );
+      // If there's more text after the clear phrase, process it as a fresh message
+      const remainder = msg.text.replace(CONTEXT_CLEAR_RE, "").trim();
+      if (remainder.length > 0) {
+        msg.text = remainder;
+        // Fall through to process the remainder with a clean thread
+      } else {
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          "Contexto limpio. ¿En qué te ayudo?",
+        );
+        return;
+      }
+    }
+
     // Background agents: "lanza un agente", "investiga en background"
     const BACKGROUND_AGENT_RE =
       /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
