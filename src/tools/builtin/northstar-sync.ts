@@ -250,6 +250,9 @@ Requires COMMIT_DB_KEY env var.`,
             );
             const newNotes = extractField(existing.content, "Notes");
 
+            const newTarget = extractField(existing.content, "Target");
+            const newDue = extractField(existing.content, "Due");
+
             const updates: Record<string, unknown> = {
               updated_at: new Date().toISOString(),
             };
@@ -260,6 +263,9 @@ Requires COMMIT_DB_KEY env var.`,
             if (newDescription && newDescription !== item.description)
               updates.description = newDescription;
             if (newNotes && newNotes !== item.notes) updates.notes = newNotes;
+            if (newTarget && newTarget !== item.target_date)
+              updates.target_date = newTarget;
+            if (newDue && newDue !== item.due_date) updates.due_date = newDue;
 
             if (Object.keys(updates).length > 1) {
               const ok = await patchItem(table, item.id, updates, apiKey);
