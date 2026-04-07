@@ -86,10 +86,14 @@ export async function enrichContext(
     );
   }
 
-  // v6.2 M0.5: pgvector semantic search — run IN PARALLEL with Hindsight
-  // recalls to avoid sequential 3-5s penalty (embed generation + HTTP search).
-  // 2s timeout prevents blocking the pipeline if Supabase/Gemini are slow.
+  // v6.2 M0.5 + v6.4 G1.5: pgvector semantic search with query expansion.
+  // Runs IN PARALLEL with Hindsight recalls. 2s timeout per search.
+  //
+  // G1.5 query expansion: generate 3 reformulations of the user message
+  // via cheap LLM call, then run them as additional pgvector searches.
+  // Merge results by path dedup + session diversity cap (max 2 per source_task_id).
   const PGVECTOR_TIMEOUT_MS = 2000;
+  const MAX_RESULTS_PER_SOURCE = 2; // Session diversity cap (v6.4 G1.5)
   let pgTimedOut = false;
   recallPromises.push(
     Promise.race([
@@ -102,27 +106,65 @@ export async function enrichContext(
 
           if (!isPgvectorEnabled()) return;
 
-          const queryEmbedding = await generateEmbedding(messageText);
-          if (!queryEmbedding || queryEmbedding.length === 0) return;
+          // Build query variants: original + up to 3 expansions
+          const queries = [messageText];
+          try {
+            const expansions = await expandQuery(messageText);
+            queries.push(...expansions);
+          } catch {
+            // Non-fatal — fall back to original query only
+          }
 
-          const results = await pgHybridSearch(
-            queryEmbedding,
-            messageText,
-            5,
-            0.25,
+          // Run all queries in parallel, collect unique results by path
+          const seenPaths = new Set<string>();
+          const sourceCount = new Map<string, number>();
+          const allResults: Array<{
+            combined_score: number;
+            title: string;
+            content: string;
+            path: string;
+            stale: boolean;
+          }> = [];
+
+          await Promise.all(
+            queries.map(async (q) => {
+              const qEmbedding = await generateEmbedding(q);
+              if (!qEmbedding || qEmbedding.length === 0) return;
+              const results = await pgHybridSearch(qEmbedding, q, 3, 0.25);
+              for (const r of results) {
+                if (seenPaths.has(r.path)) continue;
+                // Session diversity: cap per source_task_id
+                const sourceKey =
+                  (r as { source_task_id?: string }).source_task_id ??
+                  "unknown";
+                const count = sourceCount.get(sourceKey) ?? 0;
+                if (count >= MAX_RESULTS_PER_SOURCE) continue;
+                sourceCount.set(sourceKey, count + 1);
+                seenPaths.add(r.path);
+                allResults.push(r);
+                pgRecordAccess(r.path).catch(() => {});
+              }
+            }),
           );
+
           // Guard: don't mutate sections after timeout (race condition C1)
           if (pgTimedOut) return;
-          if (results.length > 0) {
+
+          // Sort by score, take top 5
+          allResults.sort((a, b) => b.combined_score - a.combined_score);
+          const topResults = allResults.slice(0, 5);
+
+          if (topResults.length > 0) {
             const lines: string[] = [];
-            for (const r of results) {
+            for (const r of topResults) {
               let line = `- [${r.combined_score.toFixed(2)}] **${r.title}**: ${r.content.slice(0, 200)}`;
               if (r.stale) line += " ⚠ STALE";
               lines.push(line);
-              pgRecordAccess(r.path).catch(() => {});
             }
+            const expandNote =
+              queries.length > 1 ? ` (${queries.length} query variants)` : "";
             sections.push(
-              `## Contexto semántico (pgvector)\n${lines.join("\n")}`,
+              `## Contexto semántico (pgvector${expandNote})\n${lines.join("\n")}`,
             );
           }
         } catch {
@@ -203,6 +245,60 @@ export async function enrichContext(
     matchedSkillIds,
     confidence,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Query expansion (v6.4 G1.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate 3 reformulations of a user message for diverse KB recall.
+ * Uses a cheap, fast LLM call (5s timeout). Returns empty array on failure.
+ *
+ * Example: "Qué tareas tengo pendientes?" →
+ *   ["lista de pendientes y prioridades",
+ *    "NorthStar tasks not started",
+ *    "objetivos sin completar"]
+ */
+export async function expandQuery(messageText: string): Promise<string[]> {
+  // Skip expansion for very short or very long messages
+  if (messageText.length < 15 || messageText.length > 500) return [];
+
+  try {
+    const { infer } = await import("../inference/adapter.js");
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("expand timeout")), 5_000),
+    );
+    const result = await Promise.race([
+      infer({
+        messages: [
+          {
+            role: "system",
+            content:
+              "Generate exactly 3 short search queries (one per line) that rephrase the user's message for knowledge base search. Different angles: synonyms, English/Spanish flip, abstract/concrete. No numbering, no explanation, just 3 lines.",
+          },
+          { role: "user", content: messageText },
+        ],
+        max_tokens: 100,
+      }),
+      deadline,
+    ]);
+
+    const lines = (result.content ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 5 && l.length < 200)
+      .slice(0, 3);
+
+    if (lines.length > 0) {
+      console.log(
+        `[enrichment] Query expansion: ${lines.length} variants generated`,
+      );
+    }
+    return lines;
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------

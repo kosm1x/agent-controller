@@ -5,7 +5,11 @@
     "input": {
       "message": "Busca cuánto cuesta un vuelo a Madrid la próxima semana"
     },
-    "expected": { "tools": ["web_search"] },
+    "expected": {
+      "tools": [
+        "web_search"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -15,7 +19,11 @@
     "input": {
       "message": "What's the latest news about AI regulation in the EU?"
     },
-    "expected": { "tools": ["web_search"] },
+    "expected": {
+      "tools": [
+        "web_search"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -25,7 +33,11 @@
     "input": {
       "message": "Lee este artículo y dame un resumen: https://example.com/article"
     },
-    "expected": { "tools": ["web_read"] },
+    "expected": {
+      "tools": [
+        "web_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -35,15 +47,25 @@
     "input": {
       "message": "Mándame un email a juan@empresa.com con el resumen del proyecto"
     },
-    "expected": { "tools": ["gmail_send"] },
+    "expected": {
+      "tools": [
+        "gmail_send"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-calendar-01",
     "category": "tool_selection",
-    "input": { "message": "Qué tengo en mi agenda para mañana?" },
-    "expected": { "tools": ["calendar_list"] },
+    "input": {
+      "message": "Qué tengo en mi agenda para mañana?"
+    },
+    "expected": {
+      "tools": [
+        "calendar_list"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -53,25 +75,41 @@
     "input": {
       "message": "Crea una tarea para revisar el contrato de Televisa"
     },
-    "expected": { "tools": ["jarvis_file_write"] },
+    "expected": {
+      "tools": [
+        "jarvis_file_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-northstar-list-01",
     "category": "tool_selection",
-    "input": { "message": "Qué tareas pendientes tengo?" },
-    "expected": { "tools": ["jarvis_file_read"] },
+    "input": {
+      "message": "Qué tareas pendientes tengo?"
+    },
+    "expected": {
+      "tools": [
+        "jarvis_file_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-northstar-no-create-01",
     "category": "tool_selection",
-    "input": { "message": "Investiga cuánto cuesta un dominio .ai" },
+    "input": {
+      "message": "Investiga cuánto cuesta un dominio .ai"
+    },
     "expected": {
-      "tools": ["web_search"],
-      "not_tools": ["jarvis_file_write"]
+      "tools": [
+        "web_search"
+      ],
+      "not_tools": [
+        "jarvis_file_write"
+      ]
     },
     "weight": 1.5,
     "source": "manual"
@@ -79,8 +117,14 @@
   {
     "case_id": "ts-user-fact-01",
     "category": "tool_selection",
-    "input": { "message": "Mi cumpleaños es el 15 de octubre" },
-    "expected": { "tools": ["user_fact_set"] },
+    "input": {
+      "message": "Mi cumpleaños es el 15 de octubre"
+    },
+    "expected": {
+      "tools": [
+        "user_fact_set"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -90,17 +134,28 @@
     "input": {
       "message": "Publica un nuevo artículo en el blog sobre tendencias 2026"
     },
-    "expected": { "tools": ["wp_publish"] },
+    "expected": {
+      "tools": [
+        "wp_publish"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-wp-status-01",
     "category": "tool_selection",
-    "input": { "message": "Cambia a borrador el post más reciente del blog" },
+    "input": {
+      "message": "Cambia a borrador el post más reciente del blog"
+    },
     "expected": {
-      "tools": ["wp_list_posts", "wp_publish"],
-      "not_tools": ["wp_read_post"]
+      "tools": [
+        "wp_list_posts",
+        "wp_publish"
+      ],
+      "not_tools": [
+        "wp_read_post"
+      ]
     },
     "weight": 1.5,
     "source": "manual"
@@ -111,15 +166,25 @@
     "input": {
       "message": "Revisa cuánto espacio en disco queda en el servidor"
     },
-    "expected": { "tools": ["shell_exec"] },
+    "expected": {
+      "tools": [
+        "shell_exec"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-file-read-01",
     "category": "tool_selection",
-    "input": { "message": "Lee el archivo package.json del proyecto" },
-    "expected": { "tools": ["file_read"] },
+    "input": {
+      "message": "Lee el archivo package.json del proyecto"
+    },
+    "expected": {
+      "tools": [
+        "file_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -129,31 +194,53 @@
     "input": {
       "message": "Programa un reporte semanal de ventas cada lunes a las 9am"
     },
-    "expected": { "tools": ["schedule_task"] },
+    "expected": {
+      "tools": [
+        "schedule_task"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-project-01",
     "category": "tool_selection",
-    "input": { "message": "Cuáles son mis proyectos activos?" },
-    "expected": { "tools": ["project_list"] },
+    "input": {
+      "message": "Cuáles son mis proyectos activos?"
+    },
+    "expected": {
+      "tools": [
+        "project_list"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-skill-01",
     "category": "tool_selection",
-    "input": { "message": "Qué skills tienes disponibles?" },
-    "expected": { "tools": ["skill_list"] },
+    "input": {
+      "message": "Qué skills tienes disponibles?"
+    },
+    "expected": {
+      "tools": [
+        "skill_list"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-gdrive-01",
     "category": "tool_selection",
-    "input": { "message": "Lista los archivos en mi Google Drive" },
-    "expected": { "tools": ["gdrive_list"] },
+    "input": {
+      "message": "Lista los archivos en mi Google Drive"
+    },
+    "expected": {
+      "tools": [
+        "gdrive_list"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -163,7 +250,11 @@
     "input": {
       "message": "Genera una gráfica de barras con las ventas del trimestre"
     },
-    "expected": { "tools": ["chart_generate"] },
+    "expected": {
+      "tools": [
+        "chart_generate"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -173,17 +264,27 @@
     "input": {
       "message": "Busca el precio actual de Bitcoin y guárdalo como dato"
     },
-    "expected": { "tools": ["web_search", "user_fact_set"] },
+    "expected": {
+      "tools": [
+        "web_search",
+        "user_fact_set"
+      ]
+    },
     "weight": 1.5,
     "source": "manual"
   },
   {
     "case_id": "ts-greeting-01",
     "category": "tool_selection",
-    "input": { "message": "Buenos días Jarvis, cómo estás?" },
+    "input": {
+      "message": "Buenos días Jarvis, cómo estás?"
+    },
     "expected": {
       "tools": [],
-      "not_tools": ["web_search", "jarvis_file_write"]
+      "not_tools": [
+        "web_search",
+        "jarvis_file_write"
+      ]
     },
     "weight": 1.0,
     "source": "manual"
@@ -191,24 +292,42 @@
   {
     "case_id": "ts-http-01",
     "category": "tool_selection",
-    "input": { "message": "Haz un GET a https://api.example.com/health" },
-    "expected": { "tools": ["http_fetch"] },
+    "input": {
+      "message": "Haz un GET a https://api.example.com/health"
+    },
+    "expected": {
+      "tools": [
+        "http_fetch"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-rss-01",
     "category": "tool_selection",
-    "input": { "message": "Lee el feed RSS de TechCrunch" },
-    "expected": { "tools": ["rss_read"] },
+    "input": {
+      "message": "Lee el feed RSS de TechCrunch"
+    },
+    "expected": {
+      "tools": [
+        "rss_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-delete-01",
     "category": "tool_selection",
-    "input": { "message": "Elimina la tarea de revisar el contrato" },
-    "expected": { "tools": ["jarvis_file_write"] },
+    "input": {
+      "message": "Elimina la tarea de revisar el contrato"
+    },
+    "expected": {
+      "tools": [
+        "jarvis_file_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -218,14 +337,21 @@
     "input": {
       "message": "Sí, hazlo",
       "conversationHistory": [
-        { "role": "user", "content": "Busca cuánto cuesta un vuelo a Madrid" },
+        {
+          "role": "user",
+          "content": "Busca cuánto cuesta un vuelo a Madrid"
+        },
         {
           "role": "assistant",
           "content": "¿Quieres que busque precios específicos?"
         }
       ]
     },
-    "expected": { "tools": ["web_search"] },
+    "expected": {
+      "tools": [
+        "web_search"
+      ]
+    },
     "weight": 1.5,
     "source": "manual"
   },
@@ -235,40 +361,67 @@
     "input": {
       "message": "Genera una imagen para el blog de un atardecer en la playa"
     },
-    "expected": { "tools": ["gemini_image"] },
+    "expected": {
+      "tools": [
+        "gemini_image"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
-
   {
     "case_id": "sc-coding-01",
     "category": "scope_accuracy",
-    "input": { "message": "Revisa el código del módulo de autenticación" },
-    "expected": { "scope_groups": ["coding"] },
+    "input": {
+      "message": "Revisa el código del módulo de autenticación"
+    },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-coding-02",
     "category": "scope_accuracy",
-    "input": { "message": "Hay un bug en el deploy, revisa los logs" },
-    "expected": { "scope_groups": ["coding"] },
+    "input": {
+      "message": "Hay un bug en el deploy, revisa los logs"
+    },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-wordpress-01",
     "category": "scope_accuracy",
-    "input": { "message": "Publica el artículo sobre tendencias de marketing" },
-    "expected": { "scope_groups": ["wordpress"] },
+    "input": {
+      "message": "Publica el artículo sobre tendencias de marketing"
+    },
+    "expected": {
+      "scope_groups": [
+        "wordpress"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-google-01",
     "category": "scope_accuracy",
-    "input": { "message": "Revisa mi correo y busca emails de Juan" },
-    "expected": { "scope_groups": ["google"] },
+    "input": {
+      "message": "Revisa mi correo y busca emails de Juan"
+    },
+    "expected": {
+      "scope_groups": [
+        "google"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -278,39 +431,68 @@
     "input": {
       "message": "Crea una meta para mejorar la retención de clientes"
     },
-    "expected": { "scope_groups": ["northstar_write"] },
+    "expected": {
+      "scope_groups": [
+        "northstar_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-northstar-write-02",
     "category": "scope_accuracy",
-    "input": { "message": "Marca la tarea de revisar docs como completada" },
-    "expected": { "scope_groups": ["northstar_write"] },
+    "input": {
+      "message": "Marca la tarea de revisar docs como completada"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-northstar-write-03",
     "category": "scope_accuracy",
-    "input": { "message": "Cambia el status de la tarea a in_progress" },
-    "expected": { "scope_groups": ["northstar_write"] },
+    "input": {
+      "message": "Cambia el status de la tarea a in_progress"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-northstar-write-04",
     "category": "scope_accuracy",
-    "input": { "message": "Completé la tarea del reporte" },
-    "expected": { "scope_groups": ["northstar_write"] },
+    "input": {
+      "message": "Completé la tarea del reporte"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-destructive-01",
     "category": "scope_accuracy",
-    "input": { "message": "Elimina la meta de Q1 que ya no aplica" },
-    "expected": { "scope_groups": ["destructive", "northstar_write"] },
+    "input": {
+      "message": "Elimina la meta de Q1 que ya no aplica"
+    },
+    "expected": {
+      "scope_groups": [
+        "destructive",
+        "northstar_write"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -320,25 +502,42 @@
     "input": {
       "message": "Navega al sitio web y verifica que el tracking funciona"
     },
-    "expected": { "scope_groups": ["browser"] },
+    "expected": {
+      "scope_groups": [
+        "browser"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-schedule-01",
     "category": "scope_accuracy",
-    "input": { "message": "Programa un reporte automático semanal" },
-    "expected": { "scope_groups": ["schedule"] },
+    "input": {
+      "message": "Programa un reporte automático semanal"
+    },
+    "expected": {
+      "scope_groups": [
+        "schedule"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-no-scope-01",
     "category": "scope_accuracy",
-    "input": { "message": "Hola, cómo te va?" },
+    "input": {
+      "message": "Hola, cómo te va?"
+    },
     "expected": {
       "scope_groups": [],
-      "not_scope_groups": ["coding", "wordpress", "google", "browser"]
+      "not_scope_groups": [
+        "coding",
+        "wordpress",
+        "google",
+        "browser"
+      ]
     },
     "weight": 1.0,
     "source": "manual"
@@ -349,7 +548,12 @@
     "input": {
       "message": "Revisa el código y luego publica el cambio en WordPress"
     },
-    "expected": { "scope_groups": ["coding", "wordpress"] },
+    "expected": {
+      "scope_groups": [
+        "coding",
+        "wordpress"
+      ]
+    },
     "weight": 1.5,
     "source": "manual"
   },
@@ -359,23 +563,39 @@
     "input": {
       "message": "Revisa los containers de Docker que están corriendo"
     },
-    "expected": { "scope_groups": ["coding"] },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-server-scope-01",
     "category": "scope_accuracy",
-    "input": { "message": "Cuánta RAM tiene el servidor?" },
-    "expected": { "scope_groups": ["coding"] },
+    "input": {
+      "message": "Cuánta RAM tiene el servidor?"
+    },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-ga4-scope-01",
     "category": "scope_accuracy",
-    "input": { "message": "Instala el tracking de GA4 en el sitio" },
-    "expected": { "scope_groups": ["wordpress"] },
+    "input": {
+      "message": "Instala el tracking de GA4 en el sitio"
+    },
+    "expected": {
+      "scope_groups": [
+        "wordpress"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -385,22 +605,35 @@
     "input": {
       "message": "Adelante",
       "conversationHistory": [
-        { "role": "user", "content": "Edita el archivo config.ts" },
-        { "role": "assistant", "content": "¿Qué cambios quieres hacer?" }
+        {
+          "role": "user",
+          "content": "Edita el archivo config.ts"
+        },
+        {
+          "role": "assistant",
+          "content": "¿Qué cambios quieres hacer?"
+        }
       ]
     },
-    "expected": { "scope_groups": ["coding"] },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.5,
     "source": "manual"
   },
-
   {
     "case_id": "sc-research-01",
     "category": "scope_accuracy",
     "input": {
       "message": "Sube este PDF y hazme un resumen de los documentos"
     },
-    "expected": { "scope_groups": ["research"] },
+    "expected": {
+      "scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -410,48 +643,82 @@
     "input": {
       "message": "I want to do a deep analysis of these research papers"
     },
-    "expected": { "scope_groups": ["research"] },
+    "expected": {
+      "scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-research-03",
     "category": "scope_accuracy",
-    "input": { "message": "Genera un podcast con los documentos que subí" },
-    "expected": { "scope_groups": ["research"] },
+    "input": {
+      "message": "Genera un podcast con los documentos que subí"
+    },
+    "expected": {
+      "scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-research-04",
     "category": "scope_accuracy",
-    "input": { "message": "Hazme flashcards del material de estudio" },
-    "expected": { "scope_groups": ["research"] },
+    "input": {
+      "message": "Hazme flashcards del material de estudio"
+    },
+    "expected": {
+      "scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-research-05",
     "category": "scope_accuracy",
-    "input": { "message": "Create a study guide from the uploaded files" },
-    "expected": { "scope_groups": ["research"] },
+    "input": {
+      "message": "Create a study guide from the uploaded files"
+    },
+    "expected": {
+      "scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-research-no-scope-01",
     "category": "scope_accuracy",
-    "input": { "message": "Busca información sobre inteligencia artificial" },
-    "expected": { "scope_groups": [], "not_scope_groups": ["research"] },
+    "input": {
+      "message": "Busca información sobre inteligencia artificial"
+    },
+    "expected": {
+      "scope_groups": [],
+      "not_scope_groups": [
+        "research"
+      ]
+    },
     "weight": 1.5,
     "source": "manual"
   },
-
   {
     "case_id": "ts-gemini-upload-01",
     "category": "tool_selection",
-    "input": { "message": "Sube este PDF para analizar: /tmp/report.pdf" },
-    "expected": { "tools": ["gemini_upload"] },
+    "input": {
+      "message": "Sube este PDF para analizar: /tmp/report.pdf"
+    },
+    "expected": {
+      "tools": [
+        "gemini_upload"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -461,7 +728,14 @@
     "input": {
       "message": "Qué dicen los documentos sobre el impacto económico?"
     },
-    "expected": { "tools": ["gemini_research"], "not_tools": ["web_search"] },
+    "expected": {
+      "tools": [
+        "gemini_research"
+      ],
+      "not_tools": [
+        "web_search"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -471,104 +745,155 @@
     "input": {
       "message": "Genera un audio overview de los documentos que subí"
     },
-    "expected": { "tools": ["gemini_audio_overview"] },
+    "expected": {
+      "tools": [
+        "gemini_audio_overview"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
-
   {
     "case_id": "cl-fast-01",
     "category": "classification",
-    "input": { "message": "Busca el clima en CDMX" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Busca el clima en CDMX"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-02",
     "category": "classification",
-    "input": { "message": "Manda un email a Pedro" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Manda un email a Pedro"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-03",
     "category": "classification",
-    "input": { "message": "Qué tareas tengo pendientes hoy?" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Qué tareas tengo pendientes hoy?"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-04",
     "category": "classification",
-    "input": { "message": "Buenos días" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Buenos días"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-05",
     "category": "classification",
-    "input": { "message": "Crea una tarea para llamar al proveedor" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Crea una tarea para llamar al proveedor"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-06",
     "category": "classification",
-    "input": { "message": "Genera una imagen de un gato programador" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Genera una imagen de un gato programador"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-07",
     "category": "classification",
-    "input": { "message": "Lee el feed RSS de Hacker News" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Lee el feed RSS de Hacker News"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-08",
     "category": "classification",
-    "input": { "message": "Cuáles son mis proyectos activos?" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Cuáles son mis proyectos activos?"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-09",
     "category": "classification",
-    "input": { "message": "Search for the best restaurants near Polanco" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Search for the best restaurants near Polanco"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-fast-10",
     "category": "classification",
-    "input": { "message": "Revisa el espacio en disco del servidor" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "Revisa el espacio en disco del servidor"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-msg-greeting",
     "category": "classification",
-    "input": { "message": "hola" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "hola"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "cl-msg-thanks",
     "category": "classification",
-    "input": { "message": "gracias, perfecto" },
-    "expected": { "agent_type": "fast" },
+    "input": {
+      "message": "gracias, perfecto"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -578,7 +903,9 @@
     "input": {
       "message": "Investiga las tendencias del mercado de AI en 2026 y hazme un resumen"
     },
-    "expected": { "agent_type": "fast" },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -588,7 +915,9 @@
     "input": {
       "message": "Ayúdame a redactar un correo para el cliente sobre la propuesta"
     },
-    "expected": { "agent_type": "fast" },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
@@ -598,63 +927,522 @@
     "input": {
       "message": "Analiza el rendimiento del pipeline de ventas este trimestre"
     },
-    "expected": { "agent_type": "fast" },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-northstar-read-01",
     "category": "scope_accuracy",
-    "input": { "message": "lista mis visiones abiertas" },
-    "expected": { "scope_groups": ["northstar_read"] },
+    "input": {
+      "message": "lista mis visiones abiertas"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-northstar-read-02",
     "category": "scope_accuracy",
-    "input": { "message": "qué tareas tengo pendientes esta semana" },
-    "expected": { "scope_groups": ["northstar_read"] },
+    "input": {
+      "message": "qué tareas tengo pendientes esta semana"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_read"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-intel-01",
     "category": "scope_accuracy",
-    "input": { "message": "qué señales hay del mercado hoy" },
-    "expected": { "scope_groups": ["intel"] },
+    "input": {
+      "message": "qué señales hay del mercado hoy"
+    },
+    "expected": {
+      "scope_groups": [
+        "intel"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-intel-02",
     "category": "scope_accuracy",
-    "input": { "message": "hubo alertas de inteligencia anoche" },
-    "expected": { "scope_groups": ["intel"] },
+    "input": {
+      "message": "hubo alertas de inteligencia anoche"
+    },
+    "expected": {
+      "scope_groups": [
+        "intel"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "sc-coding-git-01",
     "category": "scope_accuracy",
-    "input": { "message": "haz commit de los cambios y pushea a github" },
-    "expected": { "scope_groups": ["coding"] },
+    "input": {
+      "message": "haz commit de los cambios y pushea a github"
+    },
+    "expected": {
+      "scope_groups": [
+        "coding"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-intel-query-01",
     "category": "tool_selection",
-    "input": { "message": "cómo va el bitcoin hoy" },
-    "expected": { "tools": ["intel_query"] },
+    "input": {
+      "message": "cómo va el bitcoin hoy"
+    },
+    "expected": {
+      "tools": [
+        "intel_query"
+      ]
+    },
     "weight": 1.0,
     "source": "manual"
   },
   {
     "case_id": "ts-git-commit-01",
     "category": "tool_selection",
-    "input": { "message": "commitea los cambios con mensaje 'fix: typo'" },
-    "expected": { "tools": ["git_commit"] },
+    "input": {
+      "message": "commitea los cambios con mensaje 'fix: typo'"
+    },
+    "expected": {
+      "tools": [
+        "git_commit"
+      ]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "sc-wp-false-pos-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Revisa el proyecto livingjoyfully"
+    },
+    "expected": {
+      "scope_groups": [],
+      "forbidden_groups": [
+        "wordpress"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-wp-true-pos-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Publica en livingjoyfully.art"
+    },
+    "expected": {
+      "scope_groups": [
+        "wordpress"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-social-pub-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Publica esto en Instagram"
+    },
+    "expected": {
+      "scope_groups": [
+        "social"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-social-pub-02",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Publicación en redes sociales del evento"
+    },
+    "expected": {
+      "scope_groups": [
+        "social"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-blog-not-social",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Publica en el blog el artículo"
+    },
+    "expected": {
+      "scope_groups": [
+        "wordpress"
+      ],
+      "forbidden_groups": [
+        "social"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-specialty-texto-01",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Limpia tu contexto"
+    },
+    "expected": {
+      "scope_groups": [],
+      "forbidden_groups": [
+        "specialty"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-specialty-texto-02",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Limpia el texto de este documento"
+    },
+    "expected": {
+      "scope_groups": [
+        "specialty"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-northstar-open",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Abre mi NorthStar"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_read"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-northstar-sync",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "sync con db.mycommit"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_read"
+      ]
+    },
+    "weight": 1.5,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-northstar-marca",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Marca la tarea como completada"
+    },
+    "expected": {
+      "scope_groups": [
+        "northstar_write"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-google-correo",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Envía un correo a javier con el reporte"
+    },
+    "expected": {
+      "scope_groups": [
+        "google"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-schedule-report",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Programa un reporte diario a las 8am"
+    },
+    "expected": {
+      "scope_groups": [
+        "schedule"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-meta-tools",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Lista las herramientas disponibles"
+    },
+    "expected": {
+      "scope_groups": [
+        "meta"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-meta-diag",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Ejecuta un diagnóstico del sistema"
+    },
+    "expected": {
+      "scope_groups": [
+        "meta"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-browser-app",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Abre la app de NorthStar"
+    },
+    "expected": {
+      "scope_groups": [
+        "browser"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "sc-intel-signals",
+    "category": "scope_accuracy",
+    "input": {
+      "message": "Muéstrame las señales de mercado"
+    },
+    "expected": {
+      "scope_groups": [
+        "intel"
+      ]
+    },
+    "weight": 1.0,
+    "source": "regression"
+  },
+  {
+    "case_id": "ts-gmail-send-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Envía el reporte a javier@eurekamd.net"
+    },
+    "expected": {
+      "tools": [
+        "gmail_send"
+      ]
+    },
+    "weight": 1.5,
+    "source": "production"
+  },
+  {
+    "case_id": "ts-task-history-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Qué pasó con el reporte que falló ayer"
+    },
+    "expected": {
+      "tools": [
+        "task_history"
+      ]
+    },
+    "weight": 1.0,
+    "source": "production"
+  },
+  {
+    "case_id": "ts-vps-status-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Estado del VPS"
+    },
+    "expected": {
+      "tools": [
+        "vps_status"
+      ]
+    },
+    "weight": 1.5,
+    "source": "production"
+  },
+  {
+    "case_id": "ts-vps-status-02",
+    "category": "tool_selection",
+    "input": {
+      "message": "Cómo está el servidor"
+    },
+    "expected": {
+      "tools": [
+        "vps_status"
+      ]
+    },
+    "weight": 1.0,
+    "source": "production"
+  },
+  {
+    "case_id": "ts-northstar-sync-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Sincroniza NorthStar con la app"
+    },
+    "expected": {
+      "tools": [
+        "northstar_sync"
+      ]
+    },
+    "weight": 1.0,
+    "source": "production"
+  },
+  {
+    "case_id": "ts-batch-decompose-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Migra estos 20 archivos al nuevo formato"
+    },
+    "expected": {
+      "tools": [
+        "batch_decompose"
+      ]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-schedule-task-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Programa un reporte semanal de pharma para Javier los lunes a las 10am"
+    },
+    "expected": {
+      "tools": [
+        "schedule_task"
+      ]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-dashboard-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Genera un dashboard con las métricas de la semana"
+    },
+    "expected": {
+      "tools": [
+        "dashboard_generate"
+      ]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "ts-screenshot-01",
+    "category": "tool_selection",
+    "input": {
+      "message": "Toma un screenshot de la página principal del blog"
+    },
+    "expected": {
+      "tools": [
+        "screenshot_element"
+      ]
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-batch-heavy",
+    "category": "classification",
+    "input": {
+      "message": "Migra 50 archivos de knowledge/ a projects/ con los nombres correctos"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-simple-greeting",
+    "category": "classification",
+    "input": {
+      "message": "Buenos días, qué hay pendiente hoy?"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-diagnostic",
+    "category": "classification",
+    "input": {
+      "message": "Por qué falló el reporte de ayer"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
+    "weight": 1.0,
+    "source": "production"
+  },
+  {
+    "case_id": "cl-research-deep",
+    "category": "classification",
+    "input": {
+      "message": "Investiga las últimas noticias de biotecnología y genera un análisis detallado con fuentes"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
+    "weight": 1.0,
+    "source": "manual"
+  },
+  {
+    "case_id": "cl-video-create",
+    "category": "classification",
+    "input": {
+      "message": "Crea un video corto sobre las tendencias de IA para TikTok"
+    },
+    "expected": {
+      "agent_type": "fast"
+    },
     "weight": 1.0,
     "source": "manual"
   }
