@@ -305,12 +305,13 @@ BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). 
 | A1      | Anti-Overfitting + Simplicity Criteria | "Would this still be worthwhile if the task disappeared?" + simpler code = keep |
 | SK1     | Batch Orchestration Skill              | `/batch`: plan-approve-execute-track cycle for large multi-tool tasks           |
 
-### Workstream 10: Operational Hardening (1.5 sessions)
+### Workstream 10: Operational Hardening (2.5 sessions)
 
-| Session | Deliverable                                         | What                                                                               |
-| ------- | --------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| OH1     | Decomposed QA Review                                | 3 parallel review agents (reuse, quality, efficiency) instead of single qa-auditor |
-| OH1.5   | Loop Execute-Then-Schedule + disableModelInvocation | Immediate execution on schedule + prevent LLM auto-invoking expensive skills       |
+| Session | Deliverable                                         | What                                                                                                                                                                                         |
+| ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OH1     | Decomposed QA Review                                | 3 parallel review agents (reuse, quality, efficiency) instead of single qa-auditor                                                                                                           |
+| OH1.5   | Loop Execute-Then-Schedule + disableModelInvocation | Immediate execution on schedule + prevent LLM auto-invoking expensive skills                                                                                                                 |
+| OH2     | Hallucination Guard Precision + Deferral Tests      | Fix write-claim false positive (LLM text before write calls ≠ hallucination). Add test coverage for deferred tool expansion path (S1 from v6.3.1 audit). Scope pattern regression test suite |
 
 ### v6.4 Success Criteria
 
@@ -321,6 +322,8 @@ BRAID integration based on validated paper findings (arxiv.org/abs/2512.15959). 
 - [ ] Superseded KB entries cascade staleness to related entries
 - [ ] `/batch` decomposes large tasks into parallel isolated units
 - [ ] QA review runs 3 specialized agents in parallel
+- [ ] Hallucination guard no longer fires on write-claim-before-write-call pattern
+- [ ] Deferred tool expansion path has full test coverage
 
 ---
 
