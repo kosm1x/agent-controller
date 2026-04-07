@@ -132,45 +132,113 @@ export function setWaiting(
 // LLM analysis — generates questions or PASS
 // ---------------------------------------------------------------------------
 
-const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un agente autónomo de AI con 150 herramientas.
+/**
+ * CIRICD-aware gatekeeper prompt (v6.4 PE1).
+ *
+ * Scores 6 dimensions: Clarity, Intent, Risk, Context, Impact, Decompose.
+ * Only asks questions when specific dimensions score low.
+ * Output is structured JSON for reliable parsing.
+ */
+const ENHANCER_SYSTEM_PROMPT = `Eres un optimizador de prompts para Jarvis, un agente autónomo de AI con 170 herramientas.
 
-Tu trabajo: analizar el mensaje del usuario EN CONTEXTO de la conversación reciente y decidir si necesita clarificación O si necesita ser dividido en partes más pequeñas.
+Analiza el mensaje del usuario EN CONTEXTO de la conversación reciente usando el framework CIRICD:
 
-REGLAS:
-1. Tu DEFAULT es "PASS". Solo preguntas cuando la ambigüedad causará un ERROR GRAVE (archivo equivocado borrado, datos enviados a destino incorrecto)
-2. Si la conversación reciente aclara paths, repos, o datos → "PASS"
-3. Si el mensaje es claro y específico → "PASS"
-4. Si Jarvis PUEDE inferir la respuesta de su contexto → "PASS"
-5. Si hay ambigüedad grave → genera EXACTAMENTE 2 preguntas (nunca 1, nunca 3+)
-6. Las preguntas SOLO sobre: destino incorrecto posible, datos que se perderían, acción destructiva ambigua
-7. Si el contexto menciona un proyecto, sheet, o repo — asume que es el mismo → "PASS"
+## SCORING (evalúa cada dimensión)
 
-REGLA CRÍTICA — DETECCIÓN DE TAREAS COMPLEJAS:
-8. Si la tarea implica MÁS DE 5 archivos, MÁS DE 10 tool calls, o operaciones batch (migrar, mover, copiar muchos archivos) → NO digas PASS. En su lugar, sugiere dividir la tarea en bloques de máximo 5 items por mensaje.
-   Ejemplo: "Esta tarea involucra ~23 archivos. Sugiero dividir en bloques:
-   1. Primero los 6 archivos de agent-controller
-   2. Luego los 15 de cuatro-flor/research
-   3. Finalmente cmll y reddit-scraper (1 cada uno)
-   ¿Con cuál empezamos?"
-9. Si el usuario dice "migra todo", "haz todos", "procede con todos" → SIEMPRE sugiere dividir. Jarvis tiene un máximo de 35 rounds por tarea — cada archivo que lee+escribe consume 2 rounds. Más de 10 archivos en un mensaje FALLARÁ.
+**C — Clarity** (0-10): ¿Es claro qué quiere el usuario?
+  10 = instrucción precisa con paths/destinos explícitos
+  5 = intención clara pero faltan detalles menores (Jarvis puede inferir)
+  0 = totalmente ambiguo, múltiples interpretaciones posibles
+
+**I — Intent**: Extrae la acción principal en una frase.
+  Ej: "Publicar artículo en WordPress", "Enviar reporte por email a Javier"
+
+**R — Risk** (high/low): ¿La ambigüedad puede causar un ERROR GRAVE?
+  high = acción destructiva (borrar, sobreescribir), envío a destino incorrecto, datos que se pierden
+  low = lectura, búsqueda, análisis, creación de contenido nuevo
+
+**I2 — Impact** (count): ¿Cuántos items afecta?
+  Cuenta archivos, registros, emails, tareas. Si no es claro, estima.
+
+**C2 — Context** (resolved/unresolved): ¿La conversación reciente aclara las dudas?
+  resolved = paths, repos, destinos ya mencionados en conversación
+  unresolved = información crítica faltante que Jarvis NO puede inferir
+
+**D — Decompose** (ok/split): ¿Necesita dividirse?
+  split = >5 archivos O >10 tool calls O batch (migrar/mover muchos items)
+  ok = cabe en 35 rounds (max ~5 archivos por mensaje)
+
+## DECISIÓN
+
+Basándote en los scores:
+- **PASS** si: Clarity ≥ 5 AND Risk = low AND Context = resolved AND Decompose = ok
+- **PASS** si: Clarity ≥ 7 (incluso con risk=high, la instrucción es precisa)
+- **ASK** si: Clarity < 5 AND Risk = high AND Context = unresolved → genera EXACTAMENTE 2 preguntas sobre las dimensiones con score bajo
+- **SPLIT** si: Decompose = split → sugiere plan de división en bloques de max 5 items
+
+DEFAULT = PASS. En el 80% de los casos la respuesta correcta es PASS.
+
+## FORMATO DE RESPUESTA (JSON estricto)
+
+{"decision":"PASS","intent":"...","clarity":8,"risk":"low","impact":1,"context":"resolved","decompose":"ok"}
+
+{"decision":"ASK","intent":"...","clarity":3,"risk":"high","impact":1,"context":"unresolved","decompose":"ok","questions":["¿A qué archivo te refieres?","¿Quieres sobreescribir o crear uno nuevo?"]}
+
+{"decision":"SPLIT","intent":"...","clarity":7,"risk":"low","impact":23,"context":"resolved","decompose":"split","split_plan":"Sugiero dividir en 3 bloques:\\n1. Los 6 archivos de X\\n2. Los 15 de Y\\n3. Los 2 restantes\\n¿Con cuál empezamos?"}
 
 CONTEXTO DEL SISTEMA:
-- Jarvis Knowledge Base: jarvis_file_read/write/list (directives/, NorthStar/, projects/, knowledge/, logs/)
-- Proyecto CuatroFlor: /root/claude/cuatro-flor/ → EurekaMD-net/cuatro-flor
-- Git: git_commit y git_push REQUIEREN cwd= (directorio del proyecto)
-- GitHub org: EurekaMD-net (default para repos nuevos)
-- Intel Depot: 8 fuentes (mercados, clima, geopolítica, cyber, noticias)
-- Google Sheets: gsheets_read (NO fetch desde browser por CORS)
+- Jarvis Knowledge Base: jarvis_file_read/write/list
+- Git: git_commit y git_push REQUIEREN cwd=
 - LÍMITES: 35 rounds/tarea, 50K tokens. Cada file read+write = 2 rounds. Max ~5 archivos por mensaje.
 
-RESPONDE SOLO con:
-- "PASS" (en caso de duda, di PASS — es mejor ejecutar que preguntar de más)
-- EXACTAMENTE 2 preguntas numeradas si la ambigüedad causaría un error grave
-- Plan de división si la tarea es batch (>5 archivos)
-En el 80% de los casos la respuesta correcta es "PASS".`;
+RESPONDE SOLO con JSON válido. Nada más.`;
+
+/** Parsed CIRICD analysis result. */
+export interface CiricdResult {
+  decision: "PASS" | "ASK" | "SPLIT";
+  intent: string;
+  clarity: number;
+  risk: "high" | "low";
+  impact: number;
+  context: "resolved" | "unresolved";
+  decompose: "ok" | "split";
+  questions?: string[];
+  splitPlan?: string;
+}
 
 /**
- * Analyze a user message and return questions or "PASS".
+ * Parse a CIRICD JSON response from the LLM.
+ * Returns null if parsing fails (caller should default to PASS).
+ */
+export function parseCiricdResponse(raw: string): CiricdResult | null {
+  try {
+    // Extract JSON from possible markdown code fences
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.decision) return null;
+    return {
+      decision: (
+        parsed.decision as string
+      ).toUpperCase() as CiricdResult["decision"],
+      intent: parsed.intent ?? "",
+      clarity: typeof parsed.clarity === "number" ? parsed.clarity : 5,
+      risk: parsed.risk === "high" ? "high" : "low",
+      impact: typeof parsed.impact === "number" ? parsed.impact : 1,
+      context: parsed.context === "unresolved" ? "unresolved" : "resolved",
+      decompose: parsed.decompose === "split" ? "split" : "ok",
+      questions: Array.isArray(parsed.questions)
+        ? (parsed.questions as string[]).slice(0, 2)
+        : undefined,
+      splitPlan: parsed.split_plan as string | undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Analyze a user message using CIRICD framework and return questions or "PASS".
  * Uses a cheap, fast LLM call (flash tier).
  */
 export async function analyzePrompt(
@@ -194,7 +262,7 @@ export async function analyzePrompt(
               : `Mensaje del usuario:\n${userMessage}`,
           },
         ],
-        max_tokens: 150,
+        max_tokens: 250,
       }),
       deadline,
     ]);
@@ -202,21 +270,37 @@ export async function analyzePrompt(
     const raw = (result.content ?? "PASS").trim();
     if (raw.toUpperCase() === "PASS") return "PASS";
 
-    // max_tokens: 150 already limits total output.
-    // Only cap if it's clearly a question list (>3 numbered/bulleted items).
-    const questionLines = raw
-      .split("\n")
-      .filter((l) => /^\s*(\d+[\.\)]|[-•*])\s/.test(l));
-    if (questionLines.length > 2) {
-      // Too many questions — keep first 2 + any non-question context
-      const nonQuestions = raw
+    // Parse CIRICD JSON response
+    const ciricd = parseCiricdResponse(raw);
+    if (!ciricd) {
+      // Failed to parse — check if it's a legacy-format response
+      if (raw.toUpperCase().startsWith("PASS")) return "PASS";
+      // Treat as raw questions (backward compat)
+      const questionLines = raw
         .split("\n")
-        .filter(
-          (l) => l.trim().length > 0 && !/^\s*(\d+[\.\)]|[-•*])\s/.test(l),
-        );
-      return [...nonQuestions, ...questionLines.slice(0, 2)].join("\n");
+        .filter((l) => /^\s*(\d+[\.\)]|[-•*])\s/.test(l));
+      if (questionLines.length > 2) {
+        return questionLines.slice(0, 2).join("\n");
+      }
+      return raw;
     }
-    return raw;
+
+    // Log CIRICD scores for observability
+    console.log(
+      `[enhancer] CIRICD: decision=${ciricd.decision} clarity=${ciricd.clarity} risk=${ciricd.risk} impact=${ciricd.impact} context=${ciricd.context} decompose=${ciricd.decompose} intent="${ciricd.intent}"`,
+    );
+
+    if (ciricd.decision === "PASS") return "PASS";
+
+    if (ciricd.decision === "SPLIT" && ciricd.splitPlan) {
+      return ciricd.splitPlan;
+    }
+
+    if (ciricd.decision === "ASK" && ciricd.questions?.length) {
+      return ciricd.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
+    }
+
+    return "PASS"; // Fallback
   } catch {
     return "PASS";
   }

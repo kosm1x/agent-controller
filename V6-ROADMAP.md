@@ -313,9 +313,9 @@ Reordered after v6.3.2 learnings: reliability before intelligence. PE1.5 (BRAID 
 
 PE1 validated against Jarvis's enhancer architecture: CIRICD dimensions already exist implicitly (clarity gates, ERROR GRAVE risk detection, batch decomposition, context from last 4 turns). This session formalizes them as explicit scoring dimensions in the analyzer prompt.
 
-| Session | Deliverable             | What                                                                                                                                                               |
-| ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| PE1     | CIRICD-Aware Gatekeeper | Explicit CIRICD scoring in analyzePrompt(): Clarity (0-10), Intent (extract), Risk (high/low), Context (verify), Impact (count items), Decompose (split threshold) |
+| Session | Deliverable             | What                                                                                                                                          |
+| ------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| PE1     | CIRICD-Aware Gatekeeper | Structured JSON scoring in analyzePrompt(). parseCiricdResponse() with fallback. CIRICD logs for observability. 19 new tests. **1639 tests.** | **Done** |
 
 ### Workstream 9: Memory Maturation (1.5 sessions)
 
