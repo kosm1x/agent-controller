@@ -99,50 +99,55 @@ WORKFLOW for video content:
         args: ["--disable-blink-features=AutomationControlled"],
       });
 
-      const context = await browser.newContext({
-        viewport: { width, height: 1920 },
-        deviceScaleFactor: dsf,
-        ...(theme && {
-          colorScheme: theme,
-        }),
-      });
+      // C1 audit fix: try/finally guarantees browser.close() on all paths
+      try {
+        const context = await browser.newContext({
+          viewport: { width, height: 1920 },
+          deviceScaleFactor: dsf,
+          ...(theme && {
+            colorScheme: theme,
+          }),
+        });
 
-      const page = await context.newPage();
+        const page = await context.newPage();
 
-      // Navigate with timeout
-      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+        // Navigate with timeout
+        await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
 
-      // Optional: inject JavaScript before capture
-      if (injectText) {
-        await page.evaluate(injectText);
-        // Brief wait for DOM updates
-        await page.waitForTimeout(500);
-      }
+        // Optional: inject JavaScript before capture
+        if (injectText) {
+          try {
+            await page.evaluate(injectText);
+          } catch {
+            // Injected JS failed — continue with capture anyway
+          }
+          await page.waitForTimeout(500);
+        }
 
-      // Capture the element
-      const element = await page.$(selector);
-      if (!element) {
-        await browser.close();
+        // Capture the element
+        const element = await page.$(selector);
+        if (!element) {
+          return JSON.stringify({
+            error: `Element not found: "${selector}"`,
+            url,
+          });
+        }
+
+        await element.screenshot({ path: outputPath });
+
+        const box = await element.boundingBox();
+
         return JSON.stringify({
-          error: `Element not found: "${selector}"`,
+          path: outputPath,
+          width: box ? Math.round(box.width * dsf) : width * dsf,
+          height: box ? Math.round(box.height * dsf) : 0,
+          dsf,
+          selector,
           url,
         });
+      } finally {
+        await browser.close();
       }
-
-      await element.screenshot({ path: outputPath });
-
-      // Get dimensions
-      const box = await element.boundingBox();
-      await browser.close();
-
-      return JSON.stringify({
-        path: outputPath,
-        width: box ? Math.round(box.width * dsf) : width * dsf,
-        height: box ? Math.round(box.height * dsf) : 0,
-        dsf,
-        selector,
-        url,
-      });
     } catch (err) {
       return JSON.stringify({
         error: err instanceof Error ? err.message : String(err),
