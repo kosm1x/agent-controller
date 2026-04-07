@@ -48,6 +48,7 @@ import {
   clearAllFeedbackWindows,
 } from "../intelligence/outcome-tracker.js";
 import { enrichContext } from "../intelligence/enrichment.js";
+import { extractAndPersistCorrection } from "../intelligence/correction-loop.js";
 import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
 import { formatProjectsBlock } from "../db/projects.js";
 import {
@@ -1050,6 +1051,15 @@ export class MessageRouter {
           linkFeedbackToScope(feedbackTaskId, signal);
         } catch {
           /* non-fatal */
+        }
+        // v6.4 H1: When user rephrases, extract what changed and persist
+        // as a correction so the enrichment pipeline recalls it on future
+        // similar messages. Builds a "when Fede says X, he means Y" dictionary.
+        if (signal === "rephrase") {
+          const prevMsg = previousMessages.get(msg.channel);
+          if (prevMsg) {
+            extractAndPersistCorrection(prevMsg, msg.text).catch(() => {});
+          }
         }
       }
 

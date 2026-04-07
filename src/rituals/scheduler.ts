@@ -8,6 +8,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { execFileSync } from "child_process";
 import { getDatabase } from "../db/index.js";
+import { scheduleCanary, stopCanary } from "./canary.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
@@ -122,10 +123,19 @@ export function startRitualScheduler(): void {
     );
   }
 
-  // Mechanical backups + autonomous improvement + safeguards
+  // Mechanical backups + autonomous improvement + safeguards + canary
   scheduleKbBackup();
   scheduleAutonomousImprovement();
   scheduleDiffDigest();
+
+  // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
+  try {
+    scheduleCanary();
+  } catch (err) {
+    console.error(
+      `[rituals] Failed to schedule canary: ${err instanceof Error ? err.message : err}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,5 +296,6 @@ export function stopRitualScheduler(): void {
     job.stop();
   }
   scheduledJobs.length = 0;
+  stopCanary();
   console.log("[rituals] All jobs stopped");
 }

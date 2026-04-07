@@ -15,7 +15,48 @@ import type { ToolExecutor } from "../inference/adapter.js";
 import { createLogger } from "../lib/logger.js";
 import { classifyMutation, recordMutation } from "../db/task-mutations.js";
 
+import { existsSync } from "fs";
+
 const log = createLogger("task-executor");
+
+// ---------------------------------------------------------------------------
+// Pre-flight verification (v6.4 H2)
+// ---------------------------------------------------------------------------
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Check preconditions before executing a critical tool.
+ * Returns an error string if precondition fails, null if OK.
+ */
+function checkPreflight(
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  switch (name) {
+    case "gmail_send": {
+      const to = args.to as string | undefined;
+      const body = args.body as string | undefined;
+      if (to && !EMAIL_RE.test(to)) {
+        return `Pre-flight failed: invalid email address "${to}"`;
+      }
+      if (body && body.length < 20) {
+        return `Pre-flight failed: email body too short (${body.length} chars). Likely truncated or incomplete.`;
+      }
+      return null;
+    }
+    case "git_push":
+    case "git_commit": {
+      const cwd = args.cwd as string | undefined;
+      if (cwd && !existsSync(cwd)) {
+        return `Pre-flight failed: working directory "${cwd}" does not exist`;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
 
 /** Tools that require user confirmation before execution. */
 const DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
@@ -59,6 +100,14 @@ export function createTaskExecutor(
           warning: `Memory store limit reached (${context.getMemoryStoreLimit()}/task). Prioritize quality over quantity — store only the most valuable observation.`,
         });
       }
+    }
+
+    // v6.4 H2: Pre-flight verification on critical tools.
+    // Check preconditions BEFORE execution to prevent cryptic failures.
+    const preflightError = checkPreflight(name, args);
+    if (preflightError) {
+      log.warn({ tool: name, taskId: context.taskId }, preflightError);
+      return JSON.stringify({ error: preflightError });
     }
 
     // Delegate actual execution to the registry (read-only singleton)
