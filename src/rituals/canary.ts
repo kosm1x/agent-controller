@@ -7,8 +7,7 @@
  *
  * Checks:
  * 1. Task success rate (last 24h) — threshold: <70%
- * 2. Provider failure count (last 24h) — threshold: >10
- * 3. Delivery miss count (last 24h) — threshold: >2
+ * 2. Delivery miss count (last 24h) — threshold: >2
  */
 
 import cron, { type ScheduledTask } from "node-cron";

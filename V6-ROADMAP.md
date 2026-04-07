@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-07 — **v6.0-v6.4+CL1 ALL DONE. 1664 tests, 170 tools, 50 sessions. Semantic scope classifier, CIRICD enhancer, comprehension layer. Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-07 — **v6.0-v6.4+CL1+H ALL DONE. 1673 tests, 170 tools, 10 rituals, 51 sessions. Comprehension layer + hardening (canary, pre-flight, rephrase loop). Next: D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -367,6 +367,19 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 - [x] Precedent resolution injects recent entities for anaphora
 - [x] Assumption-first enhancer reduces friction on moderate-clarity messages
 - [x] Input normalization handles domain typos
+- [x] Rephrase correction loop persists intent corrections to pgvector
+- [x] Pre-flight verification catches invalid emails, missing cwd
+- [x] Self-monitoring canary alerts on degradation every 4 hours
+
+---
+
+### Workstream 13: Hardening (1 session)
+
+| Session | Deliverable                  | What                                                                                                                                               |
+| ------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| H1      | Rephrase Correction Loop     | extractAndPersistCorrection(): LLM extracts "when user says X, means Y" from rephrases. Persists to pgvector as type:"correction". Fire-and-forget | **Done** |
+| H2      | Pre-flight Tool Verification | checkPreflight() in task-executor: gmail_send (valid email, body >20), git_push/commit (cwd exists). Clear error before execution                  | **Done** |
+| H3      | Self-Monitoring Canary       | runCanaryCheck() every 4h: task success <70%, delivery misses >2 → Telegram alert. 10th cron job. scheduleCanary()/stopCanary()                    | **Done** |
 
 ---
 
@@ -417,16 +430,16 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 
 | Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4 (current)     |
 | ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1664               |
-| Source files            | 214        | 228       | 232  | 238                |
-| Test files              | 85         | 105       | 120  | 125                |
+| Tests                   | 1228       | 1377      | 1576 | 1673               |
+| Source files            | 214        | 228       | 232  | 240                |
+| Test files              | 85         | 105       | 120  | 126                |
 | Tools                   | 150        | 163       | 169  | 170 (109 deferred) |
 | Safeguards              | 0          | 5         | 5    | 5                  |
 | Behavioral patterns     | 0          | 10        | 10   | 10                 |
 | Background agents (max) | 0          | 3         | 3    | 3                  |
 | Provider cascade        | 2-model    | 3-model   | 3    | 3                  |
 | Immutable core files    | 0          | 15        | 15   | 15                 |
-| Rituals                 | 7          | 9         | 9    | 9                  |
+| Rituals                 | 7          | 9         | 9    | 10                 |
 | KB entries (pgvector)   | 0          | 0         | 315  | 350+               |
 | Prompt tokens (chat)    | ~15K       | ~19K      | ~19K | ~9.3K              |
 
@@ -447,4 +460,5 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 | v6.3.2    | Scheduled report fix   | 1        | **Done**     |
 | v6.4      | Intelligence layer     | 8        | **Done**     |
 | v6.4 CL1  | Comprehension layer    | 3        | **Done**     |
-| **Total** |                        | **50**   |              |
+| v6.4 H    | Hardening              | 1        | **Done**     |
+| **Total** |                        | **51**   |              |
