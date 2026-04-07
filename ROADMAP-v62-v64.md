@@ -72,13 +72,13 @@ Week 7:  S5 (protected paths)     +  V3.5 (integration)
 
 ### Workstream 4: Content Distribution (4.5 sessions)
 
-| Session | Deliverable                     | Source                                                                                          |
-| ------- | ------------------------------- | ----------------------------------------------------------------------------------------------- |
-| D1      | Screenshot-to-Content Pipeline  | RedditVideoMakerBot. `screenshot_element` tool, DSF trick, cookie injection, DOM text injection |
-| D2      | Facebook + Instagram Publishing | AiToEarn. OAuth, social_accounts + publish_records tables, Media Container pattern              |
-| D3      | TikTok + YouTube Publishing     | AiToEarn. Chunked upload, resumable protocol, status polling                                    |
-| D4      | Content Calendar                | `social_schedule` tool, event reactor triggers, batch mode                                      |
-| D4.5    | Playwright Stealth Hardening    | browser-fingerprinting. 5 addInitScript patches, validate against 5 test URLs                   |
+| Session | Deliverable                               | Source                                                                                                        |
+| ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| D1      | Screenshot-to-Content Pipeline — **DONE** | screenshot_element tool (Playwright direct, DSF HiDPI, theme override, JS injection). 166th tool. 9 new tests |
+| D2      | Facebook + Instagram Publishing           | AiToEarn. OAuth, social_accounts + publish_records tables, Media Container pattern                            |
+| D3      | TikTok + YouTube Publishing               | AiToEarn. Chunked upload, resumable protocol, status polling                                                  |
+| D4      | Content Calendar                          | `social_schedule` tool, event reactor triggers, batch mode                                                    |
+| D4.5    | Playwright Stealth Hardening              | browser-fingerprinting. 5 addInitScript patches, validate against 5 test URLs                                 |
 
 ### Workstream 5: Writing Quality (1.5 sessions)
 

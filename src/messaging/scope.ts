@@ -174,6 +174,7 @@ export const VIDEO_TOOLS = [
   "video_list_profiles",
   "video_list_voices",
   "video_background_download",
+  "screenshot_element",
 ];
 
 /** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
@@ -291,7 +292,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(video|pel[ií]cula|clip|render|mp4|youtube|tiktok|reels|graba(r|ci[oó]n)?|hazme un video|overlay|fondo|background\s*video|narraci[oó]n|voz\s*(para|del)\s*video)\b/i,
+      /\b(video|pel[ií]cula|clip|render|mp4|youtube|tiktok|reels|graba(r|ci[oó]n)?|hazme un video|overlay|fondo|background\s*video|narraci[oó]n|voz\s*(para|del)\s*video|screenshot|captura\s*(de\s*pantalla)?)\b/i,
     group: "video",
   },
   {

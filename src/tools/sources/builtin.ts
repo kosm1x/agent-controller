@@ -125,6 +125,7 @@ import {
   videoListVoicesTool,
   videoBackgroundDownloadTool,
 } from "../builtin/video.js";
+import { screenshotElementTool } from "../builtin/screenshot.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -192,6 +193,7 @@ const BUILTIN_TOOLS: Tool[] = [
   videoListProfilesTool,
   videoListVoicesTool,
   videoBackgroundDownloadTool,
+  screenshotElementTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,
