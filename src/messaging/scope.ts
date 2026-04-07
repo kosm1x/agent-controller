@@ -283,7 +283,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(wordpress|wp|blogs?|posts?|art[ií]culos?|publi(ca|car|que)|drafts?|borrador|featured\s*image|hero\s*image|categor[iy]|tags?|plugin|theme|tema|sitio\s+web|header|footer|inyect|inject|tracker|tracking|GA4|analytics|widget|snippet|livingjoyfully|redlightinsider|genera.*imagen|image.*genera|gemini.*imag|imag.*blog|sube.*imagen|upload.*image|media.*upload)/i,
+      /\b(wordpress|blogs?\s+(?:post|entry|article|entrada)|wp[-_]|publi(?:ca|car|que)\s+(?:en\s+)?(?:el\s+)?(?:blog|sitio|wordpress)|drafts?\s+(?:del?\s+)?blog|borrador\s+(?:del?\s+)?blog|featured\s*image|hero\s*image|plugin(?:s)?\s+(?:de\s+)?wp|theme\s+(?:de\s+)?wp|sitio\s+web|header|footer|tracker|tracking|GA4|analytics|widget|snippet|(?:livingjoyfully|redlightinsider)\.(?:art|com)|genera.*imagen.*blog|sube.*imagen.*(?:blog|wp|sitio)|media.*upload.*(?:blog|wp))/i,
     group: "wordpress",
   },
   {
@@ -304,7 +304,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(publica(r|ci[oó]n)?|publish|post(ear)?|instagram|facebook|tiktok|youtube|redes\s*sociales|social\s*media|contenido\s+para|programar\s+post|schedule\s+post)\b/i,
+      /\b(publica(?:r|ci[oó]n)\s+(?:en\s+)?(?:redes|instagram|facebook|tiktok|youtube)|publish\s+(?:to|on)\s|postea(?:r|lo)?|instagram|facebook(?!\s*auth)|redes\s*sociales|social\s*media|contenido\s+para\s+(?:redes|social)|programar?\s+(?:un\s+)?post|schedule\s+post)\b/i,
     group: "social",
   },
   {
