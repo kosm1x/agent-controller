@@ -319,10 +319,10 @@ PE1 validated against Jarvis's enhancer architecture: CIRICD dimensions already 
 
 ### Workstream 9: Memory Maturation (1.5 sessions)
 
-| Session | Deliverable                         | What                                                                  |
-| ------- | ----------------------------------- | --------------------------------------------------------------------- |
-| G1      | Cascading Staleness Propagation     | Track source_observation_ids, flag related entries stale on supersede |
-| G1.5    | Query Expansion + Session Diversity | LLM generates 3-5 reformulations, cap results per session             |
+| Session | Deliverable                         | What                                                                                                                                      |
+| ------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| G1      | Cascading Staleness Propagation     | pgCascadeStale() on upsert — marks entries with related_to containing superseded path as stale. Fire-and-forget. 3 tests. **1642 tests.** | **Done** |
+| G1.5    | Query Expansion + Session Diversity | LLM generates 3-5 reformulations, cap results per session                                                                                 |
 
 ### Workstream 10: Autoresearch + Skill Refinement (1.5 sessions)
 

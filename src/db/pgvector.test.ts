@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { contentHash, isPgvectorEnabled } from "./pgvector.js";
+import { contentHash, isPgvectorEnabled, pgCascadeStale } from "./pgvector.js";
 
 // Mock fetch globally for all pgvector tests
 const mockFetch = vi.fn();
@@ -56,7 +56,13 @@ describe("isPgvectorEnabled", () => {
 describe("pgUpsert", () => {
   it("sends correct POST to kb_entries with merge-duplicates", async () => {
     process.env.COMMIT_DB_KEY = "test-key";
+    // Upsert POST response
     mockFetch.mockResolvedValueOnce({ ok: true });
+    // Cascade stale search (fire-and-forget, returns no related entries)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    });
 
     const { pgUpsert } = await import("./pgvector.js");
     const result = await pgUpsert({
@@ -67,7 +73,7 @@ describe("pgUpsert", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockFetch).toHaveBeenCalledOnce();
+    // First call is the upsert POST
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toContain("/kb_entries");
     expect(opts.method).toBe("POST");
@@ -214,5 +220,58 @@ describe("pgReinforce", () => {
     expect(url).toContain("/rpc/kb_reinforce");
     const body = JSON.parse(opts.body);
     expect(body.p_path).toBe("test.md");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cascading staleness (v6.4 G1)
+// ---------------------------------------------------------------------------
+
+describe("pgCascadeStale", () => {
+  it("marks related entries stale when source path changes", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+
+    // First call: search for entries with related_to containing the path
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { path: "derived/entry1.md" },
+        { path: "derived/entry2.md" },
+      ],
+    });
+
+    // Second call: PATCH to mark them stale
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    const count = await pgCascadeStale("source/original.md");
+    expect(count).toBe(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // Verify PATCH call
+    const [, patchOpts] = mockFetch.mock.calls[1];
+    expect(patchOpts.method).toBe("PATCH");
+    const body = JSON.parse(patchOpts.body);
+    expect(body.stale).toBe(true);
+  });
+
+  it("returns 0 when no related entries found", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    });
+
+    const count = await pgCascadeStale("source/no-deps.md");
+    expect(count).toBe(0);
+    // Only search call, no PATCH
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it("returns 0 when no API key", async () => {
+    delete process.env.COMMIT_DB_KEY;
+    const count = await pgCascadeStale("source/test.md");
+    expect(count).toBe(0);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

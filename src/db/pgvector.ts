@@ -84,11 +84,13 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
   const apiKey = getApiKey();
   if (!apiKey) return false;
 
+  const newHash = entry.content_hash ?? contentHash(entry.content);
+
   const row = {
     path: entry.path,
     title: entry.title,
     content: entry.content,
-    content_hash: entry.content_hash ?? contentHash(entry.content),
+    content_hash: newHash,
     embedding: entry.embedding ? `[${entry.embedding.join(",")}]` : null,
     type: entry.type ?? "fact",
     qualifier: entry.qualifier ?? "reference",
@@ -121,6 +123,16 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
       );
       return false;
     }
+
+    // v6.4 G1: Cascade staleness — if content changed, mark related entries stale.
+    // Fire-and-forget: staleness propagation shouldn't block the upsert caller.
+    pgCascadeStale(entry.path, apiKey).catch((err) => {
+      console.warn(
+        `[pgvector] Cascade stale failed for ${entry.path}:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+
     return true;
   } catch (err) {
     console.warn(
@@ -128,6 +140,65 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
       err instanceof Error ? err.message : err,
     );
     return false;
+  }
+}
+
+/**
+ * Cascading staleness propagation (v6.4 G1).
+ *
+ * When an entry at `path` is superseded (content changed), find all entries
+ * whose `related_to` array contains this path and mark them stale.
+ * This ensures derived/dependent knowledge is flagged for re-evaluation
+ * when its source changes.
+ *
+ * Uses PostgREST array containment operator: related_to @> [path]
+ */
+export async function pgCascadeStale(
+  path: string,
+  apiKey?: string,
+): Promise<number> {
+  const key = apiKey ?? getApiKey();
+  if (!key) return 0;
+
+  try {
+    // Find entries whose related_to contains this path (PostgREST cs. operator)
+    const searchRes = await fetch(
+      `${SUPABASE_URL}/kb_entries?related_to=cs.{${encodeURIComponent(path)}}&stale=is.false&select=path`,
+      {
+        headers: supabaseHeaders(key),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    if (!searchRes.ok) return 0;
+    const related = (await searchRes.json()) as Array<{ path: string }>;
+    if (related.length === 0) return 0;
+
+    // Mark them stale via PATCH
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/kb_entries?related_to=cs.{${encodeURIComponent(path)}}&stale=is.false`,
+      {
+        method: "PATCH",
+        headers: {
+          ...supabaseHeaders(key),
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          stale: true,
+          updated_at: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    if (patchRes.ok) {
+      console.log(
+        `[pgvector] Cascade stale: ${related.length} entries marked stale (source: ${path})`,
+      );
+    }
+    return related.length;
+  } catch {
+    return 0;
   }
 }
 
