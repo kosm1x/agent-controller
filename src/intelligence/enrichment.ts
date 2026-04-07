@@ -90,6 +90,7 @@ export async function enrichContext(
   // recalls to avoid sequential 3-5s penalty (embed generation + HTTP search).
   // 2s timeout prevents blocking the pipeline if Supabase/Gemini are slow.
   const PGVECTOR_TIMEOUT_MS = 2000;
+  let pgTimedOut = false;
   recallPromises.push(
     Promise.race([
       (async () => {
@@ -110,6 +111,8 @@ export async function enrichContext(
             5,
             0.25,
           );
+          // Guard: don't mutate sections after timeout (race condition C1)
+          if (pgTimedOut) return;
           if (results.length > 0) {
             const lines: string[] = [];
             for (const r of results) {
@@ -126,7 +129,12 @@ export async function enrichContext(
           // Non-fatal — pgvector search is best-effort
         }
       })(),
-      new Promise<void>((resolve) => setTimeout(resolve, PGVECTOR_TIMEOUT_MS)),
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          pgTimedOut = true;
+          resolve();
+        }, PGVECTOR_TIMEOUT_MS),
+      ),
     ]),
   );
 

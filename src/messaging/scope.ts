@@ -110,6 +110,7 @@ export const MISC_TOOLS = [
   "jarvis_file_search", // Deferred — schema on demand
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
+  "video_status", // Always available — follow-ups about video status don't re-trigger video scope
   // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
@@ -456,7 +457,8 @@ export function scopeToolsForMessage(
     tools.push("memory_search", "memory_store");
   }
 
-  return tools;
+  // Deduplicate: multiple scope groups can push the same tool
+  return [...new Set(tools)];
 }
 
 /**

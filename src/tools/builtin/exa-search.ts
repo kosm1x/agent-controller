@@ -15,7 +15,6 @@ const MAX_RESULTS = 10;
 
 export const exaSearchTool: Tool = {
   name: "exa_search",
-  deferred: true,
   definition: {
     type: "function",
     function: {
