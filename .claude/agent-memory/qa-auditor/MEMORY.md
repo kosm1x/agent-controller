@@ -14,3 +14,5 @@
 - [v62-m05-extractor-audit](v62-m05-extractor-audit.md) — v6.2 M0.5 background extractor: PASS WITH WARNINGS, 8-char hash collision, no storeFacts tests, duplicate DB read, unbounded enrichment latency (2026-04-06)
 - [v62-m1-dedup-audit](v62-m1-dedup-audit.md) — v6.2 M1 lesson fingerprinting + dedup: PASS WITH WARNINGS, enforce sweep risk, metadata loss on dedup, no stop cron, no dedup tests (2026-04-06)
 - [v62-v1-tts-audit](v62-v1-tts-audit.md) — v6.2 V1 TTS engine: PASS WITH WARNINGS, listVoices dashes bug, splitText contract violation, orphaned temp dirs, dead generatePerSceneTTS (2026-04-06)
+- [v63-tool-deferral-audit](v63-tool-deferral-audit.md) — v6.3 tool deferral: FAIL, allowedToolNames never updated after expansion, 83+ tools non-functional, exa_search dual-listed (2026-04-07)
+- [v631-optimization-audit](v631-optimization-audit.md) — v6.3.1 optimization: PASS WITH WARNINGS, pgvector race condition, exa_search still dual-listed, fede-summary gated behind northstar (2026-04-07)

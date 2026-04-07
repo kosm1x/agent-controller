@@ -143,8 +143,16 @@ const ERROR_RATE_HEALTHY = 0.03;
 const ERROR_RATE_UNHEALTHY = 0.1;
 /** Minimum samples before health classification applies. */
 const MIN_HEALTH_SAMPLES = 5;
-/** Rolling window for degradation checks (10 min). */
+/** Rolling window for health stats/dashboard (10 min). */
 const HEALTH_WINDOW_MS = 600_000;
+/**
+ * Degradation routing uses shorter window + higher error threshold than
+ * dashboard health to prevent scheduled task failures (which produce
+ * 5-10 timeout entries in rapid succession) from contaminating
+ * interactive traffic for 10 minutes.
+ */
+const DEGRADATION_WINDOW_MS = 180_000; // 3 min
+const DEGRADATION_ERROR_THRESHOLD = 0.25; // 25%
 
 // ---------------------------------------------------------------------------
 // Per-model pricing (USD per 1M tokens) — update as prices change
@@ -254,16 +262,20 @@ class ProviderMetrics {
 
   /**
    * True if provider should be skipped (degraded or unhealthy).
-   * Uses baseline-derived thresholds (v6.2 S1):
-   *   - avg latency > 90s OR error rate > 10% → skip
-   * Only considers entries within windowMs (default 10 min) so degraded
-   * providers automatically get retried — prevents permanent death spiral.
+   *
+   * Uses a SHORTER window (3 min) and HIGHER error threshold (25%) than
+   * dashboard health classification. This prevents a single burst of
+   * failures (e.g. a scheduled task timing out 5-10 times in 60s) from
+   * marking the provider degraded for interactive traffic.
+   *
+   * Dashboard health uses the wider 10-min/3% window for visibility —
+   * routing decisions use the tighter window for resilience.
    */
   isDegraded(provider: string): boolean {
     const list = this.entries.get(provider);
     if (!list || list.length === 0) return false;
 
-    const cutoff = Date.now() - HEALTH_WINDOW_MS;
+    const cutoff = Date.now() - DEGRADATION_WINDOW_MS;
     const recent = list.filter((e) => e.timestamp >= cutoff);
     if (recent.length < MIN_HEALTH_SAMPLES) return false;
 
@@ -273,7 +285,10 @@ class ProviderMetrics {
     const successes = recent.filter((e) => e.success).length;
     const errorRate = 1 - successes / recent.length;
 
-    return avgLatencyMs > LATENCY_HEALTHY_MS || errorRate > ERROR_RATE_HEALTHY;
+    return (
+      avgLatencyMs > LATENCY_UNHEALTHY_MS ||
+      errorRate > DEGRADATION_ERROR_THRESHOLD
+    );
   }
 }
 

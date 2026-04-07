@@ -129,12 +129,12 @@ describe("ProviderMetrics", () => {
     expect(providerMetrics.isDegraded(name)).toBe(false);
   });
 
-  it("should report degraded when avg latency exceeds 90s threshold", () => {
+  it("should report degraded when avg latency exceeds unhealthy threshold (180s)", () => {
     const name = "test_degraded_slow";
     for (let i = 0; i < 8; i++) {
       providerMetrics.record(name, {
         timestamp: Date.now(),
-        latencyMs: 100_000, // 100s > 90s healthy threshold
+        latencyMs: 200_000, // 200s > 180s unhealthy threshold
         success: true,
         promptTokens: 100,
         completionTokens: 50,
@@ -143,18 +143,46 @@ describe("ProviderMetrics", () => {
     expect(providerMetrics.isDegraded(name)).toBe(true);
   });
 
-  it("should report degraded when error rate exceeds 10%", () => {
+  it("should NOT report degraded at moderate latency (100s < 180s threshold)", () => {
+    const name = "test_not_degraded_moderate";
+    for (let i = 0; i < 8; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 100_000, // 100s < 180s threshold — not degraded
+        success: true,
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    expect(providerMetrics.isDegraded(name)).toBe(false);
+  });
+
+  it("should report degraded when error rate exceeds 25%", () => {
     const name = "test_degraded_failures";
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 8; i++) {
       providerMetrics.record(name, {
         timestamp: Date.now(),
         latencyMs: 1000, // fast
-        success: i < 10, // 10/12 success = 83%, error rate 17% > 10%
+        success: i < 5, // 5/8 success = 62.5%, error rate 37.5% > 25%
         promptTokens: 100,
         completionTokens: 50,
       });
     }
     expect(providerMetrics.isDegraded(name)).toBe(true);
+  });
+
+  it("should NOT report degraded at moderate error rate (17% < 25% threshold)", () => {
+    const name = "test_not_degraded_moderate_errors";
+    for (let i = 0; i < 12; i++) {
+      providerMetrics.record(name, {
+        timestamp: Date.now(),
+        latencyMs: 1000,
+        success: i < 10, // 10/12 success = 83%, error rate 17% < 25%
+        promptTokens: 100,
+        completionTokens: 50,
+      });
+    }
+    expect(providerMetrics.isDegraded(name)).toBe(false);
   });
 
   it("classifies health as healthy/degraded/unhealthy", () => {

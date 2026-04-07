@@ -554,14 +554,26 @@ export const fastRunner: Runner = {
     // as a text catalog. This saves significant context tokens when many
     // tools are in scope. When the LLM calls a deferred tool, the executor
     // returns the full schema so the LLM can retry with correct arguments.
-    const definitions = toolRegistry.getDefinitions(input.tools, true);
-    const deferredCatalog = toolRegistry.getDeferredCatalog(input.tools);
-    // Count all available (deferred + non-deferred) for the empty check
+    //
+    // Small tool sets (≤ 6 tools): skip deferral entirely. Scheduled tasks
+    // and rituals have explicit, small tool sets where deferral overhead
+    // (extra inference round + timeout risk) outweighs token savings (~200
+    // tokens per deferred tool). Deferral is designed for scope-triggered
+    // sessions with 20-40+ tools.
     const totalTools = toolRegistry.getDefinitions(input.tools).length;
+    const skipDeferral = totalTools <= 6;
+    const definitions = toolRegistry.getDefinitions(input.tools, !skipDeferral);
+    const deferredCatalog = skipDeferral
+      ? undefined
+      : toolRegistry.getDeferredCatalog(input.tools);
     const deferredCount = totalTools - definitions.length;
     if (deferredCount > 0) {
       console.log(
         `[fast-runner] Tool deferral: ${definitions.length} full + ${deferredCount} deferred (${totalTools} total)`,
+      );
+    } else if (skipDeferral && totalTools > 0) {
+      console.log(
+        `[fast-runner] Deferral skipped: ${totalTools} tools (≤6 threshold)`,
       );
     }
     if (totalTools === 0) {

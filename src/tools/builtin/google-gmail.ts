@@ -14,7 +14,7 @@ import { join } from "path";
 export const gmailSendTool: Tool = {
   name: "gmail_send",
   requiresConfirmation: true,
-  deferred: true,
+  deferred: false,
   definition: {
     type: "function",
     function: {
