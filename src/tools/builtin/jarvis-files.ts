@@ -498,7 +498,6 @@ For batch moves, call this tool multiple times (one per file).`,
 
 export const jarvisFileSearchTool: Tool = {
   name: "jarvis_file_search",
-  deferred: true,
   definition: {
     type: "function",
     function: {
