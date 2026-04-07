@@ -73,7 +73,6 @@ export const CODING_TOOLS = [
   "code_search",
   "jarvis_diagnose",
   "jarvis_test_run",
-  "vps_status",
   "vps_deploy",
   "vps_backup",
   "vps_logs",
@@ -111,6 +110,7 @@ export const MISC_TOOLS = [
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
+  "vps_status", // Always available — "how's the server?" doesn't need coding scope
   // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
