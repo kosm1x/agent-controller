@@ -326,10 +326,10 @@ PE1 validated against Jarvis's enhancer architecture: CIRICD dimensions already 
 
 ### Workstream 10: Autoresearch + Skill Refinement (1.5 sessions)
 
-| Session | Deliverable                            | What                                                                            |
-| ------- | -------------------------------------- | ------------------------------------------------------------------------------- |
-| A1      | Anti-Overfitting + Simplicity Criteria | "Would this still be worthwhile if the task disappeared?" + simpler code = keep |
-| SK1     | Batch Orchestration Skill              | `/batch`: plan-approve-execute-track cycle for large multi-tool tasks           |
+| Session | Deliverable                            | What                                                                                                                                             |
+| ------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| A1      | Anti-Overfitting + Simplicity Criteria | validateMutation() gate: case-ID overfitting, >2x complexity, low-worth (1 case + length). "rejected" ExperimentStatus. 6 tests. **1648 tests.** | **Done** |
+| SK1     | Batch Orchestration Skill              | `/batch`: plan-approve-execute-track cycle for large multi-tool tasks                                                                            |
 
 ### Workstream 11: Fast-Runner Quality Pipeline (1 session)
 

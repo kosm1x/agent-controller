@@ -201,6 +201,49 @@ function mergeResults(baseline: EvalResult, targeted: EvalResult): EvalResult {
 }
 
 // ---------------------------------------------------------------------------
+// Anti-overfitting + simplicity gate (v6.4 A1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a proposed mutation against anti-overfitting and simplicity criteria.
+ * Returns null if the mutation passes, or a rejection reason string.
+ *
+ * Criteria:
+ * 1. Anti-overfitting: reject if the mutation's hypothesis references a single
+ *    specific test case by ID — the fix should generalize, not overfit to one case.
+ * 2. Simplicity: reject if the mutated value is >2x longer than the original —
+ *    complexity must justify its improvement. Shorter = better when scores are equal.
+ * 3. Worthiness: "Would this still be worthwhile if the task disappeared?"
+ *    Reject if the mutation only affects 1 case AND adds >20% length.
+ */
+export function validateMutation(
+  mutation: Mutation,
+  affectedCaseCount: number,
+  originalValue: string,
+): string | null {
+  const mutatedLen = mutation.mutated_value.length;
+  const originalLen = originalValue.length;
+  const lengthRatio = originalLen > 0 ? mutatedLen / originalLen : 1;
+
+  // 1. Anti-overfitting: hypothesis mentions a specific case ID pattern
+  if (/\bcase[-_]?\d+\b/i.test(mutation.hypothesis)) {
+    return `overfitting: hypothesis references specific case ID "${mutation.hypothesis.match(/\bcase[-_]?\d+\b/i)?.[0]}"`;
+  }
+
+  // 2. Simplicity: mutation more than doubles the content length
+  if (lengthRatio > 2.0) {
+    return `complexity: mutated value is ${lengthRatio.toFixed(1)}x longer than original (${mutatedLen} vs ${originalLen} chars)`;
+  }
+
+  // 3. Worthiness: single-case fix that adds complexity
+  if (affectedCaseCount <= 1 && lengthRatio > 1.2) {
+    return `low-worth: only affects ${affectedCaseCount} case(s) but adds ${((lengthRatio - 1) * 100).toFixed(0)}% length`;
+  }
+
+  return null; // passes validation
+}
+
+// ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
 
@@ -323,11 +366,38 @@ export async function runOvernightTuning(
     // Get current value for recording
     const originalValue = getCurrentValue(mutation);
 
-    // Apply mutation to sandbox
-    const sandbox = applySandbox(bestSandbox, mutation);
-
     // Identify affected cases for targeted re-eval
     const affectedCaseIds = identifyAffectedCases(mutation, baseline.perCase);
+
+    // v6.4 A1: Anti-overfitting + simplicity gate
+    const rejection = validateMutation(
+      mutation,
+      affectedCaseIds.length,
+      originalValue,
+    );
+    if (rejection) {
+      console.log(`[tuning] ✗ REJECTED: ${rejection}`);
+      const expId = `${runId}-exp-${i}`;
+      insertExperiment({
+        experiment_id: expId,
+        run_id: runId,
+        surface: mutation.surface,
+        target: mutation.target,
+        mutation_type: "rejected",
+        hypothesis: mutation.hypothesis,
+        original_value: originalValue,
+        mutated_value: mutation.mutated_value,
+        baseline_score: bestScore,
+        mutated_score: bestScore,
+        status: "rejected",
+      });
+      experimentsRun++;
+      consecutiveRegressions++;
+      continue;
+    }
+
+    // Apply mutation to sandbox
+    const sandbox = applySandbox(bestSandbox, mutation);
     console.log(
       `[tuning] Re-evaluating ${affectedCaseIds.length} affected cases`,
     );

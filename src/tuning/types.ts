@@ -96,7 +96,12 @@ export type TuningSurface =
   | "classifier"
   | "prompt";
 
-export type ExperimentStatus = "pending" | "passed" | "regressed" | "error";
+export type ExperimentStatus =
+  | "pending"
+  | "passed"
+  | "regressed"
+  | "rejected"
+  | "error";
 
 export interface Mutation {
   surface: TuningSurface;

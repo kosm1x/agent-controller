@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { runOvernightTuning } from "./overnight-loop.js";
+import { runOvernightTuning, validateMutation } from "./overnight-loop.js";
 import { initDatabase, closeDatabase } from "../db/index.js";
 import {
   ensureTuningTables,
@@ -248,5 +248,75 @@ describe("runOvernightTuning", () => {
     expect(variants.length).toBeGreaterThanOrEqual(1);
     expect(variants[0].variant_id).toMatch(/^var-tune-/);
     expect(variants[0].generation).toBe(0); // First generation (no parent)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateMutation (v6.4 A1 — anti-overfitting + simplicity gate)
+// ---------------------------------------------------------------------------
+
+describe("validateMutation", () => {
+  // Use realistic description lengths (100+ chars) so ratio tests are meaningful
+  const original =
+    "Search the web for current information using major search engines. Returns top results with snippets.";
+  const baseMutation = {
+    surface: "tool_description" as const,
+    target: "web_search",
+    mutation_type: "rewrite" as const,
+    hypothesis: "Add clearer usage guidance for news queries",
+    mutated_value:
+      "Search the web for current information using major search engines. Returns top results with snippets and dates.",
+    original_value: original,
+  };
+
+  it("passes a clean mutation", () => {
+    expect(validateMutation(baseMutation, 5, original)).toBeNull();
+  });
+
+  it("rejects overfitting: hypothesis mentions specific case ID", () => {
+    const m = {
+      ...baseMutation,
+      hypothesis: "Fix case-42 by adding keyword",
+    };
+    expect(validateMutation(m, 5, original)).toContain("overfitting");
+  });
+
+  it("rejects complexity: mutation >2x longer than original", () => {
+    const m = {
+      ...baseMutation,
+      mutated_value: "A".repeat(210), // >2x of 100-char original
+    };
+    expect(validateMutation(m, 5, original)).toContain("complexity");
+  });
+
+  it("rejects low-worth: single case + length increase >20%", () => {
+    const m = {
+      ...baseMutation,
+      // ~30% longer than original (130 vs 100 chars)
+      mutated_value:
+        original +
+        " Also check academic sources and verify publication dates for accuracy.",
+    };
+    expect(validateMutation(m, 1, original)).toContain("low-worth");
+  });
+
+  it("allows single-case fix if no length increase", () => {
+    const m = {
+      ...baseMutation,
+      // Same length, different wording
+      mutated_value:
+        "Query the internet for latest information using major search engines. Returns top results with snippets.",
+    };
+    expect(validateMutation(m, 1, original)).toBeNull();
+  });
+
+  it("allows longer mutation if many cases affected", () => {
+    const m = {
+      ...baseMutation,
+      mutated_value:
+        original +
+        " Also check academic sources and verify publication dates for accuracy.",
+    };
+    expect(validateMutation(m, 10, original)).toBeNull();
   });
 });
