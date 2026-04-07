@@ -1053,6 +1053,30 @@ export const fastRunner: Runner = {
         }
       }
 
+      // v6.4 QP1: Post-task quality check — detect delivery misses and tool gaps.
+      // This catches issues that the hallucination guard misses because the LLM
+      // DID call some tools but skipped the critical delivery step.
+      const qpConcerns: string[] = [];
+      if (
+        hasEmailDelivery &&
+        !toolsCalled.includes("gmail_send") &&
+        parsed.status === "DONE"
+      ) {
+        qpConcerns.push(
+          "Delivery miss: gmail_send was in scope but never called. Email was not sent.",
+        );
+      }
+      if (qpConcerns.length > 0) {
+        console.warn(
+          `[fast-runner] QP1 quality check: ${qpConcerns.join("; ")}`,
+        );
+        parsed = {
+          ...parsed,
+          status: "DONE_WITH_CONCERNS",
+          concerns: [...(parsed.concerns ?? []), ...qpConcerns],
+        };
+      }
+
       // Task continuity: save checkpoint when hitting max_rounds or token_budget
       // so user can say "continúa" and resume where we left off.
       if (

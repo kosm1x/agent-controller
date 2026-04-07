@@ -136,6 +136,7 @@ import {
   dashboardGenerateTool,
   dashboardListTool,
 } from "../builtin/dashboard.js";
+import { batchDecomposeTool } from "../builtin/batch.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -218,6 +219,7 @@ const BUILTIN_TOOLS: Tool[] = [
   northstarSyncTool,
   knowledgeMapTool,
   knowledgeMapExpandTool,
+  batchDecomposeTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

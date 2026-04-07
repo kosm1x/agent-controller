@@ -136,6 +136,7 @@ export const SPECIALTY_TOOLS = [
   "gemini_image",
   "hf_generate",
   "hf_spaces",
+  "batch_decompose",
 ];
 
 /** Gemini research tools — document analysis, Q&A, podcast generation.
