@@ -111,7 +111,6 @@ function buildFileContent(
 export const northstarSyncTool: Tool = {
   name: "northstar_sync",
   requiresConfirmation: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {

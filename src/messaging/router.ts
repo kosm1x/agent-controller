@@ -702,10 +702,11 @@ export class MessageRouter {
     const CONTEXT_CLEAR_RE =
       /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
     if (CONTEXT_CLEAR_RE.test(msg.text)) {
-      conversationThreads.delete(msg.channel);
-      hydratedChannels.delete(msg.channel);
+      // Set empty thread AND mark as hydrated — prevents re-hydration from DB
+      conversationThreads.set(msg.channel, []);
+      hydratedChannels.add(msg.channel);
       console.log(
-        `[router] Context cleared for ${msg.channel} (thread buffer purged)`,
+        `[router] Context cleared for ${msg.channel} (thread buffer purged, hydration blocked)`,
       );
       // If there's more text after the clear phrase, process it as a fresh message
       const remainder = msg.text.replace(CONTEXT_CLEAR_RE, "").trim();
