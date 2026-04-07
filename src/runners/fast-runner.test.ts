@@ -359,6 +359,64 @@ describe("detectsHallucinatedExecution", () => {
   });
 });
 
+describe("write-claim false positive fixes (v6.4 OH2)", () => {
+  it("allows 'Status: completed' data label from task_history (not a write claim)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "| Ejecución | Status | Rounds |\n| Apr 3 | `completed` | 4 |\n| Apr 7 | `completed_with_concerns` | 3 |",
+        ["task_history"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows 'status: done' in diagnostic table from read tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "## Diagnóstico\n\nStatus: completed_with_concerns\nExit reason: provider_failure\nRounds: 3",
+        ["task_history", "list_schedules"],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows diagnostic report with failure analysis (user asked about failures)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Detectar fallos consecutivos permite identificar patrones de inestabilidad. El reporte fue completado con concerns.",
+        ["task_history"],
+        "Qué pasó con el reporte que falló?",
+      ),
+    ).toBe(false);
+  });
+
+  it("allows failure diagnosis with 'error' in user message", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El reporte fue enviado exitosamente el día 5 pero falló el día 6.",
+        ["task_history"],
+        "Diagnóstico del error en el reporte diario",
+      ),
+    ).toBe(false);
+  });
+
+  it("still catches first-person write claims even from diagnostic tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Actualicé la tarea en NorthStar con el nuevo estado.",
+        ["task_history"],
+      ),
+    ).toBe(true);
+  });
+
+  it("still catches ✅ Marcada claim from diagnostic tools", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "✅ **Marcada como `completed`** — Tarea actualizada",
+        ["task_history"],
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("git hallucination detection", () => {
   it("detects PUSH EXITOSO claim without git_push called", () => {
     expect(

@@ -409,3 +409,160 @@ describe("detectActiveGroups", () => {
     expect(groups.has("research")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scope pattern regression suite (v6.4 OH2)
+// Historical bugs from v6.3.1 sessions — each test corresponds to a real
+// production false-positive or false-negative that was diagnosed and fixed.
+// ---------------------------------------------------------------------------
+
+describe("scope pattern regression suite (v6.4 OH2)", () => {
+  const detect = (msg: string, prior: string[] = []) =>
+    detectActiveGroups(msg, prior, DEFAULT_SCOPE_PATTERNS);
+
+  // --- WordPress false positives ---
+  it("'livingjoyfully' without domain should NOT trigger wordpress", () => {
+    const tools = scope("Revisa el proyecto livingjoyfully");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("'livingjoyfully.art' WITH domain should trigger wordpress", () => {
+    const tools = scope("Publica en livingjoyfully.art");
+    expect(hasAll(tools, ["wp_list_posts"])).toBe(true);
+  });
+
+  it("'post' in markdown table context should NOT trigger social", () => {
+    // Prior thread contained markdown table with 'post' in it
+    const tools = scope("Dime qué tareas faltan", [
+      "| Feature | Status |\n| blog post tracker | done |",
+    ]);
+    // Should NOT activate social just from 'post' in prior context
+    expect(
+      tools.includes("social_publish") || tools.includes("social_accounts"),
+    ).toBe(false);
+  });
+
+  // --- Social false positives/negatives ---
+  it("'publica en instagram' should trigger social", () => {
+    const groups = detect("Publica esto en Instagram");
+    expect(groups.has("social")).toBe(true);
+  });
+
+  it("'publica en el blog' should trigger wordpress, NOT social", () => {
+    const groups = detect("Publica en el blog");
+    expect(groups.has("wordpress")).toBe(true);
+    expect(groups.has("social")).toBe(false);
+  });
+
+  it("'publicación en redes' should trigger social", () => {
+    const groups = detect("Prepara una publicación en redes sociales");
+    expect(groups.has("social")).toBe(true);
+  });
+
+  // --- Specialty false positives ---
+  it("'limpia tu contexto' should NOT trigger specialty (via texto substring)", () => {
+    const groups = detect("Limpia tu contexto");
+    expect(groups.has("specialty")).toBe(false);
+  });
+
+  it("'limpia el texto' SHOULD trigger specialty", () => {
+    const groups = detect("Limpia el texto de este documento");
+    expect(groups.has("specialty")).toBe(true);
+  });
+
+  // --- NorthStar scope ---
+  it("'Abre mi NorthStar' should trigger northstar_read", () => {
+    const groups = detect("Abre mi NorthStar");
+    expect(groups.has("northstar_read")).toBe(true);
+  });
+
+  it("'sync con db.mycommit' should trigger northstar_read", () => {
+    const groups = detect("sync con db.mycommit");
+    expect(groups.has("northstar_read")).toBe(true);
+  });
+
+  it("'sincroniza con NorthStar' should trigger northstar_read", () => {
+    const groups = detect("Sincroniza con NorthStar");
+    expect(groups.has("northstar_read")).toBe(true);
+  });
+
+  it("'qué tareas tengo' should trigger northstar_read", () => {
+    const groups = detect("Qué tareas tengo pendientes?");
+    expect(groups.has("northstar_read")).toBe(true);
+  });
+
+  it("'marca como completada' should trigger northstar_write", () => {
+    const groups = detect("Marca la tarea como completada");
+    expect(groups.has("northstar_write")).toBe(true);
+  });
+
+  // --- VPS should be in MISC (always available) ---
+  it("'estado del VPS' should include vps_status (MISC tool)", () => {
+    const tools = scope("Estado del VPS");
+    expect(tools).toContain("vps_status");
+  });
+
+  it("vps_status available even without coding keywords", () => {
+    const tools = scope("Cómo está el servidor?");
+    expect(tools).toContain("vps_status");
+  });
+
+  // --- Google scope ---
+  it("'envía un correo' should trigger google scope", () => {
+    const groups = detect("Envía un correo a javier");
+    expect(groups.has("google")).toBe(true);
+  });
+
+  it("'revisa mi calendario' should trigger google scope", () => {
+    const groups = detect("Revisa mi calendario para mañana");
+    expect(groups.has("google")).toBe(true);
+  });
+
+  // --- Schedule scope ---
+  it("'programa un reporte diario' should trigger schedule", () => {
+    const groups = detect("Programa un reporte diario a las 8am");
+    expect(groups.has("schedule")).toBe(true);
+  });
+
+  // --- Coding scope ---
+  it("'revisa el código' should trigger coding", () => {
+    const groups = detect("Revisa el código del módulo de inference");
+    expect(groups.has("coding")).toBe(true);
+  });
+
+  it("'deploy' should trigger coding", () => {
+    const groups = detect("Haz deploy de los cambios");
+    expect(groups.has("coding")).toBe(true);
+  });
+
+  // --- Intel scope ---
+  it("'señales de mercado' should trigger intel", () => {
+    const groups = detect("Muéstrame las señales de mercado");
+    expect(groups.has("intel")).toBe(true);
+  });
+
+  // --- Meta scope ---
+  it("'herramientas disponibles' should trigger meta", () => {
+    const groups = detect("Lista las herramientas disponibles");
+    expect(groups.has("meta")).toBe(true);
+  });
+
+  it("'diagnóstico' should trigger meta", () => {
+    const groups = detect("Ejecuta un diagnóstico del sistema");
+    expect(groups.has("meta")).toBe(true);
+  });
+
+  // --- Browser scope ---
+  it("'abre la app' should trigger browser", () => {
+    const groups = detect("Abre la app de NorthStar");
+    expect(groups.has("browser")).toBe(true);
+  });
+
+  // --- Scope deduplication ---
+  it("tools array has no duplicates (Set dedup)", () => {
+    // Use a message that triggers multiple overlapping groups
+    const tools = scope("Crea una tarea y sincroniza con NorthStar");
+    const unique = new Set(tools);
+    expect(tools.length).toBe(unique.size);
+  });
+});

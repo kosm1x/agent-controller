@@ -401,9 +401,9 @@ export function detectsHallucinatedExecution(
         userMessage,
       )
     : false;
-  // Read/list/query requests: the LLM is reporting DB state, not claiming writes
+  // Read/list/query/diagnostic requests: the LLM is reporting state, not claiming writes
   const isReadRequest = userMessage
-    ? /\b(lista|listar|list|cu[aá]les|muestra|mostrar|show|dame|dime|qu[eé]\s+(hay|tareas?|metas?|objetivos?|visio)|report[ae]|describe|consulta|status|estado)\b/i.test(
+    ? /\b(lista|listar|list|cu[aá]les|muestra|mostrar|show|dame|dime|qu[eé]\s+(hay|tareas?|metas?|objetivos?|visio)|report[ae]|describe|consulta|status|estado|diagnos|fallo|fail|error|histor|qué\s+pas[oó]|why\s+did|what\s+happened)\b/i.test(
         userMessage,
       )
     : false;
@@ -454,8 +454,10 @@ export function detectsHallucinatedExecution(
       ) ||
       // "Acciones Ejecutadas" header — narrated action table
       /accione?s?\s+ejecutadas?/i.test(text) ||
-      // Direct status assignment (not a listing of multiple statuses)
-      /status[:\s]+(?:completed|done|✅)\b/i.test(text) ||
+      // NOTE: "status[:\s]+completed" was removed (v6.4 OH2) — it's a data label
+      // from diagnostic tools (task_history, list_schedules), not a write claim.
+      // Real status-change claims are caught by first-person ("marqué como completada")
+      // and ✅-participle patterns.
       // Quantity claims ("50 celdas actualizadas")
       /\d+\s+(?:celdas?|filas?|rows?|cells?)\s+(?:actualizada?s?|escrit[oa]s?|written|updated)/i.test(
         text,
