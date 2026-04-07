@@ -151,14 +151,17 @@ describe("MessageRouter", () => {
       // Jarvis file tools always-on (NorthStar visions live here)
       expect(call.tools).toContain("jarvis_file_read");
       expect(call.tools).toContain("jarvis_file_list");
-      // Misc always present
-      expect(call.tools).toContain("http_fetch");
-      // Specialty tools now keyword-gated
+      // Misc core always present (trimmed in v6.3.1)
+      expect(call.tools).toContain("jarvis_file_write");
+      expect(call.tools).toContain("list_schedules");
+      // Niche tools no longer always-on
+      expect(call.tools).not.toContain("http_fetch");
+      // Specialty tools keyword-gated
       expect(call.tools).not.toContain("chart_generate");
-      // Lightpanda browser always present (MISC_TOOLS)
+      // Lightpanda: only goto + markdown always present
       expect(call.tools).toContain("browser__goto");
       expect(call.tools).toContain("browser__markdown");
-      expect(call.tools).toContain("browser__click");
+      expect(call.tools).not.toContain("browser__click");
       // Playwright NOT present for generic greetings (scope-gated)
       expect(call.tools).not.toContain("playwright__browser_navigate");
       // exa_search always present

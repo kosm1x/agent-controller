@@ -8,6 +8,7 @@ import { getRecentAlerts, type AlertTier } from "../../intel/alert-router.js";
 
 export const intelAlertHistoryTool: Tool = {
   name: "intel_alert_history",
+  deferred: true,
   definition: {
     type: "function",
     function: {

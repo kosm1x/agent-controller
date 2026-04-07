@@ -59,6 +59,7 @@ function isPathAllowedForSelfImprovement(filePath: string): boolean {
 
 export const fileEditTool: Tool = {
   name: "file_edit",
+  deferred: true,
   definition: {
     type: "function",
     function: {

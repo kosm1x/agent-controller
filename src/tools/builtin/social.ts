@@ -17,6 +17,7 @@ const NOT_CONFIGURED_MSG =
 
 export const socialPublishTool: Tool = {
   name: "social_publish",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -98,6 +99,7 @@ WORKFLOW:
 
 export const socialAccountsListTool: Tool = {
   name: "social_accounts_list",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -165,6 +167,7 @@ USE WHEN:
 
 export const socialPublishStatusTool: Tool = {
   name: "social_publish_status",
+  deferred: true,
   definition: {
     type: "function",
     function: {

@@ -216,6 +216,7 @@ async function tryImagen(
 export const geminiImageTool: Tool = {
   name: "gemini_image",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {

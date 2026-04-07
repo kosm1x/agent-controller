@@ -118,6 +118,7 @@ function run(cmd: string, timeout = 30_000, cwd?: string): string {
 
 export const gitStatusTool: Tool = {
   name: "git_status",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -158,6 +159,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
 
 export const gitDiffTool: Tool = {
   name: "git_diff",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -210,6 +212,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
 
 export const gitCommitTool: Tool = {
   name: "git_commit",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -294,6 +297,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
 
 export const gitPushTool: Tool = {
   name: "git_push",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -423,6 +427,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
 export const ghRepoCreateTool: Tool = {
   name: "gh_repo_create",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -482,6 +487,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
 
 export const ghCreatePrTool: Tool = {
   name: "gh_create_pr",
+  deferred: true,
   definition: {
     type: "function",
     function: {

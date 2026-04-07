@@ -11,6 +11,7 @@ const MAX_BODY = 20_000; // chars
 
 export const httpTool: Tool = {
   name: "http_fetch",
+  deferred: true,
   definition: {
     type: "function",
     function: {

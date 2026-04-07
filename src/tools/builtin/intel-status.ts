@@ -10,6 +10,7 @@ import { getRecentAlerts } from "../../intel/alert-router.js";
 
 export const intelStatusTool: Tool = {
   name: "intel_status",
+  deferred: true,
   definition: {
     type: "function",
     function: {

@@ -21,6 +21,7 @@ const BACKUP_RETENTION_DAYS = 7;
 
 export const vpsStatusTool: Tool = {
   name: "vps_status",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -145,6 +146,7 @@ AFTER CHECKING: Report the key metrics concisely.`,
 export const vpsDeployTool: Tool = {
   name: "vps_deploy",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -229,6 +231,7 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
 
 export const vpsBackupTool: Tool = {
   name: "vps_backup",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -296,6 +299,7 @@ AFTER BACKUP: Report the backup file path and size.`,
 
 export const vpsLogsTool: Tool = {
   name: "vps_logs",
+  deferred: true,
   definition: {
     type: "function",
     function: {

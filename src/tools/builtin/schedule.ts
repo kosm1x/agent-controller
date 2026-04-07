@@ -200,6 +200,7 @@ export const listSchedulesTool: Tool = {
 
 export const deleteScheduleTool: Tool = {
   name: "delete_schedule",
+  deferred: true,
   definition: {
     type: "function",
     function: {

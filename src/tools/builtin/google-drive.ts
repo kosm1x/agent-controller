@@ -25,6 +25,7 @@ const MIME_TYPES: Record<string, string> = {
 
 export const gdriveListTool: Tool = {
   name: "gdrive_list",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -120,6 +121,7 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
 
 export const gdriveCreateTool: Tool = {
   name: "gdrive_create",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -205,6 +207,7 @@ Returns the file URL for sharing.`,
 export const gdriveShareTool: Tool = {
   name: "gdrive_share",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -267,6 +270,7 @@ WORKFLOW: If user mentions a file by name, call gdrive_list first to find the fi
 export const gdriveDeleteTool: Tool = {
   name: "gdrive_delete",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -346,6 +350,7 @@ NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.
 
 export const gdriveMoveTool: Tool = {
   name: "gdrive_move",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -436,6 +441,7 @@ Also supports renaming — pass new_name to rename while moving (or rename in pl
 
 export const gdriveUploadTool: Tool = {
   name: "gdrive_upload",
+  deferred: true,
   definition: {
     type: "function",
     function: {

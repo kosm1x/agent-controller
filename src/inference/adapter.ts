@@ -1395,18 +1395,23 @@ export async function inferWithTools(
             if (!allowedToolNames.has(toolName)) {
               const registeredTool = toolRegistry.get(toolName);
               if (registeredTool?.deferred) {
-                // Deferred tool expansion — return full schema for retry
+                // Deferred tool expansion — return full schema for retry.
+                // CRITICAL: add to allowedToolNames so the retry actually
+                // executes instead of looping back here, and push the full
+                // definition into the tools array for proper function calling.
+                allowedToolNames.add(toolName);
+                tools.push(registeredTool.definition);
                 const schema = JSON.stringify(
                   registeredTool.definition.function.parameters,
                   null,
                   2,
                 );
                 console.log(
-                  `[inference] Deferred tool ${toolName} expanded — returning schema for retry`,
+                  `[inference] Deferred tool ${toolName} expanded — schema injected, ready for retry`,
                 );
                 result = JSON.stringify({
                   deferred_expansion: true,
-                  message: `Tool "${toolName}" is a deferred tool. Here is its full parameter schema. Call it again with the correct arguments.`,
+                  message: `Tool "${toolName}" is now available. Call it again with the correct arguments.`,
                   parameters: JSON.parse(schema),
                 });
               } else {

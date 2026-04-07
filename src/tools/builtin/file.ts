@@ -164,6 +164,7 @@ export const fileReadTool: Tool = {
 
 export const fileWriteTool: Tool = {
   name: "file_write",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -259,6 +260,7 @@ const ALLOW_DELETE_PREFIXES = ALLOW_WRITE_PREFIXES;
 export const fileDeleteTool: Tool = {
   name: "file_delete",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {

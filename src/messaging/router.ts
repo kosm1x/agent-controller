@@ -183,18 +183,19 @@ function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
 ): { tools: string[]; activeGroups: string[] } {
-  // Scope from RECENT user messages only (last 2) — older messages cause scope
-  // accumulation where every past topic stays active, bloating the tool list.
+  // Scope from LAST user message only — two turns caused scope accumulation
+  // where prior topics stayed active (e.g., hallucinated NorthStar response
+  // containing "Contenido"/"followers" triggered social+wordpress on next turn).
   // The current message (first param) is always scanned separately.
   const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
-    .slice(-2)
+    .slice(-1)
     .map((t) => t.content);
 
   // For assistant messages, extract only google/wp keywords to avoid false triggers
   const assistantContext = conversationHistory
     .filter((t) => t.role === "assistant")
-    .slice(-2)
+    .slice(-1)
     .map((t) => {
       // Only pass through words that match google or wordpress patterns
       const googleMatch = t.content.match(

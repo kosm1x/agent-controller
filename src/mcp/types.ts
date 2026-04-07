@@ -20,6 +20,8 @@ export interface McpServerConfig {
     description: string;
     inputSchema?: Record<string, unknown>;
   }>;
+  /** Tool names to mark as deferred (name + description only, full schema on first call). */
+  deferredTools?: string[];
 }
 
 /** Full MCP configuration file schema: serverId → config. */

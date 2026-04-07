@@ -162,6 +162,7 @@ async function generateImage(
 export const hfGenerateTool: Tool = {
   name: "hf_generate",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -409,6 +410,7 @@ DO NOT narrate generation — call this tool. If it fails, report the actual err
 
 export const hfSpacesTool: Tool = {
   name: "hf_spaces",
+  deferred: true,
   definition: {
     type: "function",
     function: {

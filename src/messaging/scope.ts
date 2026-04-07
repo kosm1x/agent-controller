@@ -98,29 +98,25 @@ export const WORDPRESS_TOOLS = [
 /** CRM tools — only when sales/pipeline context detected. */
 export const CRM_TOOLS_SCOPE = ["crm_query"];
 
-/** Other utility tools — always included (keep minimal for token budget). */
+/** Other utility tools — always included (keep minimal for token budget).
+ *  v6.3.1: Trimmed from 30→10 tools. Niche tools moved to scope-gated groups
+ *  or deferred (name+description only, full schema on first call). */
 export const MISC_TOOLS = [
   // jarvis_file_read + jarvis_file_list already in CORE_TOOLS
-  "jarvis_file_write",
-  "jarvis_file_update",
-  "jarvis_file_delete",
-  "jarvis_file_move",
-  "jarvis_file_search",
-  "northstar_sync",
-  "jarvis_init",
-  "http_fetch",
-  "list_schedules",
-  "project_list",
-  "project_get",
-  "project_update",
-  "pdf_read",
-  "video_status", // Always available — follow-ups about video status don't re-trigger video scope
-  "humanize_text", // Writing quality — always available
-  "dashboard_generate", // Dashboard creation — always available
-  "dashboard_list", // Dashboard browsing — always available
-  // Lightpanda browser — fast, lightweight, for content reading + simple forms
+  "jarvis_file_write", // Core write — needed for most tasks
+  "jarvis_file_update", // Core update — append/metadata changes
+  "jarvis_file_delete", // Deferred — schema on demand
+  "jarvis_file_move", // Deferred — schema on demand
+  "jarvis_file_search", // Deferred — schema on demand
+  "list_schedules", // Read-only, lightweight
+  "project_list", // Read-only, lightweight
+  // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
+];
+
+/** Lightpanda browser tools — scope-gated: only when browse/navegar/web keywords detected. */
+export const BROWSER_EXTRA_TOOLS = [
   "browser__links",
   "browser__click",
   "browser__fill",
@@ -246,7 +242,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?)/i,
+      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric)/i,
     group: "specialty",
   },
   {
@@ -405,11 +401,26 @@ export function scopeToolsForMessage(
     activeGroups.add("crm");
   }
 
+  if (
+    activeGroups.has("northstar_read") ||
+    activeGroups.has("northstar_write")
+  ) {
+    tools.push("northstar_sync");
+  }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
+    // Niche tools activated by specialty context
+    tools.push(
+      "humanize_text",
+      "dashboard_generate",
+      "dashboard_list",
+      "http_fetch",
+      "pdf_read",
+    );
   }
   if (activeGroups.has("research")) {
     tools.push(...RESEARCH_TOOLS);
+    tools.push("pdf_read", "http_fetch");
   }
   if (activeGroups.has("intel")) {
     tools.push(...INTEL_TOOLS);
@@ -427,16 +438,19 @@ export function scopeToolsForMessage(
     tools.push(...GOOGLE_TOOLS);
   }
   if (activeGroups.has("browser")) {
-    tools.push(...BROWSER_TOOLS);
+    tools.push(...BROWSER_TOOLS, ...BROWSER_EXTRA_TOOLS);
   }
   if (activeGroups.has("coding")) {
     tools.push(...CODING_TOOLS);
+    // Projects need write access in coding context
+    tools.push("project_get", "project_update");
   }
   if (activeGroups.has("crm") && options.hasCrm) {
     tools.push(...CRM_TOOLS_SCOPE);
   }
   if (activeGroups.has("wordpress") && options.hasWordpress) {
     tools.push(...WORDPRESS_TOOLS);
+    tools.push("humanize_text"); // Writing quality for blog posts
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store");

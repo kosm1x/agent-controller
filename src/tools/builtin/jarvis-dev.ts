@@ -258,6 +258,7 @@ function actionStatus(): string {
 export const jarvisDevTool: Tool = {
   name: "jarvis_dev",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {

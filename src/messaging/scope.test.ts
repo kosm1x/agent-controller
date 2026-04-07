@@ -61,13 +61,24 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
-  it("Lightpanda browser tools always available via MISC_TOOLS", () => {
+  it("Lightpanda core tools always available, extras scope-gated", () => {
     const tools = scope("Hola, buenos días");
+    // Core Lightpanda: goto + markdown always available
+    expect(tools).toContain("browser__goto");
+    expect(tools).toContain("browser__markdown");
+    // Extra Lightpanda tools now scope-gated (not in generic messages)
+    expect(tools).not.toContain("browser__click");
+    expect(tools).not.toContain("browser__fill");
+    // Playwright tools still scope-gated
+    expect(tools).not.toContain("playwright__browser_navigate");
+  });
+
+  it("Lightpanda extra tools activate on browser keywords", () => {
+    const tools = scope("Navega al sitio web y llena el formulario");
     expect(tools).toContain("browser__goto");
     expect(tools).toContain("browser__click");
     expect(tools).toContain("browser__fill");
-    // Playwright tools are scope-gated, NOT always available
-    expect(tools).not.toContain("playwright__browser_navigate");
+    expect(tools).toContain("browser__structuredData");
   });
 
   it("Playwright tools activate on browser/SPA keywords", () => {

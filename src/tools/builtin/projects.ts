@@ -76,6 +76,7 @@ NOTE: This returns DB project metadata (status, URLs, credentials). For project 
 
 export const projectGetTool: Tool = {
   name: "project_get",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -152,6 +153,7 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
 export const projectUpdateTool: Tool = {
   name: "project_update",
   requiresConfirmation: false,
+  deferred: true,
   definition: {
     type: "function",
     function: {

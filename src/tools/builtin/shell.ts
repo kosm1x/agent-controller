@@ -210,6 +210,7 @@ export function validateShellCommand(command: string): {
 
 export const shellTool: Tool = {
   name: "shell_exec",
+  deferred: true,
   definition: {
     type: "function",
     function: {

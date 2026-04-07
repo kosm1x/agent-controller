@@ -170,6 +170,7 @@ export class McpManager {
     };
 
     // Register each tool in the global registry
+    const deferSet = new Set(config.deferredTools ?? []);
     for (const mcpTool of tools) {
       const tool = createMcpTool(
         serverId,
@@ -179,6 +180,7 @@ export class McpManager {
           inputSchema: mcpTool.inputSchema as Record<string, unknown>,
         },
         callFn,
+        deferSet.has(mcpTool.name),
       );
       registry.register(tool);
       toolNames.push(tool.name);
@@ -203,6 +205,7 @@ export class McpManager {
   ): string[] {
     const toolDefs = config.tools ?? [];
     const toolNames: string[] = [];
+    const deferSet = new Set(config.deferredTools ?? []);
 
     for (const toolDef of toolDefs) {
       const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${toolDef.name}`;
@@ -210,6 +213,7 @@ export class McpManager {
       const proxyMarker = Symbol("lazy-proxy");
       const tool: Tool = {
         name: namespacedName,
+        deferred: deferSet.has(toolDef.name),
         definition: {
           type: "function",
           function: {

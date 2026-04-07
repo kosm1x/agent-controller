@@ -14,6 +14,7 @@ const DEFAULT_LON = -99.1332;
 
 export const weatherForecastTool: Tool = {
   name: "weather_forecast",
+  deferred: true,
   definition: {
     type: "function",
     function: {

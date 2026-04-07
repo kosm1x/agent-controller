@@ -13,6 +13,7 @@ const MAX_ITEMS = 20;
 
 export const rssReadTool: Tool = {
   name: "rss_read",
+  deferred: true,
   definition: {
     type: "function",
     function: {

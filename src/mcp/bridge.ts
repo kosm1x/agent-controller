@@ -45,16 +45,21 @@ export function extractText(content: McpContentItem[]): string {
 /**
  * Create a Mission Control Tool from an MCP tool definition.
  * The tool name is namespaced as: serverId__toolName.
+ * When `deferred` is true, the tool's full schema is excluded from initial
+ * context — only name + description are sent. The executor returns the full
+ * schema on first call so the LLM can retry with correct arguments.
  */
 export function createMcpTool(
   serverId: string,
   mcpTool: McpToolInfo,
   callFn: McpCallFn,
+  deferred = false,
 ): Tool {
   const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${mcpTool.name}`;
 
   return {
     name: namespacedName,
+    deferred,
     definition: {
       type: "function",
       function: {

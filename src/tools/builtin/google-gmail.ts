@@ -14,6 +14,7 @@ import { join } from "path";
 export const gmailSendTool: Tool = {
   name: "gmail_send",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -127,6 +128,7 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
 
 export const gmailSearchTool: Tool = {
   name: "gmail_search",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -285,6 +287,7 @@ function extractParts(
 
 export const gmailReadTool: Tool = {
   name: "gmail_read",
+  deferred: true,
   definition: {
     type: "function",
     function: {

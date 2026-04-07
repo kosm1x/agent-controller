@@ -25,6 +25,7 @@ const COOLDOWN_KEY = "directive_last_proposal_at";
 
 export const jarvisProposeTool: Tool = {
   name: "jarvis_propose_directive",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -203,6 +204,7 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
 export const jarvisApplyProposalTool: Tool = {
   name: "jarvis_apply_proposal",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {

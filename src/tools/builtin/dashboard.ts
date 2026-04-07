@@ -87,6 +87,7 @@ const chartsDiv = document.getElementById('charts');
 
 export const dashboardGenerateTool: Tool = {
   name: "dashboard_generate",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -201,6 +202,7 @@ Serve via: GET /dashboard/{id}`,
 
 export const dashboardListTool: Tool = {
   name: "dashboard_list",
+  deferred: true,
   definition: {
     type: "function",
     function: {

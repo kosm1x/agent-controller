@@ -390,7 +390,8 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
 
 export const jarvisFileDeleteTool: Tool = {
   name: "jarvis_file_delete",
-  requiresConfirmation: true, // S5: precious paths need user confirmation
+  requiresConfirmation: true,
+  deferred: true, // S5: precious paths need user confirmation
   definition: {
     type: "function",
     function: {
@@ -449,6 +450,7 @@ After user confirms, call again with confirmed:true to proceed.`,
 
 export const jarvisFileMoveTool: Tool = {
   name: "jarvis_file_move",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -496,6 +498,7 @@ For batch moves, call this tool multiple times (one per file).`,
 
 export const jarvisFileSearchTool: Tool = {
   name: "jarvis_file_search",
+  deferred: true,
   definition: {
     type: "function",
     function: {

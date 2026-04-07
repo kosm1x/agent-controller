@@ -12,6 +12,7 @@ import { upsertFile } from "../../db/jarvis-fs.js";
 
 export const jarvisInitTool: Tool = {
   name: "jarvis_init",
+  deferred: true,
   definition: {
     type: "function",
     function: {

@@ -74,6 +74,7 @@ function searchContent(
 
 export const pdfReadTool: Tool = {
   name: "pdf_read",
+  deferred: true,
   definition: {
     type: "function",
     function: {

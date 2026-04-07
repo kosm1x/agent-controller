@@ -85,6 +85,7 @@ function getJob(jobId: string): VideoJobRow | undefined {
 export const videoCreateTool: Tool = {
   name: "video_create",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -373,6 +374,7 @@ async function runPipeline(
 
 export const videoStatusTool: Tool = {
   name: "video_status",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -427,6 +429,7 @@ Returns: status, output file path (when completed), or error message (when faile
 
 export const videoScriptTool: Tool = {
   name: "video_script",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -477,6 +480,7 @@ USE WHEN:
 
 export const videoTtsTool: Tool = {
   name: "video_tts",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -540,6 +544,7 @@ Long texts (>2000 chars) are automatically split at sentence boundaries with sil
 
 export const videoListVoicesTool: Tool = {
   name: "video_list_voices",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -593,6 +598,7 @@ Returns voice names, genders, and locales. Filter by language to narrow results.
 
 export const videoImageTool: Tool = {
   name: "video_image",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -640,6 +646,7 @@ USE WHEN:
 
 export const videoListProfilesTool: Tool = {
   name: "video_list_profiles",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -664,6 +671,7 @@ USE WHEN:
 
 export const videoBackgroundDownloadTool: Tool = {
   name: "video_background_download",
+  deferred: true,
   definition: {
     type: "function",
     function: {

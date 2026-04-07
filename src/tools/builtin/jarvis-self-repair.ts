@@ -39,6 +39,7 @@ function currentBranch(): string {
 
 export const jarvisDiagnoseTool: Tool = {
   name: "jarvis_diagnose",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -202,6 +203,7 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
 
 export const jarvisTestRunTool: Tool = {
   name: "jarvis_test_run",
+  deferred: true,
   definition: {
     type: "function",
     function: {

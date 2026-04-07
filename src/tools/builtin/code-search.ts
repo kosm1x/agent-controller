@@ -355,6 +355,7 @@ import { searchCode, symbolsInFile, type SymbolKind } from "./code-index.js";
 
 export const codeSearchTool: Tool = {
   name: "code_search",
+  deferred: true,
   definition: {
     type: "function",
     function: {

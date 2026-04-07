@@ -11,6 +11,7 @@ import { googleFetch } from "../../google/client.js";
 
 export const gsheetsReadTool: Tool = {
   name: "gsheets_read",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -89,6 +90,7 @@ AFTER READING: Report the spreadsheet name and range read. Only report data that
 
 export const gsheetsWriteTool: Tool = {
   name: "gsheets_write",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -301,6 +303,7 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
 
 export const gdocsReadTool: Tool = {
   name: "gdocs_read",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -357,6 +360,7 @@ export const gdocsReadTool: Tool = {
 
 export const gdocsWriteTool: Tool = {
   name: "gdocs_write",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -464,6 +468,7 @@ AFTER WRITING: Report the document title and what was appended.`,
 
 export const gdocsReplaceTool: Tool = {
   name: "gdocs_replace",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -581,6 +586,7 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
 
 export const gslidesCreateTool: Tool = {
   name: "gslides_create",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -702,6 +708,7 @@ export const gslidesCreateTool: Tool = {
 
 export const gtasksCreateTool: Tool = {
   name: "gtasks_create",
+  deferred: true,
   definition: {
     type: "function",
     function: {

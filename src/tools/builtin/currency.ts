@@ -12,6 +12,7 @@ const TIMEOUT_MS = 10_000;
 
 export const currencyConvertTool: Tool = {
   name: "currency_convert",
+  deferred: true,
   definition: {
     type: "function",
     function: {

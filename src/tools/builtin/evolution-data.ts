@@ -17,6 +17,7 @@ import { deactivateSkill, getUnderperformingSkills } from "../../db/skills.js";
 
 export const evolutionGetDataTool: Tool = {
   name: "evolution_get_data",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -78,6 +79,7 @@ DO NOT USE: During regular task execution.`,
 
 export const evolutionDeactivateSkillTool: Tool = {
   name: "evolution_deactivate_skill",
+  deferred: true,
   definition: {
     type: "function",
     function: {

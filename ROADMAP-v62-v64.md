@@ -1,7 +1,7 @@
 # Jarvis Roadmap: v6.2 → v6.3 → v6.4
 
-**Date**: 2026-04-06
-**Baseline**: v6.0+v6.1 complete. 1319 tests, 163 tools. SG1-SG5 shipped. Behavioral coherence (10 OpenClaude patterns) shipped.
+**Date**: 2026-04-07
+**Baseline**: v6.2 COMPLETE (14/14), v6.3 7/8 done (D3+D4 blocked on OAuth), v6.3.1 context optimization shipped. 1577 tests, 169 tools (84 deferred). SG1-SG5 shipped. Unified file system complete.
 **Sources**: 8 repo assessments, 3 Claude Code deep-dives, 11 memory references
 
 ---
@@ -55,12 +55,12 @@ Week 7:  S5 (protected paths)     +  V3.5 (integration)
 
 ### v6.2 Success Criteria
 
-- [ ] Jarvis never goes silent >2 minutes due to provider failure
-- [ ] KB entries deduplicate automatically via content fingerprinting
-- [ ] Old unreinforced entries decay and get pruned (Ebbinghaus)
-- [ ] Conversations automatically extract memories into pgvector
-- [ ] Enrichment pipeline uses vector similarity, not just FTS5 keywords
-- [ ] `video_create mode:"overlay"` produces 30-60s vertical video with per-scene narration over background
+- [x] Jarvis never goes silent >2 minutes due to provider failure
+- [x] KB entries deduplicate automatically via content fingerprinting
+- [x] Old unreinforced entries decay and get pruned (Ebbinghaus)
+- [x] Conversations automatically extract memories into pgvector
+- [x] Enrichment pipeline uses vector similarity, not just FTS5 keywords
+- [x] `video_create mode:"overlay"` produces 30-60s vertical video with per-scene narration over background
 
 ---
 
@@ -105,11 +105,11 @@ Week 4:  D4 + D4.5 (calendar + stealth) + DB2 (dashboard serving)
 
 ### v6.3 Success Criteria
 
-- [ ] "Toma este hilo, hazlo video, publícalo en TikTok e Instagram de [cliente]" works end-to-end
-- [ ] All outbound text passes humanization filter (no "delve", no reasoning chain leaks)
-- [ ] `dashboard_generate` produces interactive ECharts HTML served via Hono URL
-- [ ] Playwright browser passes bot.incolumitas.com and sannysoft basic checks
-- [ ] Content calendar enables "publish this video to all [client] accounts"
+- [ ] "Toma este hilo, hazlo video, publícalo en TikTok e Instagram de [cliente]" works end-to-end — **blocked on D3+D4 OAuth**
+- [x] All outbound text passes humanization filter (no "delve", no reasoning chain leaks)
+- [x] `dashboard_generate` produces interactive ECharts HTML served via Hono URL
+- [x] Playwright browser passes bot.incolumitas.com and sannysoft basic checks
+- [ ] Content calendar enables "publish this video to all [client] accounts" — **blocked on D3+D4 OAuth**
 
 ---
 

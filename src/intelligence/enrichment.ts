@@ -86,23 +86,64 @@ export async function enrichContext(
     );
   }
 
-  // Wait for all recalls to complete
+  // v6.2 M0.5: pgvector semantic search — run IN PARALLEL with Hindsight
+  // recalls to avoid sequential 3-5s penalty (embed generation + HTTP search).
+  // 2s timeout prevents blocking the pipeline if Supabase/Gemini are slow.
+  const PGVECTOR_TIMEOUT_MS = 2000;
+  recallPromises.push(
+    Promise.race([
+      (async () => {
+        try {
+          const { isPgvectorEnabled, pgHybridSearch, pgRecordAccess } =
+            await import("../db/pgvector.js");
+          const { generateEmbedding } =
+            await import("../inference/embeddings.js");
+
+          if (!isPgvectorEnabled()) return;
+
+          const queryEmbedding = await generateEmbedding(messageText);
+          if (!queryEmbedding || queryEmbedding.length === 0) return;
+
+          const results = await pgHybridSearch(
+            queryEmbedding,
+            messageText,
+            5,
+            0.25,
+          );
+          if (results.length > 0) {
+            const lines: string[] = [];
+            for (const r of results) {
+              let line = `- [${r.combined_score.toFixed(2)}] **${r.title}**: ${r.content.slice(0, 200)}`;
+              if (r.stale) line += " ⚠ STALE";
+              lines.push(line);
+              pgRecordAccess(r.path).catch(() => {});
+            }
+            sections.push(
+              `## Contexto semántico (pgvector)\n${lines.join("\n")}`,
+            );
+          }
+        } catch {
+          // Non-fatal — pgvector search is best-effort
+        }
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, PGVECTOR_TIMEOUT_MS)),
+    ]),
+  );
+
+  // Wait for ALL recalls (Hindsight + pgvector) to complete in parallel
   await Promise.all(recallPromises);
 
   // Memory drift verification (OpenClaude pattern): recalled memories that
   // name specific file paths may be stale. Verify referenced paths exist
   // and flag stale entries so the LLM doesn't act on outdated claims.
-  // "A memory that names a file path is a claim it existed when written."
   try {
     const { existsSync } = await import("fs");
     for (let i = 0; i < sections.length; i++) {
-      // Word-boundary anchor prevents false-positives on URLs like
-      // https://example.com/var/logs → would extract /var/logs without anchor
       const pathRegex = /(?:^|\s)(\/(?:root|home|opt|tmp|var|etc)\/[\w./-]+)/gm;
       const pathMatches: string[] = [];
       let m: RegExpExecArray | null;
       while ((m = pathRegex.exec(sections[i])) !== null) {
-        pathMatches.push(m[1]); // capture group 1 = path without leading space
+        pathMatches.push(m[1]);
       }
       if (pathMatches.length > 0) {
         const stalePaths = pathMatches.filter((p) => !existsSync(p));
@@ -113,46 +154,7 @@ export async function enrichContext(
       }
     }
   } catch {
-    // Non-fatal — drift check is best-effort
-  }
-
-  // v6.2 M0.5: pgvector semantic search — supplements FTS5 keyword recall
-  // with vector similarity for paraphrased queries, multilingual matches,
-  // and conceptual connections the keyword index would miss.
-  try {
-    const { isPgvectorEnabled, pgHybridSearch, pgRecordAccess } =
-      await import("../db/pgvector.js");
-    const { generateEmbedding } = await import("../inference/embeddings.js");
-
-    if (isPgvectorEnabled()) {
-      const queryEmbedding = await generateEmbedding(messageText);
-      if (queryEmbedding && queryEmbedding.length > 0) {
-        const results = await pgHybridSearch(
-          queryEmbedding,
-          messageText,
-          5,
-          0.25,
-        );
-        if (results.length > 0) {
-          const lines: string[] = [];
-          for (const r of results) {
-            let line = `- [${r.combined_score.toFixed(2)}] **${r.title}**: ${r.content.slice(0, 200)}`;
-            // Staleness warning for entries >7 days old
-            if (r.stale) {
-              line += " ⚠ STALE";
-            }
-            lines.push(line);
-            // Record access for retention scoring (fire-and-forget)
-            pgRecordAccess(r.path).catch(() => {});
-          }
-          sections.push(
-            `## Contexto semántico (pgvector)\n${lines.join("\n")}`,
-          );
-        }
-      }
-    }
-  } catch {
-    // Non-fatal — pgvector search is best-effort
+    // Non-fatal
   }
 
   // Tool effectiveness from SQLite outcomes (sync, single query for both)

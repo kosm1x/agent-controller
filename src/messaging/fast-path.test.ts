@@ -44,20 +44,12 @@ describe("isConversationalFastPath", () => {
     "qué calor",
     "mucho trabajo",
     "vamos bien",
-  ])(
-    "returns true for short casual phrase (≤5 words, no triggers): %s",
-    (text) => {
-      expect(isConversationalFastPath(text)).toBe(true);
-    },
-  );
-
-  it.each([
     "Hablame de la serie de TV Community",
     "Cuéntame sobre tu día favorito",
     "Dime algo interesante sobre México",
     "Estoy pensando en cambiar de carrera",
-  ])("returns true for 6-8 word conversational statement: %s", (text) => {
-    expect(isConversationalFastPath(text)).toBe(true);
+  ])("returns false for 3+ word messages (full pipeline): %s", (text) => {
+    expect(isConversationalFastPath(text)).toBe(false);
   });
 
   // --- Should NOT fast-path (false) ---

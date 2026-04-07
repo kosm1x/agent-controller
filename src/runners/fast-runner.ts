@@ -20,7 +20,7 @@ import {
 } from "../intelligence/scope-telemetry.js";
 import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
-import { getFilesByQualifier } from "../db/jarvis-fs.js";
+import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -40,9 +40,40 @@ STATUS: BLOCKED — [what is preventing completion]`;
  * Build the knowledge base injection section from jarvis_files.
  * Fetches always-read + enforce files, plus conditional files matching scope.
  */
+/** Known project slugs for README auto-injection. */
+const PROJECT_SLUGS = [
+  "agent-controller",
+  "braid-jarvis",
+  "cmll-gira-estrellas",
+  "cuatro-flor",
+  "livingjoyfully",
+  "obsidian-brain",
+  "pipesong",
+  "presencia-digital-eurekamd",
+  "reddit-scraper-tool",
+  "vlmp",
+];
+
+/** Match project names in message text (slug or natural name). */
+function detectProjectInMessage(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const slug of PROJECT_SLUGS) {
+    // Match slug directly or as separate words (e.g. "cuatro flor", "living joyfully")
+    if (lower.includes(slug) || lower.includes(slug.replace(/-/g, " "))) {
+      return slug;
+    }
+  }
+  // Common aliases
+  if (/\bcrm\b/i.test(text)) return "crm-azteca";
+  if (/\bvlmp\b/i.test(text)) return "vlmp";
+  if (/\bpipesong\b/i.test(text)) return "pipesong";
+  return null;
+}
+
 function buildKnowledgeBaseSection(
   scopedTools: string[],
   enforceOnly = false,
+  messageText?: string,
 ): string | null {
   try {
     const files = enforceOnly
@@ -61,7 +92,7 @@ function buildKnowledgeBaseSection(
         const matches =
           (condLower.includes("crm") && scopedTools.includes("crm_query")) ||
           (condLower.includes("northstar") &&
-            scopedTools.includes("jarvis_file_read")) ||
+            scopedTools.includes("northstar_sync")) ||
           (condLower.includes("google") &&
             scopedTools.includes("gmail_send")) ||
           (condLower.includes("wordpress") &&
@@ -88,9 +119,31 @@ function buildKnowledgeBaseSection(
       totalChars += section.length;
     }
 
+    // Project README auto-injection: when the user mentions a project by name,
+    // inject that project's README.md so the LLM has full context without
+    // needing a tool call first.
+    if (messageText) {
+      const projectSlug = detectProjectInMessage(messageText);
+      if (projectSlug) {
+        try {
+          const readme = getFile(`projects/${projectSlug}/README.md`);
+          if (readme && totalChars + readme.content.length < KB_CHAR_BUDGET) {
+            sections.push(
+              `### Project Context: ${readme.title}\n${readme.content}`,
+            );
+            totalChars += readme.content.length;
+            console.log(
+              `[fast-runner] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
+            );
+          }
+        } catch {
+          // Project README not found — non-fatal
+        }
+      }
+    }
+
     if (sections.length === 0) return null;
 
-    // Safety: warn if enforce + always-read exceeds budget headroom
     if (totalChars > 6000) {
       console.warn(
         `[fast-runner] KB injection at ${totalChars} chars — enforce+always-read files may be too large`,
@@ -504,6 +557,12 @@ export const fastRunner: Runner = {
     const deferredCatalog = toolRegistry.getDeferredCatalog(input.tools);
     // Count all available (deferred + non-deferred) for the empty check
     const totalTools = toolRegistry.getDefinitions(input.tools).length;
+    const deferredCount = totalTools - definitions.length;
+    if (deferredCount > 0) {
+      console.log(
+        `[fast-runner] Tool deferral: ${definitions.length} full + ${deferredCount} deferred (${totalTools} total)`,
+      );
+    }
     if (totalTools === 0) {
       return {
         success: false,
@@ -535,7 +594,15 @@ export const fastRunner: Runner = {
       const scopedTools = input.tools ?? [];
       const isReadOnlyTask =
         scopedTools.length > 0 && scopedTools.every((t) => isReadOnlyTool(t));
-      const kb = buildKnowledgeBaseSection(scopedTools, isReadOnlyTask);
+      // Extract current user message for project README detection
+      const lastUserMsg = input.conversationHistory
+        ?.filter((t) => t.role === "user")
+        .pop()?.content;
+      const kb = buildKnowledgeBaseSection(
+        scopedTools,
+        isReadOnlyTask,
+        lastUserMsg,
+      );
       if (kb) {
         messages.push({ role: "system", content: kb });
       }

@@ -19,7 +19,7 @@ import type { ConversationTurn } from "../runners/types.js";
 
 /** Greetings, farewells, and casual small talk — safe to fast-path. */
 const SAFE_PATTERNS = [
-  /^(hola|hey|buenas?|buenos?\s+(d[ií]as?|tardes?|noches?))[\s!.,]*$/i,
+  /^(hola|hey|buenas?(\s+(d[ií]as?|tardes?|noches?))?|buenos?\s+(d[ií]as?|tardes?|noches?))[\s!.,]*$/i,
   /^(qu[eé]\s+tal|c[oó]mo\s+(est[aá]s|andas|vas|te\s+va))[\s!?.,]*$/i,
   /^(qu[eé]\s+onda|qu[eé]\s+hay|qu[eé]\s+cuentas)[\s!?.,]*$/i,
   /^(adi[oó]s|bye|hasta\s+(luego|ma[nñ]ana|pronto)|nos\s+vemos)[\s!.,]*$/i,
@@ -35,7 +35,8 @@ const TOOL_TRIGGERS = [
   /\b(busca|search|publica|publish|env[ií]a|send|crea|create|genera)\b/i,
   /\b(correos?|emails?|mails?|gmail|drive|sheets?|wordpress|wp|blogs?|mand[aá]|env[ií]a)\b/i,
   /\b(recuerda|remember|guarda|save|anota|registra)\b/i,
-  /\b(lee|read|lista|list|muestra|show|analiza|analyze|revisa|check|verifica|audita)\b/i,
+  /\b(lee|read|lista|list|muestra|show|analiza|analyze|revisa|check|verifica|audita|abre|open)\b/i,
+  /\b(northstar|north\s*star|commit|repo|c[oó]digo|archivos?|files?)\b/i,
   /\b(programas?|configura|setup|instala|deploy)\b/i,
   /\b(procede|ejecuta|hazlo|adelante|dale|confir\w+|s[ií]guele|int[eé]ntalo|reint[eé]ntalo)\b/i,
   /\b(elimina\w*|borra\w*|delete|quita\w*|actualiza\w*|marca\w*|update)\b/i,
@@ -54,19 +55,15 @@ export function isConversationalFastPath(text: string): boolean {
   const trimmed = text.trim();
   const wordCount = trimmed.split(/\s+/).length;
 
-  // Only very short messages qualify
-  if (wordCount > 8) return false;
+  // 3+ words ALWAYS go through the full pipeline (prompt enhancer + tools).
+  // Only 1-2 word greetings/farewells qualify for the fast-path.
+  if (wordCount >= 3) return false;
 
-  // Tool triggers always disqualify
+  // Tool triggers always disqualify (even 1-2 word messages)
   if (TOOL_TRIGGERS.some((p) => p.test(trimmed))) return false;
 
-  // Explicit safe patterns
+  // Explicit safe patterns (greetings, farewells)
   if (SAFE_PATTERNS.some((p) => p.test(trimmed))) return true;
-
-  // Fallback: short (≤8 words), no tool triggers, no question mark.
-  // These are conversational statements that don't need the full pipeline.
-  // Tool triggers already filtered at line 61, so this is safe.
-  if (wordCount <= 8 && !trimmed.endsWith("?")) return true;
 
   return false;
 }

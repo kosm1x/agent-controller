@@ -196,6 +196,7 @@ const FORMAT_INSTRUCTIONS: Record<string, string> = {
 
 export const geminiUploadTool: Tool = {
   name: "gemini_upload",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -412,6 +413,7 @@ EDGE CASES:
 
 export const geminiResearchTool: Tool = {
   name: "gemini_research",
+  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -630,6 +632,7 @@ OUTPUT FORMAT — Return ONLY valid JSON (no markdown fences):
 export const geminiAudioOverviewTool: Tool = {
   name: "gemini_audio_overview",
   requiresConfirmation: true,
+  deferred: true,
   definition: {
     type: "function",
     function: {
