@@ -94,9 +94,20 @@ Two modes:
         { providerName: "fallback" },
       );
 
+      const content = result.content?.trim();
+
+      // C3 audit fix: in rewrite mode, empty LLM response = error (not silent replacement)
+      if (!content && mode === "rewrite") {
+        return JSON.stringify({
+          error:
+            "Rewrite failed: LLM returned empty response. Try again or use detect mode.",
+          original: text.slice(0, 200),
+        });
+      }
+
       return JSON.stringify({
         mode,
-        result: result.content ?? "No output generated.",
+        result: content || "No issues detected.",
         original_length: text.length,
       });
     } catch (err) {

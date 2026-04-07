@@ -167,9 +167,14 @@ Serve via: GET /dashboard/{id}`,
         });
       }
 
-      // Assemble HTML
+      // Assemble HTML (C2 audit fix: escape title to prevent XSS)
       mkdirSync(DASHBOARD_DIR, { recursive: true });
-      const html = HTML_TEMPLATE.replace(/\{\{TITLE\}\}/g, title)
+      const safeTitle = title
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      const html = HTML_TEMPLATE.replace(/\{\{TITLE\}\}/g, safeTitle)
         .replace("{{DATA}}", JSON.stringify(data))
         .replace("{{CONFIG}}", JSON.stringify(config));
 

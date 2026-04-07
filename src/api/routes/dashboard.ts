@@ -7,7 +7,7 @@
 
 import { Hono } from "hono";
 import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { resolve } from "path";
 
 const DASHBOARD_DIR = "/tmp/dashboards";
 
@@ -15,7 +15,18 @@ const dashboard = new Hono();
 
 dashboard.get("/:id", (c) => {
   const id = c.req.param("id");
-  const filePath = join(DASHBOARD_DIR, `${id}.html`);
+
+  // C1 audit fix: reject path traversal (../, /, \)
+  if (/[\/\\]|\.\./.test(id)) {
+    return c.text("Invalid dashboard ID", 400);
+  }
+
+  const filePath = resolve(DASHBOARD_DIR, `${id}.html`);
+
+  // Defense-in-depth: verify resolved path stays inside DASHBOARD_DIR
+  if (!filePath.startsWith(DASHBOARD_DIR + "/")) {
+    return c.text("Invalid dashboard ID", 400);
+  }
 
   if (!existsSync(filePath)) {
     return c.text("Dashboard not found", 404);
