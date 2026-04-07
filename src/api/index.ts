@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { apiKeyAuth } from "./auth.js";
 import { health } from "./routes/health.js";
+import dashboardRoute from "./routes/dashboard.js";
 import { tasks } from "./routes/tasks.js";
 import { agents } from "./routes/agents.js";
 import { events } from "./routes/events.js";
@@ -24,6 +25,9 @@ export function createApp(): Hono {
 
   // Health check + metrics — no auth
   app.route("/", health);
+
+  // Dashboard serving — no auth (self-contained HTML)
+  app.route("/dashboard", dashboardRoute);
   app.get("/metrics", async (c) => {
     const text = await getMetricsText();
     return c.text(text, 200, { "Content-Type": metricsContentType });

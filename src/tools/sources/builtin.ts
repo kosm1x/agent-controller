@@ -131,6 +131,11 @@ import {
   socialAccountsListTool,
   socialPublishStatusTool,
 } from "../builtin/social.js";
+import { humanizeTextTool } from "../builtin/writing.js";
+import {
+  dashboardGenerateTool,
+  dashboardListTool,
+} from "../builtin/dashboard.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -199,6 +204,9 @@ const BUILTIN_TOOLS: Tool[] = [
   videoListVoicesTool,
   videoBackgroundDownloadTool,
   screenshotElementTool,
+  humanizeTextTool,
+  dashboardGenerateTool,
+  dashboardListTool,
   jarvisFileReadTool,
   jarvisFileWriteTool,
   jarvisFileUpdateTool,

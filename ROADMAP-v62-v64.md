@@ -78,21 +78,21 @@ Week 7:  S5 (protected paths)     +  V3.5 (integration)
 | D2      | Facebook + Instagram Publishing — **SCAFFOLDING DONE** | social_accounts + publish_records tables, 3 tool stubs (social_publish/accounts_list/status), scope group. OAuth pending Meta app |
 | D3      | TikTok + YouTube Publishing                            | AiToEarn. Chunked upload, resumable protocol, status polling                                                                      |
 | D4      | Content Calendar                                       | `social_schedule` tool, event reactor triggers, batch mode                                                                        |
-| D4.5    | Playwright Stealth Hardening                           | browser-fingerprinting. 5 addInitScript patches, validate against 5 test URLs                                                     |
+| D4.5    | Playwright Stealth Hardening — **DONE**                | 5 stealth scripts (hasFocus, visibility, webdriver, connection, memory). Wired into screenshot_element. 7 tests                   |
 
 ### Workstream 5: Writing Quality (1.5 sessions)
 
-| Session | Deliverable                   | Source                                                                                 |
-| ------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| W1      | AI Writing Humanization Skill | avoid-ai-writing. On-demand skill, 4-section audit, 6 context profiles                 |
-| W1.5    | Mechanical Post-Filter        | avoid-ai-writing. Regex scan on outbound messages: 60 Tier 1 words + chatbot artifacts |
+| Session | Deliverable                              | Source                                                                                                   |
+| ------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| W1      | AI Writing Humanization Skill — **DONE** | humanize_text tool: detect/rewrite modes, Tier 1 words + artifacts + structure. 3 tests                  |
+| W1.5    | Mechanical Post-Filter — **DONE**        | post-filter.ts: regex scan for 20 Tier 1 + artifacts + leaks + filler. Wired into sendToChannel. 6 tests |
 
 ### Workstream 6: Dashboard Generation (2 sessions)
 
-| Session | Deliverable              | Source                                                                                        |
-| ------- | ------------------------ | --------------------------------------------------------------------------------------------- |
-| DB1     | Tool + Prompt + Template | Anton. `dashboard_generate` tool, ECharts 5, KPI hero cards, template + LLM-generated options |
-| DB2     | Serving + Integration    | Hono route, jarvis_files storage, Playwright screenshot for Telegram/WordPress                |
+| Session | Deliverable                         | Source                                                                                              |
+| ------- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| DB1     | Tool + Prompt + Template — **DONE** | dashboard_generate: ECharts 5 template + LLM JSON options + KPI hero cards. dashboard_list. 5 tests |
+| DB2     | Serving + Integration — **DONE**    | GET /dashboard/:id Hono route serves self-contained HTML. No auth (dashboards are self-contained)   |
 
 ### v6.3 Week Plan
 

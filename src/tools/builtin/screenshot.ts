@@ -109,6 +109,14 @@ WORKFLOW for video content:
           }),
         });
 
+        // D4.5: Apply stealth patches to reduce bot detection
+        try {
+          const { applyStealthPatches } = await import("./stealth.js");
+          await applyStealthPatches(context);
+        } catch {
+          // Non-fatal — stealth patches are best-effort
+        }
+
         const page = await context.newPage();
 
         // Navigate with timeout

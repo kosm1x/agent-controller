@@ -1626,6 +1626,11 @@ export class MessageRouter {
     const adapter = this.channels.get(channel);
     if (!adapter) return;
 
+    // v6.3 W1.5: log AI writing patterns before delivery (detect-only, no modification)
+    import("./post-filter.js")
+      .then(({ logAIPatterns }) => logAIPatterns(text, channel))
+      .catch(() => {});
+
     const msg: OutgoingMessage = { channel, to, text };
     adapter.send(msg).catch((err) => {
       console.error(`[router] Send to ${channel} failed:`, err);
