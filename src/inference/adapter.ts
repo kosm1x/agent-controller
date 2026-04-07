@@ -385,7 +385,12 @@ async function callProvider(
   if (request.temperature !== undefined) {
     body.temperature = request.temperature;
   }
-  if (request.tools && request.tools.length > 0) {
+  // v6.4 ST1: kimi containment — strip all tools from kimi requests.
+  // Kimi freezes with 20+ tool schemas, consistently skips tools on first
+  // round, and wastes 2 rounds on nudge recovery. Restrict to tools=0
+  // (wrap-up, extraction, enhancer) only.
+  const isKimi = provider.model.startsWith("kimi");
+  if (request.tools && request.tools.length > 0 && !isKimi) {
     body.tools = request.tools;
     body.tool_choice = "auto";
   }
@@ -952,6 +957,12 @@ export interface InferWithToolsOptions {
    * Keeps the compressor generic — callers define what matters.
    */
   compressionContext?: string;
+  /**
+   * If true, exempt this task from the analysis_paralysis guard.
+   * Research-then-send workflows (scheduled reports) legitimately do many
+   * read-only rounds (web_search) before calling gmail_send. (v6.4 ST1)
+   */
+  exemptAnalysisParalysis?: boolean;
 }
 
 /**
@@ -1547,10 +1558,15 @@ export async function inferWithTools(
     const phantoms = detectPhantomActions(roundData.llmText, toolCallNames);
 
     // Collect all guard triggers for this round
+    // v6.4 ST1: exempt email-delivery tasks from analysis_paralysis —
+    // research-then-send workflows legitimately do many read-only rounds.
+    const analysisParalysisTriggered =
+      consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD &&
+      !options?.exemptAnalysisParalysis;
     const guardTriggered =
       consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS ||
       consecutiveSmallResults >= STALE_LOOP_THRESHOLD ||
-      consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD ||
+      analysisParalysisTriggered ||
       consecutiveErrorRounds >= PERSISTENT_FAILURE_THRESHOLD ||
       doomSignal !== null ||
       phantoms.length > 0;
@@ -1564,7 +1580,7 @@ export async function inferWithTools(
             ? "consecutive_repeats"
             : consecutiveSmallResults >= STALE_LOOP_THRESHOLD
               ? "stale_loop"
-              : consecutiveReadOnlyRounds >= ANALYSIS_PARALYSIS_THRESHOLD
+              : analysisParalysisTriggered
                 ? "analysis_paralysis"
                 : "persistent_failure");
 

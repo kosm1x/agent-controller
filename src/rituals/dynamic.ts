@@ -322,15 +322,24 @@ interface PendingSchedule {
   name: string;
   delivery: string;
   emailTo: string | null;
+  scheduleId: string;
+  /** How many times this execution has been retried after delivery miss. */
+  retryCount: number;
 }
 
 const pendingScheduled = new Map<string, PendingSchedule>();
 
-function watchScheduledTask(taskId: string, schedule: ScheduledTaskRow): void {
+function watchScheduledTask(
+  taskId: string,
+  schedule: ScheduledTaskRow,
+  retryCount = 0,
+): void {
   pendingScheduled.set(taskId, {
     name: schedule.name,
     delivery: schedule.delivery,
     emailTo: schedule.email_to,
+    scheduleId: schedule.schedule_id,
+    retryCount,
   });
 }
 
@@ -339,6 +348,33 @@ function watchScheduledTask(taskId: string, schedule: ScheduledTaskRow): void {
  * Verifies email delivery actually happened (gmail_send was called).
  * Called from the messaging router on task completion.
  */
+
+/** Re-submit a scheduled task after delivery miss (v6.4 ST1). */
+async function retryScheduledTask(
+  schedule: ScheduledTaskRow,
+  retryCount: number,
+): Promise<void> {
+  const now = new Date();
+  const todayLabel = now.toLocaleDateString("en-CA", { timeZone: TIMEZONE });
+  const tools = JSON.parse(schedule.tools) as string[];
+
+  let deliveryInstructions = "";
+  if (schedule.delivery === "email" || schedule.delivery === "both") {
+    deliveryInstructions += `\n\nIMPORTANT: THIS IS A RETRY — the previous attempt failed to send email. You MUST call gmail_send to ${schedule.email_to ?? "fede@eurekamd.net"} with subject "${schedule.email_subject ?? schedule.name} — ${todayLabel}". Do NOT skip the email step.`;
+    if (!tools.includes("gmail_send")) tools.push("gmail_send");
+  }
+
+  const result = await submitTask({
+    title: `[Retry] ${schedule.name} — ${todayLabel}`,
+    description: `${schedule.description}${deliveryInstructions}`,
+    agentType: "fast",
+    tools,
+    tags: ["scheduled", "retry", `schedule:${schedule.schedule_id}`],
+  });
+
+  watchScheduledTask(result.taskId, schedule, retryCount);
+}
+
 export function handleScheduledTaskResult(
   taskId: string,
   result: string,
@@ -356,12 +392,31 @@ export function handleScheduledTaskResult(
   const emailSent = toolCalls?.includes("gmail_send") ?? false;
 
   if (expectsEmail && !emailSent) {
+    // Auto-retry once on delivery miss (v6.4 ST1)
+    if (meta.retryCount < 1) {
+      console.warn(
+        `[schedules] DELIVERY MISS — retrying "${meta.name}" (attempt ${meta.retryCount + 1})`,
+      );
+      const schedule = getSchedule(meta.scheduleId);
+      if (schedule) {
+        retryScheduledTask(schedule, meta.retryCount + 1).catch((err) => {
+          console.error(
+            `[schedules] Retry failed for "${meta.name}": ${err instanceof Error ? err.message : err}`,
+          );
+        });
+        return;
+      }
+    }
+
+    // Retry exhausted or schedule not found — alert user
     const alert =
       `⚠️ Scheduled task "${meta.name}" completed but email was NOT sent` +
       (meta.emailTo ? ` (to: ${meta.emailTo})` : "") +
-      (status === "completed_with_concerns"
-        ? ". Task had inference issues (wrap-up recovery)."
-        : ". gmail_send was never called.");
+      (meta.retryCount > 0
+        ? ". Auto-retry also failed."
+        : status === "completed_with_concerns"
+          ? ". Task had inference issues (wrap-up recovery)."
+          : ". gmail_send was never called.");
     console.warn(`[schedules] DELIVERY MISS: ${alert}`);
     if (router) {
       router.broadcastToAll(alert).catch((err) => {

@@ -304,8 +304,8 @@ Reordered after v6.3.2 learnings: reliability before intelligence. PE1.5 (BRAID 
 ### Workstream 7: Operational Hardening — Ship First (3 sessions)
 
 | Session | Deliverable                                    | What                                                                                                                                                                                                        |
-| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OH2     | Hallucination Guard Precision + Deferral Tests | Fix write-claim false positive (LLM text before write calls ≠ hallucination). Test coverage for deferred tool expansion path. Scope pattern regression test suite (20+ cases from v6.3.1 scope bugs)        |
+| ------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| OH2     | Hallucination Guard Precision + Deferral Tests | Remove status data-label false positive, expand diagnostic exemptions. 8 deferred expansion tests. 25 scope regression tests. **1618 tests.**                                                               | **Done** |
 | ST1     | Scheduled Task Resilience                      | Delivery retry on delivery miss (auto re-execute once). analysis_paralysis exemption for email-delivery tasks. Kimi containment: restrict to tools=0 wrap-up only. Per-task cap on provider failure records |
 | OH1.5   | Execute-Then-Schedule + Provider Routing v2    | Immediate execution on schedule creation. Prevent LLM auto-invoking expensive skills. Provider metrics namespaces (scheduled vs interactive) or per-task failure cap                                        |
 

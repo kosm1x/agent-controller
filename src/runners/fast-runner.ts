@@ -705,12 +705,18 @@ export const fastRunner: Runner = {
         );
       }
 
+      // v6.4 ST1: exempt email-delivery tasks from analysis_paralysis guard.
+      // Research-then-send workflows (scheduled reports) legitimately do many
+      // read-only rounds (web_search) before calling gmail_send.
+      const hasEmailDelivery = input.tools?.includes("gmail_send") ?? false;
+
       const result = await inferWithTools(messages, definitions, taskExecutor, {
         maxRounds,
         providerName,
         tokenBudget,
         onTextChunk: input.onTextChunk,
         signal: input.signal,
+        exemptAnalysisParalysis: hasEmailDelivery,
       });
 
       let parsed = parseRunnerStatus(result.content);
