@@ -9,7 +9,7 @@
 import type { Tool } from "../types.js";
 
 const NOT_CONFIGURED_MSG =
-  "Social publishing not configured. Register a Meta/TikTok/YouTube OAuth app and set SOCIAL_PUBLISH_ENABLED=true in .env. See ROADMAP-v62-v64.md for setup checklist.";
+  "Social publishing not configured. Register a Meta/TikTok/YouTube OAuth app and set SOCIAL_PUBLISH_ENABLED=true in .env. See V6-ROADMAP.md for setup checklist.";
 
 // ---------------------------------------------------------------------------
 // social_publish
