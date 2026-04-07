@@ -20,6 +20,12 @@ export interface Tool {
    * Saves context tokens for rarely-used tools. (OpenClaude pattern)
    */
   readonly deferred?: boolean;
+  /**
+   * Natural-language phrases users might say to invoke this tool (v6.4 CL1.4).
+   * Shown in deferred catalog to help the LLM match informal requests.
+   * Example: ["manda un correo", "envía eso por mail", "send email"]
+   */
+  readonly triggerPhrases?: readonly string[];
   /** Execute the tool with parsed arguments. Returns result string. */
   execute(args: Record<string, unknown>): Promise<string>;
 }

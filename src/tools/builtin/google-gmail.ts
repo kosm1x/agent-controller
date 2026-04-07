@@ -15,6 +15,13 @@ export const gmailSendTool: Tool = {
   name: "gmail_send",
   requiresConfirmation: true,
   deferred: false,
+  triggerPhrases: [
+    "manda un correo",
+    "envía un email",
+    "envíale esto por mail",
+    "send email",
+    "mándale el reporte",
+  ],
   definition: {
     type: "function",
     function: {

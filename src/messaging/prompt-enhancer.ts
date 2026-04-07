@@ -171,18 +171,20 @@ Analiza el mensaje del usuario EN CONTEXTO de la conversación reciente usando e
 ## DECISIÓN
 
 Basándote en los scores:
-- **PASS** si: Clarity ≥ 5 AND Risk = low AND Context = resolved AND Decompose = ok
-- **PASS** si: Clarity ≥ 7 (incluso con risk=high, la instrucción es precisa)
-- **ASK** si: Clarity < 5 AND Risk = high AND Context = unresolved → genera EXACTAMENTE 2 preguntas sobre las dimensiones con score bajo
+- **PASS** si: Clarity ≥ 7 OR (Clarity ≥ 5 AND Risk = low AND Context = resolved AND Decompose = ok)
+- **ASSUME** si: Clarity 4-6 AND Risk = low → declara tu interpretación en "assumption". Jarvis procede con esa interpretación. El usuario corrige si se equivoca.
+- **ASK** si: Clarity < 4 AND Risk = high AND Context = unresolved → genera EXACTAMENTE 2 preguntas
 - **SPLIT** si: Decompose = split → sugiere plan de división en bloques de max 5 items
 
-DEFAULT = PASS. En el 80% de los casos la respuesta correcta es PASS.
+DEFAULT = PASS. Solo usa ASK cuando la ambigüedad + riesgo harían daño. Prefiere ASSUME sobre ASK — es mejor intentar y que el usuario corrija que preguntar de más.
 
 ## FORMATO DE RESPUESTA (JSON estricto)
 
 {"decision":"PASS","intent":"...","clarity":8,"risk":"low","impact":1,"context":"resolved","decompose":"ok"}
 
-{"decision":"ASK","intent":"...","clarity":3,"risk":"high","impact":1,"context":"unresolved","decompose":"ok","questions":["¿A qué archivo te refieres?","¿Quieres sobreescribir o crear uno nuevo?"]}
+{"decision":"ASSUME","intent":"...","clarity":5,"risk":"low","impact":2,"context":"unresolved","decompose":"ok","assumption":"Entiendo que quieres actualizar el status de las tareas de VLMP a completadas"}
+
+{"decision":"ASK","intent":"...","clarity":2,"risk":"high","impact":1,"context":"unresolved","decompose":"ok","questions":["¿A qué archivo te refieres?","¿Quieres sobreescribir o crear uno nuevo?"]}
 
 {"decision":"SPLIT","intent":"...","clarity":7,"risk":"low","impact":23,"context":"resolved","decompose":"split","split_plan":"Sugiero dividir en 3 bloques:\\n1. Los 6 archivos de X\\n2. Los 15 de Y\\n3. Los 2 restantes\\n¿Con cuál empezamos?"}
 
@@ -195,7 +197,7 @@ RESPONDE SOLO con JSON válido. Nada más.`;
 
 /** Parsed CIRICD analysis result. */
 export interface CiricdResult {
-  decision: "PASS" | "ASK" | "SPLIT";
+  decision: "PASS" | "ASSUME" | "ASK" | "SPLIT";
   intent: string;
   clarity: number;
   risk: "high" | "low";
@@ -204,6 +206,8 @@ export interface CiricdResult {
   decompose: "ok" | "split";
   questions?: string[];
   splitPlan?: string;
+  /** Stated interpretation when decision=ASSUME (v6.4 CL1.3). */
+  assumption?: string;
 }
 
 /**
@@ -231,6 +235,7 @@ export function parseCiricdResponse(raw: string): CiricdResult | null {
         ? (parsed.questions as string[]).slice(0, 2)
         : undefined,
       splitPlan: parsed.split_plan as string | undefined,
+      assumption: parsed.assumption as string | undefined,
     };
   } catch {
     return null;
@@ -291,6 +296,18 @@ export async function analyzePrompt(
     );
 
     if (ciricd.decision === "PASS") return "PASS";
+
+    // v6.4 CL1.3: Assumption-first — proceed with stated interpretation.
+    // Returns "PASS" to the router (don't block), but logs the assumption.
+    // The LLM receives the assumption as precedent context, not as a rewrite.
+    if (ciricd.decision === "ASSUME") {
+      if (ciricd.assumption) {
+        console.log(
+          `[enhancer] ASSUME: "${ciricd.assumption}" (clarity=${ciricd.clarity})`,
+        );
+      }
+      return "PASS"; // Don't block — let the LLM proceed with its interpretation
+    }
 
     if (ciricd.decision === "SPLIT" && ciricd.splitPlan) {
       return ciricd.splitPlan;

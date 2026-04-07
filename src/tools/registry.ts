@@ -147,10 +147,14 @@ export class ToolRegistry {
       tools = Array.from(this.tools.values()).filter((t) => t.deferred);
     }
     if (tools.length === 0) return null;
-    const lines = tools.map(
-      (t) =>
-        `- **${t.name}**: ${t.definition.function.description.slice(0, 120)}`,
-    );
+    const lines = tools.map((t) => {
+      let line = `- **${t.name}**: ${t.definition.function.description.slice(0, 120)}`;
+      // v6.4 CL1.4: Append trigger phrases so the LLM matches informal requests
+      if (t.triggerPhrases && t.triggerPhrases.length > 0) {
+        line += ` [triggers: ${t.triggerPhrases.join(", ")}]`;
+      }
+      return line;
+    });
     return `[DEFERRED TOOLS] The following tools are available but their full schemas are not loaded. Call any of them by name — the system will return the parameter schema so you can retry with correct arguments.\n\n${lines.join("\n")}`;
   }
 

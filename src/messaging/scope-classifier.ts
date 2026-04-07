@@ -1,0 +1,147 @@
+/**
+ * Semantic scope classifier (v6.4 CL1.1).
+ *
+ * Replaces regex-based scope group detection with an LLM classifier.
+ * The LLM reads the user message + recent context and returns which
+ * scope groups should activate. Regex patterns kept as fallback when
+ * the LLM fails, times out, or returns unparseable output.
+ *
+ * This eliminates the entire class of "scope pattern regression" bugs —
+ * the LLM understands intent, not keywords.
+ */
+
+const SCOPE_CLASSIFIER_TIMEOUT_MS = 3_000;
+
+/** All valid scope group names the classifier can return. */
+const VALID_GROUPS = new Set([
+  "northstar_read",
+  "northstar_write",
+  "northstar_journal",
+  "destructive",
+  "google",
+  "browser",
+  "coding",
+  "schedule",
+  "wordpress",
+  "crm",
+  "intel",
+  "video",
+  "social",
+  "meta",
+  "specialty",
+  "research",
+]);
+
+const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
+
+GROUPS (return only the ones that apply):
+- northstar_read: reading tasks, goals, objectives, visions, NorthStar, pendientes, sync with db.mycommit
+- northstar_write: creating/updating/completing tasks, goals, objectives. "marca como completada", "crea una tarea"
+- northstar_journal: writing diary/journal entries
+- destructive: deleting, removing, cleaning up items
+- google: email, gmail, calendar, agenda, drive, sheets, slides, docs, google workspace
+- browser: navigating websites, scraping, login, React/SPA apps, playwright
+- coding: code, deploy, git, github, commit, push, files, scripts, debug, build, test, npm
+- schedule: recurring tasks, cron, reports, reminders, automation, programar, cada día/hora
+- wordpress: blog posts, WordPress, livingjoyfully.art, redlightinsider.com, publish to blog
+- crm: CRM, Azteca, customer management (only when explicitly mentioned)
+- intel: intelligence, signals, market, earthquake, cyber, threats, bitcoin, treasury
+- video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration
+- social: publish to Instagram/Facebook/TikTok/YouTube, social media posts, redes sociales
+- meta: list tools, capabilities, diagnostics, herramientas disponibles
+- specialty: charts, RSS, images, text humanization, dashboards, KPI, batch processing, research tools
+- research: deep analysis, study guides, podcasts, PDF analysis, document research
+
+RULES:
+- Return ONLY groups needed. Empty array [] for greetings/small talk.
+- A message can activate multiple groups (e.g., "envía un email con el reporte de tareas" → google + northstar_read).
+- "publica en el blog" → wordpress (NOT social). "publica en Instagram" → social.
+- "livingjoyfully" without .art/.com → NOT wordpress (it's a project name).
+- VPS/server status questions need NO special group (vps_status is always available).
+- Short follow-ups ("dale", "procede", "sí") → return [].
+
+RESPOND with JSON array only. No explanation. Examples:
+["northstar_read","google"]
+["coding"]
+[]`;
+
+/**
+ * Classify scope groups using LLM. Returns null on failure (caller uses regex fallback).
+ */
+export async function classifyScopeGroups(
+  message: string,
+  recentContext?: string,
+): Promise<Set<string> | null> {
+  try {
+    const { infer } = await import("../inference/adapter.js");
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("scope classifier timeout")),
+        SCOPE_CLASSIFIER_TIMEOUT_MS,
+      ),
+    );
+
+    const userContent = recentContext
+      ? `Recent context:\n${recentContext}\n\nUser message:\n${message}`
+      : `User message:\n${message}`;
+
+    const result = await Promise.race([
+      infer({
+        messages: [
+          { role: "system", content: CLASSIFIER_SYSTEM_PROMPT },
+          { role: "user", content: userContent },
+        ],
+        max_tokens: 80,
+      }),
+      deadline,
+    ]);
+
+    const raw = (result.content ?? "").trim();
+    return parseScopeGroups(raw);
+  } catch {
+    return null; // Fallback to regex
+  }
+}
+
+/**
+ * Parse the LLM's scope group response.
+ * Handles JSON arrays, markdown code fences, and comma-separated lists.
+ */
+export function parseScopeGroups(raw: string): Set<string> | null {
+  // Try JSON array parse
+  try {
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as string[];
+      if (Array.isArray(parsed)) {
+        const groups = new Set<string>();
+        for (const g of parsed) {
+          const normalized = String(g).trim().toLowerCase();
+          if (VALID_GROUPS.has(normalized)) {
+            groups.add(normalized);
+          }
+        }
+        return groups;
+      }
+    }
+  } catch {
+    // Try fallback formats
+  }
+
+  // Try comma-separated: "northstar_read, google"
+  if (raw.includes(",") || VALID_GROUPS.has(raw.trim().toLowerCase())) {
+    const groups = new Set<string>();
+    for (const part of raw.split(/[,\n]+/)) {
+      const cleaned = part
+        .trim()
+        .toLowerCase()
+        .replace(/["\[\]]/g, "");
+      if (VALID_GROUPS.has(cleaned)) {
+        groups.add(cleaned);
+      }
+    }
+    if (groups.size > 0) return groups;
+  }
+
+  return null; // Unparseable — fallback to regex
+}

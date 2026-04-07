@@ -342,45 +342,51 @@ export function scopeToolsForMessage(
   recentUserMessages: string[],
   patterns: ScopePattern[],
   options: ScopeOptions,
+  /** Pre-classified groups from semantic classifier (v6.4 CL1.1). Bypasses regex. */
+  preClassifiedGroups?: Set<string>,
 ): string[] {
-  // Check if the CURRENT message triggers any scope groups on its own.
-  // If not (pure conversational/personal message), don't inherit from prior turns —
-  // this prevents the LLM from continuing a prior task when the user changed topics.
-  const currentGroups = new Set<string>();
-  for (const { pattern, group } of patterns) {
-    if (pattern.test(currentMessage)) {
-      currentGroups.add(group);
-    }
-  }
-  const activeGroups = new Set<string>();
-  if (currentGroups.size > 0) {
-    // Current message has scope signals — also scan prior messages for context
-    const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
+  // v6.4 CL1.1: If semantic classifier provided groups, use them directly.
+  // This bypasses the regex matching entirely — the LLM already understood intent.
+  // Regex is only used when the classifier is unavailable (timeout, parse failure).
+  let activeGroups: Set<string>;
+  if (preClassifiedGroups && preClassifiedGroups.size >= 0) {
+    activeGroups = preClassifiedGroups;
+  } else {
+    activeGroups = new Set<string>();
+    // Check if the CURRENT message triggers any scope groups on its own.
+    // If not (pure conversational/personal message), don't inherit from prior turns —
+    // this prevents the LLM from continuing a prior task when the user changed topics.
+    const currentGroups = new Set<string>();
     for (const { pattern, group } of patterns) {
-      if (pattern.test(contextText)) {
-        activeGroups.add(group);
+      if (pattern.test(currentMessage)) {
+        currentGroups.add(group);
       }
     }
-  } else if (
-    recentUserMessages.length > 0 &&
-    (currentMessage.trim().length < 80 ||
-      /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele|el\s+primer[oa]\s+que|eso\s+que\s+(?:te|me|le)|lo\s+(?:que|de|del)\s+(?:te|me|le)\s+(?:ped|dij|mand|envi|compart)|ese\s+(?:que|mismo)\s+(?:te|me|le)|tu\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste)|t[uú]\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste))\b/i.test(
-        currentMessage,
-      ))
-  ) {
-    // Follow-up message with no scope signals — either short (<80 chars) or
-    // contains imperative verbs / referential phrases that continue a prior
-    // topic. Inherit scope from recent messages to maintain context
-    // continuity. Without this, the LLM loses access to tools it just
-    // used and may hallucinate that capabilities don't exist.
-    const priorText = recentUserMessages.join(" ");
-    for (const { pattern, group } of patterns) {
-      if (pattern.test(priorText)) {
-        activeGroups.add(group);
+    if (currentGroups.size > 0) {
+      // Current message has scope signals — also scan prior messages for context
+      const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
+      for (const { pattern, group } of patterns) {
+        if (pattern.test(contextText)) {
+          activeGroups.add(group);
+        }
+      }
+    } else if (
+      recentUserMessages.length > 0 &&
+      (currentMessage.trim().length < 80 ||
+        /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele|el\s+primer[oa]\s+que|eso\s+que\s+(?:te|me|le)|lo\s+(?:que|de|del)\s+(?:te|me|le)\s+(?:ped|dij|mand|envi|compart)|ese\s+(?:que|mismo)\s+(?:te|me|le)|tu\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste)|t[uú]\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste))\b/i.test(
+          currentMessage,
+        ))
+    ) {
+      // Follow-up message with no scope signals
+      const priorText = recentUserMessages.join(" ");
+      for (const { pattern, group } of patterns) {
+        if (pattern.test(priorText)) {
+          activeGroups.add(group);
+        }
       }
     }
+    // else: no scope signals and not a short follow-up → core tools only
   }
-  // else: no scope signals and not a short follow-up → core tools only
 
   // Assemble scoped tool list — start with minimal core
   const tools = [...CORE_TOOLS, ...MISC_TOOLS];

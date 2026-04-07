@@ -22,6 +22,13 @@ const BACKUP_RETENTION_DAYS = 7;
 export const vpsStatusTool: Tool = {
   name: "vps_status",
   deferred: true,
+  triggerPhrases: [
+    "cómo está el servidor",
+    "estado del VPS",
+    "server status",
+    "cuánta memoria queda",
+    "revisa el server",
+  ],
   definition: {
     type: "function",
     function: {

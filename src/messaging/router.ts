@@ -100,6 +100,7 @@ import {
   SPECIALTY_TOOLS,
   RESEARCH_TOOLS,
 } from "./scope.js";
+import { classifyScopeGroups } from "./scope-classifier.js";
 
 import {
   recordScopeDecision,
@@ -182,6 +183,7 @@ function buildJarvisSystemPrompt(
 function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
+  semanticGroups?: Set<string> | null,
 ): { tools: string[]; activeGroups: string[] } {
   // Scope from LAST user message only — two turns caused scope accumulation
   // where prior topics stayed active (e.g., hallucinated NorthStar response
@@ -210,14 +212,26 @@ function scopeToolsForMessage(
 
   const recentUserMessages = [...userMsgs, ...assistantContext];
 
-  // Log which scope groups activated (diagnostic — critical for debugging scope misses)
-  const activeGroups = detectActiveGroups(
-    currentMessage,
-    recentUserMessages,
-    DEFAULT_SCOPE_PATTERNS,
-  );
-  if (activeGroups.size > 0) {
-    console.log(`[router] Scope groups: ${[...activeGroups].join(", ")}`);
+  // v6.4 CL1.1: Use semantic classifier groups if available, regex as fallback.
+  // The LLM understands intent ("abre mi northstar", "manda un correo") without
+  // needing exact keyword patterns. Regex stays as safety net for timeouts.
+  let activeGroups: Set<string>;
+  if (semanticGroups && semanticGroups.size > 0) {
+    activeGroups = semanticGroups;
+    console.log(
+      `[router] Scope groups (semantic): ${[...activeGroups].join(", ")}`,
+    );
+  } else {
+    activeGroups = detectActiveGroups(
+      currentMessage,
+      recentUserMessages,
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    if (activeGroups.size > 0) {
+      console.log(
+        `[router] Scope groups (regex fallback): ${[...activeGroups].join(", ")}`,
+      );
+    }
   }
 
   const tools = scopeToolsPure(
@@ -230,6 +244,7 @@ function scopeToolsForMessage(
       hasMemory: getMemoryService().backend === "hindsight",
       hasCrm: !!process.env.CRM_API_TOKEN,
     },
+    activeGroups,
   );
 
   const fullCount =
@@ -1144,10 +1159,32 @@ export class MessageRouter {
       // Non-fatal — DB may not have the tables yet
     }
 
-    // Dynamic tool scoping — only include tool groups relevant to the conversation
+    // v6.4 CL1.5: Normalize input for better matching (typo correction)
+    const { normalizeForMatching, wasNormalized } =
+      await import("./normalize.js");
+    const normalizedText = normalizeForMatching(msg.text);
+    if (wasNormalized(msg.text, normalizedText)) {
+      console.log(
+        `[router] Input normalized: "${msg.text.slice(0, 60)}" → "${normalizedText.slice(0, 60)}"`,
+      );
+    }
+
+    // v6.4 CL1.1: Semantic scope classification — LLM understands intent,
+    // replaces brittle regex matching. 3s timeout, regex fallback on failure.
+    const recentContext = conversationHistory
+      .slice(-2)
+      .map((t) => `${t.role}: ${t.content.slice(0, 150)}`)
+      .join("\n");
+    const semanticGroups = await classifyScopeGroups(
+      normalizedText,
+      recentContext || undefined,
+    );
+
+    // Dynamic tool scoping — uses semantic groups if available, regex fallback
     const { tools, activeGroups } = scopeToolsForMessage(
       msg.text,
       conversationHistory,
+      semanticGroups,
     );
 
     // Implicit feedback: compare current scope groups with previous message's.

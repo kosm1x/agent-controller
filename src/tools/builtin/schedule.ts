@@ -19,6 +19,13 @@ import { toMexTime } from "../../lib/timezone.js";
 
 export const scheduleTaskTool: Tool = {
   name: "schedule_task",
+  triggerPhrases: [
+    "programa un reporte",
+    "hazlo cada día",
+    "repite esto todos los lunes",
+    "schedule a daily report",
+    "avísame cada hora",
+  ],
   definition: {
     type: "function",
     function: {

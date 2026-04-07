@@ -117,6 +117,12 @@ function buildFileContent(
 export const northstarSyncTool: Tool = {
   name: "northstar_sync",
   requiresConfirmation: true,
+  triggerPhrases: [
+    "sincroniza con NorthStar",
+    "sync con db.mycommit",
+    "actualiza la app",
+    "push changes to commit",
+  ],
   definition: {
     type: "function",
     function: {

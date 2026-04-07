@@ -622,6 +622,17 @@ export const fastRunner: Runner = {
         messages.push({ role: "system", content: kb });
       }
 
+      // v6.4 CL1.2: Precedent resolution — inject recent entities so the LLM
+      // can resolve "it", "that", "the file", "continue" from conversation.
+      if (input.conversationHistory.length > 1) {
+        const { buildPrecedentBlock } =
+          await import("../messaging/precedent.js");
+        const precedent = buildPrecedentBlock(input.conversationHistory);
+        if (precedent) {
+          messages.push({ role: "system", content: precedent });
+        }
+      }
+
       // Inject deferred tool catalog (names + descriptions only, no schemas)
       if (deferredCatalog) {
         messages.push({ role: "system", content: deferredCatalog });

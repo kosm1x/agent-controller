@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-07 — **v6.0-v6.4 ALL DONE. 1648 tests, 170 tools, 47 sessions. Next: D3+D4 (OAuth for TikTok/YouTube), then G1.5 (query expansion).**
+> Last updated: 2026-04-07 — **v6.0-v6.4+CL1 ALL DONE. 1664 tests, 170 tools, 50 sessions. Semantic scope classifier, CIRICD enhancer, comprehension layer. Next: D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -339,6 +339,18 @@ Replaces OH1 (decomposed QA). Jarvis's fast-runner handles 90%+ of tasks but has
 | ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | QP1     | Post-Task Quality Check | Delivery miss detection in fast-runner: gmail_send in scope but not called → DONE_WITH_CONCERNS. Wired after hallucination guard. **1648 tests.** | **Done** |
 
+### Workstream 12: Comprehension Layer (3 sessions) — CL1 inspired by Claude Code
+
+Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-based scope matching. The LLM understands intent; stop outsmarting it with regex.
+
+| Session | Deliverable               | What                                                                                                                                                         |
+| ------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| CL1.1   | Semantic Scope Classifier | LLM-based scope group detection (3s timeout). Replaces regex as primary, regex kept as fallback. classifyScopeGroups() + parseScopeGroups(). 8 tests.        | **Done** |
+| CL1.2   | Precedent Resolution      | buildPrecedentBlock() extracts files/projects/tools/tasks from last 3 turns. Injected as system message so LLM resolves "it"/"that"/"the file".              | **Done** |
+| CL1.3   | Assumption-First Enhancer | ASSUME decision in CIRICD (clarity 4-6, low risk). States interpretation, proceeds without asking. Reduces friction vs ASK.                                  | **Done** |
+| CL1.4   | Tool Trigger Phrases      | triggerPhrases field on Tool interface. Natural-language variants shown in deferred catalog. Added to gmail_send, vps_status, northstar_sync, schedule_task. | **Done** |
+| CL1.5   | Input Normalization       | normalizeForMatching(): 50-entry domain typo dictionary. <1ms pure function. Wired before scope classification. 8 tests.                                     | **Done** |
+
 ### v6.4 Success Criteria — ALL MET
 
 - [x] Hallucination guard no longer fires on write-claim-before-write-call pattern
@@ -350,7 +362,11 @@ Replaces OH1 (decomposed QA). Jarvis's fast-runner handles 90%+ of tasks but has
 - [x] Superseded KB entries cascade staleness to related entries
 - [x] `batch_decompose` decomposes large tasks into chunked subtasks
 - [x] Fast-runner delivery miss detected and flagged as DONE_WITH_CONCERNS
-- [ ] Self-tuning seed set expanded 73 → 100+ — **deferred to G1.5**
+- [x] Self-tuning seed set expanded 73 → 103
+- [x] Semantic scope classifier replaces regex as primary intent detector
+- [x] Precedent resolution injects recent entities for anaphora
+- [x] Assumption-first enhancer reduces friction on moderate-clarity messages
+- [x] Input normalization handles domain typos
 
 ---
 
@@ -401,9 +417,9 @@ Replaces OH1 (decomposed QA). Jarvis's fast-runner handles 90%+ of tasks but has
 
 | Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4 (current)     |
 | ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1648               |
-| Source files            | 214        | 228       | 232  | 234                |
-| Test files              | 85         | 105       | 120  | 122                |
+| Tests                   | 1228       | 1377      | 1576 | 1664               |
+| Source files            | 214        | 228       | 232  | 238                |
+| Test files              | 85         | 105       | 120  | 125                |
 | Tools                   | 150        | 163       | 169  | 170 (109 deferred) |
 | Safeguards              | 0          | 5         | 5    | 5                  |
 | Behavioral patterns     | 0          | 10        | 10   | 10                 |
@@ -430,4 +446,5 @@ Replaces OH1 (decomposed QA). Jarvis's fast-runner handles 90%+ of tasks but has
 | v6.3.1    | Context optimization   | 1        | **Done**     |
 | v6.3.2    | Scheduled report fix   | 1        | **Done**     |
 | v6.4      | Intelligence layer     | 8        | **Done**     |
-| **Total** |                        | **47**   |              |
+| v6.4 CL1  | Comprehension layer    | 3        | **Done**     |
+| **Total** |                        | **50**   |              |
