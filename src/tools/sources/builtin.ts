@@ -126,6 +126,11 @@ import {
   videoBackgroundDownloadTool,
 } from "../builtin/video.js";
 import { screenshotElementTool } from "../builtin/screenshot.js";
+import {
+  socialPublishTool,
+  socialAccountsListTool,
+  socialPublishStatusTool,
+} from "../builtin/social.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -207,6 +212,13 @@ const BUILTIN_TOOLS: Tool[] = [
   knowledgeMapExpandTool,
 ];
 
+// Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured
+const SOCIAL_TOOLS: Tool[] = [
+  socialPublishTool,
+  socialAccountsListTool,
+  socialPublishStatusTool,
+];
+
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured
 const CRM_TOOLS: Tool[] = [crmQueryTool];
 
@@ -255,6 +267,14 @@ export class BuiltinToolSource implements ToolSource {
         registry.register(tool);
       }
       registered.push(...CRM_TOOLS.map((t) => t.name));
+    }
+
+    // Register social publishing tools when enabled
+    if (process.env.SOCIAL_PUBLISH_ENABLED === "true") {
+      for (const tool of SOCIAL_TOOLS) {
+        registry.register(tool);
+      }
+      registered.push(...SOCIAL_TOOLS.map((t) => t.name));
     }
 
     return registered;

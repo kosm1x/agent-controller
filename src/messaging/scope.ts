@@ -177,6 +177,13 @@ export const VIDEO_TOOLS = [
   "screenshot_element",
 ];
 
+/** Social publishing tools — scope-gated: only when social/publish keywords detected. */
+export const SOCIAL_TOOLS = [
+  "social_publish",
+  "social_accounts_list",
+  "social_publish_status",
+];
+
 /** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
 export const INTEL_TOOLS = [
   "intel_query",
@@ -296,6 +303,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "video",
   },
   {
+    pattern:
+      /\b(publica(r|ci[oó]n)?|publish|post(ear)?|instagram|facebook|tiktok|youtube|redes\s*sociales|social\s*media|contenido\s+para|programar\s+post|schedule\s+post)\b/i,
+    group: "social",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -401,6 +413,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("video")) {
     tools.push(...VIDEO_TOOLS);
+  }
+  if (activeGroups.has("social")) {
+    tools.push(...SOCIAL_TOOLS);
   }
   if (activeGroups.has("schedule")) {
     tools.push(...SCHEDULE_TOOLS);
