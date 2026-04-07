@@ -536,9 +536,10 @@ const READ_HALLUCINATION_RE =
 
 /** Map classifier model tier to inference provider name. */
 function tierToProvider(tier?: string): string | undefined {
-  if (tier === "flash") return "fallback";
+  // All tool-calling tasks use primary (qwen3.5-plus). kimi-k2.5 (fallback)
+  // freezes with 20+ tool schemas — only suitable for wrap-up/extraction.
   if (tier === "capable") return "primary";
-  return undefined; // use default provider ordering
+  return "primary";
 }
 
 export const fastRunner: Runner = {
