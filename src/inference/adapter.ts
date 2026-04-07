@@ -290,9 +290,11 @@ class ProviderMetrics {
     const failureCountByTask = new Map<string, number>();
     let cappedFailures = 0;
     let totalCapped = 0;
+    let cappedLatencySum = 0;
     for (const e of recent) {
       if (e.success) {
         totalCapped++;
+        cappedLatencySum += e.latencyMs;
         continue;
       }
       const key = e.taskId ?? "unknown";
@@ -301,15 +303,15 @@ class ProviderMetrics {
         failureCountByTask.set(key, count + 1);
         cappedFailures++;
         totalCapped++;
+        cappedLatencySum += e.latencyMs;
       }
-      // else: skip this failure — already counted 2 from this task
+      // else: skip this entry entirely — not counted in latency or error rate
     }
 
     if (totalCapped < MIN_HEALTH_SAMPLES) return false;
 
-    const avgLatencyMs = Math.round(
-      recent.reduce((s, e) => s + e.latencyMs, 0) / recent.length,
-    );
+    // Both metrics use the same population (capped entries only)
+    const avgLatencyMs = Math.round(cappedLatencySum / totalCapped);
     const errorRate = cappedFailures / totalCapped;
 
     return (

@@ -86,13 +86,22 @@ export async function enrichContext(
     );
   }
 
-  // v6.2 M0.5 + v6.4 G1.5: pgvector semantic search with query expansion.
-  // Runs IN PARALLEL with Hindsight recalls. 2s timeout per search.
-  //
-  // G1.5 query expansion: generate 3 reformulations of the user message
-  // via cheap LLM call, then run them as additional pgvector searches.
-  // Merge results by path dedup + session diversity cap (max 2 per source_task_id).
-  const PGVECTOR_TIMEOUT_MS = 2000;
+  // v6.4 G1.5: Query expansion runs IN PARALLEL with Hindsight recalls,
+  // NOT inside the pgvector race block (audit fix: 5s LLM call inside 2s
+  // timeout = dead on arrival). Results cached for use in pgvector search.
+  let expandedQueries: string[] = [];
+  recallPromises.push(
+    expandQuery(messageText)
+      .then((expansions) => {
+        expandedQueries = expansions;
+      })
+      .catch(() => {}),
+  );
+
+  // v6.2 M0.5 + v6.4 G1.5: pgvector semantic search with expanded queries.
+  // Runs IN PARALLEL with Hindsight recalls. 4s timeout to accommodate
+  // multiple embedding generations from query expansion.
+  const PGVECTOR_TIMEOUT_MS = 4000;
   const MAX_RESULTS_PER_SOURCE = 2; // Session diversity cap (v6.4 G1.5)
   let pgTimedOut = false;
   recallPromises.push(
@@ -106,14 +115,8 @@ export async function enrichContext(
 
           if (!isPgvectorEnabled()) return;
 
-          // Build query variants: original + up to 3 expansions
-          const queries = [messageText];
-          try {
-            const expansions = await expandQuery(messageText);
-            queries.push(...expansions);
-          } catch {
-            // Non-fatal — fall back to original query only
-          }
+          // Use cached expansion results (populated by parallel promise above)
+          const queries = [messageText, ...expandedQueries];
 
           // Run all queries in parallel, collect unique results by path
           const seenPaths = new Set<string>();

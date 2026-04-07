@@ -76,6 +76,14 @@ EXAMPLE:
       10,
     );
 
+    // Safety cap: prevent unbounded subtask creation (audit #5)
+    const MAX_ITEMS = 100;
+    if (items.length > MAX_ITEMS) {
+      return JSON.stringify({
+        error: `Too many items (${items.length}). Maximum is ${MAX_ITEMS}. Narrow the scope or split manually.`,
+      });
+    }
+
     if (items.length <= chunkSize) {
       return JSON.stringify({
         message: `Only ${items.length} items — no decomposition needed. Process them directly.`,
