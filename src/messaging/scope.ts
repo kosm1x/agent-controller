@@ -111,6 +111,7 @@ export const MISC_TOOLS = [
   "project_list", // Read-only, lightweight
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
   "vps_status", // Always available — "how's the server?" doesn't need coding scope
+  "northstar_sync", // Always available — "sync con db.mycommit" shouldn't need NorthStar keywords
   // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
@@ -200,7 +201,7 @@ export const INTEL_TOOLS = [
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?)/i,
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?|northstar|north\s*star|sync\w*\s+(?:\S+\s+)*(?:commit|mycommit|db\.mycommit)|db\.mycommit|sincroniza(?:r|ci[oó]n)?(?:\s+\S+){0,3}\s+(?:commit|northstar|mycommit))/i,
     group: "northstar_read",
   },
   // northstar_write — split into small patterns to avoid catastrophic regex backtracking.
