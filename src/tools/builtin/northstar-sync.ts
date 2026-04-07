@@ -73,6 +73,12 @@ async function patchItem(
     body: JSON.stringify(updates),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(
+      `[northstar-sync] PATCH ${table}/${id} failed: HTTP ${res.status} ${body.slice(0, 200)}`,
+    );
+  }
   return res.ok;
 }
 
@@ -224,42 +230,51 @@ Requires COMMIT_DB_KEY env var.`,
             continue;
           }
 
-          // Both exist — compare timestamps
+          // Both exist — merge strategy:
+          // COMMIT wins for: status, priority (user is authority on the app)
+          // NorthStar wins for: due_date, target_date, notes (Jarvis manages these)
+          // On conflict: COMMIT status always overrides file status
           const commitTime = new Date(item.updated_at).getTime();
           const fileTime = new Date(existing.updated_at).getTime();
+          let didPull = false;
+          let didPush = false;
 
-          if (commitTime > fileTime && direction !== "push") {
-            // COMMIT is newer — pull
-            const content = buildFileContent(item, type, parentTitle);
-            upsertFile(
-              filePath,
-              item.title,
-              content,
-              ["northstar", type],
-              "reference",
-              30,
-            );
-            pulled++;
-          } else if (fileTime > commitTime && direction !== "pull") {
-            // NorthStar is newer — push to COMMIT
-            const newStatus = extractField(existing.content, "Status");
-            const newPriority = extractField(existing.content, "Priority");
+          // STEP 1: Always pull status/priority from COMMIT if different
+          if (direction !== "push") {
+            const fileStatus = extractField(existing.content, "Status");
+            const filePriority = extractField(existing.content, "Priority");
+            if (
+              (fileStatus && fileStatus !== item.status) ||
+              (filePriority && filePriority !== (item.priority ?? ""))
+            ) {
+              // COMMIT status/priority wins — rebuild file with COMMIT data
+              const content = buildFileContent(item, type, parentTitle);
+              upsertFile(
+                filePath,
+                item.title,
+                content,
+                ["northstar", type],
+                "reference",
+                30,
+              );
+              didPull = true;
+            }
+          }
+
+          // STEP 2: Push dates/notes from file to COMMIT if file is newer
+          if (fileTime > commitTime && direction !== "pull" && !didPull) {
             const newDescription = extractField(
               existing.content,
               "Description",
             );
             const newNotes = extractField(existing.content, "Notes");
-
             const newTarget = extractField(existing.content, "Target");
             const newDue = extractField(existing.content, "Due");
 
             const updates: Record<string, unknown> = {
               updated_at: new Date().toISOString(),
             };
-            if (newStatus && newStatus !== item.status)
-              updates.status = newStatus;
-            if (newPriority && newPriority !== item.priority)
-              updates.priority = newPriority;
+            // Never push status — COMMIT is authority
             if (newDescription && newDescription !== item.description)
               updates.description = newDescription;
             if (newNotes && newNotes !== item.notes) updates.notes = newNotes;
@@ -269,17 +284,17 @@ Requires COMMIT_DB_KEY env var.`,
 
             if (Object.keys(updates).length > 1) {
               const ok = await patchItem(table, item.id, updates, apiKey);
-              if (ok) pushed++;
+              if (ok) didPush = true;
               else
                 console.warn(
                   `[northstar-sync] Failed to push ${item.title} to ${table}`,
                 );
-            } else {
-              unchanged++;
             }
-          } else {
-            unchanged++;
           }
+
+          if (didPull) pulled++;
+          else if (didPush) pushed++;
+          else unchanged++;
         }
       }
 
