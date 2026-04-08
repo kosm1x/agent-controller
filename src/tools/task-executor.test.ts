@@ -10,6 +10,7 @@ function mockRegistry() {
   return {
     execute: vi.fn().mockResolvedValue('{"ok": true}'),
     getEffectiveRiskTier: vi.fn().mockReturnValue("low"),
+    isDestructiveMcp: vi.fn().mockReturnValue(false),
   } as unknown as import("./registry.js").ToolRegistry;
 }
 

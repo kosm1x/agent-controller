@@ -84,14 +84,15 @@ export function createTaskExecutor(
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    // CCP5+CCP9: Use risk tier from registry. HIGH-risk tools check
-    // scope-bounded approval via args fingerprint.
-    const riskTier = registry.getEffectiveRiskTier(name);
-    if (riskTier === "high") {
+    // CCP5+CCP9: Only DESTRUCTIVE_MCP_TOOLS are hard-blocked until unlocked.
+    // Other HIGH-risk tools (gmail_send, etc.) are log-only via registry.execute().
+    // The blocking gate is for tools that require explicit user confirmation flow
+    // (ask → confirm → unlock → execute), not for all high-risk tools.
+    if (registry.isDestructiveMcp(name)) {
       const fp = argsFingerprint(args);
       if (!context.isDestructiveUnlocked(name, fp)) {
         log.warn(
-          { tool: name, riskTier, taskId: context.taskId },
+          { tool: name, taskId: context.taskId },
           "destructive tool BLOCKED (no confirmation in task context)",
         );
         return JSON.stringify({

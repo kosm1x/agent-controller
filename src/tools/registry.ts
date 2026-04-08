@@ -161,6 +161,11 @@ export class ToolRegistry {
   /** MCP tools that require confirmation (can't be tagged via interface). */
   private static readonly DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
 
+  /** Check if a tool is in the hard-blocked destructive MCP set. */
+  isDestructiveMcp(name: string): boolean {
+    return ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name);
+  }
+
   /**
    * Tracks whether destructive tools have been "unlocked" for the current
    * execution cycle. Call `unlockDestructive(name)` after verifying user
