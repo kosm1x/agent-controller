@@ -1,8 +1,8 @@
 /**
  * WhatsApp channel adapter using Baileys (Multi-Device).
  *
- * Owner-only, text-only. Reuses auth/reconnect patterns from CRM-Azteca.
- * Env vars: WHATSAPP_ENABLED, WHATSAPP_OWNER_JID
+ * Supports DM (owner-only) and group chats (mention-only).
+ * Env vars: WHATSAPP_ENABLED, WHATSAPP_OWNER_JID, WHATSAPP_GROUP_JIDS
  */
 
 import makeWASocket, {
@@ -27,6 +27,14 @@ import { formatForWhatsApp } from "../formatter.js";
 
 const AUTH_DIR = "./data/whatsapp-session";
 const OWNER_JID = process.env.WHATSAPP_OWNER_JID;
+
+/** Allowed group JIDs (comma-separated env var). */
+const GROUP_JIDS = new Set(
+  (process.env.WHATSAPP_GROUP_JIDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly name = "whatsapp" as const;
@@ -119,15 +127,45 @@ export class WhatsAppAdapter implements ChannelAdapter {
         const jid = msg.key.remoteJid;
         if (!jid || jid === "status@broadcast") continue;
 
-        // Owner-only: ignore messages from non-owner JIDs
-        if (jid !== OWNER_JID) continue;
+        const isGroup = jid.endsWith("@g.us");
+        const senderJid = isGroup ? (msg.key.participant ?? null) : jid;
+
+        // Access control:
+        // DM: owner-only
+        // Group: only allowed groups, mention-only
+        if (isGroup) {
+          if (!GROUP_JIDS.has(jid)) continue;
+        } else {
+          if (jid !== OWNER_JID) continue;
+        }
 
         let text =
           msg.message.conversation ||
           msg.message.extendedTextMessage?.text ||
           null;
 
-        // Voice/audio message → transcribe via Whisper
+        // Group: only respond when bot is mentioned (text or structured mention)
+        const botJid = this.sock?.user?.id;
+        const botNumber = botJid?.split(":")[0]?.split("@")[0];
+        if (isGroup) {
+          if (text) {
+            const mentionedJids =
+              msg.message.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
+            const isMentioned =
+              mentionedJids.some((m) => m.split("@")[0] === botNumber) ||
+              (botNumber && text.includes(`@${botNumber}`));
+            if (!isMentioned) continue;
+            // Strip the @mention from the text so it reads naturally
+            if (botNumber) {
+              text = text.replaceAll(`@${botNumber}`, "").trim();
+            }
+          } else {
+            // Audio/media in group without text mention — skip
+            continue;
+          }
+        }
+
+        // Voice/audio message → transcribe via Whisper (DM only — groups filtered above)
         if (!text && msg.message.audioMessage) {
           if (isTranscriptionConfigured()) {
             try {
@@ -168,12 +206,21 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
         if (!text) continue;
 
+        // Sender identity: phone number from JID (no API call needed)
+        const senderName =
+          isGroup && senderJid ? senderJid.split("@")[0] : undefined;
+
         this.messageHandler({
           channel: "whatsapp",
-          from: jid,
-          text,
+          from: jid, // Group JID for groups, owner JID for DM — reply routes correctly
+          text: isGroup
+            ? `[Grupo: ${jid.split("@")[0]}, De: ${senderName ?? "desconocido"}]\n${text}`
+            : text,
           timestamp: new Date(Number(msg.messageTimestamp) * 1000),
           replyTo: msg.key.id ?? undefined,
+          metadata: isGroup
+            ? { isGroup: true, groupJid: jid, senderJid, senderName }
+            : undefined,
         });
       }
     });

@@ -310,6 +310,8 @@ interface PendingReply {
   streamController?: TelegramStreamController;
   /** Abort controller for task cancellation (v6.2 S2). */
   abortController?: AbortController;
+  /** Thread key for conversation isolation (groups vs DMs). */
+  tk: string;
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -326,12 +328,22 @@ interface ThreadEntry {
 
 const conversationThreads = new Map<string, ThreadEntry[]>();
 const threadLastAccess = new Map<string, number>();
-/** Previous scope groups per channel — used for implicit feedback detection. */
+/** Previous scope groups per conversation — used for implicit feedback detection. */
 const previousScopeGroups = new Map<string, Set<string>>();
 const previousMessages = new Map<string, string>();
 const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let threadAccessCount = 0;
 const hydratedChannels = new Set<string>();
+
+/**
+ * Thread key: isolates conversation buffers per unique endpoint.
+ * WhatsApp groups use the group JID so each group has its own thread.
+ * DMs and Telegram use the channel name (backward-compatible).
+ */
+function threadKey(channel: string, from?: string): string {
+  if (from && from.endsWith("@g.us")) return `${channel}:${from}`;
+  return channel;
+}
 
 // ---------------------------------------------------------------------------
 // Critical data persistence safety net
@@ -752,10 +764,11 @@ export class MessageRouter {
     // If the message continues after the phrase, process the rest as a fresh task.
     const CONTEXT_CLEAR_RE =
       /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
+    const tk = threadKey(msg.channel, msg.from);
     if (CONTEXT_CLEAR_RE.test(msg.text)) {
       // Set empty thread AND mark as hydrated — prevents re-hydration from DB
-      conversationThreads.set(msg.channel, []);
-      hydratedChannels.add(msg.channel);
+      conversationThreads.set(tk, []);
+      hydratedChannels.add(tk);
       console.log(
         `[router] Context cleared for ${msg.channel} (thread buffer purged, hydration blocked)`,
       );
@@ -843,16 +856,14 @@ export class MessageRouter {
 
         // Push to thread so next task knows this was a REAL router action
         // (prevents false hallucination self-diagnosis)
-        pushToThread(
-          msg.channel,
-          `User: ${msg.text}\nJarvis: ${agentNotification}`,
-        );
+        pushToThread(tk, `User: ${msg.text}\nJarvis: ${agentNotification}`);
 
         // Track for completion notification
         this.pendingReplies.set(result.taskId, {
           channel: msg.channel,
           to: msg.from,
           originalText: taskText,
+          tk,
           interimTimer: setTimeout(() => {}, 0),
           finalTimer: setTimeout(() => {
             this.pendingReplies.delete(result.taskId);
@@ -993,10 +1004,7 @@ export class MessageRouter {
           msg.from,
           `🛑 Tarea cancelada (${cancelledTaskId.slice(0, 8)}). ¿En qué más te ayudo?`,
         );
-        pushToThread(
-          msg.channel,
-          `User: ${msg.text}\nJarvis: Tarea cancelada.`,
-        );
+        pushToThread(tk, `User: ${msg.text}\nJarvis: Tarea cancelada.`);
       } else {
         this.sendToChannel(
           msg.channel,
@@ -1082,10 +1090,7 @@ export class MessageRouter {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
-      const signal = detectFeedbackSignal(
-        msg.text,
-        previousMessages.get(msg.channel),
-      );
+      const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
       if (signal !== "neutral") {
         recordTaskFeedback(feedbackTaskId, signal);
         try {
@@ -1097,7 +1102,7 @@ export class MessageRouter {
         // as a correction so the enrichment pipeline recalls it on future
         // similar messages. Builds a "when Fede says X, he means Y" dictionary.
         if (signal === "rephrase") {
-          const prevMsg = previousMessages.get(msg.channel);
+          const prevMsg = previousMessages.get(tk);
           if (prevMsg) {
             extractAndPersistCorrection(prevMsg, msg.text).catch(() => {});
           }
@@ -1138,10 +1143,7 @@ export class MessageRouter {
           response.length > THREAD_RESPONSE_CAP
             ? response.slice(0, THREAD_RESPONSE_CAP) + "..."
             : response;
-        pushToThread(
-          msg.channel,
-          `User: ${msg.text}\nJarvis: ${cappedResponse}`,
-        );
+        pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
         try {
           const exchange = `User: ${msg.text}\nJarvis: ${response}`;
@@ -1193,7 +1195,7 @@ export class MessageRouter {
     // Build structured conversation turns from in-memory thread buffer.
     // The current user message is appended as the final turn so the fast runner
     // can send it as a proper user message rather than embedding it in the description.
-    const conversationHistory = getThreadTurns(msg.channel);
+    const conversationHistory = getThreadTurns(tk);
     conversationHistory.push({
       role: "user",
       content: msg.text,
@@ -1241,8 +1243,8 @@ export class MessageRouter {
     // Implicit feedback: compare current scope groups with previous message's.
     // Uses feedbackTaskId captured at line 592 (checkFeedbackWindow is destructive
     // — consumes the ID on first call, so we can't call it again here).
-    const prevGroups = previousScopeGroups.get(msg.channel);
-    const prevMsg = previousMessages.get(msg.channel);
+    const prevGroups = previousScopeGroups.get(tk);
+    const prevMsg = previousMessages.get(tk);
     if (prevGroups && prevMsg && feedbackTaskId) {
       const implicitSignal = detectImplicitFeedback(
         new Set(activeGroups),
@@ -1263,8 +1265,8 @@ export class MessageRouter {
         );
       }
     }
-    previousScopeGroups.set(msg.channel, new Set(activeGroups));
-    previousMessages.set(msg.channel, msg.text);
+    previousScopeGroups.set(tk, new Set(activeGroups));
+    previousMessages.set(tk, msg.text);
 
     // Scope telemetry — record decision for self-tuning pipeline
     let scopeRowId = 0;
@@ -1372,6 +1374,7 @@ export class MessageRouter {
       originalText: msg.text,
       imageUrl: msg.imageUrl,
       scopeGroups: [...activeGroups],
+      tk,
       interimTimer,
       finalTimer,
       ...(streamController && { streamController }),
@@ -1541,7 +1544,7 @@ export class MessageRouter {
           ? resultText.slice(0, THREAD_RESPONSE_CAP) + "..."
           : resultText;
       pushToThread(
-        pending.channel,
+        pending.tk,
         `User: ${pending.originalText}\nJarvis: ${cappedResult}`,
         pending.imageUrl,
       );
