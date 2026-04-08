@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-07 — **v6.0-v6.4+CL1+H ALL DONE. 1673 tests, 170 tools, 10 rituals, 51 sessions. Comprehension layer + hardening (canary, pre-flight, rephrase loop). Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-08 — **v6.0-v6.4+CL1+H ALL DONE. 1682 tests, 170 tools, 10 rituals, 51 sessions. withTimeout utility, ASSUME visible to user. Next: D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -430,9 +430,9 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 
 | Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4 (current)     |
 | ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1673               |
-| Source files            | 214        | 228       | 232  | 240                |
-| Test files              | 85         | 105       | 120  | 126                |
+| Tests                   | 1228       | 1377      | 1576 | 1682               |
+| Source files            | 214        | 228       | 232  | 241                |
+| Test files              | 85         | 105       | 120  | 127                |
 | Tools                   | 150        | 163       | 169  | 170 (109 deferred) |
 | Safeguards              | 0          | 5         | 5    | 5                  |
 | Behavioral patterns     | 0          | 10        | 10   | 10                 |
