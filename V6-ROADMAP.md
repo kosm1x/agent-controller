@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-08 — **v6.0-v6.4+CL1+H ALL DONE. 1682 tests, 170 tools, 10 rituals, 51 sessions. withTimeout utility, ASSUME visible to user. Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-08 — **v6.0-v6.4+CL1+H+CCP1-4 ALL DONE. 1701 tests, 170 tools, 10 rituals, 52 sessions. CCP: error context in retries, QP2 write verification, injection defense, structured failure recovery. Next: CCP5-10, D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -381,6 +381,23 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 | H2      | Pre-flight Tool Verification | checkPreflight() in task-executor: gmail_send (valid email, body >20), git_push/commit (cwd exists). Clear error before execution                  | **Done** |
 | H3      | Self-Monitoring Canary       | runCanaryCheck() every 4h: task success <70%, delivery misses >2 → Telegram alert. 10th cron job. scheduleCanary()/stopCanary()                    | **Done** |
 
+### Workstream 14: Claude Code Patterns — CCP (1 session)
+
+Extracted from analysis of claude-code-prompts repo (45 files). Cross-referenced against Jarvis architecture, shipped highest-impact 4.
+
+| Session | Deliverable                     | What                                                                                                                                          | Status      |
+| ------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| CCP1    | Error Context in Retry Messages | failedToolCalls Map stores error text. Retry message includes actual error + transient/permanent guidance. LLM knows WHY tools failed         | **Done**    |
+| CCP2    | Read-After-Write Verification   | QP2: 11 write tools verified for success markers in results. Missing marker → DONE_WITH_CONCERNS. Catches silent API failures                 | **Done**    |
+| CCP3    | Tool Result Injection Defense   | detectInjection() scans 11 untrusted tools for 12 injection patterns. sanitizeToolResult() prepends warning. Wired into adapter pipeline      | **Done**    |
+| CCP4    | Structured Failure Recovery     | classifyToolError() distinguishes transient vs permanent. Permanent errors skip retry. Diagnosis in replacement message. Word-bounded regexes | **Done**    |
+| CCP5    | Tiered Risk Assessment          | Replace binary requiresConfirmation with 3-tier model (reversibility x impact). Populate DESTRUCTIVE_MCP_TOOLS                                | **Planned** |
+| CCP6    | Prompt Size Governance          | Hard cap on system prompt tokens. Priority-order sections. Truncate KB when over budget                                                       | **Planned** |
+| CCP7    | Memory Consolidation Cycle      | 4-phase overnight: Orient → Gather → Consolidate → Prune. "Fewer, stronger memories"                                                          | **Planned** |
+| CCP8    | Prometheus Synthesis Mandate    | Planner must cite file paths/functions. Increase inter-goal context to 2000 chars                                                             | **Planned** |
+| CCP9    | Scope-Bounded Approval          | unlockDestructive() target-scoped, not tool-scoped. Prevent multi-delete on single approval                                                   | **Planned** |
+| CCP10   | Status Line Enforcement         | Default to NEEDS_CONTEXT when LLM omits status. Log missing status lines                                                                      | **Planned** |
+
 ---
 
 ## Safety Invariants
@@ -461,4 +478,5 @@ Bridges the gap between Claude Code's intent comprehension and Jarvis's regex-ba
 | v6.4      | Intelligence layer     | 8        | **Done**     |
 | v6.4 CL1  | Comprehension layer    | 3        | **Done**     |
 | v6.4 H    | Hardening              | 1        | **Done**     |
-| **Total** |                        | **51**   |              |
+| CCP 1-4   | Claude Code patterns   | 1        | **Done**     |
+| **Total** |                        | **52**   |              |

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectsHallucinatedExecution,
   hasUserConfirmedDeletion,
+  classifyToolError,
 } from "./fast-runner.js";
 
 describe("detectsHallucinatedExecution", () => {
@@ -794,5 +795,57 @@ describe("hasUserConfirmedDeletion", () => {
         { role: "user", content: "Do it" },
       ]),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CCP4: classifyToolError
+// ---------------------------------------------------------------------------
+
+describe("classifyToolError", () => {
+  it("classifies token expiration as permanent", () => {
+    expect(
+      classifyToolError('{"error":"Google API 401: token expired or revoked"}'),
+    ).toBe("permanent");
+  });
+
+  it("classifies invalid_grant as permanent", () => {
+    expect(classifyToolError('{"error":"invalid_grant"}')).toBe("permanent");
+  });
+
+  it("classifies 403 permission denied as permanent", () => {
+    expect(
+      classifyToolError('{"error":"Google API 403: permission denied"}'),
+    ).toBe("permanent");
+  });
+
+  it("classifies 404 not found as permanent", () => {
+    expect(
+      classifyToolError('{"error":"Resource not found: contact_123"}'),
+    ).toBe("permanent");
+  });
+
+  it("classifies timeout as transient", () => {
+    expect(classifyToolError('{"error":"Request timeout after 10000ms"}')).toBe(
+      "transient",
+    );
+  });
+
+  it("classifies 429 rate limit as transient", () => {
+    expect(classifyToolError('{"error":"429 Too Many Requests"}')).toBe(
+      "transient",
+    );
+  });
+
+  it("classifies 500 server error as transient", () => {
+    expect(classifyToolError('{"error":"500 Internal Server Error"}')).toBe(
+      "transient",
+    );
+  });
+
+  it("classifies unknown errors as transient (benefit of doubt)", () => {
+    expect(classifyToolError('{"error":"Something unexpected happened"}')).toBe(
+      "transient",
+    );
   });
 });

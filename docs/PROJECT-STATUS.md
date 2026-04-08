@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-06
+> Last updated: 2026-04-08
 
 ## Overview
 
@@ -12,9 +12,9 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 | Metric        | Value                                                                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 232                                                                                                                                                                                                            |
-| Test files    | 120                                                                                                                                                                                                            |
-| Tests passing | 1577                                                                                                                                                                                                           |
+| Source files  | 251                                                                                                                                                                                                            |
+| Test files    | 125                                                                                                                                                                                                            |
+| Tests passing | 1701                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
 | Total tools   | 169 (90 builtin + 55 MCP + 19 Google + 3 memory + 2 skill). 109 deferred (84 builtin + 25 MCP) — 52% prompt token reduction                                                                                    |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |

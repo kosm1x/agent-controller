@@ -25,6 +25,7 @@ import { compactConversation } from "../prometheus/compaction-pipeline.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
+import { sanitizeToolResult } from "./guards.js";
 import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
 import type { RoundData } from "./doom-loop.js";
 import {
@@ -1521,6 +1522,9 @@ export async function inferWithTools(
             });
           }
         }
+        // CCP3: Sanitize tool results from untrusted sources before LLM sees them.
+        result = sanitizeToolResult(toolCall.function.name, result);
+
         // Large result eviction: write to temp file, return preview + TOC.
         // Skip if result already contains an evicted file path (e.g., from
         // web_read) to avoid double-eviction of the same content.

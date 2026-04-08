@@ -294,6 +294,34 @@ export const WRITE_TOOLS = new Set([
 ]);
 
 /**
+ * CCP4: Classify tool errors as transient (worth retrying) vs permanent
+ * (should escalate to user). Prevents blind retry of auth failures, missing
+ * resources, and permission errors.
+ */
+export function classifyToolError(
+  errorText: string,
+): "transient" | "permanent" {
+  // Permanent: auth expired, permission denied, not found, invalid args
+  if (
+    /token.*expir|invalid.?grant|\b401\b|\b403\b|permission.?denied|not.?found|\b404\b|invalid.?argument|does not exist|no.?such/i.test(
+      errorText,
+    )
+  ) {
+    return "permanent";
+  }
+  // Transient: timeouts, rate limits, server errors, network issues
+  if (
+    /timeout|\b429\b|rate.?limit|too many|\b5\d{2}\b|econnreset|enotfound|fetch.?fail|abort/i.test(
+      errorText,
+    )
+  ) {
+    return "transient";
+  }
+  // Default: treat unknown errors as transient (give it one more shot)
+  return "transient";
+}
+
+/**
  * Patterns that indicate the response claims a write/mutate action was performed.
  * Generic — covers all tool categories, not just WordPress.
  */
@@ -769,7 +797,8 @@ export const fastRunner: Runner = {
       // This prevents the hallucination guard from being bypassed when a tool
       // was invoked but failed (truncated args, validation error, API error).
       const toolsCalled: string[] = [];
-      const failedToolCalls = new Set<string>();
+      // Map tool name → first error message (for retry context)
+      const failedToolCalls = new Map<string, string>();
       for (let i = 0; i < result.messages.length; i++) {
         const msg = result.messages[i];
         if (msg.role === "assistant" && msg.tool_calls) {
@@ -793,7 +822,9 @@ export const fastRunner: Runner = {
               resultContent.includes("Tool call truncated") ||
               resultContent.includes("Invalid arguments for");
             if (isError) {
-              failedToolCalls.add(name);
+              if (!failedToolCalls.has(name)) {
+                failedToolCalls.set(name, resultContent.slice(0, 200));
+              }
             } else if (!toolsCalled.includes(name)) {
               toolsCalled.push(name);
             }
@@ -802,13 +833,15 @@ export const fastRunner: Runner = {
       }
       if (failedToolCalls.size > 0) {
         console.log(
-          `[fast-runner] Failed tool calls (excluded from toolsCalled): [${[...failedToolCalls].join(", ")}]`,
+          `[fast-runner] Failed tool calls (excluded from toolsCalled): [${[...failedToolCalls.keys()].join(", ")}]`,
         );
       }
 
       // Scope telemetry — record tool execution + repairs
       try {
-        recordToolExecution(input.taskId, toolsCalled, [...failedToolCalls]);
+        recordToolExecution(input.taskId, toolsCalled, [
+          ...failedToolCalls.keys(),
+        ]);
         if (result.toolRepairs.length > 0) {
           recordToolRepairs(input.taskId, result.toolRepairs);
         }
@@ -848,7 +881,7 @@ export const fastRunner: Runner = {
           }
         }
       }
-      const failedWriteTools = [...failedToolCalls].filter(
+      const failedWriteTools = [...failedToolCalls.keys()].filter(
         (t) =>
           WRITE_TOOLS.has(t) &&
           // Exclude only confirmation-retry tools that later succeeded
@@ -861,9 +894,10 @@ export const fastRunner: Runner = {
         );
       }
 
-      // Hallucination guard: if the LLM narrated tool execution without calling
-      // the right tools, retry once if budget has headroom, else replace.
-      // Skip for vision tasks — image analysis is a legitimate zero-tool response.
+      // CCP4: Structured failure recovery protocol.
+      // 4 steps: diagnose (extract error) → classify (transient vs permanent) →
+      // targeted correction (retry with context OR skip) → respect sound strategy.
+      // Max 1 hallucination retry per task. Permanent errors skip retry entirely.
       if (
         !hasVision &&
         detectsHallucinatedExecution(
@@ -877,14 +911,32 @@ export const fastRunner: Runner = {
         const hasHeadroom =
           lastPromptTokens < tokenBudget * HALLUCINATION_RETRY_HEADROOM;
 
-        if (hasHeadroom) {
-          // Budget has room — retry with correction instead of giving up.
+        // Step 1 — Diagnose: extract actual error text from failed tools
+        const failedErrorContext = failedWriteTools
+          .map((t) => {
+            const errText = failedToolCalls.get(t);
+            return errText
+              ? `  - ${t}: ${errText}`
+              : `  - ${t}: (unknown error)`;
+          })
+          .join("\n");
+        const hasToolErrors = failedErrorContext.length > 0;
+
+        // Step 2 — Classify: are ALL errors permanent?
+        const allPermanent =
+          hasToolErrors &&
+          failedWriteTools.every((t) => {
+            const err = failedToolCalls.get(t) ?? "";
+            return classifyToolError(err) === "permanent";
+          });
+
+        // Step 3 — Decide: retry only if transient errors + budget headroom
+        const shouldRetry = hasHeadroom && !allPermanent;
+
+        if (shouldRetry) {
           console.log(
             `[fast-runner] Hallucination detected (prompt=${lastPromptTokens}, budget=${tokenBudget}). Retrying with correction.`,
           );
-          // Use result.messages (includes tool results from reads) — NOT the
-          // original messages. The LLM needs to see gsheets_read data to act on it.
-          // Strip the hallucinated text response (last assistant message).
           const retryMessages: ChatMessage[] = result.messages.filter(
             (m, i) =>
               !(
@@ -893,13 +945,9 @@ export const fastRunner: Runner = {
                 !m.tool_calls
               ),
           );
-          // Context-aware retry message: read vs write hallucination
           const isReadHallucination =
             toolsCalled.length === 0 &&
             READ_HALLUCINATION_RE.test(parsed.cleanContent);
-          // Build dynamic write tool list from scoped definitions instead of
-          // hardcoding names — prevents the LLM from calling tools that are
-          // not in scope and getting rejected in a loop.
           const scopedWriteTools = definitions
             .map((d) => d.function.name)
             .filter((n) => WRITE_TOOLS.has(n));
@@ -907,12 +955,22 @@ export const fastRunner: Runner = {
             scopedWriteTools.length > 0
               ? scopedWriteTools.join(", ")
               : "file_write, file_edit";
-          retryMessages.push({
-            role: "user",
-            content: isReadHallucination
-              ? "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados."
-              : `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Herramientas de escritura disponibles: [${writeToolHint}]. Llama a la correcta AHORA. NO narres — EJECUTA.`,
-          });
+
+          let retryContent: string;
+          if (isReadHallucination) {
+            retryContent =
+              "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados.";
+          } else if (hasToolErrors) {
+            retryContent =
+              `ALTO: Las siguientes herramientas FALLARON con errores reales:\n${failedErrorContext}\n\n` +
+              `Si el error es permanente (token expirado, permiso denegado, recurso no encontrado), ` +
+              `NO reintentes — reporta el error al usuario. ` +
+              `Si el error es transitorio (timeout, rate limit), intenta de nuevo. ` +
+              `Herramientas disponibles: [${writeToolHint}].`;
+          } else {
+            retryContent = `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Herramientas de escritura disponibles: [${writeToolHint}]. Llama a la correcta AHORA. NO narres — EJECUTA.`;
+          }
+          retryMessages.push({ role: "user", content: retryContent });
 
           const retryResult = await inferWithTools(
             retryMessages,
@@ -981,14 +1039,31 @@ export const fastRunner: Runner = {
         ) {
           // Retry fixed it — skip replacement
         } else {
+          // Step 4 — Honest replacement with diagnosis
+          const reason = allPermanent
+            ? "permanent tool errors (retry skipped)"
+            : "hallucination persists after retry";
           console.log(
-            `[fast-runner] Hallucination persists. Replacing with honest response. Tools: [${toolsCalled.join(", ")}]`,
+            `[fast-runner] ${reason}. Replacing with honest response. Tools: [${toolsCalled.join(", ")}]`,
           );
           const toolList =
             toolsCalled.length > 0 ? toolsCalled.join(", ") : "ninguna";
           const readHalluc =
             toolsCalled.length === 0 &&
             READ_HALLUCINATION_RE.test(parsed.cleanContent);
+
+          // Build error diagnosis for the user when tools failed
+          const errorDiagnosis =
+            hasToolErrors && failedWriteTools.length > 0
+              ? `\n\n**Errores de herramientas**:\n${failedWriteTools
+                  .map((t) => {
+                    const err = failedToolCalls.get(t) ?? "desconocido";
+                    const cls = classifyToolError(err);
+                    return `- ${t}: ${err.slice(0, 100)} (${cls === "permanent" ? "permanente — requiere acción manual" : "transitorio — reintenta"})`;
+                  })
+                  .join("\n")}`
+              : "";
+
           parsed = {
             cleanContent: readHalluc
               ? `⚠️ No verifiqué realmente — narré una verificación sin leer el contenido.\n\n` +
@@ -997,11 +1072,11 @@ export const fastRunner: Runner = {
                 `Intenta de nuevo — esta vez leeré el contenido real.`
               : `⚠️ No completé la acción solicitada.\n\n` +
                 `**Herramientas que SÍ llamé**: ${toolList}\n` +
-                `**Lo que faltó**: Llamar herramientas de escritura para ejecutar los cambios (solo leí datos, no los modifiqué).\n\n` +
-                `Intenta con una instrucción más específica, por ejemplo: "actualiza el status de la tarea X a completada".`,
+                `**Lo que faltó**: Llamar herramientas de escritura para ejecutar los cambios.${errorDiagnosis}\n\n` +
+                `Intenta con una instrucción más específica, o resuelve los errores permanentes primero.`,
             status: "DONE_WITH_CONCERNS",
             concerns: [
-              "Hallucination detected — response mechanically replaced with honest tool inventory",
+              `Hallucination detected — ${reason}. Response mechanically replaced with honest tool inventory`,
             ],
           };
         }
@@ -1077,9 +1152,46 @@ export const fastRunner: Runner = {
           "Delivery miss: gmail_send was in scope but never called. Email was not sent.",
         );
       }
+
+      // CCP2/QP2: Read-after-write verification — check that write tools that
+      // WERE called actually returned success markers, not silent failures.
+      // Maps tool name → expected success marker in the result JSON.
+      const WRITE_VERIFICATION: Record<string, string> = {
+        gmail_send: '"sent":true',
+        gdrive_create: '"id"',
+        gdrive_upload: '"id"',
+        gsheets_write: '"cells"',
+        calendar_create: '"id"',
+        calendar_update: '"id"',
+        gdocs_write: '"document_id"',
+        gslides_create: '"presentationId"',
+        gtasks_create: '"id"',
+        wp_publish: '"post_id"',
+      };
+      for (const msg of result.messages) {
+        if (msg.role !== "assistant" || !msg.tool_calls) continue;
+        for (const tc of msg.tool_calls) {
+          const name = tc.function?.name;
+          if (!name || !WRITE_VERIFICATION[name]) continue;
+          if (!toolsCalled.includes(name)) continue; // already flagged as failed
+          const toolResultMsg = result.messages.find(
+            (m) => m.role === "tool" && m.tool_call_id === tc.id,
+          );
+          const content =
+            typeof toolResultMsg?.content === "string"
+              ? toolResultMsg.content
+              : "";
+          if (!content.includes(WRITE_VERIFICATION[name])) {
+            qpConcerns.push(
+              `Write verification failed: ${name} was called but result lacks expected success marker (${WRITE_VERIFICATION[name]}).`,
+            );
+          }
+        }
+      }
+
       if (qpConcerns.length > 0) {
         console.warn(
-          `[fast-runner] QP1 quality check: ${qpConcerns.join("; ")}`,
+          `[fast-runner] QP quality check: ${qpConcerns.join("; ")}`,
         );
         parsed = {
           ...parsed,
