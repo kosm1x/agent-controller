@@ -218,6 +218,14 @@ export const listSchedulesTool: Tool = {
 export const deleteScheduleTool: Tool = {
   name: "delete_schedule",
   deferred: true,
+  triggerPhrases: [
+    "elimina la rutina",
+    "elimina el schedule",
+    "borra la rutina",
+    "delete schedule",
+    "quita esa programación",
+    "cancela la rutina",
+  ],
   definition: {
     type: "function",
     function: {
