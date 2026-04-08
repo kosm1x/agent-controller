@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-08 — **v6.0-v6.4+CL1+H+CCP1-10 ALL DONE. 1709 tests, 170 tools, 11 rituals, 53 sessions. Full CCP suite: error retries, QP2, injection defense, failure recovery, risk tiers, prompt governance, memory consolidation, synthesis mandate, scope-bounded approval, status enforcement. Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-08 — **v6.0-v6.4+CL1+H+CCP1-10 ALL DONE. 1713 tests, 170 tools, 11 rituals, 53 sessions. WhatsApp group support (mention-only, thread-isolated). CCP5 regression fixed (dual gate removed). Next: WhatsApp activation, D3+D4 (OAuth).**
 
 ## Status Key
 
