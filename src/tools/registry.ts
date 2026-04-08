@@ -166,22 +166,8 @@ export class ToolRegistry {
     return ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name);
   }
 
-  /**
-   * Tracks whether destructive tools have been "unlocked" for the current
-   * execution cycle. Call `unlockDestructive(name)` after verifying user
-   * confirmation in the conversation history.
-   */
-  private destructiveUnlocked = new Set<string>();
-
-  /** Unlock a destructive tool for execution (call after confirming with user). */
-  unlockDestructive(name: string): void {
-    this.destructiveUnlocked.add(name);
-  }
-
-  /** Reset destructive locks — call at the start of each task/chat turn. */
-  resetDestructiveLocks(): void {
-    this.destructiveUnlocked.clear();
-  }
+  // Blocking responsibility lives in task-executor (CCP5+CCP9).
+  // Registry only handles execution + audit logging.
 
   /**
    * CCP5: Get effective risk tier for a tool.
@@ -203,36 +189,15 @@ export class ToolRegistry {
       return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
 
-    // CCP5: Tiered risk assessment gate.
+    // CCP5: Audit trail for risk-tiered tools. Blocking is handled by
+    // task-executor (single responsibility — prevents dual-gate bugs).
     const riskTier = this.getEffectiveRiskTier(name);
-
-    // HIGH: Block until explicitly unlocked (confirmation required)
-    if (
-      (riskTier === "high" || ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)) &&
-      !this.destructiveUnlocked.has(name)
-    ) {
-      log.warn(
-        { tool: name, riskTier, args: JSON.stringify(args).slice(0, 200) },
-        "destructive tool BLOCKED (no confirmation)",
-      );
-      return JSON.stringify({
-        error: "CONFIRMATION_REQUIRED",
-        message:
-          "PAUSE — this tool requires user confirmation before execution. " +
-          "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
-          "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
-        tool: name,
-      });
-    }
-
-    // HIGH + MEDIUM: Log warning for audit trail
     if (riskTier === "high" || riskTier === "medium") {
       log.warn(
         { tool: name, riskTier, args: JSON.stringify(args).slice(0, 200) },
         "destructive tool called",
       );
     }
-    // LOW: Silent proceed
     const start = Date.now();
     try {
       const result = await tool.execute(args);
