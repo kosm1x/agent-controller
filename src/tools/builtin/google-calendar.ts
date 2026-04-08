@@ -94,6 +94,7 @@ USE WHEN:
 export const calendarCreateTool: Tool = {
   name: "calendar_create",
   requiresConfirmation: true,
+  riskTier: "medium",
   deferred: true,
   definition: {
     type: "function",
@@ -196,6 +197,7 @@ AFTER CREATING: Report the event title, date/time, and calendar link.`,
 export const calendarUpdateTool: Tool = {
   name: "calendar_update",
   requiresConfirmation: true,
+  riskTier: "medium",
   deferred: true,
   definition: {
     type: "function",

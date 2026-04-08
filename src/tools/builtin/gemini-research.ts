@@ -632,6 +632,7 @@ OUTPUT FORMAT — Return ONLY valid JSON (no markdown fences):
 export const geminiAudioOverviewTool: Tool = {
   name: "gemini_audio_overview",
   requiresConfirmation: true,
+  riskTier: "medium",
   deferred: true,
   definition: {
     type: "function",

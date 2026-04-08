@@ -55,6 +55,13 @@ export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 35);
 /** Max inference rounds for Playwright browser tasks (navigate+snapshot+click cycles). */
 export const MAX_ROUNDS_BROWSER = int("MAX_ROUNDS_BROWSER", 35);
 
+// --- Prompt size governance (CCP6) ---
+/** Max tokens for the system prompt (sections + KB + facts). ~24K chars. */
+export const SYSTEM_PROMPT_TOKEN_BUDGET = int(
+  "SYSTEM_PROMPT_TOKEN_BUDGET",
+  6000,
+);
+
 // --- Hallucination guard ---
 /** Token budget headroom threshold for retry (0-1). */
 export const HALLUCINATION_RETRY_HEADROOM = float(

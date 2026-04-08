@@ -393,6 +393,7 @@ This approach prevents content truncation and article destruction.`,
 export const wpPublishTool: Tool = {
   name: "wp_publish",
   requiresConfirmation: true,
+  riskTier: "medium",
   definition: {
     type: "function",
     function: {
@@ -731,6 +732,7 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
 export const wpMediaUploadTool: Tool = {
   name: "wp_media_upload",
   requiresConfirmation: true,
+  riskTier: "medium",
   definition: {
     type: "function",
     function: {

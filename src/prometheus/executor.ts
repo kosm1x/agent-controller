@@ -27,8 +27,10 @@ import {
 const MAX_RETRIES = 3;
 const MAX_ROUNDS_PER_GOAL = 10;
 const MAX_SELF_ASSESS = 2;
-const CONTEXT_MAX_GOALS = 5;
-const CONTEXT_MAX_CHARS = 500;
+// CCP8: Increased context for synthesis mandate — prior goals carry
+// more detail (file paths, function names) to inform dependent goals.
+const CONTEXT_MAX_GOALS = 8;
+const CONTEXT_MAX_CHARS = 2000;
 
 const TRANSIENT_PATTERNS = [
   "timeout",

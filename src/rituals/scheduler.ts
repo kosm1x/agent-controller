@@ -123,10 +123,11 @@ export function startRitualScheduler(): void {
     );
   }
 
-  // Mechanical backups + autonomous improvement + safeguards + canary
+  // Mechanical backups + autonomous improvement + safeguards + canary + consolidation
   scheduleKbBackup();
   scheduleAutonomousImprovement();
   scheduleDiffDigest();
+  scheduleMemoryConsolidation();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -264,6 +265,30 @@ function scheduleKbBackup(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/** CCP7: Memory consolidation — prune stale/duplicate memories. */
+function scheduleMemoryConsolidation(): void {
+  // 2:30 AM Tue/Thu/Sat — after overnight tuning (1:00 AM)
+  const job = cron.schedule(
+    "30 2 * * 2,4,6",
+    async () => {
+      try {
+        const { runConsolidation } = await import("../memory/consolidation.js");
+        const report = await runConsolidation();
+        console.log(
+          `[rituals] memory-consolidation: removed ${report.duplicatesRemoved + report.pruned}, remaining ${report.remaining} (${report.durationMs}ms)`,
+        );
+      } catch (err) {
+        console.error("[rituals] memory-consolidation failed:", err);
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] memory-consolidation: scheduled (30 2 * * 2,4,6, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

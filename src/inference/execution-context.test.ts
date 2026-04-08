@@ -21,6 +21,38 @@ describe("TaskExecutionContext", () => {
       expect(ctxA.isDestructiveUnlocked("dangerous_tool")).toBe(true);
       expect(ctxB.isDestructiveUnlocked("dangerous_tool")).toBe(false);
     });
+
+    // CCP9: Scope-bounded approval tests
+    it("broad unlock (no fingerprint) allows any target", () => {
+      const ctx = new TaskExecutionContext("task-1");
+      ctx.unlockDestructive("delete_item");
+      expect(ctx.isDestructiveUnlocked("delete_item", "contact_123")).toBe(
+        true,
+      );
+      expect(ctx.isDestructiveUnlocked("delete_item", "contact_456")).toBe(
+        true,
+      );
+    });
+
+    it("target-scoped unlock only allows matching fingerprint", () => {
+      const ctx = new TaskExecutionContext("task-1");
+      ctx.unlockDestructive("delete_item", "contact_123");
+      expect(ctx.isDestructiveUnlocked("delete_item", "contact_123")).toBe(
+        true,
+      );
+      expect(ctx.isDestructiveUnlocked("delete_item", "contact_456")).toBe(
+        false,
+      );
+    });
+
+    it("broad unlock overrides target-scoped", () => {
+      const ctx = new TaskExecutionContext("task-1");
+      ctx.unlockDestructive("delete_item", "contact_123");
+      ctx.unlockDestructive("delete_item"); // broad override
+      expect(ctx.isDestructiveUnlocked("delete_item", "contact_456")).toBe(
+        true,
+      );
+    });
   });
 
   describe("memory store rate limiting", () => {

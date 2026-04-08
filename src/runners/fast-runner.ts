@@ -176,7 +176,7 @@ const VERIFICATION_NUDGE = `
 /** Status suffix appended to chat system prompts. */
 const STATUS_SUFFIX = `
 
-When you finish, end your response with exactly one of these status lines:
+REQUIRED: End EVERY response with exactly one status line. Omitting it marks your task as incomplete.
 STATUS: DONE
 STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]

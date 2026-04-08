@@ -13,6 +13,14 @@ export interface Tool {
   /** If true, LLM should confirm with user before executing (destructive/external action). */
   readonly requiresConfirmation?: boolean;
   /**
+   * CCP5: Risk tier — graduated risk assessment (reversibility x impact).
+   * HIGH: irreversible/external (email, delete, deploy) — blocks until confirmed.
+   * MEDIUM: impactful but reversible (publish, write, update) — logs warning.
+   * LOW: easily reversible (create draft, save fact) — silent.
+   * Falls back to requiresConfirmation (→ "high") if not set.
+   */
+  readonly riskTier?: "low" | "medium" | "high";
+  /**
    * If true, the tool's full schema is NOT sent to the LLM by default.
    * Only the name + description are included in a deferred catalog.
    * When the LLM calls a deferred tool, the executor returns the full

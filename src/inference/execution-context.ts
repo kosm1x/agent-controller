@@ -14,8 +14,13 @@ const MAX_MEMORY_STORES_PER_TASK = 5;
 export class TaskExecutionContext {
   readonly taskId: string;
 
-  /** Destructive tools unlocked for this task (e.g. after user confirmation). */
-  private readonly destructiveUnlocked = new Set<string>();
+  /**
+   * CCP9: Scope-bounded destructive tool approval.
+   * Map: tool name → args fingerprint (null = any target approved).
+   * target-scoped: unlock("delete_item", "contact_123") only unlocks that target.
+   * broad: unlock("delete_item") unlocks for any target (deletion commands).
+   */
+  private readonly destructiveUnlocked = new Map<string, string | null>();
 
   /** Memory store count for rate limiting. */
   private memoryStoreCount = 0;
@@ -26,12 +31,31 @@ export class TaskExecutionContext {
 
   // --- Destructive lock management ---
 
-  unlockDestructive(name: string): void {
-    this.destructiveUnlocked.add(name);
+  /**
+   * Unlock a destructive tool.
+   * @param name Tool name
+   * @param argsFingerprint Optional target fingerprint. If omitted, unlocks for ANY target.
+   */
+  unlockDestructive(name: string, argsFingerprint?: string): void {
+    // Broad unlock (no fingerprint) always wins over target-scoped
+    if (!argsFingerprint || this.destructiveUnlocked.get(name) === null) {
+      this.destructiveUnlocked.set(name, null);
+    } else {
+      this.destructiveUnlocked.set(name, argsFingerprint);
+    }
   }
 
-  isDestructiveUnlocked(name: string): boolean {
-    return this.destructiveUnlocked.has(name);
+  /**
+   * Check if a destructive tool is unlocked for the given args.
+   * null fingerprint in the map = any target approved (broad unlock).
+   */
+  isDestructiveUnlocked(name: string, argsFingerprint?: string): boolean {
+    if (!this.destructiveUnlocked.has(name)) return false;
+    const stored = this.destructiveUnlocked.get(name);
+    // null = broad unlock (any target approved)
+    if (stored === null) return true;
+    // Target-scoped: must match fingerprint
+    return !argsFingerprint || stored === argsFingerprint;
   }
 
   // --- Memory store rate limiting ---

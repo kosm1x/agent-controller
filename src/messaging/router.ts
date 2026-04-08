@@ -7,6 +7,7 @@
  */
 
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
+import { SYSTEM_PROMPT_TOKEN_BUDGET } from "../config/constants.js";
 import { getDatabase } from "../db/index.js";
 import {
   findRecentCheckpoint,
@@ -151,27 +152,58 @@ function buildJarvisSystemPrompt(
   enrichmentBlock: string,
 ): string {
   const flags = detectToolFlags(tools);
-  const sections: string[] = [];
 
-  // Always-on sections
-  sections.push(identitySection(mxDate, mxTime));
-  if (flags.hasNorthStar) sections.push(fileSystemSection());
-  sections.push(capabilitiesSection(flags));
-  sections.push(personalDataSection());
-  sections.push(confirmationSection(flags));
-  if (flags.hasBrowser) sections.push(verificationSection());
-  sections.push(toolFirstSection(flags));
-  if (flags.hasWordpress) sections.push(wordpressSection());
-  sections.push(mechanicalVerificationSection());
-  if (tools.includes("memory_store")) sections.push(memoryPersistenceSection());
-  sections.push(correctionMemorySection());
-  if (flags.hasCoding) sections.push(codingSection());
-  if (flags.hasBrowser) sections.push(browserSection());
-  if (flags.hasResearch) sections.push(researchSection());
+  // CCP6: Priority-ordered sections. Higher priority = kept when over budget.
+  // P1 (safety-critical), P2 (core), P3 (conditional), P4 (supplementary)
+  const p1: string[] = []; // Never truncated
+  const p2: string[] = [];
+  const p3: string[] = [];
+  const p4: string[] = []; // First to truncate
 
-  let prompt = sections.join("\n\n");
-  prompt += userFactsBlock;
-  prompt += enrichmentBlock;
+  // P1: Identity + safety
+  p1.push(identitySection(mxDate, mxTime));
+  p1.push(confirmationSection(flags));
+  p1.push(toolFirstSection(flags));
+  p1.push(mechanicalVerificationSection());
+
+  // P2: Core knowledge
+  if (flags.hasNorthStar) p2.push(fileSystemSection());
+  p2.push(capabilitiesSection(flags));
+  p2.push(personalDataSection());
+  p2.push(correctionMemorySection());
+
+  // P3: Domain-specific
+  if (flags.hasBrowser) p3.push(verificationSection());
+  if (flags.hasWordpress) p3.push(wordpressSection());
+  if (tools.includes("memory_store")) p3.push(memoryPersistenceSection());
+  if (flags.hasCoding) p3.push(codingSection());
+  if (flags.hasBrowser) p3.push(browserSection());
+  if (flags.hasResearch) p3.push(researchSection());
+
+  // P4: Supplementary data (user facts, enrichment)
+  if (userFactsBlock) p4.push(userFactsBlock);
+  if (enrichmentBlock) p4.push(enrichmentBlock);
+
+  // Assemble with budget check
+  const budget = SYSTEM_PROMPT_TOKEN_BUDGET * 4; // Convert tokens to chars
+  let prompt = [...p1, ...p2, ...p3, ...p4].join("\n\n");
+
+  // CCP6: Truncate from lowest priority if over budget
+  if (prompt.length > budget) {
+    // Try removing P4, then P3 sections until within budget
+    let parts = [...p1, ...p2, ...p3, ...p4];
+    while (parts.length > p1.length && prompt.length > budget) {
+      parts.pop();
+      prompt = parts.join("\n\n");
+    }
+    console.warn(
+      `[prompt] System prompt truncated: ${Math.round(prompt.length / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET})`,
+    );
+  }
+
+  console.log(
+    `[prompt] System prompt: ${Math.round(prompt.length / 4)} tokens, ${p1.length + p2.length + p3.length + p4.length} sections`,
+  );
   return prompt;
 }
 

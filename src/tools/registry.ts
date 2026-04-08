@@ -178,21 +178,36 @@ export class ToolRegistry {
     this.destructiveUnlocked.clear();
   }
 
+  /**
+   * CCP5: Get effective risk tier for a tool.
+   * Priority: explicit riskTier > requiresConfirmation (→ high) > default (low).
+   */
+  getEffectiveRiskTier(name: string): "low" | "medium" | "high" {
+    const tool = this.tools.get(name);
+    if (!tool) return "low";
+    if (tool.riskTier) return tool.riskTier;
+    if (tool.requiresConfirmation) return "high";
+    if (ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)) return "high";
+    return "low";
+  }
+
   /** Execute a tool by name. */
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
-    // Mechanical gate: block destructive MCP tools unless explicitly unlocked.
-    // The LLM must ask for user confirmation first; the runner unlocks after
-    // seeing the confirmation in conversation history.
+
+    // CCP5: Tiered risk assessment gate.
+    const riskTier = this.getEffectiveRiskTier(name);
+
+    // HIGH: Block until explicitly unlocked (confirmation required)
     if (
-      ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name) &&
+      (riskTier === "high" || ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)) &&
       !this.destructiveUnlocked.has(name)
     ) {
       log.warn(
-        { tool: name, args: JSON.stringify(args).slice(0, 200) },
+        { tool: name, riskTier, args: JSON.stringify(args).slice(0, 200) },
         "destructive tool BLOCKED (no confirmation)",
       );
       return JSON.stringify({
@@ -204,15 +219,15 @@ export class ToolRegistry {
         tool: name,
       });
     }
-    if (
-      tool.requiresConfirmation ||
-      ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)
-    ) {
+
+    // HIGH + MEDIUM: Log warning for audit trail
+    if (riskTier === "high" || riskTier === "medium") {
       log.warn(
-        { tool: name, args: JSON.stringify(args).slice(0, 200) },
+        { tool: name, riskTier, args: JSON.stringify(args).slice(0, 200) },
         "destructive tool called",
       );
     }
+    // LOW: Silent proceed
     const start = Date.now();
     try {
       const result = await tool.execute(args);

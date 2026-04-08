@@ -24,14 +24,20 @@ const STATUS_RE =
 /**
  * Parse a STATUS: line from the end of LLM output.
  *
- * If no status line is found, defaults to DONE (backward compatibility).
- * The status line is stripped from the returned cleanContent.
+ * CCP10: If no status line is found, defaults to DONE_WITH_CONCERNS
+ * (missing status = incomplete task tracking). The concern is logged
+ * so monitoring can detect LLMs that consistently omit status lines.
  */
 export function parseRunnerStatus(content: string): ParsedStatus {
   const match = content.match(STATUS_RE);
 
   if (!match) {
-    return { status: "DONE", cleanContent: content };
+    console.warn("[status] No STATUS line in LLM response");
+    return {
+      status: "DONE_WITH_CONCERNS",
+      concerns: ["LLM omitted required status line"],
+      cleanContent: content,
+    };
   }
 
   const status = match[1] as RunnerStatus;

@@ -162,6 +162,7 @@ async function generateImage(
 export const hfGenerateTool: Tool = {
   name: "hf_generate",
   requiresConfirmation: true,
+  riskTier: "medium",
   deferred: true,
   definition: {
     type: "function",

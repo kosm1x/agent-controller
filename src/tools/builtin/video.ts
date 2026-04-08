@@ -85,6 +85,7 @@ function getJob(jobId: string): VideoJobRow | undefined {
 export const videoCreateTool: Tool = {
   name: "video_create",
   requiresConfirmation: true,
+  riskTier: "medium",
   deferred: true,
   definition: {
     type: "function",

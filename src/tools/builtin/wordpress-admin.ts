@@ -188,6 +188,7 @@ treats pages similarly to posts for create/update operations.`,
 export const wpPluginsTool: Tool = {
   name: "wp_plugins",
   requiresConfirmation: true,
+  riskTier: "medium",
   definition: {
     type: "function",
     function: {
@@ -525,6 +526,7 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
 export const wpRawApiTool: Tool = {
   name: "wp_raw_api",
   requiresConfirmation: true,
+  riskTier: "medium",
   definition: {
     type: "function",
     function: {

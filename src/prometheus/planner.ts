@@ -40,6 +40,7 @@ Rules:
 - IDs must be sequential: g-1, g-2, g-3, etc.
 - If the task involves an unfamiliar or specialized domain, make the first goal "Build domain overview using knowledge_map tool" before detailed execution goals.
 - NEVER delegate understanding: each goal description must be specific enough to execute without guessing. Include file paths, function names, or concrete targets when known. Never write "based on findings from g-1, do X" — instead, make g-2 depend_on g-1 and describe exactly what g-2 must do with its own terms.
+- MANDATORY (CCP8): Every goal that modifies code, files, or configuration MUST include at least one file path or resource identifier in its description. Goals like "fix the bug" without specifying which file are too vague — write "fix the timeout handling in src/inference/adapter.ts" instead.
 - Emit ONLY valid JSON. No markdown, no commentary.`;
 
 const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A previous plan partially executed but needs revision.
