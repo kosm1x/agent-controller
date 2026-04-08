@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createTaskExecutor } from "./task-executor.js";
+import { createTaskExecutor, argsFingerprint } from "./task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 
 afterEach(() => {
@@ -9,6 +9,7 @@ afterEach(() => {
 function mockRegistry() {
   return {
     execute: vi.fn().mockResolvedValue('{"ok": true}'),
+    getEffectiveRiskTier: vi.fn().mockReturnValue("low"),
   } as unknown as import("./registry.js").ToolRegistry;
 }
 
@@ -137,5 +138,32 @@ describe("checkPreflight via createTaskExecutor", () => {
     const result = await exec("web_search", { query: "test" });
     expect(result).toBe('{"ok": true}');
     expect(reg.execute).toHaveBeenCalledOnce();
+  });
+});
+
+// CCP9: argsFingerprint tests
+describe("argsFingerprint", () => {
+  it("produces deterministic output for same args", () => {
+    const fp1 = argsFingerprint({ to: "a@b.com", subject: "Hello" });
+    const fp2 = argsFingerprint({ to: "a@b.com", subject: "Hello" });
+    expect(fp1).toBe(fp2);
+  });
+
+  it("sorts keys for order independence", () => {
+    const fp1 = argsFingerprint({ z: "1", a: "2" });
+    const fp2 = argsFingerprint({ a: "2", z: "1" });
+    expect(fp1).toBe(fp2);
+  });
+
+  it("truncates to 64 chars", () => {
+    const fp = argsFingerprint({
+      a: "x".repeat(100),
+      b: "y".repeat(100),
+    });
+    expect(fp.length).toBeLessThanOrEqual(64);
+  });
+
+  it("handles empty args", () => {
+    expect(argsFingerprint({})).toBe("");
   });
 });

@@ -58,8 +58,18 @@ function checkPreflight(
   }
 }
 
-/** Tools that require user confirmation before execution. */
-const DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
+/**
+ * CCP9: Generate a lightweight fingerprint from tool args for scope-bounded approval.
+ * Deterministic: sorted keys, first 64 chars. Used to scope destructive unlocks
+ * to the specific target the user approved.
+ */
+export function argsFingerprint(args: Record<string, unknown>): string {
+  const sorted = Object.keys(args)
+    .sort()
+    .map((k) => `${k}:${String(args[k] ?? "").slice(0, 20)}`)
+    .join("|");
+  return sorted.slice(0, 64);
+}
 
 /**
  * Create a per-task executor that delegates to toolRegistry but uses the
@@ -74,23 +84,25 @@ export function createTaskExecutor(
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    // Destructive gate: check the per-task context, not the registry singleton
-    if (
-      DESTRUCTIVE_MCP_TOOLS.has(name) &&
-      !context.isDestructiveUnlocked(name)
-    ) {
-      log.warn(
-        { tool: name, taskId: context.taskId },
-        "destructive tool BLOCKED (no confirmation in task context)",
-      );
-      return JSON.stringify({
-        error: "CONFIRMATION_REQUIRED",
-        message:
-          "PAUSE — this tool requires user confirmation before execution. " +
-          "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
-          "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
-        tool: name,
-      });
+    // CCP5+CCP9: Use risk tier from registry. HIGH-risk tools check
+    // scope-bounded approval via args fingerprint.
+    const riskTier = registry.getEffectiveRiskTier(name);
+    if (riskTier === "high") {
+      const fp = argsFingerprint(args);
+      if (!context.isDestructiveUnlocked(name, fp)) {
+        log.warn(
+          { tool: name, riskTier, taskId: context.taskId },
+          "destructive tool BLOCKED (no confirmation in task context)",
+        );
+        return JSON.stringify({
+          error: "CONFIRMATION_REQUIRED",
+          message:
+            "PAUSE — this tool requires user confirmation before execution. " +
+            "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
+            "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
+          tool: name,
+        });
+      }
     }
 
     // Memory store rate limiting via context

@@ -188,13 +188,15 @@ function buildJarvisSystemPrompt(
   const budget = SYSTEM_PROMPT_TOKEN_BUDGET * 4; // Convert tokens to chars
   let prompt = [...p1, ...p2, ...p3, ...p4].join("\n\n");
 
-  // CCP6: Truncate from lowest priority if over budget
+  // CCP6: Truncate from lowest priority tier first, then next tier up.
+  // Drain P4 completely before touching P3, P3 before P2. Never touch P1.
   if (prompt.length > budget) {
-    // Try removing P4, then P3 sections until within budget
-    let parts = [...p1, ...p2, ...p3, ...p4];
-    while (parts.length > p1.length && prompt.length > budget) {
-      parts.pop();
-      prompt = parts.join("\n\n");
+    const tiers = [p4, p3, p2]; // drain order (P4 first)
+    for (const tier of tiers) {
+      while (tier.length > 0 && prompt.length > budget) {
+        tier.pop();
+        prompt = [...p1, ...p2, ...p3, ...p4].join("\n\n");
+      }
     }
     console.warn(
       `[prompt] System prompt truncated: ${Math.round(prompt.length / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET})`,
