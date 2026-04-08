@@ -74,18 +74,13 @@ export async function classifyScopeGroups(
 ): Promise<Set<string> | null> {
   try {
     const { infer } = await import("../inference/adapter.js");
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error("scope classifier timeout")),
-        SCOPE_CLASSIFIER_TIMEOUT_MS,
-      ),
-    );
+    const { withTimeout } = await import("../lib/with-timeout.js");
 
     const userContent = recentContext
       ? `Recent context:\n${recentContext}\n\nUser message:\n${message}`
       : `User message:\n${message}`;
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       infer({
         messages: [
           { role: "system", content: CLASSIFIER_SYSTEM_PROMPT },
@@ -93,8 +88,9 @@ export async function classifyScopeGroups(
         ],
         max_tokens: 80,
       }),
-      deadline,
-    ]);
+      SCOPE_CLASSIFIER_TIMEOUT_MS,
+      "scope classifier",
+    );
 
     const raw = (result.content ?? "").trim();
     return parseScopeGroups(raw);

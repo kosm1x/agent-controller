@@ -252,11 +252,8 @@ export async function analyzePrompt(
 ): Promise<string> {
   try {
     const { infer } = await import("../inference/adapter.js");
-    // 10s deadline — if LLM is slow, pass through rather than block
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("enhancer timeout")), 10_000),
-    );
-    const result = await Promise.race([
+    const { withTimeout } = await import("../lib/with-timeout.js");
+    const result = await withTimeout(
       infer({
         messages: [
           { role: "system", content: ENHANCER_SYSTEM_PROMPT },
@@ -269,8 +266,9 @@ export async function analyzePrompt(
         ],
         max_tokens: 250,
       }),
-      deadline,
-    ]);
+      10_000,
+      "enhancer",
+    );
 
     const raw = (result.content ?? "PASS").trim();
     if (raw.toUpperCase() === "PASS") return "PASS";
@@ -298,15 +296,16 @@ export async function analyzePrompt(
     if (ciricd.decision === "PASS") return "PASS";
 
     // v6.4 CL1.3: Assumption-first — proceed with stated interpretation.
-    // Returns "PASS" to the router (don't block), but logs the assumption.
-    // The LLM receives the assumption as precedent context, not as a rewrite.
+    // Returns "ASSUME:text" so the router can show the user what Jarvis
+    // understood before proceeding. User corrects if wrong.
     if (ciricd.decision === "ASSUME") {
       if (ciricd.assumption) {
         console.log(
           `[enhancer] ASSUME: "${ciricd.assumption}" (clarity=${ciricd.clarity})`,
         );
+        return `ASSUME:${ciricd.assumption}`;
       }
-      return "PASS"; // Don't block — let the LLM proceed with its interpretation
+      return "PASS";
     }
 
     if (ciricd.decision === "SPLIT" && ciricd.splitPlan) {
@@ -362,15 +361,13 @@ export async function buildEnhancedPrompt(
 ): Promise<string> {
   try {
     const { infer } = await import("../inference/adapter.js");
-    const builderDeadline = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("builder timeout")), 15_000),
-    );
+    const { withTimeout } = await import("../lib/with-timeout.js");
 
     const contextBlock = recentContext
       ? `CONVERSACIÓN RECIENTE (últimos 2 turnos):\n${recentContext}\n\n`
       : "";
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       infer({
         messages: [
           { role: "system", content: BUILDER_SYSTEM_PROMPT },
@@ -381,8 +378,9 @@ export async function buildEnhancedPrompt(
         ],
         max_tokens: 500,
       }),
-      builderDeadline,
-    ]);
+      15_000,
+      "builder",
+    );
 
     return (result.content ?? "").trim() || originalMessage;
   } catch {

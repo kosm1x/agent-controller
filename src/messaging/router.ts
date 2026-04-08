@@ -1021,7 +1021,14 @@ export class MessageRouter {
       console.log(`[enhancer] Analyzing: "${msg.text.slice(0, 60)}"`);
       const analysis = await analyzePrompt(msg.text, recentContext);
 
-      if (analysis !== "PASS" && !analysis.startsWith("PASS")) {
+      if (analysis.startsWith("ASSUME:")) {
+        // v6.4 CL1.3: Show assumption to user, then proceed without blocking.
+        const assumption = analysis.slice(7);
+        this.sendToChannel(msg.channel, msg.from, `💡 ${assumption}`);
+        console.log(
+          "[enhancer] ASSUME — proceeding with stated interpretation",
+        );
+      } else if (analysis !== "PASS") {
         // Send questions to user, wait for answers
         setWaiting(msg.channel, msg.text, analysis);
         this.sendToChannel(
@@ -1033,9 +1040,9 @@ export class MessageRouter {
           `[enhancer] Asking ${analysis.split("\n").length} questions`,
         );
         return;
+      } else {
+        console.log("[enhancer] PASS — message is clear enough");
       }
-      // PASS — continue with original message
-      console.log("[enhancer] PASS — message is clear enough");
     }
 
     // Check if this message is feedback for a recently completed task

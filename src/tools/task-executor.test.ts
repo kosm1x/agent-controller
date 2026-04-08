@@ -69,3 +69,73 @@ describe("createTaskExecutor", () => {
     expect(await execB("memory_store", { content: "b0" })).toBe('{"ok": true}');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pre-flight verification (v6.4 H2)
+// ---------------------------------------------------------------------------
+
+describe("checkPreflight via createTaskExecutor", () => {
+  it("rejects gmail_send with invalid email", async () => {
+    const reg = mockRegistry();
+    const ctx = new TaskExecutionContext("t1");
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("gmail_send", {
+      to: "not-an-email",
+      subject: "Test",
+      body: "This is a valid body for the email.",
+    });
+    expect(result).toContain("invalid email");
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects gmail_send with short body", async () => {
+    const reg = mockRegistry();
+    const ctx = new TaskExecutionContext("t2");
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: "Hi",
+    });
+    expect(result).toContain("too short");
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("allows gmail_send with valid email and body", async () => {
+    const reg = mockRegistry();
+    const ctx = new TaskExecutionContext("t3");
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: "This is a complete email body with enough content.",
+    });
+    expect(result).toBe('{"ok": true}');
+    expect(reg.execute).toHaveBeenCalledOnce();
+  });
+
+  it("rejects git_push with non-existent cwd", async () => {
+    const reg = mockRegistry();
+    const ctx = new TaskExecutionContext("t4");
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("git_push", {
+      cwd: "/nonexistent/path/abc123",
+    });
+    expect(result).toContain("does not exist");
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("passes through tools without preflight checks", async () => {
+    const reg = mockRegistry();
+    const ctx = new TaskExecutionContext("t5");
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("web_search", { query: "test" });
+    expect(result).toBe('{"ok": true}');
+    expect(reg.execute).toHaveBeenCalledOnce();
+  });
+});

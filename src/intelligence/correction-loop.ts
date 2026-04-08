@@ -28,11 +28,9 @@ export async function extractAndPersistCorrection(
 
     if (!isPgvectorEnabled()) return;
 
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("correction timeout")), 5_000),
-    );
+    const { withTimeout } = await import("../lib/with-timeout.js");
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       infer({
         messages: [
           {
@@ -47,8 +45,9 @@ export async function extractAndPersistCorrection(
         ],
         max_tokens: 100,
       }),
-      deadline,
-    ]);
+      5_000,
+      "correction",
+    );
 
     const correction = (result.content ?? "").trim();
     if (!correction || correction.toUpperCase() === "SKIP") return;

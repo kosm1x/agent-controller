@@ -16,3 +16,6 @@
 - [v62-v1-tts-audit](v62-v1-tts-audit.md) — v6.2 V1 TTS engine: PASS WITH WARNINGS, listVoices dashes bug, splitText contract violation, orphaned temp dirs, dead generatePerSceneTTS (2026-04-06)
 - [v63-tool-deferral-audit](v63-tool-deferral-audit.md) — v6.3 tool deferral: FAIL, allowedToolNames never updated after expansion, 83+ tools non-functional, exa_search dual-listed (2026-04-07)
 - [v631-optimization-audit](v631-optimization-audit.md) — v6.3.1 optimization: PASS WITH WARNINGS, pgvector race condition, exa_search still dual-listed, fede-summary gated behind northstar (2026-04-07)
+- [v64-sprint-audit](v64-sprint-audit.md) — v6.4 sprint (10 commits, 9 sessions): PASS WITH WARNINGS, isDegraded latency denominator bug, pgCascadeStale unconditional, expandQuery timeout dead, 3 untested modules (2026-04-07)
+- [v64-cl1-comprehension-audit](v64-cl1-comprehension-audit.md) — v6.4 CL1 comprehension layer: PASS WITH WARNINGS, scope.ts >= 0 always-true, setTimeout leak, normalizedText inconsistency, no precedent tests (2026-04-07)
+- [v64-h1h3-hardening-audit](v64-h1h3-hardening-audit.md) — v6.4 H1-H3 hardening: PASS WITH WARNINGS, setTimeout leak, always-read bloat risk, no provider failure check, no tests for 3 features (2026-04-07)
