@@ -8,7 +8,7 @@
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { GoalGraph } from "./goal-graph.js";
-import { GoalStatus, parseLLMJson } from "./types.js";
+import { GoalStatus, parseLLMJson, convergenceScore } from "./types.js";
 import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
@@ -120,6 +120,55 @@ export async function reflect(
     }
   }
 
+  // H1: Convergence penalty — penalize looping goals
+  const goalResults = Object.values(executionResults.goalResults);
+  const convergenceData = goalResults.map((gr) => {
+    const uniqueTools = new Set(gr.toolNames).size;
+    const conv = convergenceScore(gr.toolCalls, uniqueTools);
+    return { goalId: gr.goalId, ...conv };
+  });
+  const loopingGoals = convergenceData.filter((c) => c.looping);
+  if (loopingGoals.length > 0) {
+    const penalty = 0.1 * Math.min(loopingGoals.length, 3);
+    assessment.score = Math.max(0, assessment.score - penalty);
+    console.log(
+      `[reflector] Convergence penalty: -${penalty.toFixed(2)} (${loopingGoals.length} looping goals)`,
+    );
+  }
+
+  // H2: Trace efficiency — pure arithmetic from execution metrics
+  const totalTokens =
+    executionResults.tokenUsage.promptTokens +
+    executionResults.tokenUsage.completionTokens;
+  const tokenBurnRate =
+    executionResults.totalToolCalls > 0
+      ? totalTokens / executionResults.totalToolCalls
+      : 0;
+  const avgConvergence =
+    convergenceData.length > 0
+      ? convergenceData.reduce((s, c) => s + c.score, 0) /
+        convergenceData.length
+      : 0;
+  const burnPenalty =
+    tokenBurnRate > 10_000
+      ? Math.min((tokenBurnRate - 10_000) / 50_000, 0.3)
+      : 0;
+  const convergencePenalty =
+    avgConvergence > 3.0 ? Math.min((avgConvergence - 3.0) * 0.05, 0.2) : 0;
+  const traceEfficiency = {
+    efficiency: Math.max(0, 1.0 - burnPenalty - convergencePenalty),
+    tokenBurnRate,
+    avgConvergence,
+  };
+  if (traceEfficiency.efficiency < 0.5) {
+    const tracePenalty = (0.5 - traceEfficiency.efficiency) * 0.1;
+    assessment.score = Math.max(0, assessment.score - tracePenalty);
+    console.log(
+      `[reflector] Trace efficiency penalty: -${tracePenalty.toFixed(3)} ` +
+        `(eff=${traceEfficiency.efficiency.toFixed(2)}, burn=${Math.round(tokenBurnRate)} tok/call)`,
+    );
+  }
+
   const learnings = assessment.learnings ?? [];
 
   // Persist learnings via memory service
@@ -148,6 +197,8 @@ export async function reflect(
       learnings,
       summary: assessment.summary ?? "",
       anchoringScore,
+      convergenceData: loopingGoals.length > 0 ? convergenceData : undefined,
+      traceEfficiency,
     },
     usage,
   };

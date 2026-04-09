@@ -230,6 +230,35 @@ export async function orchestrate(
       score: reflection.score,
     });
 
+    // H2 Layer 5: Drift detection — post-reflection, zero execution latency
+    try {
+      const { checkAndRecordDrift, pruneBaselines } =
+        await import("./drift.js");
+      const taskType =
+        taskDescription.match(/^\[([^\]]+)\]/)?.[1]?.toLowerCase() ??
+        taskDescription
+          .split(/\s+/)
+          .slice(0, 3)
+          .join(" ")
+          .toLowerCase()
+          .slice(0, 50);
+      const drift = checkAndRecordDrift(taskType, reflection.score);
+      if (drift.drifting) {
+        console.warn(
+          `[orchestrator] DRIFT ALERT: "${taskType}" score ${drift.currentScore.toFixed(2)} ` +
+            `< avg ${drift.rollingAvg.toFixed(2)} - 1σ (${drift.stdDev.toFixed(2)})`,
+        );
+        traceRecord(trace, "drift_alert", {
+          taskType,
+          currentScore: drift.currentScore,
+          rollingAvg: drift.rollingAvg,
+        });
+      }
+      pruneBaselines(taskType);
+    } catch {
+      // Drift detection is best-effort
+    }
+
     trace.endTime = Date.now();
     clearTimeout(globalTimer);
     emitProgress(taskId, Phase.REFLECT, 100, "Complete");

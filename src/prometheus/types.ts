@@ -109,6 +109,18 @@ export interface ReflectionResult {
   summary: string;
   /** Source anchoring score (0-1): fraction of cited URLs that were verified/fetched. */
   anchoringScore?: number;
+  /** Per-goal convergence data (Hermes H1). Populated when any goal triggered looping. */
+  convergenceData?: Array<{
+    goalId: string;
+    score: number;
+    looping: boolean;
+  }>;
+  /** Tool efficiency metrics from trace layer (Hermes H2). */
+  traceEfficiency?: {
+    efficiency: number;
+    tokenBurnRate: number;
+    avgConvergence: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,4 +217,21 @@ export function parseLLMJson<T = unknown>(raw: string): T {
         `Raw (first 500 chars): ${text.slice(0, 500)}`,
     );
   }
+}
+
+/**
+ * Convergence score for a single goal (Hermes H1).
+ * ratio = totalToolCalls / uniqueTools.
+ * High ratio (>3.0) = goal is looping over the same tools.
+ * Pure function — no side effects, no latency.
+ */
+export function convergenceScore(
+  toolCalls: number,
+  uniqueTools: number,
+): { score: number; looping: boolean } {
+  if (toolCalls === 0 || uniqueTools === 0) {
+    return { score: 0, looping: false };
+  }
+  const score = toolCalls / uniqueTools;
+  return { score, looping: score > 3.0 };
 }

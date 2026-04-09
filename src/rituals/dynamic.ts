@@ -67,7 +67,75 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 `;
 
 export function ensureScheduledTasksTable(): void {
-  getDatabase().exec(CREATE_TABLE_SQL);
+  const db = getDatabase();
+  db.exec(CREATE_TABLE_SQL);
+  // H3: Schedule run audit trail
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schedule_runs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id     TEXT NOT NULL,
+      task_id         TEXT NOT NULL,
+      spawned_at      TEXT DEFAULT (datetime('now')),
+      status          TEXT DEFAULT 'running',
+      result_summary  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sched_runs_schedule ON schedule_runs(schedule_id, spawned_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sched_runs_task ON schedule_runs(task_id);
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Schedule run tracking (Hermes H3)
+// ---------------------------------------------------------------------------
+
+function insertScheduleRun(scheduleId: string, taskId: string): void {
+  const db = getDatabase();
+  const existing = db
+    .prepare(
+      `SELECT 1 FROM schedule_runs
+       WHERE schedule_id = ? AND spawned_at >= datetime('now', '-1 minute')
+       LIMIT 1`,
+    )
+    .get(scheduleId);
+  if (existing) return;
+  db.prepare(
+    "INSERT INTO schedule_runs (schedule_id, task_id) VALUES (?, ?)",
+  ).run(scheduleId, taskId);
+}
+
+function updateScheduleRun(
+  taskId: string,
+  status: string,
+  resultSummary?: string,
+): void {
+  getDatabase()
+    .prepare(
+      "UPDATE schedule_runs SET status = ?, result_summary = ? WHERE task_id = ?",
+    )
+    .run(status, resultSummary?.slice(0, 2000) ?? null, taskId);
+}
+
+export interface ScheduleRunRow {
+  id: number;
+  schedule_id: string;
+  task_id: string;
+  spawned_at: string;
+  status: string;
+  result_summary: string | null;
+}
+
+export function getScheduleRuns(
+  scheduleId: string,
+  limit = 20,
+): ScheduleRunRow[] {
+  return getDatabase()
+    .prepare(
+      `SELECT * FROM schedule_runs
+       WHERE schedule_id = ?
+       ORDER BY spawned_at DESC
+       LIMIT ?`,
+    )
+    .all(scheduleId, limit) as ScheduleRunRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +234,7 @@ export async function executeScheduleNow(
     tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
   });
 
+  insertScheduleRun(schedule.schedule_id, result.taskId);
   watchScheduledTask(result.taskId, schedule);
   markExecuted(schedule.schedule_id);
   return result.taskId;
@@ -261,6 +330,8 @@ async function checkAndExecuteSchedules(): Promise<void> {
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
       });
 
+      // H3: Record execution in audit trail
+      insertScheduleRun(schedule.schedule_id, result.taskId);
       // Watch for result to verify delivery and broadcast
       watchScheduledTask(result.taskId, schedule);
     } catch (err) {
@@ -412,6 +483,7 @@ async function retryScheduledTask(
     tags: ["scheduled", "retry", `schedule:${schedule.schedule_id}`],
   });
 
+  insertScheduleRun(schedule.schedule_id, result.taskId);
   watchScheduledTask(result.taskId, schedule, retryCount);
 }
 
@@ -424,6 +496,7 @@ export function handleScheduledTaskResult(
   const meta = pendingScheduled.get(taskId);
   if (!meta) return;
   pendingScheduled.delete(taskId);
+  updateScheduleRun(taskId, "completed", result?.slice(0, 500));
 
   const router = getRouter();
 
@@ -490,6 +563,7 @@ export function handleScheduledTaskFailure(
   const meta = pendingScheduled.get(taskId);
   if (!meta) return;
   pendingScheduled.delete(taskId);
+  updateScheduleRun(taskId, "failed", error?.slice(0, 500));
 
   const alert = `⚠️ Scheduled task "${meta.name}" FAILED: ${error}`;
   console.error(`[schedules] ${alert}`);

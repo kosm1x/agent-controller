@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseLLMJson, defaultConfig } from "./types.js";
+import { parseLLMJson, defaultConfig, convergenceScore } from "./types.js";
 
 describe("parseLLMJson", () => {
   it("should parse plain JSON", () => {
@@ -55,5 +55,31 @@ describe("defaultConfig", () => {
     const config = defaultConfig({ maxTurns: 10 });
     expect(config.maxTurns).toBe(10);
     expect(config.maxReplans).toBe(3); // unchanged
+  });
+});
+
+describe("convergenceScore (H1)", () => {
+  it("returns score 0 for zero calls", () => {
+    expect(convergenceScore(0, 0)).toEqual({ score: 0, looping: false });
+  });
+
+  it("detects looping when ratio exceeds 3.0", () => {
+    const r = convergenceScore(10, 2);
+    expect(r.score).toBe(5);
+    expect(r.looping).toBe(true);
+  });
+
+  it("does not flag looping within threshold", () => {
+    const r = convergenceScore(6, 3);
+    expect(r.score).toBe(2);
+    expect(r.looping).toBe(false);
+  });
+
+  it("handles single unique tool (worst case)", () => {
+    expect(convergenceScore(15, 1).looping).toBe(true);
+  });
+
+  it("does not loop at exactly 3.0", () => {
+    expect(convergenceScore(9, 3).looping).toBe(false);
   });
 });

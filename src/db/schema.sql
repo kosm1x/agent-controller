@@ -250,3 +250,24 @@ CREATE TABLE IF NOT EXISTS a2a_contexts (
   created_at  TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_a2a_ctx_task ON a2a_contexts(task_id);
+
+-- Hermes H2: Reflection drift baselines — rolling score history per task type
+CREATE TABLE IF NOT EXISTS reflection_baselines (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_type   TEXT NOT NULL,
+  score       REAL NOT NULL,
+  created_at  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_refl_baselines_type ON reflection_baselines(task_type, created_at DESC);
+
+-- Hermes H3: Schedule run audit trail — per-execution history for recurring tasks
+CREATE TABLE IF NOT EXISTS schedule_runs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  schedule_id     TEXT NOT NULL,
+  task_id         TEXT NOT NULL,
+  spawned_at      TEXT DEFAULT (datetime('now')),
+  status          TEXT DEFAULT 'running',
+  result_summary  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sched_runs_schedule ON schedule_runs(schedule_id, spawned_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sched_runs_task ON schedule_runs(task_id);
