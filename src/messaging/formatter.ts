@@ -18,6 +18,9 @@ export function formatForWhatsApp(text: string): string {
 
   let result = text;
 
+  // Strip code fences (```language ... ```) — WhatsApp can't render them
+  result = result.replace(/```[\w]*\n?([\s\S]*?)```/g, "$1");
+
   // Headers: ## Header → *Header*
   result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
 
@@ -26,6 +29,15 @@ export function formatForWhatsApp(text: string): string {
 
   // Italic: __text__ → _text_ (WhatsApp italic)
   result = result.replace(/__(.+?)__/g, "_$1_");
+
+  // Inline code: `text` → ```text``` (WhatsApp monospace)
+  result = result.replace(/`([^`]+)`/g, "```$1```");
+
+  // Strikethrough: ~~text~~ → ~text~ (WhatsApp strikethrough)
+  result = result.replace(/~~(.+?)~~/g, "~$1~");
+
+  // Strip HTML tags that may leak from mixed formatting
+  result = result.replace(/<\/?[a-z][^>]*>/gi, "");
 
   return result;
 }
