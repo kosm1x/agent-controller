@@ -44,6 +44,28 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
   private outgoingQueue: Array<{ to: string; text: string }> = [];
   private flushing = false;
+  /** Active typing indicators — cleared on send. */
+  private typingTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+  /** Start "composing" presence for a chat. Refreshes every 5s until stopped. */
+  private startTyping(jid: string): void {
+    if (this.typingTimers.has(jid)) return;
+    const send = () => {
+      this.sock?.sendPresenceUpdate("composing", jid).catch(() => {});
+    };
+    send(); // immediate
+    this.typingTimers.set(jid, setInterval(send, 5_000));
+  }
+
+  /** Stop typing indicator for a chat. */
+  private stopTyping(jid: string): void {
+    const timer = this.typingTimers.get(jid);
+    if (timer) {
+      clearInterval(timer);
+      this.typingTimers.delete(jid);
+    }
+    this.sock?.sendPresenceUpdate("paused", jid).catch(() => {});
+  }
 
   async start(): Promise<void> {
     if (!OWNER_JID) {
@@ -220,11 +242,40 @@ export class WhatsAppAdapter implements ChannelAdapter {
           }
         }
 
+        // Image message → download + base64 for vision
+        let imageUrl: string | undefined;
+        if (msg.message.imageMessage) {
+          try {
+            const buffer = (await downloadMediaMessage(
+              msg,
+              "buffer",
+              {},
+            )) as Buffer;
+            const mimetype = msg.message.imageMessage.mimetype || "image/jpeg";
+            const base64 = buffer.toString("base64");
+            imageUrl = `data:${mimetype};base64,${base64}`;
+            const sizeKB = Math.round(buffer.length / 1024);
+            console.log(`[whatsapp] Image received: ${sizeKB}KB, ${mimetype}`);
+            // Use caption as text, or default prompt
+            if (!text) {
+              text =
+                msg.message.imageMessage.caption || "¿Qué ves en esta imagen?";
+            }
+          } catch (err) {
+            console.warn(
+              `[whatsapp] Image download failed: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+
         if (!text) continue;
 
         // Sender identity: phone number from JID (no API call needed)
         const senderName =
           isGroup && senderJid ? senderJid.split("@")[0] : undefined;
+
+        // Start typing indicator — user sees "composing..." while task runs
+        this.startTyping(jid);
 
         this.messageHandler({
           channel: "whatsapp",
@@ -234,6 +285,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
             : text,
           timestamp: new Date(Number(msg.messageTimestamp) * 1000),
           replyTo: msg.key.id ?? undefined,
+          imageUrl,
           metadata: isGroup
             ? { isGroup: true, groupJid: jid, senderJid, senderName }
             : undefined,
@@ -243,6 +295,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async send(msg: OutgoingMessage): Promise<string> {
+    // Stop typing indicator when response is ready
+    this.stopTyping(msg.to);
+
     const text = formatForWhatsApp(msg.text);
 
     if (!this.connected || !this.sock) {
