@@ -13,6 +13,7 @@ import { getDatabase } from "./index.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
+import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
@@ -95,6 +96,9 @@ export function upsertFile(
 
   // Dual-write to pgvector (fire-and-forget, async, non-blocking)
   syncToPgvector(path, title, content, tags, qualifier, priority, condition);
+
+  // Sync to Google Drive for Obsidian (fire-and-forget, async, non-blocking)
+  syncToDrive(path, title, content);
 
   // Debounced INDEX.md regeneration (skip if we're writing INDEX.md itself)
   if (path !== "INDEX.md") {
@@ -200,6 +204,7 @@ export function deleteFile(path: string): boolean {
     .run(path);
   if (result.changes > 0) {
     syncDeleteToPgvector(path);
+    syncDeleteToDrive(path);
   }
   return result.changes > 0;
 }

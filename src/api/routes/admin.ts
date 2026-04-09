@@ -73,3 +73,15 @@ admin.get("/autonomous-status", (c) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+/**
+ * POST /api/admin/drive-backfill
+ *
+ * One-time backfill: uploads all jarvis_files to Google Drive.
+ * Requires DRIVE_KB_FOLDER_ID env var.
+ */
+admin.post("/drive-backfill", async (c) => {
+  const { backfillToDrive } = await import("../../db/drive-sync.js");
+  const result = await backfillToDrive();
+  return c.json(result);
+});
