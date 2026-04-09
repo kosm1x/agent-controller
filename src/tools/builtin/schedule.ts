@@ -170,8 +170,14 @@ export const listSchedulesTool: Tool = {
     type: "function",
     function: {
       name: "list_schedules",
-      description:
-        "List all active recurring scheduled tasks. Shows name, cron schedule, delivery method, and last run time.",
+      description: `List all active recurring scheduled tasks (reports, monitors, syncs). Shows: name, cron schedule, delivery method, and last run time.
+
+USE WHEN:
+- User asks "qué tareas tengo programadas", "mis schedules", "tareas recurrentes"
+- User wants to verify a report is scheduled
+- Before creating/deleting a schedule — check what already exists
+
+RELATED: schedule_task (create), delete_schedule (remove)`,
       parameters: {
         type: "object",
         properties: {

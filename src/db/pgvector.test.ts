@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { contentHash, isPgvectorEnabled, pgCascadeStale } from "./pgvector.js";
+import {
+  contentHash,
+  isPgvectorEnabled,
+  pgCascadeStale,
+  validateKbEntry,
+} from "./pgvector.js";
 
 // Mock fetch globally for all pgvector tests
 const mockFetch = vi.fn();
@@ -68,7 +73,7 @@ describe("pgUpsert", () => {
     const result = await pgUpsert({
       path: "test/file.md",
       title: "Test File",
-      content: "Hello world",
+      content: "This is a valid test entry for pgvector upsert verification",
       embedding: [0.1, 0.2, 0.3],
     });
 
@@ -108,9 +113,11 @@ describe("pgUpsert", () => {
     const result = await pgUpsert({
       path: "test.md",
       title: "Test",
-      content: "Hello",
+      content:
+        "A sufficiently long content string that passes the quality gate for API error testing",
     });
     expect(result).toBe(false);
+    expect(mockFetch).toHaveBeenCalled(); // Quality gate passed, API call made
   });
 });
 
@@ -273,5 +280,121 @@ describe("pgCascadeStale", () => {
     const count = await pgCascadeStale("source/test.md");
     expect(count).toBe(0);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateKbEntry (SAGE quality gate)
+// ---------------------------------------------------------------------------
+
+describe("validateKbEntry", () => {
+  const validEntry = {
+    path: "test/entry.md",
+    title: "Test Entry",
+    content: "This is a valid KB entry with enough content to pass the gate.",
+    type: "fact",
+    confidence: 0.9,
+  };
+
+  it("accepts valid entries", () => {
+    expect(validateKbEntry(validEntry)).toBeNull();
+  });
+
+  it("rejects content too short (<20 chars)", () => {
+    const result = validateKbEntry({ ...validEntry, content: "too short" });
+    expect(result).toContain("too short");
+  });
+
+  it("allows shorter corrections (>10 chars)", () => {
+    const result = validateKbEntry({
+      ...validEntry,
+      content: "X means Y fix",
+      type: "correction",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("rejects corrections under 10 chars", () => {
+    const result = validateKbEntry({
+      ...validEntry,
+      content: "short",
+      type: "correction",
+    });
+    expect(result).toContain("too short");
+  });
+
+  it("rejects empty title", () => {
+    const result = validateKbEntry({ ...validEntry, title: "" });
+    expect(result).toContain("empty title");
+  });
+
+  it("rejects greeting noise patterns (exact match)", () => {
+    // Exact noise phrases anchored with $ — must match the full content
+    expect(
+      validateKbEntry({ ...validEntry, content: "no action taken" }),
+    ).toContain("too short"); // 15 chars, hits length gate
+    expect(validateKbEntry({ ...validEntry, content: "recibido" })).toContain(
+      "too short",
+    ); // 8 chars, hits length gate
+  });
+
+  it("does NOT reject noise-prefixed legitimate content", () => {
+    // Tightened patterns: "user said hi to the team about..." is legitimate
+    expect(
+      validateKbEntry({
+        ...validEntry,
+        content: "user said hi to the team and discussed the deployment plan",
+      }),
+    ).toBeNull();
+    expect(
+      validateKbEntry({
+        ...validEntry,
+        content: "recibido el archivo de ventas Q3 con 50 registros",
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects short greetings via length gate", () => {
+    // Short greetings hit length gate first (<20 chars)
+    expect(validateKbEntry({ ...validEntry, content: "hola" })).toContain(
+      "too short",
+    );
+    expect(
+      validateKbEntry({ ...validEntry, content: "session started" }),
+    ).toContain("too short");
+  });
+
+  it("rejects facts with low confidence (<0.3)", () => {
+    const result = validateKbEntry({
+      ...validEntry,
+      type: "fact",
+      confidence: 0.2,
+    });
+    expect(result).toContain("confidence too low");
+  });
+
+  it("allows observations with low confidence", () => {
+    const result = validateKbEntry({
+      ...validEntry,
+      type: "observation",
+      confidence: 0.2,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("does not reject legitimate content", () => {
+    expect(
+      validateKbEntry({
+        ...validEntry,
+        content:
+          "ShellExec fails with ENOENT for npm — use full path /usr/bin/npm",
+      }),
+    ).toBeNull();
+    expect(
+      validateKbEntry({
+        ...validEntry,
+        content: "Mexico City timezone is UTC-6, no DST since 2022 reform",
+      }),
+    ).toBeNull();
   });
 });

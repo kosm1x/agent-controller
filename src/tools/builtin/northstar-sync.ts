@@ -128,16 +128,23 @@ export const northstarSyncTool: Tool = {
     type: "function",
     function: {
       name: "northstar_sync",
-      description: `Bidirectional sync between NorthStar files and COMMIT database (db.mycommit.net).
+      description: `Bidirectional sync between NorthStar files (local KB) and COMMIT database (db.mycommit.net).
 
-Latest entry wins: compares updated_at timestamps. If NorthStar file is newer, pushes to COMMIT DB. If COMMIT DB is newer, updates NorthStar file.
+MERGE RULES (field-level, not full-overwrite):
+- COMMIT wins: status, priority (user is the authority on task state)
+- NorthStar wins: dates, notes, details (Jarvis manages these)
+- Latest entry wins for other fields (compares updated_at timestamps)
 
 USE WHEN:
-- User asks to sync or refresh NorthStar: "sincroniza NorthStar", "actualiza desde COMMIT"
-- User updated tasks in COMMIT and wants NorthStar to reflect changes
-- User updated NorthStar files and wants COMMIT DB to reflect changes
+- User says "sync", "sincroniza", "actualiza NorthStar", "sync con COMMIT"
+- After completing a task or updating goals (push changes back)
 
-Requires COMMIT_DB_KEY env var.`,
+DIRECTION:
+- "both" (default): pull then push — safe, idempotent
+- "pull": COMMIT → NorthStar only (read from app)
+- "push": NorthStar → COMMIT only (write to app)
+
+GOTCHA: 0 pulled + 0 pushed means everything is already in sync — normal, not an error.`,
       parameters: {
         type: "object",
         properties: {

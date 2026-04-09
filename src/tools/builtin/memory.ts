@@ -126,21 +126,28 @@ export const memoryStoreTool: Tool = {
     type: "function",
     function: {
       name: "memory_store",
-      description: `Store an observation or learning in long-term memory for future recall.
+      description: `Store a durable learning in long-term memory. Use sparingly — only for knowledge that should survive across sessions.
+
+MEMORY TYPES (choose carefully):
+- FACT: Durable knowledge — IPs, hostnames, API endpoints, credentials paths, architecture decisions. Survives decay long-term. Use for things that don't change.
+- OBSERVATION: Ephemeral context — what the user discussed, preferences expressed. Decays faster. Use for "Fede mentioned X" moments.
+- CORRECTION: "When I say X, I mean Y" — user corrected a mistake. Persists for intent learning.
 
 USE WHEN:
-- You discovered something important during task execution that future tasks should know
-- A tool failed in a specific way and you found a workaround
-- You learned a user preference or project detail worth remembering
+- You discovered a NEW fact worth remembering across sessions (tool workaround, user preference, project detail)
+- The user explicitly asked you to remember something
+- You found a non-obvious gotcha (data format, API quirk, timezone issue)
 
 DO NOT USE WHEN:
-- The task reflector will capture this automatically (routine execution outcomes)
+- Greeting noise ("user said hi", "session started") — not worth storing
+- Content is trivially short — be specific and actionable
 - The information is transient (temporary errors, one-time states)
-- You're storing raw data that belongs in a database or file
+- Background extraction will capture this automatically (tasks with ≥3 tools auto-extract)
+- You're storing raw data that belongs in a file (use jarvis_file_write instead)
 
 TIPS:
-- Be specific and actionable: "ShellExec fails with ENOENT for 'npm' — use full path /usr/bin/npm"
-- Include context: what happened, why it matters, what to do differently`,
+- Be specific: "ShellExec fails with ENOENT for npm — use /usr/bin/npm" > "npm doesn't work"
+- One fact per call. Don't bundle multiple learnings into one entry`,
       parameters: {
         type: "object",
         properties: {

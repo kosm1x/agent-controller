@@ -73,16 +73,73 @@ export interface SearchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Quality gate (SAGE pattern: pre-validation before memory writes)
+// ---------------------------------------------------------------------------
+
+/** Noise patterns that should never be stored as KB entries. */
+const NOISE_PATTERNS = [
+  /^(user said hi|user greeted|session started|brain online|no action taken)\s*[.!]?$/i,
+  /^(hola|hello|hi|gracias|thanks|ok|sí|yes|no)\s*[.!]?$/i,
+  /^(buenos días|buenas tardes|buenas noches)\s*[.!]?$/i,
+  /^recibido\s*[.!]?$/i,
+];
+
+/**
+ * Validate a KB entry before upserting. Rejects:
+ * - Content too short (<20 chars for facts, <10 for corrections)
+ * - Greeting/noise patterns
+ * - Facts with low confidence (<0.3)
+ * - Empty titles
+ *
+ * Returns null if valid, or a rejection reason string.
+ */
+export function validateKbEntry(entry: KbEntry): string | null {
+  const content = entry.content?.trim() ?? "";
+  const minLen = entry.type === "correction" ? 10 : 20;
+
+  if (content.length < minLen) {
+    return `content too short (${content.length} chars, min ${minLen})`;
+  }
+
+  if (!entry.title?.trim()) {
+    return "empty title";
+  }
+
+  // Noise detection
+  for (const pattern of NOISE_PATTERNS) {
+    if (pattern.test(content)) {
+      return `noise pattern: "${content.slice(0, 40)}"`;
+    }
+  }
+
+  // Confidence threshold for facts
+  const confidence = entry.confidence ?? 1.0;
+  if (entry.type === "fact" && confidence < 0.3) {
+    return `fact confidence too low (${confidence.toFixed(2)}, min 0.3)`;
+  }
+
+  return null; // valid
+}
+
+// ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
 
 /**
  * Upsert a KB entry to pgvector. Merges on path (unique).
+ * Pre-validates via quality gate — rejects noise before network call.
  * Non-blocking — returns success/failure, never throws.
  */
 export async function pgUpsert(entry: KbEntry): Promise<boolean> {
   const apiKey = getApiKey();
   if (!apiKey) return false;
+
+  // Quality gate: reject noise before upserting
+  const rejection = validateKbEntry(entry);
+  if (rejection) {
+    console.log(`[pgvector] Quality gate rejected ${entry.path}: ${rejection}`);
+    return false;
+  }
 
   const newHash = entry.content_hash ?? contentHash(entry.content);
 
