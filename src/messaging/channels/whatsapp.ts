@@ -174,6 +174,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         let text =
           msg.message.conversation ||
           msg.message.extendedTextMessage?.text ||
+          msg.message.imageMessage?.caption ||
           null;
 
         // Group: only respond when bot is mentioned (text or structured mention)
@@ -181,13 +182,15 @@ export class WhatsAppAdapter implements ChannelAdapter {
         // LID-based JID (196692976615515@lid). WhatsApp uses LID in mentions.
         const botJid = this.sock?.user?.id;
         const botNumber = botJid?.split(":")[0]?.split("@")[0];
-        const botLid = (this.sock?.user as { lid?: string })?.lid
-          ?.split(":")[0]
-          ?.split("@")[0];
+        const botLid = this.sock?.user?.lid?.split(":")[0]?.split("@")[0];
         if (isGroup) {
+          // Collect mentionedJids from all possible sources (text, caption, contextInfo)
+          const mentionedJids = [
+            ...(msg.message.extendedTextMessage?.contextInfo?.mentionedJid ??
+              []),
+            ...(msg.message.imageMessage?.contextInfo?.mentionedJid ?? []),
+          ];
           if (text) {
-            const mentionedJids =
-              msg.message.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
             const isMentioned =
               mentionedJids.some((m) => {
                 const id = m.split(":")[0]?.split("@")[0];
@@ -201,7 +204,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
             if (botLid) text = text.replaceAll(`@${botLid}`, "");
             text = text.trim();
           } else {
-            // Audio/media in group without text mention — skip
+            // No text/caption at all — skip
             continue;
           }
         }
