@@ -668,6 +668,9 @@ export const fastRunner: Runner = {
 
       for (const turn of input.conversationHistory) {
         if (turn.imageUrl && turn.role === "user") {
+          console.log(
+            `[fast-runner] Injecting vision content: text="${turn.content.slice(0, 50)}" imageLen=${turn.imageUrl.length}`,
+          );
           // Multimodal: text + image as content array for vision-capable models
           messages.push({
             role: "user",
