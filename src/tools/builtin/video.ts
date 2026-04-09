@@ -8,6 +8,7 @@ import { mkdirSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
+import { toMexTime } from "../../lib/timezone.js";
 import type { VideoJobRow } from "../../video/types.js";
 import { VIDEO_PROFILES } from "../../video/types.js";
 
@@ -413,12 +414,12 @@ Returns: status, output file path (when completed), or error message (when faile
       topic: job.topic,
       duration: job.duration_seconds,
       template: job.template,
-      createdAt: job.created_at,
+      createdAt: toMexTime(job.created_at),
     };
 
     if (job.output_file) result.outputFile = job.output_file;
     if (job.error_message) result.error = job.error_message;
-    if (job.completed_at) result.completedAt = job.completed_at;
+    if (job.completed_at) result.completedAt = toMexTime(job.completed_at);
 
     return JSON.stringify(result);
   },

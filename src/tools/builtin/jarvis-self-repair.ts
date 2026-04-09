@@ -8,6 +8,7 @@
 import { execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
+import { toMexTime } from "../../lib/timezone.js";
 
 const MC_DIR = "/root/claude/mission-control";
 
@@ -141,7 +142,7 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
         lines.push(`\n**Failed tasks (${failed.length}):**`);
         for (const t of failed) {
           lines.push(
-            `  ${t.created_at} — ${t.title.slice(0, 60)} (${t.agent_type})`,
+            `  ${toMexTime(t.created_at)} — ${t.title.slice(0, 60)} (${t.agent_type})`,
           );
           if (t.error) lines.push(`    Error: ${t.error.slice(0, 100)}`);
         }

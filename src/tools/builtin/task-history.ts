@@ -10,6 +10,7 @@
 
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
+import { toMexTime } from "../../lib/timezone.js";
 
 export const taskHistoryTool: Tool = {
   name: "task_history",
@@ -138,8 +139,8 @@ Returns the last N executions matching the query, with: title, status, tools cal
         status: row.status,
         runStatus: row.run_status,
         agentType: row.agent_type,
-        createdAt: row.created_at,
-        completedAt: row.completed_at,
+        createdAt: toMexTime(row.created_at),
+        completedAt: toMexTime(row.completed_at),
         error: row.error,
         toolsCalled: toolCalls,
         exitReason,

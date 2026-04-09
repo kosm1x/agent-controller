@@ -5,6 +5,7 @@
 
 import type { Tool } from "../types.js";
 import { getRecentAlerts, type AlertTier } from "../../intel/alert-router.js";
+import { toMexTime } from "../../lib/timezone.js";
 
 export const intelAlertHistoryTool: Tool = {
   name: "intel_alert_history",
@@ -65,11 +66,13 @@ Tiers: FLASH (critical, immediate), PRIORITY (high, same day), ROUTINE (moderate
 
     for (const a of alerts) {
       const delivery = a.delivered_at
-        ? `✅ ${a.delivered_via} at ${a.delivered_at}`
+        ? `✅ ${a.delivered_via} at ${toMexTime(a.delivered_at)}`
         : "⏳ pending";
       lines.push(`[${a.tier}] ${a.title}`);
       lines.push(`  ${a.body.slice(0, 150)}`);
-      lines.push(`  Delivery: ${delivery} | Created: ${a.created_at}`);
+      lines.push(
+        `  Delivery: ${delivery} | Created: ${toMexTime(a.created_at)}`,
+      );
       lines.push("");
     }
 

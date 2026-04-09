@@ -32,10 +32,14 @@ export function parseRunnerStatus(content: string): ParsedStatus {
   const match = content.match(STATUS_RE);
 
   if (!match) {
-    console.warn("[status] No STATUS line in LLM response");
+    // Track internally but don't surface as concern — LLM omits status lines
+    // ~67% of the time. Flagging as DONE_WITH_CONCERNS creates noise that
+    // drowns real concerns. Metric still logged for observability.
+    console.log(
+      "[status] No STATUS line in LLM response (tracked, not surfaced)",
+    );
     return {
-      status: "DONE_WITH_CONCERNS",
-      concerns: ["LLM omitted required status line"],
+      status: "DONE",
       cleanContent: content,
     };
   }

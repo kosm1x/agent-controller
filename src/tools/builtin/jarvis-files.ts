@@ -7,6 +7,7 @@
  */
 
 import type { Tool } from "../types.js";
+import { toMexTime } from "../../lib/timezone.js";
 import {
   getFile,
   upsertFile,
@@ -92,7 +93,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
         condition: file.condition,
         priority: file.priority,
         related,
-        updatedAt: file.updated_at,
+        updatedAt: toMexTime(file.updated_at),
       });
     }
 
@@ -171,9 +172,15 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
           },
           qualifier: {
             type: "string",
-            enum: ["always-read", "conditional", "reference", "workspace"],
+            enum: [
+              "always-read",
+              "conditional",
+              "reference",
+              "workspace",
+              "enforce",
+            ],
             description:
-              'How this file should be used. Default: reference. "enforce" is reserved for user-created directives only — not available here.',
+              'How this file should be used. Default: reference. "enforce" is silently downgraded to "reference" — enforce is reserved for user-created directives.',
           },
           condition: {
             type: "string",

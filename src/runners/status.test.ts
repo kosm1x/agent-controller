@@ -46,18 +46,18 @@ describe("parseRunnerStatus", () => {
     expect(result.cleanContent).toBe("Cannot proceed.");
   });
 
-  it("CCP10: should default to DONE_WITH_CONCERNS when no status line present", () => {
+  it("CCP10: should default to DONE when no status line present (tracked, not surfaced)", () => {
     const result = parseRunnerStatus("Just a regular response without status.");
-    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.status).toBe("DONE");
     expect(result.cleanContent).toBe("Just a regular response without status.");
-    expect(result.concerns).toEqual(["LLM omitted required status line"]);
+    expect(result.concerns).toBeUndefined();
   });
 
-  it("CCP10: should default to DONE_WITH_CONCERNS for empty string", () => {
+  it("CCP10: should default to DONE for empty string", () => {
     const result = parseRunnerStatus("");
-    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.status).toBe("DONE");
     expect(result.cleanContent).toBe("");
-    expect(result.concerns).toEqual(["LLM omitted required status line"]);
+    expect(result.concerns).toBeUndefined();
   });
 
   it("should handle multiline content with status at end", () => {

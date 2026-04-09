@@ -6,6 +6,7 @@
  */
 
 import type { Tool } from "../types.js";
+import { toMexTime } from "../../lib/timezone.js";
 import {
   listProjects,
   getProject,
@@ -139,7 +140,7 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
     if (recentLog.length > 0) {
       lines.push(`\n**Recent activity:**`);
       for (const e of recentLog) {
-        lines.push(`  ${e.created_at} — ${e.action}: ${e.details}`);
+        lines.push(`  ${toMexTime(e.created_at)} — ${e.action}: ${e.details}`);
       }
     }
     return lines.join("\n");
