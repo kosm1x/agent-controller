@@ -71,12 +71,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
       },
-      printQRInTerminal: true,
       browser: ["Mission Control", "Chrome", "1.0.0"],
     });
 
     this.sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, qr } = update;
+
+      // QR code for first-time pairing — log the raw string so it can
+      // be rendered with any QR tool (e.g. qrencode, online generator)
+      if (qr) {
+        console.log(
+          `[whatsapp] QR code for pairing (paste into any QR renderer):\n${qr}`,
+        );
+      }
 
       if (connection === "close") {
         this.connected = false;
@@ -122,9 +129,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       for (const msg of messages) {
         if (!msg.message) continue;
-        if (msg.key.fromMe) continue;
 
         const jid = msg.key.remoteJid;
+        if (msg.key.fromMe) continue;
         if (!jid || jid === "status@broadcast") continue;
 
         const isGroup = jid.endsWith("@g.us");
@@ -145,20 +152,29 @@ export class WhatsAppAdapter implements ChannelAdapter {
           null;
 
         // Group: only respond when bot is mentioned (text or structured mention)
+        // Bot identity: phone-based JID (5215640501088@s.whatsapp.net) AND
+        // LID-based JID (196692976615515@lid). WhatsApp uses LID in mentions.
         const botJid = this.sock?.user?.id;
         const botNumber = botJid?.split(":")[0]?.split("@")[0];
+        const botLid = (this.sock?.user as { lid?: string })?.lid
+          ?.split(":")[0]
+          ?.split("@")[0];
         if (isGroup) {
           if (text) {
             const mentionedJids =
               msg.message.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
             const isMentioned =
-              mentionedJids.some((m) => m.split("@")[0] === botNumber) ||
-              (botNumber && text.includes(`@${botNumber}`));
+              mentionedJids.some((m) => {
+                const id = m.split(":")[0]?.split("@")[0];
+                return id === botNumber || id === botLid;
+              }) ||
+              (botNumber && text.includes(`@${botNumber}`)) ||
+              (botLid && text.includes(`@${botLid}`));
             if (!isMentioned) continue;
-            // Strip the @mention from the text so it reads naturally
-            if (botNumber) {
-              text = text.replaceAll(`@${botNumber}`, "").trim();
-            }
+            // Strip all forms of @mention from the text
+            if (botNumber) text = text.replaceAll(`@${botNumber}`, "");
+            if (botLid) text = text.replaceAll(`@${botLid}`, "");
+            text = text.trim();
           } else {
             // Audio/media in group without text mention — skip
             continue;
