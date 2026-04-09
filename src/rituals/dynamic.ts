@@ -496,7 +496,6 @@ export function handleScheduledTaskResult(
   const meta = pendingScheduled.get(taskId);
   if (!meta) return;
   pendingScheduled.delete(taskId);
-  updateScheduleRun(taskId, "completed", result?.slice(0, 500));
 
   const router = getRouter();
 
@@ -510,6 +509,7 @@ export function handleScheduledTaskResult(
       console.warn(
         `[schedules] DELIVERY MISS — retrying "${meta.name}" (attempt ${meta.retryCount + 1})`,
       );
+      updateScheduleRun(taskId, "delivery_miss", result?.slice(0, 500));
       const schedule = getSchedule(meta.scheduleId);
       if (schedule) {
         retryScheduledTask(schedule, meta.retryCount + 1).catch((err) => {
@@ -538,6 +538,9 @@ export function handleScheduledTaskResult(
     }
     return;
   }
+
+  // Delivery verified — mark as completed in audit trail (after delivery check, audit C2)
+  updateScheduleRun(taskId, "completed", result?.slice(0, 500));
 
   // Broadcast result via Telegram if needed
   if (

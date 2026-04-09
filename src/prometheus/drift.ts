@@ -29,14 +29,7 @@ export function checkAndRecordDrift(
 ): DriftResult {
   const db = getDatabase();
 
-  writeWithRetry(() =>
-    db
-      .prepare(
-        "INSERT INTO reflection_baselines (task_type, score) VALUES (?, ?)",
-      )
-      .run(taskType, currentScore),
-  );
-
+  // Query BEFORE inserting to avoid self-contamination (audit C1)
   const rows = db
     .prepare(
       `SELECT score FROM reflection_baselines
@@ -45,6 +38,14 @@ export function checkAndRecordDrift(
        LIMIT ?`,
     )
     .all(taskType, BASELINE_WINDOW) as Array<{ score: number }>;
+
+  writeWithRetry(() =>
+    db
+      .prepare(
+        "INSERT INTO reflection_baselines (task_type, score) VALUES (?, ?)",
+      )
+      .run(taskType, currentScore),
+  );
 
   if (rows.length < 5) {
     return {
