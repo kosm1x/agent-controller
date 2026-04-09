@@ -337,10 +337,15 @@ const hydratedChannels = new Set<string>();
 
 /**
  * Thread key: isolates conversation buffers per unique endpoint.
- * WhatsApp groups use the group JID so each group has its own thread.
+ * WhatsApp groups use group:sender so each person has their own thread.
  * DMs and Telegram use the channel name (backward-compatible).
  */
-function threadKey(channel: string, from?: string): string {
+function threadKey(channel: string, from?: string, senderJid?: string): string {
+  // Groups: isolate per sender so Person A's budget talk doesn't leak into Person B's poetry
+  if (from && from.endsWith("@g.us") && senderJid) {
+    return `${channel}:${from}:${senderJid}`;
+  }
+  // Groups without sender (shouldn't happen, but fallback to group-level isolation)
   if (from && from.endsWith("@g.us")) return `${channel}:${from}`;
   return channel;
 }
@@ -764,7 +769,8 @@ export class MessageRouter {
     // If the message continues after the phrase, process the rest as a fresh task.
     const CONTEXT_CLEAR_RE =
       /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
-    const tk = threadKey(msg.channel, msg.from);
+    const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
+    const tk = threadKey(msg.channel, msg.from, senderJid);
     if (CONTEXT_CLEAR_RE.test(msg.text)) {
       // Set empty thread AND mark as hydrated — prevents re-hydration from DB
       conversationThreads.set(tk, []);
@@ -1031,7 +1037,7 @@ export class MessageRouter {
         msg.text = original;
       } else {
         // Build enhanced prompt from user's answers/clarification
-        const threadTurns = getThreadTurns(msg.channel);
+        const threadTurns = getThreadTurns(tk);
         const builderContext = threadTurns
           .slice(-4)
           .map((t) => `${t.role}: ${t.content.slice(0, 300)}`)
@@ -1054,7 +1060,7 @@ export class MessageRouter {
     }
     // Prompt enhancer: check if new message needs enhancement
     else if (!msg.imageUrl && shouldEnhance(msg.text)) {
-      const threadTurns = getThreadTurns(msg.channel);
+      const threadTurns = getThreadTurns(tk);
       const recentContext = threadTurns
         .slice(-4)
         .map((t) => `${t.role}: ${t.content.slice(0, 200)}`)
@@ -1133,7 +1139,7 @@ export class MessageRouter {
         console.log(
           `[router] Fast-path: "${msg.text.slice(0, 40)}" → direct LLM`,
         );
-        const threadTurns = getThreadTurns(msg.channel);
+        const threadTurns = getThreadTurns(tk);
         const response = await fastPathRespond(msg.text, threadTurns);
 
         this.sendToChannel(msg.channel, msg.from, response);

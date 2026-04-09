@@ -18,8 +18,9 @@ const { mockSchedule, mockGet, mockPrepare, mockSubmitTask } = vi.hoisted(
   }),
 );
 
-// Wire mockPrepare → mockGet
-mockPrepare.mockReturnValue({ get: mockGet });
+// Wire mockPrepare → mockGet + mockAll
+const mockAll = vi.fn().mockReturnValue([]);
+mockPrepare.mockReturnValue({ get: mockGet, all: mockAll });
 
 vi.mock("node-cron", () => ({
   default: { schedule: mockSchedule },
@@ -51,7 +52,8 @@ import { createWeeklyReview } from "./weekly-review.js";
 beforeEach(() => {
   vi.clearAllMocks();
   // Re-wire after clearAllMocks
-  mockPrepare.mockReturnValue({ get: mockGet });
+  mockAll.mockReturnValue([]);
+  mockPrepare.mockReturnValue({ get: mockGet, all: mockAll });
 });
 
 afterEach(() => {
@@ -164,6 +166,9 @@ describe("task templates", () => {
     expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("file_read");
+    // Mechanical count injected — no LLM estimation
+    expect(task.description).toContain("Pre-computed metrics");
+    expect(task.description).toContain("Conversations today: 0");
   });
 
   it("weekly review has correct structure", () => {

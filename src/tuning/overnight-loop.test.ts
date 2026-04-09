@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { runOvernightTuning, validateMutation } from "./overnight-loop.js";
+import {
+  runOvernightTuning,
+  validateMutation,
+  detectPerCaseRegressions,
+} from "./overnight-loop.js";
 import { initDatabase, closeDatabase } from "../db/index.js";
 import {
   ensureTuningTables,
@@ -318,5 +322,77 @@ describe("validateMutation", () => {
         " Also check academic sources and verify publication dates for accuracy.",
     };
     expect(validateMutation(m, 10, original)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectPerCaseRegressions
+// ---------------------------------------------------------------------------
+
+describe("detectPerCaseRegressions", () => {
+  const makeResult = (
+    cases: Array<{ id: string; score: number }>,
+  ): import("./types.js").EvalResult => ({
+    compositeScore: 80,
+    subscores: { toolSelection: 80, scopeAccuracy: 80, classification: 80 },
+    perCase: cases.map((c) => ({
+      caseId: c.id,
+      category: "scope_accuracy" as const,
+      score: c.score,
+      weight: 1.0,
+      details: {},
+    })),
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+    durationMs: 0,
+  });
+
+  it("detects regression when passing case drops significantly", () => {
+    const baseline = makeResult([
+      { id: "case-1", score: 1.0 },
+      { id: "case-2", score: 0.8 },
+    ]);
+    const merged = makeResult([
+      { id: "case-1", score: 0.5 }, // dropped 0.5 — regression
+      { id: "case-2", score: 0.9 }, // improved — fine
+    ]);
+    const regressions = detectPerCaseRegressions(baseline, merged);
+    expect(regressions).toHaveLength(1);
+    expect(regressions[0].caseId).toBe("case-1");
+    expect(regressions[0].before).toBe(1.0);
+    expect(regressions[0].after).toBe(0.5);
+  });
+
+  it("ignores already-failing cases that drop further", () => {
+    const baseline = makeResult([
+      { id: "case-1", score: 0.3 }, // already failing (<0.5)
+    ]);
+    const merged = makeResult([
+      { id: "case-1", score: 0.1 }, // dropped, but was already failing
+    ]);
+    expect(detectPerCaseRegressions(baseline, merged)).toHaveLength(0);
+  });
+
+  it("ignores minor fluctuations below threshold", () => {
+    const baseline = makeResult([{ id: "case-1", score: 0.9 }]);
+    const merged = makeResult([{ id: "case-1", score: 0.8 }]); // -0.1, below 0.15 threshold
+    expect(detectPerCaseRegressions(baseline, merged)).toHaveLength(0);
+  });
+
+  it("returns empty for identical results", () => {
+    const baseline = makeResult([
+      { id: "case-1", score: 1.0 },
+      { id: "case-2", score: 0.7 },
+    ]);
+    expect(detectPerCaseRegressions(baseline, baseline)).toHaveLength(0);
+  });
+
+  it("handles new cases in merged (no baseline comparison)", () => {
+    const baseline = makeResult([{ id: "case-1", score: 1.0 }]);
+    const merged = makeResult([
+      { id: "case-1", score: 1.0 },
+      { id: "case-new", score: 0.0 }, // new case, no baseline
+    ]);
+    expect(detectPerCaseRegressions(baseline, merged)).toHaveLength(0);
   });
 });

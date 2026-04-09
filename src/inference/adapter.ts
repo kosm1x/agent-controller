@@ -632,6 +632,8 @@ export async function infer(
   }
 
   let lastError: Error | undefined;
+  const FALLBACK_TOOL_CAP = 15;
+  const requestToolCount = request.tools?.length ?? 0;
 
   for (let pi = 0; pi < providers.length; pi++) {
     const provider = providers[pi];
@@ -656,14 +658,26 @@ export async function infer(
       continue;
     }
 
+    // Tool paralysis guard: non-primary providers freeze with too many tools.
+    // kimi-k2.5 is known to freeze with 20+ tool schemas — skip to next provider.
+    if (
+      provider.name !== "primary" &&
+      requestToolCount > FALLBACK_TOOL_CAP &&
+      pi < providers.length - 1
+    ) {
+      console.warn(
+        `[inference] Skipping ${provider.name} — ${requestToolCount} tools exceeds cap (${FALLBACK_TOOL_CAP}) for non-primary provider`,
+      );
+      continue;
+    }
+
     for (let attempt = 0; attempt < config.inferenceMaxRetries; attempt++) {
       const attemptStart = Date.now();
       try {
-        const toolCount = request.tools?.length ?? 0;
         const effectiveTimeoutLog =
-          config.inferenceTimeoutMs + toolCount * 1000;
+          config.inferenceTimeoutMs + requestToolCount * 1000;
         console.log(
-          `[inference] Attempting ${provider.name}/${provider.model} (provider ${pi + 1}/${providers.length}, attempt ${attempt + 1}/${config.inferenceMaxRetries}, timeout=${effectiveTimeoutLog}ms, tools=${toolCount})`,
+          `[inference] Attempting ${provider.name}/${provider.model} (provider ${pi + 1}/${providers.length}, attempt ${attempt + 1}/${config.inferenceMaxRetries}, timeout=${effectiveTimeoutLog}ms, tools=${requestToolCount})`,
         );
         const result = await callProvider(
           provider,

@@ -201,6 +201,57 @@ function mergeResults(baseline: EvalResult, targeted: EvalResult): EvalResult {
 }
 
 // ---------------------------------------------------------------------------
+// Regression detection (Dash pattern)
+// ---------------------------------------------------------------------------
+
+interface CaseRegression {
+  caseId: string;
+  category: string;
+  before: number;
+  after: number;
+}
+
+/**
+ * Detect per-case regressions: cases that were passing in baseline but
+ * degraded after mutation. A mutation that improves the composite but
+ * breaks individual cases is rejected — prevents whack-a-mole tuning.
+ *
+ * Threshold: a case "regresses" if it drops by more than 0.15 (15%)
+ * AND was previously above 0.5 (passing). This avoids flagging noise
+ * on already-failing cases while catching real breakage.
+ */
+export function detectPerCaseRegressions(
+  baseline: EvalResult,
+  merged: EvalResult,
+): CaseRegression[] {
+  const REGRESSION_THRESHOLD = 0.15;
+  const PASSING_THRESHOLD = 0.5;
+
+  const baselineMap = new Map<string, CaseScore>();
+  for (const c of baseline.perCase) baselineMap.set(c.caseId, c);
+
+  const regressions: CaseRegression[] = [];
+  for (const mergedCase of merged.perCase) {
+    const baseCase = baselineMap.get(mergedCase.caseId);
+    if (!baseCase) continue; // New case, no baseline to compare
+
+    // Only flag if baseline was passing AND score dropped significantly
+    if (
+      baseCase.score >= PASSING_THRESHOLD &&
+      baseCase.score - mergedCase.score > REGRESSION_THRESHOLD
+    ) {
+      regressions.push({
+        caseId: mergedCase.caseId,
+        category: mergedCase.category,
+        before: baseCase.score,
+        after: mergedCase.score,
+      });
+    }
+  }
+  return regressions;
+}
+
+// ---------------------------------------------------------------------------
 // Anti-overfitting + simplicity gate (v6.4 A1)
 // ---------------------------------------------------------------------------
 
@@ -495,10 +546,20 @@ export async function runOvernightTuning(
     const newScore = merged.compositeScore;
     const delta = newScore - bestScore;
 
+    // Regression detection (Dash pattern): block mutation if any previously-passing
+    // case now fails, even if composite improved. A mutation that improves 3 cases
+    // but breaks 1 is still unacceptable — the broken case will cause user-visible issues.
+    const regressions = detectPerCaseRegressions(baseline, merged);
+
     // Record experiment
     const expId = `${runId}-exp-${i}`;
-    const passed = delta >= cfg.minDeltaToKeep;
-    const status = passed ? "passed" : "regressed";
+    const hasRegressions = regressions.length > 0;
+    const passed = delta >= cfg.minDeltaToKeep && !hasRegressions;
+    const status = hasRegressions
+      ? "regressed"
+      : passed
+        ? "passed"
+        : "regressed";
 
     insertExperiment({
       experiment_id: expId,
@@ -524,6 +585,11 @@ export async function runOvernightTuning(
       bestSandbox = sandbox;
       experimentsWon++;
       consecutiveRegressions = 0;
+    } else if (hasRegressions) {
+      console.log(
+        `[tuning] ✗ REGRESSION: ${regressions.length} case(s) degraded — ${regressions.map((r) => `${r.caseId}: ${r.before.toFixed(2)}→${r.after.toFixed(2)}`).join(", ")}`,
+      );
+      consecutiveRegressions++;
     } else {
       console.log(
         `[tuning] ✗ DISCARD: ${newScore.toFixed(1)} (delta ${delta.toFixed(1)} < ${cfg.minDeltaToKeep})`,

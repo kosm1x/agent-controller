@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.3.1 CURRENT.** 120 test files, 1577 tests passing, zero type errors, 169 tools (84 deferred). v6.2 complete (14 sessions), v6.3 7/8 done (D3+D4 blocked on OAuth). Context optimization: 52% prompt token reduction via tool deferral + KB trim + scope tightening. Unified file system complete. Roadmap: D3+D4 (OAuth), then v6.4 Intelligence Layer.
+**v6.4 CURRENT.** 127 test files, 1750 tests passing, zero type errors, 169 tools (109 deferred). v6.0-v6.4 + CL1 + H1-H3 + CCP1-10 all done. Hermes patterns (convergence, trace+drift, schedule runs). Injection defense (28 patterns, Unicode/encoding detection, 5-tier risk). Per-sender thread isolation in WhatsApp groups. Regression detection in overnight tuning. Roadmap: D3+D4 (OAuth).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

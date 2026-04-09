@@ -28,7 +28,7 @@ export interface EnrichmentResult {
  */
 export async function enrichContext(
   messageText: string,
-  _channel: string,
+  channel: string,
 ): Promise<EnrichmentResult> {
   const sections: string[] = [];
   const toolHints: string[] = [];
@@ -56,7 +56,7 @@ export async function enrichContext(
     memory
       .recall(messageText, {
         bank: "mc-jarvis",
-        tags: ["conversation"],
+        tags: [channel],
         maxResults: 5,
       })
       .then((results) => {

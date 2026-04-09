@@ -100,7 +100,13 @@ function buildKnowledgeBaseSection(
           (condLower.includes("coding") &&
             scopedTools.includes("shell_exec")) ||
           (condLower.includes("browser") &&
-            scopedTools.some((t) => t.startsWith("playwright__")));
+            scopedTools.some((t) => t.startsWith("playwright__"))) ||
+          (condLower.includes("schedule") &&
+            scopedTools.includes("list_schedules")) ||
+          (condLower.includes("reporting") &&
+            scopedTools.some((t) =>
+              ["web_search", "exa_search", "gmail_send"].includes(t),
+            ));
         if (!matches) continue;
       }
 
