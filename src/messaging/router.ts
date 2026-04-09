@@ -1119,23 +1119,43 @@ export class MessageRouter {
           }
         }
       }
+    }
 
-      // Pure feedback ("gracias", "perfecto", "no") → ack and skip task creation
-      if (isFeedbackMessage(msg.text)) {
-        if (signal === "positive") {
-          this.sendToChannel(msg.channel, msg.from, "👍");
-        } else if (signal === "negative") {
-          this.sendToChannel(
-            msg.channel,
-            msg.from,
-            "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
-          );
-        }
-        console.log(
-          `[router] Feedback intercepted from ${msg.channel}: ${signal}`,
-        );
-        return;
+    // Pure feedback ("excelente", "gracias", "perfecto", "no") → ack and skip task creation.
+    // Runs UNCONDITIONALLY — even without a feedback window, these messages
+    // should never spawn a 21K-token task. Record the signal so Jarvis knows.
+    if (isFeedbackMessage(msg.text)) {
+      const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
+      // Record feedback against the most recent task if available
+      if (feedbackTaskId && signal !== "neutral") {
+        recordTaskFeedback(feedbackTaskId, signal);
       }
+      // Persist positive feedback to memory so Jarvis learns what works
+      if (signal === "positive") {
+        this.sendToChannel(msg.channel, msg.from, "👍");
+        getMemoryService()
+          .retain(
+            `User: ${msg.text}\nJarvis: [positive feedback acknowledged]`,
+            {
+              bank: "mc-jarvis",
+              tags: [msg.channel, "feedback", "positive"],
+              async: true,
+              trustTier: 2,
+              source: "router",
+            },
+          )
+          .catch(() => {});
+      } else if (signal === "negative") {
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
+        );
+      }
+      console.log(
+        `[router] Feedback intercepted from ${msg.channel}: ${signal}`,
+      );
+      return;
     }
 
     // Fast-path: simple conversational messages → direct LLM, no tools, ~2s

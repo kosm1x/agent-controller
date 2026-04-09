@@ -52,7 +52,8 @@ const TOOL_TRIGGERS = [
  * Must not have images (those need vision pipeline).
  */
 export function isConversationalFastPath(text: string): boolean {
-  const trimmed = text.trim();
+  // Strip WhatsApp group metadata prefix before checking
+  const trimmed = text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
   const wordCount = trimmed.split(/\s+/).length;
 
   // 3+ words ALWAYS go through the full pipeline (prompt enhancer + tools).

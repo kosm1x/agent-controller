@@ -1014,6 +1014,11 @@ export interface InferWithToolsOptions {
    * (v6.4 OH1.5)
    */
   taskId?: string;
+  /**
+   * If true, skip the first-round tool-skip nudge. Used for short
+   * conversational messages (reactions, thanks) that don't need tool calls.
+   */
+  skipToolNudge?: boolean;
 }
 
 /**
@@ -1326,10 +1331,11 @@ export async function inferWithTools(
       // tools on the very first round when tools are available, nudge it.
       // The weaker fallback model (qwen3-coder-plus) consistently skips tools
       // and gives short refusals ("no tengo esa herramienta", 52 chars).
-      // Catch ALL first-round text responses when tools are available.
-      // Only skip truly tiny responses (<20 chars — emoji acks, "ok", etc.)
+      // Skip for: tiny responses (<20 chars), or when caller explicitly
+      // marks as conversational (skipToolNudge — reactions, thanks, etc.)
       const hasTools = (tools?.length ?? 0) > 0;
-      if (round === 0 && hasTools && content.length > 20) {
+      const skipNudge = options?.skipToolNudge ?? false;
+      if (round === 0 && hasTools && content.length > 20 && !skipNudge) {
         console.log(
           "[inference] First-round tool skip detected (✅ without tool calls). Nudging.",
         );

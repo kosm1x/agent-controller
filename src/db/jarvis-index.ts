@@ -63,29 +63,45 @@ export function regenerateIndex(): void {
     // Build compact INDEX
     const dirLines = rows
       .filter((r) => r.dir !== "(root)")
-      .map((r) => `- ${r.dir}/ (${r.cnt})`)
+      .map((r) => `- [[${r.dir}/|${r.dir}]] (${r.cnt})`)
       .join("\n");
 
     const projectLines =
       projects.length > 0
-        ? projects.map((p) => `- ${p.name}/`).join("\n")
+        ? projects.map((p) => `- [[projects/${p.name}/|${p.name}]]`).join("\n")
         : "- (ninguno)";
+
+    // Get recent files for Obsidian dashboard
+    const recentFiles = db
+      .prepare(
+        `SELECT path, title FROM jarvis_files
+         WHERE path != 'INDEX.md'
+         ORDER BY updated_at DESC LIMIT 5`,
+      )
+      .all() as Array<{ path: string; title: string }>;
+
+    const recentLines = recentFiles
+      .map((f) => `- [[${f.path.replace(/\.md$/, "")}|${f.title}]]`)
+      .join("\n");
 
     const content = `# Jarvis Knowledge Base
 
-## Estructura (${totalFiles} archivos, ${totalKB}KB)
+> [!summary] ${totalFiles} archivos · ${totalKB}KB · Actualizado ${now}
+
+## Estructura
 ${dirLines}
 
 ## Proyectos Activos
 ${projectLines}
 
+## Recientes
+${recentLines}
+
 ## Cómo navegar
 - jarvis_file_list con prefix="NorthStar/" para metas
 - jarvis_file_list con prefix="projects/{nombre}/" para un proyecto
 - jarvis_file_list con prefix="knowledge/" para conocimiento
-- jarvis_file_read para leer cualquier archivo
-
-Última actualización: ${now}`;
+- jarvis_file_read para leer cualquier archivo`;
 
     upsertFile(
       "INDEX.md",

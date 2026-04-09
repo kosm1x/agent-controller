@@ -17,6 +17,11 @@ const POSITIVE_PATTERNS = /^(excelente)\b/i;
 const NEGATIVE_PATTERNS =
   /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;
 
+/** Strip WhatsApp group metadata prefix "[Grupo: ..., De: ...]\n" from message text. */
+function stripGroupPrefix(text: string): string {
+  return text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
+}
+
 /** Explicit feedback signals detected from user message text. */
 export type FeedbackSignal = "positive" | "negative" | "rephrase" | "neutral";
 
@@ -33,7 +38,7 @@ export function detectFeedbackSignal(
   text: string,
   previousMessage?: string,
 ): FeedbackSignal {
-  const trimmed = text.trim();
+  const trimmed = stripGroupPrefix(text);
 
   if (POSITIVE_PATTERNS.test(trimmed)) return "positive";
   if (NEGATIVE_PATTERNS.test(trimmed)) return "negative";
@@ -51,7 +56,7 @@ export function detectFeedbackSignal(
  * rather than a new command? If true, the router can skip task creation.
  */
 export function isFeedbackMessage(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = stripGroupPrefix(text);
   const wordCount = trimmed.split(/\s+/).length;
 
   // Only intercept very short messages with clear signal

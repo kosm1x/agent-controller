@@ -19,6 +19,69 @@ import { getDatabase } from "./index.js";
 /** Root folder ID — "Jarvis Knowledge Base" in peter.blades@gmail.com Drive. */
 const ROOT_FOLDER_ID = process.env.DRIVE_KB_FOLDER_ID ?? "";
 
+// ---------------------------------------------------------------------------
+// Obsidian-native content transformation
+// ---------------------------------------------------------------------------
+
+/** Metadata passed from jarvis-fs to enrich Drive copies for Obsidian. */
+export interface DriveMetadata {
+  tags?: string[];
+  qualifier?: string;
+  priority?: number;
+  condition?: string | null;
+  relatedTo?: string[];
+}
+
+/**
+ * Transform content into Obsidian-native markdown:
+ * - Prepend YAML frontmatter (title, tags, qualifier, priority, date)
+ * - Append [[wikilinks]] section from related_to references
+ *
+ * Exported for testing. Only applied to Drive copies — SQLite content is untouched.
+ */
+export function toObsidianContent(
+  path: string,
+  title: string,
+  content: string,
+  metadata?: DriveMetadata,
+): string {
+  // --- YAML frontmatter ---
+  const qualifier = metadata?.qualifier ?? "reference";
+  const priority = metadata?.priority ?? 50;
+  const date = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Mexico_City",
+  });
+
+  let yaml = "---\n";
+  yaml += `title: "${title.replace(/"/g, '\\"')}"\n`;
+  yaml += `qualifier: ${qualifier}\n`;
+  yaml += `priority: ${priority}\n`;
+  if (metadata?.tags?.length) {
+    yaml += `tags: [${metadata.tags.join(", ")}]\n`;
+  }
+  if (metadata?.condition) {
+    yaml += `condition: "${metadata.condition.replace(/"/g, '\\"')}"\n`;
+  }
+  yaml += `path: ${path}\n`;
+  yaml += `updated: ${date}\n`;
+  yaml += "---\n\n";
+
+  let result = yaml + content;
+
+  // --- Wikilinks from related_to ---
+  if (metadata?.relatedTo?.length) {
+    const links = metadata.relatedTo
+      .map((p) => {
+        const display = p.replace(/\.md$/, "").split("/").pop() ?? p;
+        return `- [[${p.replace(/\.md$/, "")}|${display}]]`;
+      })
+      .join("\n");
+    result += `\n\n## Related\n${links}\n`;
+  }
+
+  return result;
+}
+
 /** Cache of path-prefix → Drive folder ID (avoids repeated lookups). */
 const folderCache = new Map<string, string>();
 
@@ -128,17 +191,25 @@ async function ensureFolder(dirPath: string): Promise<string> {
 /**
  * Sync a jarvis_files upsert to Google Drive (fire-and-forget).
  * Creates the file if new, updates content if existing.
+ * Applies Obsidian-native transformation (frontmatter + wikilinks).
  */
 export function syncToDrive(
   path: string,
   title: string,
   content: string,
+  driveMetadata?: DriveMetadata,
 ): void {
   if (!isDriveSyncEnabled()) return;
 
   (async () => {
     try {
       ensureMapTable();
+      const obsidianContent = toObsidianContent(
+        path,
+        title,
+        content,
+        driveMetadata,
+      );
       const existingDriveId = getDriveId(path);
 
       if (existingDriveId) {
@@ -147,7 +218,7 @@ export function syncToDrive(
           `https://www.googleapis.com/upload/drive/v3/files/${existingDriveId}?uploadType=media`,
           {
             method: "PATCH",
-            rawBody: content,
+            rawBody: obsidianContent,
             contentType: "text/markdown",
           },
         );
@@ -162,7 +233,7 @@ export function syncToDrive(
           : path;
 
         const boundary = "jarvis_drive_sync";
-        const metadata = JSON.stringify({
+        const fileMeta = JSON.stringify({
           name: fileName,
           mimeType: "text/markdown",
           parents: [parentId],
@@ -170,10 +241,10 @@ export function syncToDrive(
         const body =
           `--${boundary}\r\n` +
           `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-          `${metadata}\r\n` +
+          `${fileMeta}\r\n` +
           `--${boundary}\r\n` +
           `Content-Type: text/markdown\r\n\r\n` +
-          `${content}\r\n` +
+          `${obsidianContent}\r\n` +
           `--${boundary}--`;
 
         const result = await googleFetch<{ id: string }>(
@@ -243,12 +314,19 @@ export async function backfillToDrive(): Promise<{
   ensureMapTable();
   const db = getDatabase();
   const files = db
-    .prepare("SELECT id, path, title, content FROM jarvis_files ORDER BY path")
+    .prepare(
+      "SELECT id, path, title, content, tags, qualifier, priority, condition, related_to FROM jarvis_files ORDER BY path",
+    )
     .all() as Array<{
     id: string;
     path: string;
     title: string;
     content: string;
+    tags: string;
+    qualifier: string;
+    priority: number;
+    condition: string | null;
+    related_to: string;
   }>;
 
   let uploaded = 0;
@@ -271,8 +349,21 @@ export async function backfillToDrive(): Promise<{
         ? file.path.slice(file.path.lastIndexOf("/") + 1)
         : file.path;
 
+      const obsidianContent = toObsidianContent(
+        file.path,
+        file.title,
+        file.content,
+        {
+          tags: JSON.parse(file.tags || "[]"),
+          qualifier: file.qualifier,
+          priority: file.priority,
+          condition: file.condition,
+          relatedTo: JSON.parse(file.related_to || "[]"),
+        },
+      );
+
       const boundary = "jarvis_backfill";
-      const metadata = JSON.stringify({
+      const fileMeta = JSON.stringify({
         name: fileName,
         mimeType: "text/markdown",
         parents: [parentId],
@@ -280,10 +371,10 @@ export async function backfillToDrive(): Promise<{
       const body =
         `--${boundary}\r\n` +
         `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-        `${metadata}\r\n` +
+        `${fileMeta}\r\n` +
         `--${boundary}\r\n` +
         `Content-Type: text/markdown\r\n\r\n` +
-        `${file.content}\r\n` +
+        `${obsidianContent}\r\n` +
         `--${boundary}--`;
 
       const result = await googleFetch<{ id: string }>(
@@ -318,4 +409,95 @@ export async function backfillToDrive(): Promise<{
     `[drive-sync] Backfill complete: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed`,
   );
   return { uploaded, skipped, failed };
+}
+
+/**
+ * Reformat all existing Drive files with Obsidian-native content.
+ * Updates files that already have a drive_id with current frontmatter + wikilinks.
+ * Use after changing the toObsidianContent format.
+ */
+export async function reformatDriveFiles(): Promise<{
+  updated: number;
+  skipped: number;
+  failed: number;
+}> {
+  if (!isDriveSyncEnabled()) {
+    console.warn("[drive-sync] DRIVE_KB_FOLDER_ID not set, skipping reformat");
+    return { updated: 0, skipped: 0, failed: 0 };
+  }
+
+  ensureMapTable();
+  const db = getDatabase();
+  const files = db
+    .prepare(
+      "SELECT id, path, title, content, tags, qualifier, priority, condition, related_to FROM jarvis_files ORDER BY path",
+    )
+    .all() as Array<{
+    id: string;
+    path: string;
+    title: string;
+    content: string;
+    tags: string;
+    qualifier: string;
+    priority: number;
+    condition: string | null;
+    related_to: string;
+  }>;
+
+  let updated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const file of files) {
+    const driveId = getDriveId(file.path);
+    if (!driveId) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const obsidianContent = toObsidianContent(
+        file.path,
+        file.title,
+        file.content,
+        {
+          tags: JSON.parse(file.tags || "[]"),
+          qualifier: file.qualifier,
+          priority: file.priority,
+          condition: file.condition,
+          relatedTo: JSON.parse(file.related_to || "[]"),
+        },
+      );
+
+      await googleFetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${driveId}?uploadType=media`,
+        {
+          method: "PATCH",
+          rawBody: obsidianContent,
+          contentType: "text/markdown",
+          timeout: 30_000,
+        },
+      );
+      updated++;
+
+      // Rate limiting — avoid Drive API quota (300 req/min)
+      if (updated % 50 === 0) {
+        console.log(
+          `[drive-sync] Reformat progress: ${updated}/${files.length}`,
+        );
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (err) {
+      console.warn(
+        `[drive-sync] Reformat failed for ${file.path}:`,
+        err instanceof Error ? err.message : err,
+      );
+      failed++;
+    }
+  }
+
+  console.log(
+    `[drive-sync] Reformat complete: ${updated} updated, ${skipped} no drive_id, ${failed} failed`,
+  );
+  return { updated, skipped, failed };
 }

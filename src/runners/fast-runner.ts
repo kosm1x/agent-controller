@@ -758,6 +758,22 @@ export const fastRunner: Runner = {
       // read-only rounds (web_search) before calling gmail_send.
       const hasEmailDelivery = input.tools?.includes("gmail_send") ?? false;
 
+      // Skip tool-skip nudge for short conversational messages (reactions,
+      // thanks, agreements) that don't need tool calls. Check the raw user
+      // message from the task input, not the enriched conversation messages.
+      const rawUserMsgFull =
+        input.conversationHistory?.filter((t) => t.role === "user").pop()
+          ?.content ?? "";
+      // Strip group metadata prefix "[Grupo: ..., De: ...]\n" to get actual text
+      const rawUserMsg = rawUserMsgFull
+        .replace(/^\[Grupo:.*?\]\n?/i, "")
+        .trim();
+      const isConversational =
+        rawUserMsg.length < 50 &&
+        !/\?|busca|crea|haz|envía|agenda|programa|genera|analiz|revis|actualiz|configur|escrib/i.test(
+          rawUserMsg,
+        );
+
       const result = await inferWithTools(messages, definitions, taskExecutor, {
         maxRounds,
         providerName,
@@ -766,6 +782,7 @@ export const fastRunner: Runner = {
         signal: input.signal,
         exemptAnalysisParalysis: hasEmailDelivery,
         taskId: input.taskId,
+        skipToolNudge: isConversational,
       });
 
       let parsed = parseRunnerStatus(result.content);

@@ -85,3 +85,15 @@ admin.post("/drive-backfill", async (c) => {
   const result = await backfillToDrive();
   return c.json(result);
 });
+
+/**
+ * POST /api/admin/drive-reformat
+ *
+ * Updates all existing Drive files with Obsidian-native formatting
+ * (YAML frontmatter + wikilinks). Use after format changes.
+ */
+admin.post("/drive-reformat", async (c) => {
+  const { reformatDriveFiles } = await import("../../db/drive-sync.js");
+  const result = await reformatDriveFiles();
+  return c.json(result);
+});

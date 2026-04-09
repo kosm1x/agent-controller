@@ -13,6 +13,7 @@ import { getDatabase } from "./index.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
+import type { DriveMetadata } from "./drive-sync.js";
 import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
@@ -98,7 +99,14 @@ export function upsertFile(
   syncToPgvector(path, title, content, tags, qualifier, priority, condition);
 
   // Sync to Google Drive for Obsidian (fire-and-forget, async, non-blocking)
-  syncToDrive(path, title, content);
+  const driveMeta: DriveMetadata = {
+    tags,
+    qualifier,
+    priority,
+    condition,
+    relatedTo,
+  };
+  syncToDrive(path, title, content, driveMeta);
 
   // Debounced INDEX.md regeneration (skip if we're writing INDEX.md itself)
   if (path !== "INDEX.md") {
