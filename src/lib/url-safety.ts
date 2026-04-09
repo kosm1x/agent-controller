@@ -27,6 +27,7 @@ const BLOCKED_HOSTS = new Set([
   "localhost",
   "metadata.google.internal",
   "metadata",
+  "instance-data.ec2.internal",
 ]);
 
 /** Only allow these URL schemes. */
@@ -49,15 +50,30 @@ export function validateOutboundUrl(url: string): string | null {
     return `Blocked scheme: ${parsed.protocol} (only http/https allowed)`;
   }
 
-  // Blocked hostnames
-  const hostname = parsed.hostname.toLowerCase();
+  // Blocked hostnames — strip IPv6 brackets for matching
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (BLOCKED_HOSTS.has(hostname)) {
     return `Blocked host: ${hostname}`;
   }
 
+  // IPv6-mapped IPv4 detection — Node converts ::ffff:10.0.0.1 to ::ffff:a00:1 (hex)
+  // Parse both dotted-decimal and hex-encoded mapped forms
+  let checkHost = hostname;
+  const dottedV4 = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (dottedV4) {
+    checkHost = dottedV4[1];
+  } else {
+    const hexV4 = hostname.match(/^::ffff:([0-9a-f]+):([0-9a-f]+)$/i);
+    if (hexV4) {
+      const hi = parseInt(hexV4[1], 16);
+      const lo = parseInt(hexV4[2], 16);
+      checkHost = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    }
+  }
+
   // IP address check
   for (const pattern of BLOCKED_IP_PATTERNS) {
-    if (pattern.test(hostname)) {
+    if (pattern.test(checkHost)) {
       return `Blocked private/reserved IP: ${hostname}`;
     }
   }

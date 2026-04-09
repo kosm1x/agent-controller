@@ -136,9 +136,10 @@ export class TelegramAdapter implements ChannelAdapter {
       `[telegram] Restarting polling in ${delay}ms (attempt ${this.restartAttempts}/${TelegramAdapter.MAX_RESTART_ATTEMPTS})`,
     );
     setTimeout(async () => {
+      if (!this.bot) return; // Shutdown happened during delay — abort restart
       try {
-        await this.bot!.api.deleteWebhook({ drop_pending_updates: true });
-        this.bot!.start({
+        await this.bot.api.deleteWebhook({ drop_pending_updates: true });
+        this.bot.start({
           drop_pending_updates: true,
           onStart: () => {
             console.log("[telegram] Polling restarted successfully");
