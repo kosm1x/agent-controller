@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-09 — **v6.0-v6.4+CL1+H+CCP1-10 ALL DONE. 1713 tests, 170 tools, 11 rituals, 54 sessions. WhatsApp group live (mention-only, thread-isolated, typing indicator, vision, LID mentions, formatter). 19 commits this session. Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-09 — **v6.0-v6.4+CL1+H+CCP1-10+H1-H3 ALL DONE. 1722 tests, 170 tools, 11 rituals, 54 sessions. WhatsApp group live. Hermes: convergence score, trace+drift eval, schedule runs. 21 commits this session. Next: D3+D4 (OAuth).**
 
 ## Status Key
 
