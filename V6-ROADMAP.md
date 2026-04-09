@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-09 — **v6.0-v6.4+CL1+H+CCP1-10+H1-H3 ALL DONE. 1722 tests, 170 tools, 11 rituals, 54 sessions. WhatsApp group live. Hermes: convergence score, trace+drift eval, schedule runs. 21 commits this session. Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-09 — **v6.0-v6.4+CL1+H+CCP1-10+H1-H3 ALL DONE. 1750 tests, 170 tools, 11 rituals, 55 sessions. Defender injection defense (28 patterns, 5-tier risk). Per-sender WhatsApp thread isolation. Tuning regression detection (Dash pattern). Next: D3+D4 (OAuth).**
 
 ## Status Key
 
@@ -398,6 +398,27 @@ Extracted from analysis of claude-code-prompts repo (45 files). Cross-referenced
 | CCP9    | Scope-Bounded Approval          | unlockDestructive() target-scoped, not tool-scoped. Prevent multi-delete on single approval                                                   | **Done** |
 | CCP10   | Status Line Enforcement         | Default to NEEDS_CONTEXT when LLM omits status. Log missing status lines                                                                      | **Done** |
 
+### Workstream 15: Hermes Patterns — H1-H3 (1 session)
+
+Extracted from Hermes agent orchestrator. All post-execution — zero hot-path latency.
+
+| Session | Deliverable               | What                                                                                                               | Status   |
+| ------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------- |
+| H1      | Convergence Score         | `convergenceScore(toolCalls, uniqueTools)` — per-goal loop detection. Ratio >3.0 = looping. Reflector penalty -0.1 | **Done** |
+| H2      | Trace + Drift Eval        | Token burn rate + convergence → efficiency score. Rolling baseline comparison per task type (±1σ alert)            | **Done** |
+| H3      | Schedule Runs Audit Trail | `schedule_runs` table — per-execution tracking, duplicate prevention, delivery-miss status                         | **Done** |
+
+### Workstream 16: External Pattern Adoption (1 session)
+
+Patterns extracted from StackOne Defender and agno-agi/dash repos.
+
+| Session | Deliverable                 | What                                                                                                                     | Status   |
+| ------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------- |
+| DEF1    | Injection Defense Upgrade   | 28 patterns (2 severity tiers), Unicode normalization, Base64/URL encoding detection, structural analysis, 5-tier risk   | **Done** |
+| DEF2    | Per-Sender Thread Isolation | WhatsApp group members get separate threads. Channel-scoped enrichment. Fallback tool cap (>15 tools → skip non-primary) | **Done** |
+| DASH1   | Tuning Regression Detection | `detectPerCaseRegressions()` — blocks mutations that break passing cases even if composite improves                      | **Done** |
+| DASH2   | Structured Gotchas KB       | Conditional jarvis_file with operational gotchas. Scope-gated: reporting, schedule, crm                                  | **Done** |
+
 ---
 
 ## Safety Invariants
@@ -447,8 +468,8 @@ Extracted from analysis of claude-code-prompts repo (45 files). Cross-referenced
 
 | Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4 (current)     |
 | ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1682               |
-| Source files            | 214        | 228       | 232  | 241                |
+| Tests                   | 1228       | 1377      | 1576 | 1750               |
+| Source files            | 214        | 228       | 232  | 251                |
 | Test files              | 85         | 105       | 120  | 127                |
 | Tools                   | 150        | 163       | 169  | 170 (109 deferred) |
 | Safeguards              | 0          | 5         | 5    | 5                  |
@@ -456,9 +477,10 @@ Extracted from analysis of claude-code-prompts repo (45 files). Cross-referenced
 | Background agents (max) | 0          | 3         | 3    | 3                  |
 | Provider cascade        | 2-model    | 3-model   | 3    | 3                  |
 | Immutable core files    | 0          | 15        | 15   | 15                 |
-| Rituals                 | 7          | 9         | 9    | 10                 |
+| Rituals                 | 7          | 9         | 9    | 11                 |
 | KB entries (pgvector)   | 0          | 0         | 315  | 350+               |
 | Prompt tokens (chat)    | ~15K       | ~19K      | ~19K | ~9.3K              |
+| Injection patterns      | 0          | 0         | 0    | 28 (5-tier risk)   |
 
 ---
 
@@ -479,4 +501,6 @@ Extracted from analysis of claude-code-prompts repo (45 files). Cross-referenced
 | v6.4 CL1  | Comprehension layer    | 3        | **Done**     |
 | v6.4 H    | Hardening              | 1        | **Done**     |
 | CCP 1-10  | Claude Code patterns   | 1        | **Done**     |
-| **Total** |                        | **53**   |              |
+| H1-H3     | Hermes patterns        | 1        | **Done**     |
+| DEF+DASH  | External patterns      | 1        | **Done**     |
+| **Total** |                        | **55**   |              |
