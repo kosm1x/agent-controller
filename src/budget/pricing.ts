@@ -27,8 +27,8 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "qwen3-coder-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "qwen3-coder-next": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   // GLM series (ZhipuAI via DashScope)
-  "glm-5": { promptCostPer1k: 0.001, completionCostPer1k: 0.003 },
-  "glm-4.7": { promptCostPer1k: 0.001, completionCostPer1k: 0.003 },
+  "glm-5": { promptCostPer1k: 0.0005, completionCostPer1k: 0.0015 },
+  "glm-4.7": { promptCostPer1k: 0.0005, completionCostPer1k: 0.0015 },
   // Kimi (Moonshot via DashScope)
   "kimi-k2.5": { promptCostPer1k: 0.001, completionCostPer1k: 0.003 },
   // MiniMax

@@ -5,6 +5,7 @@
  */
 
 import type { Tool } from "../types.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
@@ -48,6 +49,12 @@ export const httpTool: Tool = {
     const url = args.url as string;
     if (!url) {
       return JSON.stringify({ error: "url is required" });
+    }
+
+    // SSRF protection — block private IPs, metadata endpoints, non-HTTP schemes
+    const urlError = validateOutboundUrl(url);
+    if (urlError) {
+      return JSON.stringify({ error: urlError, url });
     }
 
     const method = ((args.method as string) ?? "GET").toUpperCase();

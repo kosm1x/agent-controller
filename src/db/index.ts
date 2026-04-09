@@ -285,13 +285,13 @@ export function writeWithRetry<T>(fn: () => T): T {
         lastErr = err instanceof Error ? err : new Error(msg);
         if (attempt < WRITE_MAX_RETRIES - 1) {
           // Random jitter breaks convoy pattern
-          const jitter =
+          const jitter = Math.round(
             WRITE_RETRY_MIN_MS +
-            Math.random() * (WRITE_RETRY_MAX_MS - WRITE_RETRY_MIN_MS);
-          const end = Date.now() + jitter;
-          while (Date.now() < end) {
-            /* spin-wait: better-sqlite3 is sync, no setTimeout available */
-          }
+              Math.random() * (WRITE_RETRY_MAX_MS - WRITE_RETRY_MIN_MS),
+          );
+          // Atomics.wait on a SharedArrayBuffer: non-busy synchronous sleep
+          // that doesn't block the event loop like a spin-wait does
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, jitter);
         }
         continue;
       }

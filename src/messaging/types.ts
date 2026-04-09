@@ -30,4 +30,6 @@ export interface ChannelAdapter {
   send(msg: OutgoingMessage): Promise<string>; // Returns message ID
   onMessage(handler: (msg: IncomingMessage) => void): void;
   stop(): Promise<void>;
+  /** Whether the channel is currently connected and receiving messages. */
+  isConnected(): boolean;
 }

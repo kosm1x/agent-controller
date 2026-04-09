@@ -13,6 +13,7 @@ import {
   isCloudflareChallenge,
   stealthFetch,
 } from "../../lib/stealth-browser.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
@@ -135,6 +136,12 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
     const url = args.url as string;
     if (!url) {
       return JSON.stringify({ error: "url is required" });
+    }
+
+    // SSRF protection — block private IPs, metadata endpoints, non-HTTP schemes
+    const urlError = validateOutboundUrl(url);
+    if (urlError) {
+      return JSON.stringify({ error: urlError, url });
     }
 
     // PDF URLs: extract locally via OpenDataLoader (no Jina dependency)

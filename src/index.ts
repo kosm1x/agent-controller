@@ -214,7 +214,35 @@ async function main(): Promise<void> {
     // 4. Teardown MCP + tool sources
     await sourceManager.teardownAll();
 
-    // 5. Mark running tasks as failed (prevents orphaned tasks blocking new work)
+    // 5. Grace period — wait up to 10s for in-flight tasks to complete
+    try {
+      const db = getDatabase();
+      const running = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM tasks WHERE status IN ('running')`,
+        )
+        .get() as { cnt: number } | undefined;
+      const inFlight = running?.cnt ?? 0;
+      if (inFlight > 0) {
+        log.info(
+          `waiting up to 10s for ${inFlight} in-flight task(s) to complete...`,
+        );
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const still = db
+            .prepare(
+              `SELECT COUNT(*) as cnt FROM tasks WHERE status = 'running'`,
+            )
+            .get() as { cnt: number } | undefined;
+          if ((still?.cnt ?? 0) === 0) break;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    // 6. Mark remaining running tasks as failed
     try {
       const db = getDatabase();
       const orphaned = db
@@ -229,7 +257,7 @@ async function main(): Promise<void> {
       // Non-fatal — DB may already be closed
     }
 
-    // 6. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
+    // 7. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
     import("./db/jarvis-index.js")
       .then((m) => m.cancelPendingRegeneration())
       .catch(() => {});

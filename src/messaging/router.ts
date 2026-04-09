@@ -18,7 +18,7 @@ import {
   extractPattern,
   findRelevantPatterns,
 } from "../intelligence/execution-patterns.js";
-import { getFile, upsertFile } from "../db/jarvis-fs.js";
+import { getFile, mirrorToDisk } from "../db/jarvis-fs.js";
 import {
   shouldEnhance,
   checkToggle,
@@ -695,7 +695,25 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
       ? existing.content + entry
       : `# Day Log: ${date}\n\n${entry}`;
 
-    upsertFile(path, `Day Log: ${date}`, content, ["day-log"], "workspace");
+    // Direct DB write — skip pgvector embedding + Drive sync + index regen.
+    // Day logs are ephemeral workspace entries; embedding/syncing them is waste.
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, priority, related_to, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(path) DO UPDATE SET
+         content = excluded.content, updated_at = datetime('now')`,
+    ).run(
+      path,
+      path,
+      `Day Log: ${date}`,
+      content,
+      '["day-log"]',
+      "workspace",
+      90,
+      "[]",
+    );
+    mirrorToDisk(path, content);
   } catch {
     // Non-fatal — never block message processing for logging
   }
@@ -710,6 +728,15 @@ export class MessageRouter {
 
   get channelCount(): number {
     return this.channels.size;
+  }
+
+  /** Connection status per channel — for /health endpoint. */
+  getChannelStatus(): Record<string, boolean> {
+    const status: Record<string, boolean> = {};
+    for (const [name, adapter] of this.channels) {
+      status[name] = adapter.isConnected();
+    }
+    return status;
   }
 
   /** Timestamp of the last inbound message (for proactive throttle). */

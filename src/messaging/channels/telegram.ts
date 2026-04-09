@@ -103,10 +103,57 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private bot: Bot | null = null;
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
+  private pollingActive = false;
+  private restartAttempts = 0;
+  private static readonly MAX_RESTART_ATTEMPTS = 5;
 
   /** Expose bot instance for streaming controller. */
   getBot(): Bot | null {
     return this.bot;
+  }
+
+  /** Whether Telegram polling is actively connected. */
+  isConnected(): boolean {
+    return this.pollingActive && this.bot !== null;
+  }
+
+  /** Restart polling after a fatal error. Caps at 5 attempts, then gives up. */
+  private restartPolling(): void {
+    if (
+      this.restartAttempts >= TelegramAdapter.MAX_RESTART_ATTEMPTS ||
+      !this.bot
+    ) {
+      console.error(
+        `[telegram] Polling restart failed after ${this.restartAttempts} attempts — giving up`,
+      );
+      this.pollingActive = false;
+      return;
+    }
+    this.restartAttempts++;
+    this.pollingActive = false;
+    const delay = Math.min(5000 * this.restartAttempts, 30_000);
+    console.warn(
+      `[telegram] Restarting polling in ${delay}ms (attempt ${this.restartAttempts}/${TelegramAdapter.MAX_RESTART_ATTEMPTS})`,
+    );
+    setTimeout(async () => {
+      try {
+        await this.bot!.api.deleteWebhook({ drop_pending_updates: true });
+        this.bot!.start({
+          drop_pending_updates: true,
+          onStart: () => {
+            console.log("[telegram] Polling restarted successfully");
+            this.pollingActive = true;
+            this.restartAttempts = 0; // Reset on success
+          },
+        });
+      } catch (err) {
+        console.error(
+          "[telegram] Polling restart failed:",
+          err instanceof Error ? err.message : err,
+        );
+        this.restartPolling(); // Retry with backoff
+      }
+    }, delay);
   }
 
   async start(): Promise<void> {
@@ -136,6 +183,7 @@ export class TelegramAdapter implements ChannelAdapter {
       drop_pending_updates: true,
       onStart: () => {
         console.log("[telegram] Polling started");
+        this.pollingActive = true;
       },
     });
 
@@ -326,6 +374,8 @@ export class TelegramAdapter implements ChannelAdapter {
 
     this.bot.catch((err) => {
       console.error("[telegram] Bot error:", err.message);
+      // Reconnect on fatal polling errors — without this, Telegram dies silently
+      this.restartPolling();
     });
   }
 

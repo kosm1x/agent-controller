@@ -45,6 +45,12 @@ export function getRouter(): MessageRouter | null {
   return router;
 }
 
+/** Channel connection status for health endpoint. */
+export function getMessagingStatus(): Record<string, boolean> {
+  if (!router) return {};
+  return router.getChannelStatus();
+}
+
 export async function shutdownMessaging(): Promise<void> {
   if (router) {
     await router.stopAll();

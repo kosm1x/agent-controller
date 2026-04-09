@@ -134,7 +134,7 @@ export function loadConfig(): Config {
     inferenceTertiaryModel: optional("INFERENCE_TERTIARY_MODEL"),
 
     inferenceTimeoutMs: int("INFERENCE_TIMEOUT_MS", 60000),
-    inferenceMaxTokens: int("INFERENCE_MAX_TOKENS", 4096),
+    inferenceMaxTokens: int("INFERENCE_MAX_TOKENS", 6144),
     inferenceMaxRetries: int("INFERENCE_MAX_RETRIES", 3),
 
     orchestratorTimeoutMs: int("ORCHESTRATOR_TIMEOUT_MS", 600_000),

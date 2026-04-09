@@ -12,6 +12,7 @@ import { getBudgetStatus } from "../../budget/service.js";
 import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
 import { getKbHealthStats } from "../../memory/lesson-decay.js";
+import { getMessagingStatus } from "../../messaging/index.js";
 
 const health = new Hono();
 
@@ -75,6 +76,7 @@ health.get("/health", async (c) => {
       tools: toolMetrics.getSummary(),
       commitEvents: eventMetrics.getSummary(),
       circuitBreakers: circuitRegistry.getAllStatus(),
+      messaging: getMessagingStatus(),
       ...(kbStats && { knowledgeBase: kbStats }),
     },
     code,

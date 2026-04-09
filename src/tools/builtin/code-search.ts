@@ -6,7 +6,7 @@
  * has worse error handling and inconsistent output formats.
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 
 const MAX_RESULTS = 100;
@@ -105,22 +105,43 @@ TIPS:
     }
 
     if (includeGlob) {
-      flags.push(`--glob '${includeGlob}'`);
+      flags.push("--glob", includeGlob);
     }
 
     // Limit output
-    flags.push(`--max-count ${mode === "files" ? 1 : maxResults}`);
+    flags.push("--max-count", String(mode === "files" ? 1 : maxResults));
 
-    // Escape single quotes in pattern for shell safety
-    const safePattern = pattern.replace(/'/g, "'\\''");
-    const cmd = `rg ${flags.join(" ")} -- '${safePattern}' '${searchPath}' 2>/dev/null || grep -r ${caseInsensitive ? "-i" : ""} ${mode === "files" ? "-l" : mode === "count" ? "-c" : "-n"} --fixed-strings ${includeGlob ? `--include='${includeGlob}'` : ""} -- '${safePattern}' '${searchPath}' 2>/dev/null || true`;
+    // execFileSync: args as array — no shell interpolation, immune to injection
+    const rgArgs = [...flags, "--", pattern, searchPath];
 
     try {
-      const output = execSync(cmd, {
-        timeout: 20_000,
-        maxBuffer: 2 * 1024 * 1024,
-        encoding: "utf-8",
-      });
+      let output: string;
+      try {
+        output = execFileSync("rg", rgArgs, {
+          timeout: 20_000,
+          maxBuffer: 2 * 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch {
+        // rg not found or failed — fall back to grep
+        const grepArgs = [
+          "-r",
+          ...(caseInsensitive ? ["-i"] : []),
+          mode === "files" ? "-l" : mode === "count" ? "-c" : "-n",
+          "--fixed-strings",
+          ...(includeGlob ? [`--include=${includeGlob}`] : []),
+          "--",
+          pattern,
+          searchPath,
+        ];
+        output = execFileSync("grep", grepArgs, {
+          timeout: 20_000,
+          maxBuffer: 2 * 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      }
 
       if (!output.trim()) {
         return JSON.stringify({
@@ -230,20 +251,46 @@ TIPS:
       1000,
     );
 
-    // Use find with shell glob expansion, or fd if available
-    // Escape single quotes for shell safety
-    const safePattern = pattern.replace(/'/g, "'\\''");
-    const safePath = searchPath.replace(/'/g, "'\\''");
-
-    // Try fd first (fast, respects .gitignore), fall back to find + bash globbing
-    const cmd = `cd '${safePath}' && (fd --glob '${safePattern}' --type f 2>/dev/null || find . -type f -name '${safePattern.includes("/") ? safePattern.split("/").pop() : safePattern}' 2>/dev/null | head -${maxResults}) | sort | head -${maxResults}`;
-
+    // execFileSync: args as array — no shell interpolation, immune to injection
     try {
-      const output = execSync(cmd, {
-        timeout: 20_000,
-        maxBuffer: 2 * 1024 * 1024,
-        encoding: "utf-8",
-      });
+      let output: string;
+      try {
+        // fd first (fast, respects .gitignore)
+        output = execFileSync(
+          "fd",
+          [
+            "--glob",
+            pattern,
+            "--type",
+            "f",
+            "--max-results",
+            String(maxResults),
+          ],
+          {
+            timeout: 20_000,
+            maxBuffer: 2 * 1024 * 1024,
+            encoding: "utf-8",
+            cwd: searchPath,
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        );
+      } catch {
+        // fd not found — fall back to find
+        const findPattern = pattern.includes("/")
+          ? (pattern.split("/").pop() ?? pattern)
+          : pattern;
+        output = execFileSync(
+          "find",
+          [".", "-type", "f", "-name", findPattern, "-maxdepth", "10"],
+          {
+            timeout: 20_000,
+            maxBuffer: 2 * 1024 * 1024,
+            encoding: "utf-8",
+            cwd: searchPath,
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        );
+      }
 
       if (!output.trim()) {
         return JSON.stringify({
@@ -317,19 +364,44 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
     );
 
     try {
-      let cmd: string;
+      let output: string;
       if (recursive) {
-        // tree-style recursive listing
-        cmd = `find '${dirPath.replace(/'/g, "'\\''")}' -maxdepth ${maxDepth} -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' | sort | head -500`;
+        output = execFileSync(
+          "find",
+          [
+            dirPath,
+            "-maxdepth",
+            String(maxDepth),
+            "-not",
+            "-path",
+            "*/node_modules/*",
+            "-not",
+            "-path",
+            "*/.git/*",
+            "-not",
+            "-path",
+            "*/dist/*",
+          ],
+          {
+            timeout: 10_000,
+            maxBuffer: 1024 * 1024,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        );
+        // Sort and limit
+        const lines = output.trim().split("\n").sort();
+        output = lines.slice(0, 500).join("\n");
       } else {
-        cmd = `ls -1Ap '${dirPath.replace(/'/g, "'\\''")}' 2>/dev/null | head -200`;
+        output = execFileSync("ls", ["-1Ap", dirPath], {
+          timeout: 10_000,
+          maxBuffer: 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const lines = output.trim().split("\n");
+        output = lines.slice(0, 200).join("\n");
       }
-
-      const output = execSync(cmd, {
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-        encoding: "utf-8",
-      });
 
       if (!output.trim()) {
         return JSON.stringify({

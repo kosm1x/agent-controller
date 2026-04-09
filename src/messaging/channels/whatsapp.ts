@@ -42,6 +42,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private sock: WASocket | null = null;
   private connected = false;
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
+
+  isConnected(): boolean {
+    return this.connected;
+  }
   private outgoingQueue: Array<{ to: string; text: string }> = [];
   private flushing = false;
   /** Active typing indicators — cleared on send. */

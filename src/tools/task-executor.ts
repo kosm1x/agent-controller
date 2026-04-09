@@ -84,11 +84,11 @@ export function createTaskExecutor(
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    // CCP5+CCP9: Only DESTRUCTIVE_MCP_TOOLS are hard-blocked until unlocked.
-    // Other HIGH-risk tools (gmail_send, etc.) are log-only via registry.execute().
-    // The blocking gate is for tools that require explicit user confirmation flow
-    // (ask → confirm → unlock → execute), not for all high-risk tools.
-    if (registry.isDestructiveMcp(name)) {
+    // CCP5+CCP9: HIGH-risk tools require user confirmation before execution.
+    // The LLM must present items to the user and wait for confirmation on the
+    // next message. Without this, gmail_send, gdrive_delete, vps_deploy, etc.
+    // execute without any confirmation gate.
+    if (registry.getEffectiveRiskTier(name) === "high") {
       const fp = argsFingerprint(args);
       if (!context.isDestructiveUnlocked(name, fp)) {
         log.warn(
