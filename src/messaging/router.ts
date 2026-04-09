@@ -633,9 +633,14 @@ function getThreadTurns(channel: string): ConversationTurn[] {
  * On first access per channel, hydrate the thread buffer from SQLite conversations.
  * This ensures conversation continuity survives process restarts.
  */
-function hydrateThreadIfNeeded(channel: string): void {
-  if (hydratedChannels.has(channel)) return;
-  hydratedChannels.add(channel);
+function hydrateThreadIfNeeded(tk: string): void {
+  if (hydratedChannels.has(tk)) return;
+  hydratedChannels.add(tk);
+
+  // Extract base channel from compound key for DB query.
+  // Compound keys: "whatsapp:group@g.us:sender@s.whatsapp.net" → "whatsapp"
+  // Simple keys: "telegram" → "telegram"
+  const baseChannel = tk.split(":")[0];
 
   try {
     const db = getDatabase();
@@ -647,7 +652,7 @@ function hydrateThreadIfNeeded(channel: string): void {
          ORDER BY created_at DESC
          LIMIT ?`,
       )
-      .all(channel, THREAD_BUFFER_SIZE) as { content: string }[];
+      .all(baseChannel, THREAD_BUFFER_SIZE) as { content: string }[];
 
     if (rows.length > 0) {
       // Reverse to chronological order (query returns newest-first)
@@ -655,12 +660,12 @@ function hydrateThreadIfNeeded(channel: string): void {
       const thread: ThreadEntry[] = rows
         .reverse()
         .map((r) => ({ text: r.content }));
-      conversationThreads.set(channel, thread);
+      conversationThreads.set(tk, thread);
     } else {
-      conversationThreads.set(channel, []);
+      conversationThreads.set(tk, []);
     }
   } catch {
-    conversationThreads.set(channel, []);
+    conversationThreads.set(tk, []);
   }
 }
 

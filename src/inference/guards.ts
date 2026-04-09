@@ -243,8 +243,8 @@ const ZERO_WIDTH_RE =
 export function normalizeForDetection(text: string): string {
   // NFKC decomposes + recomposes: ﬁ → fi, ℂ → C, mathematical bold → ASCII
   let normalized = text.normalize("NFKC");
-  // Strip zero-width chars (invisible payload hiding)
-  normalized = normalized.replace(ZERO_WIDTH_RE, "");
+  // Replace zero-width chars with spaces (preserves word boundaries for pattern matching)
+  normalized = normalized.replace(ZERO_WIDTH_RE, " ");
   // Cyrillic homoglyphs
   for (const [cyrillic, latin] of Object.entries(HOMOGLYPHS)) {
     normalized = normalized.replaceAll(cyrillic, latin);

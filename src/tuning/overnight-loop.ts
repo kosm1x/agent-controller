@@ -356,6 +356,7 @@ export async function runOvernightTuning(
 
   // --- Step 2: Experiment loop ---
   let bestScore = baseline.compositeScore;
+  let bestResult: EvalResult = baseline; // Tracks evolving best for regression detection
   let bestSandbox: SandboxConfig = parentVariant
     ? deserializeSandbox(parentVariant.config_json)
     : {};
@@ -549,7 +550,7 @@ export async function runOvernightTuning(
     // Regression detection (Dash pattern): block mutation if any previously-passing
     // case now fails, even if composite improved. A mutation that improves 3 cases
     // but breaks 1 is still unacceptable — the broken case will cause user-visible issues.
-    const regressions = detectPerCaseRegressions(baseline, merged);
+    const regressions = detectPerCaseRegressions(bestResult, merged);
 
     // Record experiment
     const expId = `${runId}-exp-${i}`;
@@ -582,6 +583,7 @@ export async function runOvernightTuning(
         `[tuning] ✓ KEEP: ${bestScore.toFixed(1)} → ${newScore.toFixed(1)} (+${delta.toFixed(1)})`,
       );
       bestScore = newScore;
+      bestResult = merged;
       bestSandbox = sandbox;
       experimentsWon++;
       consecutiveRegressions = 0;
