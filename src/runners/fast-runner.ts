@@ -668,14 +668,31 @@ export const fastRunner: Runner = {
 
       for (const turn of input.conversationHistory) {
         if (turn.imageUrl && turn.role === "user") {
-          // Multimodal: text + image as content array for vision-capable models
-          messages.push({
-            role: "user",
-            content: [
-              { type: "text", text: turn.content },
-              { type: "image_url", image_url: { url: turn.imageUrl } },
-            ],
-          });
+          // Vision: describe image via VL model, then inject description
+          // as text. The primary model (qwen3.5-plus) is not vision-capable,
+          // so we pre-process images through qwen-vl-max.
+          try {
+            const { describeImage } = await import("../inference/vision.js");
+            const description = await describeImage(
+              turn.imageUrl,
+              turn.content,
+            );
+            console.log(
+              `[fast-runner] Vision description: ${description.length} chars`,
+            );
+            messages.push({
+              role: "user",
+              content: `${turn.content}\n\n[Imagen analizada]:\n${description}`,
+            });
+          } catch (err) {
+            console.error(
+              `[fast-runner] Vision failed: ${err instanceof Error ? err.message : err}`,
+            );
+            messages.push({
+              role: "user",
+              content: `${turn.content}\n\n[Error al procesar imagen: ${err instanceof Error ? err.message : "unknown"}]`,
+            });
+          }
         } else {
           messages.push({ role: turn.role, content: turn.content });
         }
