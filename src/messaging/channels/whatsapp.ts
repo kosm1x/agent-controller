@@ -54,7 +54,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
       this.sock?.sendPresenceUpdate("composing", jid).catch(() => {});
     };
     send(); // immediate
-    this.typingTimers.set(jid, setInterval(send, 5_000));
+    const interval = setInterval(send, 5_000);
+    this.typingTimers.set(jid, interval);
+    // Safety: auto-stop after 5 min to prevent leaks if send() is never called
+    setTimeout(() => this.stopTyping(jid), 300_000);
   }
 
   /** Stop typing indicator for a chat. */
@@ -283,7 +286,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
           text: isGroup
             ? `[Grupo: ${jid.split("@")[0]}, De: ${senderName ?? "desconocido"}]\n${text}`
             : text,
-          timestamp: new Date(Number(msg.messageTimestamp) * 1000),
+          timestamp: msg.messageTimestamp
+            ? new Date(Number(msg.messageTimestamp) * 1000)
+            : new Date(),
           replyTo: msg.key.id ?? undefined,
           imageUrl,
           metadata: isGroup
@@ -324,6 +329,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this.connected = false;
+    // Clear all typing timers to prevent leaks
+    for (const [, timer] of this.typingTimers) {
+      clearInterval(timer);
+    }
+    this.typingTimers.clear();
     if (this.sock) {
       this.sock.end(undefined);
       this.sock = null;
