@@ -1126,10 +1126,8 @@ export class MessageRouter {
     // should never spawn a 21K-token task. Record the signal so Jarvis knows.
     if (isFeedbackMessage(msg.text)) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
-      // Record feedback against the most recent task if available
-      if (feedbackTaskId && signal !== "neutral") {
-        recordTaskFeedback(feedbackTaskId, signal);
-      }
+      // Note: recordTaskFeedback already called in feedbackWindow block above
+      // when feedbackTaskId is available — no duplicate recording needed here.
       // Persist positive feedback to memory so Jarvis learns what works
       if (signal === "positive") {
         this.sendToChannel(msg.channel, msg.from, "👍");

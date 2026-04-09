@@ -62,7 +62,7 @@ export function toObsidianContent(
   if (metadata?.condition) {
     yaml += `condition: "${metadata.condition.replace(/"/g, '\\"')}"\n`;
   }
-  yaml += `path: ${path}\n`;
+  yaml += `path: "${path}"\n`;
   yaml += `updated: ${date}\n`;
   yaml += "---\n\n";
 

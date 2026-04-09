@@ -20,7 +20,7 @@ describe("toObsidianContent", () => {
     expect(result).toMatch(/title: "Core Directives"/);
     expect(result).toMatch(/qualifier: reference/);
     expect(result).toMatch(/priority: 50/);
-    expect(result).toMatch(/path: directives\/core\.md/);
+    expect(result).toMatch(/path: "directives\/core\.md"/);
     expect(result).toMatch(/updated: \d{4}-\d{2}-\d{2}/);
     expect(result).toMatch(/---\n\n# Hello/);
   });

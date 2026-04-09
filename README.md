@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.4 CURRENT.** 128 test files, 1771 tests passing, zero type errors, 170 tools (109 deferred). v6.0-v6.4 + CL1 + H1-H3 + CCP1-10 all done. Obsidian-native Drive sync (YAML frontmatter + wikilinks on all 384 KB files). WhatsApp group feedback fix (group prefix stripping + unconditional feedback intercept). Roadmap: D3+D4 (OAuth).
+**v6.4 CURRENT.** 129 test files, 1785 tests passing, zero type errors, 170 tools (109 deferred). v6.0-v6.4 + CL1 + H1-H3 + CCP1-10 all done. Stealth browser (Cloudflare Turnstile solver, auto-fallback in web_read). Obsidian-native Drive sync. WhatsApp group feedback fix. Roadmap: D3+D4 (OAuth).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

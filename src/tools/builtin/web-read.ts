@@ -9,6 +9,10 @@
 import type { Tool } from "../types.js";
 import { extractPdfFromUrl } from "../../lib/pdf.js";
 import { evictToFile } from "../../lib/eviction.js";
+import {
+  isCloudflareChallenge,
+  stealthFetch,
+} from "../../lib/stealth-browser.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
@@ -31,6 +35,56 @@ async function extractPdfLocally(url: string): Promise<string> {
     const message = err instanceof Error ? err.message : String(err);
     return JSON.stringify({
       error: `PDF extraction failed: ${message}`,
+      url,
+    });
+  }
+}
+
+/**
+ * Stealth browser fallback for Cloudflare-protected pages.
+ * Launches headless Chromium with anti-bot patches, solves Turnstile if needed.
+ */
+async function stealthFallback(url: string): Promise<string> {
+  console.log(`[web-read] Cloudflare detected, trying stealth browser: ${url}`);
+  try {
+    const result = await stealthFetch(url, {
+      timeoutMs: 30_000,
+      extractMarkdown: true,
+    });
+
+    if (!result || !result.content) {
+      return JSON.stringify({
+        error:
+          "Cloudflare-protected page — stealth browser could not extract content",
+        url,
+      });
+    }
+
+    let trimmed = result.content;
+    let evictedFilePath: string | undefined;
+
+    if (result.content.length > MAX_CONTENT) {
+      const { preview, filePath } = evictToFile(
+        result.content,
+        "web-read-stealth",
+        MAX_CONTENT,
+      );
+      trimmed = preview;
+      evictedFilePath = filePath;
+    }
+
+    return JSON.stringify({
+      url: result.finalUrl,
+      content: trimmed,
+      chars: result.content.length,
+      truncated: result.content.length > MAX_CONTENT,
+      source: "stealth-browser",
+      cloudflare_solved: result.solved,
+      ...(evictedFilePath && { full_content_path: evictedFilePath }),
+    });
+  } catch (err) {
+    return JSON.stringify({
+      error: `Stealth browser fallback failed: ${err instanceof Error ? err.message : String(err)}`,
       url,
     });
   }
@@ -59,6 +113,7 @@ DO NOT USE WHEN:
 
 Returns clean Markdown with headings, code blocks, and links preserved.
 Works with: GitHub repos, news articles, documentation, blogs, PDFs.
+Cloudflare-protected pages are handled automatically via stealth browser fallback.
 For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).
 
 AFTER READING: Cite the URL when reporting content. Distinguish between what the page says and your own analysis.`,
@@ -113,6 +168,13 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
       }
 
       if (!response.ok) {
+        // Cloudflare fallback: if Jina returns 403/503, try stealth browser
+        if (response.status === 403 || response.status === 503) {
+          const body = await response.text().catch(() => "");
+          if (isCloudflareChallenge(body)) {
+            return await stealthFallback(url);
+          }
+        }
         return JSON.stringify({
           error: `Failed to read URL: ${response.status} ${response.statusText}`,
           url,
@@ -120,6 +182,11 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
       }
 
       const content = await response.text();
+
+      // Jina sometimes returns Cloudflare challenge HTML instead of content
+      if (isCloudflareChallenge(content)) {
+        return await stealthFallback(url);
+      }
 
       let trimmed = content;
       let evictedFilePath: string | undefined;
