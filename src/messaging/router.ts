@@ -1053,7 +1053,7 @@ export class MessageRouter {
       }
     }
     // Prompt enhancer: check if new message needs enhancement
-    else if (shouldEnhance(msg.text)) {
+    else if (!msg.imageUrl && shouldEnhance(msg.text)) {
       const threadTurns = getThreadTurns(msg.channel);
       const recentContext = threadTurns
         .slice(-4)
