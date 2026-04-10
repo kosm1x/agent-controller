@@ -49,6 +49,12 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 │  ├── Volume spike (> 2σ above 20-day average)            │
 │  ├── Price threshold alerts (user-defined)               │
 │  └── Custom composite signals (combine any indicators)   │
+│                                                          │
+│  Sentiment Signals (from Vibe-Trading gap analysis):     │
+│  ├── Fear & Greed Index (0-100, alternative.me API)      │
+│  ├── Crypto funding rates (long/short leverage)          │
+│  ├── Liquidation heatmaps (forced selling cascades)      │
+│  └── Stablecoin flows (money entering/leaving crypto)    │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
@@ -392,14 +398,20 @@ Before paper trading, Jarvis backtests its thesis against historical data. Nine 
 **Validation flow:**
 
 ```
-Signal: "BTC RSI at 28, macro stable"
+Signal: "BTC RSI at 28, macro stable, fear index at 22"
   → Regime: RANGING
   → Backtest RSI Reversion + Mean Reversion + VWAP (ranging strategies)
-  → Results: RSI Reversion 65% win rate, Mean Rev 58%, VWAP 52%
-  → Select: RSI Reversion (best for current regime)
+  → Walk-forward validation (not naive backtest — train/test split rolls forward)
+  → Stress test: "Would this strategy survive 2020 COVID crash?"
+  → Results: RSI Reversion 65% win rate, survived 4/5 stress scenarios
+  → Select: RSI Reversion (best for current regime + stress-resilient)
   → Paper trade with RSI Reversion entry/exit rules
   → Track: did the backtest-selected strategy outperform random?
 ```
+
+**Walk-forward validation** (from Vibe-Trading): Train on months 1-6, test on month 7. Roll forward. This prevents overfitting — a strategy that only works "in backtest" gets filtered out.
+
+**Stress testing** (from Vibe-Trading): Pre-built scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up). "This strategy has 65% win rate AND survives historical crashes" is fundamentally different from "65% win rate in calm markets."
 
 Over time, Jarvis learns which strategy works for which regime — adapting its playbook based on evidence, not intuition.
 
@@ -443,6 +455,7 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 - **Polymarket-Trading-Bot** — Regime detection (trending/ranging/volatile), multi-filter convergence (7 gates), shadow portfolio validation. Design patterns adopted into F7 composite signals
 - **polymarket-paper-trader** — MCP server (29 tools, stdio). Jarvis practices trading with $10K simulated. Track record builds credibility before alerting user. Phase F8
 - **polybot** — Replication scoring: compare Jarvis's paper trades vs whale decisions. Measures smart money alignment. Feedback loop for signal tuning
+- **Vibe-Trading** (HKUDS) — Gap analysis revealed 3 missing pieces: (1) sentiment signals (fear/greed, funding rates, liquidation heatmaps), (2) stress testing (5 historical + 5 hypothetical crash scenarios), (3) walk-forward ML validation (prevents backtest overfitting). 68-skill reference library. MIT licensed
 
 ## Open Questions
 
