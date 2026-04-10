@@ -524,24 +524,57 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 
 ## Implementation Order
 
-| Phase    | What                                                                                                                                                       | Sessions | Deps          |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------- |
-| **F1**   | Schema (market_data + watchlist + backtest_results + trade_theses + api_call_budget), Alpha Vantage + Yahoo Finance dual adapter, api_call_budget tracking | 1.5      | None          |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R)                                                                             | 1        | F1            |
-| **F3**   | Signal detector + market_signals tool + transmission chain field                                                                                           | 1        | F2            |
-| **F4**   | Watchlist management + market_quote/history tools                                                                                                          | 1        | F1            |
-| **F5**   | Python sidecar (FastAPI): FRED macro regime + TimesFM forecasting — single process, one port                                                               | 1.5      | None          |
-| **F6**   | Prediction markets (Polymarket/Kalshi) + whale tracker (Polymarket trade history + SEC EDGAR insider filings)                                              | 1.5      | None          |
-| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations)                                                                                                | 0.5      | None          |
-| **F7**   | Alpha Combination Engine (11-step) + signal evolution tracking + ISQ quality dimensions + minimum signal threshold (≥3 of 5 layers fresh)                  | 2        | F3+F5+F6+F6.5 |
-| **F7.5** | Strategy backtester (walk-forward + stress test) → backtest_results table                                                                                  | 1        | F7+F6         |
-| **F8**   | Paper trading via pm-trader MCP + trade_theses commitment tracking                                                                                         | 1.5      | F7.5          |
-| **F9**   | Morning/EOD market scan rituals                                                                                                                            | 1        | F7+F4         |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)                                                                                                          | 1        | F3            |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) + vision chart patterns (6th signal layer)                                                          | 1.5      | F3            |
-| **v7.2** | Knowledge graph layer (Graphify MCP — CRM + codebase + corpus)                                                                                             | 1.5      | None          |
-| **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                                              | 3        | v7.2          |
-| **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                                        | 2        | v7.3          |
+| Phase    | What                                                                                                                                    | Sessions | Deps           |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------- |
+| **F1**   | Schema (6 tables), Alpha Vantage + Yahoo Finance dual adapter, data validation, timezone normalization, api_call_budget tracking        | 1.5      | None           |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R) + golden-file tests                                      | 1        | F1             |
+| **F4**   | Watchlist management + market_quote/history tools                                                                                       | 1        | F1             |
+| **F3**   | Signal detector + market_signals tool + transmission chain field                                                                        | 1        | F2 + F4        |
+| **F5**   | Python sidecar (FastAPI): FRED macro regime + TimesFM forecasting — single process, one port                                            | 1.5      | F1 (test data) |
+| **F6**   | Prediction markets (Polymarket/Kalshi) + whale tracker (Polymarket trade history + SEC EDGAR insider filings)                           | 1.5      | None           |
+| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations)                                                                             | 0.5      | None           |
+| **F7**   | Alpha Combination Engine (11-step) + signal evolution + ISQ dimensions + per-layer freshness + weight versioning + min signal threshold | 2        | F3+F5+F6+F6.5  |
+| **F7.5** | Strategy backtester (walk-forward + stress test) → backtest_results table                                                               | 1        | F7             |
+| **F8**   | Paper trading via pm-trader MCP + trade_theses commitment tracking + transaction costs                                                  | 1.5      | F7.5           |
+| **F9**   | Morning/EOD market scan rituals + market calendar + dynamic alert budget                                                                | 1        | F8 + F4        |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)                                                                                       | 1        | F3             |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) + vision chart patterns (6th signal layer)                                       | 1.5      | F3             |
+| **v7.2** | Knowledge graph layer (Graphify MCP — CRM + codebase + corpus)                                                                          | 1.5      | None           |
+| **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                           | 3        | None           |
+| **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                     | 2        | v7.3           |
+
+### Dependency Graph
+
+```
+F1 (data layer)
+├── F2 (indicators) ──┐
+├── F4 (watchlist) ────┤
+│                      F3 (signal detector)
+├── F5 (FRED+TimesFM)─────────────────────┐
+                                           │
+F6 (prediction markets) ──────────────────┤
+F6.5 (sentiment) ─────────────────────────┤
+                                           │
+                                    F7 (combination engine)
+                                           │
+                                    F7.5 (backtester)
+                                           │
+                                    F8 (paper trading)
+                                           │
+                              F9 (scan rituals — last, needs track record)
+
+Parallel branches (after F3):
+  F10 (crypto websocket)
+  v7.1 (charts + vision)
+
+Independent (no v7 deps):
+  v7.2 (knowledge graph)
+  v7.3 (digital marketing) ── v7.4 (video production)
+```
+
+### Parallelization Opportunities
+
+F5, F6, and F6.5 have no dependencies on each other and only need F1 for test data. They can be built in parallel or interleaved. The critical path is: **F1 → F2 → F4 → F3 → F7 → F7.5 → F8 → F9**. Everything else can slot around it.
 
 ## Production Hardening (built into phases, zero extra sessions)
 
