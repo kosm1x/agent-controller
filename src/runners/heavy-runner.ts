@@ -96,6 +96,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       content?: string;
       score?: number;
       learnings?: string[];
+      toolCalls?: string[];
       tokenUsage?: { promptTokens: number; completionTokens: number };
       goalGraph?: unknown;
       trace?: unknown[];
@@ -118,6 +119,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
         score: parsed.score,
         learnings: parsed.learnings,
       },
+      toolCalls: parsed.toolCalls,
       tokenUsage: parsed.tokenUsage,
       durationMs: Date.now() - start,
       goalGraph: parsed.goalGraph,

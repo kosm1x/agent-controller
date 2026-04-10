@@ -1,16 +1,23 @@
 /**
- * NanoClaw Runner — Docker container-based task execution.
+ * NanoClaw Runner — Docker container-based coding task execution.
  *
- * Spawns a NanoClaw Docker container, sends the task via stdin JSON,
- * and collects output via sentinel-delimited stdout protocol.
- * This is the only runner type that uses Docker containers.
+ * Spawns a container with the nanoclaw-worker entrypoint, which runs
+ * the Prometheus orchestrator with all coding tools (jarvis_dev,
+ * code_search, file_edit, etc.) inside Docker isolation.
+ *
+ * The container uses the mission-control:latest image (same as heavy-runner)
+ * with the mission-control repo volume-mounted for git/test operations.
  */
 
 import { getConfig } from "../config.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import { spawnContainer, killContainer } from "./container.js";
+import {
+  spawnContainer,
+  killContainer,
+  generateContainerName,
+} from "./container.js";
 import type { ContainerHandle } from "./container.js";
 
 const CONTAINER_TIMEOUT_MS = 300_000; // 5 minutes
@@ -24,17 +31,30 @@ export const nanoclawRunner: Runner = {
     let handle: ContainerHandle | null = null;
 
     try {
-      // Build container input
+      // Build container input — include tools so the worker knows what to register
       const containerInput = {
         prompt: `${input.title}\n\n${input.description}`,
         taskId: input.taskId,
-        ...(input.input != null ? { data: input.input } : {}),
+        tools: input.tools,
       };
 
-      // Spawn container
+      // Spawn container with worker entrypoint, credentials, and repo mount
       handle = spawnContainer({
-        image: config.nanoclawImage,
+        image: config.heavyRunnerImage, // mission-control:latest (has compiled dist/)
+        name: generateContainerName(`nanoclaw-${input.taskId.slice(0, 8)}`),
+        command: ["node", "dist/runners/nanoclaw-worker.js"],
         input: containerInput,
+        envVars: {
+          INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
+          INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
+          INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
+          MC_API_KEY: config.apiKey,
+          MC_DB_PATH: "/tmp/mc.db",
+        },
+        volumes: [
+          "/root/claude/mission-control:/root/claude/mission-control:rw",
+          "/root/.config/gh:/root/.config/gh:ro",
+        ],
         timeoutMs: CONTAINER_TIMEOUT_MS,
       });
 
@@ -53,22 +73,50 @@ export const nanoclawRunner: Runner = {
 
       // Wait for result
       const containerOutput = await handle.result;
-
       const durationMs = Date.now() - start;
 
       if (containerOutput.status === "error") {
         return {
           success: false,
-          error: containerOutput.error ?? "Container returned error",
-          output: containerOutput.result,
+          error: containerOutput.error ?? "Container execution failed",
+          durationMs,
+        };
+      }
+
+      // Parse structured output from the worker (mirrors heavy-runner.ts:94-125)
+      const parsed = JSON.parse(containerOutput.result ?? "{}") as {
+        success?: boolean;
+        content?: string;
+        score?: number;
+        learnings?: string[];
+        toolCalls?: string[];
+        tokenUsage?: { promptTokens: number; completionTokens: number };
+        goalGraph?: unknown;
+        trace?: unknown[];
+        error?: string;
+        durationMs?: number;
+      };
+
+      if (parsed.error) {
+        return {
+          success: false,
+          error: parsed.error,
           durationMs,
         };
       }
 
       return {
-        success: true,
-        output: containerOutput.result,
+        success: parsed.success ?? true,
+        output: {
+          content: parsed.content,
+          score: parsed.score,
+          learnings: parsed.learnings,
+        },
+        toolCalls: parsed.toolCalls,
+        tokenUsage: parsed.tokenUsage,
         durationMs,
+        goalGraph: parsed.goalGraph,
+        trace: parsed.trace,
       };
     } catch (err) {
       // Kill container on unexpected error

@@ -96,14 +96,16 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
     }
   }
 
-  // Add volume mounts (validated: host path must be under /root/claude/ or /tmp/)
+  // Add volume mounts (validated: host path must be in allowlist)
   if (opts.volumes) {
+    const allowedPrefixes = [
+      "/root/claude/",
+      "/tmp/",
+      "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)
+    ];
     for (const vol of opts.volumes) {
       const hostPath = vol.split(":")[0];
-      if (
-        !hostPath.startsWith("/root/claude/") &&
-        !hostPath.startsWith("/tmp/")
-      ) {
+      if (!allowedPrefixes.some((p) => hostPath.startsWith(p))) {
         console.warn(
           `[container] Blocked volume mount outside allowed paths: ${vol}`,
         );

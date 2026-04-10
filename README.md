@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.4 CURRENT.** 131 test files, 1847 tests passing, zero type errors, 172 tools (109 deferred). Multi-turn confirmation gate for 21 high-risk tools (pause/resume pattern, interactive-only bypass for scheduled tasks). Pre-production hardened (5-agent audit + exhaustive tool scope audit). Pre-commit hook (typecheck + tests). Roadmap: D3+D4 (OAuth).
+**v6.4 CURRENT.** 132 test files, 1854 tests passing, zero type errors, 172 tools (109 deferred). Multi-turn confirmation gate for 21 high-risk tools (pause/resume pattern, interactive-only bypass for scheduled tasks). NanoClaw coding sandbox fully functional (5-bug fix: worker entrypoint, runner rewrite, volume validation, Dockerfile). Pre-production hardened (5-agent audit + exhaustive tool scope audit). Pre-commit hook (typecheck + tests). Roadmap: D3+D4 (OAuth).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -389,7 +389,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v5.0 S5c     | Done   | Research verification (provenance tracking, source anchoring, condensation)                                                                                          |
 | v5.0 S5      | Done   | Classifier calibration (dynamic messaging tier, rephrase fix, feedback quality loop, weighted eval scoring)                                                          |
 | v5.0 S6–S8   | Done   | Intelligence Depot (8 sources, delta engine, alert router, baselines, z-scores, 4 Jarvis tools, ritual integration)                                                  |
-| Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support                                                         |
+| Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support, sandbox E2E verified                                   |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
 See `V6-ROADMAP.md` for the full v6 roadmap and `docs/PROJECT-STATUS.md` for detailed phase history.
