@@ -509,11 +509,56 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 - **Vibe-Trading** (HKUDS) — Gap analysis revealed 3 missing pieces: (1) sentiment signals (fear/greed, funding rates, liquidation heatmaps), (2) stress testing (5 historical + 5 hypothetical crash scenarios), (3) walk-forward ML validation (prevents backtest overfitting). 68-skill reference library. MIT licensed
 - **RohOnChain alpha combination thread** — Fundamental Law of Active Management (IR = IC × √N). 11-step procedure for mathematically optimal signal weighting. Replaces naive voting ("3 of 5 agree") with independence-weighted combination. The theoretical foundation for F7. Key insight: 50 weak signals at IC=0.05 beat one strong signal at IC=0.10
 
-## Open Questions
+## Decisions (answered 2026-04-10)
 
-1. **Which tickers does Fede care about?** Need initial watchlist for testing
-2. **Alert frequency tolerance?** How many signals/day before it becomes noise?
-3. **Crypto priority vs equities?** Determines which data source to build first
-4. **Premium data?** Alpha Vantage/Polygon.io API keys worth the cost?
-5. **FRED API key?** Free signup at https://fred.stlouisfed.org/docs/api/api_key.html — needed before F5
-6. **Prediction market focus?** Fed rate decisions? Elections? Crypto events? Determines Polymarket vs Kalshi priority
+### 1. Sectors: Biotech, Military/Intelligence, Energy
+
+**Initial watchlist:**
+
+| Sector                    | Tickers                                                                                        | Why                                                     |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **Biotech**               | XBI (SPDR Biotech ETF), IBB (iShares Biotech), ARKG (ARK Genomic), MRNA, LLY, AMGN, VRTX, REGN | FDA approvals, pipeline catalysts, earnings surprises   |
+| **Military/Intelligence** | ITA (iShares Defense ETF), LMT, RTX, NOC, GD, PLTR, BA, LHX                                    | Geopolitical tensions, defense budgets, contract awards |
+| **Energy**                | XLE (Energy Select ETF), XOP (Oil & Gas Exploration), CVX, XOM, SLB, OXY, FSLR, ENPH           | Oil prices, OPEC decisions, energy transition           |
+
+### 2. Priority: Leveraged FOREX + Gold
+
+**F1 starts with forex/gold, not equities.** Data source: Yahoo Finance for daily OHLCV, Frankfurter (already in Intel Depot) for real-time rates.
+
+| Pair/Instrument    | Why                                              |
+| ------------------ | ------------------------------------------------ |
+| EUR/USD            | Most liquid, macro-driven                        |
+| GBP/USD            | BoE policy divergence                            |
+| USD/JPY            | Carry trade barometer                            |
+| USD/MXN            | Fede's home currency exposure                    |
+| EUR/MXN            | Direct business relevance                        |
+| XAU/USD (Gold)     | Safe haven, inflation hedge, central bank buying |
+| DXY (Dollar Index) | Umbrella for all USD pairs                       |
+
+**"Leveraged" note:** Jarvis detects signals and paper trades. Position sizing via Kelly accounts for leverage risk. Jarvis never recommends leverage amounts — that's the user's decision.
+
+### 3. FRED API Key
+
+Reminder set: sign up at https://fred.stlouisfed.org/docs/api/api_key.html before F5 session.
+
+### 4. Trading Horizon: Mid-to-Long Term
+
+**No scalping. No intraday noise.**
+
+| Timeframe   | Data                          | Signal Type                                       |
+| ----------- | ----------------------------- | ------------------------------------------------- |
+| **Daily**   | OHLCV candles, 1 year history | SMA/EMA crossovers, RSI extremes, Bollinger bands |
+| **Weekly**  | Aggregated from daily         | Trend direction, regime detection                 |
+| **Monthly** | FRED macro data               | Macro regime shifts, yield curve, employment      |
+
+**Alert cadence:** Max 2-3 signals per day across entire watchlist. Morning scan (7:30 AM MX) + end-of-day (4:30 PM MX). No mid-day noise unless a circuit-breaker-level event fires.
+
+**Holding periods:** Days to weeks (forex), weeks to months (sectors). Not minutes or hours.
+
+**Implication for indicators:** Optimize SMA/EMA periods for daily timeframe (20/50/200 day). RSI 14-period on daily. MACD 12/26/9 on daily. No 1-min or 5-min signals.
+
+## Remaining Pre-Build Items
+
+- [ ] FRED API key signup (before F5)
+- [ ] 30-day v6 production validation (V7-READINESS-CRITERIA.md checklist)
+- [ ] Confirm Yahoo Finance covers all forex pairs + gold adequately
