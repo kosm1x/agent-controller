@@ -232,17 +232,54 @@ function detectSignals(
 type MarketRegime = "trending" | "ranging" | "volatile";
 function detectRegime(data: OHLCV[], period?: number): MarketRegime;
 
-// Composite signal: require ≥N confirming factors before alerting
-// (convergence pattern: momentum + depth + macro + prediction + volume)
-function compositeScore(
+// Alpha Combination Engine (from RohOnChain / Fundamental Law of Active Management)
+//
+// NOT a voting system ("3 of 5 agree"). Instead: mathematically optimal weighting
+// based on each signal's INDEPENDENT contribution after removing shared variance.
+//
+// IR = IC × √N  (Information Ratio = avg Information Coefficient × √independent signals)
+// 50 weak signals at IC=0.05 → IR=0.354 (beats single signal at IC=0.10)
+//
+// The 11-step procedure:
+// 1. Collect return series per signal
+// 2. Serial demean (remove drift)
+// 3. Calculate variance per signal
+// 4. Normalize to common scale
+// 5. Drop most recent observation (prevent look-ahead)
+// 6. Cross-sectional demean (remove shared market-wide effects)
+// 7. Drop final period (data hygiene)
+// 8. Calculate forward expected return per signal
+// 9. Regress to isolate INDEPENDENT contribution (critical step)
+// 10. Weight = independent_edge / volatility (penalize noise)
+// 11. Normalize weights to sum to 1
+
+interface AlphaWeight {
+  signalName: string;
+  weight: number; // optimal weight from combination engine
+  informationCoefficient: number; // IC: correlation of signal vs outcome
+  independentContribution: number; // what this adds that no other signal covers
+}
+
+function combineAlpha(
   signals: Signal[],
+  historicalReturns: SignalReturnSeries[],
   regime: MarketRegime,
 ): {
-  score: number; // 0-1 composite confidence
-  confirming: number; // how many independent signals agree
-  regime: MarketRegime;
-  actionable: boolean; // confirming ≥ 3
+  megaAlpha: number; // combined probability/direction estimate
+  weights: AlphaWeight[]; // per-signal optimal weights
+  effectiveN: number; // actual independent signals (≤ total signals)
+  informationRatio: number; // IR of the combined system
+  edge: number; // gap between megaAlpha and market price
+  actionable: boolean; // edge > minimum threshold
 };
+
+// Position sizing: empirical Kelly adjusted for estimation uncertainty
+// f = f_kelly × (1 - CV_edge)  where CV_edge from Monte Carlo simulation
+function kellySize(
+  edge: number,
+  odds: number,
+  cvEdge: number, // coefficient of variation from simulation
+): number;
 ```
 
 ### Shadow Portfolio (validation before alerting)
@@ -351,14 +388,26 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 Instead of just reporting signals, Jarvis paper trades them on Polymarket via the `pm-trader` MCP server (agent-next/polymarket-paper-trader). This builds a track record that proves signal quality before recommending actions to the user.
 
 ```
-Signal detected: "BTC RSI at 28, macro regime stable"
-  → Jarvis forms thesis: "BTC oversold, likely bounce"
-  → Backtests RSI reversion strategy on last 30 days (F7.5)
-  → Paper buys BTC-UP on Polymarket ($100 simulated)
-  → Tracks outcome over next 15 minutes
-  → Scores vs whale consensus: "72% alignment with smart money" (replication score)
-  → Records win/loss in trading journal
-  → After 30+ trades: "My oversold signals have 62% win rate, 1.3 Sharpe"
+12 signals fire across 5 layers:
+  RSI=28, Bollinger low, volume spike (technical)
+  Yield curve stable, VIX=18 (macro)
+  Polymarket BTC-UP at 0.62 (crowd)
+  Top 3 whales bought in last hour (smart money)
+  Fear index=22, funding rates negative (sentiment)
+
+Alpha Combination Engine (11-step procedure):
+  → Strips shared variance: RSI + Bollinger are correlated (same price data)
+  → Effective independent signals: 7 of 12 (5 were redundant)
+  → Weights: whale flow 0.23, funding rates 0.19, VIX 0.17, RSI 0.14, ...
+  → Combined megaAlpha: 0.71 probability of bounce
+  → Market price: 0.62 → Edge: +0.09
+  → Kelly size (uncertainty-adjusted): $85 paper trade
+
+  → Backtests strategy on last 30 days with walk-forward (F7.5)
+  → Stress test: survives 4/5 historical crash scenarios
+  → Paper trades on Polymarket (F8)
+  → Scores vs whale consensus: 72% alignment (replication)
+  → After 30+ trades: "62% win rate, 1.3 Sharpe, IR=0.35"
   → NOW alerts user with evidence
 ```
 
@@ -369,12 +418,13 @@ Signal detected: "BTC RSI at 28, macro regime stable"
 ```
 📊 **Señal de Mercado — BTC-USD**
 
-🟢 BTC RSI at 28 (sobreventa) + macro estable + VIX < 20
-Señal: COMPRA — RSI extremo con soporte macro
+🟢 **MegaAlpha: 0.71** (mercado: 0.62) → Edge: +9%
+  7 señales independientes de 12 totales (5 redundantes filtradas)
+  Top pesos: whale flow 23%, funding 19%, VIX 17%, RSI 14%
 
-📈 **Mi historial con esta señal:**
-  Trades: 47 | Win rate: 62% | Sharpe: 1.3 | Max DD: -8%
-  Alineación con smart money: 72% | Última vez: +4.2% (7 abr)
+📈 **Mi historial:**
+  Trades: 47 | Win rate: 62% | Sharpe: 1.3 | IR: 0.35
+  Smart money: 72% alineado | Estrés: sobrevive 4/5 crashes
 
 _¿Procedo con paper trade? Responde "sí" para ejecutar_
 ```
@@ -417,20 +467,21 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 
 ## Implementation Order
 
-| Phase    | What                                                        | Sessions | Deps     |
-| -------- | ----------------------------------------------------------- | -------- | -------- |
-| **F1**   | market_data table + Yahoo Finance adapter                   | 1        | None     |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)           | 1        | F1       |
-| **F3**   | Signal detector + market_signals tool                       | 1        | F2       |
-| **F4**   | Watchlist management + market_quote/history tools           | 1        | F1       |
-| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)        | 1        | None     |
-| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)      | 1.5      | None     |
-| **F7**   | Composite signals + regime detection + shadow portfolio     | 1        | F3+F5+F6 |
-| **F7.5** | Strategy backtester (test 9 playbook strategies on history) | 1        | F7+F6    |
-| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)    | 1        | F7.5     |
-| **F9**   | Morning/EOD market scan rituals                             | 1        | F7+F4    |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)           | 1        | F3       |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)      | 1        | F3       |
+| Phase    | What                                                        | Sessions | Deps          |
+| -------- | ----------------------------------------------------------- | -------- | ------------- |
+| **F1**   | market_data table + Yahoo Finance adapter                   | 1        | None          |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)           | 1        | F1            |
+| **F3**   | Signal detector + market_signals tool                       | 1        | F2            |
+| **F4**   | Watchlist management + market_quote/history tools           | 1        | F1            |
+| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)        | 1        | None          |
+| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)      | 1.5      | None          |
+| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations) | 0.5      | None          |
+| **F7**   | Alpha Combination Engine (11-step, replaces naive voting)   | 1.5      | F3+F5+F6+F6.5 |
+| **F7.5** | Strategy backtester (walk-forward + stress test)            | 1        | F7+F6         |
+| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)    | 1        | F7.5          |
+| **F9**   | Morning/EOD market scan rituals                             | 1        | F7+F4         |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)           | 1        | F3            |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)      | 1        | F3            |
 
 ## Constraints
 
@@ -456,6 +507,7 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 - **polymarket-paper-trader** — MCP server (29 tools, stdio). Jarvis practices trading with $10K simulated. Track record builds credibility before alerting user. Phase F8
 - **polybot** — Replication scoring: compare Jarvis's paper trades vs whale decisions. Measures smart money alignment. Feedback loop for signal tuning
 - **Vibe-Trading** (HKUDS) — Gap analysis revealed 3 missing pieces: (1) sentiment signals (fear/greed, funding rates, liquidation heatmaps), (2) stress testing (5 historical + 5 hypothetical crash scenarios), (3) walk-forward ML validation (prevents backtest overfitting). 68-skill reference library. MIT licensed
+- **RohOnChain alpha combination thread** — Fundamental Law of Active Management (IR = IC × √N). 11-step procedure for mathematically optimal signal weighting. Replaces naive voting ("3 of 5 agree") with independence-weighted combination. The theoretical foundation for F7. Key insight: 50 weak signals at IC=0.05 beat one strong signal at IC=0.10
 
 ## Open Questions
 
