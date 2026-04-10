@@ -486,7 +486,8 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
-- **Free APIs first** — Yahoo Finance + CoinGecko + Frankfurter + FRED + Polymarket/Kalshi cover stocks/crypto/forex/macro/predictions
+- **Alpha Vantage primary** ($50/yr) — forex, gold, US stocks (daily OHLCV, 75 calls/min). Reliable API with SLA
+- **Free APIs supplement** — FRED (macro), Polymarket/Kalshi (predictions), CoinGecko (crypto), Frankfurter (EUR backup)
 - **Python sidecar for FRED** — fredapi + pandas, called via subprocess. No npm deps added
 - **SQLite storage** — market_data table, additive schema (no DB reset)
 - **Text-first delivery** — charts are v7.1, not v7
@@ -557,8 +558,22 @@ Reminder set: sign up at https://fred.stlouisfed.org/docs/api/api_key.html befor
 
 **Implication for indicators:** Optimize SMA/EMA periods for daily timeframe (20/50/200 day). RSI 14-period on daily. MACD 12/26/9 on daily. No 1-min or 5-min signals.
 
+## Data Source Decision
+
+**Alpha Vantage ($50/yr)** selected as primary data source. Confirmed by user.
+
+| Source               | Role                                            | Cost   |
+| -------------------- | ----------------------------------------------- | ------ |
+| **Alpha Vantage**    | Forex, gold, US stocks (daily OHLCV)            | $50/yr |
+| **FRED (fredapi)**   | Macro signals (yield curve, VIX, employment)    | Free   |
+| **Polymarket Gamma** | Prediction market probabilities                 | Free   |
+| **CoinGecko**        | Crypto (already in Intel Depot)                 | Free   |
+| **Frankfurter**      | EUR cross-rates backup (already in Intel Depot) | Free   |
+
+**Total data layer cost: $50/year.**
+
 ## Remaining Pre-Build Items
 
+- [ ] Alpha Vantage API key (user confirmed — set in .env as `ALPHAVANTAGE_API_KEY`)
 - [ ] FRED API key signup (before F5)
 - [ ] 30-day v6 production validation (V7-READINESS-CRITERIA.md checklist)
-- [ ] Confirm Yahoo Finance covers all forex pairs + gold adequately
