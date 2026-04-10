@@ -587,6 +587,14 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
 export const gslidesReadTool: Tool = {
   name: "gslides_read",
   deferred: true,
+  triggerPhrases: [
+    "lee esta presentación",
+    "abre esta presentación",
+    "qué dice este slides",
+    "analiza la presentación",
+    "read this presentation",
+    "diapositivas",
+  ],
   definition: {
     type: "function",
     function: {

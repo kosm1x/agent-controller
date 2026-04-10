@@ -353,6 +353,15 @@ export function scopeToolsForMessage(
   // Empty set = classifier said "no groups needed" (greetings). Null/undefined = fallback.
   if (preClassifiedGroups !== undefined && preClassifiedGroups !== null) {
     activeGroups = preClassifiedGroups;
+    // URL-based scope injection — semantic classifier misses these because it
+    // sees "URL" → "browser" instead of recognizing Google Workspace domains.
+    if (
+      /docs\.google\.com\/(document|spreadsheets|presentation)/i.test(
+        currentMessage,
+      )
+    ) {
+      activeGroups.add("google");
+    }
   } else {
     activeGroups = new Set<string>();
     // Check if the CURRENT message triggers any scope groups on its own.
