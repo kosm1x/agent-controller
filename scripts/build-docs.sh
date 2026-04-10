@@ -30,8 +30,8 @@ mkdir -p "$OUT"
     fi
   done
 
-  # All docs/*.md (sorted for consistency)
-  for f in $(find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort); do
+  # All docs/*.md sorted — safe iteration (no word-split on spaces)
+  find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort | while IFS= read -r f; do
     name="$(basename "$f")"
     echo "================================================================================"
     echo "# FILE: docs/$name"
@@ -44,26 +44,28 @@ mkdir -p "$OUT"
 } > "$OUT/llms-full.txt"
 
 # ---------------------------------------------------------------------------
-# 2. llms.txt — index file (llmstxt.org format)
+# 2. llms.txt — index file (llmstxt.org format, resolvable URLs)
 # ---------------------------------------------------------------------------
 {
   echo "# Mission Control"
   echo "> Unified AI agent orchestrator. Jarvis strategic assistant."
   echo ""
   echo "## Root"
-  echo "- [README](README.md): Project overview, architecture, setup"
-  echo "- [CLAUDE.md](CLAUDE.md): Development instructions, invariants, patterns"
+  echo "- [README](/docs/raw/README.md): Project overview, architecture, setup"
+  echo "- [CLAUDE.md](/docs/raw/CLAUDE.md): Development instructions, invariants, patterns"
   echo ""
   echo "## Docs"
-  for f in $(find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort); do
+  find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort | while IFS= read -r f; do
     name="$(basename "$f")"
-    title="$(head -5 "$f" | grep "^# " | head -1 | sed 's/^# //' || echo "$name")"
-    echo "- [$name](docs/$name): $title"
+    # Extract first H1 title; fallback to filename. || true prevents pipefail exit
+    title="$(head -5 "$f" | grep "^# " | head -1 | sed 's/^# //' || true)"
+    [ -z "$title" ] && title="$name"
+    echo "- [$name](/docs/raw/$name): $title"
   done
 } > "$OUT/llms.txt"
 
 # ---------------------------------------------------------------------------
-# 3. index.html — minimal browsable docs page
+# 3. index.html — minimal browsable docs page (XSS-safe: uses textContent)
 # ---------------------------------------------------------------------------
 TOTAL_DOCS=$(find "$DOCS" -maxdepth 1 -name "*.md" -type f | wc -l)
 cat > "$OUT/index.html" << 'HTMLEOF'
@@ -120,19 +122,30 @@ cat > "$OUT/index.html" << 'HTMLEOF'
 <script>
 HTMLEOF
 
-# Inject doc entries dynamically
+# Inject doc entries — JSON with HTML-entity-escaped titles (XSS-safe)
 echo "const docs = [" >> "$OUT/index.html"
-for f in $(find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort); do
+find "$DOCS" -maxdepth 1 -name "*.md" -type f | sort | while IFS= read -r f; do
   name="$(basename "$f")"
-  title="$(head -5 "$f" | grep "^# " | head -1 | sed 's/^# //' | sed "s/'/\\\\'/g" || echo "$name")"
+  title="$(head -5 "$f" | grep "^# " | head -1 | sed 's/^# //' || true)"
+  [ -z "$title" ] && title="$name"
+  # Escape for JSON string: backslash, single quote, HTML entities
+  title="$(echo "$title" | sed "s/\\\\/\\\\\\\\/g" | sed "s/'/\\\\'/g" | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')"
   echo "  {name:'$name', title:'$title'}," >> "$OUT/index.html"
 done
+# XSS-safe DOM construction: textContent instead of innerHTML
 cat >> "$OUT/index.html" << 'HTMLEOF2'
 ];
 const ul = document.getElementById('docs');
 docs.forEach(d => {
   const li = document.createElement('li');
-  li.innerHTML = `<a href="/docs/raw/${d.name}">${d.name}<div class="desc">${d.title}</div></a>`;
+  const a = document.createElement('a');
+  a.href = `/docs/raw/${d.name}`;
+  a.textContent = d.name;
+  const desc = document.createElement('div');
+  desc.className = 'desc';
+  desc.textContent = d.title;
+  a.appendChild(desc);
+  li.appendChild(a);
   ul.appendChild(li);
 });
 </script>

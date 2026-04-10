@@ -3,7 +3,7 @@
  * Mounts all route groups onto the Hono app.
  */
 
-import { readFileSync } from "fs";
+import { readFile } from "fs/promises";
 import { join } from "path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -63,17 +63,22 @@ export function createApp(): Hono {
   // Docs — static HTML index + llms.txt + raw markdown (no auth)
   app.get("/docs", (c) => c.redirect("/docs/"));
   app.use("/docs/*", serveStatic({ root: "./public" }));
-  app.get("/docs/raw/:file", (c) => {
+  app.get("/docs/raw/:file", async (c) => {
     const file = c.req.param("file");
+    // Security: only .md files, no traversal (.. or / or percent-encoded variants)
     if (!file.endsWith(".md") || file.includes("..") || file.includes("/")) {
       return c.text("Not found", 404);
     }
     // Check docs/ first, then project root (README.md, CLAUDE.md)
     for (const base of ["docs", "."]) {
       try {
-        const content = readFileSync(join(process.cwd(), base, file), "utf-8");
+        const content = await readFile(
+          join(process.cwd(), base, file),
+          "utf-8",
+        );
         return c.text(content, 200, {
           "Content-Type": "text/markdown; charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
         });
       } catch {
         continue;
