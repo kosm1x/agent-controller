@@ -7,6 +7,7 @@
  */
 
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
+import { toolRegistry } from "../tools/registry.js";
 import { SYSTEM_PROMPT_TOKEN_BUDGET } from "../config/constants.js";
 import { getDatabase } from "../db/index.js";
 import {
@@ -58,6 +59,12 @@ import {
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
+import {
+  getPendingConfirmation,
+  clearPendingConfirmation,
+  storePendingConfirmation,
+  detectConfirmationResponse,
+} from "./confirmations.js";
 import { TelegramStreamController } from "./channels/telegram-stream.js";
 import {
   isProactiveTask,
@@ -1125,6 +1132,52 @@ export class MessageRouter {
       }
     }
 
+    // Pending confirmation check — user confirms/declines a high-risk tool operation.
+    // Must be before feedback/fast-path/full pipeline — this is a direct tool execution.
+    const pendingConf = getPendingConfirmation(tk);
+    if (pendingConf) {
+      const confResponse = detectConfirmationResponse(msg.text);
+      if (confResponse === "confirm") {
+        console.log(
+          `[router] Confirmation accepted: ${pendingConf.toolName} — executing directly`,
+        );
+        clearPendingConfirmation(tk);
+        try {
+          const result = await toolRegistry.execute(
+            pendingConf.toolName,
+            pendingConf.args,
+          );
+          // Format result for user
+          let userResponse: string;
+          try {
+            const parsed = JSON.parse(result);
+            userResponse = parsed.error
+              ? `Error: ${parsed.error}`
+              : `Listo. ${pendingConf.summary}`;
+          } catch {
+            userResponse = `Listo. ${pendingConf.summary}`;
+          }
+          this.sendToChannel(msg.channel, msg.from, userResponse);
+          appendDayLog("USER", msg.text);
+          appendDayLog("JARVIS", userResponse);
+          pushToThread(tk, `User: ${msg.text}\nJarvis: ${userResponse}`);
+        } catch (err) {
+          const errMsg = `Error ejecutando ${pendingConf.toolName}: ${err instanceof Error ? err.message : String(err)}`;
+          this.sendToChannel(msg.channel, msg.from, errMsg);
+        }
+        return;
+      } else if (confResponse === "decline") {
+        console.log(`[router] Confirmation declined: ${pendingConf.toolName}`);
+        clearPendingConfirmation(tk);
+        this.sendToChannel(msg.channel, msg.from, "Cancelado.");
+        appendDayLog("USER", msg.text);
+        appendDayLog("JARVIS", "Cancelado.");
+        return;
+      }
+      // Not a clear confirm/decline — clear stale pending and process normally
+      clearPendingConfirmation(tk);
+    }
+
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
@@ -1624,6 +1677,10 @@ export class MessageRouter {
       // Read tool calls once — shared by extractPattern + auto-persist + background extraction
       // (C1 audit fix: hoisted above all consumers to eliminate duplicate DB read)
       let taskToolCalls: string[] = [];
+      let taskPendingConfirmation: {
+        toolName: string;
+        args: Record<string, unknown>;
+      } | null = null;
       try {
         const toolRow = getDatabase()
           .prepare(
@@ -1631,10 +1688,28 @@ export class MessageRouter {
           )
           .get(taskId) as { output: string | null } | undefined;
         if (toolRow?.output) {
-          taskToolCalls = JSON.parse(toolRow.output).toolCalls ?? [];
+          const parsedOutput = JSON.parse(toolRow.output);
+          taskToolCalls = parsedOutput.toolCalls ?? [];
+          taskPendingConfirmation = parsedOutput.pendingConfirmation ?? null;
         }
       } catch {
         /* DB or JSON parse failure — proceed with empty tool list */
+      }
+
+      // Store pending confirmation for the next user message (pause/resume pattern)
+      if (taskPendingConfirmation && pending.tk) {
+        const summary = `${taskPendingConfirmation.toolName}(${Object.entries(
+          taskPendingConfirmation.args,
+        )
+          .map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`)
+          .join(", ")})`;
+        storePendingConfirmation(
+          pending.tk,
+          taskPendingConfirmation.toolName,
+          taskPendingConfirmation.args,
+          summary,
+        );
+        console.log(`[router] Stored pending confirmation: ${summary}`);
       }
 
       // Execution pattern extraction (async, fire-and-forget)

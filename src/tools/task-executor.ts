@@ -84,24 +84,25 @@ export function createTaskExecutor(
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    // CCP5+CCP9: Only explicitly listed DESTRUCTIVE_MCP_TOOLS are hard-blocked.
-    // The broader requiresConfirmation gate (getEffectiveRiskTier === "high")
-    // was enabled in ed0d56b but broke 21 tools — no multi-turn confirmation
-    // flow exists yet. Reverted to empty-Set check; risk tier is log-only.
-    // TODO: Build multi-turn confirmation flow, then re-enable risk tier gate.
-    if (registry.isDestructiveMcp(name)) {
+    // CCP5+CCP9: HIGH-risk tools (requiresConfirmation) require user approval.
+    // Multi-turn confirmation flow: tool returns CONFIRMATION_REQUIRED →
+    // LLM asks user → task completes → pending stored → user confirms →
+    // router executes directly on next message. Pattern from Executor.
+    if (registry.getEffectiveRiskTier(name) === "high") {
       const fp = argsFingerprint(args);
       if (!context.isDestructiveUnlocked(name, fp)) {
-        log.warn(
+        // Store the pending operation so the router can execute it on confirmation
+        context.setPendingConfirmation(name, args);
+        log.info(
           { tool: name, taskId: context.taskId },
-          "destructive tool BLOCKED (no confirmation in task context)",
+          "high-risk tool requires confirmation — pausing for user approval",
         );
         return JSON.stringify({
           error: "CONFIRMATION_REQUIRED",
           message:
-            "PAUSE — this tool requires user confirmation before execution. " +
-            "Present the items to delete (name, type, count) and ask: '¿Los elimino?' or 'Shall I delete these?' " +
-            "The user will confirm on the next message, and the tool will execute. Do NOT say you lack the tool.",
+            "Esta acción requiere confirmación del usuario. " +
+            "Presenta lo que vas a hacer y pregunta: '¿Procedo?' o '¿Lo envío?' " +
+            "El usuario confirmará en el siguiente mensaje y la acción se ejecutará automáticamente.",
           tool: name,
         });
       }

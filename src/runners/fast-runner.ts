@@ -1267,6 +1267,9 @@ export const fastRunner: Runner = {
           ...(result.compactionApplied && {
             compactionApplied: result.compactionApplied,
           }),
+          ...(taskContext.getPendingConfirmation() && {
+            pendingConfirmation: taskContext.getPendingConfirmation(),
+          }),
         },
         toolCalls: toolsCalled,
         tokenUsage: {

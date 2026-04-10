@@ -25,8 +25,30 @@ export class TaskExecutionContext {
   /** Memory store count for rate limiting. */
   private memoryStoreCount = 0;
 
+  /** Pending tool confirmation — set when a high-risk tool is blocked. */
+  private _pendingConfirmation: {
+    toolName: string;
+    args: Record<string, unknown>;
+  } | null = null;
+
   constructor(taskId: string) {
     this.taskId = taskId;
+  }
+
+  // --- Pending confirmation (pause/resume pattern) ---
+
+  setPendingConfirmation(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): void {
+    this._pendingConfirmation = { toolName, args };
+  }
+
+  getPendingConfirmation(): {
+    toolName: string;
+    args: Record<string, unknown>;
+  } | null {
+    return this._pendingConfirmation;
   }
 
   // --- Destructive lock management ---
