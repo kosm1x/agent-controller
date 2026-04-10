@@ -207,6 +207,40 @@ function detectSignals(
   data: OHLCV[],
   config?: SignalConfig,
 ): Signal[];
+
+// Regime-aware signal weighting (from Polymarket Trading Bot pattern)
+type MarketRegime = "trending" | "ranging" | "volatile";
+function detectRegime(data: OHLCV[], period?: number): MarketRegime;
+
+// Composite signal: require ≥N confirming factors before alerting
+// (convergence pattern: momentum + depth + macro + prediction + volume)
+function compositeScore(
+  signals: Signal[],
+  regime: MarketRegime,
+): {
+  score: number; // 0-1 composite confidence
+  confirming: number; // how many independent signals agree
+  regime: MarketRegime;
+  actionable: boolean; // confirming ≥ 3
+};
+```
+
+### Shadow Portfolio (validation before alerting)
+
+Before sending live alerts, simulate the last 30 days of signals and report hypothetical P&L. Builds credibility and catches broken signal logic before it reaches the user.
+
+```typescript
+// src/finance/shadow.ts
+function backtest(
+  signals: Signal[],
+  priceHistory: OHLCV[],
+): {
+  totalReturn: number;
+  winRate: number;
+  sharpe: number;
+  maxDrawdown: number;
+  tradeCount: number;
+};
 ```
 
 ## Macro Regime Detection (FRED)
@@ -279,7 +313,7 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 | **F4**   | Watchlist management + market_quote/history tools               | 1        | F1       |
 | **F5**   | FRED macro regime (Python sidecar + macro_dashboard)            | 1        | None     |
 | **F6**   | Prediction markets (Polymarket/Kalshi + prediction_market tool) | 1        | None     |
-| **F7**   | Composite signals (technical + macro + prediction)              | 1        | F3+F5+F6 |
+| **F7**   | Composite signals + regime detection + shadow portfolio         | 1        | F3+F5+F6 |
 | **F8**   | Morning/EOD market scan rituals                                 | 1        | F7+F4    |
 | **F9**   | Real-time crypto via Binance WebSocket (optional)               | 1        | F3       |
 | **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)          | 1        | F3       |
@@ -304,6 +338,7 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 - **Polymarket Gamma API** — `https://gamma-api.polymarket.com/events` (market discovery, no key)
 - **Kalshi REST API** — `https://api.kalshi.com/trade-api/v2` (20 RPS free tier)
 - **prediction-market-backtesting** — Strategy patterns: mean reversion, EMA crossover, panic fade, VWAP reversion, breakout. Reference for signal extraction logic
+- **Polymarket-Trading-Bot** — Regime detection (trending/ranging/volatile), multi-filter convergence (7 gates), shadow portfolio validation. Design patterns adopted into F7 composite signals
 
 ## Open Questions
 
