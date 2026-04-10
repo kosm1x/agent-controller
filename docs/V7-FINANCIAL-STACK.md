@@ -52,7 +52,9 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 │  ├── CoinGecko (crypto — already in Intel Depot)         │
 │  ├── Frankfurter (forex — already in Intel Depot)        │
 │  ├── Open-Meteo (commodities correlation — existing)     │
-│  └── Google Finance (basic quotes, no API key)           │
+│  ├── Google Finance (basic quotes, no API key)           │
+│  ├── Polymarket Gamma API (prediction market events)     │
+│  └── Kalshi REST API (binary outcome markets, 20 RPS)   │
 │                                                          │
 │  Macro data (FRED — free, 120 calls/min):                │
 │  ├── T10Y2Y (yield curve — recession predictor)          │
@@ -123,13 +125,14 @@ CREATE TABLE IF NOT EXISTS watchlist (
 | `watchlist_manage`  | Add/remove/list watchlist tickers + alert configs          | `finance`   |
 | `market_scan`       | Scan multiple tickers for a specific condition             | `finance`   |
 | `macro_dashboard`   | FRED macro regime: yield curve, VIX, employment, inflation | `finance`   |
+| `prediction_market` | Polymarket/Kalshi top markets, probabilities, 24h shifts   | `finance`   |
 
 ### Scope pattern
 
 ```typescript
 // finance scope group
 {
-  pattern: /\b(mercado|market|acci[oó]n|stock|precio|price|ticker|bolsa|crypto|bitcoin|btc|eth|forex|divisas?|tipo\s+de\s+cambio|rsi|macd|bollinger|sma|ema|vwap|volumen|volume|overbought|oversold|sobrecompra|sobreventa|cruce\s+de\s+medias|golden\s+cross|death\s+cross|señal\s+(de\s+)?compra|señal\s+(de\s+)?venta|buy\s+signal|sell\s+signal)\b/i,
+  pattern: /\b(mercado|market|acci[oó]n|stock|precio|price|ticker|bolsa|crypto|bitcoin|btc|eth|forex|divisas?|tipo\s+de\s+cambio|rsi|macd|bollinger|sma|ema|vwap|volumen|volume|overbought|oversold|sobrecompra|sobreventa|cruce\s+de\s+medias|golden\s+cross|death\s+cross|señal\s+(de\s+)?compra|señal\s+(de\s+)?venta|buy\s+signal|sell\s+signal|polymarket|kalshi|predicci[oó]n|prediction\s+market|probabilidad|apuesta|odds)\b/i,
   group: "finance",
 }
 ```
@@ -268,22 +271,23 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 
 ## Implementation Order
 
-| Phase    | What                                                   | Sessions | Deps  |
-| -------- | ------------------------------------------------------ | -------- | ----- |
-| **F1**   | market_data table + Yahoo Finance adapter              | 1        | None  |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)      | 1        | F1    |
-| **F3**   | Signal detector + market_signals tool                  | 1        | F2    |
-| **F4**   | Watchlist management + market_quote/history tools      | 1        | F1    |
-| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)   | 1        | None  |
-| **F6**   | Composite signals (technical + macro regime context)   | 1        | F3+F5 |
-| **F7**   | Morning/EOD market scan rituals                        | 1        | F6+F4 |
-| **F8**   | Real-time crypto via Binance WebSocket (optional)      | 1        | F3    |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) | 1        | F3    |
+| Phase    | What                                                            | Sessions | Deps     |
+| -------- | --------------------------------------------------------------- | -------- | -------- |
+| **F1**   | market_data table + Yahoo Finance adapter                       | 1        | None     |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)               | 1        | F1       |
+| **F3**   | Signal detector + market_signals tool                           | 1        | F2       |
+| **F4**   | Watchlist management + market_quote/history tools               | 1        | F1       |
+| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)            | 1        | None     |
+| **F6**   | Prediction markets (Polymarket/Kalshi + prediction_market tool) | 1        | None     |
+| **F7**   | Composite signals (technical + macro + prediction)              | 1        | F3+F5+F6 |
+| **F8**   | Morning/EOD market scan rituals                                 | 1        | F7+F4    |
+| **F9**   | Real-time crypto via Binance WebSocket (optional)               | 1        | F3       |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)          | 1        | F3       |
 
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
-- **Free APIs first** — Yahoo Finance + CoinGecko + Frankfurter + FRED cover stocks/crypto/forex/macro
+- **Free APIs first** — Yahoo Finance + CoinGecko + Frankfurter + FRED + Polymarket/Kalshi cover stocks/crypto/forex/macro/predictions
 - **Python sidecar for FRED** — fredapi + pandas, called via subprocess. No npm deps added
 - **SQLite storage** — market_data table, additive schema (no DB reset)
 - **Text-first delivery** — charts are v7.1, not v7
@@ -297,6 +301,9 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 - **Camofox** — if stealth browsing needed for finance site scraping
 - **CoinGecko adapter** — already in Intel Depot (src/intel/adapters/coingecko.ts)
 - **Frankfurter adapter** — already in Intel Depot (src/intel/adapters/frankfurter.ts)
+- **Polymarket Gamma API** — `https://gamma-api.polymarket.com/events` (market discovery, no key)
+- **Kalshi REST API** — `https://api.kalshi.com/trade-api/v2` (20 RPS free tier)
+- **prediction-market-backtesting** — Strategy patterns: mean reversion, EMA crossover, panic fade, VWAP reversion, breakout. Reference for signal extraction logic
 
 ## Open Questions
 
@@ -305,3 +312,4 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 3. **Crypto priority vs equities?** Determines which data source to build first
 4. **Premium data?** Alpha Vantage/Polygon.io API keys worth the cost?
 5. **FRED API key?** Free signup at https://fred.stlouisfed.org/docs/api/api_key.html — needed before F5
+6. **Prediction market focus?** Fed rate decisions? Elections? Crypto events? Determines Polymarket vs Kalshi priority
