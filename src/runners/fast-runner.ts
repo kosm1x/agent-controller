@@ -725,7 +725,11 @@ export const fastRunner: Runner = {
         : MAX_ROUNDS_DEFAULT;
 
     // Per-task execution context: isolates destructive locks + memory rate limits
-    const taskContext = new TaskExecutionContext(input.taskId);
+    // Non-interactive tasks (scheduled, rituals) bypass the confirmation gate.
+    const taskContext = new TaskExecutionContext(
+      input.taskId,
+      input.interactive !== false,
+    );
     const taskExecutor = createTaskExecutor(toolRegistry, taskContext);
 
     try {

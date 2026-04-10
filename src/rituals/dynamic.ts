@@ -232,6 +232,7 @@ export async function executeScheduleNow(
     agentType: "fast",
     tools,
     tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
+    interactive: false,
   });
 
   insertScheduleRun(schedule.schedule_id, result.taskId);
@@ -328,6 +329,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
         agentType: "fast",
         tools,
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
+        interactive: false,
       });
 
       // H3: Record execution in audit trail
@@ -481,6 +483,7 @@ async function retryScheduledTask(
     agentType: "fast",
     tools,
     tags: ["scheduled", "retry", `schedule:${schedule.schedule_id}`],
+    interactive: false,
   });
 
   insertScheduleRun(schedule.schedule_id, result.taskId);

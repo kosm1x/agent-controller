@@ -142,6 +142,54 @@ describe("checkPreflight via createTaskExecutor", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Confirmation gate: interactive vs non-interactive
+// ---------------------------------------------------------------------------
+
+describe("confirmation gate bypass for non-interactive tasks", () => {
+  it("blocks high-risk tools in interactive context", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ctx = new TaskExecutionContext("task-interactive", true);
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: "A complete email body with enough content to pass preflight.",
+    });
+    expect(result).toContain("CONFIRMATION_REQUIRED");
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.getPendingConfirmation()).not.toBeNull();
+    expect(ctx.getPendingConfirmation()!.toolName).toBe("gmail_send");
+  });
+
+  it("allows high-risk tools in non-interactive context (scheduled tasks)", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ctx = new TaskExecutionContext("task-scheduled", false);
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: "A complete email body with enough content to pass preflight.",
+    });
+    expect(result).toBe('{"ok": true}');
+    expect(reg.execute).toHaveBeenCalledOnce();
+    expect(ctx.getPendingConfirmation()).toBeNull();
+  });
+
+  it("defaults to interactive=true when not specified", () => {
+    const ctx = new TaskExecutionContext("task-default");
+    expect(ctx.interactive).toBe(true);
+  });
+});
+
 // CCP9: argsFingerprint tests
 describe("argsFingerprint", () => {
   it("produces deterministic output for same args", () => {

@@ -83,6 +83,7 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
   }
 
   const template = getTaskTemplate(ritual);
+  template.interactive = false; // Rituals have no interactive user
 
   try {
     const result = await submitTask(template);
@@ -223,6 +224,7 @@ function scheduleAutonomousImprovement(): void {
         const task = createImprovementTask();
         if (!task) return; // no candidates or gates blocked
 
+        task.interactive = false; // Autonomous — no interactive user
         const result = await submitTask(task);
         console.log(
           `[rituals] autonomous-improvement: submitted task ${result.taskId} (agent: ${result.agentType})`,

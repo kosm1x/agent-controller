@@ -38,6 +38,9 @@ export interface RunnerInput {
   onTextChunk?: (text: string) => void;
   /** Abort signal for task cancellation (v6.2 S2). */
   signal?: AbortSignal;
+  /** Whether the task has an interactive user for confirmation prompts.
+   *  Defaults to true. Scheduled tasks / rituals set false. */
+  interactive?: boolean;
 }
 
 /** Output returned by a runner after execution. */

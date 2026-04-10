@@ -77,6 +77,7 @@ ${result.report}
 
 STATUS: DONE`,
         agentType: "fast",
+        interactive: false,
       });
     }
 

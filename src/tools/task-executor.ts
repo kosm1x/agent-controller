@@ -88,7 +88,9 @@ export function createTaskExecutor(
     // Multi-turn confirmation flow: tool returns CONFIRMATION_REQUIRED →
     // LLM asks user → task completes → pending stored → user confirms →
     // router executes directly on next message. Pattern from Executor.
-    if (registry.getEffectiveRiskTier(name) === "high") {
+    // Bypass: non-interactive tasks (scheduled, rituals) have no user to confirm —
+    // the schedule itself serves as prior authorization.
+    if (context.interactive && registry.getEffectiveRiskTier(name) === "high") {
       const fp = argsFingerprint(args);
       if (!context.isDestructiveUnlocked(name, fp)) {
         // Store the pending operation so the router can execute it on confirmation

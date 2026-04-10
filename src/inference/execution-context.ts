@@ -15,6 +15,13 @@ export class TaskExecutionContext {
   readonly taskId: string;
 
   /**
+   * Whether this task has an interactive user who can confirm high-risk actions.
+   * Scheduled tasks, rituals, and autonomous improvement have no user in the loop —
+   * confirmation gate is bypassed for these (the schedule itself is the authorization).
+   */
+  readonly interactive: boolean;
+
+  /**
    * CCP9: Scope-bounded destructive tool approval.
    * Map: tool name → args fingerprint (null = any target approved).
    * target-scoped: unlock("delete_item", "contact_123") only unlocks that target.
@@ -31,8 +38,9 @@ export class TaskExecutionContext {
     args: Record<string, unknown>;
   } | null = null;
 
-  constructor(taskId: string) {
+  constructor(taskId: string, interactive = true) {
     this.taskId = taskId;
+    this.interactive = interactive;
   }
 
   // --- Pending confirmation (pause/resume pattern) ---

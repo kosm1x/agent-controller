@@ -44,6 +44,9 @@ export interface TaskSubmission {
   onTextChunk?: (text: string) => void;
   /** Abort controller for task cancellation (v6.2 S2). Caller creates and retains it. */
   abortController?: AbortController;
+  /** Whether the task has an interactive user who can confirm high-risk actions.
+   *  Defaults to true. Scheduled tasks, rituals set this to false. */
+  interactive?: boolean;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
 }
@@ -361,6 +364,7 @@ async function dispatchWithSlot(
     conversationHistory: submission.conversationHistory,
     onTextChunk: submission.onTextChunk,
     signal: submission.abortController?.signal,
+    interactive: submission.interactive,
   };
 
   taskStarted(agentType);
