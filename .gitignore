@@ -10,3 +10,4 @@ mcp-servers.json
 scripts/benchmark-*.json
 bin/
 monitoring/grafana/provisioning/alerting/contact-points.yml
+public/docs/

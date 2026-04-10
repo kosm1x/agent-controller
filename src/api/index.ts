@@ -3,6 +3,8 @@
  * Mounts all route groups onto the Hono app.
  */
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { apiKeyAuth } from "./auth.js";
@@ -57,6 +59,28 @@ export function createApp(): Hono {
   // Dashboard static files — no auth (JS handles API key itself)
   app.get("/dashboard", (c) => c.redirect("/dashboard/"));
   app.use("/dashboard/*", serveStatic({ root: "./public" }));
+
+  // Docs — static HTML index + llms.txt + raw markdown (no auth)
+  app.get("/docs", (c) => c.redirect("/docs/"));
+  app.use("/docs/*", serveStatic({ root: "./public" }));
+  app.get("/docs/raw/:file", (c) => {
+    const file = c.req.param("file");
+    if (!file.endsWith(".md") || file.includes("..") || file.includes("/")) {
+      return c.text("Not found", 404);
+    }
+    // Check docs/ first, then project root (README.md, CLAUDE.md)
+    for (const base of ["docs", "."]) {
+      try {
+        const content = readFileSync(join(process.cwd(), base, file), "utf-8");
+        return c.text(content, 200, {
+          "Content-Type": "text/markdown; charset=utf-8",
+        });
+      } catch {
+        continue;
+      }
+    }
+    return c.text("Not found", 404);
+  });
 
   return app;
 }
