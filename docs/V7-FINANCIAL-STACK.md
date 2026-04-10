@@ -303,6 +303,39 @@ interface MacroSignal {
 _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 ```
 
+## Paper Trading — Jarvis Learns to Trade (F8)
+
+**Progression:** Detect → Hypothesize → Practice → Prove → Alert
+
+Instead of just reporting signals, Jarvis paper trades them on Polymarket via the `pm-trader` MCP server (agent-next/polymarket-paper-trader). This builds a track record that proves signal quality before recommending actions to the user.
+
+```
+Signal detected: "BTC RSI at 28, macro regime stable"
+  → Jarvis forms thesis: "BTC oversold, likely bounce"
+  → Paper buys BTC-UP on Polymarket ($100 simulated)
+  → Tracks outcome over next 15 minutes
+  → Records win/loss in trading journal
+  → After 30+ trades: "My oversold signals have 62% win rate, 1.3 Sharpe"
+  → NOW alerts user with evidence
+```
+
+**Integration:** MCP server (`pm-trader mcp` via stdio). 29 tools: search_markets, buy, sell, portfolio, stats, backtest, etc. Same protocol as Lightpanda/Playwright — add to `mcp-servers.json`, tools auto-discovered.
+
+**Delivery format with track record:**
+
+```
+📊 **Señal de Mercado — BTC-USD**
+
+🟢 BTC RSI at 28 (sobreventa) + macro estable + VIX < 20
+Señal: COMPRA — RSI extremo con soporte macro
+
+📈 **Mi historial con esta señal:**
+  Trades: 47 | Win rate: 62% | Sharpe: 1.3 | Max DD: -8%
+  Última vez: +4.2% en 2 horas (7 abr)
+
+_¿Procedo con paper trade? Responde "sí" para ejecutar_
+```
+
 ## Implementation Order
 
 | Phase    | What                                                            | Sessions | Deps     |
@@ -314,8 +347,9 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 | **F5**   | FRED macro regime (Python sidecar + macro_dashboard)            | 1        | None     |
 | **F6**   | Prediction markets (Polymarket/Kalshi + prediction_market tool) | 1        | None     |
 | **F7**   | Composite signals + regime detection + shadow portfolio         | 1        | F3+F5+F6 |
-| **F8**   | Morning/EOD market scan rituals                                 | 1        | F7+F4    |
-| **F9**   | Real-time crypto via Binance WebSocket (optional)               | 1        | F3       |
+| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)        | 1        | F7       |
+| **F9**   | Morning/EOD market scan rituals                                 | 1        | F7+F4    |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)               | 1        | F3       |
 | **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)          | 1        | F3       |
 
 ## Constraints
@@ -339,6 +373,7 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 - **Kalshi REST API** — `https://api.kalshi.com/trade-api/v2` (20 RPS free tier)
 - **prediction-market-backtesting** — Strategy patterns: mean reversion, EMA crossover, panic fade, VWAP reversion, breakout. Reference for signal extraction logic
 - **Polymarket-Trading-Bot** — Regime detection (trending/ranging/volatile), multi-filter convergence (7 gates), shadow portfolio validation. Design patterns adopted into F7 composite signals
+- **polymarket-paper-trader** — MCP server (29 tools, stdio). Jarvis practices trading with $10K simulated. Track record builds credibility before alerting user. Phase F8
 
 ## Open Questions
 
