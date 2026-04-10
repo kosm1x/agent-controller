@@ -51,6 +51,7 @@ export class GoogleToolSource implements ToolSource {
       gdocsReadTool,
       gdocsWriteTool,
       gdocsReplaceTool,
+      gslidesReadTool,
       gslidesCreateTool,
       gtasksCreateTool,
     } = await import("../builtin/google-docs.js");
@@ -73,6 +74,7 @@ export class GoogleToolSource implements ToolSource {
       gdocsReadTool,
       gdocsWriteTool,
       gdocsReplaceTool,
+      gslidesReadTool,
       gslidesCreateTool,
       gtasksCreateTool,
     ];

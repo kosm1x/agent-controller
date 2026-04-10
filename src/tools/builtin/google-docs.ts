@@ -581,6 +581,116 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
 };
 
 // ---------------------------------------------------------------------------
+// gslides_read
+// ---------------------------------------------------------------------------
+
+export const gslidesReadTool: Tool = {
+  name: "gslides_read",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "gslides_read",
+      description: `Read the text content of a Google Slides presentation.
+
+USE WHEN:
+- The user shares a Google Slides URL and wants you to read or analyze it
+- You need to review presentation content (titles, bullet points, speaker notes)
+- The user says "lee esta presentación", "qué dice este slides"
+
+DO NOT USE browser__goto for Google Slides URLs — it hits an auth wall.
+Use this tool instead — it reads via the authenticated Slides API.
+
+Pass the presentation ID (from the URL: docs.google.com/presentation/d/{ID}/edit).`,
+      parameters: {
+        type: "object",
+        properties: {
+          presentation_id: {
+            type: "string",
+            description:
+              "Google Slides presentation ID (the long string in the URL between /d/ and /edit)",
+          },
+        },
+        required: ["presentation_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const presId = args.presentation_id as string;
+    if (!presId)
+      return JSON.stringify({ error: "presentation_id is required" });
+
+    try {
+      const pres = await googleFetch<{
+        title: string;
+        slides: Array<{
+          objectId: string;
+          pageElements?: Array<{
+            objectId: string;
+            shape?: {
+              text?: {
+                textElements?: Array<{
+                  textRun?: { content: string };
+                }>;
+              };
+            };
+          }>;
+          slideProperties?: {
+            notesPage?: {
+              pageElements?: Array<{
+                shape?: {
+                  text?: {
+                    textElements?: Array<{
+                      textRun?: { content: string };
+                    }>;
+                  };
+                };
+              }>;
+            };
+          };
+        }>;
+      }>(`https://slides.googleapis.com/v1/presentations/${presId}`);
+
+      const slideTexts = pres.slides.map((slide, i) => {
+        // Extract text from all shapes on the slide
+        const texts = (slide.pageElements ?? [])
+          .map((el) =>
+            (el.shape?.text?.textElements ?? [])
+              .map((te) => te.textRun?.content ?? "")
+              .join("")
+              .trim(),
+          )
+          .filter(Boolean);
+
+        // Extract speaker notes
+        const notes = (slide.slideProperties?.notesPage?.pageElements ?? [])
+          .map((el) =>
+            (el.shape?.text?.textElements ?? [])
+              .map((te) => te.textRun?.content ?? "")
+              .join("")
+              .trim(),
+          )
+          .filter(Boolean)
+          .join(" ");
+
+        let slideText = `## Slide ${i + 1}\n${texts.join("\n")}`;
+        if (notes) slideText += `\n_Notes: ${notes}_`;
+        return slideText;
+      });
+
+      const content = `# ${pres.title}\n\n${slideTexts.join("\n\n")}`;
+      return content.length > 8000
+        ? content.slice(0, 8000) + "\n...(truncated)"
+        : content;
+    } catch (err) {
+      return JSON.stringify({
+        error: `Slides read failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // gslides_create
 // ---------------------------------------------------------------------------
 

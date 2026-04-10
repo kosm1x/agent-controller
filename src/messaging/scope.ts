@@ -50,6 +50,7 @@ export const GOOGLE_TOOLS = [
   "gdocs_read",
   "gdocs_write",
   "gdocs_replace",
+  "gslides_read",
   "gslides_create",
   "gtasks_create",
 ];
