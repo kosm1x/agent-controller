@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.4 CURRENT.** 131 test files, 1844 tests passing, zero type errors, 172 tools (109 deferred). Multi-turn confirmation gate for 21 high-risk tools (pause/resume pattern). Pre-production hardened (5-agent audit + exhaustive tool scope audit). Roadmap: D3+D4 (OAuth).
+**v6.4 CURRENT.** 131 test files, 1847 tests passing, zero type errors, 172 tools (109 deferred). Multi-turn confirmation gate for 21 high-risk tools (pause/resume pattern, interactive-only bypass for scheduled tasks). Pre-production hardened (5-agent audit + exhaustive tool scope audit). Pre-commit hook (typecheck + tests). Roadmap: D3+D4 (OAuth).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

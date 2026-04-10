@@ -1,6 +1,6 @@
 # v6 Roadmap — Self-Improving Jarvis
 
-> Last updated: 2026-04-09 — **v6.0-v6.4+CL1+H+CCP1-10+H1-H3 ALL DONE. 1750 tests, 170 tools, 11 rituals, 55 sessions. Defender injection defense (28 patterns, 5-tier risk). Per-sender WhatsApp thread isolation. Tuning regression detection (Dash pattern). Next: D3+D4 (OAuth).**
+> Last updated: 2026-04-10 — **v6.0-v6.4+CL1+H+CCP1-10+H1-H3+POST ALL DONE. 1847 tests, 172 tools, 131 test files, 11 rituals, 57 sessions. Confirmation gate bypass for scheduled tasks. Pre-commit hook (typecheck+tests). 172-tool exhaustive scope audit. Next: v6 stabilization (30 days) → v7.**
 
 ## Status Key
 
@@ -419,6 +419,20 @@ Patterns extracted from StackOne Defender and agno-agi/dash repos.
 | DASH1   | Tuning Regression Detection | `detectPerCaseRegressions()` — blocks mutations that break passing cases even if composite improves                      | **Done** |
 | DASH2   | Structured Gotchas KB       | Conditional jarvis_file with operational gotchas. Scope-gated: reporting, schedule, crm                                  | **Done** |
 
+### Workstream 17: Post-v6.4 Hardening (2 sessions)
+
+Exhaustive production hardening after v6.4 feature-complete. Stealth browser, multi-turn confirmation gate, 172-tool scope audit, SSRF protection.
+
+| Session | Deliverable                       | What                                                                                                                                     | Status   |
+| ------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| POST1   | Stealth Browser + SSRF Protection | stealthFetch() with 33 anti-bot flags, Cloudflare Turnstile solver. validateOutboundUrl() blocks private IPs/IPv6. 37 tests              | **Done** |
+| POST2   | Multi-Turn Confirmation Gate      | 21 high-risk tools require user approval via pause/resume. PendingConfirmation with 5-min TTL. Adapted from Executor pattern             | **Done** |
+| POST3   | Interactive Bypass for Scheduled  | `interactive` flag on TaskExecutionContext. Scheduled tasks/rituals bypass confirmation gate. Fixed 5 delivery misses. 3 tests           | **Done** |
+| POST4   | Exhaustive 172-Tool Scope Audit   | All tools verified for scope reachability. 5 critical bugs found (memory_reflect, utility group, social, gmail_search IDs, gslides_read) | **Done** |
+| POST5   | Pre-Commit Hook                   | `.git/hooks/pre-commit`: typecheck + full test suite before commits. Skips docs-only. Addresses 93 buggy_code friction events            | **Done** |
+| POST6   | Obsidian-Native Drive Sync        | YAML frontmatter + wikilinks in Google Drive files. toObsidianContent() transformation. SQLite content untouched                         | **Done** |
+| POST7   | WhatsApp Group Prefix Fix         | `[Grupo:...]` prefix broke 6 `^`-anchored regex patterns. Stripped before matching                                                       | **Done** |
+
 ---
 
 ## Safety Invariants
@@ -466,21 +480,23 @@ Patterns extracted from StackOne Defender and agno-agi/dash repos.
 
 ## Metrics
 
-| Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4 (current)     |
-| ----------------------- | ---------- | --------- | ---- | ------------------ |
-| Tests                   | 1228       | 1377      | 1576 | 1750               |
-| Source files            | 214        | 228       | 232  | 251                |
-| Test files              | 85         | 105       | 120  | 127                |
-| Tools                   | 150        | 163       | 169  | 170 (109 deferred) |
-| Safeguards              | 0          | 5         | 5    | 5                  |
-| Behavioral patterns     | 0          | 10        | 10   | 10                 |
-| Background agents (max) | 0          | 3         | 3    | 3                  |
-| Provider cascade        | 2-model    | 3-model   | 3    | 3                  |
-| Immutable core files    | 0          | 15        | 15   | 15                 |
-| Rituals                 | 7          | 9         | 9    | 11                 |
-| KB entries (pgvector)   | 0          | 0         | 315  | 350+               |
-| Prompt tokens (chat)    | ~15K       | ~19K      | ~19K | ~9.3K              |
-| Injection patterns      | 0          | 0         | 0    | 28 (5-tier risk)   |
+| Metric                  | v5.0 Final | v6.0+v6.1 | v6.2 | v6.4+POST (current) |
+| ----------------------- | ---------- | --------- | ---- | ------------------- |
+| Tests                   | 1228       | 1377      | 1576 | 1847                |
+| Source files            | 214        | 228       | 232  | 255+                |
+| Test files              | 85         | 105       | 120  | 131                 |
+| Tools                   | 150        | 163       | 169  | 172 (109 deferred)  |
+| Safeguards              | 0          | 5         | 5    | 5                   |
+| Behavioral patterns     | 0          | 10        | 10   | 10                  |
+| Background agents (max) | 0          | 3         | 3    | 3                   |
+| Provider cascade        | 2-model    | 3-model   | 3    | 3                   |
+| Immutable core files    | 0          | 15        | 15   | 15                  |
+| Rituals                 | 7          | 9         | 9    | 11                  |
+| KB entries (pgvector)   | 0          | 0         | 315  | 350+                |
+| Prompt tokens (chat)    | ~15K       | ~19K      | ~19K | ~9.3K               |
+| Injection patterns      | 0          | 0         | 0    | 28 (5-tier risk)    |
+| High-risk tool gate     | 0          | 0         | 0    | 21 tools gated      |
+| Pre-commit checks       | none       | none      | none | typecheck + tests   |
 
 ---
 
@@ -503,4 +519,5 @@ Patterns extracted from StackOne Defender and agno-agi/dash repos.
 | CCP 1-10  | Claude Code patterns   | 1        | **Done**     |
 | H1-H3     | Hermes patterns        | 1        | **Done**     |
 | DEF+DASH  | External patterns      | 1        | **Done**     |
-| **Total** |                        | **55**   |              |
+| POST      | Post-v6.4 hardening    | 2        | **Done**     |
+| **Total** |                        | **57**   |              |
