@@ -23,7 +23,14 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
-│              Layer 2: Signal Detection                   │
+│              Layer 2b: Paper Trading (F8)                │
+│  pm-trader MCP server (29 tools, stdio)                  │
+│  Jarvis practices: thesis → trade → track → prove        │
+│  Track record builds credibility before alerting user    │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────┐
+│              Layer 2a: Signal Detection                  │
 │                                                          │
 │  Indicator Engine (pure math, no deps):                  │
 │  ├── SMA, EMA (simple/exponential moving average)        │
@@ -54,7 +61,14 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 │  ├── Open-Meteo (commodities correlation — existing)     │
 │  ├── Google Finance (basic quotes, no API key)           │
 │  ├── Polymarket Gamma API (prediction market events)     │
-│  └── Kalshi REST API (binary outcome markets, 20 RPS)   │
+│  ├── Kalshi REST API (binary outcome markets, 20 RPS)   │
+│  └── Polymarket Data API (whale trade history, 7d)       │
+│                                                          │
+│  Smart money (whale tracking):                           │
+│  ├── Auto-discover top traders by win rate + ROI          │
+│  ├── Score across 6 dimensions (profit, timing, slip...)  │
+│  ├── Track moves in real-time → signal layer 4            │
+│  └── Jarvis learns: follow vs fade whale = training data │
 │                                                          │
 │  Macro data (FRED — free, 120 calls/min):                │
 │  ├── T10Y2Y (yield curve — recession predictor)          │
@@ -338,19 +352,19 @@ _¿Procedo con paper trade? Responde "sí" para ejecutar_
 
 ## Implementation Order
 
-| Phase    | What                                                            | Sessions | Deps     |
-| -------- | --------------------------------------------------------------- | -------- | -------- |
-| **F1**   | market_data table + Yahoo Finance adapter                       | 1        | None     |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)               | 1        | F1       |
-| **F3**   | Signal detector + market_signals tool                           | 1        | F2       |
-| **F4**   | Watchlist management + market_quote/history tools               | 1        | F1       |
-| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)            | 1        | None     |
-| **F6**   | Prediction markets (Polymarket/Kalshi + prediction_market tool) | 1        | None     |
-| **F7**   | Composite signals + regime detection + shadow portfolio         | 1        | F3+F5+F6 |
-| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)        | 1        | F7       |
-| **F9**   | Morning/EOD market scan rituals                                 | 1        | F7+F4    |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)               | 1        | F3       |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)          | 1        | F3       |
+| Phase    | What                                                     | Sessions | Deps     |
+| -------- | -------------------------------------------------------- | -------- | -------- |
+| **F1**   | market_data table + Yahoo Finance adapter                | 1        | None     |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)        | 1        | F1       |
+| **F3**   | Signal detector + market_signals tool                    | 1        | F2       |
+| **F4**   | Watchlist management + market_quote/history tools        | 1        | F1       |
+| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)     | 1        | None     |
+| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)   | 1.5      | None     |
+| **F7**   | Composite signals + regime detection + shadow portfolio  | 1        | F3+F5+F6 |
+| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade) | 1        | F7+F6    |
+| **F9**   | Morning/EOD market scan rituals                          | 1        | F7+F4    |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)        | 1        | F3       |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)   | 1        | F3       |
 
 ## Constraints
 
