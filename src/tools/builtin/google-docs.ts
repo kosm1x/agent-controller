@@ -18,6 +18,9 @@ export const gsheetsReadTool: Tool = {
       name: "gsheets_read",
       description: `Read data from a Google Spreadsheet.
 
+DO NOT USE browser__goto for Google Sheets URLs — it hits an auth wall.
+Use this tool instead — it reads via the authenticated Sheets API.
+
 WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first to find the file ID.
 
 AFTER READING: Report the spreadsheet name and range read. Only report data that was actually returned — never fill gaps with assumed values.`,
@@ -308,7 +311,11 @@ export const gdocsReadTool: Tool = {
     type: "function",
     function: {
       name: "gdocs_read",
-      description: "Read the text content of a Google Doc.",
+      description: `Read the text content of a Google Doc.
+
+DO NOT USE browser__goto for Google Docs URLs — it hits an auth wall.
+Use this tool instead — it reads via the authenticated Docs API.
+Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
       parameters: {
         type: "object",
         properties: {

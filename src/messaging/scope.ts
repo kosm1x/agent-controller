@@ -355,8 +355,9 @@ export function scopeToolsForMessage(
     activeGroups = preClassifiedGroups;
     // URL-based scope injection — semantic classifier misses these because it
     // sees "URL" → "browser" instead of recognizing Google Workspace domains.
+    // Covers ALL Google Workspace URL patterns: Docs, Sheets, Slides, Drive, Gmail, Calendar.
     if (
-      /docs\.google\.com\/(document|spreadsheets|presentation)/i.test(
+      /docs\.google\.com\/(document|spreadsheets|presentation)|drive\.google\.com|mail\.google\.com|calendar\.google\.com/i.test(
         currentMessage,
       )
     ) {

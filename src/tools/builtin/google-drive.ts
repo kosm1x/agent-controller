@@ -37,6 +37,9 @@ USE WHEN:
 - You need to find a file ID for subsequent operations (read, share, delete, move)
 - Checking if a file already exists before creating (dedup check)
 
+DO NOT USE browser__goto for drive.google.com URLs — it hits an auth wall.
+Use this tool instead — it reads via the authenticated Drive API.
+
 Use parent_folder_id to list contents of a specific folder instead of searching all of Drive.
 Supports Drive search queries: name contains 'X', mimeType='application/...', modifiedTime > '2026-01-01'`,
       parameters: {

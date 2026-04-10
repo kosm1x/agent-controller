@@ -306,7 +306,10 @@ USE WHEN:
 - The user asks to read, open, or view an email
 - You need to download or inspect email attachments
 
-WORKFLOW: gmail_search → get message ID → gmail_read with that ID.
+DO NOT USE browser__goto for Gmail URLs — it hits an auth wall.
+Use gmail_search to find emails, then gmail_read with the ID from the results.
+
+WORKFLOW: gmail_search → get message ID (the "ID:" field) → gmail_read with that ID.
 
 Returns the email body (plain text preferred, HTML fallback) and a list of
 attachments with filenames and sizes. Use download_attachments=true to save
