@@ -810,7 +810,9 @@ export class MessageRouter {
       /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
     const tk = threadKey(msg.channel, msg.from, senderJid);
-    if (CONTEXT_CLEAR_RE.test(msg.text)) {
+    // Strip WhatsApp group prefix before matching (same pattern as feedback/fast-path)
+    const textForClear = msg.text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
+    if (CONTEXT_CLEAR_RE.test(textForClear)) {
       // Set empty thread AND mark as hydrated — prevents re-hydration from DB
       conversationThreads.set(tk, []);
       hydratedChannels.add(tk);
@@ -818,7 +820,7 @@ export class MessageRouter {
         `[router] Context cleared for ${msg.channel} (thread buffer purged, hydration blocked)`,
       );
       // If there's more text after the clear phrase, process it as a fresh message
-      const remainder = msg.text.replace(CONTEXT_CLEAR_RE, "").trim();
+      const remainder = textForClear.replace(CONTEXT_CLEAR_RE, "").trim();
       if (remainder.length > 0) {
         msg.text = remainder;
         // Fall through to process the remainder with a clean thread
