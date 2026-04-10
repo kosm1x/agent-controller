@@ -682,6 +682,39 @@ function hydrateThreadIfNeeded(tk: string): void {
 // Writes to jarvis_files table (where jarvis_file_read reads from) + disk mirror.
 // ---------------------------------------------------------------------------
 
+/** Format a human-readable confirmation result based on tool name. */
+function formatConfirmationResult(
+  toolName: string,
+  args: Record<string, unknown>,
+  result: Record<string, unknown>,
+): string {
+  switch (toolName) {
+    case "gmail_send":
+      return `✅ Correo enviado a ${args.to ?? "destinatario"}.\nAsunto: ${args.subject ?? "(sin asunto)"}`;
+    case "calendar_create":
+    case "calendar_update":
+      return `✅ Evento ${toolName === "calendar_create" ? "creado" : "actualizado"}: ${args.title ?? args.summary ?? "evento"}`;
+    case "gdrive_delete":
+      return `✅ Archivo eliminado de Drive.`;
+    case "gdrive_move":
+      return `✅ Archivo movido en Drive.`;
+    case "gdrive_share":
+      return `✅ Archivo compartido${args.email ? ` con ${args.email}` : ""}.`;
+    case "wp_publish":
+      return `✅ Publicado en WordPress: ${(result as Record<string, unknown>).title ?? args.title ?? "post"}`;
+    case "wp_delete":
+      return `✅ Post eliminado de WordPress.`;
+    case "file_delete":
+      return `✅ Archivo eliminado: ${args.path ?? ""}`;
+    case "vps_deploy":
+      return `✅ Deploy ejecutado.`;
+    case "schedule_delete":
+      return `✅ Schedule eliminado.`;
+    default:
+      return `✅ ${toolName} ejecutado correctamente.`;
+  }
+}
+
 function appendDayLog(role: "USER" | "JARVIS", text: string): void {
   try {
     const now = new Date();
@@ -1149,15 +1182,21 @@ export class MessageRouter {
             pendingConf.toolName,
             pendingConf.args,
           );
-          // Format result for user
+          // Format result for user — human-readable confirmation
           let userResponse: string;
           try {
             const parsed = JSON.parse(result);
-            userResponse = parsed.error
-              ? `Error: ${parsed.error}`
-              : `Listo. ${pendingConf.summary}`;
+            if (parsed.error) {
+              userResponse = `Error: ${parsed.error}`;
+            } else {
+              userResponse = formatConfirmationResult(
+                pendingConf.toolName,
+                pendingConf.args,
+                parsed,
+              );
+            }
           } catch {
-            userResponse = `Listo. ${pendingConf.summary}`;
+            userResponse = `✅ ${pendingConf.toolName} ejecutado.`;
           }
           this.sendToChannel(msg.channel, msg.from, userResponse);
           appendDayLog("USER", msg.text);
