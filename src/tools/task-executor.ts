@@ -84,11 +84,12 @@ export function createTaskExecutor(
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    // CCP5+CCP9: HIGH-risk tools require user confirmation before execution.
-    // The LLM must present items to the user and wait for confirmation on the
-    // next message. Without this, gmail_send, gdrive_delete, vps_deploy, etc.
-    // execute without any confirmation gate.
-    if (registry.getEffectiveRiskTier(name) === "high") {
+    // CCP5+CCP9: Only explicitly listed DESTRUCTIVE_MCP_TOOLS are hard-blocked.
+    // The broader requiresConfirmation gate (getEffectiveRiskTier === "high")
+    // was enabled in ed0d56b but broke 21 tools — no multi-turn confirmation
+    // flow exists yet. Reverted to empty-Set check; risk tier is log-only.
+    // TODO: Build multi-turn confirmation flow, then re-enable risk tier gate.
+    if (registry.isDestructiveMcp(name)) {
       const fp = argsFingerprint(args);
       if (!context.isDestructiveUnlocked(name, fp)) {
         log.warn(
