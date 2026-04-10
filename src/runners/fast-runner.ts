@@ -470,7 +470,7 @@ export function detectsHallucinatedExecution(
       /(?:was|were|has been|have been)\s+\w+\s*(?:successfully|correctly)/i.test(
         text,
       ) ||
-      /(?:publicad[oa]|enviad[oa]|subid[oa]|creada?|eliminad[oa])\s+(?:exitosamente|correctamente|con éxito|successfully)/i.test(
+      /(?:publicad[oa]|enviad[oa]|subid[oa]|creada?|eliminad[oa]|compartid[oa]|guardad[oa]|programad[oa]|configurad[oa]|sincronizad[oa])\s+(?:exitosamente|correctamente|con éxito|successfully)/i.test(
         text,
       ) ||
       // Status change claims — must have first-person anchor or active voice
@@ -483,7 +483,7 @@ export function detectsHallucinatedExecution(
       // "✅ Marcada como completed" = hallucinated write (no tool called)
       // "✅ Eliminada (no existe)" = hallucinated delete
       // vs "La tarea está marcada como completada" = read observation (no ✅)
-      /✅[^.\n]{0,30}(?:Marcad[ao]s?|Eliminad[ao]s?|Actualizada?s?|Cambiad[ao]s?|Borrad[ao]s?|Cread[ao]s?|Modificad[ao]s?|Completad[ao]s?)\s*(?:como|a\s|en\s|\(|—|:)/i.test(
+      /✅[^.\n]{0,30}(?:Marcad[ao]s?|Eliminad[ao]s?|Actualizada?s?|Cambiad[ao]s?|Borrad[ao]s?|Cread[ao]s?|Modificad[ao]s?|Completad[ao]s?|Compartid[ao]s?|Enviad[ao]s?|Publicad[ao]s?|Guardad[ao]s?)/i.test(
         text,
       ) ||
       // "Acciones Ejecutadas" header — narrated action table
