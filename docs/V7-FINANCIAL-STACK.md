@@ -257,6 +257,27 @@ function backtest(
 };
 ```
 
+### Replication Scoring (am I trading like the winners?)
+
+After each paper trade batch, compare Jarvis's decisions against top whale decisions for the same markets. Measures whether Jarvis is converging toward smart money behavior.
+
+```typescript
+// src/finance/replication.ts (from Polybot pattern)
+function replicationScore(
+  jarvisTrades: PaperTrade[],
+  whaleTrades: WhaleTrade[],
+): {
+  alignment: number; // 0-1 how closely Jarvis mirrors whale consensus
+  directionMatch: number; // % of trades where Jarvis and whales agree on direction
+  timingDelta: number; // avg seconds between Jarvis entry and whale entry
+  trend: "converging" | "diverging" | "stable";
+};
+```
+
+If alignment is high → Jarvis signals are tracking smart money (good).
+If alignment is low but win rate is high → Jarvis found its own edge (also good).
+If alignment is low AND win rate is low → retune signal weights.
+
 ## Macro Regime Detection (FRED)
 
 ```typescript
@@ -326,8 +347,10 @@ Instead of just reporting signals, Jarvis paper trades them on Polymarket via th
 ```
 Signal detected: "BTC RSI at 28, macro regime stable"
   → Jarvis forms thesis: "BTC oversold, likely bounce"
+  → Backtests RSI reversion strategy on last 30 days (F7.5)
   → Paper buys BTC-UP on Polymarket ($100 simulated)
   → Tracks outcome over next 15 minutes
+  → Scores vs whale consensus: "72% alignment with smart money" (replication score)
   → Records win/loss in trading journal
   → After 30+ trades: "My oversold signals have 62% win rate, 1.3 Sharpe"
   → NOW alerts user with evidence
@@ -345,7 +368,7 @@ Señal: COMPRA — RSI extremo con soporte macro
 
 📈 **Mi historial con esta señal:**
   Trades: 47 | Win rate: 62% | Sharpe: 1.3 | Max DD: -8%
-  Última vez: +4.2% en 2 horas (7 abr)
+  Alineación con smart money: 72% | Última vez: +4.2% (7 abr)
 
 _¿Procedo con paper trade? Responde "sí" para ejecutar_
 ```
@@ -419,6 +442,7 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 - **prediction-market-backtesting** — 9 strategy playbook (mean reversion, EMA crossover, panic fade, VWAP reversion, breakout, RSI reversion, final period momentum, late favorite, threshold). Strategy backtester for F7.5 — Jarvis selects best strategy per regime from historical performance
 - **Polymarket-Trading-Bot** — Regime detection (trending/ranging/volatile), multi-filter convergence (7 gates), shadow portfolio validation. Design patterns adopted into F7 composite signals
 - **polymarket-paper-trader** — MCP server (29 tools, stdio). Jarvis practices trading with $10K simulated. Track record builds credibility before alerting user. Phase F8
+- **polybot** — Replication scoring: compare Jarvis's paper trades vs whale decisions. Measures smart money alignment. Feedback loop for signal tuning
 
 ## Open Questions
 
