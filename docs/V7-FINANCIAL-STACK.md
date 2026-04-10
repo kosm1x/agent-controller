@@ -543,18 +543,126 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 | **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                                              | 3        | v7.2          |
 | **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                                        | 2        | v7.3          |
 
+## Production Hardening (built into phases, zero extra sessions)
+
+### H1. Golden-File Indicator Tests (F2)
+
+Every indicator gets a `*.golden.json` fixture — known input (100 days of real OHLCV), expected output verified against a reference source (TradingView or TA-Lib values). Tests compare to 6 decimal places. If the RSI math is wrong, tests catch it before signals are generated. This is the difference between "looks right" and "is right."
+
+### H2. Data Validation Layer (F1)
+
+`validateOHLCV()` runs on every ingested record before storage:
+
+- Reject: price ≤ 0, high < low, volume negative, NaN/null
+- Flag: >10% gap from previous close without corresponding volume spike (possible API glitch)
+- Log: data quality score per source per day to `api_call_budget` table
+
+Bad data never reaches the indicator engine.
+
+### H3. Timezone & Market Convention (F1)
+
+All timestamps stored in **UTC**. Each data adapter normalizes on ingestion via `normalizeTimestamp(raw, source) → UTC ISO`.
+
+Jarvis uses **market-native timezones** for financial references and alerts — not Mexico City time:
+
+- US stocks: ET (NYSE/NASDAQ). "Market opens at 9:30 AM ET"
+- FOREX: 24/5, daily candle closes at 5 PM ET (NY close convention)
+- Crypto: 24/7, candles close at midnight UTC
+- Asia (Tokyo/Shanghai/HK): JST/CST/HKT. "Asia session opens Sunday 4 PM MX time"
+- FRED macro: release dates in ET
+- User sync: Mexico City time for rituals, morning briefings, personal scheduling
+
+The user's local time is for Jarvis-to-human communication. Market references use each market's native convention.
+
+### H4. Market Calendar (F9)
+
+`isMarketOpen(assetType, datetime) → boolean`
+
+- US stocks: NYSE holiday calendar (static, updated annually). Skip stock scans on holidays. Don't alert "no signals" when market was closed
+- FOREX: 24/5 (Sunday 5 PM ET → Friday 5 PM ET). Closed weekends
+- Crypto: always open
+- Asia: TSE/SSE/HKEX calendars for sector-specific scans
+
+Morning scan ritual checks calendar before firing. No wasted API calls on closed markets.
+
+### H5. Paper Trading Transaction Costs (F8)
+
+`transactionCost(assetType, ticker) → { spread, fee }`
+
+| Asset              | Cost Model                                                 |
+| ------------------ | ---------------------------------------------------------- |
+| FOREX              | 1-3 pip spread (pair + session dependent)                  |
+| US stocks          | $0.005/share (commission-free assumption) + $0.01 slippage |
+| Crypto             | 0.1% taker fee                                             |
+| Prediction markets | Built into odds spread                                     |
+
+Paper P&L calculated **after** costs. A strategy that wins 55% with zero spread might win 48% with realistic costs — know this during paper phase, not after.
+
+### H6. Weight Versioning (F7)
+
+Add `weights TEXT` (JSON) to `trade_theses` — snapshot the full Alpha Combination weight vector at thesis creation. Post-mortem: "Why did Jarvis take that trade?" requires knowing what weights were active.
+
+```sql
+-- Add to trade_theses
+weights TEXT,  -- JSON: {"whale_flow": 0.23, "funding": 0.19, "vix": 0.17, ...}
+```
+
+Also: `signal_weights_log` table for drift analysis over time.
+
+```sql
+CREATE TABLE IF NOT EXISTS signal_weights_log (
+  id         INTEGER PRIMARY KEY,
+  regime     TEXT NOT NULL,
+  weights    TEXT NOT NULL,            -- JSON weight vector
+  effective_n REAL,                    -- independent signals count
+  ir         REAL,                     -- information ratio
+  created_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+### H7. Per-Layer Freshness Thresholds (F7)
+
+Replace blanket "<24h" with per-layer config:
+
+```typescript
+const FRESHNESS_THRESHOLDS = {
+  technical: 60 * 60, // 1 hour (price data)
+  macro: 7 * 24 * 60 * 60, // 7 days (FRED monthly releases are "fresh" longer)
+  crowd: 2 * 60 * 60, // 2 hours (prediction markets move fast)
+  smartMoney: 4 * 60 * 60, // 4 hours (whale activity)
+  sentiment: 12 * 60 * 60, // 12 hours (fear/greed index updates daily)
+};
+```
+
+MegaAlpha requires ≥3 layers within their respective freshness windows.
+
+### H8. Dynamic Alert Budget (F9)
+
+Replace static "2-3 signals/day" with regime-aware budget:
+
+| Regime          | Max Alerts/Day | MegaAlpha Threshold              |
+| --------------- | -------------- | -------------------------------- |
+| Low volatility  | 1-2            | ≥ 0.65                           |
+| Normal          | 2-3            | ≥ 0.60                           |
+| High volatility | 4-5            | ≥ 0.70 (higher bar during noise) |
+
+Regime detector feeds the alert budget. During crashes, more alerts are allowed but require stronger conviction. During calm, fewer alerts but lower bar — don't miss slow-developing opportunities.
+
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
 - **Alpha Vantage primary + Yahoo Finance fallback** — never single-source for market data. Both adapters built in F1. API call budget tracking from day one
 - **Free APIs supplement** — FRED (macro), Polymarket/Kalshi (predictions), CoinGecko (crypto), Frankfurter (EUR backup)
 - **Single Python sidecar** — FastAPI on localhost combining FRED (fredapi) + TimesFM (torch). One process, one port, ~3GB RAM. No subprocess sprawl
-- **SQLite storage** — 5 tables (market_data, watchlist, backtest_results, trade_theses, api_call_budget), additive schema (no DB reset)
-- **Minimum signal threshold** — MegaAlpha only generated when ≥3 of 5 signal layers have fresh data (<24h). Below threshold → "insufficient data" instead of weak signal
+- **SQLite storage** — 6 tables (market_data, watchlist, backtest_results, trade_theses, api_call_budget, signal_weights_log), additive schema (no DB reset)
+- **Minimum signal threshold** — MegaAlpha only generated when ≥3 of 5 signal layers have fresh data (per-layer thresholds, not blanket 24h)
+- **Market-native timezones** — Jarvis references markets in their native TZ (ET for US, UTC for crypto, JST for Tokyo). Mexico City for personal scheduling only
 - **Text-first delivery** — charts are v7.1, not v7
 - **Existing infrastructure** — rituals, proactive scanner, Intel Depot alert router all reusable
 - **Scope group** — new `finance` group, deferred tools, keyword-gated
 - **Whale tracking scoped** — Polymarket trade history (free, Gamma API) + SEC EDGAR insider filings (free, delayed). No paid whale services
+- **Transaction costs in paper trading** — realistic spread/fee model per asset type. Paper P&L after costs
+- **Golden-file indicator tests** — every indicator verified against reference to 6 decimal places
 - **Realistic session estimate** — 15-16 sessions for F1-F9 (not 12). v6 history: 3x expansion is normal. Quality over speed
 
 ## Bookmarked Resources
