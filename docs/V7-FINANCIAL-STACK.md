@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS market_data (
   low        REAL NOT NULL,
   close      REAL NOT NULL,
   volume     REAL DEFAULT 0,
-  source     TEXT DEFAULT 'unknown',  -- 'yahoo', 'coingecko', 'polygon'
+  source     TEXT DEFAULT 'unknown',  -- 'alphavantage', 'yahoo', 'coingecko'
   created_at TEXT DEFAULT (datetime('now')),
   UNIQUE(ticker, timeframe, ts)
 );
@@ -132,6 +132,63 @@ CREATE TABLE IF NOT EXISTS watchlist (
   active     INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now'))
 );
+```
+
+### backtest_results table
+
+```sql
+CREATE TABLE IF NOT EXISTS backtest_results (
+  id            INTEGER PRIMARY KEY,
+  strategy      TEXT NOT NULL,          -- 'rsi_reversion', 'ema_crossover', etc.
+  regime        TEXT NOT NULL,          -- 'trending', 'ranging', 'volatile'
+  ticker        TEXT NOT NULL,
+  period_start  TEXT NOT NULL,          -- ISO date
+  period_end    TEXT NOT NULL,
+  win_rate      REAL NOT NULL,
+  sharpe        REAL,
+  max_drawdown  REAL,
+  trade_count   INTEGER NOT NULL,
+  stress_passed INTEGER DEFAULT 0,     -- how many of 5 stress scenarios survived
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_strategy ON backtest_results(strategy, regime, ticker);
+```
+
+### trade_theses table
+
+```sql
+CREATE TABLE IF NOT EXISTS trade_theses (
+  id              INTEGER PRIMARY KEY,
+  ticker          TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'open',  -- 'open', 'tracking', 'resolved', 'broken'
+  thesis          TEXT NOT NULL,                 -- "BTC RSI oversold, macro stable, expect bounce"
+  direction       TEXT NOT NULL,                 -- 'bullish', 'bearish'
+  evidence        TEXT DEFAULT '[]',             -- JSON: [{signal, weight, timestamp}]
+  transmission    TEXT DEFAULT '[]',             -- JSON: [{from, to, mechanism, confidence}]
+  evolution       TEXT DEFAULT 'new',            -- 'new', 'strengthened', 'weakened', 'falsified'
+  mega_alpha      REAL,                          -- combined signal at thesis creation
+  entry_price     REAL,                          -- price when paper trade entered
+  exit_price      REAL,                          -- price when resolved/broken
+  outcome         TEXT,                          -- what actually happened
+  lessons         TEXT,                          -- extracted post-resolution
+  created_at      TEXT DEFAULT (datetime('now')),
+  resolved_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_theses_status ON trade_theses(status, ticker);
+```
+
+### api_call_budget table
+
+```sql
+CREATE TABLE IF NOT EXISTS api_call_budget (
+  id         INTEGER PRIMARY KEY,
+  source     TEXT NOT NULL,            -- 'alphavantage', 'fred', 'polymarket', 'yahoo'
+  date       TEXT NOT NULL,            -- ISO date (UTC)
+  calls      INTEGER NOT NULL DEFAULT 0,
+  limit_day  INTEGER NOT NULL,         -- max calls/day for this source
+  UNIQUE(source, date)
+);
+CREATE INDEX IF NOT EXISTS idx_api_budget_source ON api_call_budget(source, date);
 ```
 
 ## Tools (6 new, all deferred)
@@ -467,32 +524,38 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 
 ## Implementation Order
 
-| Phase    | What                                                        | Sessions | Deps          |
-| -------- | ----------------------------------------------------------- | -------- | ------------- |
-| **F1**   | market_data table + Yahoo Finance adapter                   | 1        | None          |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)           | 1        | F1            |
-| **F3**   | Signal detector + market_signals tool                       | 1        | F2            |
-| **F4**   | Watchlist management + market_quote/history tools           | 1        | F1            |
-| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)        | 1        | None          |
-| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)      | 1.5      | None          |
-| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations) | 0.5      | None          |
-| **F7**   | Alpha Combination Engine (11-step, replaces naive voting)   | 1.5      | F3+F5+F6+F6.5 |
-| **F7.5** | Strategy backtester (walk-forward + stress test)            | 1        | F7+F6         |
-| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)    | 1        | F7.5          |
-| **F9**   | Morning/EOD market scan rituals                             | 1        | F7+F4         |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)           | 1        | F3            |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)      | 1        | F3            |
+| Phase    | What                                                                                                                                                       | Sessions | Deps          |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------- |
+| **F1**   | Schema (market_data + watchlist + backtest_results + trade_theses + api_call_budget), Alpha Vantage + Yahoo Finance dual adapter, api_call_budget tracking | 1.5      | None          |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R)                                                                             | 1        | F1            |
+| **F3**   | Signal detector + market_signals tool + transmission chain field                                                                                           | 1        | F2            |
+| **F4**   | Watchlist management + market_quote/history tools                                                                                                          | 1        | F1            |
+| **F5**   | Python sidecar (FastAPI): FRED macro regime + TimesFM forecasting — single process, one port                                                               | 1.5      | None          |
+| **F6**   | Prediction markets (Polymarket/Kalshi) + whale tracker (Polymarket trade history + SEC EDGAR insider filings)                                              | 1.5      | None          |
+| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations)                                                                                                | 0.5      | None          |
+| **F7**   | Alpha Combination Engine (11-step) + signal evolution tracking + ISQ quality dimensions + minimum signal threshold (≥3 of 5 layers fresh)                  | 2        | F3+F5+F6+F6.5 |
+| **F7.5** | Strategy backtester (walk-forward + stress test) → backtest_results table                                                                                  | 1        | F7+F6         |
+| **F8**   | Paper trading via pm-trader MCP + trade_theses commitment tracking                                                                                         | 1.5      | F7.5          |
+| **F9**   | Morning/EOD market scan rituals                                                                                                                            | 1        | F7+F4         |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)                                                                                                          | 1        | F3            |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) + vision chart patterns (6th signal layer)                                                          | 1.5      | F3            |
+| **v7.2** | Knowledge graph layer (Graphify MCP — CRM + codebase + corpus)                                                                                             | 1.5      | None          |
+| **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                                              | 3        | v7.2          |
+| **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                                        | 2        | v7.3          |
 
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
-- **Alpha Vantage primary** ($50/yr) — forex, gold, US stocks (daily OHLCV, 75 calls/min). Reliable API with SLA
+- **Alpha Vantage primary + Yahoo Finance fallback** — never single-source for market data. Both adapters built in F1. API call budget tracking from day one
 - **Free APIs supplement** — FRED (macro), Polymarket/Kalshi (predictions), CoinGecko (crypto), Frankfurter (EUR backup)
-- **Python sidecar for FRED** — fredapi + pandas, called via subprocess. No npm deps added
-- **SQLite storage** — market_data table, additive schema (no DB reset)
+- **Single Python sidecar** — FastAPI on localhost combining FRED (fredapi) + TimesFM (torch). One process, one port, ~3GB RAM. No subprocess sprawl
+- **SQLite storage** — 5 tables (market_data, watchlist, backtest_results, trade_theses, api_call_budget), additive schema (no DB reset)
+- **Minimum signal threshold** — MegaAlpha only generated when ≥3 of 5 signal layers have fresh data (<24h). Below threshold → "insufficient data" instead of weak signal
 - **Text-first delivery** — charts are v7.1, not v7
 - **Existing infrastructure** — rituals, proactive scanner, Intel Depot alert router all reusable
 - **Scope group** — new `finance` group, deferred tools, keyword-gated
+- **Whale tracking scoped** — Polymarket trade history (free, Gamma API) + SEC EDGAR insider filings (free, delayed). No paid whale services
+- **Realistic session estimate** — 15-16 sessions for F1-F9 (not 12). v6 history: 3x expansion is normal. Quality over speed
 
 ## Bookmarked Resources
 
@@ -509,6 +572,10 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 - **polybot** — Replication scoring: compare Jarvis's paper trades vs whale decisions. Measures smart money alignment. Feedback loop for signal tuning
 - **Vibe-Trading** (HKUDS) — Gap analysis revealed 3 missing pieces: (1) sentiment signals (fear/greed, funding rates, liquidation heatmaps), (2) stress testing (5 historical + 5 hypothetical crash scenarios), (3) walk-forward ML validation (prevents backtest overfitting). 68-skill reference library. MIT licensed
 - **RohOnChain alpha combination thread** — Fundamental Law of Active Management (IR = IC × √N). 11-step procedure for mathematically optimal signal weighting. Replaces naive voting ("3 of 5 agree") with independence-weighted combination. The theoretical foundation for F7. Key insight: 50 weak signals at IC=0.05 beat one strong signal at IC=0.10
+- **last30days-skill** (mvanhorn) — Pre-research planner, engagement scoring, cross-source clustering. Free sources: HN (Algolia), Reddit JSON, Bluesky. X via xAI API (~$3-5/mo). 14 platforms, MIT
+- **PageIndex** (VectifyAI) — Summary-as-retrieval-key pattern for KB enrichment optimization when >500 entries. Vectorless RAG via LLM tree traversal
+- **gbrain** (garrytan) — Compiled truth + timeline for Prometheus goal execution. Tiered goal budgeting. RRF fusion for multi-signal ranking without normalization
+- **mcp-toolbox** (Google) — Vector-assist pgvector query generation pattern. Skip adoption (Go server, wrong role)
 
 ## Decisions (answered 2026-04-10)
 
@@ -571,6 +638,53 @@ Reminder set: sign up at https://fred.stlouisfed.org/docs/api/api_key.html befor
 | **Frankfurter**      | EUR cross-rates backup (already in Intel Depot) | Free   |
 
 **Total data layer cost: $50/year.**
+
+## Adopted Patterns from Repo Analysis (Session 58)
+
+### From last30days-skill (mvanhorn/last30days-skill)
+
+**Pre-research planner** — Before searching, an LLM resolves the topic into platform-specific targets (X handles, subreddits, GitHub repos, hashtags). Apply to Jarvis's `exa_search`/`web_search` and v7 intel tools. "Biotech sector sentiment" → specific company names, tickers, X handles, subreddits.
+
+**Engagement-weighted scoring** — Rank results by real-world signals (upvotes, prediction market odds, repost counts) instead of keyword relevance. Maps directly to Alpha Combination Engine signal weighting.
+
+**Cross-source clustering** — Entity overlap detection merges duplicate stories across platforms. Needed for multi-source intel fusion when combining HN + Reddit + X + Polymarket signals.
+
+**New free data sources for v7:**
+
+- Hacker News (Algolia API, zero cost) — tech/biotech sentiment
+- Polymarket (Gamma API, zero cost) — already planned in F6
+- Reddit public JSON (free for fetching by URL/subreddit)
+- Bluesky (AT Protocol, free with app password)
+
+**X/Twitter via xAI API** (~$3-5/mo) — only reliable path. Bird cookie hack is deprecated and fragile. Add as premium intel tier when budget allows.
+
+### From PageIndex (VectifyAI/PageIndex)
+
+**Summary-as-retrieval-key** — When KB exceeds 500 entries (expected in v7 with financial data), add a `summary` column to `kb_entries`. Use summaries for first-pass filtering in enrichment pipeline, fetch full content only when LLM needs it. Reduces the 5K-char enrichment cap pressure without new dependencies.
+
+### From gbrain (garrytan/gbrain)
+
+**Compiled truth + timeline on goal execution** — For Prometheus PER loop: each goal maintains a `compiledState` (current summary, rewritten on replan) + `timeline` (immutable trace of attempts/failures). Reflector reads compiled state instead of re-scanning full trace. Reduces context pressure during multi-iteration financial analysis tasks.
+
+**Tiered goal budgeting** — Allocate API spend by goal importance. High-priority goals (signal detection for user-facing alerts) get more rounds than peripheral goals (data gathering). Apply to orchestrator config in v7 financial tasks where API budget matters.
+
+**RRF (Reciprocal Rank Fusion)** — Merges rankings from different signal types without normalization (K=60). Complement to the 11-step Alpha Combination Engine for cases where signals have incomparable scales (technical price data vs. crowd probability vs. macro regime).
+
+### From googleapis/mcp-toolbox
+
+**Vector-assist query generation** — Auto-generates pgvector similarity SQL from tool config. Apply when v7 financial data queries against pgvector get complex (semantic search across market analysis notes).
+
+### From Awesome-finance-skills (RKiding/Awesome-finance-skills)
+
+**Transmission chain mapping** — Model causal flows on signals: "Gold crash → currency pressure → A-share export tailwind." Each signal gets a `transmission_chain` field — array of `{from, to, mechanism, confidence}`. The Alpha Combination Engine (F7) weights signals by independent contribution but doesn't model _how_ signals transmit through markets. This adds the "why" behind each signal, improving thesis formation.
+
+**Signal evolution tracking** — Systematic lifecycle per signal: `Strengthened`, `Weakened`, or `Falsified` as new data arrives. Integrates with the trade_theses commitment tracking (from PMM pattern). Jarvis tracks whether a thesis is getting stronger or weaker before acting — not just point-in-time snapshots.
+
+**ISQ framework (bookmark)** — 6-dimension decomposition of Information Coefficient: Sentiment, Confidence, Intensity, Expectation Gap, Timeliness, Transmission Clarity. Richer than raw IC as a single number. Apply when Alpha Combination Engine (F7) is built to give each signal a quality profile, not just a weight.
+
+### From persistent-mind-model (scottonanski/persistent-mind-model-v1.0)
+
+**Commitment tracking for trade theses** — MemeGraph lifecycle (open → tracking → resolved/broken) maps to paper trading: thesis formed → trade entered → outcome tracked → thesis resolved or broken. Implementation: `trade_theses` table with status lifecycle, thesis text, evidence array, outcome, extracted lessons.
 
 ## Remaining Pre-Build Items
 
