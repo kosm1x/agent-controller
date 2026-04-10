@@ -171,6 +171,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "glm-5": { input: 0.5, output: 1.5 },
   // Groq
   "llama-3.3-70b-versatile": { input: 0.59, output: 0.79 },
+  "meta-llama/llama-4-scout-17b-16e-instruct": { input: 0.04, output: 0.15 },
   // Default for unknown models
   _default: { input: 1.0, output: 3.0 },
 };
