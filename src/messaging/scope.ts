@@ -195,6 +195,13 @@ export const INTEL_TOOLS = [
   "intel_baseline",
 ];
 
+/** Utility tools — weather, currency, geocoding. Scope-gated to save tokens. */
+export const UTILITY_TOOLS = [
+  "weather_forecast",
+  "currency_convert",
+  "geocode_address",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -257,12 +264,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
       /\b(escrib[eiao]\w*\s.*(diario|journal)|anota\w*\s.*(diario|journal)|registra\w*\s.*(diario|journal)|agrega\w*\s.*(diario|journal)|pon\w*\s.*(diario|journal)|crea\w*\s.*(entrada|entry).*(diario|journal)|journal\s*entry|diario.*escrib|write.*journal)/i,
-    group: "northstar_journal",
+    group: "northstar_journal", // Intent detection only — no extra tools added (jarvis_file_write in MISC handles writes)
   },
   {
     pattern:
       /\b(elimina(r|la|las|lo|los)?|borra(r|la|las|lo|los)?|delete|quita(r)?|remove)\b/i,
-    group: "destructive",
+    group: "destructive", // Intent detection only — destructive tools (file_delete, etc.) live in their domain groups (CODING, GOOGLE)
   },
   {
     pattern:
@@ -309,6 +316,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b((?:publica(?:r|ci[oó]n)?|publique)\s+(?:\S+\s+){0,3}(?:en\s+)?(?:redes|instagram|facebook|tiktok|youtube)|publish\s+(?:to|on)\s|postea(?:r|lo)?|instagram|facebook(?!\s*auth)|redes\s*sociales|social\s*media|contenido\s+para\s+(?:redes|social)|programar?\s+(?:un\s+)?post|schedule\s+post)\b/i,
     group: "social",
+  },
+  {
+    pattern:
+      /\b(clima|weather|temperatura|temperature|lluvia|rain|pron[oó]stico|forecast|moneda|currency|convert|tipo\s+de\s+cambio|d[oó]lar|exchange\s+rate|coordenadas|coordinates|direcci[oó]n.*geocod|geocod|ubicaci[oó]n\s+de)\b/i,
+    group: "utility",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -420,6 +432,8 @@ export function scopeToolsForMessage(
     activeGroups.add("coding");
     activeGroups.add("wordpress");
     activeGroups.add("crm");
+    activeGroups.add("social");
+    activeGroups.add("utility");
   }
 
   if (
@@ -473,8 +487,11 @@ export function scopeToolsForMessage(
     tools.push(...WORDPRESS_TOOLS);
     tools.push("humanize_text"); // Writing quality for blog posts
   }
+  if (activeGroups.has("utility")) {
+    tools.push(...UTILITY_TOOLS);
+  }
   if (options.hasMemory) {
-    tools.push("memory_search", "memory_store");
+    tools.push("memory_search", "memory_store", "memory_reflect");
   }
 
   // Deduplicate: multiple scope groups can push the same tool

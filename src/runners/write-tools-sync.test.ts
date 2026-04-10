@@ -21,6 +21,7 @@ const GOOGLE_READ_ONLY = new Set([
   "gmail_read",
   "gsheets_read",
   "gdocs_read",
+  "gslides_read",
   "gdrive_list",
   "calendar_list",
 ]);

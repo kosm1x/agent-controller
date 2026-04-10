@@ -291,10 +291,10 @@ describe("two-phase scope isolation", () => {
 
   it("bare 'lo que' without verb context does NOT trigger referential inheritance on long msg", () => {
     const tools = scope(
-      "lo que pasa es que el clima esta cambiando mucho este año y me preocupa bastante la situación",
+      "lo que pasa es que me siento muy cansado hoy y no tengo ganas de hacer absolutamente nada por favor",
       ["Busca en mi gmail los correos de ayer"],
     );
-    // 93 chars, "lo que" without "te/me pedí/dije" — should NOT inherit
+    // 100 chars, no scope keywords, no imperative verbs — should NOT inherit
     expect(hasNone(tools, GOOGLE_TOOLS)).toBe(true);
   });
 
