@@ -223,7 +223,7 @@ Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unrea
       const lines = [`📧 **"${query}"** — ${emails.length} emails`];
       for (const e of emails) {
         lines.push(
-          `\n**${e.subject}**\nDe: ${e.from}\nFecha: ${e.date}\n> ${e.snippet}`,
+          `\n**${e.subject}**\nID: ${e.id}\nDe: ${e.from}\nFecha: ${e.date}\n> ${e.snippet}`,
         );
       }
       return lines.join("\n");
