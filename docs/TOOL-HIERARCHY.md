@@ -68,28 +68,30 @@ Typical message sees ~27 tools. Of those, ~9 have full schemas, ~18 are deferred
 ### Classification Priority
 
 1. **Semantic classifier** (LLM-based, 3s timeout) — understands intent ("abre mi northstar" → northstar scope)
-2. **URL injection** (mechanical) — `docs.google.com/*` → google scope
+2. **URL injection** (mechanical) — `docs.google.com/*`, `drive.google.com`, `mail.google.com`, `calendar.google.com` → google scope
 3. **Regex fallback** (mechanical) — keyword patterns when semantic classifier times out
 
 ### Scope Groups
 
-| Group             | Trigger Keywords                                                            | Tools                                                                                  | Count |
-| ----------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----- |
-| `google`          | correo, gmail, calendar, drive, slides, presentación, Google Workspace URLs | Gmail (3), Drive (6), Calendar (3), Sheets (2), Docs (3), Slides (2), Tasks (1)        | 20    |
-| `coding`          | código, archivo, git, deploy, shell                                         | Shell, file ops, git (6), jarvis dev/diagnose/test, VPS deploy/backup/logs, directives | 22    |
-| `browser`         | navega, browse, click, login, SPA, playwright                               | Lightpanda extras (8) + Playwright Chromium (8)                                        | 16    |
-| `wordpress`       | blog, wordpress, publica en sitio                                           | WP CRUD, media, plugins, settings, raw API                                             | 10    |
-| `video`           | video, clip, render, TikTok                                                 | Create, script, TTS, image, profiles, voices, background, screenshot                   | 9     |
-| `research`        | analiza, investiga, estudio                                                 | Gemini upload/research/audio, knowledge maps                                           | 5     |
-| `specialty`       | gráfica, RSS, genera imagen                                                 | Chart, RSS, Gemini image, HuggingFace, batch                                           | 6     |
-| `intel`           | señales, mercado, alertas, depot                                            | Query, status, alert history, baseline                                                 | 4     |
-| `social`          | redes, Instagram, publica en redes                                          | Publish, accounts, status                                                              | 3     |
-| `schedule`        | programa, reportes, cron, cada hora                                         | Schedule task, delete schedule                                                         | 2     |
-| `crm`             | CRM, Azteca (explicit only)                                                 | crm_query                                                                              | 1     |
-| `northstar_read`  | metas, visión, objetivo, north star                                         | jarvis_file_read (already in CORE), jarvis_init                                        | 2     |
-| `northstar_write` | actualiza visión, nueva meta                                                | jarvis_file_write (already in MISC)                                                    | 1     |
-| `destructive`     | elimina, borra, delete                                                      | file_delete, jarvis_file_delete                                                        | 2     |
-| `meta`            | herramientas disponibles, diagnóstico                                       | **ALL groups activate** — full inventory                                               | all   |
+| Group               | Trigger Keywords                                                            | Tools                                                                                  | Count |
+| ------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----- |
+| `google`            | correo, gmail, calendar, drive, slides, presentación, Google Workspace URLs | Gmail (3), Drive (6), Calendar (3), Sheets (2), Docs (3), Slides (2), Tasks (1)        | 20    |
+| `coding`            | código, archivo, git, deploy, shell                                         | Shell, file ops, git (6), jarvis dev/diagnose/test, VPS deploy/backup/logs, directives | 22    |
+| `browser`           | navega, browse, click, login, SPA, playwright                               | Lightpanda extras (8) + Playwright Chromium (8)                                        | 16    |
+| `wordpress`         | blog, wordpress, publica en sitio                                           | WP CRUD, media, plugins, settings, raw API                                             | 10    |
+| `video`             | video, clip, render, TikTok                                                 | Create, script, TTS, image, profiles, voices, background, screenshot                   | 9     |
+| `research`          | analiza, investiga, estudio                                                 | Gemini upload/research/audio, knowledge maps                                           | 5     |
+| `specialty`         | gráfica, RSS, genera imagen                                                 | Chart, RSS, Gemini image, HuggingFace, batch                                           | 6     |
+| `intel`             | señales, mercado, alertas, depot                                            | Query, status, alert history, baseline                                                 | 4     |
+| `social`            | redes, Instagram, publica en redes                                          | Publish, accounts, status                                                              | 3     |
+| `schedule`          | programa, reportes, cron, cada hora                                         | Schedule task, delete schedule                                                         | 2     |
+| `utility`           | clima, weather, moneda, currency, tipo de cambio, geocode                   | weather_forecast, currency_convert, geocode_address                                    | 3     |
+| `crm`               | CRM, Azteca (explicit only)                                                 | crm_query                                                                              | 1     |
+| `northstar_read`    | metas, visión, objetivo, north star                                         | jarvis_file_read (already in CORE), jarvis_init                                        | 2     |
+| `northstar_write`   | actualiza visión, nueva meta                                                | jarvis_file_write (already in MISC)                                                    | 1     |
+| `destructive`       | elimina, borra, delete                                                      | _(intent-only — destructive tools live in domain groups)_                              | 0     |
+| `northstar_journal` | escribe diario, journal entry                                               | _(intent-only — jarvis_file_write in MISC handles writes)_                             | 0     |
+| `meta`              | herramientas disponibles, diagnóstico                                       | **ALL groups activate** — full inventory                                               | all   |
 
 ### Scope Behavior Rules
 
@@ -159,11 +161,12 @@ Tools only registered at startup if their service is configured:
 
 | Scenario                  | Tools in Scope | Deferred | Full Schema | Prompt Tokens |
 | ------------------------- | -------------- | -------- | ----------- | ------------- |
-| Simple chat (no topic)    | 25             | 18       | 7           | ~11-15K       |
-| Google + chat             | 45             | 35       | 10          | ~18-22K       |
-| Coding task               | 47             | 30       | 17          | ~20-25K       |
-| Full browser + coding     | 63             | 45       | 18          | ~22-28K       |
-| Meta query (all groups)   | 104            | 70       | 34          | ~28-35K       |
+| Simple chat (no topic)    | 28             | 18       | 10          | ~12-16K       |
+| Weather/currency query    | 31             | 21       | 10          | ~13-17K       |
+| Google + chat             | 48             | 38       | 10          | ~19-23K       |
+| Coding task               | 50             | 33       | 17          | ~21-26K       |
+| Full browser + coding     | 66             | 48       | 18          | ~23-29K       |
+| Meta query (all groups)   | 110            | 76       | 34          | ~30-37K       |
 | Scheduled task (≤6 tools) | 4-6            | 0        | 4-6         | ~8-12K        |
 
 Against TOKEN_BUDGET_FAST=28,000 and INFERENCE_CONTEXT_LIMIT=128,000.
@@ -190,3 +193,28 @@ Against TOKEN_BUDGET_FAST=28,000 and INFERENCE_CONTEXT_LIMIT=128,000.
 3. **Mechanical over LLM** — URL injection and regex don't cost inference. Semantic classifier is a 3s LLM call — use it for ambiguous cases, not obvious ones
 4. **Never block delivery** — `gmail_send` is non-deferred because a round-trip delay on email delivery is unacceptable
 5. **Scope doesn't restrict** — If the LLM asks for a tool not in scope, the deferred catalog shows it exists. Scope is about token budget, not access control
+6. **API over browser** — Google Workspace URLs must route to authenticated API tools (gdocs_read, gsheets_read, gslides_read), never to browser**goto which hits auth walls. All Google read tools carry "DO NOT USE browser**goto" warnings
+
+---
+
+## Known Anti-Patterns
+
+| Anti-Pattern                       | What Happens                                            | Defense                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Browser for private URLs**       | LLM uses browser\_\_goto on docs.google.com → auth wall | URL scope injection + "DO NOT USE browser" in tool descriptions                                             |
+| **Missing chain ID**               | Tool A returns data without the ID that Tool B needs    | All search/list tools verified to output IDs (gmail_search includes `ID:`, gdrive_list includes `id`, etc.) |
+| **Orphaned tools**                 | Tool registered but in no scope group → invisible       | Exhaustive audit: every tool mapped to a group or documented as intentionally unscopped                     |
+| **Semantic classifier blind spot** | LLM classifier returns "browser" for Google URLs        | URL injection overrides semantic classifier for known Google domains                                        |
+| **Intent-only groups**             | Scope group detected but adds zero tools                | `destructive` and `northstar_journal` documented as intent-detection-only                                   |
+
+---
+
+## Internal Tools (intentionally unscopped)
+
+These tools are registered but deliberately excluded from scope groups. They are reached via scheduled tasks, rituals, or internal code paths that bypass the scoping system:
+
+| Tool                         | Purpose                           | Reached Via              |
+| ---------------------------- | --------------------------------- | ------------------------ |
+| `evolution_get_data`         | Nightly skill evolution data      | Evolution ritual (cron)  |
+| `evolution_deactivate_skill` | Deactivate underperforming skills | Evolution ritual (cron)  |
+| `jarvis_init`                | One-time bootstrap                | Startup / manual trigger |
