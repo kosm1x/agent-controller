@@ -54,6 +54,15 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 │  ├── Open-Meteo (commodities correlation — existing)     │
 │  └── Google Finance (basic quotes, no API key)           │
 │                                                          │
+│  Macro data (FRED — free, 120 calls/min):                │
+│  ├── T10Y2Y (yield curve — recession predictor)          │
+│  ├── DFF (fed funds rate — policy stance)                │
+│  ├── VIXCLS (VIX — volatility/fear gauge)                │
+│  ├── UNRATE, PAYEMS, ICSA (employment signals)           │
+│  ├── CPIAUCSL (inflation)                                │
+│  ├── M2SL (money supply — liquidity indicator)           │
+│  └── Python sidecar via fredapi (no TS port needed)      │
+│                                                          │
 │  Paid / keyed APIs (optional, higher quality):           │
 │  ├── Alpha Vantage (free tier: 25 calls/day)             │
 │  ├── Polygon.io (free tier: 5 calls/min, delayed)        │
@@ -105,14 +114,15 @@ CREATE TABLE IF NOT EXISTS watchlist (
 
 ## Tools (6 new, all deferred)
 
-| Tool                | Purpose                                           | Scope Group |
-| ------------------- | ------------------------------------------------- | ----------- |
-| `market_quote`      | Current price + daily change for a ticker         | `finance`   |
-| `market_history`    | OHLCV history for a ticker + timeframe            | `finance`   |
-| `market_indicators` | Compute SMA/EMA/RSI/MACD/Bollinger for a ticker   | `finance`   |
-| `market_signals`    | Detect active signals across watchlist            | `finance`   |
-| `watchlist_manage`  | Add/remove/list watchlist tickers + alert configs | `finance`   |
-| `market_scan`       | Scan multiple tickers for a specific condition    | `finance`   |
+| Tool                | Purpose                                                    | Scope Group |
+| ------------------- | ---------------------------------------------------------- | ----------- |
+| `market_quote`      | Current price + daily change for a ticker                  | `finance`   |
+| `market_history`    | OHLCV history for a ticker + timeframe                     | `finance`   |
+| `market_indicators` | Compute SMA/EMA/RSI/MACD/Bollinger for a ticker            | `finance`   |
+| `market_signals`    | Detect active signals across watchlist                     | `finance`   |
+| `watchlist_manage`  | Add/remove/list watchlist tickers + alert configs          | `finance`   |
+| `market_scan`       | Scan multiple tickers for a specific condition             | `finance`   |
+| `macro_dashboard`   | FRED macro regime: yield curve, VIX, employment, inflation | `finance`   |
 
 ### Scope pattern
 
@@ -196,6 +206,38 @@ function detectSignals(
 ): Signal[];
 ```
 
+## Macro Regime Detection (FRED)
+
+```typescript
+// src/finance/macro.ts — Python sidecar via fredapi
+
+interface MacroRegime {
+  regime: "expansion" | "tightening" | "recession_risk" | "recovery";
+  yieldCurve: number; // T10Y2Y spread (< 0 = inverted)
+  fedRate: number; // DFF current level
+  vix: number; // VIXCLS current level
+  unemployment: number; // UNRATE latest
+  inflationYoY: number; // CPIAUCSL year-over-year %
+  m2GrowthYoY: number; // M2SL year-over-year %
+  initialClaims: number; // ICSA latest weekly
+  signals: MacroSignal[];
+}
+
+interface MacroSignal {
+  type: string; // 'yield_curve_inversion', 'vix_spike', 'employment_miss'
+  severity: "watch" | "warning" | "alert";
+  description: string;
+}
+
+// Regime rules:
+// - yieldCurve < 0 + unemployment rising → recession_risk
+// - fedRate rising + M2 declining → tightening
+// - yieldCurve > 0 + unemployment falling + VIX < 20 → expansion
+// - yieldCurve normalizing + unemployment peaking → recovery
+```
+
+**Integration:** Python sidecar calls fredapi, returns JSON. Cached in SQLite (daily refresh for daily series, monthly for monthly). Macro regime injected into signal context so technical signals get regime-aware interpretation.
+
 ## Rituals
 
 | Ritual              | Schedule                        | Delivery                       |
@@ -232,14 +274,17 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 | **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)      | 1        | F1    |
 | **F3**   | Signal detector + market_signals tool                  | 1        | F2    |
 | **F4**   | Watchlist management + market_quote/history tools      | 1        | F1    |
-| **F5**   | Morning/EOD market scan rituals                        | 1        | F3+F4 |
-| **F6**   | Real-time crypto via Binance WebSocket (optional)      | 1        | F3    |
+| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)   | 1        | None  |
+| **F6**   | Composite signals (technical + macro regime context)   | 1        | F3+F5 |
+| **F7**   | Morning/EOD market scan rituals                        | 1        | F6+F4 |
+| **F8**   | Real-time crypto via Binance WebSocket (optional)      | 1        | F3    |
 | **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) | 1        | F3    |
 
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
-- **Free APIs first** — Yahoo Finance + CoinGecko + Frankfurter cover stocks/crypto/forex
+- **Free APIs first** — Yahoo Finance + CoinGecko + Frankfurter + FRED cover stocks/crypto/forex/macro
+- **Python sidecar for FRED** — fredapi + pandas, called via subprocess. No npm deps added
 - **SQLite storage** — market_data table, additive schema (no DB reset)
 - **Text-first delivery** — charts are v7.1, not v7
 - **Existing infrastructure** — rituals, proactive scanner, Intel Depot alert router all reusable
@@ -248,6 +293,7 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 ## Bookmarked Resources
 
 - **TradingView lightweight-charts** — v7.1 chart rendering (50KB, Canvas, OHLC-native)
+- **FRED API (fredapi)** — macro economic data (500K+ series, free, 120 calls/min). Python sidecar
 - **Camofox** — if stealth browsing needed for finance site scraping
 - **CoinGecko adapter** — already in Intel Depot (src/intel/adapters/coingecko.ts)
 - **Frankfurter adapter** — already in Intel Depot (src/intel/adapters/frankfurter.ts)
@@ -258,3 +304,4 @@ _Watchlist: 12 tickers | 2 señales activas | Próximo scan: 1:00 PM_
 2. **Alert frequency tolerance?** How many signals/day before it becomes noise?
 3. **Crypto priority vs equities?** Determines which data source to build first
 4. **Premium data?** Alpha Vantage/Polygon.io API keys worth the cost?
+5. **FRED API key?** Free signup at https://fred.stlouisfed.org/docs/api/api_key.html — needed before F5
