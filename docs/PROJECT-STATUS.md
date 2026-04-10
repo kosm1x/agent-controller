@@ -16,7 +16,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | Test files    | 130                                                                                                                                                                                                            |
 | Tests passing | 1808                                                                                                                                                                                                           |
 | Type errors   | 0                                                                                                                                                                                                              |
-| Total tools   | 170 (90 builtin + 55 MCP + 19 Google + 3 memory + 2 skill + 1 admin). 109 deferred (84 builtin + 25 MCP) — 52% prompt token reduction                                                                          |
+| Total tools   | 172 (91 builtin + 55 MCP + 20 Google + 3 memory + 2 skill + 1 admin). 109 deferred (84 builtin + 25 MCP) — 52% prompt token reduction                                                                          |
 | Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
