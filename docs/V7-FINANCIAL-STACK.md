@@ -350,21 +350,52 @@ Señal: COMPRA — RSI extremo con soporte macro
 _¿Procedo con paper trade? Responde "sí" para ejecutar_
 ```
 
+## Strategy Backtester — Learn Before You Trade (F7.5)
+
+Before paper trading, Jarvis backtests its thesis against historical data. Nine strategy templates from the prediction-market-backtesting playbook:
+
+| Strategy                 | Logic                                    | Best Regime |
+| ------------------------ | ---------------------------------------- | ----------- |
+| Mean Reversion           | Buy when price < rolling_avg - threshold | Ranging     |
+| EMA Crossover            | Buy when fast_ema >= slow_ema            | Trending    |
+| Breakout                 | Buy when price > mean + n\*std           | Volatile    |
+| RSI Reversion            | Buy when RSI < entry_threshold           | Ranging     |
+| Panic Fade               | Buy panic selloffs below threshold       | Volatile    |
+| VWAP Reversion           | Buy dislocation from trade-tick VWAP     | Ranging     |
+| Final Period Momentum    | Buy late-game strength near expiry       | Any         |
+| Late Favorite Limit Hold | Limit buy high-probability favorites     | Trending    |
+| Threshold Momentum       | Buy absolute price threshold crossovers  | Trending    |
+
+**Validation flow:**
+
+```
+Signal: "BTC RSI at 28, macro stable"
+  → Regime: RANGING
+  → Backtest RSI Reversion + Mean Reversion + VWAP (ranging strategies)
+  → Results: RSI Reversion 65% win rate, Mean Rev 58%, VWAP 52%
+  → Select: RSI Reversion (best for current regime)
+  → Paper trade with RSI Reversion entry/exit rules
+  → Track: did the backtest-selected strategy outperform random?
+```
+
+Over time, Jarvis learns which strategy works for which regime — adapting its playbook based on evidence, not intuition.
+
 ## Implementation Order
 
-| Phase    | What                                                     | Sessions | Deps     |
-| -------- | -------------------------------------------------------- | -------- | -------- |
-| **F1**   | market_data table + Yahoo Finance adapter                | 1        | None     |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)        | 1        | F1       |
-| **F3**   | Signal detector + market_signals tool                    | 1        | F2       |
-| **F4**   | Watchlist management + market_quote/history tools        | 1        | F1       |
-| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)     | 1        | None     |
-| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)   | 1.5      | None     |
-| **F7**   | Composite signals + regime detection + shadow portfolio  | 1        | F3+F5+F6 |
-| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade) | 1        | F7+F6    |
-| **F9**   | Morning/EOD market scan rituals                          | 1        | F7+F4    |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)        | 1        | F3       |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)   | 1        | F3       |
+| Phase    | What                                                        | Sessions | Deps     |
+| -------- | ----------------------------------------------------------- | -------- | -------- |
+| **F1**   | market_data table + Yahoo Finance adapter                   | 1        | None     |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger)           | 1        | F1       |
+| **F3**   | Signal detector + market_signals tool                       | 1        | F2       |
+| **F4**   | Watchlist management + market_quote/history tools           | 1        | F1       |
+| **F5**   | FRED macro regime (Python sidecar + macro_dashboard)        | 1        | None     |
+| **F6**   | Prediction markets + whale tracker (Polymarket/Kalshi)      | 1.5      | None     |
+| **F7**   | Composite signals + regime detection + shadow portfolio     | 1        | F3+F5+F6 |
+| **F7.5** | Strategy backtester (test 9 playbook strategies on history) | 1        | F7+F6    |
+| **F8**   | Paper trading via pm-trader MCP (Jarvis learns to trade)    | 1        | F7.5     |
+| **F9**   | Morning/EOD market scan rituals                             | 1        | F7+F4    |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)           | 1        | F3       |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG)      | 1        | F3       |
 
 ## Constraints
 
@@ -385,7 +416,7 @@ _¿Procedo con paper trade? Responde "sí" para ejecutar_
 - **Frankfurter adapter** — already in Intel Depot (src/intel/adapters/frankfurter.ts)
 - **Polymarket Gamma API** — `https://gamma-api.polymarket.com/events` (market discovery, no key)
 - **Kalshi REST API** — `https://api.kalshi.com/trade-api/v2` (20 RPS free tier)
-- **prediction-market-backtesting** — Strategy patterns: mean reversion, EMA crossover, panic fade, VWAP reversion, breakout. Reference for signal extraction logic
+- **prediction-market-backtesting** — 9 strategy playbook (mean reversion, EMA crossover, panic fade, VWAP reversion, breakout, RSI reversion, final period momentum, late favorite, threshold). Strategy backtester for F7.5 — Jarvis selects best strategy per regime from historical performance
 - **Polymarket-Trading-Bot** — Regime detection (trending/ranging/volatile), multi-filter convergence (7 gates), shadow portfolio validation. Design patterns adopted into F7 composite signals
 - **polymarket-paper-trader** — MCP server (29 tools, stdio). Jarvis practices trading with $10K simulated. Track record builds credibility before alerting user. Phase F8
 
