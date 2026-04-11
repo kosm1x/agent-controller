@@ -234,13 +234,13 @@ function scopeToolsForMessage(
   // The current message (first param) is always scanned separately.
   const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
-    .slice(-1)
+    .slice(-2)
     .map((t) => t.content);
 
   // For assistant messages, extract only google/wp keywords to avoid false triggers
   const assistantContext = conversationHistory
     .filter((t) => t.role === "assistant")
-    .slice(-1)
+    .slice(-2)
     .map((t) => {
       // Only pass through words that match google or wordpress patterns
       const googleMatch = t.content.match(
@@ -816,6 +816,74 @@ export class MessageRouter {
     );
 
     this.subscriptions.push(completedSub, failedSub);
+
+    // Notify user about tasks killed by service restart.
+    // On shutdown, orphaned tasks get status='failed', error='Service shutdown'
+    // but the messaging router is already torn down — failure messages never sent.
+    // On startup, find recent orphans and send a brief apology so the user knows.
+    this.notifyOrphanedTasks();
+  }
+
+  /**
+   * Find tasks killed by the last service restart and notify the user.
+   * Only looks at tasks from the last 10 minutes to avoid spamming on
+   * first boot after a long downtime.
+   */
+  private notifyOrphanedTasks(): void {
+    try {
+      const db = getDatabase();
+      const orphans = db
+        .prepare(
+          `SELECT task_id, title FROM tasks
+           WHERE error = 'Service shutdown'
+             AND completed_at > datetime('now', '-10 minutes')
+             AND title LIKE 'Chat:%'
+           ORDER BY completed_at DESC
+           LIMIT 3`,
+        )
+        .all() as Array<{ task_id: string; title: string }>;
+
+      if (orphans.length === 0) return;
+
+      // Find the most recent channel from thread history
+      const defaultChannel: ChannelName = this.channels.has("telegram")
+        ? "telegram"
+        : "whatsapp";
+      const defaultTo = ""; // Will be populated from thread if available
+
+      // Get the sender from thread entries for the first orphan
+      const thread = db
+        .prepare(`SELECT metadata FROM tasks WHERE task_id = ? LIMIT 1`)
+        .get(orphans[0].task_id) as { metadata: string } | undefined;
+
+      let channel = defaultChannel;
+      let to = defaultTo;
+      try {
+        if (thread?.metadata) {
+          const meta = JSON.parse(thread.metadata);
+          if (meta.channel) channel = meta.channel as ChannelName;
+          if (meta.from) to = meta.from;
+        }
+      } catch {
+        /* best effort */
+      }
+
+      if (!to) return; // Can't determine recipient — skip silently
+
+      const titles = orphans
+        .map((o) => o.title.replace("Chat: ", "").slice(0, 50))
+        .join(", ");
+      this.sendToChannel(
+        channel,
+        to,
+        `Tuve un reinicio mientras procesaba tu solicitud. Lo que se interrumpió: "${titles}". Puedes repetirlo y lo intento de nuevo.`,
+      );
+      console.log(
+        `[router] Notified user about ${orphans.length} task(s) killed by restart`,
+      );
+    } catch {
+      // Best effort — don't crash startup
+    }
   }
 
   /** Handle an inbound message from any channel → create task. */
