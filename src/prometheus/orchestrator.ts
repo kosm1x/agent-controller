@@ -9,7 +9,7 @@
 import { randomUUID } from "crypto";
 import { GoalGraph } from "./goal-graph.js";
 import { IterationBudget } from "./budget.js";
-import { Phase, defaultConfig } from "./types.js";
+import { Phase, GoalStatus, defaultConfig } from "./types.js";
 import type {
   OrchestratorConfig,
   OrchestratorResult,
@@ -21,6 +21,7 @@ import { executeGraph } from "./executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 import { reflect } from "./reflector.js";
 import { eventBus } from "../lib/event-bus.js";
+import type { PrometheusSnapshot } from "./snapshot.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -34,6 +35,7 @@ export async function orchestrate(
   taskDescription: string,
   config?: Partial<OrchestratorConfig>,
   toolNames?: string[],
+  snapshot?: PrometheusSnapshot,
 ): Promise<OrchestratorResult> {
   const cfg = defaultConfig(config);
   const trace = createTrace();
@@ -54,44 +56,84 @@ export async function orchestrate(
       cfg.timeoutMs,
     );
 
-    // --- PLAN ---
-    emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
-    traceRecord(trace, "phase_start", { phase: Phase.PLAN });
-
     let graph: GoalGraph;
-    try {
-      const { graph: g, usage: planUsage } = await plan(taskDescription);
-      graph = g;
-      totalPromptTokens += planUsage.promptTokens;
-      totalCompletionTokens += planUsage.completionTokens;
-    } catch (err) {
-      traceRecord(trace, "phase_error", {
-        phase: Phase.PLAN,
-        error: String(err),
-      });
-      throw new Error(
-        `Planning failed: ${err instanceof Error ? err.message : err}`,
+    let executionResults: ExecutionResult;
+
+    if (snapshot) {
+      // --- RESUME PATH: restore state from snapshot ---
+      graph = GoalGraph.fromJSON(snapshot.goalGraph);
+      // Reset any IN_PROGRESS goals to PENDING (they were interrupted mid-execution)
+      for (const goal of graph.getAll()) {
+        if (goal.status === GoalStatus.IN_PROGRESS) {
+          graph.updateStatus(goal.id, GoalStatus.PENDING);
+        }
+      }
+      replanCount = snapshot.executionState.replanCount;
+      totalPromptTokens = snapshot.executionState.tokenUsage.promptTokens;
+      totalCompletionTokens =
+        snapshot.executionState.tokenUsage.completionTokens;
+      for (let i = 0; i < snapshot.executionState.budgetConsumed; i++) {
+        budget.consume();
+      }
+      trace.events.push(
+        ...(snapshot.executionState.traceEvents as Array<
+          Record<string, unknown> & { type: string; timestamp: number }
+        >),
       );
+      executionResults = {
+        goalResults: snapshot.goalResults,
+        summary: graph.summary(),
+        totalToolCalls: 0,
+        totalToolNames: [],
+        totalToolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        toolRepairs: [],
+      };
+      traceRecord(trace, "resumed_from_snapshot", {
+        taskId: snapshot.taskId,
+        priorGoals: Object.keys(snapshot.goalResults).length,
+      });
+      console.log(
+        `[orchestrator] Task ${taskId}: resumed from snapshot (${Object.keys(snapshot.goalResults).length} prior results, budget ${budget.remaining} remaining)`,
+      );
+      emitProgress(taskId, Phase.EXECUTE, 30, "Resuming from snapshot");
+    } else {
+      // --- PLAN ---
+      emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
+      traceRecord(trace, "phase_start", { phase: Phase.PLAN });
+
+      try {
+        const { graph: g, usage: planUsage } = await plan(taskDescription);
+        graph = g;
+        totalPromptTokens += planUsage.promptTokens;
+        totalCompletionTokens += planUsage.completionTokens;
+      } catch (err) {
+        traceRecord(trace, "phase_error", {
+          phase: Phase.PLAN,
+          error: String(err),
+        });
+        throw new Error(
+          `Planning failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+
+      traceRecord(trace, "phase_end", {
+        phase: Phase.PLAN,
+        goalCount: graph.size,
+      });
+      emitProgress(taskId, Phase.PLAN, 25, `Planned ${graph.size} goals`);
+      console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
+
+      executionResults = {
+        goalResults: {},
+        summary: graph.summary(),
+        totalToolCalls: 0,
+        totalToolNames: [],
+        totalToolFailures: 0,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        toolRepairs: [],
+      };
     }
-
-    traceRecord(trace, "phase_end", {
-      phase: Phase.PLAN,
-      goalCount: graph.size,
-    });
-    emitProgress(taskId, Phase.PLAN, 25, `Planned ${graph.size} goals`);
-
-    console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
-
-    // --- EXECUTE + REPLAN LOOP ---
-    let executionResults: ExecutionResult = {
-      goalResults: {},
-      summary: graph.summary(),
-      totalToolCalls: 0,
-      totalToolNames: [],
-      totalToolFailures: 0,
-      tokenUsage: { promptTokens: 0, completionTokens: 0 },
-      toolRepairs: [],
-    };
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -104,15 +146,23 @@ export async function orchestrate(
         break;
       }
 
-      executionResults = await executeGraph(
+      const newExecResults = await executeGraph(
         graph,
         toolNames,
         budget,
         cfg.goalTimeoutMs,
         timeoutController.signal,
       );
-      trace.totalToolCalls += executionResults.totalToolCalls;
-      trace.totalToolFailures += executionResults.totalToolFailures;
+      // Merge: keep prior snapshot results + add newly executed results
+      executionResults = {
+        ...newExecResults,
+        goalResults: {
+          ...executionResults.goalResults,
+          ...newExecResults.goalResults,
+        },
+      };
+      trace.totalToolCalls += newExecResults.totalToolCalls;
+      trace.totalToolFailures += newExecResults.totalToolFailures;
       totalPromptTokens += executionResults.tokenUsage.promptTokens;
       totalCompletionTokens += executionResults.tokenUsage.completionTokens;
 
@@ -211,6 +261,44 @@ export async function orchestrate(
       break;
     }
 
+    // --- SNAPSHOT on early exit ---
+    const postExecSummary = graph.summary();
+    if (postExecSummary.pending > 0 || postExecSummary.in_progress > 0) {
+      const exitReason = timeoutController.signal.aborted
+        ? "timeout"
+        : "budget_exhausted";
+      try {
+        const { saveSnapshot } = await import("./snapshot.js");
+        saveSnapshot({
+          taskId,
+          goalGraph: graph.toJSON(),
+          goalResults: executionResults.goalResults,
+          executionState: {
+            budgetConsumed: budget.consumed,
+            replanCount,
+            tokenUsage: {
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+            },
+            traceEvents: trace.events,
+          },
+          taskDescription,
+          toolNames: toolNames ?? null,
+          config: config ?? null,
+          exitReason: exitReason as "timeout" | "budget_exhausted",
+          createdAt: new Date().toISOString(),
+        });
+        traceRecord(trace, "snapshot_saved", {
+          exitReason,
+          pending: postExecSummary.pending,
+        });
+      } catch (err) {
+        console.warn(
+          `[orchestrator] Failed to save snapshot: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
     // --- REFLECT ---
     emitProgress(taskId, Phase.REFLECT, 85, "Reflecting on execution");
     traceRecord(trace, "phase_start", { phase: Phase.REFLECT });
@@ -262,6 +350,16 @@ export async function orchestrate(
     trace.endTime = Date.now();
     clearTimeout(globalTimer);
     emitProgress(taskId, Phase.REFLECT, 100, "Complete");
+
+    // Clear snapshot on successful completion (if we resumed from one)
+    if (snapshot) {
+      try {
+        const { clearSnapshot } = await import("./snapshot.js");
+        clearSnapshot(snapshot.taskId);
+      } catch {
+        /* best-effort */
+      }
+    }
 
     console.log(
       `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,

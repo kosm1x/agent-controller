@@ -3,7 +3,7 @@
  * Tests the plan→execute→reflect flow, replan triggers, event emission.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { ExecutionResult, ReflectionResult } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -20,6 +20,11 @@ vi.mock("./executor.js", () => ({
 
 vi.mock("./reflector.js", () => ({
   reflect: vi.fn(),
+}));
+
+vi.mock("./snapshot.js", () => ({
+  saveSnapshot: vi.fn(),
+  clearSnapshot: vi.fn(),
 }));
 
 vi.mock("../lib/event-bus.js", () => ({
@@ -111,7 +116,9 @@ function makeReflection(): ReflectionResult {
 }
 
 describe("orchestrate", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should run plan→execute→reflect successfully", async () => {
     const graph = makeGraph();
     mockPlan.mockResolvedValueOnce({
@@ -386,5 +393,127 @@ describe("orchestrate", () => {
     const types = result.trace.map((e) => e.type);
     expect(types).toContain("phase_start");
     expect(types).toContain("phase_end");
+  });
+
+  it("resumes from snapshot — skips plan phase", async () => {
+    const graph = makeGraph();
+    // Only g-1 completed in snapshot, g-2 still pending
+    graph.updateStatus("g-2", GoalStatus.PENDING);
+
+    const snapshot = {
+      taskId: "task-resume",
+      goalGraph: graph.toJSON(),
+      goalResults: {
+        "g-1": {
+          goalId: "g-1",
+          ok: true,
+          result: "done",
+          durationMs: 100,
+          toolCalls: 1,
+          toolNames: ["shell"],
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 50, completionTokens: 20 },
+        },
+      },
+      executionState: {
+        budgetConsumed: 3,
+        replanCount: 0,
+        tokenUsage: { promptTokens: 200, completionTokens: 100 },
+        traceEvents: [],
+      },
+      taskDescription: "Resume test",
+      toolNames: null,
+      config: null,
+      exitReason: "timeout" as const,
+      createdAt: new Date().toISOString(),
+    };
+
+    // executeGraph should receive the graph with g-1 COMPLETED, g-2 PENDING
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate(
+      "task-resume",
+      "Resume test",
+      undefined,
+      undefined,
+      snapshot,
+    );
+
+    // plan() should NOT be called (skipped for resume)
+    expect(mockPlan).not.toHaveBeenCalled();
+    // executeGraph and reflect should still be called
+    expect(mockExecuteGraph).toHaveBeenCalledTimes(1);
+    expect(mockReflect).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    // Trace should include resumed_from_snapshot event
+    const traceTypes = result.trace.map((e) => e.type);
+    expect(traceTypes).toContain("resumed_from_snapshot");
+  });
+
+  it("does not save snapshot on normal completion", async () => {
+    const graph = makeGraph(); // all completed
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-normal", "Normal completion");
+
+    expect(result.success).toBe(true);
+    // No snapshot_saved event in trace
+    const traceTypes = result.trace.map((e) => e.type);
+    expect(traceTypes).not.toContain("snapshot_saved");
+  });
+
+  it("saves snapshot when goals remain pending after execution", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Goal 2",
+      status: GoalStatus.PENDING,
+      dependsOn: ["g-1"],
+    });
+
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+
+    // executeGraph returns without completing g-2 (budget exhausted)
+    const partialResult = makeExecResult();
+    partialResult.summary = {
+      completed: 1,
+      failed: 0,
+      pending: 1,
+      blocked: 0,
+      in_progress: 0,
+      total: 2,
+    };
+    delete (partialResult.goalResults as Record<string, unknown>)["g-2"];
+    mockExecuteGraph.mockResolvedValueOnce(partialResult);
+    mockReflect.mockResolvedValueOnce({
+      result: { ...makeReflection(), success: false, score: 0.5 },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-partial", "Partial task");
+
+    // snapshot_saved should appear in trace (g-2 still pending)
+    const traceTypes = result.trace.map((e) => e.type);
+    expect(traceTypes).toContain("snapshot_saved");
   });
 });

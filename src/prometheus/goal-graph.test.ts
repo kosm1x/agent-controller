@@ -204,4 +204,47 @@ describe("GoalGraph", () => {
       expect(restored.getGoal("c").parentId).toBe("a");
     });
   });
+
+  describe("getDependents", () => {
+    it("returns empty array for leaf goals", () => {
+      const g = new GoalGraph();
+      g.addGoal({ id: "a", description: "A" });
+      g.addGoal({ id: "b", description: "B", dependsOn: ["a"] });
+      expect(g.getDependents("b")).toEqual([]);
+    });
+
+    it("returns direct dependents", () => {
+      const g = new GoalGraph();
+      g.addGoal({ id: "a", description: "A" });
+      g.addGoal({ id: "b", description: "B", dependsOn: ["a"] });
+      g.addGoal({ id: "c", description: "C", dependsOn: ["a"] });
+      const deps = g.getDependents("a");
+      expect(deps.sort()).toEqual(["b", "c"]);
+    });
+
+    it("returns transitive dependents", () => {
+      const g = new GoalGraph();
+      g.addGoal({ id: "a", description: "A" });
+      g.addGoal({ id: "b", description: "B", dependsOn: ["a"] });
+      g.addGoal({ id: "c", description: "C", dependsOn: ["b"] });
+      expect(g.getDependents("a").sort()).toEqual(["b", "c"]);
+    });
+
+    it("handles diamond dependencies without duplicates", () => {
+      const g = new GoalGraph();
+      g.addGoal({ id: "a", description: "A" });
+      g.addGoal({ id: "b", description: "B", dependsOn: ["a"] });
+      g.addGoal({ id: "c", description: "C", dependsOn: ["a"] });
+      g.addGoal({ id: "d", description: "D", dependsOn: ["b", "c"] });
+      const deps = g.getDependents("a");
+      expect(deps.sort()).toEqual(["b", "c", "d"]);
+      expect(new Set(deps).size).toBe(deps.length); // no duplicates
+    });
+
+    it("throws for nonexistent goalId", () => {
+      const g = new GoalGraph();
+      g.addGoal({ id: "a", description: "A" });
+      expect(() => g.getDependents("nonexistent")).toThrow();
+    });
+  });
 });

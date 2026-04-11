@@ -171,6 +171,26 @@ export class GoalGraph {
     return blocked;
   }
 
+  /** Get all transitive dependents of a goal (goals that depend on it, recursively). */
+  getDependents(goalId: string): string[] {
+    this.getGoal(goalId); // validate exists
+    const dependents: string[] = [];
+    const visited = new Set<string>();
+    const queue = [goalId];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const [, goal] of this.goals) {
+        if (goal.dependsOn.includes(current) && !visited.has(goal.id)) {
+          visited.add(goal.id);
+          dependents.push(goal.id);
+          queue.push(goal.id);
+        }
+      }
+    }
+    return dependents;
+  }
+
   /** Get goals matching a status filter. */
   getByStatus(status: GoalStatus): Goal[] {
     const result: Goal[] = [];

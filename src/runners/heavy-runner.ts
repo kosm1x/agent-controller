@@ -20,11 +20,28 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
 
   try {
+    // Check for resumable snapshot from a prior early exit
+    let snapshot:
+      | import("../prometheus/snapshot.js").PrometheusSnapshot
+      | undefined;
+    try {
+      const { loadSnapshot } = await import("../prometheus/snapshot.js");
+      snapshot = loadSnapshot(input.taskId) ?? undefined;
+      if (snapshot) {
+        console.log(
+          `[heavy-runner] Resuming task ${input.taskId} from snapshot`,
+        );
+      }
+    } catch {
+      /* snapshot loading is best-effort */
+    }
+
     const result = await orchestrate(
       input.taskId,
       `${input.title}\n\n${input.description}`,
       undefined,
       input.tools,
+      snapshot,
     );
 
     return {

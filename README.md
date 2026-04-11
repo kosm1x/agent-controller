@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.4 CURRENT.** 132 test files, 1854 tests passing, zero type errors, 172 tools (109 deferred). Memory embeddings unified on Gemini (1536-dim, was broken HuggingFace 384-dim). 3,238 conversations backfilled. V7 30-day validation in progress (day 2/30, `mc-ctl validation check`). NanoClaw coding sandbox functional. Pre-production hardened. Roadmap: D3+D4 (OAuth), then v7 Financial Signal Detection Stack after validation passes (~May 10).
+**v6.4 CURRENT.** 134 test files, 1874 tests passing, zero type errors, 172 tools (109 deferred). Prometheus snapshot/resume (execution state persists across early exits) + partial re-execution (re-run from any goal in a completed plan). V7 30-day validation in progress (day 2/30). Alpha Vantage premium verified. Roadmap: v7 Financial Signal Detection Stack after validation passes (~May 10).
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

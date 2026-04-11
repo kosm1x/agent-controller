@@ -204,6 +204,23 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_provenance_goal ON task_provenance(goal_id)",
   );
 
+  // Prometheus snapshot/resume
+  _db.exec(`CREATE TABLE IF NOT EXISTS prometheus_snapshots (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id          TEXT NOT NULL,
+    goal_graph       TEXT NOT NULL,
+    goal_results     TEXT NOT NULL,
+    execution_state  TEXT NOT NULL,
+    task_description TEXT NOT NULL,
+    tool_names       TEXT,
+    config           TEXT,
+    exit_reason      TEXT NOT NULL,
+    created_at       TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_prom_snap_task ON prometheus_snapshots(task_id, created_at DESC)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
