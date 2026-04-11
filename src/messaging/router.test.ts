@@ -288,7 +288,7 @@ describe("MessageRouter", () => {
       );
     });
 
-    it("should send timeout notice after 300s", async () => {
+    it("should send extended warning after 300s (keeps pending entry)", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
         from: "owner@s.whatsapp.net",
@@ -299,9 +299,11 @@ describe("MessageRouter", () => {
 
       vi.advanceTimersByTime(300_001);
 
-      // [0] = ack, [1] = interim (120s), [2] = timeout (300s)
+      // [0] = ack, [1] = interim (120s), [2] = warning (300s, no longer abandons)
       expect(waAdapter.sentMessages).toHaveLength(3);
-      expect(waAdapter.sentMessages[2].text).toContain("Se agotó el tiempo");
+      expect(waAdapter.sentMessages[2].text).toContain(
+        "tomando más de lo esperado",
+      );
     });
   });
 
