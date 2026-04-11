@@ -150,6 +150,17 @@ export async function queryClaudeSdk(opts: {
     opts.abortSignal.addEventListener("abort", () => abortController.abort());
   }
 
+  // Hard timeout: kill the subprocess if it hangs. SDK has no built-in timeout
+  // for the full query — maxTurns only caps turns, not wall-clock time.
+  // 10 minutes is generous for any single task.
+  const SDK_TIMEOUT_MS = 10 * 60_000;
+  const timeoutTimer = setTimeout(() => {
+    console.warn(
+      `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
+    );
+    abortController.abort();
+  }, SDK_TIMEOUT_MS);
+
   const options: SdkOptions = {
     model: opts.model ?? "claude-sonnet-4-6",
     systemPrompt: opts.systemPrompt,
@@ -211,6 +222,8 @@ export async function queryClaudeSdk(opts: {
       }
     }
   }
+
+  clearTimeout(timeoutTimer);
 
   console.log(
     `[claude-sdk] Completed: ${numTurns} turns, ${toolCallCount} tool calls, ` +
