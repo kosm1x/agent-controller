@@ -166,7 +166,7 @@ CREATE TRIGGER IF NOT EXISTS conversations_au AFTER UPDATE ON conversations BEGI
   INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
 END;
 
--- Embedding vectors for semantic search (384-dim float32 as BLOB)
+-- Embedding vectors for semantic search (1536-dim float32 as BLOB)
 CREATE TABLE IF NOT EXISTS conversation_embeddings (
   conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id),
   embedding       BLOB NOT NULL

@@ -1,44 +1,31 @@
 /**
  * Embedding service for semantic memory search.
  *
- * Uses BAAI/bge-small-en-v1.5 via HuggingFace Inference API (384 dims).
- * Free with HF Pro subscription. Falls back gracefully — recall degrades
- * to FTS5-only if embeddings unavailable.
+ * Uses Gemini gemini-embedding-001 (1536 dims, free tier).
+ * Falls back gracefully — recall degrades to FTS5-only if embeddings unavailable.
  */
 
-const HF_EMBED_URL =
-  "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5";
-const EMBED_DIMS = 384;
-const EMBED_TIMEOUT_MS = 10_000;
-const MAX_INPUT_CHARS = 512;
+import { generateEmbedding } from "../inference/embeddings.js";
+
+export const EMBED_DIMS = 1536;
 
 /**
- * Embed text into a 384-dim float32 vector via HF Inference API.
+ * Embed text into a 1536-dim float32 vector via Gemini Embedding API.
  * Returns null on any error (graceful degradation).
  */
 export async function embed(text: string): Promise<Float32Array | null> {
-  const token = process.env.HUGGINGFACE_TOKEN;
-  if (!token) return null;
-
   try {
-    const input = text.slice(0, MAX_INPUT_CHARS);
-    const response = await fetch(HF_EMBED_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ inputs: input }),
-      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as number[];
-    if (!Array.isArray(data) || data.length !== EMBED_DIMS) return null;
-
-    return new Float32Array(data);
-  } catch {
+    const vec = await generateEmbedding(text);
+    if (!vec || vec.length === 0) {
+      console.warn("[embed] No embedding returned — check GEMINI_API_KEY");
+      return null;
+    }
+    return new Float32Array(vec);
+  } catch (err) {
+    console.warn(
+      "[embed] Embedding failed:",
+      err instanceof Error ? err.message : err,
+    );
     return null;
   }
 }

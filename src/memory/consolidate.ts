@@ -1,7 +1,7 @@
 /**
  * Learning consolidation — semantic deduplication of accumulated learnings.
  *
- * Uses existing embedding infrastructure (BAAI/bge-small-en-v1.5, 384-dim)
+ * Uses existing embedding infrastructure (Gemini gemini-embedding-001, 1536-dim)
  * to find and merge near-duplicate entries in the conversations table.
  * Designed to be called from the evolution ritual, not auto-scheduled.
  */

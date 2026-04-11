@@ -2,7 +2,7 @@
  * Learning consolidation tests.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { serializeEmbedding } from "./embeddings.js";
 
 // ---------------------------------------------------------------------------
@@ -30,43 +30,43 @@ import { consolidateLearnings } from "./consolidate.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a normalized embedding vector (384-dim) from a seed. */
+/** Create a normalized embedding vector (1536-dim) from a seed. */
 function makeEmbedding(seed: number): Buffer {
-  const v = new Float32Array(384);
-  for (let i = 0; i < 384; i++) {
+  const v = new Float32Array(1536);
+  for (let i = 0; i < 1536; i++) {
     v[i] = Math.sin(seed * (i + 1) * 0.01);
   }
   // Normalize
   let norm = 0;
-  for (let i = 0; i < 384; i++) norm += v[i] * v[i];
+  for (let i = 0; i < 1536; i++) norm += v[i] * v[i];
   norm = Math.sqrt(norm);
-  for (let i = 0; i < 384; i++) v[i] /= norm;
+  for (let i = 0; i < 1536; i++) v[i] /= norm;
   return serializeEmbedding(v);
 }
 
 /** Create a nearly-identical embedding (high cosine similarity). */
 function makeNearDuplicate(seed: number): Buffer {
-  const v = new Float32Array(384);
-  for (let i = 0; i < 384; i++) {
+  const v = new Float32Array(1536);
+  for (let i = 0; i < 1536; i++) {
     v[i] = Math.sin(seed * (i + 1) * 0.01) + 0.001 * Math.sin(i * 0.5);
   }
   let norm = 0;
-  for (let i = 0; i < 384; i++) norm += v[i] * v[i];
+  for (let i = 0; i < 1536; i++) norm += v[i] * v[i];
   norm = Math.sqrt(norm);
-  for (let i = 0; i < 384; i++) v[i] /= norm;
+  for (let i = 0; i < 1536; i++) v[i] /= norm;
   return serializeEmbedding(v);
 }
 
 /** Create a completely different embedding. */
 function makeDifferentEmbedding(seed: number): Buffer {
-  const v = new Float32Array(384);
-  for (let i = 0; i < 384; i++) {
+  const v = new Float32Array(1536);
+  for (let i = 0; i < 1536; i++) {
     v[i] = Math.cos(seed * (i + 1) * 7.3 + i * 2.1);
   }
   let norm = 0;
-  for (let i = 0; i < 384; i++) norm += v[i] * v[i];
+  for (let i = 0; i < 1536; i++) norm += v[i] * v[i];
   norm = Math.sqrt(norm);
-  for (let i = 0; i < 384; i++) v[i] /= norm;
+  for (let i = 0; i < 1536; i++) v[i] /= norm;
   return serializeEmbedding(v);
 }
 
@@ -85,7 +85,9 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("consolidateLearnings", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should return no-op for empty bank", () => {
     mockAll.mockReturnValueOnce([]);
 

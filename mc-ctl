@@ -911,6 +911,192 @@ cmd_intel() {
 }
 
 # ---------------------------------------------------------------------------
+# V7 Validation Log
+# ---------------------------------------------------------------------------
+
+VALIDATION_LOG="${PROJECT_DIR}/data/v7-validation.log"
+VALIDATION_START="2026-04-10"
+
+cmd_validation() {
+  need_db
+  local subcmd="${1:-check}"
+
+  case "$subcmd" in
+    check)
+      local today
+      today=$(date +%Y-%m-%d)
+      local day_num
+      day_num=$(( ( $(date -d "$today" +%s) - $(date -d "$VALIDATION_START" +%s) ) / 86400 + 1 ))
+
+      echo -e "\n${BOLD}V7 VALIDATION — Day ${day_num}/30${NC} ($today)"
+      echo -e "${DIM}Started: ${VALIDATION_START} — Gate: 2026-05-10${NC}\n"
+
+      local pass=0 fail=0 warn=0
+
+      # 1. Service uptime
+      local active
+      active=$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || echo "inactive")
+      if [ "$active" = "active" ]; then
+        local uptime_sec
+        uptime_sec=$(systemctl show "$SERVICE_NAME" --property=ActiveEnterTimestamp --value 2>/dev/null)
+        echo -e "  ${GREEN}[PASS]${NC} Service active (since $uptime_sec)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${RED}[FAIL]${NC} Service not running"
+        fail=$((fail+1))
+      fi
+
+      # 2. Ritual completion (last 24h)
+      local rituals_expected=0 rituals_completed=0
+      # Check cron-scheduled rituals from schedule_runs in last 24h
+      rituals_expected=$(sql_raw "SELECT COUNT(DISTINCT schedule_id) FROM schedule_runs WHERE spawned_at >= datetime('now', '-24 hours');")
+      rituals_completed=$(sql_raw "SELECT COUNT(DISTINCT schedule_id) FROM schedule_runs WHERE spawned_at >= datetime('now', '-24 hours') AND status = 'completed';")
+      local rituals_missed=$((rituals_expected - rituals_completed))
+      if [ "$rituals_missed" -eq 0 ] && [ "$rituals_expected" -gt 0 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} Rituals: ${rituals_completed}/${rituals_expected} completed (24h)"
+        pass=$((pass+1))
+      elif [ "$rituals_expected" -eq 0 ]; then
+        echo -e "  ${YELLOW}[WARN]${NC} No rituals fired in last 24h"
+        warn=$((warn+1))
+      else
+        echo -e "  ${RED}[FAIL]${NC} Rituals: ${rituals_completed}/${rituals_expected} (${rituals_missed} missed)"
+        fail=$((fail+1))
+      fi
+
+      # 3. Message delivery (last 24h) — tasks from messaging
+      local total_msgs completed_msgs delivery_pct
+      total_msgs=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE created_at >= datetime('now', '-24 hours');")
+      completed_msgs=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE created_at >= datetime('now', '-24 hours') AND status IN ('completed', 'completed_with_concerns');")
+      if [ "$total_msgs" -gt 0 ]; then
+        delivery_pct=$((completed_msgs * 100 / total_msgs))
+        if [ "$delivery_pct" -ge 95 ]; then
+          echo -e "  ${GREEN}[PASS]${NC} Task completion: ${delivery_pct}% (${completed_msgs}/${total_msgs})"
+          pass=$((pass+1))
+        else
+          echo -e "  ${RED}[FAIL]${NC} Task completion: ${delivery_pct}% (${completed_msgs}/${total_msgs}) — below 95%"
+          fail=$((fail+1))
+        fi
+      else
+        echo -e "  ${YELLOW}[WARN]${NC} No tasks in last 24h"
+        warn=$((warn+1))
+      fi
+
+      # 4. Hallucination / confirmation gate holds
+      local gate_violations
+      gate_violations=$(sql_raw "SELECT COUNT(*) FROM events WHERE type = 'confirmation_gate_bypass' AND created_at >= datetime('now', '-24 hours');" 2>/dev/null || echo "0")
+      if [ "$gate_violations" -eq 0 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} Confirmation gate: no violations (24h)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${RED}[FAIL]${NC} Confirmation gate: ${gate_violations} violations"
+        fail=$((fail+1))
+      fi
+
+      # 5. Context pressure — emergency compactions
+      local compactions
+      compactions=$(journalctl -u "$SERVICE_NAME" --since "24 hours ago" --no-pager 2>/dev/null | grep -c -E "emergency.*compact|CONTEXT_PRESSURE_CRITICAL" 2>/dev/null || true)
+      compactions="${compactions:-0}"; compactions="${compactions##*$'\n'}"
+      if [ "$compactions" -eq 0 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} Context pressure: no emergency compactions (24h)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${YELLOW}[WARN]${NC} Emergency compactions: ${compactions} in 24h"
+        warn=$((warn+1))
+      fi
+
+      # 6. DB size
+      local db_size_mb
+      db_size_mb=$(du -m "$DB_PATH" 2>/dev/null | cut -f1)
+      if [ "$db_size_mb" -lt 400 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} DB size: ${db_size_mb}MB (limit: 400MB)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${YELLOW}[WARN]${NC} DB size: ${db_size_mb}MB — approaching limit"
+        warn=$((warn+1))
+      fi
+
+      # 7. Embedding health
+      local embed_count conv_count embed_pct
+      embed_count=$(sql_raw "SELECT COUNT(*) FROM conversation_embeddings;")
+      conv_count=$(sql_raw "SELECT COUNT(*) FROM conversations;")
+      if [ "$conv_count" -gt 0 ]; then
+        embed_pct=$((embed_count * 100 / conv_count))
+        if [ "$embed_pct" -ge 90 ]; then
+          echo -e "  ${GREEN}[PASS]${NC} Embeddings: ${embed_count}/${conv_count} (${embed_pct}%)"
+          pass=$((pass+1))
+        else
+          echo -e "  ${YELLOW}[WARN]${NC} Embeddings: ${embed_count}/${conv_count} (${embed_pct}%) — below 90%"
+          warn=$((warn+1))
+        fi
+      fi
+
+      # 8. Scope classifier — no tool routing errors in logs
+      local scope_errors
+      scope_errors=$(journalctl -u "$SERVICE_NAME" --since "24 hours ago" --no-pager 2>/dev/null | grep -c -E "scope.*error|classifier.*fail" 2>/dev/null || true)
+      scope_errors="${scope_errors:-0}"; scope_errors="${scope_errors##*$'\n'}"
+      if [ "$scope_errors" -eq 0 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} Scope classifier: no errors (24h)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${YELLOW}[WARN]${NC} Scope classifier errors: ${scope_errors}"
+        warn=$((warn+1))
+      fi
+
+      # 9. Poisoned threads
+      local poison_events
+      poison_events=$(sql_raw "SELECT COUNT(*) FROM events WHERE type LIKE '%poison%' AND created_at >= datetime('now', '-24 hours');" 2>/dev/null || echo "0")
+      if [ "$poison_events" -eq 0 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} No poisoned thread incidents (24h)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${RED}[FAIL]${NC} Poisoned thread events: ${poison_events}"
+        fail=$((fail+1))
+      fi
+
+      # 10. Failed tasks
+      local failed_24h
+      failed_24h=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE created_at >= datetime('now', '-24 hours') AND status = 'failed';")
+      if [ "$failed_24h" -le 2 ]; then
+        echo -e "  ${GREEN}[PASS]${NC} Failed tasks: ${failed_24h} (24h, threshold: ≤2)"
+        pass=$((pass+1))
+      else
+        echo -e "  ${RED}[FAIL]${NC} Failed tasks: ${failed_24h} (24h)"
+        fail=$((fail+1))
+      fi
+
+      # Summary
+      echo ""
+      echo -e "  ${BOLD}Score: ${pass} pass, ${warn} warn, ${fail} fail${NC}"
+      if [ "$fail" -eq 0 ]; then
+        echo -e "  ${GREEN}Day ${day_num} — CLEAN${NC}"
+      else
+        echo -e "  ${RED}Day ${day_num} — ${fail} FAILURES — investigate before v7${NC}"
+      fi
+
+      # Append to log
+      echo "${today}|day${day_num}|pass=${pass}|warn=${warn}|fail=${fail}" >> "$VALIDATION_LOG"
+      echo ""
+      echo -e "  ${DIM}Logged to ${VALIDATION_LOG}${NC}"
+      ;;
+
+    log)
+      if [ -f "$VALIDATION_LOG" ]; then
+        echo -e "\n${BOLD}V7 Validation History${NC}\n"
+        column -t -s'|' "$VALIDATION_LOG"
+      else
+        echo "No validation log yet. Run: mc-ctl validation check"
+      fi
+      ;;
+
+    *)
+      echo -e "${RED}Unknown validation subcommand:${NC} $subcmd"
+      echo "  Usage: mc-ctl validation [check|log]"
+      exit 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -957,6 +1143,8 @@ case "$cmd" in
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;
+
+  validation)        cmd_validation "$@" ;;
 
   help|--help|-h)    usage ;;
   *)                 echo -e "${RED}Unknown command:${NC} ${cmd}"; echo ""; usage; exit 1 ;;

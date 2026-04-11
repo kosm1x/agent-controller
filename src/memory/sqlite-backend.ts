@@ -161,7 +161,12 @@ export class SqliteMemoryBackend implements MemoryService {
             }
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn(
+            "[memory] Embedding store failed:",
+            err instanceof Error ? err.message : err,
+          );
+        });
     } catch {
       // DB may not be initialized in tests — best-effort
     }
