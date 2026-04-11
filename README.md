@@ -42,7 +42,7 @@ Agent Controller doesn't replace either pattern. It routes to the right one — 
 
 1. **100% TypeScript.** One language, one build, one test suite. The Prometheus core was rewritten from Python to TypeScript to eliminate cross-language friction. Shared inference adapter, shared types, no mirroring.
 
-2. **Vendor-agnostic inference.** Raw HTTP to any OpenAI-compatible endpoint. Qwen, MiniMax, vLLM, Together, Groq, Anthropic, OpenAI. Primary + fallback with automatic failover. Zero vendor SDK.
+2. **Multi-provider inference.** Claude Agent SDK (primary, Max Plan billing) + raw HTTP to any OpenAI-compatible endpoint (fallback). Groq, DashScope, Anthropic API, OpenAI, Together, DeepInfra. 3-provider cascade with circuit breaker + automatic failover. One env var to switch primary provider.
 
 3. **Simplicity first.** One process. SQLite. No Redis, no Postgres, no message queues. Runs on a single VPS. Per Anthropic: "Find the simplest solution possible, and only increase complexity when needed."
 
@@ -419,7 +419,7 @@ Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built o
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (19 tools)
 - **WordPress multi-site** — content management with destruction safeguards (10 tools)
 - **Autonomous improvement** — SG1-SG5 safeguards (diff digest, kill switch, immutable core, directive cooldown, pre-cycle git tags)
-- **3-provider cascade** — qwen3.5-plus → kimi-k2.5 → glm-5. Different infrastructure per tier
+- **3-provider cascade** — Claude Sonnet (Agent SDK) → Groq/Llama 4 Scout → DashScope/qwen3.5-plus. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
 
 ---
 

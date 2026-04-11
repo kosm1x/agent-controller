@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../config.js", () => ({
   getConfig: () => ({
+    inferencePrimaryProvider: "openai",
     inferencePrimaryUrl: "http://localhost:9999/v1",
     inferencePrimaryKey: "test",
     inferencePrimaryModel: "test-model",

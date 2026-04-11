@@ -10,14 +10,14 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 ## Metrics
 
-| Metric        | Value                                                                                                                                                                                                          |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 255                                                                                                                                                                                                            |
-| Test files    | 134                                                                                                                                                                                                            |
-| Tests passing | 1874                                                                                                                                                                                                           |
-| Type errors   | 0                                                                                                                                                                                                              |
-| Total tools   | 172 (91 builtin + 55 MCP + 20 Google + 3 memory + 2 skill + 1 admin). 109 deferred (84 builtin + 25 MCP) — 52% prompt token reduction                                                                          |
-| Dependencies  | 11 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp + @whiskeysockets/baileys, grammy) |
+| Metric        | Value                                                                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source files  | 255                                                                                                                                                                                                                                            |
+| Test files    | 135                                                                                                                                                                                                                                            |
+| Tests passing | 1889                                                                                                                                                                                                                                           |
+| Type errors   | 0                                                                                                                                                                                                                                              |
+| Total tools   | 172 (91 builtin + 55 MCP + 20 Google + 3 memory + 2 skill + 1 admin). 109 deferred (84 builtin + 25 MCP) — 52% prompt token reduction                                                                                                          |
+| Dependencies  | 12 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp, @anthropic-ai/claude-agent-sdk + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
 

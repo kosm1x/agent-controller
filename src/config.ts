@@ -11,6 +11,8 @@ export interface Config {
   /** SQLite database file path. */
   dbPath: string;
 
+  /** Primary inference provider type: 'openai' (default, DashScope/OpenAI-compatible) or 'claude-sdk' (Agent SDK). */
+  inferencePrimaryProvider: "openai" | "claude-sdk";
   /** Primary inference provider URL. */
   inferencePrimaryUrl: string;
   /** Primary inference provider API key. */
@@ -121,6 +123,10 @@ export function loadConfig(): Config {
     port: int("MC_PORT", 8080),
     dbPath: process.env.MC_DB_PATH ?? "./data/mc.db",
 
+    inferencePrimaryProvider: (process.env.INFERENCE_PRIMARY_PROVIDER ===
+    "claude-sdk"
+      ? "claude-sdk"
+      : "openai") as "openai" | "claude-sdk",
     inferencePrimaryUrl: required("INFERENCE_PRIMARY_URL"),
     inferencePrimaryKey: required("INFERENCE_PRIMARY_KEY"),
     inferencePrimaryModel: required("INFERENCE_PRIMARY_MODEL"),

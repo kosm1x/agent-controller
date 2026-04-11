@@ -33,6 +33,14 @@ import {
   escalate,
   detectPhantomActions,
 } from "./escalation.js";
+import {
+  isAnthropicProvider,
+  buildAnthropicRequest,
+  buildAnthropicStreamRequest,
+  convertResponse,
+  parseAnthropicStream,
+  type AnthropicResponse,
+} from "./anthropic.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -392,6 +400,112 @@ async function callProvider(
   onTextChunk?: OnTextChunk,
   externalSignal?: AbortSignal,
 ): Promise<InferenceResponse> {
+  // Dispatch to Anthropic path when model is claude-*
+  if (isAnthropicProvider(provider)) {
+    return callAnthropicProvider(
+      provider,
+      request,
+      onTextChunk,
+      externalSignal,
+    );
+  }
+  return callOpenAIProvider(provider, request, onTextChunk, externalSignal);
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic Messages API path
+// ---------------------------------------------------------------------------
+
+async function callAnthropicProvider(
+  provider: InferenceProvider,
+  request: InferenceRequest,
+  onTextChunk?: OnTextChunk,
+  externalSignal?: AbortSignal,
+): Promise<InferenceResponse> {
+  const config = getConfig();
+  const start = Date.now();
+  const streaming = !!onTextChunk;
+
+  const maxTokens = request.max_tokens ?? config.inferenceMaxTokens;
+  const buildReq = streaming
+    ? buildAnthropicStreamRequest
+    : buildAnthropicRequest;
+  const { url, headers, body } = buildReq(
+    provider,
+    request.messages,
+    request.tools,
+    maxTokens,
+    request.temperature,
+  );
+
+  const toolCount = request.tools?.length ?? 0;
+  const effectiveTimeout = config.inferenceTimeoutMs + toolCount * 1000;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), effectiveTimeout);
+  const combinedSignal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: combinedSignal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+    }
+
+    let result: InferenceResponse;
+
+    if (streaming && response.body) {
+      result = await parseAnthropicStream(
+        response.body,
+        provider,
+        start,
+        onTextChunk,
+      );
+    } else {
+      const data = (await response.json()) as AnthropicResponse;
+      result = convertResponse(data, provider, start);
+    }
+
+    console.log(
+      `[inference] ${provider.name}/${provider.model} ${result.latency_ms}ms prompt=${result.usage.prompt_tokens} completion=${result.usage.completion_tokens} tools=${result.tool_calls?.length ?? 0}`,
+    );
+
+    providerMetrics.record(
+      provider.name,
+      {
+        timestamp: Date.now(),
+        latencyMs: result.latency_ms,
+        success: true,
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+      },
+      provider.model,
+    );
+
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-compatible /v1/chat/completions path
+// ---------------------------------------------------------------------------
+
+async function callOpenAIProvider(
+  provider: InferenceProvider,
+  request: InferenceRequest,
+  onTextChunk?: OnTextChunk,
+  externalSignal?: AbortSignal,
+): Promise<InferenceResponse> {
   const config = getConfig();
   const url = `${provider.baseUrl}/chat/completions`;
   const start = Date.now();
@@ -648,9 +762,13 @@ export async function infer(
       continue;
     }
 
-    // Preemptive failover: skip degraded providers if alternatives remain
+    // Preemptive failover: skip degraded providers if alternatives remain.
+    // CRITICAL: When circuit breaker is HALF_OPEN, allow the probe through —
+    // otherwise isDegraded() blocks the probe and the breaker can never self-heal
+    // (death spiral: OPEN → HALF_OPEN → degraded skip → no probe → OPEN again).
     if (
       pi < providers.length - 1 &&
+      breaker.getStatus().state !== "HALF_OPEN" &&
       providerMetrics.isDegraded(provider.name)
     ) {
       console.warn(
@@ -659,15 +777,16 @@ export async function infer(
       continue;
     }
 
-    // Tool paralysis guard: non-primary providers freeze with too many tools.
-    // kimi-k2.5 is known to freeze with 20+ tool schemas — skip to next provider.
+    // Tool paralysis guard: kimi models freeze with 20+ tool schemas.
+    // Other providers (Groq/Llama, Qwen, Mistral) handle tools fine.
+    const isToolParalysisModel = provider.model.startsWith("kimi");
     if (
-      provider.name !== "primary" &&
+      isToolParalysisModel &&
       requestToolCount > FALLBACK_TOOL_CAP &&
       pi < providers.length - 1
     ) {
       console.warn(
-        `[inference] Skipping ${provider.name} — ${requestToolCount} tools exceeds cap (${FALLBACK_TOOL_CAP}) for non-primary provider`,
+        `[inference] Skipping ${provider.name}/${provider.model} — ${requestToolCount} tools exceeds cap (${FALLBACK_TOOL_CAP}) for paralysis-prone model`,
       );
       continue;
     }

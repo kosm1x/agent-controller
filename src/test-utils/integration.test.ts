@@ -24,6 +24,7 @@ const mockPort = vi.hoisted(() => ({ value: 0 }));
 
 vi.mock("../config.js", () => ({
   getConfig: () => ({
+    inferencePrimaryProvider: "openai",
     inferencePrimaryUrl: `http://localhost:${mockPort.value}/v1`,
     inferencePrimaryKey: "test-key",
     inferencePrimaryModel: "mock-model",

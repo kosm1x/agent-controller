@@ -21,6 +21,7 @@ import {
 import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+import { getConfig } from "../config.js";
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -777,6 +778,81 @@ export const fastRunner: Runner = {
         !/\?|busca|crea|haz|envía|agenda|programa|genera|analiz|revis|actualiz|configur|escrib/i.test(
           rawUserMsg,
         );
+
+      // ---------------------------------------------------------------
+      // Claude SDK path: delegate to Agent SDK when configured.
+      // All prompt building above is reused; we just extract the parts
+      // the SDK needs and bypass inferWithTools entirely.
+      // ---------------------------------------------------------------
+      if (getConfig().inferencePrimaryProvider === "claude-sdk") {
+        const { queryClaudeSdk } = await import("../inference/claude-sdk.js");
+
+        // Extract system prompt (all system messages concatenated)
+        const systemPrompt = messages
+          .filter((m) => m.role === "system")
+          .map((m) => (typeof m.content === "string" ? m.content : ""))
+          .join("\n\n");
+
+        // Extract user prompt (all non-system messages as formatted text)
+        const userParts: string[] = [];
+        for (const m of messages) {
+          if (m.role === "system") continue;
+          if (m.role === "user") {
+            if (typeof m.content === "string") {
+              userParts.push(m.content);
+            } else if (Array.isArray(m.content)) {
+              // Vision content — extract text parts (images handled by SDK prompt)
+              for (const block of m.content) {
+                if (typeof block === "object" && "text" in block) {
+                  userParts.push(String(block.text));
+                }
+              }
+            }
+          } else if (m.role === "assistant") {
+            userParts.push(
+              `[Previous response]: ${typeof m.content === "string" ? m.content : ""}`,
+            );
+          }
+        }
+        const userPrompt = userParts.join("\n\n");
+
+        // All tool names (no deferral needed — SDK handles schemas internally)
+        const allToolNames =
+          input.tools ??
+          toolRegistry.getDefinitions().map((d) => d.function.name);
+
+        console.log(
+          `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${maxRounds}`,
+        );
+
+        const sdkResult = await queryClaudeSdk({
+          prompt: userPrompt,
+          systemPrompt,
+          toolNames: allToolNames,
+          maxTurns: maxRounds,
+          abortSignal: input.signal,
+        });
+
+        // Map SDK result to RunnerOutput
+        const parsed = parseRunnerStatus(sdkResult.text);
+        return {
+          success:
+            parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
+          status:
+            parsed.status === "DONE"
+              ? "DONE"
+              : parsed.status === "DONE_WITH_CONCERNS"
+                ? "DONE_WITH_CONCERNS"
+                : undefined,
+          concerns: parsed.concerns,
+          output: { text: parsed.cleanContent },
+          tokenUsage: {
+            promptTokens: sdkResult.usage.promptTokens,
+            completionTokens: sdkResult.usage.completionTokens,
+          },
+          durationMs: sdkResult.durationMs || Date.now() - start,
+        };
+      }
 
       const result = await inferWithTools(messages, definitions, taskExecutor, {
         maxRounds,

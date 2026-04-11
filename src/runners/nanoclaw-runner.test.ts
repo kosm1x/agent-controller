@@ -39,6 +39,7 @@ const mockKillContainer = vi.mocked(killContainer);
 function makeConfig() {
   return {
     apiKey: "test-key",
+    inferencePrimaryProvider: "openai",
     inferencePrimaryUrl: "http://localhost:4000",
     inferencePrimaryKey: "sk-test",
     inferencePrimaryModel: "qwen-test",

@@ -42,6 +42,7 @@ function makeConfig(containerized = false) {
     apiKey: "test-key",
     port: 8080,
     dbPath: "./data/mc.db",
+    inferencePrimaryProvider: "openai",
     inferencePrimaryUrl: "http://localhost:4000",
     inferencePrimaryKey: "sk-test",
     inferencePrimaryModel: "gpt-4",
