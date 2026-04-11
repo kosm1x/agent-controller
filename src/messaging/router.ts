@@ -120,7 +120,8 @@ import {
 import { autoPersistConversation } from "../memory/auto-persist.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
-const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → give up waiting
+const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
+const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → actually give up (past SDK 10min hard timeout)
 
 /**
  * Fork child injection boilerplate for background agents (OpenClaude pattern).
@@ -314,6 +315,7 @@ interface PendingReply {
   scopeGroups?: string[]; // for execution pattern extraction on completion
   interimTimer: ReturnType<typeof setTimeout>;
   finalTimer: ReturnType<typeof setTimeout>;
+  abandonTimer: ReturnType<typeof setTimeout>;
   streamController?: TelegramStreamController;
   /** Abort controller for task cancellation (v6.2 S2). */
   abortController?: AbortController;
@@ -1013,7 +1015,8 @@ export class MessageRouter {
           originalText: taskText,
           tk,
           interimTimer: setTimeout(() => {}, 0),
-          finalTimer: setTimeout(() => {
+          finalTimer: setTimeout(() => {}, 0),
+          abandonTimer: setTimeout(() => {
             this.pendingReplies.delete(result.taskId);
           }, 60 * 60_000), // 60 min — background agents can run long
         });
@@ -1134,6 +1137,7 @@ export class MessageRouter {
           // Clean up timers
           clearTimeout(pending.interimTimer);
           clearTimeout(pending.finalTimer);
+          clearTimeout(pending.abandonTimer);
           // Stop streaming if active
           if (pending.streamController) {
             pending.streamController
@@ -1577,14 +1581,30 @@ export class MessageRouter {
     const finalTimer = setTimeout(() => {
       const pending = this.pendingReplies.get(result.taskId);
       if (pending) {
+        // Send timeout warning but DON'T delete the pending reply.
+        // The SDK path can take 5-10 minutes for heavy tasks (gdocs_write,
+        // Playwright crawls). Deleting here causes the actual result to be
+        // silently dropped when it arrives seconds later.
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          "Sigo trabajando, esto está tomando más de lo esperado...",
+        );
+      }
+    }, TASK_TIMEOUT_FINAL_MS);
+
+    // Hard abandon: clean up after SDK timeout (10min) + 1min grace
+    const abandonTimer = setTimeout(() => {
+      const pending = this.pendingReplies.get(result.taskId);
+      if (pending) {
         this.pendingReplies.delete(result.taskId);
         this.sendToChannel(
           msg.channel,
           msg.from,
-          "Se agotó el tiempo. Revisa el dashboard para más detalles.",
+          "Se agotó el tiempo. Puedes intentar de nuevo.",
         );
       }
-    }, TASK_TIMEOUT_FINAL_MS);
+    }, TASK_TIMEOUT_ABANDON_MS);
 
     this.pendingReplies.set(result.taskId, {
       channel: msg.channel,
@@ -1595,6 +1615,7 @@ export class MessageRouter {
       tk,
       interimTimer,
       finalTimer,
+      abandonTimer,
       ...(streamController && { streamController }),
       abortController: taskAbort,
     });
@@ -1644,6 +1665,7 @@ export class MessageRouter {
     for (const pending of this.pendingReplies.values()) {
       clearTimeout(pending.interimTimer);
       clearTimeout(pending.finalTimer);
+      clearTimeout(pending.abandonTimer);
     }
     this.pendingReplies.clear();
 
@@ -1714,6 +1736,7 @@ export class MessageRouter {
 
     clearTimeout(pending.interimTimer);
     clearTimeout(pending.finalTimer);
+    clearTimeout(pending.abandonTimer);
     this.pendingReplies.delete(taskId);
 
     const resultText = this.extractResultText(data.result);
@@ -1960,6 +1983,7 @@ export class MessageRouter {
 
     clearTimeout(pending.interimTimer);
     clearTimeout(pending.finalTimer);
+    clearTimeout(pending.abandonTimer);
     this.pendingReplies.delete(taskId);
 
     // Background-agent-aware failure notification
