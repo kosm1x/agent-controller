@@ -635,6 +635,14 @@ export const fastRunner: Runner = {
         content: input.description + STATUS_SUFFIX,
       });
 
+      // v6.5 M2: Essential facts layer — compact identity/context block (~150-200 tokens)
+      // Injected before KB so Claude always has core user context even if KB is omitted.
+      const { getEssentialFacts } = await import("../memory/essentials.js");
+      const essentials = getEssentialFacts("mc-jarvis");
+      if (essentials) {
+        messages.push({ role: "system", content: essentials });
+      }
+
       // Inject Jarvis knowledge base files (always-read, enforce, conditional).
       // omitKB pattern (OpenClaude): read-only subagents skip KB to save tokens.
       // If ALL scoped tools are read-only, the task is pure research/observation —

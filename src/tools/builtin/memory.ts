@@ -11,6 +11,11 @@
 import type { Tool } from "../types.js";
 import { getMemoryService } from "../../memory/index.js";
 import type { MemoryBank } from "../../memory/types.js";
+import {
+  queryTriples,
+  getEntityHistory,
+  formatTriples,
+} from "../../memory/knowledge-graph.js";
 
 const BANK_MAP: Record<string, MemoryBank> = {
   operational: "mc-operational",
@@ -252,5 +257,68 @@ DO NOT USE WHEN:
     }
 
     return reflection;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// memory_kg_query — Temporal knowledge graph lookup (v6.5 M1)
+// ---------------------------------------------------------------------------
+
+export const memoryKgQueryTool: Tool = {
+  name: "memory_kg_query",
+  definition: {
+    type: "function",
+    function: {
+      name: "memory_kg_query",
+      description:
+        "Query the temporal knowledge graph for entity facts and relationships. " +
+        "Tracks what is/was true about people, projects, and concepts over time. " +
+        "Use to check current entity state or historical state at a specific date. " +
+        "Example: subject='cuatro flor' to see all known facts about that project.",
+      parameters: {
+        type: "object",
+        properties: {
+          subject: {
+            type: "string",
+            description:
+              "Entity name to query (person, project, concept). Case-insensitive.",
+          },
+          predicate: {
+            type: "string",
+            description:
+              "Optional relationship type filter (e.g., 'status_is', 'uses', 'blocked_by').",
+          },
+          as_of: {
+            type: "string",
+            description:
+              "Optional ISO date to query historical state ('what was true on this date?'). Omit for current state.",
+          },
+          include_history: {
+            type: "boolean",
+            description:
+              "If true, include invalidated (superseded) facts. Default: false.",
+          },
+        },
+        required: ["subject"],
+      },
+    },
+  },
+  deferred: true,
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const subject = args.subject as string;
+    const predicate = args.predicate as string | undefined;
+    const asOf = args.as_of as string | undefined;
+    const includeHistory = args.include_history === true;
+
+    const triples = includeHistory
+      ? getEntityHistory(subject)
+      : queryTriples({ subject, predicate, asOf });
+
+    if (triples.length === 0) {
+      return `No knowledge graph entries found for "${subject}".`;
+    }
+
+    return `Knowledge graph for "${subject}" (${triples.length} facts):\n${formatTriples(triples)}`;
   },
 };

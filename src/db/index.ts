@@ -221,6 +221,29 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_prom_snap_task ON prometheus_snapshots(task_id, created_at DESC)",
   );
 
+  // v6.5 M1: Temporal knowledge graph — entity-relationship triples with validity windows
+  _db.exec(`CREATE TABLE IF NOT EXISTS knowledge_triples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject     TEXT NOT NULL,
+    predicate   TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    confidence  REAL DEFAULT 1.0,
+    valid_from  TEXT DEFAULT (datetime('now')),
+    valid_to    TEXT,
+    source      TEXT DEFAULT 'agent',
+    task_id     TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_kt_subject ON knowledge_triples(subject)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_kt_pred ON knowledge_triples(predicate)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_kt_valid ON knowledge_triples(valid_from, valid_to)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

@@ -21,10 +21,19 @@ export class MemoryToolSource implements ToolSource {
   }
 
   async registerTools(registry: ToolRegistry): Promise<string[]> {
-    const { memorySearchTool, memoryStoreTool, memoryReflectTool } =
-      await import("../builtin/memory.js");
+    const {
+      memorySearchTool,
+      memoryStoreTool,
+      memoryReflectTool,
+      memoryKgQueryTool,
+    } = await import("../builtin/memory.js");
 
-    const tools = [memorySearchTool, memoryStoreTool, memoryReflectTool];
+    const tools = [
+      memorySearchTool,
+      memoryStoreTool,
+      memoryReflectTool,
+      memoryKgQueryTool,
+    ];
     for (const tool of tools) {
       registry.register(tool);
     }

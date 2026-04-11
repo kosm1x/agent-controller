@@ -212,6 +212,28 @@ export async function runBackgroundExtraction(
       err instanceof Error ? err.message : err,
     );
   }
+
+  // v6.5 M3: Auto entity detection → temporal knowledge graph
+  try {
+    const { extractEntities } = await import("./entity-extractor.js");
+    const { addTriple } = await import("./knowledge-graph.js");
+    const combinedText = `${userMessage}\n${responseText}`;
+    const triples = extractEntities(combinedText);
+    if (triples.length > 0) {
+      for (const t of triples) {
+        addTriple(t.subject, t.predicate, t.object, {
+          source: "extraction",
+          confidence: 0.7,
+          taskId,
+        });
+      }
+      console.log(
+        `[extractor] Task ${taskId.slice(0, 8)}: ${triples.length} KG triples extracted`,
+      );
+    }
+  } catch {
+    // Entity extraction is best-effort — don't block
+  }
 }
 
 // ---------------------------------------------------------------------------
