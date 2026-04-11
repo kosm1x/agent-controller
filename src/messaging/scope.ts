@@ -379,6 +379,19 @@ export function scopeToolsForMessage(
     ) {
       activeGroups.add("google");
     }
+    // Context-aware Google injection: classifier may miss Google intent when the
+    // message is about content ("limpiar", "integrar") not tools. If prior
+    // conversation mentions Google Workspace, inherit the google scope group.
+    if (
+      !activeGroups.has("google") &&
+      recentUserMessages.some((m) =>
+        /gdocs?|gsheets?|google\s*(doc|sheet|drive|calendar)|spreadsheet|document[oa]?\s+de\s+google/i.test(
+          m,
+        ),
+      )
+    ) {
+      activeGroups.add("google");
+    }
   } else {
     activeGroups = new Set<string>();
 
