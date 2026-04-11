@@ -329,6 +329,10 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
       /\b(auto.?diagn[oó]stic\w*|diagn[oó]stic\w*|nivel operativo|herramientas?\s+(?:disponibles?|activas?|funcional)|lista\w*\s+(?:todas?\s+)?(?:las?\s+)?(?:tools?|herramientas?)|tools?\s+(?:available|status|check)|capacidades|capabilities|funcionalidad(?:es)?)\b/i,
     group: "meta",
   },
+  // NOTE: Auto-improvement (v6.4.7-v6.4.21) attempted a broad imperative fallback
+  // pattern here. Removed — it matched common words ("lista", "esto", "tarea")
+  // causing false positive scope activation. The referential/imperative logic in
+  // scopeToolsForMessage() and detectActiveGroups() handles follow-ups correctly.
 ];
 
 // ---------------------------------------------------------------------------
@@ -377,31 +381,42 @@ export function scopeToolsForMessage(
     }
   } else {
     activeGroups = new Set<string>();
-    // Check if the CURRENT message triggers any scope groups on its own.
-    // If not (pure conversational/personal message), don't inherit from prior turns —
-    // this prevents the LLM from continuing a prior task when the user changed topics.
+
+    // 1. Check if the CURRENT message triggers any scope groups on its own.
     const currentGroups = new Set<string>();
     for (const { pattern, group } of patterns) {
       if (pattern.test(currentMessage)) {
         currentGroups.add(group);
       }
     }
-    if (currentGroups.size > 0) {
-      // Current message has scope signals — also scan prior messages for context
-      const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
-      for (const { pattern, group } of patterns) {
-        if (pattern.test(contextText)) {
-          activeGroups.add(group);
-        }
-      }
-    } else if (
+    for (const group of currentGroups) {
+      activeGroups.add(group);
+    }
+
+    // 2. Determine if we should inherit scope from prior messages.
+    // Three conditions allow inheritance:
+    //   a) Current message has its own scope signals (merge with prior)
+    //   b) Short message (< 80 chars) — likely a follow-up, not a topic change
+    //   c) Referential/imperative phrase — explicitly refers to prior context
+    const REFERENTIAL_PATTERN =
+      /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele|el\s+primer[oa]\s+que|eso\s+que\s+(?:te|me|le)|lo\s+(?:que|de|del)\s+(?:te|me|le)\s+(?:ped|dij|mand|envi|compart)|ese\s+(?:que|mismo)\s+(?:te|me|le)|tu\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste)|t[uú]\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste))\b/i;
+
+    const trimmed = currentMessage.trim();
+    const isShort = trimmed.length < 80;
+    const hasReferentialPhrase = REFERENTIAL_PATTERN.test(currentMessage);
+    const hasOwnScope = currentGroups.size > 0;
+    // Short conversational messages (greetings, thanks, acknowledgments) should
+    // NOT inherit — they're topic closers, not follow-ups. Only inherit if the
+    // short message contains an actionable word or referential phrase.
+    const CONVERSATIONAL =
+      /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;
+    const isConversational = isShort && CONVERSATIONAL.test(trimmed);
+    const isShortFollowUp = isShort && !isConversational;
+    const shouldInherit =
       recentUserMessages.length > 0 &&
-      (currentMessage.trim().length < 80 ||
-        /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele|el\s+primer[oa]\s+que|eso\s+que\s+(?:te|me|le)|lo\s+(?:que|de|del)\s+(?:te|me|le)\s+(?:ped|dij|mand|envi|compart)|ese\s+(?:que|mismo)\s+(?:te|me|le)|tu\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste)|t[uú]\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste))\b/i.test(
-          currentMessage,
-        ))
-    ) {
-      // Follow-up message with no scope signals
+      (hasOwnScope || isShortFollowUp || hasReferentialPhrase);
+
+    if (shouldInherit) {
       const priorText = recentUserMessages.join(" ");
       for (const { pattern, group } of patterns) {
         if (pattern.test(priorText)) {
@@ -509,8 +524,9 @@ export function detectActiveGroups(
   recentUserMessages: string[],
   patterns: ScopePattern[],
 ): Set<string> {
-  // Two-phase isolation: same logic as scopeToolsForMessage.
-  // Only inherit from prior messages if current has scope signals.
+  // Mirror scopeToolsForMessage's inheritance logic:
+  // Inherit from prior messages only when current has scope signals,
+  // is a short non-conversational follow-up, or contains referential phrases.
   const currentGroups = new Set<string>();
   for (const { pattern, group } of patterns) {
     if (pattern.test(currentMessage)) {
@@ -518,14 +534,30 @@ export function detectActiveGroups(
     }
   }
 
-  if (currentGroups.size === 0) return currentGroups;
+  const active = new Set(currentGroups);
 
-  const contextText = `${currentMessage} ${recentUserMessages.join(" ")}`;
-  const active = new Set<string>();
-  for (const { pattern, group } of patterns) {
-    if (pattern.test(contextText)) {
-      active.add(group);
+  if (recentUserMessages.length > 0) {
+    const REFERENTIAL =
+      /\b(ejecuta|procede|hazlo|int[eé]ntalo|contin[uú]a|adelante|dale|verifica\s*y\s*ejecuta|vuelve?\s*a\s*intentar|reint[eé]ntalo|s[ií]guele|el\s+primer[oa]\s+que|eso\s+que\s+(?:te|me|le)|lo\s+(?:que|de|del)\s+(?:te|me|le)\s+(?:ped|dij|mand|envi|compart)|ese\s+(?:que|mismo)\s+(?:te|me|le)|tu\s+(?:ya\s+)?(?:lo|la)\s+(?:tienes|hiciste))\b/i;
+    const CONVERSATIONAL =
+      /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;
+    const trimmed = currentMessage.trim();
+    const isShort = trimmed.length < 80;
+    const isConversational = isShort && CONVERSATIONAL.test(trimmed);
+    const shouldInherit =
+      currentGroups.size > 0 ||
+      (isShort && !isConversational) ||
+      REFERENTIAL.test(currentMessage);
+
+    if (shouldInherit) {
+      const priorText = recentUserMessages.join(" ");
+      for (const { pattern, group } of patterns) {
+        if (pattern.test(priorText)) {
+          active.add(group);
+        }
+      }
     }
   }
+
   return active;
 }
