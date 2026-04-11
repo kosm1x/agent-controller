@@ -76,20 +76,19 @@ Jarvis monitors financial instruments (stocks, crypto, forex, commodities), comp
 │  ├── Track moves in real-time → signal layer 4            │
 │  └── Jarvis learns: follow vs fade whale = training data │
 │                                                          │
-│  Macro data (FRED — free, 120 calls/min):                │
-│  ├── T10Y2Y (yield curve — recession predictor)          │
-│  ├── DFF (fed funds rate — policy stance)                │
-│  ├── VIXCLS (VIX — volatility/fear gauge)                │
-│  ├── UNRATE, PAYEMS, ICSA (employment signals)           │
-│  ├── CPIAUCSL (inflation)                                │
-│  ├── M2SL (money supply — liquidity indicator)           │
-│  └── Python sidecar via fredapi (no TS port needed)      │
+│  Macro data (dual source):                               │
+│  ├── Alpha Vantage: fed funds, treasury yields,          │
+│  │   CPI, unemployment, nonfarm payroll, GDP             │
+│  ├── FRED REST API (3 series AV doesn't cover):          │
+│  │   ├── VIXCLS (VIX — volatility/fear gauge)            │
+│  │   ├── ICSA (initial claims — weekly leading)          │
+│  │   └── M2SL (money supply — liquidity indicator)       │
+│  └── TypeScript fetch — no Python sidecar                │
 │                                                          │
-│  Paid / keyed APIs (optional, higher quality):           │
-│  ├── Alpha Vantage (free tier: 25 calls/day)             │
-│  ├── Polygon.io (free tier: 5 calls/min, delayed)        │
-│  ├── Twelve Data (free tier: 800 calls/day)              │
-│  └── Binance WebSocket (real-time crypto, free)          │
+│  Supplemental APIs:                                      │
+│  ├── Binance WebSocket (real-time crypto, free)          │
+│  ├── Alpha Vantage NEWS_SENTIMENT (per-ticker sentiment) │
+│  └── Alpha Vantage server-side indicators (golden-file)  │
 │                                                          │
 │  Storage:                                                │
 │  ├── SQLite table: market_data (ticker, date, OHLCV)     │
@@ -193,16 +192,16 @@ CREATE INDEX IF NOT EXISTS idx_api_budget_source ON api_call_budget(source, date
 
 ## Tools (6 new, all deferred)
 
-| Tool                | Purpose                                                    | Scope Group |
-| ------------------- | ---------------------------------------------------------- | ----------- |
-| `market_quote`      | Current price + daily change for a ticker                  | `finance`   |
-| `market_history`    | OHLCV history for a ticker + timeframe                     | `finance`   |
-| `market_indicators` | Compute SMA/EMA/RSI/MACD/Bollinger for a ticker            | `finance`   |
-| `market_signals`    | Detect active signals across watchlist                     | `finance`   |
-| `watchlist_manage`  | Add/remove/list watchlist tickers + alert configs          | `finance`   |
-| `market_scan`       | Scan multiple tickers for a specific condition             | `finance`   |
-| `macro_dashboard`   | FRED macro regime: yield curve, VIX, employment, inflation | `finance`   |
-| `prediction_market` | Polymarket/Kalshi top markets, probabilities, 24h shifts   | `finance`   |
+| Tool                | Purpose                                                                      | Scope Group |
+| ------------------- | ---------------------------------------------------------------------------- | ----------- |
+| `market_quote`      | Current price + daily change for a ticker                                    | `finance`   |
+| `market_history`    | OHLCV history for a ticker + timeframe                                       | `finance`   |
+| `market_indicators` | Compute SMA/EMA/RSI/MACD/Bollinger for a ticker                              | `finance`   |
+| `market_signals`    | Detect active signals across watchlist                                       | `finance`   |
+| `watchlist_manage`  | Add/remove/list watchlist tickers + alert configs                            | `finance`   |
+| `market_scan`       | Scan multiple tickers for a specific condition                               | `finance`   |
+| `macro_dashboard`   | Macro regime: yield curve, VIX, fed funds, employment, inflation (AV + FRED) | `finance`   |
+| `prediction_market` | Polymarket/Kalshi top markets, probabilities, 24h shifts                     | `finance`   |
 
 ### Scope pattern
 
@@ -378,19 +377,19 @@ If alignment is high → Jarvis signals are tracking smart money (good).
 If alignment is low but win rate is high → Jarvis found its own edge (also good).
 If alignment is low AND win rate is low → retune signal weights.
 
-## Macro Regime Detection (FRED)
+## Macro Regime Detection (Alpha Vantage + FRED)
 
 ```typescript
-// src/finance/macro.ts — Python sidecar via fredapi
+// src/finance/macro.ts — TypeScript fetch, no Python sidecar
 
 interface MacroRegime {
   regime: "expansion" | "tightening" | "recession_risk" | "recovery";
-  yieldCurve: number; // T10Y2Y spread (< 0 = inverted)
-  fedRate: number; // DFF current level
-  vix: number; // VIXCLS current level
-  unemployment: number; // UNRATE latest
-  inflationYoY: number; // CPIAUCSL year-over-year %
-  m2GrowthYoY: number; // M2SL year-over-year %
+  yieldCurve: number; // 10Y-2Y spread (< 0 = inverted)
+  fedRate: number; // fed funds rate current level
+  vix: number; // VIX current level
+  unemployment: number; // latest monthly
+  inflationYoY: number; // CPI year-over-year %
+  m2GrowthYoY: number; // M2 money supply year-over-year %
   initialClaims: number; // ICSA latest weekly
   signals: MacroSignal[];
 }
@@ -408,7 +407,23 @@ interface MacroSignal {
 // - yieldCurve normalizing + unemployment peaking → recovery
 ```
 
-**Integration:** Python sidecar calls fredapi, returns JSON. Cached in SQLite (daily refresh for daily series, monthly for monthly). Macro regime injected into signal context so technical signals get regime-aware interpretation.
+**Data sources (dual):**
+
+| Indicator           | Source        | Endpoint                         | Frequency |
+| ------------------- | ------------- | -------------------------------- | --------- |
+| Fed Funds Rate      | Alpha Vantage | `FEDERAL_FUNDS_RATE`             | Daily     |
+| Treasury 2Y         | Alpha Vantage | `TREASURY_YIELD maturity=2year`  | Daily     |
+| Treasury 10Y        | Alpha Vantage | `TREASURY_YIELD maturity=10year` | Daily     |
+| Yield Curve         | Computed      | 10Y - 2Y from above              | Daily     |
+| CPI                 | Alpha Vantage | `CPI`                            | Monthly   |
+| Unemployment        | Alpha Vantage | `UNEMPLOYMENT`                   | Monthly   |
+| Nonfarm Payroll     | Alpha Vantage | `NONFARM_PAYROLL`                | Monthly   |
+| GDP                 | Alpha Vantage | `REAL_GDP`                       | Quarterly |
+| **VIX**             | **FRED**      | `VIXCLS`                         | Daily     |
+| **Initial Claims**  | **FRED**      | `ICSA`                           | Weekly    |
+| **M2 Money Supply** | **FRED**      | `M2SL`                           | Monthly   |
+
+**Integration:** All TypeScript `fetch()` — Alpha Vantage uses existing adapter, FRED uses `https://api.stlouisfed.org/fred/series/observations?series_id=X&api_key=Y&file_type=json`. Cached in SQLite (daily refresh for daily series, monthly for monthly). Macro regime injected into signal context so technical signals get regime-aware interpretation.
 
 ## Rituals
 
@@ -524,44 +539,44 @@ Over time, Jarvis learns which strategy works for which regime — adapting its 
 
 ## Implementation Order
 
-| Phase    | What                                                                                                                                    | Sessions | Deps           |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------- |
-| **F1**   | Schema (6 tables), Alpha Vantage + Yahoo Finance dual adapter, data validation, timezone normalization, api_call_budget tracking        | 1.5      | None           |
-| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R) + golden-file tests                                      | 1        | F1             |
-| **F4**   | Watchlist management + market_quote/history tools                                                                                       | 1        | F1             |
-| **F3**   | Signal detector + market_signals tool + transmission chain field                                                                        | 1        | F2 + F4        |
-| **F5**   | Python sidecar (FastAPI): FRED macro regime + TimesFM forecasting — single process, one port                                            | 1.5      | F1 (test data) |
-| **F6**   | Prediction markets (Polymarket/Kalshi) + whale tracker (Polymarket trade history + SEC EDGAR insider filings)                           | 1.5      | None           |
-| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations)                                                                             | 0.5      | None           |
-| **F7**   | Alpha Combination Engine (11-step) + signal evolution + ISQ dimensions + per-layer freshness + weight versioning + min signal threshold | 2        | F3+F5+F6+F6.5  |
-| **F7.5** | Strategy backtester (walk-forward + stress test) → backtest_results table                                                               | 1        | F7             |
-| **F8**   | Paper trading via pm-trader MCP + trade_theses commitment tracking + transaction costs                                                  | 1.5      | F7.5           |
-| **F9**   | Morning/EOD market scan rituals + market calendar + dynamic alert budget                                                                | 1        | F8 + F4        |
-| **F10**  | Real-time crypto via Binance WebSocket (optional)                                                                                       | 1        | F3             |
-| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) + vision chart patterns (6th signal layer)                                       | 1.5      | F3             |
-| **v7.2** | Knowledge graph layer (Graphify MCP — CRM + codebase + corpus)                                                                          | 1.5      | None           |
-| **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                           | 3        | None           |
-| **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                     | 2        | v7.3           |
+| Phase    | What                                                                                                                                                                                                | Sessions | Deps          |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------- |
+| **F1**   | Schema (6 tables), Alpha Vantage adapter (premium: adjusted daily, FX, macro, news sentiment) + Yahoo fallback, data validation, timezone normalization, api_call_budget tracking, gold via GLD ETF | 1.5      | None          |
+| **F2**   | Indicator engine (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R) + golden-file tests (validated against AV server-side indicators)                                                    | 1        | F1            |
+| **F4**   | Watchlist management + market_quote/history tools                                                                                                                                                   | 1        | F1            |
+| **F3**   | Signal detector + market_signals tool + transmission chain field                                                                                                                                    | 1        | F2 + F4       |
+| **F5**   | Macro regime detection — Alpha Vantage (fed funds, treasury, CPI, unemployment, payroll, GDP) + FRED REST API (VIX, ICSA, M2). TypeScript fetch, no Python sidecar                                  | 0.5      | F1            |
+| **F6**   | Prediction markets (Polymarket/Kalshi) + whale tracker (Polymarket trade history + SEC EDGAR insider filings)                                                                                       | 1.5      | None          |
+| **F6.5** | Sentiment signals (fear/greed, funding rates, liquidations)                                                                                                                                         | 0.5      | None          |
+| **F7**   | Alpha Combination Engine (11-step) + signal evolution + ISQ dimensions + per-layer freshness + weight versioning + min signal threshold                                                             | 2        | F3+F5+F6+F6.5 |
+| **F7.5** | Strategy backtester (walk-forward + stress test) → backtest_results table                                                                                                                           | 1        | F7            |
+| **F8**   | Paper trading via pm-trader MCP + trade_theses commitment tracking + transaction costs                                                                                                              | 1.5      | F7.5          |
+| **F9**   | Morning/EOD market scan rituals + market calendar + dynamic alert budget                                                                                                                            | 1        | F8 + F4       |
+| **F10**  | Real-time crypto via Binance WebSocket (optional)                                                                                                                                                   | 1        | F3            |
+| **v7.1** | Chart rendering (lightweight-charts + Puppeteer → PNG) + vision chart patterns (6th signal layer)                                                                                                   | 1.5      | F3            |
+| **v7.2** | Knowledge graph layer (Graphify MCP — CRM + codebase + corpus)                                                                                                                                      | 1.5      | None          |
+| **v7.3** | Digital marketing planner & buyer (claude-ads patterns + Meta/Google Ads API)                                                                                                                       | 3        | None          |
+| **v7.4** | Video production enhancement (AI asset generation + storyboard pipeline + lip sync)                                                                                                                 | 2        | v7.3          |
 
 ### Dependency Graph
 
 ```
-F1 (data layer)
+F1 (data layer — AV premium + Yahoo fallback)
 ├── F2 (indicators) ──┐
 ├── F4 (watchlist) ────┤
+├── F5 (macro — AV + FRED fetch) ─┤
 │                      F3 (signal detector)
-├── F5 (FRED+TimesFM)─────────────────────┐
-                                           │
-F6 (prediction markets) ──────────────────┤
-F6.5 (sentiment) ─────────────────────────┤
-                                           │
-                                    F7 (combination engine)
-                                           │
-                                    F7.5 (backtester)
-                                           │
-                                    F8 (paper trading)
-                                           │
-                              F9 (scan rituals — last, needs track record)
+│                                  │
+F6 (prediction markets) ──────────┤
+F6.5 (sentiment) ─────────────────┤
+                                   │
+                            F7 (combination engine)
+                                   │
+                            F7.5 (backtester)
+                                   │
+                            F8 (paper trading)
+                                   │
+                      F9 (scan rituals — last, needs track record)
 
 Parallel branches (after F3):
   F10 (crypto websocket)
@@ -570,11 +585,14 @@ Parallel branches (after F3):
 Independent (no v7 deps):
   v7.2 (knowledge graph)
   v7.3 (digital marketing) ── v7.4 (video production)
+
+Deferred to v7.x (post-launch):
+  TimesFM forecasting (Python sidecar, 6th signal layer)
 ```
 
 ### Parallelization Opportunities
 
-F5, F6, and F6.5 have no dependencies on each other and only need F1 for test data. They can be built in parallel or interleaved. The critical path is: **F1 → F2 → F4 → F3 → F7 → F7.5 → F8 → F9**. Everything else can slot around it.
+F5 is now 0.5 sessions (TypeScript fetch, no sidecar) and slots into F1 or runs alongside F2/F4. F6 and F6.5 have no dependencies on each other. The critical path is: **F1 → F2 → F4 → F3 → F7 → F7.5 → F8 → F9**. Everything else can slot around it.
 
 ## Production Hardening (built into phases, zero extra sessions)
 
@@ -684,9 +702,9 @@ Regime detector feeds the alert budget. During crashes, more alerts are allowed 
 ## Constraints
 
 - **Zero new npm deps** for indicators — pure TypeScript math
-- **Alpha Vantage primary + Yahoo Finance fallback** — never single-source for market data. Both adapters built in F1. API call budget tracking from day one
-- **Free APIs supplement** — FRED (macro), Polymarket/Kalshi (predictions), CoinGecko (crypto), Frankfurter (EUR backup)
-- **Single Python sidecar** — FastAPI on localhost combining FRED (fredapi) + TimesFM (torch). One process, one port, ~3GB RAM. No subprocess sprawl
+- **Alpha Vantage premium primary + Yahoo Finance fallback** — never single-source for market data. AV: adjusted daily OHLCV, FX, 50+ server-side indicators, macro economic data, news sentiment. 75 req/min, unlimited daily. Gold via GLD ETF (XAU/USD not supported by AV FX endpoint)
+- **Free APIs supplement** — FRED REST API (VIX, ICSA, M2 — 3 series AV doesn't cover), Polymarket/Kalshi (predictions), CoinGecko (crypto), Frankfurter (EUR backup)
+- **No Python sidecar** — all data fetching via TypeScript `fetch()`. FRED REST API returns JSON directly. TimesFM deferred to v7.x post-launch enhancement
 - **SQLite storage** — 6 tables (market_data, watchlist, backtest_results, trade_theses, api_call_budget, signal_weights_log), additive schema (no DB reset)
 - **Minimum signal threshold** — MegaAlpha only generated when ≥3 of 5 signal layers have fresh data (per-layer thresholds, not blanket 24h)
 - **Market-native timezones** — Jarvis references markets in their native TZ (ET for US, UTC for crypto, JST for Tokyo). Mexico City for personal scheduling only
@@ -696,12 +714,12 @@ Regime detector feeds the alert budget. During crashes, more alerts are allowed 
 - **Whale tracking scoped** — Polymarket trade history (free, Gamma API) + SEC EDGAR insider filings (free, delayed). No paid whale services
 - **Transaction costs in paper trading** — realistic spread/fee model per asset type. Paper P&L after costs
 - **Golden-file indicator tests** — every indicator verified against reference to 6 decimal places
-- **Realistic session estimate** — 15-16 sessions for F1-F9 (not 12). v6 history: 3x expansion is normal. Quality over speed
+- **Realistic session estimate** — 14-15 sessions for F1-F9 (F5 dropped from 1.5 to 0.5 by eliminating Python sidecar). v6 history: 3x expansion is normal. Quality over speed
 
 ## Bookmarked Resources
 
 - **TradingView lightweight-charts** — v7.1 chart rendering (50KB, Canvas, OHLC-native)
-- **FRED API (fredapi)** — macro economic data (500K+ series, free, 120 calls/min). Python sidecar
+- **FRED REST API** — macro economic data (500K+ series, free, 120 calls/min). TypeScript fetch for VIX/ICSA/M2 only — other macro from Alpha Vantage
 - **Camofox** — if stealth browsing needed for finance site scraping
 - **CoinGecko adapter** — already in Intel Depot (src/intel/adapters/coingecko.ts)
 - **Frankfurter adapter** — already in Intel Depot (src/intel/adapters/frankfurter.ts)
@@ -768,17 +786,38 @@ Reminder set: sign up at https://fred.stlouisfed.org/docs/api/api_key.html befor
 
 ## Data Source Decision
 
-**Alpha Vantage ($50/yr)** selected as primary data source. Confirmed by user.
+**Alpha Vantage premium** selected as primary data source. Key set in `.env` as `ALPHAVANTAGE_API_KEY`. Verified 2026-04-11: adjusted daily, FX, macro, server-side indicators, news sentiment all working. 75 req/min, unlimited daily.
 
-| Source               | Role                                            | Cost   |
-| -------------------- | ----------------------------------------------- | ------ |
-| **Alpha Vantage**    | Forex, gold, US stocks (daily OHLCV)            | $50/yr |
-| **FRED (fredapi)**   | Macro signals (yield curve, VIX, employment)    | Free   |
-| **Polymarket Gamma** | Prediction market probabilities                 | Free   |
-| **CoinGecko**        | Crypto (already in Intel Depot)                 | Free   |
-| **Frankfurter**      | EUR cross-rates backup (already in Intel Depot) | Free   |
+| Source               | Role                                                                                                                                                                          | Cost   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| **Alpha Vantage**    | Forex, stocks (adjusted OHLCV), gold (GLD ETF), macro (fed funds, treasury, CPI, unemployment, payroll, GDP), news sentiment, server-side indicators (golden-file validation) | $50/yr |
+| **FRED REST API**    | VIX, initial claims (ICSA), M2 money supply — 3 series AV doesn't cover                                                                                                       | Free   |
+| **Polymarket Gamma** | Prediction market probabilities                                                                                                                                               | Free   |
+| **CoinGecko**        | Crypto (already in Intel Depot)                                                                                                                                               | Free   |
+| **Frankfurter**      | EUR cross-rates backup (already in Intel Depot)                                                                                                                               | Free   |
 
-**Total data layer cost: $50/year.**
+**Total data layer cost: ~$500/year.**
+
+### Alpha Vantage API Budget (verified 2026-04-11)
+
+**Rate limit:** 75 req/min (sustained at 1/sec, burst-limited at ~5 rapid calls)
+
+| Scenario                              | Instruments                       | Calls/scan                 | Time at 1/sec |
+| ------------------------------------- | --------------------------------- | -------------------------- | ------------- |
+| Morning OHLCV scan                    | 31 (5 FX + GLD + 24 stocks + DXY) | 31                         | ~31 sec       |
+| + Server-side indicators (validation) | 31 × 6 indicators                 | +186                       | ~3.1 min      |
+| + Macro refresh                       | 9 (6 AV + 3 FRED)                 | +9                         | ~9 sec        |
+| + News sentiment                      | ~5 key tickers                    | +5                         | ~5 sec        |
+| **Full morning scan**                 |                                   | **~45** (OHLCV+macro+news) | **~45 sec**   |
+
+Daily capacity: 108,000 calls. Heaviest scenario uses <0.3%.
+
+### Key findings (verified)
+
+- **XAU/USD does NOT work via FX endpoint** — "Invalid API call". Use GLD (SPDR Gold ETF) instead
+- **VWAP is intraday only** — irrelevant for daily timeframe, compute locally if needed
+- **Server-side indicators** cover 50+ functions (SMA, EMA, RSI, MACD, BBANDS, ATR, etc.) — use for golden-file test validation, not as primary computation
+- **Adjusted daily (premium)** includes dividend amount + split coefficient — critical for stock indicator accuracy
 
 ## Adopted Patterns from Repo Analysis (Session 58)
 
@@ -829,6 +868,6 @@ Reminder set: sign up at https://fred.stlouisfed.org/docs/api/api_key.html befor
 
 ## Remaining Pre-Build Items
 
-- [ ] Alpha Vantage API key (user confirmed — set in .env as `ALPHAVANTAGE_API_KEY`)
-- [ ] FRED API key signup (before F5)
-- [ ] 30-day v6 production validation (V7-READINESS-CRITERIA.md checklist)
+- [x] Alpha Vantage API key — premium tier, set in `.env`, verified 2026-04-11 (adjusted daily, FX, macro, indicators, news sentiment all working)
+- [ ] FRED API key signup (before F5 — https://fred.stlouisfed.org/docs/api/api_key.html)
+- [ ] 30-day v6 production validation (V7-READINESS-CRITERIA.md checklist — day 2/30, gate ~May 10)
