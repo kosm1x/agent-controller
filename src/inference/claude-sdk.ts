@@ -126,7 +126,8 @@ export function buildMcpServer(toolNames: string[]) {
 
 export interface ClaudeSdkResult {
   text: string;
-  toolCalls: number;
+  /** Bare tool names called during the run (mcp__jarvis__ prefix stripped). */
+  toolCalls: string[];
   numTurns: number;
   usage: { promptTokens: number; completionTokens: number };
   costUsd: number;
@@ -182,7 +183,7 @@ export async function queryClaudeSdk(opts: {
   };
 
   let resultText = "";
-  let toolCallCount = 0;
+  const toolCallNames: string[] = [];
   let numTurns = 0;
   let usage = { promptTokens: 0, completionTokens: 0 };
   let costUsd = 0;
@@ -192,15 +193,21 @@ export async function queryClaudeSdk(opts: {
 
   for await (const message of q) {
     if (message.type === "assistant") {
-      // Count tool calls from assistant messages
+      // Capture tool names from assistant messages. MCP tools arrive with the
+      // `mcp__jarvis__` prefix — strip it so downstream code (requiredTools
+      // validation, hallucination guard) sees bare tool names that match the
+      // registry.
       if (message.message?.content) {
         for (const block of message.message.content) {
           if (
             typeof block === "object" &&
             "type" in block &&
-            block.type === "tool_use"
+            block.type === "tool_use" &&
+            "name" in block &&
+            typeof block.name === "string"
           ) {
-            toolCallCount++;
+            const bareName = block.name.replace(/^mcp__jarvis__/, "");
+            toolCallNames.push(bareName);
           }
         }
       }
@@ -226,14 +233,14 @@ export async function queryClaudeSdk(opts: {
   clearTimeout(timeoutTimer);
 
   console.log(
-    `[claude-sdk] Completed: ${numTurns} turns, ${toolCallCount} tool calls, ` +
+    `[claude-sdk] Completed: ${numTurns} turns, ${toolCallNames.length} tool calls, ` +
       `$${costUsd.toFixed(4)}, ${durationMs}ms, ` +
       `tokens=${usage.promptTokens + usage.completionTokens}`,
   );
 
   return {
     text: resultText,
-    toolCalls: toolCallCount,
+    toolCalls: toolCallNames,
     numTurns,
     usage,
     costUsd,

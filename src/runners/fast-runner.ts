@@ -869,7 +869,11 @@ export const fastRunner: Runner = {
             parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
           status: parsed.status,
           concerns: parsed.concerns,
-          output: { text: parsed.cleanContent },
+          output: {
+            text: parsed.cleanContent,
+            toolCalls: sdkResult.toolCalls,
+          },
+          toolCalls: sdkResult.toolCalls,
           tokenUsage: {
             promptTokens: sdkResult.usage.promptTokens,
             completionTokens: sdkResult.usage.completionTokens,
