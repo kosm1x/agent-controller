@@ -15,6 +15,7 @@ import {
   serializeEmbedding,
   deserializeEmbedding,
 } from "./embeddings.js";
+import { rerankByCoherence } from "./graph-rerank.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -391,11 +392,17 @@ export class SqliteMemoryBackend implements MemoryService {
       );
       scored.sort((a, b) => b._score - a._score);
 
+      // Graph-aware coherence reranker: boost entity-linked clusters as a
+      // strict tiebreaker (capped at 15%). Fixes independent-top-K hitting
+      // mixed-topic results when several memories share project/person
+      // entities. Pattern adapted from memorypilot (conceptually, not copied).
+      const { reranked, coherence } = rerankByCoherence(scored);
+
       console.log(
-        `[memory] Hybrid recall: FTS5=${ftsResults.length}, embed=${embeddingResults.length}, merged=${allResults.size}`,
+        `[memory] Hybrid recall: FTS5=${ftsResults.length}, embed=${embeddingResults.length}, merged=${allResults.size}, coherence=${coherence.toFixed(2)}`,
       );
 
-      return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+      return reranked.slice(0, limit).map(({ _score: _, ...item }) => item);
     } catch {
       return [];
     }
