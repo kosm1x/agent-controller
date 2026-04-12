@@ -153,12 +153,16 @@ export async function queryClaudeSdk(opts: {
 
   // Hard timeout: kill the subprocess if it hangs. SDK has no built-in timeout
   // for the full query — maxTurns only caps turns, not wall-clock time.
-  // 10 minutes is generous for any single task.
-  const SDK_TIMEOUT_MS = 10 * 60_000;
+  // 15 minutes covers multi-document synthesis tasks (read 5+ files → summarize
+  // → write to Google Doc). Was 10 min but real integration tasks hit that
+  // ceiling when iterating through large research corpora.
+  const SDK_TIMEOUT_MS = 15 * 60_000;
+  let timedOut = false;
   const timeoutTimer = setTimeout(() => {
     console.warn(
       `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
     );
+    timedOut = true;
     abortController.abort();
   }, SDK_TIMEOUT_MS);
 
@@ -183,65 +187,110 @@ export async function queryClaudeSdk(opts: {
   };
 
   let resultText = "";
+  /** Accumulated text from streaming assistant messages. Used as fallback
+   *  when the query aborts (timeout/signal) before a `type: "result"` success
+   *  arrives — prevents data loss on long multi-tool runs. */
+  let streamingText = "";
   const toolCallNames: string[] = [];
   let numTurns = 0;
+  let assistantTurns = 0;
   let usage = { promptTokens: 0, completionTokens: 0 };
   let costUsd = 0;
   let durationMs = 0;
 
   const q = query({ prompt: opts.prompt, options });
 
-  for await (const message of q) {
-    if (message.type === "assistant") {
-      // Capture tool names from assistant messages. MCP tools arrive with the
-      // `mcp__jarvis__` prefix — strip it so downstream code (requiredTools
-      // validation, hallucination guard) sees bare tool names that match the
-      // registry.
-      if (message.message?.content) {
-        for (const block of message.message.content) {
-          if (
-            typeof block === "object" &&
-            "type" in block &&
-            block.type === "tool_use" &&
-            "name" in block &&
-            typeof block.name === "string"
-          ) {
-            const bareName = block.name.replace(/^mcp__jarvis__/, "");
-            toolCallNames.push(bareName);
+  try {
+    for await (const message of q) {
+      if (message.type === "assistant") {
+        assistantTurns++;
+        // Capture streaming assistant text and tool names. MCP tools arrive
+        // with the `mcp__jarvis__` prefix — strip so downstream code sees
+        // bare names that match the registry.
+        if (message.message?.content) {
+          for (const block of message.message.content) {
+            if (typeof block !== "object" || !("type" in block)) continue;
+            if (
+              block.type === "text" &&
+              "text" in block &&
+              typeof block.text === "string"
+            ) {
+              streamingText += block.text;
+            } else if (
+              block.type === "tool_use" &&
+              "name" in block &&
+              typeof block.name === "string"
+            ) {
+              const bareName = block.name.replace(/^mcp__jarvis__/, "");
+              toolCallNames.push(bareName);
+            }
           }
         }
+        // Progress log every 3 assistant turns so long-running queries are
+        // observable (previously silent 10-min runs were impossible to diagnose).
+        if (assistantTurns % 3 === 0) {
+          console.log(
+            `[claude-sdk] progress: ${assistantTurns} turns, ${toolCallNames.length} tool calls, ${streamingText.length} chars`,
+          );
+        }
+      } else if (message.type === "result") {
+        if (message.subtype === "success") {
+          const success = message as SDKResultSuccess;
+          resultText = success.result;
+          numTurns = success.num_turns;
+          usage = {
+            promptTokens: success.usage?.input_tokens ?? 0,
+            completionTokens: success.usage?.output_tokens ?? 0,
+          };
+          costUsd = success.total_cost_usd ?? 0;
+          durationMs = success.duration_ms ?? 0;
+        } else {
+          const error = message as SDKResultError;
+          const errorMsgs = error.errors?.join("; ") ?? "unknown";
+          resultText = `Error: ${error.subtype} — ${errorMsgs}`;
+        }
       }
-    } else if (message.type === "result") {
-      if (message.subtype === "success") {
-        const success = message as SDKResultSuccess;
-        resultText = success.result;
-        numTurns = success.num_turns;
-        usage = {
-          promptTokens: success.usage?.input_tokens ?? 0,
-          completionTokens: success.usage?.output_tokens ?? 0,
-        };
-        costUsd = success.total_cost_usd ?? 0;
-        durationMs = success.duration_ms ?? 0;
+    }
+  } catch (err) {
+    // Abort/timeout paths throw here. Capture the partial streamed text as
+    // the result so whatever Jarvis produced before the abort isn't lost.
+    // The fast-runner's safety net promotes BLOCKED/NEEDS_CONTEXT with >100
+    // chars to DONE_WITH_CONCERNS so the partial delivery reaches the user.
+    if (!resultText) {
+      if (streamingText) {
+        resultText = streamingText;
       } else {
-        const error = message as SDKResultError;
-        const errorMsgs = error.errors?.join("; ") ?? "unknown";
-        resultText = `Error: ${error.subtype} — ${errorMsgs}`;
+        const errMsg = err instanceof Error ? err.message : String(err);
+        resultText = `Error: query aborted — ${errMsg}`;
       }
     }
   }
 
   clearTimeout(timeoutTimer);
 
+  // If the loop ended without a "result" success message but streaming text
+  // exists (e.g. abort signaled externally), fall back to streamed text.
+  if (!resultText && streamingText) {
+    resultText = streamingText;
+  }
+
+  // If we timed out, annotate the partial response so the LLM/user know
+  // delivery was interrupted.
+  if (timedOut && resultText && !resultText.startsWith("[timeout]")) {
+    resultText = `[timeout after ${SDK_TIMEOUT_MS / 1000}s — partial response below]\n\n${resultText}\n\nSTATUS: DONE_WITH_CONCERNS — query hit the ${SDK_TIMEOUT_MS / 1000}s hard timeout, response is incomplete`;
+  }
+
   console.log(
-    `[claude-sdk] Completed: ${numTurns} turns, ${toolCallNames.length} tool calls, ` +
+    `[claude-sdk] Completed: ${numTurns || assistantTurns} turns, ${toolCallNames.length} tool calls, ` +
       `$${costUsd.toFixed(4)}, ${durationMs}ms, ` +
-      `tokens=${usage.promptTokens + usage.completionTokens}`,
+      `tokens=${usage.promptTokens + usage.completionTokens}` +
+      (timedOut ? " [TIMED OUT]" : ""),
   );
 
   return {
     text: resultText,
     toolCalls: toolCallNames,
-    numTurns,
+    numTurns: numTurns || assistantTurns,
     usage,
     costUsd,
     durationMs,
