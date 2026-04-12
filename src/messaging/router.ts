@@ -229,13 +229,15 @@ function scopeToolsForMessage(
   conversationHistory: ConversationTurn[],
   semanticGroups?: Set<string> | null,
 ): { tools: string[]; activeGroups: string[] } {
-  // Scope from LAST user message only — two turns caused scope accumulation
-  // where prior topics stayed active (e.g., hallucinated NorthStar response
-  // containing "Contenido"/"followers" triggered social+wordpress on next turn).
+  // Scope from recent user messages. Previously slice(-2) to avoid scope
+  // accumulation on hallucinated assistant content, but user messages are
+  // trusted. Widened to -4 so confirmation chains ("Lista X" → "Elimina 6 y 7"
+  // → "Confirmado" → "Confirma el status") preserve the original domain
+  // context (schedule, coding, etc.) across 3-4 turn acknowledgment loops.
   // The current message (first param) is always scanned separately.
   const userMsgs = conversationHistory
     .filter((t) => t.role === "user")
-    .slice(-2)
+    .slice(-4)
     .map((t) => t.content);
 
   // For assistant messages, extract only google/wp keywords to avoid false triggers

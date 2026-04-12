@@ -211,6 +211,19 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
+/**
+ * Intent-only scope groups — these signal user intent (destructive, journaling,
+ * meta) but add no tools of their own. Tools live in the relevant domain groups
+ * (e.g. `schedule` owns `delete_schedule`). Used by the classifier-bypass branch
+ * to detect when the classifier returned only intent signals and needs a
+ * prior-message inheritance scan to recover the domain context.
+ */
+const INTENT_ONLY_GROUPS = new Set<string>([
+  "destructive",
+  "northstar_journal",
+  "meta",
+]);
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -297,7 +310,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(schedules?|reportes?|programa(r|dos?|ción)?|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]r?\s+cada|peri[oó]dica(?:mente)?|recordatorio|reminder|av[ií]same\s+(cada|en\s+\d))/i,
+      /\b(schedules?|delete_schedule|list_schedules|schedule_task|reportes?|programa(r|dos?|ción)?|acci(o|ó)n(es)?\s+programad|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]r?\s+cada|peri[oó]dica(?:mente)?|recordatorio|reminder|av[ií]same\s+(cada|en\s+\d))/i,
     group: "schedule",
   },
   {
@@ -417,6 +430,25 @@ export function scopeToolsForMessage(
       )
     ) {
       activeGroups.add("seo");
+    }
+    // General scope inheritance safety net: when the classifier returns only
+    // intent-only groups (destructive/journal/meta) or nothing at all, the
+    // follow-up is likely a confirmation or meta question that lost the prior
+    // domain context. Scan prior user messages with the full pattern set and
+    // merge any matches — mirrors the regex-fallback branch's inheritance.
+    // This unblocks "Confirmado. Elimina las 6." style follow-ups where the
+    // classifier sees only `destructive` and `delete_schedule` gets stripped
+    // because the `schedule` group was dropped.
+    const hasDomainGroup = Array.from(activeGroups).some(
+      (g) => !INTENT_ONLY_GROUPS.has(g),
+    );
+    if (!hasDomainGroup && recentUserMessages.length > 0) {
+      const priorText = recentUserMessages.join(" ");
+      for (const { pattern, group } of patterns) {
+        if (pattern.test(priorText)) {
+          activeGroups.add(group);
+        }
+      }
     }
   } else {
     activeGroups = new Set<string>();

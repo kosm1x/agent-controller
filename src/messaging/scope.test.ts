@@ -229,6 +229,51 @@ describe("wordpress positive", () => {
 // v7.3 SEO/GEO scope group
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Classifier-bypass intent-only inheritance (scope_fix_2026_04_12)
+// ---------------------------------------------------------------------------
+
+describe("classifier-bypass intent-only inheritance", () => {
+  it("inherits schedule from priors when classifier returns only destructive", () => {
+    // Simulate the "Confirmado. Elimina las 6." follow-up: classifier sees only
+    // destructive, prior turn was the schedule listing.
+    const tools = scopeToolsForMessage(
+      "Confirmado. Elimina las 6.",
+      ["Lista las acciones programadas"],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive"]),
+    );
+    expect(tools).toContain("delete_schedule");
+    expect(tools).toContain("list_schedules");
+  });
+
+  it("does not inherit when classifier returned a real domain group", () => {
+    // Classifier returned schedule — no inheritance scan needed.
+    const tools = scopeToolsForMessage(
+      "Elimina 6 y 7",
+      ["Haz un deploy del servidor"],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive", "schedule"]),
+    );
+    expect(tools).toContain("delete_schedule");
+    // Coding should NOT have been inherited because classifier had a real group
+    expect(tools).not.toContain("shell_exec");
+  });
+
+  it("handles meta-question about a scheduled tool (delete_schedule literal)", () => {
+    const tools = scopeToolsForMessage(
+      "Confirma el status de tu herramienta delete_schedule",
+      ["Elimina las acciones programadas"],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive"]),
+    );
+    expect(tools).toContain("delete_schedule");
+  });
+});
+
 describe("seo scope group (v7.3)", () => {
   it("activates on explicit 'SEO' keyword", () => {
     const tools = scope("Haz un audit SEO de example.com");
