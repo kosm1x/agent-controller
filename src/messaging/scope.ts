@@ -407,6 +407,17 @@ export function scopeToolsForMessage(
     ) {
       activeGroups.add("google");
     }
+    // v7.3: SEO keyword injection. Classifier may tag as browser/research when
+    // the message mentions "audit", "meta tags", "schema" without recognizing
+    // the SEO domain. Force-add seo group when strong SEO signals present.
+    if (
+      !activeGroups.has("seo") &&
+      /\b(seo|posicionamiento|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|serp|pagespeed|core\s+web\s+vitals|lighthouse|ai\s+overview|generative\s+engine|content\s+brief|e-?e-?a-?t|keyword\s+research|rich\s+results?)\b/i.test(
+        currentMessage,
+      )
+    ) {
+      activeGroups.add("seo");
+    }
   } else {
     activeGroups = new Set<string>();
 

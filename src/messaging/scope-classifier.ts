@@ -30,6 +30,7 @@ const VALID_GROUPS = new Set([
   "meta",
   "specialty",
   "research",
+  "seo",
 ]);
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
@@ -51,6 +52,7 @@ GROUPS (return only the ones that apply):
 - meta: list tools, capabilities, diagnostics, herramientas disponibles
 - specialty: charts, RSS, images, text humanization, dashboards, KPI, batch processing, research tools
 - research: deep analysis, study guides, podcasts, PDF analysis, document research
+- seo: SEO audits, keyword research, meta tags, schema markup (JSON-LD), rankings, SERP, PageSpeed, Core Web Vitals, content briefs, E-E-A-T, AI overviews / generative engine optimization (GEO), Open Graph, Twitter cards
 
 RULES:
 - Return ONLY groups needed. Empty array [] for greetings/small talk.
