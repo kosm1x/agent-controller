@@ -271,3 +271,17 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_sched_runs_schedule ON schedule_runs(schedule_id, spawned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sched_runs_task ON schedule_runs(task_id);
+
+-- v7.3 Phase 1: SEO/GEO audit history — tracks page/keyword/site audits over time
+CREATE TABLE IF NOT EXISTS seo_audits (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain      TEXT NOT NULL,
+  url         TEXT,
+  audit_type  TEXT NOT NULL CHECK (audit_type IN ('page','keyword','site')),
+  score       INTEGER,
+  findings    TEXT NOT NULL,   -- JSON: { priorities[], issues[], recommendations[] }
+  metadata    TEXT,            -- JSON: raw crawl/LLM data for diffing
+  created_at  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_seo_audits_domain ON seo_audits(domain, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_seo_audits_url ON seo_audits(url, created_at DESC);

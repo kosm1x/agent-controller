@@ -137,6 +137,11 @@ import {
   dashboardListTool,
 } from "../builtin/dashboard.js";
 import { batchDecomposeTool } from "../builtin/batch.js";
+import { seoPageAuditTool } from "../builtin/seo-page-audit.js";
+import { seoKeywordResearchTool } from "../builtin/seo-keyword-research.js";
+import { seoMetaGenerateTool } from "../builtin/seo-meta-generate.js";
+import { seoSchemaGenerateTool } from "../builtin/seo-schema-generate.js";
+import { seoContentBriefTool } from "../builtin/seo-content-brief.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -220,6 +225,11 @@ const BUILTIN_TOOLS: Tool[] = [
   knowledgeMapTool,
   knowledgeMapExpandTool,
   batchDecomposeTool,
+  seoPageAuditTool,
+  seoKeywordResearchTool,
+  seoMetaGenerateTool,
+  seoSchemaGenerateTool,
+  seoContentBriefTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

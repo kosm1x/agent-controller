@@ -18,6 +18,7 @@ import {
   SCHEDULE_TOOLS,
   MISC_TOOLS,
   CRM_TOOLS_SCOPE,
+  SEO_TOOLS,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -221,6 +222,32 @@ describe("wordpress positive", () => {
   it("activates on 'Publica el artículo en WordPress'", () => {
     const tools = scope("Publica el artículo en WordPress");
     expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v7.3 SEO/GEO scope group
+// ---------------------------------------------------------------------------
+
+describe("seo scope group (v7.3)", () => {
+  it("activates on explicit 'SEO' keyword", () => {
+    const tools = scope("Haz un audit SEO de example.com");
+    expect(hasAll(tools, SEO_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'schema markup' / 'json-ld' mentions", () => {
+    const tools = scope("Genera schema markup json-ld para esta página");
+    expect(hasAll(tools, SEO_TOOLS)).toBe(true);
+  });
+
+  it("inherits seo scope from prior message on a short follow-up", () => {
+    const tools = scope("Procede", ["Analiza el SEO de https://example.com"]);
+    expect(hasAll(tools, SEO_TOOLS)).toBe(true);
+  });
+
+  it("does not activate on unrelated messages", () => {
+    const tools = scope("Cómo está el clima hoy");
+    expect(hasNone(tools, SEO_TOOLS)).toBe(true);
   });
 });
 

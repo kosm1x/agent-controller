@@ -202,6 +202,15 @@ export const UTILITY_TOOLS = [
   "geocode_address",
 ];
 
+/** SEO/GEO tools — scope-gated: only when SEO/rankings/schema/meta keywords detected. */
+export const SEO_TOOLS = [
+  "seo_page_audit",
+  "seo_keyword_research",
+  "seo_meta_generate",
+  "seo_schema_generate",
+  "seo_content_brief",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -321,6 +330,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(clima|weather|temperatura|temperature|lluvia|rain|pron[oó]stico|forecast|moneda|currency|convert|tipo\s+de\s+cambio|d[oó]lar|exchange\s+rate|coordenadas|coordinates|direcci[oó]n.*geocod|geocod|ubicaci[oó]n\s+de)\b/i,
     group: "utility",
+  },
+  {
+    // v7.3 SEO/GEO scope — activates on explicit SEO terminology.
+    pattern:
+      /\b(seo|posicionamiento|palabras?\s+clave|keyword\s*research|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|rankings?|serp|pagespeed|core\s+web\s+vitals|lighthouse|sitemap|canonical|e-?e-?a-?t|content\s+brief|ai\s+overview|generative\s+engine|geo\s+(?:keywords?|signals?)|rich\s+results?|structured\s+data|open\s+graph|og\s+tags?|twitter\s+card)\b/i,
+    group: "seo",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -462,6 +477,7 @@ export function scopeToolsForMessage(
     activeGroups.add("crm");
     activeGroups.add("social");
     activeGroups.add("utility");
+    activeGroups.add("seo");
   }
 
   if (
@@ -517,6 +533,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("utility")) {
     tools.push(...UTILITY_TOOLS);
+  }
+  if (activeGroups.has("seo")) {
+    tools.push(...SEO_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
