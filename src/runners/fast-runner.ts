@@ -842,16 +842,32 @@ export const fastRunner: Runner = {
         });
 
         // Map SDK result to RunnerOutput
-        const parsed = parseRunnerStatus(sdkResult.text);
+        let parsed = parseRunnerStatus(sdkResult.text);
+
+        // Safety net: if the LLM returned substantial content but reported
+        // BLOCKED/NEEDS_CONTEXT (e.g. a confirmation prompt for a destructive
+        // action), promote to DONE_WITH_CONCERNS so the content gets delivered.
+        // Mirrors the OpenAI path (below, ~line 896). Without this, confirmation
+        // prompts from the claude-sdk path get silently dropped because
+        // result.success=false → dispatcher marks the task failed and the
+        // messaging router sends a generic failure message instead of the text.
+        if (
+          (parsed.status === "BLOCKED" || parsed.status === "NEEDS_CONTEXT") &&
+          parsed.cleanContent.length > 100
+        ) {
+          parsed = {
+            ...parsed,
+            status: "DONE_WITH_CONCERNS",
+            concerns: [
+              `Original status: ${parsed.status}. ${parsed.concerns?.[0] ?? "Response promoted to success because content was produced."}`,
+            ],
+          };
+        }
+
         return {
           success:
             parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
-          status:
-            parsed.status === "DONE"
-              ? "DONE"
-              : parsed.status === "DONE_WITH_CONCERNS"
-                ? "DONE_WITH_CONCERNS"
-                : undefined,
+          status: parsed.status,
           concerns: parsed.concerns,
           output: { text: parsed.cleanContent },
           tokenUsage: {
