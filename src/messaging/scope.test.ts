@@ -248,8 +248,10 @@ describe("classifier-bypass intent-only inheritance", () => {
     expect(tools).toContain("list_schedules");
   });
 
-  it("does not inherit when classifier returned a real domain group", () => {
-    // Classifier returned schedule — no inheritance scan needed.
+  it("merges inheritance even when classifier already returned a real group", () => {
+    // Unconditional merge: classifier returned `schedule`, prior mentioned
+    // coding, both should end up active. Accepted tradeoff — slice(-4) bounds
+    // accumulation, and co-activation is safer than starving needed tools.
     const tools = scopeToolsForMessage(
       "Elimina 6 y 7",
       ["Haz un deploy del servidor"],
@@ -258,8 +260,7 @@ describe("classifier-bypass intent-only inheritance", () => {
       new Set(["destructive", "schedule"]),
     );
     expect(tools).toContain("delete_schedule");
-    // Coding should NOT have been inherited because classifier had a real group
-    expect(tools).not.toContain("shell_exec");
+    expect(tools).toContain("shell_exec");
   });
 
   it("handles meta-question about a scheduled tool (delete_schedule literal)", () => {
@@ -271,6 +272,39 @@ describe("classifier-bypass intent-only inheritance", () => {
       new Set(["destructive"]),
     );
     expect(tools).toContain("delete_schedule");
+  });
+
+  it("merges a missing domain group when classifier returned only one", () => {
+    // Real-world case: "Revisa documentos de investigación... agrega a la tesis"
+    // Classifier returns [research] only; prior turns referenced the Google Doc.
+    // The unconditional prior-message merge should co-activate `google`.
+    const tools = scopeToolsForMessage(
+      "Revisa documentos de investigación y agrega a la tesis",
+      [
+        "Mira el Google Doc de la tesis v2.5",
+        "Necesito gdocs_write para actualizar",
+      ],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["research"]),
+    );
+    expect(tools).toContain("gdocs_write");
+    expect(tools).toContain("gemini_research"); // research still active
+  });
+
+  it("merges multiple missing groups from priors", () => {
+    const tools = scopeToolsForMessage(
+      "Procede",
+      [
+        "Lista las acciones programadas",
+        "Revisa el código del servidor para deploy",
+      ],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive"]),
+    );
+    expect(tools).toContain("delete_schedule");
+    expect(tools).toContain("shell_exec");
   });
 });
 

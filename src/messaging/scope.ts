@@ -211,19 +211,6 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
-/**
- * Intent-only scope groups — these signal user intent (destructive, journaling,
- * meta) but add no tools of their own. Tools live in the relevant domain groups
- * (e.g. `schedule` owns `delete_schedule`). Used by the classifier-bypass branch
- * to detect when the classifier returned only intent signals and needs a
- * prior-message inheritance scan to recover the domain context.
- */
-const INTENT_ONLY_GROUPS = new Set<string>([
-  "destructive",
-  "northstar_journal",
-  "meta",
-]);
-
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -431,18 +418,20 @@ export function scopeToolsForMessage(
     ) {
       activeGroups.add("seo");
     }
-    // General scope inheritance safety net: when the classifier returns only
-    // intent-only groups (destructive/journal/meta) or nothing at all, the
-    // follow-up is likely a confirmation or meta question that lost the prior
-    // domain context. Scan prior user messages with the full pattern set and
-    // merge any matches — mirrors the regex-fallback branch's inheritance.
-    // This unblocks "Confirmado. Elimina las 6." style follow-ups where the
-    // classifier sees only `destructive` and `delete_schedule` gets stripped
-    // because the `schedule` group was dropped.
-    const hasDomainGroup = Array.from(activeGroups).some(
-      (g) => !INTENT_ONLY_GROUPS.has(g),
-    );
-    if (!hasDomainGroup && recentUserMessages.length > 0) {
+    // General scope inheritance safety net: always scan prior user messages
+    // with the full pattern set and merge any matches into the classifier's
+    // output. The classifier regularly under-classifies in two modes:
+    //   (a) intent-only output (destructive/journal/meta alone) on short
+    //       confirmation follow-ups — "Confirmado. Elimina las 6." losing
+    //       the `schedule` group
+    //   (b) partial-domain output — one real group returned but another
+    //       implicit group missed — "Revisa documentos... agrega a la tesis"
+    //       returning only `research` while the user's tesis lives in a
+    //       Google Doc, so `google` should co-activate
+    // The slice(-4) window on recentUserMessages bounds accumulation risk,
+    // and we only MERGE — never replace — the classifier's groups. Existing
+    // google/seo injections above still run first for redundancy.
+    if (recentUserMessages.length > 0) {
       const priorText = recentUserMessages.join(" ");
       for (const { pattern, group } of patterns) {
         if (pattern.test(priorText)) {
