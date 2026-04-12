@@ -371,7 +371,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**v6.4 CURRENT.** 134 test files, 1874 tests passing, zero type errors, 172 tools (109 deferred). Prometheus snapshot/resume (execution state persists across early exits) + partial re-execution (re-run from any goal in a completed plan). V7 30-day validation in progress (day 2/30). Alpha Vantage premium verified. Roadmap: v7 Financial Signal Detection Stack after validation passes (~May 10).
+**v6.5 + v7.3 Phase 1 CURRENT.** 144 test files, 1990 tests passing, zero type errors, 179 tools (115 deferred). Prometheus snapshot/resume + partial re-execution (v6). Temporal KG + essentials layer + entity extractor (v6.5). **v7.3 Phase 1 SEO/GEO suite** shipped — 5 tools (`seo_page_audit`, `seo_keyword_research`, `seo_meta_generate`, `seo_schema_generate`, `seo_content_brief`) adapted from nowork-studio/toprank with zero new deps. 4 claude-sdk regressions from session 60 also fixed: status passthrough, tool-name capture, scope classifier-bypass inheritance, partial-text capture on SDK timeout (bumped 10→15 min). V7 30-day validation in progress. Roadmap: v7 Financial Signal Detection Stack after validation passes.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
