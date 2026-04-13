@@ -10,6 +10,6 @@ mkdir -p "$BACKUP_DIR"
 sqlite3 "$DB_PATH" ".backup '$BACKUP_DIR/mc-$DATE.db'"
 
 # Remove backups older than 7 days
-find "$BACKUP_DIR" -name "mc-*.db" -mtime +7 -delete
+find "$BACKUP_DIR" -name "mc-*.db" -mtime +3 -delete
 
 echo "[$(date)] backup: mc.db → $BACKUP_DIR/mc-$DATE.db ($(du -sh "$BACKUP_DIR/mc-$DATE.db" 2>/dev/null | cut -f1))"
