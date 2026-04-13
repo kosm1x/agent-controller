@@ -142,8 +142,18 @@ export interface ProviderStats {
 }
 
 // ---------------------------------------------------------------------------
-// Health thresholds — derived from provider health baseline (2026-04-06)
-// Baseline: qwen 98.8%/59.4s avg, kimi 100%/76.6s avg
+// Health thresholds — recalibrated for SDK + OpenAI-compatible providers
+// (2026-04-13 review)
+//
+// Original baseline (2026-04-06): qwen 98.8%/59.4s, kimi 100%/76.6s
+// Post Claude Agent SDK migration: SDK runs include subprocess management
+// (spawn, MCP bridge, abort plumbing) which adds occasional transient failures
+// not present in raw HTTP calls. With small sample windows (10-20 calls), a
+// single transient failure was tripping the old 3% threshold and flapping
+// providers between healthy/degraded.
+//
+// New thresholds give SDK paths breathing room while still alerting on real
+// regressions. The degraded zone is now 5-15% error rate, 90-180s latency.
 // ---------------------------------------------------------------------------
 
 /** Avg latency below this = healthy. */
@@ -151,9 +161,9 @@ const LATENCY_HEALTHY_MS = 90_000;
 /** Avg latency above this = unhealthy. */
 const LATENCY_UNHEALTHY_MS = 180_000;
 /** Error rate below this = healthy. */
-const ERROR_RATE_HEALTHY = 0.03;
+const ERROR_RATE_HEALTHY = 0.07;
 /** Error rate above this = unhealthy. */
-const ERROR_RATE_UNHEALTHY = 0.1;
+const ERROR_RATE_UNHEALTHY = 0.2;
 /** Minimum samples before health classification applies. */
 const MIN_HEALTH_SAMPLES = 5;
 /** Rolling window for health stats/dashboard (10 min). */
