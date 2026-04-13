@@ -65,7 +65,12 @@ function classifyError(
 
 const SELF_ASSESS_SYSTEM = `You evaluate whether a goal's output satisfies its completion criteria.
 
-Respond ONLY with a JSON object:
+Think step by step before deciding. For each criterion, write one short sentence answering:
+1. What concrete evidence in the output addresses this specific criterion?
+2. Is the evidence direct and verifiable, or is the criterion only partially or vaguely addressed?
+3. Would a strict reviewer accept this as "met" or flag it as incomplete?
+
+After the reasoning, emit EXACTLY ONE JSON object as the FINAL content of your response:
 {
   "met": true,
   "unmetCriteria": [],
@@ -76,7 +81,8 @@ Rules:
 - met = true only if ALL criteria are satisfied by the output.
 - unmetCriteria = list of criteria strings that were NOT satisfied.
 - Be strict: vague or partial satisfaction counts as not met.
-- Emit ONLY valid JSON. No markdown, no commentary.`;
+- The reasoning above can be any prose. Only the final JSON object is consumed.
+- Do NOT wrap the JSON in markdown fences. Emit it bare at the end of your response.`;
 
 interface SelfAssessment {
   met: boolean;

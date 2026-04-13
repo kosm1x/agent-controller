@@ -12,6 +12,7 @@ import { GoalStatus, parseLLMJson, convergenceScore } from "./types.js";
 import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
+import { logReflectorGap } from "../db/reflector-gap.js";
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -19,7 +20,14 @@ import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 
 const REFLECT_SYSTEM = `You are the reflection module of an autonomous agent. Evaluate execution results against task goals.
 
-Respond ONLY with a JSON object:
+Think step by step before scoring. For each of these points, write one short sentence:
+1. Which goals actually completed with usable output?
+2. Which goals failed or produced degenerate/empty results?
+3. Were claims/numbers in the outputs defensible given the tool evidence observed?
+4. Was the amount of work (tool calls, tokens, detail) appropriate for the task, or bloated/thin?
+5. If a domain knowledge map was provided, did execution cover the key concepts and avoid the listed gotchas?
+
+After the reasoning, emit EXACTLY ONE JSON object as the FINAL content of your response:
 {
   "success": true,
   "score": 0.85,
@@ -32,8 +40,8 @@ Rules:
 - success = true only if score >= 0.8 and no critical goals failed.
 - learnings should be actionable and specific, not generic.
 - summary should be 1-3 sentences.
-- If a domain knowledge map is provided, evaluate whether execution addressed key concepts and avoided listed gotchas.
-- Emit ONLY valid JSON. No markdown, no commentary.`;
+- The reasoning above can be any prose. Only the final JSON object is consumed.
+- Do NOT wrap the JSON in markdown fences. Emit it bare at the end of your response.`;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -71,11 +79,15 @@ export async function reflect(
 
   let assessment: ReflectionAssessment;
   let usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
+  let llmAvailable = false;
+  let rawLlmScore: number | null = null;
 
   try {
     const response = await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";
     assessment = parseLLMJson<ReflectionAssessment>(content);
+    llmAvailable = true;
+    rawLlmScore = assessment.score;
     usage = {
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
@@ -89,6 +101,22 @@ export async function reflect(
 
   // Heuristic override: if LLM score diverges > 0.3 from goal completion ratio
   const heuristicScore = computeHeuristicScore(graph);
+
+  // Autoreason Phase 1: log generation-evaluation gap telemetry. Captures the
+  // RAW LLM score (pre-override) vs the heuristic. Non-fatal, write-only.
+  if (taskId) {
+    const summary = graph.summary();
+    logReflectorGap({
+      taskId,
+      llmScore: rawLlmScore ?? assessment.score,
+      heuristicScore,
+      llmAvailable,
+      goalsTotal: summary.total,
+      goalsCompleted: summary.completed,
+      goalsFailed: summary.failed,
+    });
+  }
+
   if (Math.abs(assessment.score - heuristicScore) > 0.3) {
     console.log(
       `[reflector] LLM score (${assessment.score.toFixed(2)}) diverges from ` +

@@ -48,6 +48,12 @@ export async function orchestrate(
     let replanCount = 0;
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    // Autoreason Phase 1: k=2 stability rule for soft replan signals.
+    // Counter increments on each consecutive soft vote from checkReplan; the
+    // replan only fires when the counter reaches 2. Any iteration with no
+    // vote (or a hard vote that routes around this) resets to 0. Prevents
+    // replan thrashing on transient single-pass metric blips.
+    let consecutiveSoftReplanVotes = 0;
 
     // Global timeout — abort the entire orchestration
     const timeoutController = new AbortController();
@@ -222,30 +228,73 @@ export async function orchestrate(
         `[orchestrator] Task ${taskId}: execution done — ${JSON.stringify(summary)}`,
       );
 
-      // Check replan triggers
-      const replanReason = checkReplan(graph, trace, executionResults, cfg);
-      if (replanReason && replanCount < cfg.maxReplans) {
+      // Check replan triggers. Soft votes are gated by the k=2 stability
+      // rule: require two consecutive votes before firing a replan. Hard
+      // votes (dead-end states) fire immediately.
+      const vote = checkReplan(graph, trace, executionResults, cfg);
+
+      if (!vote) {
+        consecutiveSoftReplanVotes = 0;
+        break;
+      }
+
+      // Soft votes: defer the first one, act on the second.
+      if (vote.severity === "soft") {
+        consecutiveSoftReplanVotes++;
+        if (consecutiveSoftReplanVotes < 2) {
+          // k=2 defer: skip this replan, give the current plan another
+          // execution pass. If the metric washes out (transient), the next
+          // iteration will reset the counter and exit normally.
+          // Use executionResults.summary (the LAST execution's view) rather
+          // than graph.summary() so deferral is gated on what the most
+          // recent pass actually reported as remaining work.
+          const summary = executionResults.summary;
+          const workRemains =
+            summary.pending > 0 ||
+            summary.in_progress > 0 ||
+            summary.blocked > 0;
+          traceRecord(trace, "replan_deferred", {
+            reason: vote.reason,
+            votes: consecutiveSoftReplanVotes,
+            workRemains,
+          });
+          console.log(
+            `[orchestrator] Task ${taskId}: soft replan vote deferred (k=2 stability) — ${vote.reason}`,
+          );
+          if (!workRemains) {
+            // Nothing left to re-execute — the deferred vote can't be
+            // resolved by another pass. Exit cleanly.
+            break;
+          }
+          continue;
+        }
+        // counter >= 2: act on the vote
+        consecutiveSoftReplanVotes = 0;
+      }
+
+      if (replanCount < cfg.maxReplans) {
         replanCount++;
         traceRecord(trace, "replan", {
-          reason: replanReason,
+          reason: vote.reason,
+          severity: vote.severity,
           attempt: replanCount,
         });
         emitProgress(
           taskId,
           Phase.PLAN,
           30,
-          `Replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
+          `Replanning (${replanCount}/${cfg.maxReplans}): ${vote.reason}`,
         );
 
         console.log(
-          `[orchestrator] Task ${taskId}: replanning (${replanCount}/${cfg.maxReplans}): ${replanReason}`,
+          `[orchestrator] Task ${taskId}: replanning (${replanCount}/${cfg.maxReplans}, ${vote.severity}): ${vote.reason}`,
         );
 
         try {
           const { graph: rg, usage: replanUsage } = await replan(
             taskDescription,
             graph,
-            replanReason,
+            vote.reason,
           );
           graph = rg;
           totalPromptTokens += replanUsage.promptTokens;
@@ -411,42 +460,70 @@ function traceRecord(
 // Replan check
 // ---------------------------------------------------------------------------
 
+/**
+ * Replan vote from checkReplan.
+ *
+ * severity:
+ *  - "soft": cumulative metric (tool failure rate, tool-calls-per-goal) that
+ *    can wash out with another execution pass. Gated by k=2 stability rule
+ *    in the orchestrator loop — requires two consecutive votes before a
+ *    replan fires. Rationale: autoreason paper Table 23 shows k=1
+ *    termination is premature on 94% of runs; a single-pass metric blip is
+ *    often transient. Mirrored here for replan triggers, which are the same
+ *    class of decision.
+ *  - "hard": dead-end state (all goals blocked with no ready alternatives).
+ *    Another execution pass literally has nothing to run, so there's no
+ *    point deferring — replan immediately.
+ */
+interface ReplanVote {
+  reason: string;
+  severity: "soft" | "hard";
+}
+
 function checkReplan(
   graph: GoalGraph,
   trace: RunTrace,
   _execResults: ExecutionResult,
   config: OrchestratorConfig,
-): string | null {
-  // Tool failure rate threshold
+): ReplanVote | null {
+  // Tool failure rate threshold (soft — can improve with another pass)
   if (trace.totalToolCalls > 0) {
     const rate = trace.totalToolFailures / trace.totalToolCalls;
     if (rate > config.replanThresholds.toolFailureRate) {
-      return (
-        `Tool failure rate ${(rate * 100).toFixed(0)}% exceeds ` +
-        `${(config.replanThresholds.toolFailureRate * 100).toFixed(0)}% threshold`
-      );
+      return {
+        reason:
+          `Tool failure rate ${(rate * 100).toFixed(0)}% exceeds ` +
+          `${(config.replanThresholds.toolFailureRate * 100).toFixed(0)}% threshold`,
+        severity: "soft",
+      };
     }
   }
 
   // Convergence check: too many tool calls relative to goals — possible looping
+  // (soft — also cumulative)
   if (config.replanThresholds.toolCallsPerGoal > 0 && graph.size > 0) {
     const ratio = trace.totalToolCalls / graph.size;
     if (ratio > config.replanThresholds.toolCallsPerGoal) {
-      return (
-        `Tool call ratio ${ratio.toFixed(1)}/goal exceeds ` +
-        `${config.replanThresholds.toolCallsPerGoal} threshold — possible looping`
-      );
+      return {
+        reason:
+          `Tool call ratio ${ratio.toFixed(1)}/goal exceeds ` +
+          `${config.replanThresholds.toolCallsPerGoal} threshold — possible looping`,
+        severity: "soft",
+      };
     }
   }
 
-  // Blocked goals with no ready alternatives
+  // Blocked goals with no ready alternatives (hard — nothing can run)
   if (config.replanThresholds.goalBlocked) {
     const blocked = graph.getBlocked();
     const ready = graph.getReady();
     const summary = graph.summary();
     const allDone = summary.completed + summary.failed === summary.total;
     if (blocked.length > 0 && ready.length === 0 && !allDone) {
-      return `Goals blocked with no ready alternatives: ${blocked.map((g) => g.id).join(", ")}`;
+      return {
+        reason: `Goals blocked with no ready alternatives: ${blocked.map((g) => g.id).join(", ")}`,
+        severity: "hard",
+      };
     }
   }
 

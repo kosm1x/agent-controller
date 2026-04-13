@@ -1,10 +1,524 @@
-# V7 — Financial Signal Detection Stack
+# v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Pre-planning document. Foundation for Jarvis v7: detect, analyze, and alert on financial market signals.
+> Last updated: 2026-04-13 — **v7 pre-launch. v7.3 Phase 1 SEO/GEO shipped session 62. v7.8 Phase 1 autoreason lifts shipped session 63 (today). Rest planned across 3 tracks totaling ~25-27 sessions. Financial Stack critical path (v7.0) is the thesis and remains unstarted; v7.6-v7.8 infrastructure unblockers ship first.**
 
-## Vision
+## Status Key
 
-Jarvis monitors financial instruments (stocks, crypto, forex, commodities), computes technical indicators, detects actionable signals, and delivers alerts with analysis via WhatsApp/Telegram. Text-first, charts later.
+- **Done** — Implemented, tested, shipped
+- **Active** — Currently in progress
+- **Planned** — Scoped and sequenced
+- **Conditional** — Gated on a future decision or prerequisite
+- **Blocked** — Dependencies unresolved
+
+---
+
+## Execution Tiers
+
+| Tier                  | Sessions  | Priority         | Rationale                                                                               |
+| --------------------- | --------- | ---------------- | --------------------------------------------------------------------------------------- |
+| A — Financial Stack   | F1–F10    | v7.0 thesis      | Detect, analyze, and alert on financial signals with paper-trading credibility          |
+| B — Feature Verticals | v7.1–v7.5 | Layered on top   | Charts, knowledge graph, digital marketing (SEO+ads), video production, skill evolution |
+| C — Infrastructure    | v7.6–v7.8 | Unblockers first | Workspace API coverage, MCP query surface, autoreason lifts from paper mining           |
+
+**Ordering principle:** Tier C ships first because it unblocks downstream Tier A+B work. Tier A is the v7.0 thesis and ships on the critical path. Tier B verticals slot around Tier A where dependencies allow. Autoreason Phase 2 is a fixed-date decision (2026-04-20) independent of position.
+
+---
+
+## Execution Phases
+
+| Phase | Scope                                  | Versions                              | Est. sessions |
+| ----- | -------------------------------------- | ------------------------------------- | ------------- |
+| α     | Infrastructure unblockers              | v7.6, v7.7, v7.8 P2                   | 2.5           |
+| β     | Financial Stack critical path (v7.0)   | F1–F10                                | 11 (7-8 par.) |
+| γ     | Feature verticals (v7.1–v7.5)          | v7.1, v7.2, v7.3 P2/P3/P4, v7.4, v7.5 | 12            |
+| δ     | Autoreason post-decision (conditional) | v7.8 P3                               | 2             |
+
+---
+
+## v7.8 Phase 1 — Autoreason Lifts (CoT judges + k=2 + gap telemetry) — **Done**
+
+> Session 63 (2026-04-13). Mined from NousResearch/autoreason paper. Deployed live; 2015→2026 tests.
+
+| Item                                                                                                                           | Source                         | Status   |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ | -------- |
+| CoT rubric in reflector system prompt — structured step-by-step reasoning before JSON verdict                                  | autoreason §2, Appendix A.5    | **Done** |
+| CoT rubric in per-goal self-assessor prompt — same pattern, per-criterion walk                                                 | autoreason §2                  | **Done** |
+| `parseLLMJson` brace-scanning fallback — extracts last balanced `{...}` from CoT-prefixed output with string-literal awareness | autoreason adoption            | **Done** |
+| k=2 stability rule for Prometheus `checkReplan` — soft votes require 2 consecutive before replan, hard votes fire immediately  | autoreason Table 23            | **Done** |
+| `ReplanVote` severity discriminator — soft (tool failure rate, tool-calls-per-goal) vs hard (blocked-no-ready)                 | —                              | **Done** |
+| Generation-evaluation gap telemetry — `reflector_gap_log` table + `src/db/reflector-gap.ts` helper, write-only                 | autoreason §7.10 central claim | **Done** |
+| Tests: 11 new (JSON extractor × 5, reflector CoT + telemetry × 4, executor CoT × 1, k=2 orchestrator × 2, hard-stop × 1)       | —                              | **Done** |
+| `error_max_turns` partial-text preservation in `claude-sdk.ts` — streaming text capture + DONE_WITH_CONCERNS annotation        | session 63 diagnose            | **Done** |
+
+---
+
+## v7.8 Phase 2 — Autoreason Tournament Feasibility Decision — **Planned** (fixed date 2026-04-20)
+
+> Scheduled nudge `eb3e4b14` fires 9 AM CDMX on 2026-04-20 via Telegram. Decision rules in `project_autoreason_phase2_decision.md`.
+
+| Item                                                                                                           | Source | Status      |
+| -------------------------------------------------------------------------------------------------------------- | ------ | ----------- |
+| Query `reflector_gap_log` over 7-day window — avg_gap, max_gap, wide_gap_count, llm_fallback_count             | —      | **Planned** |
+| Apply decision rules: `avg_gap < 0.10` → close; `wide_gap_count > 10%` → targeted pilot; `>25%` → global pilot | —      | **Planned** |
+| Verify k=2 stability rule actually fired (events `replan_deferred`); if zero, investigate before concluding    | —      | **Planned** |
+| Update memory + decide whether v7.8 Phase 3 proceeds                                                           | —      | **Planned** |
+
+---
+
+## v7.8 Phase 3 — Autoreason Targeted Tournament Pilot — **Conditional**
+
+> Only if 2026-04-20 data shows `wide_gap_count > 10%` on specific task classes. Not a global tournament — scoped to the classes with measurable gap.
+
+| Item                                                                                                       | Source          | Status          |
+| ---------------------------------------------------------------------------------------------------------- | --------------- | --------------- |
+| Identify task classes with widest gap (briefings, proposals, research syntheses)                           | Phase 2 data    | **Conditional** |
+| Build 3-candidate tournament (incumbent / adversarial revision / synthesis) for those classes only         | autoreason §2   | **Conditional** |
+| Fresh-agent judge panel (3 judges, Borda aggregation, incumbent-wins-ties)                                 | autoreason §2.1 | **Conditional** |
+| A/B compare tournament mode against current single-reflector path for 7 days, measure quality + cost delta | —               | **Conditional** |
+
+---
+
+## v7.6 — Workspace Expansion (gws CLI dispatch tool) — **Planned**
+
+> Infrastructure unblocker. Pre-plan: `project_v76_workspace_expansion.md`. 1 session. Ships after autoreason Phase 2 decision.
+
+| Item                                                                                                                                   | Source              | Status      |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----------- |
+| Install `gws` binary on VPS (cargo install or prebuilt release) + add to deploy script                                                 | googleworkspace/cli | **Planned** |
+| Token plumbing — inject existing OAuth access token via `GOOGLE_WORKSPACE_CLI_TOKEN` env per subprocess exec, reuse our refresh flow   | v7.6 plan           | **Planned** |
+| New dispatch tool `google_workspace_cli({service, resource, method, params?, json?, page_all?})` → subprocess exec + JSON parse        | v7.6 plan           | **Planned** |
+| Scope gating — only expose when `google_workspace_ext` scope active (chat, tasks, forms, meet, classroom, events, apps script, people) | scope.ts pattern    | **Planned** |
+| Error normalization — gws exit codes → `{ok, content, error}` envelope                                                                 | —                   | **Planned** |
+| Tool description teaching Discovery pattern with 3-4 examples (chat.spaces.messages.create, tasks.tasks.insert, people, forms)         | —                   | **Planned** |
+| Tests: success path, pagination, token injection, error path, unknown method, timeout (6-8 tests)                                      | —                   | **Planned** |
+| Steal: timezone-from-Calendar-Settings-API pattern → `google-calendar.ts` (independent lift)                                           | gws architecture    | **Planned** |
+
+---
+
+## v7.7 — Jarvis MCP Server (read-only) — **Planned**
+
+> Infrastructure unblocker. Pre-plan: `project_v77_jarvis_mcp_server.md`. 1 session. Ships after v7.6.
+
+| Item                                                                                                      | Source                      | Status      |
+| --------------------------------------------------------------------------------------------------------- | --------------------------- | ----------- |
+| `@modelcontextprotocol/sdk` integration + streamable-HTTP transport on existing Hono server (`POST /mcp`) | Phantom `src/mcp/server.ts` | **Planned** |
+| Bearer token auth + `mcp_tokens` table (SHA-256 hashed) + audit logging via `events` table                | Phantom `src/mcp/auth.ts`   | **Planned** |
+| Tool: `jarvis_status` — service health, PID, memory, DB size, task counts                                 | —                           | **Planned** |
+| Tool: `jarvis_task_list` — filters by status, since, limit                                                | —                           | **Planned** |
+| Tool: `jarvis_task_detail` — full record + runs + subtasks for a task_id                                  | —                           | **Planned** |
+| Tool: `jarvis_memory_query` — semantic search over memory banks with bank/tags filters                    | —                           | **Planned** |
+| Tool: `jarvis_schedule_list` — active scheduled tasks + cron + last_run_at                                | —                           | **Planned** |
+| Tool: `jarvis_recent_events` — events in last N hours by category (errors, reactions, notifications)      | —                           | **Planned** |
+| Tool: `jarvis_reflector_gap_stats` — autoreason gap telemetry distribution                                | v7.8 P1                     | **Planned** |
+| Tool: `jarvis_feedback_search` — grep over memory `feedback_*.md` files                                   | —                           | **Planned** |
+| CLI: `./mc-ctl mcp-token create/revoke/list` for per-client token management                              | —                           | **Planned** |
+| Tests: tool handlers × 8, auth middleware × 3, transport session lifecycle × 3 (~12-15 tests)             | —                           | **Planned** |
+
+---
+
+## v7.0 F1 — Data Layer (Alpha Vantage + Yahoo Fallback) — **Planned**
+
+> Critical path start. 1.5 sessions. Technical reference below.
+
+| Item                                                                                             | Source       | Status      |
+| ------------------------------------------------------------------------------------------------ | ------------ | ----------- |
+| 6-table schema: market_data, watchlist, backtest_results, trade_theses, api_call_budget, signals | V7 spec      | **Planned** |
+| Alpha Vantage premium adapter — adjusted daily, FX, macro, news sentiment                        | V7 spec      | **Planned** |
+| Yahoo Finance fallback adapter                                                                   | V7 spec      | **Planned** |
+| Data validation layer (H2) — sanity checks, missing-bar detection, corrupted-row rejection       | V7 hardening | **Planned** |
+| Timezone normalization (H3) — all timestamps to NY market time, DST-aware                        | V7 hardening | **Planned** |
+| api_call_budget tracking + per-service rate limits                                               | V7 spec      | **Planned** |
+| Gold via GLD ETF proxy                                                                           | V7 spec      | **Planned** |
+
+---
+
+## v7.0 F2 — Indicator Engine — **Planned**
+
+> 1 session. Depends on F1.
+
+| Item                                                                                      | Source       | Status      |
+| ----------------------------------------------------------------------------------------- | ------------ | ----------- |
+| Pure-math indicators: SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R         | V7 spec      | **Planned** |
+| Golden-file tests (H1) — validate each indicator against Alpha Vantage server-side values | V7 hardening | **Planned** |
+
+---
+
+## v7.0 F4 — Watchlist + Market Tools — **Planned**
+
+> 1 session. Parallel to F2. Depends on F1.
+
+| Item                                                 | Source  | Status      |
+| ---------------------------------------------------- | ------- | ----------- |
+| Watchlist management (add/remove/list/tag)           | V7 spec | **Planned** |
+| `market_quote` tool — current snapshot               | V7 spec | **Planned** |
+| `market_history` tool — historical bars with filters | V7 spec | **Planned** |
+
+---
+
+## v7.0 F5 — Macro Regime Detection — **Planned**
+
+> 0.5 sessions. Parallel to F2/F4. TypeScript fetch only, no Python sidecar.
+
+| Item                                                                             | Source  | Status      |
+| -------------------------------------------------------------------------------- | ------- | ----------- |
+| Alpha Vantage macro pulls — fed funds, treasury, CPI, unemployment, payroll, GDP | V7 spec | **Planned** |
+| FRED REST API — VIX, ICSA, M2                                                    | V7 spec | **Planned** |
+| Regime classifier — bull/bear/volatile/calm based on composite macro + VIX       | V7 spec | **Planned** |
+
+---
+
+## v7.0 F3 — Signal Detector — **Planned**
+
+> 1 session. Depends on F2 + F4.
+
+| Item                                                                                                           | Source  | Status      |
+| -------------------------------------------------------------------------------------------------------------- | ------- | ----------- |
+| Signal detector: MA crossover, RSI extremes, MACD crossover, Bollinger breakout, volume spike, price threshold | V7 spec | **Planned** |
+| Composite signal logic (combine N indicators)                                                                  | V7 spec | **Planned** |
+| `market_signals` tool                                                                                          | V7 spec | **Planned** |
+| Transmission chain field — signal → decision → outcome linkage                                                 | V7 spec | **Planned** |
+
+---
+
+## v7.0 F6 — Prediction Markets + Whale Tracker — **Planned**
+
+> 1.5 sessions. No F-series dependencies, can run in parallel with F3.
+
+| Item                                                                 | Source  | Status      |
+| -------------------------------------------------------------------- | ------- | ----------- |
+| Polymarket API adapter — live market odds, volume, resolution        | V7 spec | **Planned** |
+| Kalshi API adapter — regulated US prediction markets                 | V7 spec | **Planned** |
+| Whale tracker — Polymarket trade history + SEC EDGAR insider filings | V7 spec | **Planned** |
+
+---
+
+## v7.0 F6.5 — Sentiment Signals — **Planned**
+
+> 0.5 sessions. No dependencies, parallel.
+
+| Item                                               | Source  | Status      |
+| -------------------------------------------------- | ------- | ----------- |
+| Fear & Greed Index (alternative.me API)            | V7 spec | **Planned** |
+| Crypto funding rates (long/short leverage balance) | V7 spec | **Planned** |
+| Liquidation heatmaps (forced selling cascades)     | V7 spec | **Planned** |
+| Stablecoin flows (money entering/leaving crypto)   | V7 spec | **Planned** |
+
+---
+
+## v7.0 F7 — Alpha Combination Engine — **Planned**
+
+> 2 sessions. Depends on F3 + F5 + F6 + F6.5. See `V7-ALPHA-COMBINATION-EQUATIONS.md` for the 11-step spec.
+
+| Item                                                                                              | Source  | Status      |
+| ------------------------------------------------------------------------------------------------- | ------- | ----------- |
+| 11-step combination pipeline — ingredient scoring → layer weights → aggregation → decision output | V7 spec | **Planned** |
+| Signal evolution tracking — how signal quality changes over time                                  | V7 spec | **Planned** |
+| ISQ (Ingredient Signal Quality) dimensions                                                        | V7 spec | **Planned** |
+| Per-layer freshness gates                                                                         | V7 spec | **Planned** |
+| Weight versioning                                                                                 | V7 spec | **Planned** |
+| Minimum signal threshold                                                                          | V7 spec | **Planned** |
+
+---
+
+## v7.0 F7.5 — Strategy Backtester — **Planned**
+
+> 1 session. Depends on F7.
+
+| Item                                                                                               | Source  | Status      |
+| -------------------------------------------------------------------------------------------------- | ------- | ----------- |
+| Walk-forward validation — train months 1-6, test month 7, roll forward                             | V7 spec | **Planned** |
+| Stress test scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up)                    | V7 spec | **Planned** |
+| `backtest_results` table — per-strategy win rate, Sharpe, max drawdown, regime-conditional metrics | V7 spec | **Planned** |
+
+---
+
+## v7.0 F8 — Paper Trading (pm-trader MCP) — **Planned**
+
+> 1.5 sessions. Depends on F7.5.
+
+| Item                                                                               | Source  | Status      |
+| ---------------------------------------------------------------------------------- | ------- | ----------- |
+| pm-trader MCP server integration (29 tools, stdio)                                 | V7 spec | **Planned** |
+| `trade_theses` table — thesis → trade → outcome commitment tracking                | V7 spec | **Planned** |
+| Transaction cost model (H5) — slippage, spread, commission                         | V7 spec | **Planned** |
+| Shadow portfolio — validates before user-facing alerts                             | V7 spec | **Planned** |
+| Replication scoring — am I trading like the winners? (Polymarket whale comparison) | V7 spec | **Planned** |
+
+---
+
+## v7.0 F9 — Morning/EOD Scan Rituals — **Planned**
+
+> 1 session. Depends on F8 + F4. Last on the critical path — needs track record from paper trading.
+
+| Item                                                                              | Source  | Status      |
+| --------------------------------------------------------------------------------- | ------- | ----------- |
+| Morning scan ritual — pre-market signals + macro regime + overnight news          | V7 spec | **Planned** |
+| EOD scan ritual — close-price signals + day's trade performance + next-day setup  | V7 spec | **Planned** |
+| Market calendar (H4) — NYSE/NASDAQ holidays, half-days, early close               | V7 spec | **Planned** |
+| Dynamic alert budget — per-day token/cost cap, degrades gracefully when exhausted | V7 spec | **Planned** |
+
+---
+
+## v7.0 F10 — Real-Time Crypto WebSocket — **Planned** (optional)
+
+> 1 session. Parallel from F3. Optional — defer if not needed at v7.0 launch.
+
+| Item                                                            | Source  | Status      |
+| --------------------------------------------------------------- | ------- | ----------- |
+| Binance WebSocket adapter — tick-level BTC/ETH/SOL/etc.         | V7 spec | **Planned** |
+| Real-time signal dispatch (bypass polling for crypto watchlist) | V7 spec | **Planned** |
+
+---
+
+## v7.1 — Chart Rendering + Vision Chart Patterns — **Planned**
+
+> 1.5 sessions. Depends on F3 (needs signal data to render). Reference: `reference_quantagent.md`.
+
+| Item                                                                                               | Source     | Status      |
+| -------------------------------------------------------------------------------------------------- | ---------- | ----------- |
+| TradingView lightweight-charts + Puppeteer → PNG pipeline                                          | V7 spec    | **Planned** |
+| Candlestick + indicator overlays + signal markers                                                  | V7 spec    | **Planned** |
+| Vision chart pattern recognition — 4-agent pipeline (head-and-shoulders, triangles, wedges, flags) | quantagent | **Planned** |
+| Register as 6th signal layer in the alpha combination engine                                       | V7 spec    | **Planned** |
+
+---
+
+## v7.2 — Knowledge Graph (Graphify MCP) — **Planned**
+
+> 1.5 sessions. No v7 dependencies, can run anytime. Reference: `reference_graphify.md`.
+
+| Item                                                                                    | Source         | Status      |
+| --------------------------------------------------------------------------------------- | -------------- | ----------- |
+| Graphify MCP integration — code + docs + media knowledge graph                          | graphify       | **Planned** |
+| CRM entity graph — prospects, deals, conversations, decision-makers                     | graphify + CRM | **Planned** |
+| Codebase graph — source files, functions, call chains, test coverage                    | graphify       | **Planned** |
+| Cross-source queries — "which prospects connect to which deals via which conversations" | graphify       | **Planned** |
+
+---
+
+## v7.3 Phase 1 — SEO/GEO Tool Suite — **Done**
+
+> Session 62 (2026-04-12). Adapted from nowork-studio/toprank. 5 tools, ~2750 LOC, zero new deps.
+
+| Item                                                                                                              | Source     | Status   |
+| ----------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
+| `seo_page_audit` — rubric-scored URL audit (parses Jina markdown for title/meta/headings/schema/images/content)   | toprank    | **Done** |
+| `seo_keyword_research` — SERP via webSearchTool + LLM extraction + intent/GEO classification + Jaccard clustering | toprank    | **Done** |
+| `seo_meta_generate` — 3-variant LLM generation for title/meta/OG/Twitter with char-limit validation               | toprank    | **Done** |
+| `seo_schema_generate` — JSON-LD templates for Article/FAQPage/HowTo/Product/LocalBusiness/BreadcrumbList          | schema.org | **Done** |
+| `seo_content_brief` — E-E-A-T outline generator with GEO tactics                                                  | toprank    | **Done** |
+| `seo_audits` table — persisted audit history                                                                      | —          | **Done** |
+| `seo` scope group — wired into classifier                                                                         | scope.ts   | **Done** |
+| Reference libraries (intent taxonomy, GEO signals, meta formulas, schema templates, E-E-A-T framework)            | —          | **Done** |
+
+---
+
+## v7.3 Phase 2 — SEO Telemetry (PageSpeed Insights + Search Console) — **Planned**
+
+> 1 session. Depends on v7.6 (uses gws OAuth/Discovery pattern for Search Console).
+
+| Item                                                                              | Source  | Status      |
+| --------------------------------------------------------------------------------- | ------- | ----------- |
+| PageSpeed Insights adapter — Core Web Vitals, Lighthouse scores, mobile/desktop   | PSI API | **Planned** |
+| Google Search Console adapter — clicks, impressions, CTR, position per query/page | GSC API | **Planned** |
+| Reuse v7.6 gws pattern if GSC surfaces via Discovery; native adapter if not       | v7.6    | **Planned** |
+| `seo_telemetry` tool — query-level performance + alerting on regressions          | —       | **Planned** |
+
+---
+
+## v7.3 Phase 3 — AI Overview Monitoring — **Planned**
+
+> 1 session. Depends on F1 schedule infrastructure. The GEO differentiator toprank lacks.
+
+| Item                                                                                       | Source | Status      |
+| ------------------------------------------------------------------------------------------ | ------ | ----------- |
+| Scheduled job — runs tracked queries via SERP API, detects AI overview presence            | —      | **Planned** |
+| AI overview attribution tracking — which sources cited, rank position, over-time evolution | —      | **Planned** |
+| `ai_overview_tracking` table — time-series of query → presence + sources                   | —      | **Planned** |
+| Alert on attribution loss or competitor displacement                                       | —      | **Planned** |
+
+---
+
+## v7.3 Phase 4 — Digital Marketing Buyer (claude-ads + Meta/Google Ads) — **Planned**
+
+> 3 sessions. No F-series dependencies, independent. Reference: `reference_claude_ads.md`.
+
+| Item                                                                            | Source     | Status      |
+| ------------------------------------------------------------------------------- | ---------- | ----------- |
+| Audit scoring framework (225 checks, 7 platforms) from claude-ads               | claude-ads | **Planned** |
+| Brand DNA + creative framework system                                           | claude-ads | **Planned** |
+| Meta Ads API client — campaign CRUD, audience targeting, creative upload        | Meta Graph | **Planned** |
+| Google Ads API client — campaign CRUD, keywords, bid strategies                 | Google Ads | **Planned** |
+| Bid management — budget allocation, dayparting, auto-pause                      | —          | **Planned** |
+| CRM attribution — ad click → lead → opportunity → close linkage via agentic-crm | CRM        | **Planned** |
+
+---
+
+## v7.4 — Video Production — **Planned**
+
+> 2 sessions. Depends on v7.3 Phase 4 (feeds marketing content). Reference: `reference_open_higgsfield.md`.
+
+| Item                                                         | Source          | Status      |
+| ------------------------------------------------------------ | --------------- | ----------- |
+| AI asset generation pipeline (higgsfield 200+ model catalog) | open-higgsfield | **Planned** |
+| Storyboard pipeline — script → scene list → asset requests   | —               | **Planned** |
+| Lip sync for talking-head generation                         | open-higgsfield | **Planned** |
+| Cinema prompts library                                       | open-higgsfield | **Planned** |
+
+---
+
+## v7.5 — Skill Evolution Engine (GEPA + SkillClaw) — **Planned**
+
+> 2 sessions. Depends on F9 (needs production trace data). References: `reference_gepa.md`, `reference_skillclaw.md`, `feedback_phantom_evolution_engine.md`.
+
+| Item                                                                                                       | Source                   | Status      |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------ | ----------- |
+| Reflective mutation from execution traces — extract corrections, propose minimal config deltas             | GEPA + Phantom evolution | **Planned** |
+| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                   | GEPA                     | **Planned** |
+| Pareto domain specialization — separate skill variants per task class                                      | GEPA                     | **Planned** |
+| Failure source classification (skill / agent / env) — SkillClaw pattern                                    | SkillClaw                | **Planned** |
+| Session trajectory structuring — logged corrections promoted to golden suite                               | SkillClaw + Phantom      | **Planned** |
+| Conservative editing principles — append-first, minimal replace, no remove of safety keywords              | Phantom constitution     | **Planned** |
+| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety | Phantom evolution        | **Planned** |
+| Triple-judge minority veto for safety-critical gates                                                       | Phantom judges           | **Planned** |
+| Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine           | **Planned** |
+| Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                  | **Planned** |
+
+---
+
+## Dependency Graph
+
+```
+INFRASTRUCTURE UNBLOCKERS (Tier C — phase α, first)
+  v7.6 Workspace (gws) ──┐
+  v7.7 Jarvis MCP ───────┤
+  v7.8 P2 decision ──────┘
+                         │
+FINANCIAL STACK (Tier A — phase β, critical path)
+  F1 (data layer) ──┬── F2 (indicators) ────┐
+                    ├── F4 (watchlist) ─────┤
+                    ├── F5 (macro) ─────────┤
+                    │                       F3 (signal detector)
+                    │                              │
+                    F6 (prediction markets) ──────┤
+                    F6.5 (sentiment) ─────────────┤
+                                                   │
+                                            F7 (alpha combination)
+                                                   │
+                                            F7.5 (backtester)
+                                                   │
+                                            F8 (paper trading)
+                                                   │
+                                        F9 (scan rituals)
+                                                   │
+                                            F10 (crypto WS, parallel from F3)
+
+FEATURE VERTICALS (Tier B — phase γ, layered on top)
+  v7.2 Graphify ────────────── independent
+  v7.1 Charts + vision ──────── after F3
+  v7.3 P2 SEO telemetry ─────── after v7.6
+  v7.3 P3 AI overview monitor ─ after F1 schedule infra
+  v7.3 P4 Ads buyer ──────────── independent
+  v7.4 Video production ──────── after v7.3 P4
+  v7.5 GEPA + SkillClaw ──────── after F9 (needs trace data)
+
+AUTOREASON (Tier C continued — phase δ, conditional)
+  v7.8 P3 tournament pilot ───── only if 2026-04-20 data says yes
+```
+
+---
+
+## Execution Invariants
+
+1. Tier C (infrastructure) ships FIRST to unblock downstream work
+2. F-series is the v7.0 thesis — no feature vertical substitutes for shipping the Financial Stack
+3. Autoreason Phase 2 decision is FIXED DATE (2026-04-20) regardless of position
+4. New tools default to `deferred: true` (v6.0 hardening invariant carries forward)
+5. Pre-plans are drafted at session start, not upfront (avoids stale speculation)
+6. Jarvis CANNOT push to `main` — branches + PRs only (v6.0 invariant carries forward)
+7. Jarvis CANNOT modify the immutable core — SG3 still enforced (v6.0 invariant)
+8. Every new table additive (IF NOT EXISTS) — never reset mc.db without explicit approval
+
+---
+
+## Deferred / Deliberately Skipped
+
+| Capability                                     | Why deferred                                                                 |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| TimesFM forecasting (Python sidecar)           | Post-v7.0 launch — no sidecar in v7 by design                                |
+| Multi-account support for gws                  | Single-operator only in v7.6                                                 |
+| Write tools on Jarvis MCP server               | v7.7 is read-only; writes stay on existing channels                          |
+| Dynamic MCP tool creation at runtime           | Incompatible with deferral/scope/hallucination guard stack                   |
+| Full Phantom self-evolution in production      | Self-mutation too risky for load-bearing Telegram/WhatsApp prompts           |
+| Docker-socket-mount autonomous containers      | Hard security blocker on shared VPS                                          |
+| SocratiCode integration                        | Repo scale (≤500K LOC) below where hybrid BM25+dense beats grep meaningfully |
+| Dochkina self-organizing agents                | Paper validates existing Prometheus sequential-hybrid; no action needed      |
+| Tournament architecture (unless autoreason P2) | Paper's Sonnet 4.6 lift not statistically significant; wait for our data     |
+| Mock-first testing on critical paths           | Integration tests preferred (v5 hardening carries forward)                   |
+
+---
+
+## Metrics (target at v7.0 launch)
+
+| Metric                        | v6.4 (current) | v7.0 target                 | v7-full target |
+| ----------------------------- | -------------- | --------------------------- | -------------- |
+| Tests                         | 2026           | ~2300                       | ~2800          |
+| Source files                  | 255+           | ~290                        | ~340           |
+| Tools                         | 179            | ~195                        | ~230           |
+| Tables (SQLite)               | ~45            | ~51 (+6 F1)                 | ~58            |
+| Rituals                       | 11             | 13 (+morning/EOD)           | 14             |
+| Scheduled tasks infra         | existing       | dynamic budget              | dynamic budget |
+| Alpha Vantage premium         | set            | in use                      | in use         |
+| Signal layers                 | 0              | 5 (F3+F5+F6+F6.5+composite) | 6 (+vision)    |
+| Paper trading track record    | none           | 30+ days                    | 90+ days       |
+| MCP server tools exposed      | 0              | 8 (v7.7)                    | 8+             |
+| Google API coverage via gws   | 0              | 25+ services                | 25+            |
+| Reflector gap logged sessions | 0              | ~100                        | ~1000          |
+
+---
+
+## Total Effort
+
+| Version           | Theme                                          | Sessions | Status            |
+| ----------------- | ---------------------------------------------- | -------- | ----------------- |
+| v7.8 P1           | Autoreason lifts (CoT+k=2+gap telemetry)       | 1        | **Done**          |
+| v7.3 P1           | SEO/GEO tool suite                             | 1        | **Done**          |
+| v7.6              | Workspace expansion (gws)                      | 1        | **Planned**       |
+| v7.7              | Jarvis MCP server                              | 1        | **Planned**       |
+| v7.8 P2           | Autoreason tournament decision (fixed date)    | 0.5      | **Planned**       |
+| v7.0 F1           | Data layer (AV + Yahoo)                        | 1.5      | **Planned**       |
+| v7.0 F2           | Indicator engine                               | 1        | **Planned**       |
+| v7.0 F4           | Watchlist + market tools                       | 1        | **Planned**       |
+| v7.0 F5           | Macro regime detection                         | 0.5      | **Planned**       |
+| v7.0 F3           | Signal detector                                | 1        | **Planned**       |
+| v7.0 F6           | Prediction markets + whale tracker             | 1.5      | **Planned**       |
+| v7.0 F6.5         | Sentiment signals                              | 0.5      | **Planned**       |
+| v7.0 F7           | Alpha combination engine                       | 2        | **Planned**       |
+| v7.0 F7.5         | Strategy backtester                            | 1        | **Planned**       |
+| v7.0 F8           | Paper trading (pm-trader)                      | 1.5      | **Planned**       |
+| v7.0 F9           | Scan rituals + calendar                        | 1        | **Planned**       |
+| v7.0 F10          | Real-time crypto WebSocket                     | 1        | **Planned** (opt) |
+| v7.1              | Charts + vision chart patterns                 | 1.5      | **Planned**       |
+| v7.2              | Knowledge graph (Graphify)                     | 1.5      | **Planned**       |
+| v7.3 P2           | SEO telemetry (PageSpeed + GSC)                | 1        | **Planned**       |
+| v7.3 P3           | AI overview monitoring                         | 1        | **Planned**       |
+| v7.3 P4           | Digital marketing buyer (claude-ads + Ads API) | 3        | **Planned**       |
+| v7.4              | Video production                               | 2        | **Planned**       |
+| v7.5              | Skill evolution (GEPA + SkillClaw)             | 2        | **Planned**       |
+| v7.8 P3           | Autoreason tournament pilot (conditional)      | 2        | **Conditional**   |
+| **Total shipped** | 2 sessions                                     | **2**    |                   |
+| **Total planned** | 26 sessions critical path, ~20-22 parallelized | **~27**  |                   |
+
+---
+
+## Readiness Criteria
+
+See [V7-READINESS-CRITERIA.md](./V7-READINESS-CRITERIA.md) for go/no-go criteria per tier.
+
+---
+## Appendix: F-Series Technical Reference
+
+> The remaining sections describe the Financial Stack architecture, data model, tool surfaces, indicator/signal APIs, paper trading, backtester, macro regime, rituals, delivery format, and production hardening. Content is stable from the original V7-FINANCIAL-STACK.md draft — this is the implementation reference when Tier A (F-series) sessions begin.
 
 ## Architecture
 
@@ -537,7 +1051,9 @@ Signal: "BTC RSI at 28, macro stable, fear index at 22"
 
 Over time, Jarvis learns which strategy works for which regime — adapting its playbook based on evidence, not intuition.
 
-## Implementation Order
+## Implementation Order (F-series, archived)
+
+> **Superseded 2026-04-13** by the "Master sequence" section at the top of this document, which consolidates F-series with v7.1–v7.8 into a single ordered plan. The table below remains as the authoritative F-series scope definition — durations and dependencies here are unchanged, only the rendering moved up. Do not edit this table in isolation; edit the master sequence and mirror here.
 
 | Phase    | What                                                                                                                                                                                                                                                                                                                | Sessions | Deps                             |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------- |

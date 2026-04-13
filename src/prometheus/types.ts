@@ -193,6 +193,16 @@ export function defaultConfig(
 
 /**
  * Strip markdown code fences and parse JSON from LLM output.
+ *
+ * Tolerates three shapes:
+ *   1. Bare JSON: `{...}`
+ *   2. Fenced JSON: `` ```json\n{...}\n``` ``
+ *   3. CoT-prefixed JSON: reasoning text followed by a bare or fenced JSON object
+ *
+ * Shape (3) is required for autoreason-style chain-of-thought judges: the
+ * model reasons step-by-step, then emits a JSON verdict at the end. Direct
+ * JSON.parse fails on leading prose, so we fall back to brace-scanning.
+ *
  * Throws with a descriptive error on failure.
  */
 export function parseLLMJson<T = unknown>(raw: string): T {
@@ -211,12 +221,68 @@ export function parseLLMJson<T = unknown>(raw: string): T {
 
   try {
     return JSON.parse(text) as T;
-  } catch (err) {
+  } catch {
+    // Fallback: extract the last JSON object from CoT-prefixed output.
+    const extracted = extractLastJsonObject(text);
+    if (extracted !== null) {
+      try {
+        return JSON.parse(extracted) as T;
+      } catch (err) {
+        throw new Error(
+          `LLM returned invalid JSON (after extraction): ${err instanceof Error ? err.message : err}\n` +
+            `Extracted (first 500 chars): ${extracted.slice(0, 500)}`,
+        );
+      }
+    }
     throw new Error(
-      `LLM returned invalid JSON: ${err instanceof Error ? err.message : err}\n` +
-        `Raw (first 500 chars): ${text.slice(0, 500)}`,
+      `LLM returned no parseable JSON object.\nRaw (first 500 chars): ${text.slice(0, 500)}`,
     );
   }
+}
+
+/**
+ * Scan for the last balanced `{...}` object in a string. Walks the string
+ * tracking brace depth; once depth returns to 0 we have a candidate object.
+ * Returns the last such object (closest to end of string), or null if none.
+ *
+ * String literals are honored (braces inside quoted strings don't count),
+ * with backslash-escape awareness.
+ */
+function extractLastJsonObject(text: string): string | null {
+  let lastObject: string | null = null;
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        lastObject = text.slice(start, i + 1);
+        start = -1;
+      }
+    }
+  }
+
+  return lastObject;
 }
 
 /**

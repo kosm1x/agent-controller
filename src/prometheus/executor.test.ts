@@ -4,7 +4,7 @@
  * retry logic, and error strategies.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { Goal } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -70,7 +70,9 @@ beforeEach(() => {
 });
 
 describe("executeGoal", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should return success with result from LLM", async () => {
     mockInferWithTools.mockResolvedValueOnce({
       content: "Goal achieved successfully",
@@ -310,6 +312,27 @@ describe("selfAssess", () => {
     const goal = makeGoal({ completionCriteria: ["some criterion"] });
     const { assessment } = await selfAssess(goal, "output");
     expect(assessment!.met).toBe(true); // Assumes met on failure
+  });
+
+  it("should parse CoT-prefixed JSON responses (autoreason)", async () => {
+    // With chain-of-thought judges, the model emits reasoning prose first,
+    // then the JSON verdict. The parser must tolerate the leading prose.
+    mockInfer.mockResolvedValueOnce({
+      content:
+        `Let me think step by step:\n` +
+        `1. The output provides a numeric answer (42).\n` +
+        `2. This is direct and verifiable.\n` +
+        `3. A strict reviewer would accept this as "met".\n\n` +
+        `{"met": true, "unmetCriteria": [], "reasoning": "numeric answer present"}`,
+      usage: { prompt_tokens: 80, completion_tokens: 50, total_tokens: 130 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+
+    const goal = makeGoal({ completionCriteria: ["must return a number"] });
+    const { assessment } = await selfAssess(goal, "42");
+    expect(assessment!.met).toBe(true);
+    expect(assessment!.reasoning).toBe("numeric answer present");
   });
 
   it("should handle malformed LLM JSON with safe defaults", async () => {

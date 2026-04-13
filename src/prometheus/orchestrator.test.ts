@@ -177,14 +177,15 @@ describe("orchestrate", () => {
     );
   });
 
-  it("should trigger replan when tool failure rate exceeds threshold", async () => {
+  it("should trigger replan when tool failure rate exceeds threshold for 2 consecutive passes (k=2)", async () => {
     const graph = makeGraph();
     mockPlan.mockResolvedValueOnce({
       graph,
       usage: { promptTokens: 0, completionTokens: 0 },
     });
 
-    // First execution: high failure rate
+    // High failure rate execution with work remaining (blocked=1) so the
+    // k=2 stability rule defers rather than exiting immediately.
     const highFailExec: ExecutionResult = {
       goalResults: {
         "g-1": {
@@ -193,47 +194,36 @@ describe("orchestrate", () => {
           result: "done",
           durationMs: 100,
           toolCalls: 5,
-          toolNames: [
-            "web_search",
-            "web_search",
-            "web_search",
-            "web_search",
-            "web_search",
-          ],
+          toolNames: Array(5).fill("web_search"),
           toolFailures: 4,
           tokenUsage: { promptTokens: 0, completionTokens: 0 },
         },
       },
       summary: {
         completed: 1,
-        failed: 1,
+        failed: 0,
         pending: 0,
-        blocked: 0,
+        blocked: 1,
         in_progress: 0,
         total: 2,
       },
       totalToolCalls: 5,
-      totalToolNames: [
-        "web_search",
-        "web_search",
-        "web_search",
-        "web_search",
-        "web_search",
-      ],
+      totalToolNames: Array(5).fill("web_search"),
       totalToolFailures: 4,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
       toolRepairs: [],
     };
+    // Pass 1 (soft vote, deferred), Pass 2 (soft vote, replan fires)
+    mockExecuteGraph.mockResolvedValueOnce(highFailExec);
     mockExecuteGraph.mockResolvedValueOnce(highFailExec);
 
-    // Replan returns new graph
     const replanGraph = makeGraph();
     mockReplan.mockResolvedValueOnce({
       graph: replanGraph,
       usage: { promptTokens: 0, completionTokens: 0 },
     });
 
-    // Second execution: clean
+    // Pass 3 (post-replan): clean
     mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
     mockReflect.mockResolvedValueOnce({
       result: makeReflection(),
@@ -243,7 +233,55 @@ describe("orchestrate", () => {
     const result = await orchestrate("task-4", "Replanning task");
 
     expect(mockReplan).toHaveBeenCalledTimes(1);
-    expect(mockExecuteGraph).toHaveBeenCalledTimes(2);
+    // 3+ executions: the k=2 rule added at least one extra pass before the
+    // replan fired. Exact count depends on cumulative trace behavior
+    // across the replan boundary (trace failures persist, so the post-
+    // replan pass may also vote soft).
+    expect(mockExecuteGraph.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(result.success).toBe(true);
+    // Verify the k=2 defer fired at least once
+    const deferEvents = result.trace.filter(
+      (e) => e.type === "replan_deferred",
+    );
+    expect(deferEvents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should NOT replan on a single-pass soft vote when no work remains", async () => {
+    // k=2 + no remaining work => the deferred vote is dropped and
+    // execution exits cleanly. This is the key anti-thrash behavior:
+    // transient metric blips on a finishing task don't trigger replans.
+    const graph = makeGraph();
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const blipExec: ExecutionResult = {
+      goalResults: {},
+      summary: {
+        completed: 2,
+        failed: 0,
+        pending: 0,
+        blocked: 0,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 4,
+      totalToolNames: ["x", "x", "x", "x"],
+      totalToolFailures: 3, // 75% failure rate — would trigger replan
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
+    };
+    mockExecuteGraph.mockResolvedValueOnce(blipExec);
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-k2-nowork", "Finished task");
+
+    expect(mockReplan).not.toHaveBeenCalled();
+    expect(mockExecuteGraph).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
   });
 
@@ -288,14 +326,16 @@ describe("orchestrate", () => {
     expect(mockReplan.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
-  it("should trigger replan when tool-call-per-goal ratio exceeds threshold", async () => {
+  it("should trigger replan when tool-call-per-goal ratio exceeds threshold for 2 consecutive passes (k=2)", async () => {
     const graph = makeGraph();
     mockPlan.mockResolvedValueOnce({
       graph,
       usage: { promptTokens: 0, completionTokens: 0 },
     });
 
-    // Execution with very high tool call count: 25 calls for 2 goals (ratio 12.5 > 10.0)
+    // Execution with 21 calls for 2 goals per pass → ratio 10.5 > 10.0
+    // threshold on pass 1 (soft vote, deferred), and 21.0 cumulative on
+    // pass 2 (soft vote, triggers replan). Work remains (pending=1).
     const loopyExec: ExecutionResult = {
       goalResults: {
         "g-1": {
@@ -303,42 +343,29 @@ describe("orchestrate", () => {
           ok: true,
           result: "done",
           durationMs: 5000,
-          toolCalls: 15,
-          toolNames: Array(15).fill("web_search"),
-          toolFailures: 0,
-          tokenUsage: { promptTokens: 0, completionTokens: 0 },
-        },
-        "g-2": {
-          goalId: "g-2",
-          ok: true,
-          result: "done",
-          durationMs: 3000,
-          toolCalls: 10,
-          toolNames: Array(10).fill("file_read"),
+          toolCalls: 21,
+          toolNames: Array(21).fill("web_search"),
           toolFailures: 0,
           tokenUsage: { promptTokens: 0, completionTokens: 0 },
         },
       },
       summary: {
-        completed: 2,
+        completed: 1,
         failed: 0,
-        pending: 0,
+        pending: 1,
         blocked: 0,
         in_progress: 0,
         total: 2,
       },
-      totalToolCalls: 25,
-      totalToolNames: [
-        ...Array(15).fill("web_search"),
-        ...Array(10).fill("file_read"),
-      ],
+      totalToolCalls: 21,
+      totalToolNames: Array(21).fill("web_search"),
       totalToolFailures: 0,
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
       toolRepairs: [],
     };
     mockExecuteGraph.mockResolvedValueOnce(loopyExec);
+    mockExecuteGraph.mockResolvedValueOnce(loopyExec);
 
-    // Replan returns new graph, second execution is clean
     mockReplan.mockResolvedValueOnce({
       graph: makeGraph(),
       usage: { promptTokens: 0, completionTokens: 0 },
@@ -353,7 +380,6 @@ describe("orchestrate", () => {
       maxReplans: 1,
     });
 
-    // Should have triggered exactly one replan due to convergence
     expect(mockReplan).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
   });
@@ -374,6 +400,66 @@ describe("orchestrate", () => {
     await orchestrate("task-no-convergence", "Normal task");
 
     expect(mockReplan).not.toHaveBeenCalled();
+  });
+
+  it("should replan immediately on hard-stop signal (blocked goals, no k=2 defer)", async () => {
+    // Hard votes (all goals blocked with no ready alternatives) are NOT
+    // gated by k=2 because another execution pass has nothing to run.
+    // getBlocked() only flags goals with failed dependencies, so construct
+    // a parent→child graph where parent failed.
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "parent",
+      description: "Parent",
+      status: GoalStatus.FAILED,
+    });
+    graph.addGoal({
+      id: "child",
+      description: "Child",
+      status: GoalStatus.PENDING,
+      dependsOn: ["parent"],
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const deadlockExec: ExecutionResult = {
+      goalResults: {},
+      summary: {
+        completed: 0,
+        failed: 0,
+        pending: 0,
+        blocked: 2,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 0,
+      totalToolNames: [],
+      totalToolFailures: 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
+    };
+    mockExecuteGraph.mockResolvedValueOnce(deadlockExec);
+
+    mockReplan.mockResolvedValueOnce({
+      graph: makeGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-hard-stop", "Deadlocked task");
+
+    // Replan fires on the FIRST pass because the vote is hard severity.
+    expect(mockReplan).toHaveBeenCalledTimes(1);
+    expect(mockExecuteGraph).toHaveBeenCalledTimes(2); // no k=2 defer
+    const replanEvents = result.trace.filter((e) => e.type === "replan");
+    expect(replanEvents.length).toBe(1);
+    expect(replanEvents[0]).toMatchObject({ severity: "hard" });
   });
 
   it("should collect trace events", async () => {

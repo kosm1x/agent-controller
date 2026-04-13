@@ -245,9 +245,40 @@ export async function queryClaudeSdk(opts: {
           costUsd = success.total_cost_usd ?? 0;
           durationMs = success.duration_ms ?? 0;
         } else {
+          // SDK reported a non-success terminal result (error_max_turns,
+          // error_max_budget_usd, error_max_structured_output_retries,
+          // error_during_execution). The accumulated streamingText often
+          // contains real work — preserve it and emit an explicit STATUS
+          // line so the fast-runner parser classifies deterministically
+          // instead of defaulting to DONE on a raw error string.
           const error = message as SDKResultError;
           const errorMsgs = error.errors?.join("; ") ?? "unknown";
-          resultText = `Error: ${error.subtype} — ${errorMsgs}`;
+          const marker = `[${error.subtype} — ${errorMsgs}]`;
+          numTurns =
+            (error as unknown as { num_turns?: number }).num_turns ??
+            assistantTurns;
+          usage = {
+            promptTokens:
+              (error as unknown as { usage?: { input_tokens?: number } }).usage
+                ?.input_tokens ?? 0,
+            completionTokens:
+              (error as unknown as { usage?: { output_tokens?: number } }).usage
+                ?.output_tokens ?? 0,
+          };
+          costUsd =
+            (error as unknown as { total_cost_usd?: number }).total_cost_usd ??
+            0;
+          durationMs =
+            (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
+          if (streamingText) {
+            resultText =
+              `${marker} Partial response below — turn/budget limit hit before completion.\n\n${streamingText}\n\n` +
+              `STATUS: DONE_WITH_CONCERNS — SDK reported ${error.subtype}; content above is partial and the task did not formally complete.`;
+          } else {
+            resultText =
+              `${marker} No content produced before the limit was hit.\n\n` +
+              `STATUS: BLOCKED — SDK reported ${error.subtype} with zero streamed output.`;
+          }
         }
       }
     }

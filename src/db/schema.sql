@@ -285,3 +285,25 @@ CREATE TABLE IF NOT EXISTS seo_audits (
 );
 CREATE INDEX IF NOT EXISTS idx_seo_audits_domain ON seo_audits(domain, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_seo_audits_url ON seo_audits(url, created_at DESC);
+
+-- Autoreason Phase 1: Generation-evaluation gap telemetry
+-- Logs divergence between the reflector's LLM judge score and the heuristic
+-- goal-completion ratio for each task. Used to measure whether the base
+-- model's self-evaluation capability matches its generation capability —
+-- the central claim of the autoreason paper. If the gap is wide, further
+-- lifts (tournament judging, fresh-agent evaluation) may pay off. If narrow,
+-- structured refinement adds no value and we stay with the current design.
+CREATE TABLE IF NOT EXISTS reflector_gap_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id           TEXT NOT NULL,
+  llm_score         REAL NOT NULL,
+  heuristic_score   REAL NOT NULL,
+  abs_diff          REAL NOT NULL,
+  llm_available     INTEGER NOT NULL,  -- 0 if fell back to heuristic, 1 otherwise
+  goals_total       INTEGER NOT NULL,
+  goals_completed   INTEGER NOT NULL,
+  goals_failed      INTEGER NOT NULL,
+  created_at        TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reflector_gap_task ON reflector_gap_log(task_id);
+CREATE INDEX IF NOT EXISTS idx_reflector_gap_created ON reflector_gap_log(created_at DESC);

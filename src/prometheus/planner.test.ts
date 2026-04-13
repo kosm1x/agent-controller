@@ -3,7 +3,7 @@
  * Tests JSON parsing, fence-stripping, error handling, dependency resolution.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 
 // Mock the inference adapter before importing planner
@@ -29,7 +29,9 @@ beforeEach(() => {
 });
 
 describe("plan", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should parse a simple goal graph from LLM", async () => {
     mockInfer.mockResolvedValueOnce({
       content: JSON.stringify({
@@ -144,7 +146,9 @@ describe("plan", () => {
       latency_ms: 50,
     });
 
-    await expect(plan("Invalid JSON test")).rejects.toThrow("invalid JSON");
+    await expect(plan("Invalid JSON test")).rejects.toThrow(
+      /no parseable JSON object/,
+    );
   });
 
   it("should throw on missing goals array", async () => {

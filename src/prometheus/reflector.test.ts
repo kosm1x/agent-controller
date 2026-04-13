@@ -3,7 +3,7 @@
  * Tests LLM evaluation, heuristic fallback, score divergence override.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { ExecutionResult, GoalResult } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -17,13 +17,19 @@ vi.mock("../db/knowledge-maps.js", () => ({
   getNodes: vi.fn(() => []),
 }));
 
+vi.mock("../db/reflector-gap.js", () => ({
+  logReflectorGap: vi.fn(),
+}));
+
 import { reflect } from "./reflector.js";
 import { infer } from "../inference/adapter.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
+import { logReflectorGap } from "../db/reflector-gap.js";
 
 const mockInfer = vi.mocked(infer);
 const mockSearchMaps = vi.mocked(searchMaps);
 const mockGetNodes = vi.mocked(getNodes);
+const mockLogReflectorGap = vi.mocked(logReflectorGap);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,7 +82,9 @@ function makeExecResult(graph: GoalGraph): ExecutionResult {
 }
 
 describe("reflect", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("should return LLM assessment when valid", async () => {
     mockInfer.mockResolvedValueOnce({
       content: JSON.stringify({
@@ -289,6 +297,105 @@ describe("reflect", () => {
     expect(userMsg!.content).toContain("Source Provenance");
     expect(userMsg!.content).toContain("verified: 1");
     expect(userMsg!.content).toContain("unverified: 1");
+  });
+
+  it("should parse CoT-prefixed reflection responses (autoreason)", async () => {
+    // With chain-of-thought judges, reflection output has reasoning prose
+    // followed by the JSON verdict. Parser must tolerate leading prose.
+    mockInfer.mockResolvedValueOnce({
+      content:
+        `Let me think step by step about this execution:\n` +
+        `1. 9 of 10 goals completed with usable output.\n` +
+        `2. 1 goal failed on a transient network error.\n` +
+        `3. Tool call count is reasonable (~2 per goal).\n` +
+        `4. No domain map provided, so skipping concept coverage.\n\n` +
+        `{"success": true, "score": 0.9, "learnings": ["Handle transient network errors with retries"], "summary": "Nine of ten goals completed; one transient failure"}`,
+      tool_calls: undefined,
+      usage: { prompt_tokens: 250, completion_tokens: 120, total_tokens: 370 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    const { result } = await reflect(
+      "Test task",
+      graph,
+      execResult,
+      "task-cot",
+    );
+
+    expect(result.score).toBe(0.9);
+    expect(result.success).toBe(true);
+    expect(result.learnings).toContain(
+      "Handle transient network errors with retries",
+    );
+  });
+
+  it("should log generation-evaluation gap telemetry when taskId is present", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.85,
+        learnings: ["ok"],
+        summary: "done",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(8, 2);
+    const execResult = makeExecResult(graph);
+    await reflect("Test task", graph, execResult, "task-gap");
+
+    expect(mockLogReflectorGap).toHaveBeenCalledTimes(1);
+    const call = mockLogReflectorGap.mock.calls[0][0];
+    expect(call.taskId).toBe("task-gap");
+    expect(call.llmScore).toBe(0.85);
+    expect(call.heuristicScore).toBe(0.8); // 8/10
+    expect(call.llmAvailable).toBe(true);
+    expect(call.goalsTotal).toBe(10);
+    expect(call.goalsCompleted).toBe(8);
+    expect(call.goalsFailed).toBe(2);
+  });
+
+  it("should log telemetry with llmAvailable=false when LLM fails", async () => {
+    mockInfer.mockRejectedValueOnce(new Error("Provider down"));
+
+    const graph = makeGraph(5, 5);
+    const execResult = makeExecResult(graph);
+    await reflect("Test task", graph, execResult, "task-gap-fallback");
+
+    expect(mockLogReflectorGap).toHaveBeenCalledTimes(1);
+    const call = mockLogReflectorGap.mock.calls[0][0];
+    expect(call.llmAvailable).toBe(false);
+    // When LLM is unavailable, rawLlmScore falls back to the heuristic
+    // assessment score — so llmScore === heuristicScore by construction.
+    expect(call.llmScore).toBe(0.5);
+    expect(call.heuristicScore).toBe(0.5);
+  });
+
+  it("should skip telemetry when taskId is not provided", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+
+    const graph = makeGraph(9, 1);
+    const execResult = makeExecResult(graph);
+    await reflect("Test task", graph, execResult);
+
+    expect(mockLogReflectorGap).not.toHaveBeenCalled();
   });
 
   it("should penalize score when anchoring is weak", async () => {

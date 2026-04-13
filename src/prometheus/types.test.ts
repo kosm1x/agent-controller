@@ -30,11 +30,51 @@ describe("parseLLMJson", () => {
   });
 
   it("should throw on invalid JSON", () => {
-    expect(() => parseLLMJson("not json at all")).toThrow("invalid JSON");
+    expect(() => parseLLMJson("not json at all")).toThrow(
+      /no parseable JSON object/,
+    );
   });
 
   it("should throw on empty input", () => {
     expect(() => parseLLMJson("")).toThrow();
+  });
+
+  it("should extract JSON from CoT-prefixed prose (autoreason)", () => {
+    const input =
+      `Let me think step by step:\n` +
+      `1. First I considered X.\n` +
+      `2. Then Y.\n\n` +
+      `{"met": true, "reasoning": "done"}`;
+    const result = parseLLMJson<{ met: boolean; reasoning: string }>(input);
+    expect(result.met).toBe(true);
+    expect(result.reasoning).toBe("done");
+  });
+
+  it("should extract the LAST JSON object when multiple appear in prose", () => {
+    const input =
+      `Example output: {"met": false, "reasoning": "example"}\n\n` +
+      `Actual verdict:\n{"met": true, "reasoning": "real"}`;
+    const result = parseLLMJson<{ met: boolean; reasoning: string }>(input);
+    expect(result.met).toBe(true);
+    expect(result.reasoning).toBe("real");
+  });
+
+  it("should handle braces inside string literals correctly", () => {
+    // The `}` inside the string must NOT close the outer object early.
+    const input = `Reasoning: the output is fine.\n\n{"note": "looks like {stub}", "ok": true}`;
+    const result = parseLLMJson<{ note: string; ok: boolean }>(input);
+    expect(result.note).toBe("looks like {stub}");
+    expect(result.ok).toBe(true);
+  });
+
+  it("should handle nested objects in CoT output", () => {
+    const input = `After thinking:\n{"outer": {"inner": {"deep": 42}}, "flag": true}`;
+    const result = parseLLMJson<{
+      outer: { inner: { deep: number } };
+      flag: boolean;
+    }>(input);
+    expect(result.outer.inner.deep).toBe(42);
+    expect(result.flag).toBe(true);
   });
 });
 
