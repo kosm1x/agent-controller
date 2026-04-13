@@ -17,6 +17,7 @@ import type {
   Options as SdkOptions,
   SDKResultSuccess,
   SDKResultError,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
@@ -134,6 +135,42 @@ export interface ClaudeSdkResult {
   durationMs: number;
 }
 
+/** Vision input: base64 image payload already split from the data URL. */
+export interface ClaudeSdkImage {
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  data: string;
+}
+
+/**
+ * Build a single-message streaming input for the SDK's `query({ prompt })`.
+ * The message content is a mixed text+image block array in Anthropic format.
+ * Yielded as an async iterable because the SDK treats non-string prompts as
+ * a stream of user messages — one yield is enough for a one-shot query.
+ */
+async function* buildVisionPromptStream(
+  text: string,
+  images: ClaudeSdkImage[],
+): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text },
+        ...images.map((img) => ({
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: img.mediaType,
+            data: img.data,
+          },
+        })),
+      ],
+    },
+  };
+}
+
 export async function queryClaudeSdk(opts: {
   prompt: string;
   systemPrompt: string;
@@ -141,6 +178,11 @@ export async function queryClaudeSdk(opts: {
   maxTurns?: number;
   model?: string;
   abortSignal?: AbortSignal;
+  /** Optional vision payloads. When present, the SDK receives a streaming
+   *  user message whose content is [text, image, image, ...] so the model
+   *  actually sees the pixels. Without this, callers that stuff images into
+   *  `prompt` will silently lose them — the SDK takes only a string there. */
+  images?: ClaudeSdkImage[];
 }): Promise<ClaudeSdkResult> {
   const mcpServer = buildMcpServer(opts.toolNames);
 
@@ -198,7 +240,15 @@ export async function queryClaudeSdk(opts: {
   let costUsd = 0;
   let durationMs = 0;
 
-  const q = query({ prompt: opts.prompt, options });
+  // When images are present, switch to streaming-input mode so the user
+  // message can carry Anthropic-format image blocks alongside the text.
+  // Otherwise use the plain string path (cheaper, preserves prompt caching).
+  const sdkPrompt: string | AsyncIterable<SDKUserMessage> =
+    opts.images && opts.images.length > 0
+      ? buildVisionPromptStream(opts.prompt, opts.images)
+      : opts.prompt;
+
+  const q = query({ prompt: sdkPrompt, options });
 
   try {
     for await (const message of q) {

@@ -794,6 +794,8 @@ export const fastRunner: Runner = {
       // ---------------------------------------------------------------
       if (getConfig().inferencePrimaryProvider === "claude-sdk") {
         const { queryClaudeSdk } = await import("../inference/claude-sdk.js");
+        type ClaudeSdkImage =
+          import("../inference/claude-sdk.js").ClaudeSdkImage;
 
         // Extract system prompt (all system messages concatenated)
         const systemPrompt = messages
@@ -801,18 +803,40 @@ export const fastRunner: Runner = {
           .map((m) => (typeof m.content === "string" ? m.content : ""))
           .join("\n\n");
 
-        // Extract user prompt (all non-system messages as formatted text)
+        // Extract user prompt + any vision payloads. Multimodal user messages
+        // contain an array of {type:"text"|"image_url"} blocks; we pull text
+        // into the prompt string and convert image data URLs to the SDK's
+        // base64 image format so the model actually sees the pixels.
         const userParts: string[] = [];
+        const sdkImages: ClaudeSdkImage[] = [];
         for (const m of messages) {
           if (m.role === "system") continue;
           if (m.role === "user") {
             if (typeof m.content === "string") {
               userParts.push(m.content);
             } else if (Array.isArray(m.content)) {
-              // Vision content — extract text parts (images handled by SDK prompt)
               for (const block of m.content) {
-                if (typeof block === "object" && "text" in block) {
-                  userParts.push(String(block.text));
+                if (typeof block !== "object" || block === null) continue;
+                if ("text" in block && typeof block.text === "string") {
+                  userParts.push(block.text);
+                } else if (
+                  "type" in block &&
+                  block.type === "image_url" &&
+                  "image_url" in block
+                ) {
+                  const url = (block.image_url as { url?: string })?.url ?? "";
+                  const match = url.match(/^data:([^;]+);base64,(.+)$/s);
+                  if (match) {
+                    const mediaType = match[1];
+                    if (
+                      mediaType === "image/jpeg" ||
+                      mediaType === "image/png" ||
+                      mediaType === "image/gif" ||
+                      mediaType === "image/webp"
+                    ) {
+                      sdkImages.push({ mediaType, data: match[2] });
+                    }
+                  }
                 }
               }
             }
@@ -830,7 +854,8 @@ export const fastRunner: Runner = {
           toolRegistry.getDefinitions().map((d) => d.function.name);
 
         console.log(
-          `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${maxRounds}`,
+          `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${maxRounds}` +
+            (sdkImages.length > 0 ? `, images=${sdkImages.length}` : ""),
         );
 
         const sdkResult = await queryClaudeSdk({
@@ -839,6 +864,7 @@ export const fastRunner: Runner = {
           toolNames: allToolNames,
           maxTurns: maxRounds,
           abortSignal: input.signal,
+          ...(sdkImages.length > 0 && { images: sdkImages }),
         });
 
         // Map SDK result to RunnerOutput

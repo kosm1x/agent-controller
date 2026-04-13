@@ -81,17 +81,73 @@ async function downloadRawText(url: string): Promise<string> {
 }
 
 /**
+ * Sniff an image mime type from magic bytes. Telegram's file CDN returns
+ * content-type `application/octet-stream` for photos, so we cannot trust the
+ * HTTP header — we have to look at the actual bytes. Returns null for
+ * unrecognized formats so the caller can decide whether to fall back.
+ */
+function sniffImageMime(bytes: Uint8Array): string | null {
+  if (bytes.length < 12) return null;
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  // GIF: "GIF87a" or "GIF89a"
+  if (
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
+    return "image/gif";
+  }
+  // WEBP: "RIFF" ???? "WEBP"
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+/**
  * Download an image from Telegram and return as a base64 data URL
- * suitable for OpenAI-compatible vision APIs.
+ * suitable for OpenAI-compatible vision APIs. The mime type is sniffed
+ * from magic bytes because Telegram's CDN advertises octet-stream.
  */
 async function downloadImageAsBase64(url: string): Promise<string | null> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    // Trust magic bytes over the HTTP header (Telegram sends octet-stream).
+    // Fall back to HTTP header for unrecognized formats, then JPEG as a last
+    // resort — Telegram photos are always JPEG on the wire.
+    const sniffed = sniffImageMime(bytes);
+    const headerType = response.headers.get("content-type");
+    const mimeType =
+      sniffed ??
+      (headerType && headerType.startsWith("image/") ? headerType : null) ??
+      "image/jpeg";
     const base64 = Buffer.from(buffer).toString("base64");
-    const contentType = response.headers.get("content-type") || "image/jpeg";
-    return `data:${contentType};base64,${base64}`;
+    return `data:${mimeType};base64,${base64}`;
   } catch (err) {
     console.error("[telegram] Image download failed:", err);
     return null;
