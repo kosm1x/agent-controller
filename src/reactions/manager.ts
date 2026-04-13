@@ -15,7 +15,7 @@ import { DEFAULT_RULES, evaluateRules } from "./rules.js";
 import {
   ensureReactionsTable,
   recordReaction,
-  countReactionsForTask,
+  countReactionChainLength,
   countRecentClassificationFailures,
   updateReactionStatus,
   getLatestReaction,
@@ -113,8 +113,12 @@ export class ReactionManager {
       if (elapsed < COOLDOWN_MS) return;
     }
 
-    // Build reaction context
-    const previousAttempts = countReactionsForTask(this.db, taskId);
+    // Build reaction context. previousAttempts is the length of the retry
+    // CHAIN walking backward from this task — not just reactions keyed to
+    // this task's UUID. Each retry spawns a fresh task UUID, so without
+    // chain-walking the counter resets to 0 every link, letting
+    // adjustedRetryRule fire indefinitely (see fix for 87-task retry storm).
+    const previousAttempts = countReactionChainLength(this.db, taskId);
     let classifiedAs = "unknown";
     try {
       if (task.classification) {

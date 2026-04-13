@@ -170,20 +170,24 @@ describe("ReactionManager", () => {
   });
 
   it("escalates after 2 previous attempts", async () => {
-    // Record 2 previous reactions (with old timestamps to avoid cooldown)
+    // Construct a 2-step retry chain ending at task-1:
+    //   root-A → retry → intermediate-B → retry → task-1 (current failure)
+    // countReactionChainLength walks backward via spawned_task_id links,
+    // so the chain must be modeled with real parent→child edges.
     db.prepare(
-      `INSERT INTO reactions (reaction_id, trigger_type, source_task_id, action, attempt, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-5 minutes'))`,
-    ).run("r1", "task_failed", "task-1", "retry", 1);
+      `INSERT INTO reactions (reaction_id, trigger_type, source_task_id, spawned_task_id, action, attempt, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-5 minutes'))`,
+    ).run("r1", "task_failed", "root-A", "intermediate-B", "retry", 1);
     db.prepare(
-      `INSERT INTO reactions (reaction_id, trigger_type, source_task_id, action, attempt, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-2 minutes'))`,
-    ).run("r2", "task_failed", "task-1", "retry_adjusted", 2);
+      `INSERT INTO reactions (reaction_id, trigger_type, source_task_id, spawned_task_id, action, attempt, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-2 minutes'))`,
+    ).run("r2", "task_failed", "intermediate-B", "task-1", "retry_adjusted", 2);
 
     await triggerTaskFailed("task-1", "Still broken");
 
     expect(mockSubmitTask).not.toHaveBeenCalled(); // No retry
+    // The escalate reaction is recorded against source_task_id=task-1
     const reactions = getReactionsBySourceTask(db, "task-1");
-    expect(reactions).toHaveLength(3); // 2 old + 1 new
-    expect(reactions[2].action).toBe("escalate");
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0].action).toBe("escalate");
   });
 
   it("suppresses when 3+ classification failures in 24h", async () => {

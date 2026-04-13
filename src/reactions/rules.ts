@@ -17,8 +17,12 @@ import type {
 // Patterns
 // ---------------------------------------------------------------------------
 
+// Matches both "timeout" (single word) and "timed out" / "time out" with an
+// optional space — container errors use "Container timed out after Nms" which
+// the previous single-word pattern missed, breaking transient classification
+// for every container timeout.
 const TRANSIENT_ERROR_PATTERN =
-  /timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|rate.limit|429|503|ENOTFOUND|socket hang up|EPIPE/i;
+  /timed?\s?out|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|rate.limit|429|503|ENOTFOUND|socket hang up|EPIPE/i;
 
 const SUPPRESSION_THRESHOLD = 3;
 const MAX_RETRIES = 2; // 1 original + 2 retries = 3 total attempts

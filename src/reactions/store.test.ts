@@ -9,6 +9,7 @@ import {
   recordReaction,
   getReactionsBySourceTask,
   countReactionsForTask,
+  countReactionChainLength,
   countRecentClassificationFailures,
   updateReactionStatus,
   getLatestReaction,
@@ -105,6 +106,91 @@ describe("reaction store", () => {
       expect(countReactionsForTask(db, "task-1")).toBe(2);
       expect(countReactionsForTask(db, "task-other")).toBe(1);
       expect(countReactionsForTask(db, "task-none")).toBe(0);
+    });
+  });
+
+  describe("countReactionChainLength", () => {
+    it("returns 0 for a task with no retry history", () => {
+      expect(countReactionChainLength(db, "fresh-task")).toBe(0);
+    });
+
+    it("counts a single retry chain step", () => {
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-A",
+        spawnedTaskId: "task-B",
+        action: "retry",
+        attempt: 1,
+      });
+      // task-B was spawned from task-A → chain length from B is 1
+      expect(countReactionChainLength(db, "task-B")).toBe(1);
+      // task-A has no prior → chain length from A is 0
+      expect(countReactionChainLength(db, "task-A")).toBe(0);
+    });
+
+    it("walks a multi-step retry chain backward", () => {
+      // Chain: A -> B -> C -> D (3 retries, 4 tasks)
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-A",
+        spawnedTaskId: "task-B",
+        action: "retry",
+        attempt: 1,
+      });
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-B",
+        spawnedTaskId: "task-C",
+        action: "retry",
+        attempt: 1,
+      });
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-C",
+        spawnedTaskId: "task-D",
+        action: "retry",
+        attempt: 1,
+      });
+
+      expect(countReactionChainLength(db, "task-D")).toBe(3);
+      expect(countReactionChainLength(db, "task-C")).toBe(2);
+      expect(countReactionChainLength(db, "task-B")).toBe(1);
+      expect(countReactionChainLength(db, "task-A")).toBe(0);
+    });
+
+    it("is bounded against pathological cycles", () => {
+      // Construct a self-loop: A spawned from A (should not happen in practice).
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "cycle-A",
+        spawnedTaskId: "cycle-A",
+        action: "retry",
+        attempt: 1,
+      });
+      // Cycle guard should stop the walk without hanging or exceeding MAX_CHAIN_WALK.
+      const len = countReactionChainLength(db, "cycle-A");
+      expect(len).toBeLessThanOrEqual(20);
+    });
+
+    it("handles branching (picks the first parent found)", () => {
+      // Two parents both spawning task-X — LIMIT 1 means we pick one and walk.
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-P1",
+        spawnedTaskId: "task-X",
+        action: "retry",
+        attempt: 1,
+      });
+      recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-P2",
+        spawnedTaskId: "task-X",
+        action: "retry",
+        attempt: 1,
+      });
+      // Chain walks back from X to ONE of its parents (either P1 or P2)
+      const len = countReactionChainLength(db, "task-X");
+      expect(len).toBe(1);
     });
   });
 

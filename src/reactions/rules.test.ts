@@ -73,6 +73,12 @@ describe("reaction rules", () => {
       "ENOTFOUND: DNS lookup failed",
       "socket hang up",
       "write EPIPE",
+      // Regression: the original /timeout/ pattern missed "timed out" with a
+      // space, letting container timeouts fall through to adjustedRetryRule
+      // and bypass the MAX_RETRIES cap. All three spellings must match.
+      "Container timed out after 300000ms",
+      "Request time out after 45s",
+      "Task timedout during execution",
     ];
 
     for (const error of transientErrors) {

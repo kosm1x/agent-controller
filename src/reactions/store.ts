@@ -132,6 +132,44 @@ export function countReactionsForTask(
 }
 
 /**
+ * Count the full retry chain length walking backward from a task.
+ *
+ * A retry reaction creates a new task with a fresh UUID and records
+ * `(source_task_id, spawned_task_id)` linking parent → child. This helper
+ * walks the chain backward from the given task: for each step, it finds
+ * the row where `spawned_task_id = current` and jumps to that row's
+ * `source_task_id`, incrementing a counter until no parent exists.
+ *
+ * Used by the reaction manager to enforce MAX_RETRIES across the whole
+ * retry chain, not just the immediate parent. Without this walk, every
+ * retry's fresh UUID made `countReactionsForTask` return 0, letting
+ * `adjustedRetryRule` fire indefinitely.
+ *
+ * Bounded at `MAX_CHAIN_WALK` iterations to defend against cycles.
+ */
+const MAX_CHAIN_WALK = 20;
+export function countReactionChainLength(
+  db: Database.Database,
+  taskId: string,
+): number {
+  const stmt = db.prepare(
+    "SELECT source_task_id FROM reactions WHERE spawned_task_id = ? LIMIT 1",
+  );
+  let current = taskId;
+  let length = 0;
+  const seen = new Set<string>();
+  for (let i = 0; i < MAX_CHAIN_WALK; i++) {
+    if (seen.has(current)) break; // defensive cycle guard
+    seen.add(current);
+    const row = stmt.get(current) as { source_task_id: string } | undefined;
+    if (!row) break;
+    length++;
+    current = row.source_task_id;
+  }
+  return length;
+}
+
+/**
  * Count failures in the last 24h for a given classification.
  * Uses task_outcomes table (existing infrastructure).
  */
