@@ -13,11 +13,11 @@ export interface Config {
 
   /** Primary inference provider type: 'openai' (default, DashScope/OpenAI-compatible) or 'claude-sdk' (Agent SDK). */
   inferencePrimaryProvider: "openai" | "claude-sdk";
-  /** Primary inference provider URL. */
+  /** Primary inference provider URL. Required when provider='openai', empty string when provider='claude-sdk'. */
   inferencePrimaryUrl: string;
-  /** Primary inference provider API key. */
+  /** Primary inference provider API key. Required when provider='openai', empty string when provider='claude-sdk'. */
   inferencePrimaryKey: string;
-  /** Primary inference model name. */
+  /** Primary inference model name. Required when provider='openai', empty string when provider='claude-sdk' (SDK uses claude-sonnet-4-6 by default). */
   inferencePrimaryModel: string;
 
   /** Fallback inference provider URL (optional). */
@@ -118,18 +118,34 @@ function float(key: string, fallback: number): number {
 }
 
 export function loadConfig(): Config {
+  const provider: "openai" | "claude-sdk" =
+    process.env.INFERENCE_PRIMARY_PROVIDER === "claude-sdk"
+      ? "claude-sdk"
+      : "openai";
+
   return {
     apiKey: required("MC_API_KEY"),
     port: int("MC_PORT", 8080),
     dbPath: process.env.MC_DB_PATH ?? "./data/mc.db",
 
-    inferencePrimaryProvider: (process.env.INFERENCE_PRIMARY_PROVIDER ===
-    "claude-sdk"
-      ? "claude-sdk"
-      : "openai") as "openai" | "claude-sdk",
-    inferencePrimaryUrl: required("INFERENCE_PRIMARY_URL"),
-    inferencePrimaryKey: required("INFERENCE_PRIMARY_KEY"),
-    inferencePrimaryModel: required("INFERENCE_PRIMARY_MODEL"),
+    inferencePrimaryProvider: provider,
+    // Primary URL/key/model are only required for the openai (raw HTTP) path.
+    // The claude-sdk path uses the Claude Agent SDK which auths via
+    // ~/.claude/.credentials.json and defaults to claude-sonnet-4-6 — these
+    // env vars are unused and default to empty string, which loadProviders()
+    // treats as falsy (no provider registered).
+    inferencePrimaryUrl:
+      provider === "openai"
+        ? required("INFERENCE_PRIMARY_URL")
+        : (optional("INFERENCE_PRIMARY_URL") ?? ""),
+    inferencePrimaryKey:
+      provider === "openai"
+        ? required("INFERENCE_PRIMARY_KEY")
+        : (optional("INFERENCE_PRIMARY_KEY") ?? ""),
+    inferencePrimaryModel:
+      provider === "openai"
+        ? required("INFERENCE_PRIMARY_MODEL")
+        : (optional("INFERENCE_PRIMARY_MODEL") ?? ""),
 
     inferenceFallbackUrl: optional("INFERENCE_FALLBACK_URL"),
     inferenceFallbackKey: optional("INFERENCE_FALLBACK_KEY"),
