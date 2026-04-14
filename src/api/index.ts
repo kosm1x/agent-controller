@@ -21,6 +21,9 @@ import {
   getMetricsText,
   metricsContentType,
 } from "../observability/prometheus.js";
+import { createMcpRouter } from "./mcp-server/index.js";
+import { getDatabase } from "../db/index.js";
+import { getMemoryService } from "../memory/index.js";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -42,6 +45,19 @@ export function createApp(): Hono {
     a2aApi.use("/*", apiKeyAuth);
     a2aApi.route("/", a2a);
     app.route("/a2a", a2aApi);
+  }
+
+  // v7.7 Jarvis MCP Server — read-only MCP surface for Claude Code sessions.
+  // Exposes memory / tasks / schedules / feedback / gap-telemetry query tools.
+  // Auth: bearer tokens from mcp_tokens table. Rate limit: 100/min/token.
+  // Audit: writes to events (category=mcp_call). See project_v77_jarvis_mcp_server.md.
+  if (process.env.JARVIS_MCP_ENABLED === "true") {
+    const mcpRouter = createMcpRouter({
+      db: getDatabase(),
+      memory: getMemoryService(),
+      startedAt: Date.now(),
+    });
+    app.route("/mcp", mcpRouter);
   }
 
   // All /api/* routes require API key

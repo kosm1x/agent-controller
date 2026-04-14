@@ -307,3 +307,19 @@ CREATE TABLE IF NOT EXISTS reflector_gap_log (
 );
 CREATE INDEX IF NOT EXISTS idx_reflector_gap_task ON reflector_gap_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_reflector_gap_created ON reflector_gap_log(created_at DESC);
+
+-- v7.7 Jarvis MCP Server — bearer token store.
+-- Read-only tokens for Claude Code sessions to query live Jarvis state
+-- (memory, tasks, schedules, feedback, gap telemetry) via the /mcp route.
+-- Tokens are SHA-256 hashed at rest; raw bearer shown exactly once at
+-- mc-ctl mcp-token create time. No retrieval, no plaintext storage.
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash    TEXT NOT NULL UNIQUE,
+  client_name   TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT 'read_only' CHECK(scope IN ('read_only')),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at  TEXT,
+  revoked       INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_hash ON mcp_tokens(token_hash) WHERE revoked = 0;

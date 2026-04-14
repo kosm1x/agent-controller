@@ -101,24 +101,28 @@
 
 ---
 
-## v7.7 — Jarvis MCP Server (read-only) — **Planned**
+## v7.7 — Jarvis MCP Server (read-only) — **Done**
 
-> Infrastructure unblocker. Pre-plan: `project_v77_jarvis_mcp_server.md`. 1 session. Ships after v7.6.
+> Infrastructure unblocker. Pre-plan: `project_v77_jarvis_mcp_server.md`. Shipped 2026-04-14 (session 67), ~3 hours. Second Tier C session complete. Phase α items 1 and 2 both done; autoreason Phase 2 decision (2026-04-20) is the remaining Phase α item.
 
-| Item                                                                                                      | Source                      | Status      |
-| --------------------------------------------------------------------------------------------------------- | --------------------------- | ----------- |
-| `@modelcontextprotocol/sdk` integration + streamable-HTTP transport on existing Hono server (`POST /mcp`) | Phantom `src/mcp/server.ts` | **Planned** |
-| Bearer token auth + `mcp_tokens` table (SHA-256 hashed) + audit logging via `events` table                | Phantom `src/mcp/auth.ts`   | **Planned** |
-| Tool: `jarvis_status` — service health, PID, memory, DB size, task counts                                 | —                           | **Planned** |
-| Tool: `jarvis_task_list` — filters by status, since, limit                                                | —                           | **Planned** |
-| Tool: `jarvis_task_detail` — full record + runs + subtasks for a task_id                                  | —                           | **Planned** |
-| Tool: `jarvis_memory_query` — semantic search over memory banks with bank/tags filters                    | —                           | **Planned** |
-| Tool: `jarvis_schedule_list` — active scheduled tasks + cron + last_run_at                                | —                           | **Planned** |
-| Tool: `jarvis_recent_events` — events in last N hours by category (errors, reactions, notifications)      | —                           | **Planned** |
-| Tool: `jarvis_reflector_gap_stats` — autoreason gap telemetry distribution                                | v7.8 P1                     | **Planned** |
-| Tool: `jarvis_feedback_search` — grep over memory `feedback_*.md` files                                   | —                           | **Planned** |
-| CLI: `./mc-ctl mcp-token create/revoke/list` for per-client token management                              | —                           | **Planned** |
-| Tests: tool handlers × 8, auth middleware × 3, transport session lifecycle × 3 (~12-15 tests)             | —                           | **Planned** |
+| Item                                                                                                                                                            | Source                             | Status   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------- |
+| `@modelcontextprotocol/sdk` native Hono transport via `WebStandardStreamableHTTPServerTransport.handleRequest(c.req.raw)` — stateless                           | MCP SDK docs                       | **Done** |
+| Bearer-token auth + `mcp_tokens` table (SHA-256 hashed) with CHECK-constrained `scope='read_only'`                                                              | `src/api/mcp-server/auth.ts`       | **Done** |
+| Sliding-window rate limiter (100 req/min per token) installed after auth middleware                                                                             | `src/api/mcp-server/rate-limit.ts` | **Done** |
+| Audit logging: every request writes `events` row with `category='mcp_call'`, `type=request_received/completed/failed`                                           | `src/api/mcp-server/audit.ts`      | **Done** |
+| Tool: `jarvis_status` — live pid, uptime, memMB, task counts by status, memory backend + health                                                                 | —                                  | **Done** |
+| Tool: `jarvis_task_list` — filters by status, since, limit (max 100)                                                                                            | —                                  | **Done** |
+| Tool: `jarvis_task_detail` — full record + subtasks for a task_id                                                                                               | —                                  | **Done** |
+| Tool: `jarvis_memory_query` — delegates to `MemoryService.recall()` with bank/tags/limit                                                                        | —                                  | **Done** |
+| Tool: `jarvis_schedule_list` — active scheduled tasks + cron + delivery + last_run_at                                                                           | —                                  | **Done** |
+| Tool: `jarvis_recent_events` — events in last N hours with category/type filters (max 500 rows, 168h window)                                                    | —                                  | **Done** |
+| Tool: `jarvis_reflector_gap_stats` — autoreason gap telemetry aggregation + decisionHint for 2026-04-20 Phase 2 review                                          | v7.8 P1                            | **Done** |
+| Tool: `jarvis_feedback_search` — substring grep over memory `feedback_*.md` files with snippet + match count                                                    | —                                  | **Done** |
+| CLI: `./mc-ctl mcp-token <create\|list\|revoke>` — bearer generation via openssl, SHA-256 hashed store, token shown exactly once                                | `mc-ctl`                           | **Done** |
+| Conditional mount gated on `JARVIS_MCP_ENABLED=true` (deployed via systemd drop-in `/etc/systemd/system/mission-control.service.d/mcp.conf`)                    | `src/api/index.ts`                 | **Done** |
+| Tests: auth × 6, rate-limit × 4, feedback-grep × 7, tools × 12 = **29 new tests**                                                                               | —                                  | **Done** |
+| Live smoke test: real curl to `/mcp/health` + `tools/list` + `jarvis_status` + `jarvis_reflector_gap_stats` + `jarvis_task_list` + rate-limit 429 after 100 req | —                                  | **Done** |
 
 ---
 

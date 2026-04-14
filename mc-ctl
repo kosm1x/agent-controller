@@ -1105,6 +1105,91 @@ cmd_validation() {
 }
 
 # ---------------------------------------------------------------------------
+# v7.7 — MCP token management (Jarvis MCP Server for Claude Code sessions)
+# ---------------------------------------------------------------------------
+
+cmd_mcp_token() {
+  need_db
+  local subcmd="${1:-}"; shift || true
+
+  case "$subcmd" in
+    create)
+      # Args: --client <name>
+      local client_name=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --client) client_name="$2"; shift 2 ;;
+          *) echo -e "${RED}Unknown flag:${NC} $1"; exit 1 ;;
+        esac
+      done
+      if [ -z "$client_name" ]; then
+        echo -e "${RED}Error:${NC} --client <name> is required"
+        echo "  Usage: mc-ctl mcp-token create --client <name>"
+        exit 1
+      fi
+
+      # Generate a cryptographically random 32-byte token, hex-encoded with a
+      # "jrvs_" prefix for identification. SHA-256 hash stored in DB; raw token
+      # shown exactly once to stdout, never logged, never retrievable.
+      local raw_token
+      raw_token="jrvs_$(openssl rand -hex 32)"
+      local token_hash
+      token_hash=$(printf '%s' "$raw_token" | sha256sum | awk '{print $1}')
+
+      local insert_result
+      insert_result=$(sql_raw "INSERT INTO mcp_tokens (token_hash, client_name, scope) VALUES ('$token_hash', '$(printf '%s' "$client_name" | sed "s/'/''/g")', 'read_only') RETURNING id;" 2>&1)
+      if [ -z "$insert_result" ] || [[ "$insert_result" == *"Error"* ]]; then
+        echo -e "${RED}Failed to create token:${NC} $insert_result"
+        exit 1
+      fi
+
+      echo ""
+      echo -e "${BOLD}Jarvis MCP token created${NC}"
+      echo -e "  ID:        ${GREEN}${insert_result}${NC}"
+      echo -e "  Client:    ${client_name}"
+      echo -e "  Scope:     read_only"
+      echo ""
+      echo -e "${YELLOW}Bearer token (shown ONCE — save it now, it cannot be retrieved):${NC}"
+      echo ""
+      echo "  $raw_token"
+      echo ""
+      echo -e "${DIM}Add to your Claude Code MCP config:${NC}"
+      echo '  {"mcpServers": {"jarvis": {"type": "http", "url": "http://localhost:'"${MC_PORT:-3030}"'/mcp", "headers": {"Authorization": "Bearer '"$raw_token"'"}}}}'
+      ;;
+
+    list)
+      echo -e "\n${BOLD}Jarvis MCP tokens${NC}\n"
+      sql_raw "SELECT id, client_name, scope, created_at, COALESCE(last_used_at, '—') AS last_used, CASE revoked WHEN 1 THEN 'REVOKED' ELSE 'active' END AS status FROM mcp_tokens ORDER BY id DESC;"
+      ;;
+
+    revoke)
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        echo -e "${RED}Error:${NC} token id required"
+        echo "  Usage: mc-ctl mcp-token revoke <id>"
+        exit 1
+      fi
+      sql_raw "UPDATE mcp_tokens SET revoked = 1 WHERE id = $id;"
+      echo -e "${GREEN}[OK]${NC} Token $id revoked"
+      ;;
+
+    ""|help|--help|-h)
+      echo "Usage: mc-ctl mcp-token <create|list|revoke>"
+      echo ""
+      echo "  create --client <name>   Generate a new read-only bearer token"
+      echo "  list                     List all tokens (active + revoked)"
+      echo "  revoke <id>              Revoke a token by id"
+      ;;
+
+    *)
+      echo -e "${RED}Unknown mcp-token subcommand:${NC} $subcmd"
+      echo "  Usage: mc-ctl mcp-token [create|list|revoke]"
+      exit 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -1153,6 +1238,8 @@ case "$cmd" in
   stats)             cmd_stats ;;
 
   validation)        cmd_validation "$@" ;;
+
+  mcp-token)         cmd_mcp_token "$@" ;;
 
   help|--help|-h)    usage ;;
   *)                 echo -e "${RED}Unknown command:${NC} ${cmd}"; echo ""; usage; exit 1 ;;
