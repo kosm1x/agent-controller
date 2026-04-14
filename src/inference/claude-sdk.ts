@@ -232,6 +232,15 @@ export async function queryClaudeSdk(opts: {
     env: {
       ...process.env,
       CLAUDE_AGENT_SDK_CLIENT_APP: "mission-control/1.0.0",
+      // v7.7.3: compact earlier than the 200k model ceiling to preserve
+      // context fidelity before the window fills. Adopted from NanoClaw
+      // v1.2.50 (2026-04-12) after they observed that compacting at the
+      // ceiling collapses too much history into summary. 165k leaves a
+      // 35k budget for the post-compact suffix instead of the ~10-15k
+      // you get at 200k. Operator override wins (env var respected).
+      // Range: SDK enforces 100k-1M bounds; auto-clamped to model default.
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW:
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "165000",
     },
   };
 

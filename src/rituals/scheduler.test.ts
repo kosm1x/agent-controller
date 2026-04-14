@@ -63,8 +63,8 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Eleven: 6 rituals + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation
-    expect(mockSchedule).toHaveBeenCalledTimes(11);
+    // Twelve: 6 rituals + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
+    expect(mockSchedule).toHaveBeenCalledTimes(12);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -86,7 +86,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(11);
+    expect(mockStop).toHaveBeenCalledTimes(12);
   });
 });
 

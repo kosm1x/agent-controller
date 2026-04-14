@@ -129,6 +129,7 @@ export function startRitualScheduler(): void {
   scheduleAutonomousImprovement();
   scheduleDiffDigest();
   scheduleMemoryConsolidation();
+  scheduleStaleArtifactPrune();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -267,6 +268,102 @@ function scheduleKbBackup(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * v7.7.3: Prune stale runner artifacts — orphaned Docker containers.
+ *
+ * Normal-path: every `spawnContainer()` call uses `--rm`, so containers
+ * auto-clean on exit. But if mission-control crashes mid-run (OOM,
+ * segfault, hard reboot), the `--rm` hook doesn't fire and the container
+ * survives in `exited` state until `docker container prune` is run.
+ *
+ * Over weeks this accumulates orphaned `mc-*` containers that:
+ *  - occupy disk (copy-on-write layers)
+ *  - occupy container-name namespace
+ *  - show up in `docker ps -a` noise
+ *
+ * This ritual runs hourly, finds exited `mc-*` containers older than
+ * 1 hour (so we don't race with an in-flight run), and removes them.
+ *
+ * Adopted from NanoClaw v1.2.48 (2026-04-12) "auto-prune stale session
+ * artifacts on startup + daily" per reference_nanoclaw_upstream.md
+ * Tier 1 adoption list. Our architecture doesn't create the per-session
+ * workspace artifacts NanoClaw does (we use claude-agent-sdk as a
+ * library, not Claude Code as a subprocess), so the prune surface is
+ * smaller — Docker containers are the one real accumulation risk.
+ */
+function scheduleStaleArtifactPrune(): void {
+  // Every hour at :17 so it doesn't collide with the backup cron or the
+  // nightly close ritual. Hourly is aggressive but cheap (no-op when
+  // nothing is stale) and gives fast feedback if a crash cycle starts
+  // producing orphans.
+  const job = cron.schedule(
+    "17 * * * *",
+    async () => {
+      try {
+        // List exited mc-* containers (name prefix matches
+        // generateContainerName() in container.ts) and filter to those
+        // older than 1 hour to avoid racing with in-flight runs.
+        const listOutput = execFileSync(
+          "docker",
+          [
+            "container",
+            "ls",
+            "-a",
+            "--filter",
+            "name=^mc-",
+            "--filter",
+            "status=exited",
+            "--format",
+            "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
+          ],
+          { timeout: 5000, encoding: "utf-8" },
+        ).trim();
+
+        if (!listOutput) {
+          return; // nothing stale
+        }
+
+        const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
+        const toRemove: string[] = [];
+        for (const line of listOutput.split("\n")) {
+          const [id, name, createdAt] = line.split("\t");
+          if (!id || !name || !createdAt) continue;
+          const createdMs = Date.parse(createdAt);
+          if (Number.isNaN(createdMs)) continue;
+          if (createdMs < oneHourAgoMs) {
+            toRemove.push(id);
+          }
+        }
+
+        if (toRemove.length === 0) {
+          return;
+        }
+
+        execFileSync("docker", ["container", "rm", ...toRemove], {
+          timeout: 15_000,
+          encoding: "utf-8",
+        });
+        console.log(
+          `[rituals] stale-artifact-prune: removed ${toRemove.length} orphaned mc-* container(s)`,
+        );
+      } catch (err) {
+        // Non-fatal — docker may not be installed in test environments,
+        // or the daemon may be temporarily unreachable. Skip and retry
+        // next hour.
+        const message = err instanceof Error ? err.message : String(err);
+        if (!/no such|not found|cannot connect/i.test(message)) {
+          console.error("[rituals] stale-artifact-prune failed:", message);
+        }
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] stale-artifact-prune: scheduled (17 * * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

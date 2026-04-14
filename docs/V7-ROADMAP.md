@@ -380,19 +380,22 @@
 ## v7.5 — Skill Evolution Engine (GEPA + SkillClaw) — **Planned**
 
 > 2 sessions. Depends on F9 (needs production trace data). References: `reference_gepa.md`, `reference_skillclaw.md`, `feedback_phantom_evolution_engine.md`.
+>
+> **MANDATORY PRE-PLAN TASK (NO SKIP):** Before any v7.5 implementation starts, run the full upstream sweep per `memory/feedback_v75_upstream_sweep_directive.md`. Budget: ~4 hours as its own half-day session. Scope: 48+ `reference_*.md` files with 10 core skill-evolution references read in depth (GEPA, SkillClaw, Hyperagents, Hermes, ACE, Memoria, claude-mem, mempalace, Superpowers, context-engineering). The sweep findings shape v7.5 scope — without it the skill-evolution engine is built against stale reference material from months earlier. Launch with parallel `Agent subagent_type=Explore` calls for the 10 core repos. Do NOT start coding v7.5 until every reference file has a "last reviewed" date within the current week AND Tier 1 findings are folded into the scope table below.
 
-| Item                                                                                                       | Source                   | Status      |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------ | ----------- |
-| Reflective mutation from execution traces — extract corrections, propose minimal config deltas             | GEPA + Phantom evolution | **Planned** |
-| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                   | GEPA                     | **Planned** |
-| Pareto domain specialization — separate skill variants per task class                                      | GEPA                     | **Planned** |
-| Failure source classification (skill / agent / env) — SkillClaw pattern                                    | SkillClaw                | **Planned** |
-| Session trajectory structuring — logged corrections promoted to golden suite                               | SkillClaw + Phantom      | **Planned** |
-| Conservative editing principles — append-first, minimal replace, no remove of safety keywords              | Phantom constitution     | **Planned** |
-| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety | Phantom evolution        | **Planned** |
-| Triple-judge minority veto for safety-critical gates                                                       | Phantom judges           | **Planned** |
-| Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine           | **Planned** |
-| Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                  | **Planned** |
+| Item                                                                                                       | Source                                     | Status      |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------- |
+| **Pre-plan: bulk upstream sweep (48 refs, ~4h)**                                                           | `feedback_v75_upstream_sweep_directive.md` | **Blocker** |
+| Reflective mutation from execution traces — extract corrections, propose minimal config deltas             | GEPA + Phantom evolution                   | **Planned** |
+| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                   | GEPA                                       | **Planned** |
+| Pareto domain specialization — separate skill variants per task class                                      | GEPA                                       | **Planned** |
+| Failure source classification (skill / agent / env) — SkillClaw pattern                                    | SkillClaw                                  | **Planned** |
+| Session trajectory structuring — logged corrections promoted to golden suite                               | SkillClaw + Phantom                        | **Planned** |
+| Conservative editing principles — append-first, minimal replace, no remove of safety keywords              | Phantom constitution                       | **Planned** |
+| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety | Phantom evolution                          | **Planned** |
+| Triple-judge minority veto for safety-critical gates                                                       | Phantom judges                             | **Planned** |
+| Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine                             | **Planned** |
+| Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                                    | **Planned** |
 
 ---
 
