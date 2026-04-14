@@ -41,7 +41,11 @@ vi.mock("../config.js", () => ({
   }),
 }));
 
-import { startRitualScheduler, stopRitualScheduler } from "./scheduler.js";
+import {
+  selectStaleContainersForPrune,
+  startRitualScheduler,
+  stopRitualScheduler,
+} from "./scheduler.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionRitual } from "./evolution.js";
@@ -177,5 +181,126 @@ describe("task templates", () => {
     expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("gmail_send");
+  });
+});
+
+// v7.7.4 audit follow-up — the stale-artifact prune filter MUST NOT
+// match long-running monitoring containers that share the `mc-` prefix
+// (mc-grafana, mc-prometheus, mc-node-exporter). The strict
+// mc-<prefix>-<13-digit-timestamp> name regex from
+// generateContainerName() is the safety boundary.
+describe("selectStaleContainersForPrune", () => {
+  const now = Date.parse("2026-04-14T23:00:00Z");
+  const oldCreatedAt = "2026-04-04 18:45:36 +0000 UTC"; // 10 days old
+  const freshCreatedAt = "2026-04-14 22:30:00 +0000 UTC"; // 30 min old
+
+  it("protects mc-grafana from deletion (the blocker from audit C1)", () => {
+    const out = selectStaleContainersForPrune(
+      `f7b72b232513\tmc-grafana\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("protects mc-prometheus from deletion", () => {
+    const out = selectStaleContainersForPrune(
+      `abc123\tmc-prometheus\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("protects mc-node-exporter from deletion", () => {
+    const out = selectStaleContainersForPrune(
+      `abc124\tmc-node-exporter\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("protects any mc- prefix container without the 13-digit timestamp suffix", () => {
+    const out = selectStaleContainersForPrune(
+      `abc125\tmc-somebody-else\t${oldCreatedAt}\nabc126\tmc-foo\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("removes runner containers matching mc-<prefix>-<13-digit-timestamp>", () => {
+    const ts = "1776123456789"; // exactly 13 digits
+    const out = selectStaleContainersForPrune(
+      `deadbeef\tmc-task-${ts}\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.id).toBe("deadbeef");
+    expect(out[0]!.name).toBe(`mc-task-${ts}`);
+  });
+
+  it("removes runner containers with sanitized multi-word prefix", () => {
+    const out = selectStaleContainersForPrune(
+      `id1\tmc-heavy-runner-task-1776123456789\t${oldCreatedAt}`,
+      now,
+    );
+    expect(out).toHaveLength(1);
+  });
+
+  it("does not remove runner containers younger than 6 hours", () => {
+    const out = selectStaleContainersForPrune(
+      `id1\tmc-task-1776123456789\t${freshCreatedAt}`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("handles mixed output — grafana survives, orphan gets removed", () => {
+    const mixed = [
+      `f7b72b232513\tmc-grafana\t${oldCreatedAt}`,
+      `deadbeef0001\tmc-task-1776000000000\t${oldCreatedAt}`,
+      `deadbeef0002\tmc-prometheus\t${oldCreatedAt}`,
+      `deadbeef0003\tmc-node-exporter\t${oldCreatedAt}`,
+      `deadbeef0004\tmc-heavy-1776000000001\t${oldCreatedAt}`,
+    ].join("\n");
+    const out = selectStaleContainersForPrune(mixed, now);
+    expect(out.map((c) => c.name)).toEqual([
+      "mc-task-1776000000000",
+      "mc-heavy-1776000000001",
+    ]);
+  });
+
+  it("skips lines with malformed CreatedAt (NaN from Date.parse)", () => {
+    const out = selectStaleContainersForPrune(
+      `id1\tmc-task-1776000000000\tnot-a-date`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("skips empty lines and lines with missing columns", () => {
+    const out = selectStaleContainersForPrune(
+      `\nid1\tmc-task-1776000000000\nid2\t\t${oldCreatedAt}\n`,
+      now,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("caps the batch at PRUNE_BATCH_CAP=50 to prevent arg-list overflow", () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      const ts = (1776000000000 + i).toString();
+      lines.push(`id${i}\tmc-task-${ts}\t${oldCreatedAt}`);
+    }
+    const out = selectStaleContainersForPrune(lines.join("\n"), now);
+    expect(out).toHaveLength(50);
+  });
+
+  it("rejects names with invalid chars (uppercase, underscore)", () => {
+    const lines = [
+      `id1\tmc-Task-1776000000000\t${oldCreatedAt}`, // uppercase T
+      `id2\tmc_task-1776000000000\t${oldCreatedAt}`, // underscore
+      `id3\tmc-task-177600000000a\t${oldCreatedAt}`, // letter in timestamp
+    ].join("\n");
+    const out = selectStaleContainersForPrune(lines, now);
+    expect(out).toEqual([]);
   });
 });

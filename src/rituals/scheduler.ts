@@ -279,84 +279,125 @@ function scheduleKbBackup(): void {
  * segfault, hard reboot), the `--rm` hook doesn't fire and the container
  * survives in `exited` state until `docker container prune` is run.
  *
- * Over weeks this accumulates orphaned `mc-*` containers that:
- *  - occupy disk (copy-on-write layers)
- *  - occupy container-name namespace
- *  - show up in `docker ps -a` noise
- *
- * This ritual runs hourly, finds exited `mc-*` containers older than
- * 1 hour (so we don't race with an in-flight run), and removes them.
+ * This ritual runs hourly, finds exited containers whose name matches
+ * the EXACT runner-name shape produced by `generateContainerName()` in
+ * `src/runners/container.ts` (`mc-<prefix>-<13-digit-timestamp>`), and
+ * only if they're older than 6 hours. Long-running non-runner
+ * containers that share the `mc-` namespace (mc-grafana, mc-prometheus,
+ * mc-node-exporter) are protected by the strict post-filter regex and
+ * MUST NOT match. Unit tests enforce that invariant.
  *
  * Adopted from NanoClaw v1.2.48 (2026-04-12) "auto-prune stale session
  * artifacts on startup + daily" per reference_nanoclaw_upstream.md
- * Tier 1 adoption list. Our architecture doesn't create the per-session
- * workspace artifacts NanoClaw does (we use claude-agent-sdk as a
- * library, not Claude Code as a subprocess), so the prune surface is
- * smaller — Docker containers are the one real accumulation risk.
+ * Tier 1 adoption list. Our accumulation surface is smaller (no
+ * per-session workspace files because we use claude-agent-sdk as a
+ * library, not Claude Code as a subprocess), so Docker containers are
+ * the one real risk.
+ *
+ * v7.7.4 audit follow-up (qa-auditor 2026-04-14) fixed:
+ *   C1  Strict name regex — mc-grafana / mc-prometheus no longer match
+ *   C2  Docker CLI name filter is untrusted — verify in TS after parse
+ *   M1  Per-id rm with per-container try/catch + summary log
+ *   M2  ENOENT / spawn-not-found silenced for test environments
+ *   M3  Batch cap (50 per cycle) to prevent E2BIG on crash loops
+ *   M4  Unit tests cover the mc-grafana-must-not-match case
+ *   MN1 Age gate raised 1h → 6h so long-running heavy-runner tasks
+ *       can drain stdout after exit without racing the next tick
  */
+const RUNNER_NAME_RE = /^mc-[a-z0-9-]+-\d{13}$/;
+const PRUNE_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+const PRUNE_BATCH_CAP = 50;
+const DOCKER_UNAVAILABLE_RE =
+  /no such|not found|cannot connect|ENOENT|spawn\s+docker|permission denied while trying to connect/i;
+
+/** Exposed for testing. Applies the RUNNER_NAME_RE + age filter to a
+ *  tab-separated `docker container ls` output. */
+export function selectStaleContainersForPrune(
+  listOutput: string,
+  nowMs: number = Date.now(),
+): Array<{ id: string; name: string }> {
+  const ageCutoff = nowMs - PRUNE_AGE_MS;
+  const out: Array<{ id: string; name: string }> = [];
+  for (const line of listOutput.split("\n")) {
+    if (!line.trim()) continue;
+    const [id, name, createdAt] = line.split("\t");
+    if (!id || !name || !createdAt) continue;
+    // Strict name shape — mc-grafana, mc-prometheus etc. must NOT match.
+    if (!RUNNER_NAME_RE.test(name)) continue;
+    const createdMs = Date.parse(createdAt);
+    if (Number.isNaN(createdMs)) continue;
+    if (createdMs >= ageCutoff) continue;
+    out.push({ id, name });
+    if (out.length >= PRUNE_BATCH_CAP) break;
+  }
+  return out;
+}
+
 function scheduleStaleArtifactPrune(): void {
   // Every hour at :17 so it doesn't collide with the backup cron or the
-  // nightly close ritual. Hourly is aggressive but cheap (no-op when
-  // nothing is stale) and gives fast feedback if a crash cycle starts
-  // producing orphans.
+  // nightly close ritual. Cron TZ is noise for hourly cadence but kept
+  // consistent with the rest of the scheduler.
   const job = cron.schedule(
     "17 * * * *",
     async () => {
+      let listOutput: string;
       try {
-        // List exited mc-* containers (name prefix matches
-        // generateContainerName() in container.ts) and filter to those
-        // older than 1 hour to avoid racing with in-flight runs.
-        const listOutput = execFileSync(
+        // The CLI `name=^mc-` filter is a coarse substring pre-filter in
+        // practice — we do not trust it for safety. The strict regex in
+        // selectStaleContainersForPrune() is the actual guard.
+        listOutput = execFileSync(
           "docker",
           [
             "container",
             "ls",
             "-a",
             "--filter",
-            "name=^mc-",
-            "--filter",
             "status=exited",
             "--format",
             "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
           ],
-          { timeout: 5000, encoding: "utf-8" },
+          { timeout: 15_000, encoding: "utf-8" },
         ).trim();
-
-        if (!listOutput) {
-          return; // nothing stale
-        }
-
-        const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
-        const toRemove: string[] = [];
-        for (const line of listOutput.split("\n")) {
-          const [id, name, createdAt] = line.split("\t");
-          if (!id || !name || !createdAt) continue;
-          const createdMs = Date.parse(createdAt);
-          if (Number.isNaN(createdMs)) continue;
-          if (createdMs < oneHourAgoMs) {
-            toRemove.push(id);
-          }
-        }
-
-        if (toRemove.length === 0) {
-          return;
-        }
-
-        execFileSync("docker", ["container", "rm", ...toRemove], {
-          timeout: 15_000,
-          encoding: "utf-8",
-        });
-        console.log(
-          `[rituals] stale-artifact-prune: removed ${toRemove.length} orphaned mc-* container(s)`,
-        );
       } catch (err) {
-        // Non-fatal — docker may not be installed in test environments,
-        // or the daemon may be temporarily unreachable. Skip and retry
-        // next hour.
         const message = err instanceof Error ? err.message : String(err);
-        if (!/no such|not found|cannot connect/i.test(message)) {
-          console.error("[rituals] stale-artifact-prune failed:", message);
+        if (!DOCKER_UNAVAILABLE_RE.test(message)) {
+          console.error("[rituals] stale-artifact-prune list failed:", message);
         }
+        return;
+      }
+
+      if (!listOutput) return;
+
+      const candidates = selectStaleContainersForPrune(listOutput);
+      if (candidates.length === 0) return;
+
+      // Per-id rm with isolated error handling — one failing container
+      // must not abort the batch, and we want a summary at the end.
+      let removed = 0;
+      const failures: Array<{ name: string; error: string }> = [];
+      for (const { id, name } of candidates) {
+        try {
+          execFileSync("docker", ["container", "rm", id], {
+            timeout: 15_000,
+            encoding: "utf-8",
+          });
+          removed++;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          failures.push({ name, error: message.slice(0, 120) });
+        }
+      }
+
+      if (removed > 0) {
+        console.log(
+          `[rituals] stale-artifact-prune: removed ${removed} orphaned runner container(s)`,
+        );
+      }
+      if (failures.length > 0) {
+        console.error(
+          `[rituals] stale-artifact-prune: ${failures.length} rm failure(s):`,
+          failures,
+        );
       }
     },
     { timezone: RITUALS_TIMEZONE },
