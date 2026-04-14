@@ -298,10 +298,14 @@ export async function queryClaudeSdk(opts: {
           // body text produced in earlier turns lives only in streamingText.
           // Prefer the longer of the two so multi-turn poems/answers are not
           // silently dropped when the model ends on a tool call.
+          // v7.7.2 audit nit: coerce `success.result ?? ""` so `resultText`
+          // never transiently holds `undefined` (the declared type is
+          // `string`). Both sides of the ternary are now guaranteed strings.
+          const resolvedResult = success.result ?? "";
           resultText =
-            streamingText.length > (success.result?.length ?? 0)
+            streamingText.length > resolvedResult.length
               ? streamingText
-              : success.result;
+              : resolvedResult;
           numTurns = success.num_turns;
           usage = {
             promptTokens: success.usage?.input_tokens ?? 0,

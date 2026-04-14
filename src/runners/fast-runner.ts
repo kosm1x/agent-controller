@@ -280,6 +280,13 @@ export const WRITE_TOOLS = new Set([
   // LLM calls (method=list/get), the false-positive cost is minimal — the
   // tool still runs, it just gets tracked in the write-capable set.
   "google_workspace_cli",
+  // v7.7.2 Layer 4b retry-swap fix: jarvis_propose_directive is not
+  // strictly a "write" tool, but it IS a tool where narrating success
+  // without calling it is a hallucination. Including it here lets the
+  // fast-runner retry path (line ~1218) swap in the retry output when
+  // the LLM finally calls the tool on the second pass. Same rationale
+  // as google_workspace_cli above — the set tracks "narrate = must-call".
+  "jarvis_propose_directive",
   // File system
   "file_write",
   "file_edit",
@@ -568,7 +575,27 @@ export function detectsHallucinatedExecution(
     "jarvis_propose_directive",
   );
   if (!calledProposeDirective) {
+    // Unit token matching minutes / hours / days, spelled-out or short form,
+    // Spanish or English: `h`, `hr`, `hrs`, `hour`, `hours`, `hora`, `horas`,
+    // `m`, `min`, `mins`, `minuto`, `minutos`, `d`, `day`, `days`, `día`, `días`.
+    const NUM = String.raw`\d+(?:[.,]\d+)?`; // allow comma or dot decimal separator
+    const UNIT = String.raw`(?:h(?:ours?|rs?|oras?)?|m(?:in(?:ut(?:es?|os?))?)?|d(?:ays?|[ií]as?)?)`;
+    const NUM_UNIT = new RegExp(`\\b${NUM}\\s*${UNIT}\\b`, "i");
+    const PROP_KEYS = /\b(?:propuesta|directiv|cooldown)/i; // keyword anchor for co-occurrence checks
+    // Helper: does the text contain both a numeric-time claim and a
+    // propuesta/directiva/cooldown keyword within ~80 chars of each other?
+    const hasNearbyNumericTime = (() => {
+      const numMatch = NUM_UNIT.exec(text);
+      if (!numMatch) return false;
+      const propMatch = PROP_KEYS.exec(text);
+      if (!propMatch) return false;
+      const distance = Math.abs((numMatch.index ?? 0) - (propMatch.index ?? 0));
+      return distance <= 120;
+    })();
+
     const claimsDirectiveCooldown =
+      // Explicit cooldown-state phrases (these are always hallucinations
+      // without the tool call, regardless of numeric co-occurrence):
       /\bcooldown\s+(?:active|activo|activa)\b/i.test(text) ||
       /\b(?:pr[oó]xima|next)\s+(?:propuesta|proposal)\s+(?:disponible\s+)?(?:en|in)\s+~?\d/i.test(
         text,
@@ -578,15 +605,25 @@ export function detectsHallucinatedExecution(
       ) ||
       /\bnext\s+allowed\s+in\s+\d/i.test(text) ||
       /\blast\s+proposal\s+was\s+\d/i.test(text) ||
-      /\b(?:cooldown|propuesta|directiv)[^.\n]{0,80}\bquedan\s+\d+(?:\.\d+)?\s*h\b/i.test(
+      // Spanish "faltan/restan/quedan X unidad" near propuesta/cooldown/directiv
+      /\b(?:quedan|faltan|restan)\s+\d+(?:[.,]\d+)?\s*(?:h(?:oras?)?|m(?:in(?:utos?)?)?|d(?:[ií]as?)?)\b[^.\n]{0,80}\b(?:propuesta|cooldown|directiv)/i.test(
         text,
       ) ||
-      /\bquedan\s+\d+(?:\.\d+)?\s*h\b[^.\n]{0,80}\b(?:propuesta|cooldown|directiv)/i.test(
+      /\b(?:propuesta|cooldown|directiv)[^.\n]{0,80}\b(?:quedan|faltan|restan)\s+\d+(?:[.,]\d+)?\s*(?:h(?:oras?)?|m(?:in(?:utos?)?)?|d(?:[ií]as?)?)\b/i.test(
         text,
       ) ||
-      /\b(?:propuesta|directiv)[^.\n]{0,60}\b\d+(?:\.\d+)?\s*h\s+(?:restantes?|ago)/i.test(
+      // English "available in X units" / "in X units" near proposal/cooldown
+      /\b(?:available|allowed|ready)\s+(?:in|again\s+in)\s+\d+(?:[.,]\d+)?\s*(?:h(?:ours?|rs?)?|m(?:in(?:utes?)?)?|d(?:ays?)?)\b[^.\n]{0,80}\b(?:proposal|cooldown|directive)/i.test(
         text,
-      );
+      ) ||
+      /\b(?:proposal|cooldown|directive)[^.\n]{0,80}\b(?:available|allowed|ready)\s+(?:in|again\s+in)\s+\d+(?:[.,]\d+)?\s*(?:h(?:ours?|rs?)?|m(?:in(?:utes?)?)?|d(?:ays?)?)\b/i.test(
+        text,
+      ) ||
+      // Fallback: numeric-time claim + propuesta/directiv/cooldown keyword
+      // within ~120 chars. Catches paraphrases like "handle en 2 días, check
+      // el estado de la propuesta" and "the directive window reopens in 45 min".
+      hasNearbyNumericTime;
+
     if (claimsDirectiveCooldown) {
       console.log(
         `[fast-runner] Directive cooldown hallucination: narrates SG4 state but jarvis_propose_directive not called. Tools: [${toolsCalled.join(", ")}]`,

@@ -307,9 +307,10 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // Deliberately narrow — bare "guarda X" without a file-ish object must
     // NOT fire, or every casual note-taking request would pull write tools.
     // Fires on: (a) write verb + file-ish noun, (b) direct tool name mention,
-    // (c) knowledge-base phrase with action word.
+    // (c) knowledge-base phrase with action word (EN/ES),
+    // (d) v7.7.2: plain "KB" / "base de conocimiento" with a write verb.
     pattern:
-      /\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe)\w*(?:\s+(?:una?|el|la|los|las|un|mi|tu|este|esta|nuev[ao]))?(?:\s+\S+){0,2}\s+(?:archivo|nota|SOP|directiva|regla|fact|lesson|pattern|procedimiento|preferencia|conocimiento|jarvis[_\s]file)|jarvis_file_(?:write|update|delete|move)|knowledge\s*base\s+(?:write|update|save|append|edit)|mi\s+knowledge\s*base/i,
+      /\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe)\w*(?:\s+(?:una?|el|la|los|las|un|mi|tu|este|esta|nuev[ao]))?(?:\s+\S+){0,2}\s+(?:archivo|nota|SOP|directiva|regla|fact|lesson|pattern|procedimiento|preferencia|conocimiento|jarvis[_\s]file)|jarvis_file_(?:write|update|delete|move)|knowledge\s*base\s+(?:write|update|save|append|edit)|mi\s+knowledge\s*base|\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta)\w*(?:\s+\S+){0,3}\s+(?:en|a|al)\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\b|\ben\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\s+(?:guarda|anota|registra|agrega|actualiza|escribe)/i,
     group: "jarvis_write",
   },
   {

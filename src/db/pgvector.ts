@@ -93,14 +93,25 @@ const NOISE_PATTERNS = [
   /^(hola|hello|hi|gracias|thanks|ok|sí|yes|no)\s*[.!]?$/i,
   /^(buenos días|buenas tardes|buenas noches)\s*[.!]?$/i,
   /^recibido\s*[.!]?$/i,
-  // Tool-narrative rejections — describe tool usage, not user preferences
+  // Tool-narrative rejections — describe tool usage, not user preferences.
+  // v7.7.2 audit follow-up: widen verbs (invoked/pulled/consumed/called/
+  // llamó a/ejecutó herramienta) and tighten "was executed with" to require
+  // a tool-registry suffix so legitimate user facts like "the contract was
+  // executed with the new terms" are not rejected.
   /\b(used tools?|usó herramienta|using tools?|usando herramienta)\b.*[:,]/i,
+  /\b(invoked|pulled|consumed|called)\s+(?:the\s+)?(?:tools?|these\s+tools?)\b.*[:,]/i,
+  /\b(llam[oó]\s+a\s+(?:las?\s+)?herramientas?|ejecut[oó]\s+(?:las?\s+)?herramientas?)\b.*[:,]/i,
   /\brecurring workflow pattern using\b/i,
   /\bpatrón (recurrente|de uso) de herramientas?\b/i,
   /\b\d+\s+tools?\s+(all\s+)?at\s+\d+%\s+success/i,
   /\btop\s+tools?\s*:\s*\w+\s*\(/i,
   /\b(fast|heavy|swarm)[-\s]?runner\s+processed\s+\d+\s+tasks?\b/i,
-  /\bwas\s+executed\s+(using|with)\b/i,
+  // Tightened: must be "was executed with/using <tool-shape>" where the
+  // shape is `tool`, `herramienta`, a runner/skill word, or a snake_case
+  // token that looks like a tool name (`web_read`, `jarvis_file_write`,
+  // `gdocs_replace`). Plain "the contract was executed with the new terms"
+  // now passes because "new" is not snake_case.
+  /\bwas\s+executed\s+(using|with)\s+(?:tools?|herramientas?|fast|heavy|swarm|runner|skill|[a-z]+_[a-z_]+)/i,
   /\bsystem\s+(tools?\s+and\s+)?skills?\s+are\s+operating\b/i,
 ];
 
@@ -281,19 +292,41 @@ export async function pgCascadeStale(
 
 /**
  * Batch upsert multiple entries. Chunks to avoid payload limits.
+ *
+ * v7.7.2 audit fix: each entry goes through validateKbEntry() before it
+ * is included in the batch payload. Previously pgBatchUpsert bypassed
+ * the quality gate entirely — the backfill tooling at pgvector-backfill.ts
+ * would happily re-ingest historical tool-narrative lessons stored in
+ * the SQLite FTS5 source. That's the exact feedback loop we closed in
+ * pgUpsert; the batch path now mirrors the same contract.
  */
 export async function pgBatchUpsert(
   entries: KbEntry[],
   batchSize = 20,
-): Promise<{ success: number; failed: number }> {
+): Promise<{ success: number; failed: number; rejected: number }> {
   const apiKey = getApiKey();
-  if (!apiKey) return { success: 0, failed: entries.length };
+  if (!apiKey) return { success: 0, failed: entries.length, rejected: 0 };
 
   let success = 0;
   let failed = 0;
+  let rejected = 0;
 
-  for (let i = 0; i < entries.length; i += batchSize) {
-    const batch = entries.slice(i, i + batchSize);
+  // Quality gate: filter out noise entries before building the batch.
+  const validated: KbEntry[] = [];
+  for (const e of entries) {
+    const rejection = validateKbEntry(e);
+    if (rejection) {
+      console.log(
+        `[pgvector] Batch quality gate rejected ${e.path}: ${rejection}`,
+      );
+      rejected++;
+      continue;
+    }
+    validated.push(e);
+  }
+
+  for (let i = 0; i < validated.length; i += batchSize) {
+    const batch = validated.slice(i, i + batchSize);
     const rows = batch.map((e) => ({
       path: e.path,
       title: e.title,
@@ -338,7 +371,7 @@ export async function pgBatchUpsert(
     }
   }
 
-  return { success, failed };
+  return { success, failed, rejected };
 }
 
 /**

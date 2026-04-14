@@ -505,5 +505,100 @@ describe("validateKbEntry", () => {
         }),
       ).toBeNull();
     });
+
+    // v7.7.2 audit widening — catch more extractor paraphrase variants
+
+    it("rejects 'invoked tools: X, Y'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Session invoked tools: web_search, jarvis_file_read, and jarvis_memory_query across 4 tasks",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'pulled tools:' listings", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Task pulled tools: web_search, jarvis_file_read, web_read for multi-source research",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'consumed tools:' listings", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "The reasoning chain consumed tools: jarvis_propose_directive, jarvis_file_read at each step",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects Spanish 'llamó a las herramientas' listings", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "El runner llamó a las herramientas: web_read, jarvis_file_read, y web_search para cada paso",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects Spanish 'ejecutó herramientas' listings", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "La tarea ejecutó herramientas: gmail_send, gdrive_upload, calendar_create en secuencia",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    // v7.7.2 audit tightening — the old `was executed with` regex was too
+    // broad; legitimate user facts that happen to contain the phrase now pass.
+
+    it("does NOT reject 'the contract was executed with the new terms'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "The 2026 renewal contract was executed with the new terms after legal review",
+        }),
+      ).toBeNull();
+    });
+
+    it("does NOT reject 'the SOP was executed with exceptions'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "The Rumi delivery SOP was executed with exceptions logged for manual review",
+        }),
+      ).toBeNull();
+    });
+
+    it("still rejects 'task was executed using jarvis_file_read tool'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "The enrichment task was executed using jarvis_file_read tool on every turn",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("still rejects 'was executed with fast-runner and web_read'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "The reasoning goal was executed with fast-runner and web_read against cached sources",
+        }),
+      ).toContain("noise pattern");
+    });
   });
 });

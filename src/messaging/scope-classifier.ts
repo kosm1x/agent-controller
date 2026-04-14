@@ -17,6 +17,7 @@ const VALID_GROUPS = new Set([
   "northstar_read",
   "northstar_write",
   "northstar_journal",
+  "jarvis_write",
   "destructive",
   "google",
   "browser",
@@ -39,6 +40,7 @@ GROUPS (return only the ones that apply):
 - northstar_read: reading tasks, goals, objectives, visions, NorthStar, pendientes, sync with db.mycommit
 - northstar_write: creating/updating/completing tasks, goals, objectives. "marca como completada", "crea una tarea"
 - northstar_journal: writing diary/journal entries
+- jarvis_write: writing/updating notes, SOPs, directives, rules, facts, lessons, procedures into Jarvis's knowledge base (the KB / base de conocimiento / jarvis_file_*). "guarda esta nota en el KB", "agrega una SOP", "registra esta regla", "escribe un SOP". Read-only KB consultations do NOT activate this group.
 - destructive: deleting, removing, cleaning up items
 - google: email, gmail, calendar, agenda, drive, sheets, slides, docs, google workspace
 - browser: navigating websites, scraping, login, React/SPA apps, playwright

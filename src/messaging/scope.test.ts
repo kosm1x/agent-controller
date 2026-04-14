@@ -271,6 +271,62 @@ describe("jarvis_write scope gating", () => {
     const tools = scope("Escribe en mi diario lo que pasó hoy");
     expect(tools).toContain("jarvis_file_write");
   });
+
+  // v7.7.2 audit widening — "KB" / "base de conocimiento" alternation
+
+  it("'guarda esto en el KB' activates jarvis_write", () => {
+    const tools = scope("Guarda esto en el KB");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'agrega al KB' activates jarvis_write", () => {
+    const tools = scope("Agrega al KB un recordatorio sobre el release");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'registra en la base de conocimiento' activates jarvis_write", () => {
+    const tools = scope(
+      "Registra en la base de conocimiento que el release es el jueves",
+    );
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'en la KB guarda esto' (reversed order) activates jarvis_write", () => {
+    const tools = scope("En la KB guarda esto como regla permanente");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'apunta en mi KB' activates jarvis_write", () => {
+    const tools = scope("Apunta en mi KB esta observación");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("bare 'KB' mention without write verb does NOT activate", () => {
+    // "qué tienes en el KB sobre X" is a read question — no write tools
+    const tools = scope("Qué tienes en el KB sobre Rumi?");
+    expect(tools).not.toContain("jarvis_file_write");
+  });
+});
+
+// v7.7.2 audit fix — VALID_GROUPS in scope-classifier.ts must include
+// jarvis_write so the semantic classifier path can emit it. Previously
+// the classifier would never emit jarvis_write; only the regex fallback
+// path caught KB-write intent.
+describe("scope-classifier VALID_GROUPS (v7.7.2 audit fix)", () => {
+  it("parses 'jarvis_write' from a classifier JSON response", async () => {
+    const { parseScopeGroups } = await import("./scope-classifier.js");
+    const groups = parseScopeGroups('["jarvis_write"]');
+    expect(groups).not.toBeNull();
+    expect(groups!.has("jarvis_write")).toBe(true);
+  });
+
+  it("parses 'jarvis_write' combined with other groups", async () => {
+    const { parseScopeGroups } = await import("./scope-classifier.js");
+    const groups = parseScopeGroups('["jarvis_write","northstar_write"]');
+    expect(groups).not.toBeNull();
+    expect(groups!.has("jarvis_write")).toBe(true);
+    expect(groups!.has("northstar_write")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import {
   detectsHallucinatedExecution,
   hasUserConfirmedDeletion,
   classifyToolError,
+  WRITE_TOOLS,
 } from "./fast-runner.js";
 
 describe("detectsHallucinatedExecution", () => {
@@ -609,6 +610,98 @@ describe("Layer 4b: directive cooldown claim mismatch (SG4)", () => {
         ["jarvis_file_read"],
       ),
     ).toBe(false);
+  });
+
+  // v7.7.2 audit widening — variants the original Layer 4b regex missed
+
+  it("catches Spanish comma decimal (14,8h) — audit bypass", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El cooldown de propuestas está activo: quedan 14,8 horas antes de la próxima.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches spelled-out 'horas' unit — audit bypass", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "La propuesta de directiva entra en cola; faltan 15 horas para la próxima ventana.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches 'faltan X horas' synonym near propuesta", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Todavía faltan 10 horas antes de poder registrar la propuesta.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches 'restan Xh' synonym near directiva", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Restan 3h antes de que pueda proponer la siguiente directiva.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches English 'available in X hours' near proposal", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "The directive proposal is available in 14 hours.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches 'Next allowed in 45 minutes' (minute unit)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Cooldown active. Next allowed in 45 minutes.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("catches 'en 2 días' unit with cooldown keyword nearby", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El cooldown del mecanismo de propuestas reabre en 2 días.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("does not false-positive on discussing cooldown concept with unrelated duration", () => {
+    // Legit discussion: "reviewed the project timelines, it's been 2 hours since the last change". The words
+    // propuesta/directiv/cooldown are absent — no match.
+    expect(
+      detectsHallucinatedExecution(
+        "Revisé los proyectos hace 2 horas y todo está en orden.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(false);
+  });
+
+  it("does not false-positive on user-quoted cooldown question", () => {
+    // User is quoting what was discussed; no specific numeric claim by the assistant
+    expect(
+      detectsHallucinatedExecution(
+        "Me preguntas si existe el cooldown de directivas — sí, es un safeguard del sistema.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("jarvis_propose_directive is in WRITE_TOOLS (Layer 4b retry swap)", () => {
+  it("is a member of WRITE_TOOLS so retryCalledWrite gate accepts it", () => {
+    expect(WRITE_TOOLS.has("jarvis_propose_directive")).toBe(true);
   });
 });
 

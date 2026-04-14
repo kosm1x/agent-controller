@@ -33,6 +33,7 @@ export async function backfillToPgvector(): Promise<{
   total: number;
   success: number;
   failed: number;
+  rejected: number;
   duration_ms: number;
 }> {
   const start = Date.now();
@@ -50,6 +51,7 @@ export async function backfillToPgvector(): Promise<{
   const BATCH_SIZE = 10;
   let totalSuccess = 0;
   let totalFailed = 0;
+  let totalRejected = 0;
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
@@ -102,10 +104,13 @@ export async function backfillToPgvector(): Promise<{
       };
     });
 
-    // Upsert to pgvector
+    // Upsert to pgvector (v7.7.2: pgBatchUpsert now applies the same
+    // quality gate as pgUpsert, so historical tool-narrative lessons are
+    // rejected at ingest instead of being re-poisoned on every backfill).
     const result = await pgBatchUpsert(entries);
     totalSuccess += result.success;
     totalFailed += result.failed;
+    totalRejected += result.rejected;
 
     // Rate limit: 200ms between batches
     if (i + BATCH_SIZE < rows.length) {
@@ -115,13 +120,14 @@ export async function backfillToPgvector(): Promise<{
 
   const duration = Date.now() - start;
   console.log(
-    `[backfill] Complete: ${totalSuccess} success, ${totalFailed} failed (${duration}ms)`,
+    `[backfill] Complete: ${totalSuccess} success, ${totalFailed} failed, ${totalRejected} rejected by quality gate (${duration}ms)`,
   );
 
   return {
     total: rows.length,
     success: totalSuccess,
     failed: totalFailed,
+    rejected: totalRejected,
     duration_ms: duration,
   };
 }
