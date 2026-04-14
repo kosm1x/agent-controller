@@ -7,6 +7,7 @@
 
 import type { Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
+import { validateArgsUrls } from "../lib/url-safety.js";
 
 /** MCP tool info as returned by client.listTools(). */
 export interface McpToolInfo {
@@ -72,6 +73,23 @@ export function createMcpTool(
       },
     },
     async execute(args: Record<string, unknown>): Promise<string> {
+      // v7.6.1 — Pillar 6 SSRF defense: pre-flight URL validation across
+      // ALL MCP tool calls (lightpanda, playwright, future servers).
+      // Blocks file://, private IPs, cloud metadata, localhost BEFORE
+      // the args reach the upstream MCP server. Catches the SSRF class
+      // that Playwright's UnsupportedProtocol allowlist would miss
+      // (http://localhost:*, http://10.x, etc.). See V7-READINESS-CRITERIA.md
+      // Known Issues for the full threat model.
+      const urlError = validateArgsUrls(args);
+      if (urlError) {
+        console.warn(
+          `[mcp] blocked URL-bearing arg on ${namespacedName}: ${urlError}`,
+        );
+        return JSON.stringify({
+          error: `Blocked outbound URL: ${urlError}`,
+        });
+      }
+
       try {
         const result = await callFn(mcpTool.name, args);
         const text = extractText(result.content);

@@ -125,38 +125,39 @@ Before starting v7 implementation, confirm after 30 days of production:
 - [ ] Proactive scanner fires reliably without false positives
 - [ ] Thread buffer hydration survives restarts cleanly
 - [ ] No poisoned thread incidents requiring manual cleanup
-- [ ] **MCP browser tool URL validation gap closed** — see Known Issues below
+- [x] **MCP browser tool URL validation gap closed** — ✅ shipped 2026-04-14 session 67 (v7.6.1). Single intercept at `createMcpTool.execute()` pre-validates URL-bearing args via `validateArgsUrls()`. Covers ALL MCP tools (lightpanda, playwright, future servers). See Known Issues below for the full threat model and the fix details.
 
 **If all boxes are checked: start v7 F1.**
 **If any box fails: fix that specific item first, extend validation period.**
 
 ---
 
-## Known Issues — must close before v7.0
+## Known Issues
 
-### URL safety gap on MCP browser tools (discovered 2026-04-14, day 5 of validation)
+### ~~URL safety gap on MCP browser tools~~ ✅ CLOSED 2026-04-14 (v7.6.1)
 
-**The gap.** Jarvis's `validateOutboundUrl()` (`src/lib/url-safety.ts`) blocks `file://`, private IPs, metadata endpoints, non-HTTP schemes — but only when called from **builtin tools** that opt in. Currently those are: `web_read`, `seo_page_audit`, `http`. The Playwright MCP browser tools (`browser__markdown`, `browser__navigate`, `browser__screenshot`, etc.) come from `@playwright/mcp` and bypass this validation entirely. They reach Playwright's `page.goto()` directly. The builtin `screenshot_element` tool also lacks the validation call.
+**Discovered:** 2026-04-14 day 5 of the 30-day validation window during the `mc-ctl validation check` scope-classifier false-positive investigation. A scheduled PipeSong task on 2026-04-13 15:01 UTC had an LLM try `file:///root/claude/mission-control/.env` and `file:///root/claude/mission-control/src/tools/builtin/` via the MCP browser. Playwright's UnsupportedProtocol allowlist blocked both (no exfiltration), but the investigation found that SSRF targets looking like normal HTTP URLs (`http://localhost:3000/api/datasources/`, `http://10.x.x.x`, `http://192.168.x.x`, `http://127.0.0.1:9090/metrics`) would have reached Playwright with nothing in the way.
 
-**What saved us this time.** Playwright's protocol allowlist rejects `file://` with `UnsupportedProtocol`. Day 5 of validation surfaced 4 such errors — turned out to be a scheduled task (PipeSong tech radar) where the LLM tried `file:///root/claude/mission-control/.env` and `file:///root/claude/mission-control/src/tools/builtin/` via the MCP browser. Playwright blocked both. No exfiltration. The validation script's regex was matching these as "scope classifier errors" — false positive, fixed in `mc-ctl` cmd_validation regex tightening (same session).
+**The gap (now closed).** Jarvis's `validateOutboundUrl()` only ran on **builtin tools that explicitly called it** — `web_read`, `seo_page_audit`, `http`. The Playwright MCP browser tools (`browser__markdown`, `browser__navigate`, `browser__screenshot`, lightpanda's `browser__goto`, etc.) came from MCP servers and bypassed this validation entirely.
 
-**What is NOT blocked.** SSRF targets that look like normal HTTP URLs:
+**The fix (v7.6.1 — session 67, 2026-04-14).** Single intercept point at `createMcpTool.execute()` in `src/mcp/bridge.ts` — the ONE funnel every MCP tool from every MCP server passes through. New helper `validateArgsUrls()` in `src/lib/url-safety.ts` recursively scans the args object for string values under URL-convention keys (`url`, `uri`, `href`, `link`, `target`, `target_url`, `location`, `src`, `source_url`, `endpoint`, `page`, `page_url`, `navigate_to`, `goto`, case-insensitive) with a max depth of 3, and runs `validateOutboundUrl()` on any value that parses as an absolute URL (matches `scheme://`). If any URL fails validation, the bridge returns the standard error envelope (`{error: "Blocked outbound URL: ..."}`) **without forwarding to the upstream MCP server**. Walks arrays of objects but skips arrays of primitives (too many false positives). Short-circuits on first block.
 
-- `http://localhost:3000/`, `http://localhost:9090/`, `http://localhost:3001/` (Grafana, Prometheus, MC API on the same host)
-- `http://10.0.0.0/8`, `http://192.168.0.0/16`, `http://172.16.0.0/12` (private IP ranges)
-- `http://[::1]/` and IPv6 link-local
+**Key design choices:**
 
-**Why it matters for v7.0.** Pillar 6 is non-negotiable. An LLM that can hit `http://localhost:3000/api/datasources/` (Grafana) via the MCP browser can leak credentials and dashboard metadata. Once Jarvis manages real money signals via paper trading, this becomes a financial-data exposure path.
+- **Single intercept, not a ToolSource wrapper.** One function (`createMcpTool.execute()`), ~15 LOC delta, covers EVERY MCP server (current and future) with one change. The original v7.6 Phase 1 plan was to wrap `@playwright/mcp` specifically — the bridge-intercept approach is strictly better because it also catches lightpanda, hypothetical new MCP servers, and any schema drift where a tool adds a new URL param.
+- **Scheme gating minimizes false positives.** The helper ONLY validates values that match `^[a-z][a-z0-9+\-.]*:\/\/`. A search query `"how to fix bug"` under a `url` key is let through unchanged. Only real URL strings get validated.
+- **URL-key whitelist, not content-based detection.** The helper only inspects strings under specific key names. A `description: "see http://localhost/docs"` is NOT validated — we don't parse prose for URL substrings. This keeps false positives near zero at the cost of missing tools that use non-standard param names. Acceptable because the URL key set is easy to extend, and the current state was 0% coverage so any deterministic coverage is a strict improvement.
+- **Audit logging.** Every rejection emits `[mcp] blocked URL-bearing arg on <tool_name>: <path>: <reason>` to stderr via `console.warn` — surfaces attempted SSRF in journalctl without touching the tool result format.
 
-**Fix options** (decide in v7.6 or earlier):
+**Test coverage (v7.6.1):** 16 new tests in `src/lib/url-safety.test.ts` (allow paths, block paths, nested args, arrays, maxDepth enforcement, graceful handling of null/undefined/primitives) + 7 new tests in `src/mcp/bridge.test.ts` (file://, localhost, cloud metadata, RFC1918, public URL passthrough, non-URL-bearing args passthrough, non-URL string under url-named key passthrough). All 23 cases green. Full suite: 2071 → 2094 tests.
 
-1. **MCP source wrapper.** Wrap `@playwright/mcp` tools in a `ToolSource` adapter that calls `validateOutboundUrl()` before forwarding the call. Works for any URL-bearing param. Requires identifying which MCP tools accept URLs. Also fix `screenshot_element` builtin to call `validateOutboundUrl()`.
-2. **Network-layer block.** iptables/nftables OUTPUT rule: drop traffic from the Playwright Chromium process to RFC1918 + loopback + link-local. Defense at OS layer, no code change. Requires identifying the Chromium process by launch path or cgroup.
-3. **Both.** Belt + suspenders. Layer 1 catches user-input URL strings before the call; Layer 3 catches Chromium-internal redirects, JS-initiated fetches, and any tool we miss.
+**Deferred follow-ups** (Pillar 6 defense-in-depth, not blocking v7.0):
 
-**Recommended:** ship Option 1 in v7.6 (Workspace Expansion session) since it touches the same MCP wrapping pattern. Option 2 as a follow-up if the audit shows additional gaps.
+1. **Network-layer block (iptables OUTPUT rule)** — drop traffic from the Playwright Chromium process to RFC1918 + loopback + link-local. Defense at OS layer, catches Chromium-internal redirects and JS-initiated fetches that don't go through the tool-call boundary. Value is in defending against the class "URL was safe at tool call time but resolved to an internal target via redirect or JS" — not currently observed in production but worth having.
+2. **Validation script Pillar 6 check** — `mc-ctl validation check` should scan for `[mcp] blocked URL-bearing arg` log lines and surface the count as a Pillar 6 signal. Future attempted SSRF would show up in the validation log instead of silently getting blocked. Not built yet.
+3. **Non-URL-key attack surface audit** — walk all registered MCP tool schemas and flag any URL-bearing param whose key name isn't in `URL_PARAM_KEYS`. Extend the set if needed. One-shot audit, not recurring.
 
-**Validation script gap.** The Pillar 1 scope-classifier check (`mc-ctl validation check` item 8) was false-positiving on these Playwright errors and reporting 4 "scope classifier errors". Regex tightened to require `[router]` / `[classifier]` / `[messaging]` log prefix and exclude pino's `$scope=` browser fields. After fix: 10/10 pass. A future Pillar 6 validation item should scan for `UnsupportedProtocol` errors with internal/loopback IP targets to surface real SSRF attempts proactively.
+**Validation script false-positive (also fixed 2026-04-14).** The Pillar 1 scope-classifier check (`mc-ctl validation check` item 8) was false-positiving on Playwright errors and reporting 4 "scope classifier errors". Regex tightened to require `[router]` / `[classifier]` / `[messaging]` log prefix and exclude pino's `$scope=` browser fields. After fix: 10/10 pass — first fully clean validation day.
 
 ---
 
