@@ -125,9 +125,38 @@ Before starting v7 implementation, confirm after 30 days of production:
 - [ ] Proactive scanner fires reliably without false positives
 - [ ] Thread buffer hydration survives restarts cleanly
 - [ ] No poisoned thread incidents requiring manual cleanup
+- [ ] **MCP browser tool URL validation gap closed** — see Known Issues below
 
 **If all boxes are checked: start v7 F1.**
 **If any box fails: fix that specific item first, extend validation period.**
+
+---
+
+## Known Issues — must close before v7.0
+
+### URL safety gap on MCP browser tools (discovered 2026-04-14, day 5 of validation)
+
+**The gap.** Jarvis's `validateOutboundUrl()` (`src/lib/url-safety.ts`) blocks `file://`, private IPs, metadata endpoints, non-HTTP schemes — but only when called from **builtin tools** that opt in. Currently those are: `web_read`, `seo_page_audit`, `http`. The Playwright MCP browser tools (`browser__markdown`, `browser__navigate`, `browser__screenshot`, etc.) come from `@playwright/mcp` and bypass this validation entirely. They reach Playwright's `page.goto()` directly. The builtin `screenshot_element` tool also lacks the validation call.
+
+**What saved us this time.** Playwright's protocol allowlist rejects `file://` with `UnsupportedProtocol`. Day 5 of validation surfaced 4 such errors — turned out to be a scheduled task (PipeSong tech radar) where the LLM tried `file:///root/claude/mission-control/.env` and `file:///root/claude/mission-control/src/tools/builtin/` via the MCP browser. Playwright blocked both. No exfiltration. The validation script's regex was matching these as "scope classifier errors" — false positive, fixed in `mc-ctl` cmd_validation regex tightening (same session).
+
+**What is NOT blocked.** SSRF targets that look like normal HTTP URLs:
+
+- `http://localhost:3000/`, `http://localhost:9090/`, `http://localhost:3001/` (Grafana, Prometheus, MC API on the same host)
+- `http://10.0.0.0/8`, `http://192.168.0.0/16`, `http://172.16.0.0/12` (private IP ranges)
+- `http://[::1]/` and IPv6 link-local
+
+**Why it matters for v7.0.** Pillar 6 is non-negotiable. An LLM that can hit `http://localhost:3000/api/datasources/` (Grafana) via the MCP browser can leak credentials and dashboard metadata. Once Jarvis manages real money signals via paper trading, this becomes a financial-data exposure path.
+
+**Fix options** (decide in v7.6 or earlier):
+
+1. **MCP source wrapper.** Wrap `@playwright/mcp` tools in a `ToolSource` adapter that calls `validateOutboundUrl()` before forwarding the call. Works for any URL-bearing param. Requires identifying which MCP tools accept URLs. Also fix `screenshot_element` builtin to call `validateOutboundUrl()`.
+2. **Network-layer block.** iptables/nftables OUTPUT rule: drop traffic from the Playwright Chromium process to RFC1918 + loopback + link-local. Defense at OS layer, no code change. Requires identifying the Chromium process by launch path or cgroup.
+3. **Both.** Belt + suspenders. Layer 1 catches user-input URL strings before the call; Layer 3 catches Chromium-internal redirects, JS-initiated fetches, and any tool we miss.
+
+**Recommended:** ship Option 1 in v7.6 (Workspace Expansion session) since it touches the same MCP wrapping pattern. Option 2 as a follow-up if the audit shows additional gaps.
+
+**Validation script gap.** The Pillar 1 scope-classifier check (`mc-ctl validation check` item 8) was false-positiving on these Playwright errors and reporting 4 "scope classifier errors". Regex tightened to require `[router]` / `[classifier]` / `[messaging]` log prefix and exclude pino's `$scope=` browser fields. After fix: 10/10 pass. A future Pillar 6 validation item should scan for `UnsupportedProtocol` errors with internal/loopback IP targets to surface real SSRF attempts proactively.
 
 ---
 

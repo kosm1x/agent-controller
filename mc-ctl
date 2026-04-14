@@ -1030,9 +1030,17 @@ cmd_validation() {
         fi
       fi
 
-      # 8. Scope classifier — no tool routing errors in logs
+      # 8. Scope classifier — no tool routing errors in logs.
+      # Real messaging classifier errors carry the [router] or [classifier]
+      # log prefix. The previous regex matched any "scope.*error" which
+      # false-positived on Playwright pino logs ($scope=page $level=error,
+      # $scope=browser $level=error) emitted when the browser tool rejects
+      # unsupported URL schemes. Tightened to require an explicit prefix
+      # AND filter out pino's $scope= structured field.
       local scope_errors
-      scope_errors=$(journalctl -u "$SERVICE_NAME" --since "24 hours ago" --no-pager 2>/dev/null | grep -c -E "scope.*error|classifier.*fail" 2>/dev/null || true)
+      scope_errors=$(journalctl -u "$SERVICE_NAME" --since "24 hours ago" --no-pager 2>/dev/null \
+        | grep -v '\$scope=' \
+        | grep -c -E '\[(router|classifier|messaging)\].*[Ee]rror|[Cc]lassifier.*[Ff]ailed' 2>/dev/null || true)
       scope_errors="${scope_errors:-0}"; scope_errors="${scope_errors##*$'\n'}"
       if [ "$scope_errors" -eq 0 ]; then
         echo -e "  ${GREEN}[PASS]${NC} Scope classifier: no errors (24h)"
