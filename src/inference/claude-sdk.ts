@@ -286,7 +286,15 @@ export async function queryClaudeSdk(opts: {
       } else if (message.type === "result") {
         if (message.subtype === "success") {
           const success = message as SDKResultSuccess;
-          resultText = success.result;
+          // success.result captures only the FINAL assistant turn's text.
+          // When the final turn is tool-use-heavy (or a minimal closer), any
+          // body text produced in earlier turns lives only in streamingText.
+          // Prefer the longer of the two so multi-turn poems/answers are not
+          // silently dropped when the model ends on a tool call.
+          resultText =
+            streamingText.length > (success.result?.length ?? 0)
+              ? streamingText
+              : success.result;
           numTurns = success.num_turns;
           usage = {
             promptTokens: success.usage?.input_tokens ?? 0,

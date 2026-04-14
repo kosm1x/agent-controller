@@ -204,6 +204,94 @@ describe("queryClaudeSdk error_max_turns handling", () => {
     expect(lastQueryArgs.value?.prompt).toBe("hola");
   });
 
+  it("prefers accumulated streamingText when final turn is tool-use-heavy", async () => {
+    // Reproduces task 2378 (2026-04-14): "Me regalas un poema de Rumi"
+    // Turn 1 produced the full poem. Turns 2-3 were tool_use only. The SDK
+    // success.result then captured only the short final-turn closer, and the
+    // earlier 848 chars of actual body text were silently dropped — Telegram
+    // reply was empty. The fix: prefer the longer of streamingText vs
+    // success.result so earlier-turn text cannot be lost on tool-heavy endings.
+    const longPoem =
+      "Ven, ven, quienquiera que seas...\n" +
+      "Vagabundo, adorador, amante del irse...\n".repeat(10) +
+      "No importa.\nNuestra caravana no es la del desespero.";
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: longPoem }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "STATUS: DONE",
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+        total_cost_usd: 0.17,
+        duration_ms: 13373,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "Me regalas un poema de Rumi para dormir?",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain("Ven, ven, quienquiera que seas");
+    expect(result.text).toContain("Nuestra caravana no es la del desespero");
+    expect(result.text.length).toBeGreaterThan(longPoem.length - 20);
+    expect(result.toolCalls).toEqual([
+      "jarvis_file_read",
+      "jarvis_file_update",
+    ]);
+    expect(result.numTurns).toBe(3);
+  });
+
+  it("still prefers success.result when it is longer than streamingText", async () => {
+    // Single-turn happy path: the SDK's result field is authoritative and
+    // there is no earlier-turn text to recover. streamingText equals
+    // success.result here, so the tie-break falls to success.result.
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Final answer\n\nSTATUS: DONE" }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Final answer\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "hola",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe("Final answer\n\nSTATUS: DONE");
+  });
+
   it("still returns success result normally", async () => {
     mockMessages.value = [
       {
