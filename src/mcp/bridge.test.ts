@@ -310,6 +310,52 @@ describe("createMcpTool", () => {
       expect(callFn).toHaveBeenCalled();
     });
 
+    // v7.6.3 W6-followup (re-audit): primitive args (number/string) at
+    // the runtime call site. TypeScript signature says
+    // Record<string, unknown> but a misbehaving caller could pass
+    // anything. validateArgsUrls returns null on non-objects, so the
+    // upstream call proceeds with the raw value.
+    it("handles primitive args (number) without throwing", async () => {
+      const callFn: McpCallFn = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const tool = createMcpTool("test", { name: "echo" }, callFn);
+
+      const result = await tool.execute(
+        42 as unknown as Record<string, unknown>,
+      );
+      expect(result).toBe("ok");
+      expect(callFn).toHaveBeenCalled();
+    });
+
+    // v7.6.3 C1.5 (re-audit): MULTIPLE trailing dots also blocked.
+    // The v7.6.2 fix used /\.$/ which only stripped one dot.
+    it("blocks http://localhost../ (multi trailing dot) at bridge", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      const result = await tool.execute({ url: "http://localhost../secret" });
+      expect(JSON.parse(result).error).toMatch(/Blocked host: localhost/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
+    // v7.6.3 M3 (re-audit): plural URL keys (added to whitelist).
+    it("blocks URL array under expanded plural key 'urls'", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool("scrape", { name: "batch_fetch" }, callFn);
+
+      const result = await tool.execute({
+        urls: ["https://ok.com", "http://localhost:9090/metrics"],
+      });
+      expect(JSON.parse(result).error).toMatch(/urls\[1\]:/);
+      expect(JSON.parse(result).error).toMatch(/Blocked/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
     // v7.6.2 C1 integration: trailing-dot bypass also blocked at bridge.
     it("blocks http://localhost./ (trailing dot FQDN) at bridge", async () => {
       const callFn: McpCallFn = vi.fn();

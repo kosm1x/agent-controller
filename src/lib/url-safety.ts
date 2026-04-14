@@ -57,10 +57,15 @@ export function validateOutboundUrl(url: string): string | null {
   // v7.6.2 C1: also strip trailing FQDN dot. DNS treats `localhost.` and
   // `localhost` identically, and without the strip the blocklist
   // `BLOCKED_HOSTS.has("localhost.")` returned false → bypass.
+  // v7.6.3 C1.5 (re-audit): strip ALL trailing dots, not just one.
+  // `\.$` only stripped one trailing dot, leaving `localhost..` → `localhost.`
+  // which still bypasses. Browsers and `lightpanda` collapse multi-dot
+  // FQDN suffixes; the blocklist must too. Verified live: `URL` parses
+  // `http://localhost../` with `hostname="localhost.."` literally.
   const hostname = parsed.hostname
     .toLowerCase()
     .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
+    .replace(/\.+$/, "");
   if (BLOCKED_HOSTS.has(hostname)) {
     return `Blocked host: ${hostname}`;
   }
@@ -109,10 +114,18 @@ export function validateOutboundUrl(url: string): string | null {
  * under these keys is let through unchanged. So we can be generous
  * with the whitelist at zero false-positive cost.
  *
- * v7.6.2 W1: expanded from 15 → 30 keys per QA audit finding.
- * Covers common third-party MCP server conventions (webhook_url,
- * callback, redirect_uri, api_url, etc.) so future schema drift
- * doesn't silently bypass validation.
+ * Convention: **all entries MUST be lowercase**. The lookup at the
+ * call site uses `.toLowerCase()` on the key, so a Set entry like
+ * `"Host"` would silently never match. Keep this list lowercase or
+ * normalize at insert time.
+ *
+ * Growth history:
+ *  - v7.6.1: initial 15 keys
+ *  - v7.6.2 W1 (audit): expanded to 43 keys (webhook/callback/redirect
+ *    families) so future third-party MCP servers don't silently bypass
+ *  - v7.6.3 M3 (re-audit): added plural forms (`urls`, `links`, `hrefs`,
+ *    `targets`, `endpoints`, `pages`) since W3 array walking now handles
+ *    `{urls: ["..."]}` style schemas correctly
  */
 const URL_PARAM_KEYS = new Set([
   // Direct URL names
@@ -148,6 +161,13 @@ const URL_PARAM_KEYS = new Set([
   "page_url",
   "pageurl",
   "website",
+  // v7.6.3 M3: plural / batch forms (W3 array walking handles arrays)
+  "urls",
+  "links",
+  "hrefs",
+  "targets",
+  "endpoints",
+  "pages",
   // Webhook / callback / redirect variants (third-party MCP convention)
   "webhook",
   "webhook_url",

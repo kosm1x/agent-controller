@@ -134,7 +134,7 @@ Before starting v7 implementation, confirm after 30 days of production:
 
 ## Known Issues
 
-### ~~URL safety gap on MCP browser tools~~ ✅ CLOSED 2026-04-14 (v7.6.1 + v7.6.2 audit follow-up)
+### ~~URL safety gap on MCP browser tools~~ ✅ CLOSED 2026-04-14 (v7.6.1 + v7.6.2 + v7.6.3 — three audit rounds)
 
 **Discovered:** 2026-04-14 day 5 of the 30-day validation window during the `mc-ctl validation check` scope-classifier false-positive investigation. A scheduled PipeSong task on 2026-04-13 15:01 UTC had an LLM try `file:///root/claude/mission-control/.env` and `file:///root/claude/mission-control/src/tools/builtin/` via the MCP browser. Playwright's UnsupportedProtocol allowlist blocked both (no exfiltration), but the investigation found that SSRF targets looking like normal HTTP URLs (`http://localhost:3000/api/datasources/`, `http://10.x.x.x`, `http://192.168.x.x`, `http://127.0.0.1:9090/metrics`) would have reached Playwright with nothing in the way.
 
@@ -161,9 +161,24 @@ Before starting v7 implementation, confirm after 30 days of production:
 - **W5 (warning) — audit log contract not asserted in tests.** The `[mcp] blocked URL-bearing arg` log line is load-bearing for the future Pillar 6 validation item. Added `console.warn` spy assertions for both the block path and the no-op on happy path.
 - **W6 (warning) — `args = null/undefined` not tested at the bridge call site.** Added resilience tests covering both.
 
-**Test coverage (v7.6.2):** 21 additional tests in `url-safety.test.ts` (C1/C2/R4 regression coverage, W1 expanded whitelist keys, W3 array walking) + 8 additional tests in `bridge.test.ts` (audit log spy, null/undefined args, C1/C2/R4/W1 end-to-end via the bridge). Full suite: 2094 → 2123 tests.
+**Test coverage (v7.6.2):** 21 additional tests in `url-safety.test.ts` + 8 additional tests in `bridge.test.ts`. Full suite: 2094 → 2123 tests.
 
-**Net v7.6.1 + v7.6.2 coverage:** 37 new url-safety tests + 15 new bridge tests = 52 new security tests total against the MCP URL attack surface.
+### v7.6.3 — second audit follow-up
+
+A re-audit of v7.6.2 (commit `ee4566b`) caught a CRITICAL incomplete fix and three majors. All shipped same-day as v7.6.3.
+
+- **C1.5 (critical) — `\.$/` only stripped ONE trailing dot.** v7.6.2 used `.replace(/\.$/, "")` which left `localhost..` → `localhost.` after one strip, still bypassing `BLOCKED_HOSTS`. Browsers and lightpanda's Zig parser collapse multi-dot FQDN suffixes; the blocklist must too. **Fix:** `\.+$/` strips all trailing dots in one pass. Verified live with the same Node `URL` parser. Three regression tests added.
+- **M3 (major) — plural URL keys missing.** v7.6.2 added `webhook_url`/`callback_url`/etc. but not `urls`/`endpoints`/`pages` plural forms. Combined with the W3 array-walking fix, plurals are the natural shape (`{urls: [...]}`). Without them, third-party MCP servers using batch-style schemas would silently bypass. **Fix:** added `urls`, `links`, `hrefs`, `targets`, `endpoints`, `pages` to `URL_PARAM_KEYS`. Whitelist now 49 entries.
+- **M4 (major) — misleading test name.** v7.6.2 had a test named `"blocks array of URL strings under 'urls'"` that asserted `toBeNull()` — the opposite of "blocks". CI noise hazard. Implicitly fixed by M3 (the test is now a positive `blocks array of URLs under 'urls' (plural — added v7.6.3)` assertion).
+- **m2 (minor) — lowercase convention undocumented.** Added `// All entries MUST be lowercase` comment to the docstring.
+- **W6 follow-up — primitive args test added.** v7.6.2 tested `null`/`undefined` but not numbers/strings at runtime.
+- **Docstring count fix.** v7.6.2 docstring claimed "expanded from 15 → 30 keys" but actual was 43. v7.6.3 lists growth history accurately: 15 → 43 → 49 across the three releases.
+
+**NOT shipped (deferred per second auditor):** structured audit log format (`[mcp] ssrf_block tool=X field=Y reason=Z` vs free-form prose). Non-blocking; current format is regex-parseable.
+
+**Test coverage (v7.6.3):** 5 additional tests in `url-safety.test.ts` + 3 additional tests in `bridge.test.ts`. Full suite: 2123 → 2131 tests.
+
+**Net v7.6.1 + v7.6.2 + v7.6.3 coverage:** 60 new security tests against the MCP URL attack surface across three commits in one calendar day, with two independent audit passes.
 
 **Key design choices (post-audit):**
 

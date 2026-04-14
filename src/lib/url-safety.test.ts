@@ -77,16 +77,38 @@ describe("validateOutboundUrl", () => {
   });
 
   // v7.6.2 C1 regression: trailing-dot hostname bypass.
-  it("blocks localhost. (FQDN trailing dot)", () => {
+  it("blocks localhost. (single trailing dot FQDN)", () => {
     expect(validateOutboundUrl("http://localhost./secret")).toMatch(
       /Blocked host: localhost/,
     );
   });
 
-  it("blocks metadata.google.internal. (FQDN trailing dot)", () => {
+  it("blocks metadata.google.internal. (single trailing dot FQDN)", () => {
     expect(validateOutboundUrl("http://metadata.google.internal./v1/")).toMatch(
       /Blocked/,
     );
+  });
+
+  // v7.6.3 C1.5 regression (re-audit): MULTIPLE trailing dots.
+  // The v7.6.2 fix used `\.$` which only stripped one dot, leaving
+  // `localhost..` → `localhost.` which still bypassed BLOCKED_HOSTS.
+  // Fixed in v7.6.3 with `\.+$` to strip all trailing dots.
+  it("blocks localhost.. (double trailing dot)", () => {
+    expect(validateOutboundUrl("http://localhost../secret")).toMatch(
+      /Blocked host: localhost/,
+    );
+  });
+
+  it("blocks localhost... (triple trailing dot)", () => {
+    expect(validateOutboundUrl("http://localhost.../secret")).toMatch(
+      /Blocked host: localhost/,
+    );
+  });
+
+  it("blocks metadata.google.internal.. (multi trailing dot FQDN)", () => {
+    expect(
+      validateOutboundUrl("http://metadata.google.internal../v1/"),
+    ).toMatch(/Blocked/);
   });
 
   // v7.6.2 C2 regression: IPv6 unspecified address bypass.
@@ -364,14 +386,30 @@ describe("validateArgsUrls", () => {
     expect(result).toMatch(/api_url:/);
   });
 
-  // W3: arrays of strings under URL-convention keys
-  it("blocks array of URL strings under 'urls' (wait — 'urls' not in whitelist)", () => {
-    // 'urls' is NOT in the whitelist. Only singular keys are. Document
-    // this as an explicit gap that future schema drift might hit.
+  // v7.6.3 M3 (re-audit): plural URL keys added to the whitelist.
+  // Previously `urls` was not whitelisted and arrays bypassed validation.
+  it("blocks array of URLs under 'urls' (plural — added v7.6.3)", () => {
     const result = validateArgsUrls({
-      urls: ["http://localhost/first", "http://ok.com"],
+      urls: ["https://ok.com", "http://localhost/secret"],
     });
-    expect(result).toBeNull();
+    expect(result).toMatch(/urls\[1\]:/);
+    expect(result).toMatch(/Blocked host: localhost/);
+  });
+
+  it("blocks array under 'endpoints' (plural — added v7.6.3)", () => {
+    const result = validateArgsUrls({
+      endpoints: ["https://api.public.com", "http://10.0.0.5/internal"],
+    });
+    expect(result).toMatch(/endpoints\[1\]:/);
+    expect(result).toMatch(/Blocked private/);
+  });
+
+  it("blocks array under 'pages' (plural — added v7.6.3)", () => {
+    const result = validateArgsUrls({
+      pages: ["http://[::]/admin", "https://ok.com"],
+    });
+    expect(result).toMatch(/pages\[0\]:/);
+    expect(result).toMatch(/Blocked/);
   });
 
   it("blocks bad URL in array under 'url' (singular) key", () => {
