@@ -68,8 +68,10 @@ const EXTRACTION_PROMPT = `Extract 1-3 facts worth remembering from this convers
 Rules:
 - Each fact: one specific, actionable sentence
 - Only facts that would help in FUTURE conversations (not this one)
-- Skip procedural details ("I called tool X", "the file was created")
-- Focus on: user preferences, project decisions, discovered constraints, patterns that worked/failed
+- Focus on: user preferences, project decisions, discovered constraints, new domain knowledge revealed by the user
+- NEVER write facts about which tools were used, tool success rates, runner performance, or workflow patterns of the assistant. Those are system telemetry, not user knowledge, and recalling them poisons future prompts with self-referential guidance.
+- NEVER describe the assistant's own behavior as if it were a user preference ("user has recurring workflow pattern using tool X" is forbidden).
+- Skip procedural details ("I called tool X", "the file was created", "the task completed successfully").
 - If nothing is worth remembering, respond with "NONE"
 
 Format: one fact per line, no numbering, no bullets.`;
@@ -243,9 +245,11 @@ export async function runBackgroundExtraction(
 const CRYSTALLIZATION_PROMPT = `Extract 1-3 LESSONS from this task execution. A lesson is different from a fact — it's about what WORKED, what FAILED, and what to DO DIFFERENTLY next time.
 
 Rules:
-- Each lesson: one actionable sentence
-- Focus on: approaches that succeeded/failed, tool usage patterns, user preferences revealed, mistakes to avoid
-- Skip obvious lessons ("the task completed successfully")
+- Each lesson: one actionable sentence phrased as advice to the assistant
+- Focus on: approach that succeeded or failed (not which tools), constraints the user revealed, surprising edge cases, mistakes to avoid
+- NEVER describe which tools were called or how often. Tool-usage descriptions read as user directives when recalled later and distort future tool selection. Lessons must be about the APPROACH, not the tool inventory.
+- NEVER phrase lessons as "the user uses tools X, Y, Z" or "the task used tools X, Y, Z" — that is telemetry, not a lesson.
+- Skip obvious lessons ("the task completed successfully", "all tools worked")
 - If nothing is worth learning from this execution, respond with "NONE"
 
 Format: one lesson per line, no numbering, no bullets.`;

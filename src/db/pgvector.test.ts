@@ -397,4 +397,113 @@ describe("validateKbEntry", () => {
       }),
     ).toBeNull();
   });
+
+  // ---------------------------------------------------------------------------
+  // 2026-04-14: Tool-narrative rejection — closes the extractor feedback loop
+  // that contributed to task 2378 (Rumi poem delivery gap).
+  // ---------------------------------------------------------------------------
+
+  describe("tool-narrative rejection", () => {
+    it("rejects 'Task X was executed using tools Y, Z'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "A task on 8 new vulnerabilities was executed using web_read and file_read tools",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'used tools: X, Y, Z' listings", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Task involving chat about offer overview used tools: jarvis_file_read, web_search, web_read, jarvis_file_write",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'user has recurring workflow pattern using X'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "User has recurring workflow pattern using file_read, jarvis_file_read, and jarvis_file_write tools",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'patrón recurrente de herramientas'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Usuario tiene patrón recurrente de herramientas para tareas diarias usando web_search",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'N tools at X% success rate'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "30 tools all at 100% success rate; top tools: web_search (89 uses), web_read (67 uses)",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'top tools: X (N uses)' telemetry", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Top tools: web_search (89 uses), jarvis_file_read (64 uses) used in last 7 days",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'Fast runner processed N tasks with X% success'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Fast runner processed 415 tasks with 97.8% success rate over 7 days",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("rejects 'system tools and skills are operating optimally'", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "System tools and skills are operating optimally with no failures this week",
+        }),
+      ).toContain("noise pattern");
+    });
+
+    it("does NOT reject legitimate lesson about tool ORDER (not inventory)", () => {
+      // Approach-level lessons about WHEN/WHY to use a tool are still valid.
+      // Only tool-inventory narratives are rejected.
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "When editing code, always read the file before making an edit — blind edits fail on whitespace mismatches",
+        }),
+      ).toBeNull();
+    });
+
+    it("does NOT reject legitimate user fact that happens to mention a tool name", () => {
+      expect(
+        validateKbEntry({
+          ...validEntry,
+          content:
+            "Fede prefers gdocs_replace over gdocs_write for formatting review because of review history",
+        }),
+      ).toBeNull();
+    });
+  });
 });

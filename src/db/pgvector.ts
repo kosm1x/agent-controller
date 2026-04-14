@@ -76,12 +76,32 @@ export interface SearchResult {
 // Quality gate (SAGE pattern: pre-validation before memory writes)
 // ---------------------------------------------------------------------------
 
-/** Noise patterns that should never be stored as KB entries. */
+/** Noise patterns that should never be stored as KB entries.
+ *
+ *  2026-04-14: Added tool-narrative patterns. The LLM extractor was generating
+ *  "lessons" describing Jarvis's own tool usage ("Task X used tools A, B, C",
+ *  "user has recurring workflow pattern using tool_x", "30 tools at 100%
+ *  success rate"). When these get recalled by enrichment, the LLM reads them
+ *  as user directives ("Fede uses file tools for chat") and reflexively pulls
+ *  those tools on unrelated requests. This was one of the drivers of task 2378
+ *  (the Rumi-poem delivery gap) — the extractor fed back its own tool-use
+ *  observations as if they were user preferences. Mechanical rejection at the
+ *  storage boundary closes the feedback loop regardless of what the extraction
+ *  LLM emits. */
 const NOISE_PATTERNS = [
   /^(user said hi|user greeted|session started|brain online|no action taken)\s*[.!]?$/i,
   /^(hola|hello|hi|gracias|thanks|ok|sí|yes|no)\s*[.!]?$/i,
   /^(buenos días|buenas tardes|buenas noches)\s*[.!]?$/i,
   /^recibido\s*[.!]?$/i,
+  // Tool-narrative rejections — describe tool usage, not user preferences
+  /\b(used tools?|usó herramienta|using tools?|usando herramienta)\b.*[:,]/i,
+  /\brecurring workflow pattern using\b/i,
+  /\bpatrón (recurrente|de uso) de herramientas?\b/i,
+  /\b\d+\s+tools?\s+(all\s+)?at\s+\d+%\s+success/i,
+  /\btop\s+tools?\s*:\s*\w+\s*\(/i,
+  /\b(fast|heavy|swarm)[-\s]?runner\s+processed\s+\d+\s+tasks?\b/i,
+  /\bwas\s+executed\s+(using|with)\b/i,
+  /\bsystem\s+(tools?\s+and\s+)?skills?\s+are\s+operating\b/i,
 ];
 
 /**
