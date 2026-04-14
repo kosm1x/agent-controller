@@ -316,4 +316,146 @@ describe("registerJarvisTools", () => {
     const data = result.data as { count: number; matches: unknown[] };
     expect(Array.isArray(data.matches)).toBe(true);
   });
+
+  // v7.7.1 C2 regression — parameterized hours bind. The previous
+  // `-${hours} hours` interpolation was a latent SQLi trap. Verify that
+  // the query shape still works end-to-end across the whole Zod range.
+  it("jarvis_recent_events respects hours parameter across full range", async () => {
+    // 1-hour window: the seeded event is from datetime('now'), should match
+    const r1 = parseResult(
+      await registry.handlers.get("jarvis_recent_events")!({ hours: 1 }),
+    );
+    expect(r1.ok).toBe(true);
+    expect((r1.data as { count: number }).count).toBe(1);
+
+    // 168-hour window (max per Zod): should also match the single event
+    const r168 = parseResult(
+      await registry.handlers.get("jarvis_recent_events")!({ hours: 168 }),
+    );
+    expect(r168.ok).toBe(true);
+    expect((r168.data as { count: number }).count).toBe(1);
+  });
+
+  it("jarvis_reflector_gap_stats respects days parameter across full range", async () => {
+    // 1-day window: seeded rows are from now, should match
+    const r1 = parseResult(
+      await registry.handlers.get("jarvis_reflector_gap_stats")!({ days: 1 }),
+    );
+    expect(r1.ok).toBe(true);
+    expect((r1.data as { n: number }).n).toBe(10);
+
+    // 30-day window (max per Zod)
+    const r30 = parseResult(
+      await registry.handlers.get("jarvis_reflector_gap_stats")!({ days: 30 }),
+    );
+    expect(r30.ok).toBe(true);
+    expect((r30.data as { n: number }).n).toBe(10);
+  });
+
+  // v7.7.1 M3 regression — secret redaction in jarvis_task_detail.
+  // Operators pasting API keys into task descriptions or tool output
+  // must not leak credentials via the MCP read-only surface.
+  describe("jarvis_task_detail secret redaction (M3)", () => {
+    it("redacts Bearer tokens in description", async () => {
+      db.prepare(
+        "INSERT INTO tasks (task_id, title, description, status, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+      ).run(
+        "t-secret-1",
+        "test",
+        "curl -H 'Authorization: Bearer sk-abcdefghijklmnop1234567890ABCDEF' ...",
+        "completed",
+      );
+      const result = parseResult(
+        await registry.handlers.get("jarvis_task_detail")!({
+          task_id: "t-secret-1",
+        }),
+      );
+      expect(result.ok).toBe(true);
+      const task = (result.data as { task: { description: string } }).task;
+      expect(task.description).not.toContain(
+        "sk-abcdefghijklmnop1234567890ABCDEF",
+      );
+      expect(task.description).toContain("[REDACTED");
+    });
+
+    it("redacts jrvs_ bearer tokens in output", async () => {
+      const realToken = "jrvs_" + "a".repeat(64);
+      db.prepare(
+        "INSERT INTO tasks (task_id, title, description, status, output, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+      ).run(
+        "t-secret-2",
+        "test",
+        "desc",
+        "completed",
+        JSON.stringify({ token: realToken }),
+      );
+      const result = parseResult(
+        await registry.handlers.get("jarvis_task_detail")!({
+          task_id: "t-secret-2",
+        }),
+      );
+      const task = (result.data as { task: { output: string } }).task;
+      expect(task.output).not.toContain(realToken);
+    });
+
+    it("redacts JSON fields named 'api_key'/'password'/'access_token'", async () => {
+      db.prepare(
+        "INSERT INTO tasks (task_id, title, description, status, metadata, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+      ).run(
+        "t-secret-3",
+        "test",
+        "d",
+        "completed",
+        JSON.stringify({
+          api_key: "abc123xyz",
+          password: "hunter2",
+          access_token: "ya29.a0Afh6",
+          harmless: "keep me",
+        }),
+      );
+      const result = parseResult(
+        await registry.handlers.get("jarvis_task_detail")!({
+          task_id: "t-secret-3",
+        }),
+      );
+      const task = (result.data as { task: { metadata: string } }).task;
+      expect(task.metadata).not.toContain("abc123xyz");
+      expect(task.metadata).not.toContain("hunter2");
+      expect(task.metadata).not.toContain("ya29.a0Afh6");
+      expect(task.metadata).toContain("keep me"); // non-secret preserved
+      expect(task.metadata).toContain("[REDACTED]");
+    });
+
+    it("redacts long hex blobs (SHA/HMAC shape)", async () => {
+      const hmac = "a".repeat(64); // 64-char hex
+      db.prepare(
+        "INSERT INTO tasks (task_id, title, description, status, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+      ).run("t-secret-4", "test", `checksum=${hmac} computed`, "completed");
+      const result = parseResult(
+        await registry.handlers.get("jarvis_task_detail")!({
+          task_id: "t-secret-4",
+        }),
+      );
+      const task = (result.data as { task: { description: string } }).task;
+      expect(task.description).not.toContain(hmac);
+      expect(task.description).toContain("[REDACTED_HEX]");
+    });
+  });
+
+  // v7.7.1 M2 regression — generic error + correlation id.
+  // Raw exception messages must NOT leak through the MCP surface.
+  it("jarvis_task_detail error response includes correlation id, not exception message", async () => {
+    // Force an error by closing the DB
+    db.close();
+    const result = parseResult(
+      await registry.handlers.get("jarvis_task_detail")!({
+        task_id: "anything",
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("jarvis_task_detail failed");
+    expect(
+      (result as unknown as { correlation_id: string }).correlation_id,
+    ).toMatch(/^[0-9a-f-]{36}$/);
+  });
 });

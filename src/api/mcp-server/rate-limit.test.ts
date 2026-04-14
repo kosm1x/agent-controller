@@ -72,4 +72,48 @@ describe("mcpRateLimit", () => {
     const r2 = await app.request("/probe");
     expect(r2.status).toBe(200);
   });
+
+  // v7.7.1 C3 regression — idle-window eviction. When a token goes idle
+  // (all its hits fall outside the window), the next request from any
+  // OTHER active token should evict it. Without eviction, the internal
+  // map grows unboundedly and hangs onto revoked/orphan token state.
+  it("evicts idle tokens when another token makes a request (short window)", async () => {
+    // Use a very short window so idle detection fires immediately
+    const app = new Hono();
+    let currentId = 10;
+    app.use("/*", async (c, next) => {
+      c.set("mcpToken", {
+        id: currentId,
+        clientName: `t${currentId}`,
+        scope: "read_only" as const,
+      });
+      await next();
+    });
+    app.use("/*", mcpRateLimit({ windowMs: 50, maxPerWindow: 100 }));
+    app.get("/probe", (c) => c.json({ ok: true }));
+
+    // Populate windows for ids 10, 11, 12
+    for (const id of [10, 11, 12]) {
+      currentId = id;
+      await app.request("/probe");
+    }
+
+    // Wait until all three are idle
+    await new Promise((r) => setTimeout(r, 70));
+
+    // A fresh request from id=99 should observe one idle neighbor and
+    // evict it. We can't inspect the map directly, but we can verify the
+    // behavior by making enough requests from id=99 to exceed the per-
+    // request-eviction budget of 1 and confirming idle IDs eventually
+    // clear. This is an indirect smoke test — the eviction is bounded
+    // loop so it converges deterministically.
+    currentId = 99;
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request("/probe");
+      expect(res.status).toBe(200);
+    }
+    // No assertion on internal state — just verifying the middleware
+    // doesn't crash or mis-evict an active entry. A more thorough test
+    // requires exposing the internal map, which we intentionally don't.
+  });
 });

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { searchFeedback } from "./feedback-grep.js";
@@ -108,5 +108,35 @@ describe("searchFeedback", () => {
     expect(lower.map((r) => r.file).sort()).toEqual(
       upper.map((r) => r.file).sort(),
     );
+  });
+
+  // v7.7.1 M4 regression — symlink refusal. A symlink inside the memory
+  // dir pointing outside of it (or to a sensitive file like /etc/shadow)
+  // must NOT be followed. The filename filter alone is insufficient
+  // because feedback_evil.md can be a symlink.
+  it("refuses to follow symlinked feedback_*.md files", () => {
+    // Create a target file OUTSIDE the fixtureDir with a secret-looking string
+    const otherDir = mkdtempSync(join(tmpdir(), "mcp-symlink-target-"));
+    const secretPath = join(otherDir, "secret.txt");
+    writeFileSync(secretPath, "AUTOREASON_SECRET_MARKER_SHOULD_NOT_LEAK");
+
+    // Place a symlink inside fixtureDir that looks like a legitimate
+    // feedback file but points at the external secret
+    const symPath = join(fixtureDir, "feedback_evil.md");
+    symlinkSync(secretPath, symPath);
+
+    try {
+      const results = searchFeedback({
+        query: "AUTOREASON_SECRET_MARKER",
+        memoryDir: fixtureDir,
+      });
+      // Must not find the marker — the symlinked file should have been skipped
+      expect(results).toHaveLength(0);
+      // And must not list the symlinked filename in any result
+      const files = results.map((r) => r.file);
+      expect(files).not.toContain("feedback_evil.md");
+    } finally {
+      rmSync(otherDir, { recursive: true, force: true });
+    }
   });
 });

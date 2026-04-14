@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS mcp_tokens (
   scope         TEXT NOT NULL DEFAULT 'read_only' CHECK(scope IN ('read_only')),
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at  TEXT,
+  expires_at    TEXT,                                       -- v7.7.1 optional expiry (ISO datetime, NULL = no expiry)
   revoked       INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_tokens_hash ON mcp_tokens(token_hash) WHERE revoked = 0;

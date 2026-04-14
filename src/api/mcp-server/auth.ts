@@ -20,7 +20,10 @@ import { createHash } from "node:crypto";
 import { getDatabase } from "../../db/index.js";
 import type { McpTokenInfo } from "./types.js";
 
-const BEARER_RE = /^Bearer\s+([A-Za-z0-9_-]+)$/;
+// Min length 32 characters — short tokens make probing cheap. Our issuer
+// ("jrvs_" + 64 hex chars) is 69 chars; 32 leaves generous margin for any
+// future issuer shape but rejects trivially short inputs before hashing.
+const BEARER_RE = /^Bearer\s+([A-Za-z0-9_-]{32,})$/;
 
 export function mcpAuth(): MiddlewareHandler {
   return async (c, next) => {
@@ -31,12 +34,22 @@ export function mcpAuth(): MiddlewareHandler {
     }
 
     const tokenHash = createHash("sha256").update(match[1]).digest("hex");
+    // expires_at NULL = no expiry; non-null must be in the future.
     const row = getDatabase()
       .prepare(
-        "SELECT id, client_name, scope FROM mcp_tokens WHERE token_hash = ? AND revoked = 0",
+        `SELECT id, client_name, scope, expires_at
+         FROM mcp_tokens
+         WHERE token_hash = ?
+           AND revoked = 0
+           AND (expires_at IS NULL OR expires_at > datetime('now'))`,
       )
       .get(tokenHash) as
-      | { id: number; client_name: string; scope: "read_only" }
+      | {
+          id: number;
+          client_name: string;
+          scope: "read_only";
+          expires_at: string | null;
+        }
       | undefined;
 
     if (!row) {

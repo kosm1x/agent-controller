@@ -22,8 +22,11 @@
  */
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { randomUUID } from "node:crypto";
+import { logger } from "../../lib/logger.js";
 import { logMcpCall } from "./audit.js";
 import { mcpAuth } from "./auth.js";
 import { mcpRateLimit } from "./rate-limit.js";
@@ -35,6 +38,14 @@ const RATE_LIMIT_MAX = 100;
 
 export function createMcpRouter(deps: McpDeps): Hono {
   const router = new Hono();
+
+  // v7.7.1 W1 fix: explicit CORS policy. v7.7 ships behind a localhost SSH
+  // tunnel so same-origin browser traffic is not expected. Set `origin:
+  // false` so any cross-origin browser request is refused — an attacker
+  // who steals a token from a logged-in operator's machine cannot drive
+  // requests from an attacker-controlled page. If public HTTPS ever lands,
+  // override with an explicit allow-list.
+  router.use("/*", cors({ origin: () => null, credentials: false }));
 
   // Health check — still behind auth so we don't leak any state publicly.
   router.use("/*", mcpAuth());
@@ -69,7 +80,10 @@ export function createMcpRouter(deps: McpDeps): Hono {
   router.post("/", async (c) => {
     const token = c.get("mcpToken");
     const start = Date.now();
-    logMcpCall(deps.db, token, "request_received");
+    const correlationId = randomUUID();
+    logMcpCall(deps.db, token, "request_received", {
+      correlation_id: correlationId,
+    });
 
     try {
       const server = new McpServer(
@@ -88,16 +102,38 @@ export function createMcpRouter(deps: McpDeps): Hono {
       logMcpCall(deps.db, token, "request_completed", {
         duration_ms: Date.now() - start,
         ok: true,
+        correlation_id: correlationId,
       });
       return response;
     } catch (e) {
+      // v7.7.1 M2 fix: generic response + correlation id; full exception
+      // stays in server-side pino logs. Prevents information disclosure
+      // (DB paths, stack-derivable strings, internal state) via the error
+      // message channel while keeping debuggability intact.
       const message = e instanceof Error ? e.message : String(e);
+      logger.error(
+        {
+          correlation_id: correlationId,
+          client_name: token.clientName,
+          token_id: token.id,
+          err: message,
+          stack: e instanceof Error ? e.stack : undefined,
+        },
+        "mcp_dispatch_failed",
+      );
       logMcpCall(deps.db, token, "request_failed", {
         duration_ms: Date.now() - start,
         ok: false,
-        error: message,
+        error: "dispatch_failed",
+        correlation_id: correlationId,
       });
-      return c.json({ error: "mcp_dispatch_failed", message }, 500);
+      return c.json(
+        {
+          error: "mcp_dispatch_failed",
+          correlation_id: correlationId,
+        },
+        500,
+      );
     }
   });
 

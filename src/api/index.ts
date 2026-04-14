@@ -51,13 +51,28 @@ export function createApp(): Hono {
   // Exposes memory / tasks / schedules / feedback / gap-telemetry query tools.
   // Auth: bearer tokens from mcp_tokens table. Rate limit: 100/min/token.
   // Audit: writes to events (category=mcp_call). See project_v77_jarvis_mcp_server.md.
-  if (process.env.JARVIS_MCP_ENABLED === "true") {
+  //
+  // v7.7.1 M6 fix: parse the enable flag leniently. Accepts `true`/`1`/
+  // `yes`/`on` (case-insensitive). The previous exact `=== "true"` check
+  // would silently disable the server if someone set `JARVIS_MCP_ENABLED=1`
+  // (the systemd drop-in's natural convention) — a quiet security toggle
+  // failure. Also log the mount decision at startup so operators can
+  // confirm state via `journalctl -u mission-control | grep mcp`.
+  const mcpEnabled = /^(1|true|yes|on)$/i.test(
+    (process.env.JARVIS_MCP_ENABLED ?? "").trim(),
+  );
+  if (mcpEnabled) {
     const mcpRouter = createMcpRouter({
       db: getDatabase(),
       memory: getMemoryService(),
       startedAt: Date.now(),
     });
     app.route("/mcp", mcpRouter);
+    console.log("[api] Jarvis MCP server mounted at /mcp (JARVIS_MCP_ENABLED)");
+  } else {
+    console.log(
+      "[api] Jarvis MCP server NOT mounted (JARVIS_MCP_ENABLED unset)",
+    );
   }
 
   // All /api/* routes require API key

@@ -8,8 +8,8 @@
  * plenty fast. If it ever matters, cache file list with mtime check.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 const DEFAULT_MEMORY_DIR = "/root/.claude/projects/-root-claude/memory";
 const MAX_FILES = 500;
@@ -47,17 +47,37 @@ export function searchFeedback(
     return [];
   }
 
+  // v7.7.1 M4 fix: resolve memoryDir to a real path once and confine all
+  // file reads to its subtree. Use lstat (never stat) so symlinks are
+  // detected and refused — a symlink inside the memory dir pointing at
+  // /etc/shadow or ~/.aws/credentials must not be followed. Combined with
+  // the startsWith("feedback_") filename filter, this closes the
+  // "confined-directory read" escape path.
+  let memoryRoot: string;
+  try {
+    memoryRoot = realpathSync(resolve(memoryDir));
+  } catch {
+    return [];
+  }
+
   const candidates = entries
     .filter((name) => name.startsWith("feedback_") && name.endsWith(".md"))
     .slice(0, MAX_FILES);
 
   const matches: FeedbackMatch[] = [];
   for (const name of candidates) {
-    const path = join(memoryDir, name);
+    const path = join(memoryRoot, name);
     let content: string;
     try {
-      const stat = statSync(path);
-      if (!stat.isFile()) continue;
+      // lstat — do not follow symlinks. A symlink (even to a regular file)
+      // is refused because it could escape the memoryRoot confinement.
+      const stat = lstatSync(path);
+      if (!stat.isFile()) continue; // symlinks return false for isFile()
+      // Defense-in-depth: verify the realpath is still inside memoryRoot
+      // before reading. Guards against TOCTOU if the directory is modified
+      // between readdirSync and lstatSync.
+      const real = realpathSync(path);
+      if (real !== path && !real.startsWith(memoryRoot + "/")) continue;
       content = readFileSync(path, "utf-8");
     } catch {
       continue;

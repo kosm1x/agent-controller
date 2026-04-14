@@ -16,8 +16,11 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { logger } from "../../lib/logger.js";
 import { searchFeedback } from "./feedback-grep.js";
+import { redactDeep } from "./redact.js";
 import type { McpDeps } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -36,12 +39,56 @@ function ok(data: unknown): ToolResult {
   };
 }
 
-function err(message: string): ToolResult {
+/**
+ * Tool error with correlation id. The raw exception stays in server-side
+ * logs; the client only sees a generic code + correlation id for support.
+ * This closes the "exception-message information disclosure" gap (v7.7.1
+ * audit finding M2) without making debugging impossible.
+ */
+function toolErr(toolName: string, e: unknown): ToolResult {
+  const correlationId = randomUUID();
+  logger.error(
+    {
+      tool: toolName,
+      correlation_id: correlationId,
+      err: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+    },
+    "mcp_tool_failed",
+  );
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ ok: false, error: message }, null, 2),
+        text: JSON.stringify(
+          {
+            ok: false,
+            error: `${toolName} failed`,
+            correlation_id: correlationId,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+}
+
+/**
+ * Shape a user-facing "not found" / "bad input" error. These are NOT
+ * logged at error level because they're expected outcomes, but they
+ * still carry a correlation id for consistency with toolErr.
+ */
+function clientErr(toolName: string, reason: string): ToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          { ok: false, error: `${toolName}: ${reason}` },
+          null,
+          2,
+        ),
       },
     ],
   };
@@ -101,9 +148,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           nodeVersion: process.version,
         });
       } catch (e) {
-        return err(
-          `jarvis_status failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_status", e);
       }
     },
   );
@@ -184,9 +229,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
 
         return ok({ count: rows.length, tasks: rows });
       } catch (e) {
-        return err(
-          `jarvis_task_list failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_task_list", e);
       }
     },
   );
@@ -214,7 +257,10 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           .get(args.task_id);
 
         if (!row) {
-          return err(`task not found: ${args.task_id}`);
+          return clientErr(
+            "jarvis_task_detail",
+            `task not found: ${args.task_id}`,
+          );
         }
 
         // Best-effort subtask lookup — not every task has children.
@@ -224,11 +270,17 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           )
           .all(args.task_id);
 
-        return ok({ task: row, subtasks: children });
+        // v7.7.1 M3 fix: redact secrets before returning. `input`, `output`,
+        // `metadata`, `error` columns can contain API keys, OAuth tokens,
+        // bearer credentials pasted by the user or captured from tool output.
+        // The read_only scope label is not a confidentiality guarantee — a
+        // stolen bearer token should not hand back the full credential corpus.
+        return ok({
+          task: redactDeep(row),
+          subtasks: redactDeep(children),
+        });
       } catch (e) {
-        return err(
-          `jarvis_task_detail failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_task_detail", e);
       }
     },
   );
@@ -273,9 +325,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           items,
         });
       } catch (e) {
-        return err(
-          `jarvis_memory_query failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_memory_query", e);
       }
     },
   );
@@ -310,9 +360,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           .all();
         return ok({ count: (rows as unknown[]).length, schedules: rows });
       } catch (e) {
-        return err(
-          `jarvis_schedule_list failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_schedule_list", e);
       }
     },
   );
@@ -356,10 +404,13 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
       try {
         const hours = args.hours ?? 24;
         const limit = args.limit ?? 50;
-        const clauses: string[] = [
-          `timestamp >= datetime('now','-${hours} hours')`,
-        ];
-        const params: unknown[] = [];
+        // v7.7.1 C2 fix: bind the hours window as a SQL parameter instead
+        // of interpolating into the query string. Zod already constrains
+        // `hours` to a positive int, but the previous `-${hours} hours`
+        // pattern was a latent SQLi trap — one schema relaxation and the
+        // authenticated endpoint becomes an injection vector.
+        const clauses: string[] = ["timestamp >= datetime('now', ?)"];
+        const params: unknown[] = [`-${hours} hours`];
         if (args.category) {
           clauses.push("category = ?");
           params.push(args.category);
@@ -382,9 +433,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           events: rows,
         });
       } catch (e) {
-        return err(
-          `jarvis_recent_events failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_recent_events", e);
       }
     },
   );
@@ -410,6 +459,9 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
     async (args) => {
       try {
         const days = args.days ?? 7;
+        // v7.7.1 C2 fix: parameterize the window — same reasoning as
+        // jarvis_recent_events. Zod constrains `days` but the interpolated
+        // pattern is a latent trap.
         const row = deps.db
           .prepare(
             `SELECT
@@ -419,9 +471,9 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
                SUM(CASE WHEN abs_diff > 0.25 THEN 1 ELSE 0 END)      AS wide_gap_count,
                SUM(CASE WHEN llm_available = 0 THEN 1 ELSE 0 END)    AS llm_fallback_count
              FROM reflector_gap_log
-             WHERE created_at >= datetime('now', '-${days} days')`,
+             WHERE created_at >= datetime('now', ?)`,
           )
-          .get() as {
+          .get(`-${days} days`) as {
           n: number;
           avg_gap: number | null;
           max_gap: number | null;
@@ -455,9 +507,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
                     : "skip tournament",
         });
       } catch (e) {
-        return err(
-          `jarvis_reflector_gap_stats failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_reflector_gap_stats", e);
       }
     },
   );
@@ -491,9 +541,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
         });
         return ok({ count: results.length, matches: results });
       } catch (e) {
-        return err(
-          `jarvis_feedback_search failed: ${e instanceof Error ? e.message : e}`,
-        );
+        return toolErr("jarvis_feedback_search", e);
       }
     },
   );

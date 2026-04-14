@@ -32,12 +32,18 @@ export function mcpRateLimit(options: RateLimitOptions): MiddlewareHandler {
     const now = Date.now();
     const cutoff = now - windowMs;
     const hits = windows.get(token.id) ?? [];
+    // filter() preserves insertion order, and we only push monotonically
+    // increasing `now` values, so `recent` is always ascending. recent[0]
+    // is therefore the oldest hit in the active window.
     const recent = hits.filter((t) => t > cutoff);
 
     if (recent.length >= maxPerWindow) {
       const oldest = recent[0];
       const retryAfterSec = Math.ceil((oldest + windowMs - now) / 1000);
       c.header("Retry-After", String(Math.max(1, retryAfterSec)));
+      // Persist the filtered array so evicted timestamps don't
+      // accumulate on a rate-limited token.
+      windows.set(token.id, recent);
       return c.json(
         {
           error: "rate_limit_exceeded",
@@ -51,6 +57,21 @@ export function mcpRateLimit(options: RateLimitOptions): MiddlewareHandler {
 
     recent.push(now);
     windows.set(token.id, recent);
+
+    // Idle-window eviction: whenever we touch a token's window we also
+    // sweep one OTHER token whose window is now fully drained. This keeps
+    // the map bounded proportional to active tokens instead of all tokens
+    // that have ever authenticated — the map no longer grows unboundedly
+    // after `mc-ctl mcp-token revoke` or after clients go idle.
+    for (const [otherId, otherHits] of windows) {
+      if (otherId === token.id) continue;
+      const hasActive = otherHits.some((t) => t > cutoff);
+      if (!hasActive) {
+        windows.delete(otherId);
+        break;
+      }
+    }
+
     await next();
     return;
   };

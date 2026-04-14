@@ -11,6 +11,7 @@
  */
 
 import type { Database } from "better-sqlite3";
+import { logger } from "../../lib/logger.js";
 import type { McpTokenInfo } from "./types.js";
 
 type AuditType = "request_received" | "request_completed" | "request_failed";
@@ -19,6 +20,7 @@ export interface AuditPayload {
   duration_ms?: number;
   ok?: boolean;
   error?: string;
+  correlation_id?: string;
 }
 
 export function logMcpCall(
@@ -30,7 +32,7 @@ export function logMcpCall(
   try {
     db.prepare(
       `INSERT INTO events (id, type, category, timestamp, workspace_id, data, correlation_id)
-       VALUES (?, ?, 'mcp_call', datetime('now'), 'default', ?, '')`,
+       VALUES (?, ?, 'mcp_call', datetime('now'), 'default', ?, ?)`,
     ).run(
       crypto.randomUUID(),
       type,
@@ -39,8 +41,20 @@ export function logMcpCall(
         token_id: token.id,
         ...payload,
       }),
+      payload.correlation_id ?? "",
     );
-  } catch {
-    // Audit writes are non-fatal telemetry; never block a request on this.
+  } catch (e) {
+    // Audit writes must never block a request — but silent failure means a
+    // broken audit pipe (disk full, schema drift, DB busy) is undetectable.
+    // Escalate to pino so operators see it in journalctl / logs.
+    logger.error(
+      {
+        err: e instanceof Error ? e.message : String(e),
+        type,
+        token_id: token.id,
+        client_name: token.clientName,
+      },
+      "mcp_audit_write_failed",
+    );
   }
 }

@@ -1114,18 +1114,40 @@ cmd_mcp_token() {
 
   case "$subcmd" in
     create)
-      # Args: --client <name>
+      # Args: --client <name> [--expires-in-days N]
       local client_name=""
+      local expires_in_days=""
       while [ $# -gt 0 ]; do
         case "$1" in
           --client) client_name="$2"; shift 2 ;;
+          --expires-in-days) expires_in_days="$2"; shift 2 ;;
           *) echo -e "${RED}Unknown flag:${NC} $1"; exit 1 ;;
         esac
       done
       if [ -z "$client_name" ]; then
         echo -e "${RED}Error:${NC} --client <name> is required"
-        echo "  Usage: mc-ctl mcp-token create --client <name>"
+        echo "  Usage: mc-ctl mcp-token create --client <name> [--expires-in-days N]"
         exit 1
+      fi
+
+      # v7.7.1 C1 fix: strict whitelist on client_name. Previously a single
+      # sed "s/'/''/g" pass was the only SQLi defense, which relied on
+      # sql_raw's transport quirks — a backslash, newline, or unusual
+      # whitespace could still break out. Whitelisting to
+      # [A-Za-z0-9_.-]{1,64} is the poka-yoke: the name is a label, not
+      # arbitrary text, and any real operator client fits this pattern.
+      if ! [[ "$client_name" =~ ^[A-Za-z0-9_.-]{1,64}$ ]]; then
+        echo -e "${RED}Error:${NC} --client must match ^[A-Za-z0-9_.-]{1,64}\$"
+        echo "  (letters, digits, underscore, dot, hyphen; 1-64 chars)"
+        exit 1
+      fi
+
+      # v7.7.1 W2: validate --expires-in-days if supplied
+      if [ -n "$expires_in_days" ]; then
+        if ! [[ "$expires_in_days" =~ ^[0-9]+$ ]] || [ "$expires_in_days" -lt 1 ] || [ "$expires_in_days" -gt 3650 ]; then
+          echo -e "${RED}Error:${NC} --expires-in-days must be an integer 1-3650"
+          exit 1
+        fi
       fi
 
       # Generate a cryptographically random 32-byte token, hex-encoded with a
@@ -1136,30 +1158,50 @@ cmd_mcp_token() {
       local token_hash
       token_hash=$(printf '%s' "$raw_token" | sha256sum | awk '{print $1}')
 
+      local expires_clause="NULL"
+      if [ -n "$expires_in_days" ]; then
+        expires_clause="datetime('now', '+${expires_in_days} days')"
+      fi
+
       local insert_result
-      insert_result=$(sql_raw "INSERT INTO mcp_tokens (token_hash, client_name, scope) VALUES ('$token_hash', '$(printf '%s' "$client_name" | sed "s/'/''/g")', 'read_only') RETURNING id;" 2>&1)
+      insert_result=$(sql_raw "INSERT INTO mcp_tokens (token_hash, client_name, scope, expires_at) VALUES ('$token_hash', '$client_name', 'read_only', $expires_clause) RETURNING id;" 2>&1)
       if [ -z "$insert_result" ] || [[ "$insert_result" == *"Error"* ]]; then
         echo -e "${RED}Failed to create token:${NC} $insert_result"
         exit 1
       fi
 
+      # v7.7.1 W4 fix: cleaner output hygiene. Print the bearer token on
+      # its own line without the inline JSON config snippet that operators
+      # tend to copy to clipboards/screenshots. The config snippet is now
+      # printed with the token placeholder removed — operators paste the
+      # token into the headers field manually, which makes accidental
+      # sharing less likely.
       echo ""
       echo -e "${BOLD}Jarvis MCP token created${NC}"
       echo -e "  ID:        ${GREEN}${insert_result}${NC}"
       echo -e "  Client:    ${client_name}"
       echo -e "  Scope:     read_only"
+      if [ -n "$expires_in_days" ]; then
+        echo -e "  Expires:   in ${expires_in_days} days"
+      else
+        echo -e "  Expires:   never (consider --expires-in-days for rotation)"
+      fi
       echo ""
-      echo -e "${YELLOW}Bearer token (shown ONCE — save it now, it cannot be retrieved):${NC}"
+      echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+      echo -e "${YELLOW}BEARER TOKEN (shown ONCE — save it now, it cannot be retrieved):${NC}"
+      echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
       echo ""
-      echo "  $raw_token"
+      echo "$raw_token"
       echo ""
-      echo -e "${DIM}Add to your Claude Code MCP config:${NC}"
-      echo '  {"mcpServers": {"jarvis": {"type": "http", "url": "http://localhost:'"${MC_PORT:-3030}"'/mcp", "headers": {"Authorization": "Bearer '"$raw_token"'"}}}}'
+      echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+      echo ""
+      echo -e "${DIM}Claude Code MCP config template — paste the token above into headers.Authorization:${NC}"
+      echo '  {"mcpServers": {"jarvis": {"type": "http", "url": "http://localhost:'"${MC_PORT:-3030}"'/mcp", "headers": {"Authorization": "Bearer <PASTE_TOKEN_HERE>"}}}}'
       ;;
 
     list)
       echo -e "\n${BOLD}Jarvis MCP tokens${NC}\n"
-      sql_raw "SELECT id, client_name, scope, created_at, COALESCE(last_used_at, '—') AS last_used, CASE revoked WHEN 1 THEN 'REVOKED' ELSE 'active' END AS status FROM mcp_tokens ORDER BY id DESC;"
+      sql_raw "SELECT id, client_name, scope, created_at, COALESCE(last_used_at, '—') AS last_used, COALESCE(expires_at, 'never') AS expires, CASE revoked WHEN 1 THEN 'REVOKED' WHEN 0 THEN (CASE WHEN expires_at IS NOT NULL AND expires_at <= datetime('now') THEN 'EXPIRED' ELSE 'active' END) END AS status FROM mcp_tokens ORDER BY id DESC;"
       ;;
 
     revoke)
@@ -1169,6 +1211,12 @@ cmd_mcp_token() {
         echo "  Usage: mc-ctl mcp-token revoke <id>"
         exit 1
       fi
+      # v7.7.1 m7 fix: strict integer validation. Previously `mc-ctl
+      # mcp-token revoke "1 OR 1=1"` would silently revoke every token.
+      if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error:${NC} token id must be a positive integer"
+        exit 1
+      fi
       sql_raw "UPDATE mcp_tokens SET revoked = 1 WHERE id = $id;"
       echo -e "${GREEN}[OK]${NC} Token $id revoked"
       ;;
@@ -1176,9 +1224,9 @@ cmd_mcp_token() {
     ""|help|--help|-h)
       echo "Usage: mc-ctl mcp-token <create|list|revoke>"
       echo ""
-      echo "  create --client <name>   Generate a new read-only bearer token"
-      echo "  list                     List all tokens (active + revoked)"
-      echo "  revoke <id>              Revoke a token by id"
+      echo "  create --client <name> [--expires-in-days N]   Generate a new read-only bearer token"
+      echo "  list                                            List all tokens (active + revoked + expired)"
+      echo "  revoke <id>                                     Revoke a token by id"
       ;;
 
     *)
