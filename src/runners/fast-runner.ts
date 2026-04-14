@@ -557,6 +557,44 @@ export function detectsHallucinatedExecution(
     }
   }
 
+  // --- Layer 4b: Directive-cooldown claim mismatch ---
+  // SG4 enforces a 48h cooldown on jarvis_propose_directive. The LLM "knows"
+  // the safeguard exists and will sometimes narrate specific cooldown timing
+  // ("próxima propuesta en ~15h", "33h ago", "Next allowed in 14.6h") without
+  // actually calling the tool to verify. That's a hallucination even when the
+  // numbers happen to be close — the process is wrong. Flag and retry so the
+  // LLM is forced to call jarvis_propose_directive and echo its real response.
+  const calledProposeDirective = toolsCalled.includes(
+    "jarvis_propose_directive",
+  );
+  if (!calledProposeDirective) {
+    const claimsDirectiveCooldown =
+      /\bcooldown\s+(?:active|activo|activa)\b/i.test(text) ||
+      /\b(?:pr[oó]xima|next)\s+(?:propuesta|proposal)\s+(?:disponible\s+)?(?:en|in)\s+~?\d/i.test(
+        text,
+      ) ||
+      /\bpropuesta\s+(?:de\s+directiva\s+)?en\s+(?:cola|cooldown)\b/i.test(
+        text,
+      ) ||
+      /\bnext\s+allowed\s+in\s+\d/i.test(text) ||
+      /\blast\s+proposal\s+was\s+\d/i.test(text) ||
+      /\b(?:cooldown|propuesta|directiv)[^.\n]{0,80}\bquedan\s+\d+(?:\.\d+)?\s*h\b/i.test(
+        text,
+      ) ||
+      /\bquedan\s+\d+(?:\.\d+)?\s*h\b[^.\n]{0,80}\b(?:propuesta|cooldown|directiv)/i.test(
+        text,
+      ) ||
+      /\b(?:propuesta|directiv)[^.\n]{0,60}\b\d+(?:\.\d+)?\s*h\s+(?:restantes?|ago)/i.test(
+        text,
+      );
+    if (claimsDirectiveCooldown) {
+      console.log(
+        `[fast-runner] Directive cooldown hallucination: narrates SG4 state but jarvis_propose_directive not called. Tools: [${toolsCalled.join(", ")}]`,
+      );
+      return true;
+    }
+  }
+
   // --- Layer 3b: Completion claims (only fire when NO write tools called) ---
   // "acabo de actualizar", "he verificado", "just updated" are legitimate when
   // the LLM actually called write tools. Only flag when tools weren't called.

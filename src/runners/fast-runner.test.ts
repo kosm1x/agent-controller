@@ -565,6 +565,53 @@ describe("Layer 4: domain-specific claim mismatch (git claims without git tools)
   });
 });
 
+describe("Layer 4b: directive cooldown claim mismatch (SG4)", () => {
+  it("detects Spanish cooldown timing narrative without jarvis_propose_directive", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El sistema de propuestas está en cooldown (próxima disponible en ~15h). Propuesta de directiva en cola — la envío cuando se libere.",
+        ["jarvis_file_write", "project_list"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects English cooldown tool-response echo without jarvis_propose_directive", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Cooldown active. Last proposal was 33.2h ago. Next allowed in 14.8h.",
+        ["jarvis_file_write"],
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'quedan Xh' phrasing near propuesta without tool call", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "El cooldown es real — 48h entre propuestas, quedan 14.8h.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("allows cooldown narrative when jarvis_propose_directive was actually called", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Cooldown active. Last proposal was 33.4h ago. Next allowed in 14.6h. Lo re-propongo mañana.",
+        ["jarvis_propose_directive"],
+      ),
+    ).toBe(false);
+  });
+
+  it("does not false-positive on abstract SG4 explanation without numeric state", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "SG4 es un safeguard que limita cuántas directivas puedo proponer por ventana de tiempo.",
+        ["jarvis_file_read"],
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("hasUserConfirmedDeletion", () => {
   it("returns true when assistant asked and user confirmed (Spanish)", () => {
     expect(
