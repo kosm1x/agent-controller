@@ -78,20 +78,26 @@
 
 ---
 
-## v7.6 — Workspace Expansion (gws CLI dispatch tool) — **Planned**
+## v7.6 — Workspace Expansion (gws CLI dispatch tool) — **Done**
 
-> Infrastructure unblocker. Pre-plan: `project_v76_workspace_expansion.md`. 1 session. Ships after autoreason Phase 2 decision.
+> Infrastructure unblocker. Pre-plan: `project_v76_workspace_expansion.md`. Shipped 2026-04-14 (session 66), ~3 hours. First Tier C session complete.
 
-| Item                                                                                                                                   | Source              | Status      |
-| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----------- |
-| Install `gws` binary on VPS (cargo install or prebuilt release) + add to deploy script                                                 | googleworkspace/cli | **Planned** |
-| Token plumbing — inject existing OAuth access token via `GOOGLE_WORKSPACE_CLI_TOKEN` env per subprocess exec, reuse our refresh flow   | v7.6 plan           | **Planned** |
-| New dispatch tool `google_workspace_cli({service, resource, method, params?, json?, page_all?})` → subprocess exec + JSON parse        | v7.6 plan           | **Planned** |
-| Scope gating — only expose when `google_workspace_ext` scope active (chat, tasks, forms, meet, classroom, events, apps script, people) | scope.ts pattern    | **Planned** |
-| Error normalization — gws exit codes → `{ok, content, error}` envelope                                                                 | —                   | **Planned** |
-| Tool description teaching Discovery pattern with 3-4 examples (chat.spaces.messages.create, tasks.tasks.insert, people, forms)         | —                   | **Planned** |
-| Tests: success path, pagination, token injection, error path, unknown method, timeout (6-8 tests)                                      | —                   | **Planned** |
-| Steal: timezone-from-Calendar-Settings-API pattern → `google-calendar.ts` (independent lift)                                           | gws architecture    | **Planned** |
+| Item                                                                                                                                                                                          | Source                         | Status       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------ |
+| Install `gws` v0.22.5 prebuilt linux-x86_64 binary (SHA256 verified) → `/usr/local/bin/gws`                                                                                                   | googleworkspace/cli            | **Done**     |
+| Token plumbing — inject cached access token from `getAccessToken()` via `GOOGLE_WORKSPACE_CLI_TOKEN` env per exec, refresh before call                                                        | `src/google/auth.ts`           | **Done**     |
+| New dispatch tool `google_workspace_cli({service, resource, method, params?, json?, page_all?, timeout_ms?})` — deferred, zod schema                                                          | v7.6 plan                      | **Done**     |
+| Scope gating — added to `GOOGLE_TOOLS` array; google regex broadened to catch chat/tasks/forms/meet/classroom/keep/people/etc.                                                                | `src/messaging/scope.ts`       | **Done**     |
+| Registered in `BuiltinToolSource` behind `GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_REFRESH_TOKEN` env gate                                                                            | `src/tools/sources/builtin.ts` | **Done**     |
+| Added to `WRITE_TOOLS` in fast-runner — classified write-capable because `method` accepts create/update/patch/delete                                                                          | `src/runners/fast-runner.ts`   | **Done**     |
+| Error normalization — exit codes → `{ok, error, exitCode}`; token redaction on stderr/stdout                                                                                                  | —                              | **Done**     |
+| NDJSON pagination parser + argv builder (dot-split nested resources); 2 MiB stdout cap + 30s default timeout                                                                                  | —                              | **Done**     |
+| Tool description ~600 tokens with 4 canonical examples (chat/tasks/people/forms) + `--help` introspection pattern                                                                             | ACI principles                 | **Done**     |
+| Tests: 12 mocked cases via `vi.hoisted()` — success/error/pagination/token-injection/timeout/unconfigured/refresh-fail/parse-fail/token-redaction/empty-field/empty-resource/argv-correctness | feedback_vitest_mocking        | **Done**     |
+| **Hardening add-on**: closed `screenshot_element` SSRF gap (added `validateOutboundUrl()` call before `page.goto()`) + 2 new tests (file://, localhost)                                       | V7 Known Issues                | **Done**     |
+| Live smoke test: real `tasks.tasklists.list` call via compiled `BuiltinToolSource` against Google Tasks API — returned "My Tasks" tasklist                                                    | —                              | **Done**     |
+| DEFERRED to v7.6.1 follow-up: full `@playwright/mcp` ToolSource wrapper (larger architectural change, separate session)                                                                       | V7 Known Issues                | **Deferred** |
+| Steal: timezone-from-Calendar-Settings-API pattern → `google-calendar.ts` (independent lift)                                                                                                  | gws architecture               | **Deferred** |
 
 ---
 
@@ -516,6 +522,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 See [V7-READINESS-CRITERIA.md](./V7-READINESS-CRITERIA.md) for go/no-go criteria per tier.
 
 ---
+
 ## Appendix: F-Series Technical Reference
 
 > The remaining sections describe the Financial Stack architecture, data model, tool surfaces, indicator/signal APIs, paper trading, backtester, macro regime, rituals, delivery format, and production hardening. Content is stable from the original V7-FINANCIAL-STACK.md draft — this is the implementation reference when Tier A (F-series) sessions begin.

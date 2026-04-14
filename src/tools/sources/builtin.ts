@@ -142,6 +142,7 @@ import { seoKeywordResearchTool } from "../builtin/seo-keyword-research.js";
 import { seoMetaGenerateTool } from "../builtin/seo-meta-generate.js";
 import { seoSchemaGenerateTool } from "../builtin/seo-schema-generate.js";
 import { seoContentBriefTool } from "../builtin/seo-content-brief.js";
+import { googleWorkspaceCliTool } from "../builtin/google-workspace-cli.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -242,6 +243,12 @@ const SOCIAL_TOOLS: Tool[] = [
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured
 const CRM_TOOLS: Tool[] = [crmQueryTool];
 
+// Google Workspace CLI dispatch tool — registered when GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN
+// are configured. v7.6 infrastructure unblocker for Chat, Tasks, People, Forms,
+// Meet, Classroom, Admin Reports, Apps Script, Keep, Workspace Events. Per-call
+// token injection via getAccessToken() — no parallel credential store.
+const GWS_TOOLS: Tool[] = [googleWorkspaceCliTool];
+
 // WordPress tools — conditionally registered when WP_SITES is configured
 const WP_TOOLS: Tool[] = [
   wpListPostsTool,
@@ -295,6 +302,20 @@ export class BuiltinToolSource implements ToolSource {
         registry.register(tool);
       }
       registered.push(...SOCIAL_TOOLS.map((t) => t.name));
+    }
+
+    // Register gws dispatch tool only when Google OAuth is configured.
+    // The tool re-checks at call time via isGoogleConfigured() — the env
+    // gate here just hides it from the inventory entirely when missing.
+    if (
+      process.env.GOOGLE_CLIENT_ID &&
+      process.env.GOOGLE_CLIENT_SECRET &&
+      process.env.GOOGLE_REFRESH_TOKEN
+    ) {
+      for (const tool of GWS_TOOLS) {
+        registry.register(tool);
+      }
+      registered.push(...GWS_TOOLS.map((t) => t.name));
     }
 
     return registered;

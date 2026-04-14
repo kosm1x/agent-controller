@@ -12,6 +12,7 @@
 import { join } from "path";
 import { mkdirSync } from "fs";
 import type { Tool } from "../types.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
 
 const SCREENSHOT_DIR = "/tmp/screenshots";
 
@@ -80,6 +81,17 @@ WORKFLOW for video content:
   async execute(args: Record<string, unknown>): Promise<string> {
     const url = args.url as string;
     if (!url) return JSON.stringify({ error: "url is required" });
+
+    // SSRF protection: block file://, private IPs, metadata endpoints,
+    // non-HTTP schemes. Previously missing from this tool — see
+    // V7-READINESS-CRITERIA.md "Known Issues" (v7.6 hardening, day 5 of
+    // validation window). Playwright's own protocol allowlist catches
+    // file:// but NOT http://localhost:* / RFC1918 ranges, which would
+    // let an LLM with screenshot access hit Grafana / Prometheus / etc.
+    const urlError = validateOutboundUrl(url);
+    if (urlError) {
+      return JSON.stringify({ error: urlError, url });
+    }
 
     const selector = (args.selector as string) || "body";
     const width = Math.min(1920, Math.max(320, Number(args.width) || 1080));

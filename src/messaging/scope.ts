@@ -53,6 +53,11 @@ export const GOOGLE_TOOLS = [
   "gslides_read",
   "gslides_create",
   "gtasks_create",
+  // v7.6: gws CLI dispatch tool for Workspace services without a dedicated
+  // handler (Chat, Tasks, People, Forms, Meet, Classroom, Admin Reports,
+  // Apps Script, Keep, Workspace Events, Model Armor). Deferred — schema
+  // loads on first call to preserve prompt budget.
+  "google_workspace_cli",
 ];
 
 /** Coding/file tools — only when code/files are the topic. */
@@ -282,7 +287,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(emails?|correos?|mails?|gmail|calendar|agenda|eventos?|citas?|reuni[oó]n|drive|g?docs?|g?sheets?|document[oa]?s?|hojas?|slides?|present|google|spreadsheet)/i,
+      /\b(emails?|correos?|mails?|gmail|calendar|agenda|eventos?|citas?|reuni[oó]n|drive|g?docs?|g?sheets?|document[oa]?s?|hojas?|slides?|present|google|spreadsheet|google\s*chat|google\s*tasks?|google\s*forms?|google\s*meet|google\s*keep|google\s*people|google\s*classroom|apps\s*script|workspace\s*events?|google\s*admin|admin\s*reports?|contactos?\s*google)/i,
     group: "google",
   },
   {

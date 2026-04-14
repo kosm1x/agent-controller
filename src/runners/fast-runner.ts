@@ -274,6 +274,12 @@ export const WRITE_TOOLS = new Set([
   "gdocs_replace",
   "gslides_create",
   "gtasks_create",
+  // v7.6 gws dispatch: classified as write-capable because the `method`
+  // param can be create/update/patch/delete. The hallucination guard will
+  // flag any success claim that didn't actually invoke it. For read-only
+  // LLM calls (method=list/get), the false-positive cost is minimal — the
+  // tool still runs, it just gets tracked in the write-capable set.
+  "google_workspace_cli",
   // File system
   "file_write",
   "file_edit",

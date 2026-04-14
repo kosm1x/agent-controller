@@ -47,4 +47,23 @@ describe("screenshot_element tool definition", () => {
     const parsed = JSON.parse(result);
     expect(parsed.error).toContain("url is required");
   });
+
+  it("rejects file:// URLs before launching Playwright", async () => {
+    const { screenshotElementTool } = await import("./screenshot.js");
+    const result = await screenshotElementTool.execute({
+      url: "file:///etc/passwd",
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toMatch(/Blocked/);
+    expect(parsed.url).toBe("file:///etc/passwd");
+  });
+
+  it("rejects private IP URLs before launching Playwright (SSRF guard)", async () => {
+    const { screenshotElementTool } = await import("./screenshot.js");
+    const result = await screenshotElementTool.execute({
+      url: "http://127.0.0.1:3000/api/internal",
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toMatch(/Blocked/);
+  });
 });
