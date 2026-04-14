@@ -11,6 +11,11 @@ vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
 }));
 
+// Force openai path — SDK path covered by claude-sdk.test.ts.
+vi.mock("../config.js", () => ({
+  getConfig: () => ({ inferencePrimaryProvider: "openai" }),
+}));
+
 vi.mock("../db/knowledge-maps.js", () => ({
   searchMaps: vi.fn(() => []),
   getNodes: vi.fn(() => []),

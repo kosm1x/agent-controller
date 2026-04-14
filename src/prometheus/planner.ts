@@ -7,11 +7,21 @@
 
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
+import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
+import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson } from "./types.js";
 import type { TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
+
+// v7.9 Prometheus Sonnet port: route LLM calls through the Claude Agent SDK
+// when the primary provider is claude-sdk. Matches the fast-runner branch in
+// fast-runner.ts so heavy tasks get the same reasoning quality as chat tasks.
+// Rollback: set INFERENCE_PRIMARY_PROVIDER=openai (systemd drop-in, zero LOC).
+function useSdkPath(): boolean {
+  return getConfig().inferencePrimaryProvider === "claude-sdk";
+}
 
 // ---------------------------------------------------------------------------
 // System prompts
@@ -144,7 +154,9 @@ export async function plan(
     },
   ];
 
-  const response = await infer({ messages, temperature: 0.4 });
+  const response = useSdkPath()
+    ? await queryClaudeSdkAsInfer(messages)
+    : await infer({ messages, temperature: 0.4 });
   const content = response.content ?? "";
   return {
     graph: parseGoalGraph(content),
@@ -174,7 +186,9 @@ export async function replan(
     },
   ];
 
-  const response = await infer({ messages, temperature: 0.4 });
+  const response = useSdkPath()
+    ? await queryClaudeSdkAsInfer(messages)
+    : await infer({ messages, temperature: 0.4 });
   return {
     graph: parseGoalGraph(response.content ?? ""),
     usage: {

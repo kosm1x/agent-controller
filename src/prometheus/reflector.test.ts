@@ -12,6 +12,12 @@ vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
 }));
 
+// Force the openai/qwen path so the mocked infer() is exercised.
+// The SDK path is covered by claude-sdk.test.ts.
+vi.mock("../config.js", () => ({
+  getConfig: () => ({ inferencePrimaryProvider: "openai" }),
+}));
+
 vi.mock("../db/knowledge-maps.js", () => ({
   searchMaps: vi.fn(() => []),
   getNodes: vi.fn(() => []),

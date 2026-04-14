@@ -8,6 +8,11 @@
 
 import { infer, inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
+import {
+  queryClaudeSdkAsInfer,
+  queryClaudeSdkAsInferWithTools,
+} from "../inference/claude-sdk.js";
+import { getConfig } from "../config.js";
 import { toolRegistry } from "../tools/registry.js";
 import { GoalGraph } from "./goal-graph.js";
 import { IterationBudget } from "./budget.js";
@@ -19,6 +24,11 @@ import {
   classifySources,
   condenseSearchResults,
 } from "./provenance.js";
+
+// v7.9 Prometheus Sonnet port — see planner.ts for the rationale.
+function useSdkPath(): boolean {
+  return getConfig().inferencePrimaryProvider === "claude-sdk";
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -117,13 +127,13 @@ export async function selfAssess(
     `## Goal Output\n${resultText.length > 2000 ? resultText.slice(0, 2000) + "..." : resultText}`;
 
   try {
-    const response = await infer({
-      messages: [
-        { role: "system", content: SELF_ASSESS_SYSTEM },
-        { role: "user", content: userContent },
-      ],
-      temperature: 0.1,
-    });
+    const selfAssessMessages: ChatMessage[] = [
+      { role: "system", content: SELF_ASSESS_SYSTEM },
+      { role: "user", content: userContent },
+    ];
+    const response = useSdkPath()
+      ? await queryClaudeSdkAsInfer(selfAssessMessages)
+      : await infer({ messages: selfAssessMessages, temperature: 0.1 });
     const usage = {
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
@@ -276,17 +286,29 @@ export async function executeGoal(
         `Current goal: ${goal.description}`,
         `Criteria: ${goal.completionCriteria.join("; ")}`,
       ].join("\n");
-      const inferPromise = inferWithTools(
-        messages,
-        definitions,
-        (name, args) => toolRegistry.execute(name, args),
-        {
-          maxRounds: MAX_ROUNDS_PER_GOAL,
-          signal,
-          tokenBudget: TOKEN_BUDGET_HEAVY,
-          compressionContext,
-        },
-      );
+      const inferPromise = useSdkPath()
+        ? queryClaudeSdkAsInferWithTools(
+            messages,
+            definitions,
+            (name, args) => toolRegistry.execute(name, args),
+            {
+              maxRounds: MAX_ROUNDS_PER_GOAL,
+              signal,
+              tokenBudget: TOKEN_BUDGET_HEAVY,
+              compressionContext,
+            },
+          )
+        : inferWithTools(
+            messages,
+            definitions,
+            (name, args) => toolRegistry.execute(name, args),
+            {
+              maxRounds: MAX_ROUNDS_PER_GOAL,
+              signal,
+              tokenBudget: TOKEN_BUDGET_HEAVY,
+              compressionContext,
+            },
+          );
 
       // Apply per-goal timeout if configured
       let result: Awaited<typeof inferPromise>;
@@ -360,17 +382,29 @@ export async function executeGoal(
             `Reflect on what went wrong and try again. Use tools if needed.`,
         };
 
-        const retryResult = await inferWithTools(
-          [...currentMessages, reflectionMsg],
-          definitions,
-          (name, args) => toolRegistry.execute(name, args),
-          {
-            maxRounds: MAX_ROUNDS_PER_GOAL,
-            signal,
-            tokenBudget: TOKEN_BUDGET_HEAVY,
-            compressionContext,
-          },
-        );
+        const retryResult = useSdkPath()
+          ? await queryClaudeSdkAsInferWithTools(
+              [...currentMessages, reflectionMsg],
+              definitions,
+              (name, args) => toolRegistry.execute(name, args),
+              {
+                maxRounds: MAX_ROUNDS_PER_GOAL,
+                signal,
+                tokenBudget: TOKEN_BUDGET_HEAVY,
+                compressionContext,
+              },
+            )
+          : await inferWithTools(
+              [...currentMessages, reflectionMsg],
+              definitions,
+              (name, args) => toolRegistry.execute(name, args),
+              {
+                maxRounds: MAX_ROUNDS_PER_GOAL,
+                signal,
+                tokenBudget: TOKEN_BUDGET_HEAVY,
+                compressionContext,
+              },
+            );
 
         finalContent = retryResult.content;
         currentMessages = retryResult.messages;

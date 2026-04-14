@@ -7,12 +7,19 @@
 
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
+import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
+import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson, convergenceScore } from "./types.js";
 import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 import { logReflectorGap } from "../db/reflector-gap.js";
+
+// v7.9 Prometheus Sonnet port — see planner.ts for the rationale.
+function useSdkPath(): boolean {
+  return getConfig().inferencePrimaryProvider === "claude-sdk";
+}
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -83,7 +90,9 @@ export async function reflect(
   let rawLlmScore: number | null = null;
 
   try {
-    const response = await infer({ messages, temperature: 0.3 });
+    const response = useSdkPath()
+      ? await queryClaudeSdkAsInfer(messages)
+      : await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";
     assessment = parseLLMJson<ReflectionAssessment>(content);
     llmAvailable = true;

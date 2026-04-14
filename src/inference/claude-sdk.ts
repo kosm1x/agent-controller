@@ -23,6 +23,13 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
 import { toolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
+import type {
+  ChatMessage,
+  InferenceResponse,
+  ToolDefinition,
+  ToolExecutor,
+  OnTextChunk,
+} from "./adapter.js";
 
 // ---------------------------------------------------------------------------
 // JSON Schema → Zod raw shape (for SDK tool() definitions)
@@ -383,5 +390,202 @@ export async function queryClaudeSdk(opts: {
     usage,
     costUsd,
     durationMs,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Adapters for openai-path callers (Prometheus planner/reflector/executor)
+//
+// 2026-04-14 (v7.9 Prometheus Sonnet port): the fast-runner was migrated to
+// claude-sdk in 70f8cc5, but every other infer()/inferWithTools() caller kept
+// hitting the openai adapter → qwen3.5-plus. Prometheus (heavy-runner) is the
+// place where reasoning and tool-calling quality matter most, and it was
+// silently running on the worse model. These two adapters let callers that
+// were built against the openai-path contract route through the SDK instead
+// with a narrow branch at each callsite, without rewriting the whole adapter.
+//
+// Intentional lossiness:
+//   - Temperature is not forwarded (Anthropic SDK does not expose it).
+//     Sonnet at default temperature is more deterministic than qwen at 0.1
+//     for the JSON-structured outputs Prometheus asks for.
+//   - Tool repairs come back empty (SDK handles repairs internally).
+//   - Synthesized messages[] on return is lossy compared to a full conversation
+//     log — it reconstructs a single assistant turn with all tool calls
+//     collapsed into one tool_calls array. Downstream provenance extraction
+//     (executor.ts:extractProvenance) degrades to empty on the SDK path;
+//     that is non-critical metadata, tasks still complete correctly.
+//
+// ---------------------------------------------------------------------------
+
+/**
+ * Flatten a ChatMessage[] into the system prompt + single user prompt form
+ * that queryClaudeSdk expects. Assistant and tool messages become labeled
+ * blocks in the user prompt so multi-turn context (e.g. executor retry with
+ * reflection) is preserved as readable history even though the SDK receives
+ * it as a single turn. The system message stays separate because the SDK
+ * has a dedicated field for it.
+ */
+function flattenMessagesForSdk(messages: ChatMessage[]): {
+  systemPrompt: string;
+  userPrompt: string;
+} {
+  let systemPrompt = "";
+  const blocks: string[] = [];
+
+  for (const m of messages) {
+    if (m.role === "system") {
+      // Concatenate consecutive system messages into one system prompt.
+      const text = typeof m.content === "string" ? m.content : "";
+      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${text}` : text;
+    } else if (m.role === "user") {
+      const text = typeof m.content === "string" ? m.content : "";
+      blocks.push(text);
+    } else if (m.role === "assistant") {
+      const text = typeof m.content === "string" ? m.content : "";
+      if (text) blocks.push(`[previous assistant response]\n${text}`);
+      const toolCalls = (
+        m as unknown as {
+          tool_calls?: Array<{ function: { name: string; arguments: string } }>;
+        }
+      ).tool_calls;
+      if (toolCalls?.length) {
+        const calls = toolCalls
+          .map((tc) => `  - ${tc.function.name}(${tc.function.arguments})`)
+          .join("\n");
+        blocks.push(`[previous tool calls]\n${calls}`);
+      }
+    } else if (m.role === "tool") {
+      const text = typeof m.content === "string" ? m.content : "";
+      const truncated = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+      blocks.push(`[previous tool result]\n${truncated}`);
+    }
+  }
+
+  return {
+    systemPrompt: systemPrompt || "You are a helpful assistant.",
+    userPrompt: blocks.join("\n\n"),
+  };
+}
+
+/**
+ * openai-path `infer()` compatibility wrapper. Routes a single-turn text
+ * inference call through queryClaudeSdk with no tools. Returns the same
+ * shape as `InferenceResponse` so existing Prometheus call sites (planner,
+ * reflector, selfAssess) can branch on config with one line instead of
+ * being rewritten.
+ */
+export async function queryClaudeSdkAsInfer(
+  messages: ChatMessage[],
+  options?: { signal?: AbortSignal; maxTurns?: number },
+): Promise<InferenceResponse> {
+  const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
+  const start = Date.now();
+  const result = await queryClaudeSdk({
+    prompt: userPrompt,
+    systemPrompt,
+    toolNames: [],
+    maxTurns: options?.maxTurns ?? 3,
+    abortSignal: options?.signal,
+  });
+
+  return {
+    content: result.text,
+    usage: {
+      prompt_tokens: result.usage.promptTokens,
+      completion_tokens: result.usage.completionTokens,
+      total_tokens: result.usage.promptTokens + result.usage.completionTokens,
+    },
+    provider: "claude-sdk",
+    latency_ms: result.durationMs || Date.now() - start,
+  };
+}
+
+/**
+ * openai-path `inferWithTools()` compatibility wrapper. Routes a tool-calling
+ * inference through queryClaudeSdk. The SDK auto-wraps tools via toolRegistry
+ * given their names, so the `tools` parameter is read only to extract names
+ * and the `executor` parameter is ignored (SDK calls the registry directly).
+ *
+ * Returns a synthetic `inferWithTools` result shape: `messages[]` contains
+ * one system, one user, and one assistant turn with all tool_calls collapsed.
+ * This is lossy vs the real conversation history but sufficient for the
+ * executor's downstream consumers — provenance extraction gracefully handles
+ * empty input, and tool-call name extraction walks the synthetic assistant
+ * turn's `tool_calls` field the same way.
+ */
+export async function queryClaudeSdkAsInferWithTools(
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  _executor: ToolExecutor,
+  options?: {
+    maxRounds?: number;
+    signal?: AbortSignal;
+    onTextChunk?: OnTextChunk;
+    tokenBudget?: number;
+    compressionContext?: string;
+    providerName?: string;
+  },
+): Promise<{
+  content: string;
+  messages: ChatMessage[];
+  totalUsage: { prompt_tokens: number; completion_tokens: number };
+  toolRepairs: Array<{ original: string; repaired: string }>;
+  exitReason: string;
+  roundsCompleted: number;
+  contextPressure: number;
+}> {
+  const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
+  const toolNames = tools.map((t) => t.function.name);
+
+  const result = await queryClaudeSdk({
+    prompt: userPrompt,
+    systemPrompt,
+    toolNames,
+    maxTurns: options?.maxRounds ?? 20,
+    abortSignal: options?.signal,
+  });
+
+  // Build a synthetic assistant turn with all tool calls collapsed into one
+  // message. Downstream consumers walk messages[].tool_calls to extract names;
+  // this preserves that contract even though the real turn structure is lost.
+  const syntheticAssistant = {
+    role: "assistant" as const,
+    content: result.text,
+    ...(result.toolCalls.length > 0
+      ? {
+          tool_calls: result.toolCalls.map((name, i) => ({
+            id: `sdk_call_${i}`,
+            type: "function" as const,
+            function: { name, arguments: "{}" },
+          })),
+        }
+      : {}),
+  } as ChatMessage;
+
+  const syntheticMessages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+    syntheticAssistant,
+  ];
+
+  // exitReason maps: SDK normal completion → "stop". If the SDK surfaced a
+  // max-turns or budget error, the resultText will already contain a
+  // "STATUS: BLOCKED" or "DONE_WITH_CONCERNS" marker courtesy of the error
+  // branch, and the rounds counter reflects what was actually used.
+  const exitReason = result.text.includes("STATUS: BLOCKED")
+    ? "max_rounds"
+    : "stop";
+
+  return {
+    content: result.text,
+    messages: syntheticMessages,
+    totalUsage: {
+      prompt_tokens: result.usage.promptTokens,
+      completion_tokens: result.usage.completionTokens,
+    },
+    toolRepairs: [],
+    exitReason,
+    roundsCompleted: result.numTurns,
+    contextPressure: 0,
   };
 }

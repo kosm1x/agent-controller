@@ -31,7 +31,12 @@ vi.mock("../tools/registry.js", () => ({
   },
 }));
 
-import { queryClaudeSdk } from "./claude-sdk.js";
+import {
+  queryClaudeSdk,
+  queryClaudeSdkAsInfer,
+  queryClaudeSdkAsInferWithTools,
+} from "./claude-sdk.js";
+import type { ChatMessage, ToolDefinition } from "./adapter.js";
 
 beforeEach(() => {
   mockMessages.value = [];
@@ -314,5 +319,233 @@ describe("queryClaudeSdk error_max_turns handling", () => {
     expect(result.text).toBe("Final answer\n\nSTATUS: DONE");
     expect(result.numTurns).toBe(5);
     expect(result.costUsd).toBe(0.01);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v7.9 Prometheus Sonnet port — adapter tests
+// ---------------------------------------------------------------------------
+
+describe("queryClaudeSdkAsInfer (openai-path compatibility)", () => {
+  it("maps SDK success to InferenceResponse shape", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: '{"goals": [{"id": "g1", "description": "..."}]}',
+        num_turns: 1,
+        usage: { input_tokens: 250, output_tokens: 120 },
+        total_cost_usd: 0.004,
+        duration_ms: 800,
+      },
+    ];
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "You are a planner." },
+      { role: "user", content: "Decompose: read file and summarize." },
+    ];
+    const response = await queryClaudeSdkAsInfer(messages);
+
+    expect(response.content).toContain("goals");
+    expect(response.usage.prompt_tokens).toBe(250);
+    expect(response.usage.completion_tokens).toBe(120);
+    expect(response.usage.total_tokens).toBe(370);
+    expect(response.provider).toBe("claude-sdk");
+    expect(response.latency_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("flattens multi-turn history into a single user prompt", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "OK",
+        num_turns: 1,
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+    ];
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "You are Jarvis." },
+      { role: "user", content: "First question" },
+      { role: "assistant", content: "First answer" },
+      { role: "user", content: "Second question" },
+    ];
+    await queryClaudeSdkAsInfer(messages);
+
+    // The SDK receives a plain string prompt. Verify our flattening
+    // preserves the assistant history as readable context so the retry
+    // path doesn't lose what the model just did.
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt).toContain("First question");
+    expect(prompt).toContain("[previous assistant response]");
+    expect(prompt).toContain("First answer");
+    expect(prompt).toContain("Second question");
+
+    const opts = lastQueryArgs.value?.options as { systemPrompt: string };
+    expect(opts.systemPrompt).toBe("You are Jarvis.");
+  });
+
+  it("falls back to default system prompt when none provided", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+      },
+    ];
+
+    await queryClaudeSdkAsInfer([{ role: "user", content: "hola" }]);
+    const opts = lastQueryArgs.value?.options as { systemPrompt: string };
+    expect(opts.systemPrompt.length).toBeGreaterThan(0);
+  });
+});
+
+describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
+  const fakeTool: ToolDefinition = {
+    type: "function",
+    function: {
+      name: "jarvis_file_read",
+      description: "Read a file",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+    },
+  };
+
+  it("maps SDK streaming result to inferWithTools shape with synthetic messages", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Reading the file to check SOP..." },
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Done — criteria met.",
+        num_turns: 2,
+        usage: { input_tokens: 500, output_tokens: 150 },
+        total_cost_usd: 0.008,
+        duration_ms: 2400,
+      },
+    ];
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "Execute this goal." },
+      { role: "user", content: "Read rumi-poemas.md" },
+    ];
+    const executor = async () => "mock-result";
+    const result = await queryClaudeSdkAsInferWithTools(
+      messages,
+      [fakeTool],
+      executor,
+      { maxRounds: 10 },
+    );
+
+    // The earlier claude-sdk text-drop fix (d80e29c) now prefers the longer
+    // of streamingText vs success.result. Streaming produced "Reading the
+    // file to check SOP..." (34 chars) before the short "Done" closer, so
+    // the streaming body wins. This is the intended behavior.
+    expect(result.content).toContain("Reading the file");
+    expect(result.totalUsage.prompt_tokens).toBe(500);
+    expect(result.totalUsage.completion_tokens).toBe(150);
+    expect(result.exitReason).toBe("stop");
+    expect(result.roundsCompleted).toBe(2);
+    expect(result.toolRepairs).toEqual([]);
+
+    // Synthetic messages: system + user + assistant with tool_calls
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages[0].role).toBe("system");
+    expect(result.messages[1].role).toBe("user");
+    expect(result.messages[2].role).toBe("assistant");
+
+    const asst = result.messages[2] as ChatMessage & {
+      tool_calls?: Array<{ function: { name: string } }>;
+    };
+    expect(asst.tool_calls).toHaveLength(1);
+    expect(asst.tool_calls?.[0].function.name).toBe("jarvis_file_read");
+  });
+
+  it("passes tool names through to SDK allowedTools list", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const executor = async () => "mock";
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [fakeTool],
+      executor,
+    );
+
+    const opts = lastQueryArgs.value?.options as {
+      allowedTools: string[];
+    };
+    expect(opts.allowedTools).toContain("mcp__jarvis__jarvis_file_read");
+  });
+
+  it("maps STATUS: BLOCKED marker to exitReason=max_rounds", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        errors: ["Reached maximum number of turns"],
+      },
+    ];
+
+    const executor = async () => "mock";
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [fakeTool],
+      executor,
+    );
+
+    expect(result.exitReason).toBe("max_rounds");
+    expect(result.content).toContain("STATUS: BLOCKED");
+  });
+
+  it("returns empty tool_calls array when SDK does not call any tools", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Text-only response" }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Text-only response",
+        num_turns: 1,
+        usage: { input_tokens: 80, output_tokens: 40 },
+      },
+    ];
+
+    const executor = async () => "mock";
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "What is 2+2?" }],
+      [fakeTool],
+      executor,
+    );
+
+    const asst = result.messages[2] as ChatMessage & {
+      tool_calls?: unknown[];
+    };
+    expect(asst.tool_calls).toBeUndefined();
   });
 });
