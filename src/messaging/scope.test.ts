@@ -215,6 +215,65 @@ describe("journal scope (jarvis files)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// jarvis_write scope — 2026-04-14
+// Moved jarvis_file_{write,update,delete,move} out of always-on MISC_TOOLS
+// after task 2378 ("Me regalas un poema de Rumi para dormir?") triggered
+// silent jarvis_file_read + jarvis_file_update on a trivial chat turn
+// because enrichment recalled a self-written SOP that said "log every
+// delivered poem". Writes must now require explicit intent.
+// ---------------------------------------------------------------------------
+
+describe("jarvis_write scope gating", () => {
+  it("Rumi poem request does NOT pull jarvis_file_write/update (regression for task 2378)", () => {
+    const tools = scope("Me regalas un poema de Rumi para dormir?");
+    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).not.toContain("jarvis_file_update");
+    expect(tools).not.toContain("jarvis_file_delete");
+    expect(tools).not.toContain("jarvis_file_move");
+    // Read access must remain — model can still consult SOPs if it wants to
+    expect(tools).toContain("jarvis_file_read");
+  });
+
+  it("casual chat does NOT pull jarvis write tools", () => {
+    const tools = scope("Hola Jarvis, cómo estás hoy?");
+    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).not.toContain("jarvis_file_update");
+  });
+
+  it("explicit 'guarda esta nota' activates jarvis_write", () => {
+    const tools = scope("Guarda esta nota en mi knowledge base");
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_update");
+  });
+
+  it("explicit 'crea un SOP' activates jarvis_write", () => {
+    const tools = scope("Crea un SOP para el flujo de ventas");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("explicit 'anota este fact' activates jarvis_write", () => {
+    const tools = scope("Anota este fact en tu conocimiento");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("northstar_write still pushes jarvis write tools (inheritance)", () => {
+    const tools = scope("Crea una tarea nueva para mañana");
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_update");
+  });
+
+  it("coding scope still pushes jarvis write tools (inheritance)", () => {
+    const tools = scope("Revisa el código del servidor");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("northstar_journal still pushes jarvis write tools (inheritance)", () => {
+    const tools = scope("Escribe en mi diario lo que pasó hoy");
+    expect(tools).toContain("jarvis_file_write");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // wordpress positive activation
 // ---------------------------------------------------------------------------
 

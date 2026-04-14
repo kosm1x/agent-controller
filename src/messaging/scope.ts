@@ -105,14 +105,14 @@ export const CRM_TOOLS_SCOPE = ["crm_query"];
 
 /** Other utility tools — always included (keep minimal for token budget).
  *  v6.3.1: Trimmed from 30→10 tools. Niche tools moved to scope-gated groups
- *  or deferred (name+description only, full schema on first call). */
+ *  or deferred (name+description only, full schema on first call).
+ *  2026-04-14: jarvis_file write tools moved to JARVIS_WRITE_TOOLS (see below).
+ *  Leaving them always-on let memory-recalled SOPs (e.g. "log the delivered
+ *  poem to a registry") drive silent tool calls on trivial chat requests. */
 export const MISC_TOOLS = [
   // jarvis_file_read + jarvis_file_list already in CORE_TOOLS
-  "jarvis_file_write", // Core write — needed for most tasks
-  "jarvis_file_update", // Core update — append/metadata changes
-  "jarvis_file_delete", // Deferred — schema on demand
-  "jarvis_file_move", // Deferred — schema on demand
-  "jarvis_file_search", // Deferred — schema on demand
+  // jarvis_file_{write,update,delete,move} now gated via JARVIS_WRITE_TOOLS
+  "jarvis_file_search", // Read-only search — safe to keep always-on
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
@@ -121,6 +121,28 @@ export const MISC_TOOLS = [
   // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
+];
+
+/** Jarvis knowledge-base write tools — scope-gated.
+ *
+ *  Moved out of MISC_TOOLS on 2026-04-14 after task 2378 ("Me regalas un
+ *  poema de Rumi para dormir?") silently called jarvis_file_read +
+ *  jarvis_file_update instead of answering. Root cause: memory enrichment
+ *  recalled a self-written SOP ("Poemas de Rumi: registro obligatorio en
+ *  cada uso futuro") that instructed the model to log every poem to a
+ *  registry. With writes in always-on scope, the model faithfully followed
+ *  the SOP on a bedtime chat message and never produced a user-visible
+ *  reply. Read access is still always-on — the model can still consult the
+ *  SOP. Writes now require one of:
+ *    - explicit write verb + file-ish object (jarvis_write scope pattern)
+ *    - northstar_write / northstar_journal (NorthStar lives in jarvis_files)
+ *    - coding (code/project work implies knowledge-base writes)
+ */
+export const JARVIS_WRITE_TOOLS = [
+  "jarvis_file_write",
+  "jarvis_file_update",
+  "jarvis_file_delete",
+  "jarvis_file_move",
 ];
 
 /** Lightpanda browser tools — scope-gated: only when browse/navegar/web keywords detected. */
@@ -278,7 +300,17 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
       /\b(escrib[eiao]\w*\s.*(diario|journal)|anota\w*\s.*(diario|journal)|registra\w*\s.*(diario|journal)|agrega\w*\s.*(diario|journal)|pon\w*\s.*(diario|journal)|crea\w*\s.*(entrada|entry).*(diario|journal)|journal\s*entry|diario.*escrib|write.*journal)/i,
-    group: "northstar_journal", // Intent detection only — no extra tools added (jarvis_file_write in MISC handles writes)
+    group: "northstar_journal", // Wires up JARVIS_WRITE_TOOLS (see tool assembly below)
+  },
+  {
+    // jarvis_write: explicit write intent on a knowledge-base object.
+    // Deliberately narrow — bare "guarda X" without a file-ish object must
+    // NOT fire, or every casual note-taking request would pull write tools.
+    // Fires on: (a) write verb + file-ish noun, (b) direct tool name mention,
+    // (c) knowledge-base phrase with action word.
+    pattern:
+      /\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe)\w*(?:\s+(?:una?|el|la|los|las|un|mi|tu|este|esta|nuev[ao]))?(?:\s+\S+){0,2}\s+(?:archivo|nota|SOP|directiva|regla|fact|lesson|pattern|procedimiento|preferencia|conocimiento|jarvis[_\s]file)|jarvis_file_(?:write|update|delete|move)|knowledge\s*base\s+(?:write|update|save|append|edit)|mi\s+knowledge\s*base/i,
+    group: "jarvis_write",
   },
   {
     pattern:
@@ -501,6 +533,7 @@ export function scopeToolsForMessage(
     activeGroups.add("northstar_read");
     activeGroups.add("northstar_write");
     activeGroups.add("northstar_journal");
+    activeGroups.add("jarvis_write");
     activeGroups.add("destructive");
     activeGroups.add("specialty");
     activeGroups.add("research");
@@ -522,6 +555,17 @@ export function scopeToolsForMessage(
     activeGroups.has("northstar_write")
   ) {
     tools.push("northstar_sync");
+  }
+  // JARVIS_WRITE_TOOLS — gated to prevent silent drift from memory-recalled
+  // SOPs that instruct the model to log/register/save on trivial chat turns.
+  // Any of these four groups implies legitimate write intent.
+  if (
+    activeGroups.has("jarvis_write") ||
+    activeGroups.has("northstar_write") ||
+    activeGroups.has("northstar_journal") ||
+    activeGroups.has("coding")
+  ) {
+    tools.push(...JARVIS_WRITE_TOOLS);
   }
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);

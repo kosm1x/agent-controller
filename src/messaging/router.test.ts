@@ -148,11 +148,15 @@ describe("MessageRouter", () => {
       expect(call.tools).toContain("web_search");
       expect(call.tools).toContain("web_read");
       expect(call.tools).toContain("skill_list");
-      // Jarvis file tools always-on (NorthStar visions live here)
+      // Jarvis file READ tools always-on (NorthStar visions live here)
       expect(call.tools).toContain("jarvis_file_read");
       expect(call.tools).toContain("jarvis_file_list");
-      // Misc core always present (trimmed in v6.3.1)
-      expect(call.tools).toContain("jarvis_file_write");
+      // 2026-04-14: Jarvis file WRITE tools are now scope-gated (jarvis_write
+      // group). Generic chat must not carry write capabilities — prevents
+      // memory-recalled SOPs from driving silent tool calls. See task 2378.
+      expect(call.tools).not.toContain("jarvis_file_write");
+      expect(call.tools).not.toContain("jarvis_file_update");
+      // Misc core still always present
       expect(call.tools).toContain("list_schedules");
       // Niche tools no longer always-on
       expect(call.tools).not.toContain("http_fetch");
