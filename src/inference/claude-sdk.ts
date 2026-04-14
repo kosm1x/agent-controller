@@ -424,7 +424,33 @@ export async function queryClaudeSdk(opts: {
  * reflection) is preserved as readable history even though the SDK receives
  * it as a single turn. The system message stays separate because the SDK
  * has a dedicated field for it.
+ *
+ * v7.9 audit C1 follow-up: handles all three ChatContent shapes — string,
+ * null, and Array<{type,text,...}> — so that non-string content (vision
+ * blocks, normalized assistant arrays) is not silently erased. Unknown
+ * block types become `[non-text block omitted]` placeholders so the shape
+ * is preserved even when we can't render the payload.
  */
+function normalizeContent(content: unknown): string {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (block && typeof block === "object") {
+        const b = block as Record<string, unknown>;
+        if (b.type === "text" && typeof b.text === "string") {
+          parts.push(b.text);
+        } else if (b.type) {
+          parts.push(`[non-text block omitted: ${String(b.type)}]`);
+        }
+      }
+    }
+    return parts.join("\n");
+  }
+  return "";
+}
+
 function flattenMessagesForSdk(messages: ChatMessage[]): {
   systemPrompt: string;
   userPrompt: string;
@@ -434,14 +460,14 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
 
   for (const m of messages) {
     if (m.role === "system") {
-      // Concatenate consecutive system messages into one system prompt.
-      const text = typeof m.content === "string" ? m.content : "";
+      // Concatenate system messages — planner/reflector/executor never emit
+      // more than one, but fast-runner composition can produce several.
+      const text = normalizeContent(m.content);
       systemPrompt = systemPrompt ? `${systemPrompt}\n\n${text}` : text;
     } else if (m.role === "user") {
-      const text = typeof m.content === "string" ? m.content : "";
-      blocks.push(text);
+      blocks.push(normalizeContent(m.content));
     } else if (m.role === "assistant") {
-      const text = typeof m.content === "string" ? m.content : "";
+      const text = normalizeContent(m.content);
       if (text) blocks.push(`[previous assistant response]\n${text}`);
       const toolCalls = (
         m as unknown as {
@@ -455,8 +481,8 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
         blocks.push(`[previous tool calls]\n${calls}`);
       }
     } else if (m.role === "tool") {
-      const text = typeof m.content === "string" ? m.content : "";
-      const truncated = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+      const text = normalizeContent(m.content);
+      const truncated = text.length > 600 ? `${text.slice(0, 600)}...` : text;
       blocks.push(`[previous tool result]\n${truncated}`);
     }
   }
@@ -534,7 +560,17 @@ export async function queryClaudeSdkAsInferWithTools(
   roundsCompleted: number;
   contextPressure: number;
 }> {
-  const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
+  const flat = flattenMessagesForSdk(messages);
+  const systemPrompt = flat.systemPrompt;
+  // v7.9 audit M1 partial: surface compressionContext on the SDK path by
+  // prepending it to the user prompt. The openai-path uses it mid-loop for
+  // wrap-up compaction, which we can't replicate without SDK token counters,
+  // but at least the signal reaches the model instead of being silently
+  // discarded. tokenBudget still has no enforcement on the SDK path — it
+  // relies on the SDK's internal 15-minute timeout and maxTurns ceiling.
+  const userPrompt = options?.compressionContext
+    ? `${options.compressionContext}\n\n---\n\n${flat.userPrompt}`
+    : flat.userPrompt;
   const toolNames = tools.map((t) => t.function.name);
 
   const result = await queryClaudeSdk({
@@ -548,13 +584,16 @@ export async function queryClaudeSdkAsInferWithTools(
   // Build a synthetic assistant turn with all tool calls collapsed into one
   // message. Downstream consumers walk messages[].tool_calls to extract names;
   // this preserves that contract even though the real turn structure is lost.
+  // IDs include a timestamp nonce to avoid collisions when two runs in the
+  // same task are logged together (audit m5).
+  const nonce = Date.now().toString(36);
   const syntheticAssistant = {
     role: "assistant" as const,
     content: result.text,
     ...(result.toolCalls.length > 0
       ? {
           tool_calls: result.toolCalls.map((name, i) => ({
-            id: `sdk_call_${i}`,
+            id: `sdk_call_${nonce}_${i}`,
             type: "function" as const,
             function: { name, arguments: "{}" },
           })),
@@ -568,13 +607,19 @@ export async function queryClaudeSdkAsInferWithTools(
     syntheticAssistant,
   ];
 
-  // exitReason maps: SDK normal completion → "stop". If the SDK surfaced a
-  // max-turns or budget error, the resultText will already contain a
-  // "STATUS: BLOCKED" or "DONE_WITH_CONCERNS" marker courtesy of the error
-  // branch, and the rounds counter reflects what was actually used.
-  const exitReason = result.text.includes("STATUS: BLOCKED")
-    ? "max_rounds"
-    : "stop";
+  // exitReason maps: SDK normal completion → "stop". queryClaudeSdk emits
+  // TWO distinct STATUS markers on terminal errors (see the error branch in
+  // the main loop): "STATUS: BLOCKED" only when there is zero streamed text,
+  // and "STATUS: DONE_WITH_CONCERNS" when streaming text exists. Timeouts
+  // prepend "[timeout after ...]". All three are non-stop exit conditions
+  // and any future caller that branches on exitReason must see the
+  // distinction. Audit C2 follow-up — the old check only hit BLOCKED.
+  const exitReason =
+    result.text.includes("STATUS: BLOCKED") ||
+    result.text.includes("STATUS: DONE_WITH_CONCERNS") ||
+    result.text.startsWith("[timeout")
+      ? "max_rounds"
+      : "stop";
 
   return {
     content: result.text,

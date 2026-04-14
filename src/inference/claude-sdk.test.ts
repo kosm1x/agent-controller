@@ -519,6 +519,160 @@ describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
     expect(result.content).toContain("STATUS: BLOCKED");
   });
 
+  // ---------------------------------------------------------------------
+  // v7.9 audit follow-ups (C1, C2, M1, m5)
+  // ---------------------------------------------------------------------
+
+  it("C1: preserves text from array-shaped content (vision/normalized blocks)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 50, output_tokens: 10 },
+      },
+    ];
+
+    // Array-shaped user content — the openai-path does this for vision and
+    // for some normalized assistant retry paths. Must not be silently erased.
+    const messages = [
+      { role: "system" as const, content: "sys" },
+      {
+        role: "user" as const,
+        content: [
+          { type: "text", text: "First text block" },
+          { type: "text", text: "Second text block" },
+          { type: "image_url", image_url: { url: "data:..." } },
+        ],
+      } as unknown as ChatMessage,
+    ];
+
+    await queryClaudeSdkAsInfer(messages);
+
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt).toContain("First text block");
+    expect(prompt).toContain("Second text block");
+    expect(prompt).toContain("[non-text block omitted: image_url]");
+  });
+
+  it("C1: handles null content without throwing", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+      },
+    ];
+
+    const messages = [
+      { role: "user" as const, content: "hola" },
+      { role: "assistant" as const, content: null as unknown as string },
+      { role: "user" as const, content: "again" },
+    ];
+
+    // Should not throw on null content
+    await queryClaudeSdkAsInfer(messages);
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt).toContain("hola");
+    expect(prompt).toContain("again");
+  });
+
+  it("C2: maps DONE_WITH_CONCERNS to exitReason=max_rounds", async () => {
+    // error_max_budget_usd produces a "STATUS: DONE_WITH_CONCERNS" marker
+    // with the streamed text preserved. The wrapper must not treat this
+    // as a clean "stop" exit.
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Partial progress before budget." }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_max_budget_usd",
+        errors: ["Budget exceeded"],
+      },
+    ];
+
+    const executor = async () => "mock";
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [fakeTool],
+      executor,
+    );
+
+    expect(result.exitReason).toBe("max_rounds");
+    expect(result.content).toContain("STATUS: DONE_WITH_CONCERNS");
+  });
+
+  it("M1: compressionContext is prepended to the user prompt", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 30, output_tokens: 5 },
+      },
+    ];
+
+    const executor = async () => "mock";
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "Execute goal" }],
+      [fakeTool],
+      executor,
+      {
+        compressionContext: "Current goal: read file X\nCriteria: metadata",
+      },
+    );
+
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt).toContain("Current goal: read file X");
+    expect(prompt.indexOf("Current goal")).toBeLessThan(
+      prompt.indexOf("Execute goal"),
+    );
+  });
+
+  it("m5: synthetic tool_call IDs include a nonce to avoid cross-run collisions", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "done",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const executor = async () => "mock";
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "test" }],
+      [fakeTool],
+      executor,
+    );
+
+    const asst = result.messages[2] as ChatMessage & {
+      tool_calls?: Array<{ id: string }>;
+    };
+    // IDs are unique within a run and include a base36 nonce
+    expect(asst.tool_calls?.[0].id).toMatch(/^sdk_call_[a-z0-9]+_0$/);
+    expect(asst.tool_calls?.[1].id).toMatch(/^sdk_call_[a-z0-9]+_1$/);
+    expect(asst.tool_calls?.[0].id).not.toBe(asst.tool_calls?.[1].id);
+  });
+
   it("returns empty tool_calls array when SDK does not call any tools", async () => {
     mockMessages.value = [
       {
