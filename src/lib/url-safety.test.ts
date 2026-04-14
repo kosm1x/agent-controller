@@ -76,6 +76,47 @@ describe("validateOutboundUrl", () => {
     expect(validateOutboundUrl("http://[::ffff:10.0.0.1]/")).toMatch(/Blocked/);
   });
 
+  // v7.6.2 C1 regression: trailing-dot hostname bypass.
+  it("blocks localhost. (FQDN trailing dot)", () => {
+    expect(validateOutboundUrl("http://localhost./secret")).toMatch(
+      /Blocked host: localhost/,
+    );
+  });
+
+  it("blocks metadata.google.internal. (FQDN trailing dot)", () => {
+    expect(validateOutboundUrl("http://metadata.google.internal./v1/")).toMatch(
+      /Blocked/,
+    );
+  });
+
+  // v7.6.2 C2 regression: IPv6 unspecified address bypass.
+  it("blocks IPv6 unspecified address [::]", () => {
+    expect(validateOutboundUrl("http://[::]/")).toMatch(/Blocked/);
+  });
+
+  it("blocks IPv6 unspecified address [::0]", () => {
+    expect(validateOutboundUrl("http://[::0]/")).toMatch(/Blocked/);
+  });
+
+  // v7.6.2 R4 regression: non-http schemes previously bypassed the
+  // scheme gate in validateArgsUrls because they lack `://`. They now
+  // reach validateOutboundUrl and get rejected by the scheme check.
+  it("blocks javascript: URI", () => {
+    expect(
+      validateOutboundUrl('javascript:fetch("http://169.254.169.254")'),
+    ).toMatch(/Blocked scheme/);
+  });
+
+  it("blocks data: URI", () => {
+    expect(
+      validateOutboundUrl("data:text/html,<script>alert(1)</script>"),
+    ).toMatch(/Blocked scheme/);
+  });
+
+  it("blocks vbscript: URI", () => {
+    expect(validateOutboundUrl("vbscript:msgbox")).toMatch(/Blocked scheme/);
+  });
+
   it("blocks 0.0.0.0", () => {
     expect(validateOutboundUrl("http://0.0.0.0/")).toMatch(/Blocked/);
   });
@@ -243,5 +284,122 @@ describe("validateArgsUrls", () => {
     expect(validateArgsUrls("just a string")).toBeNull();
     expect(validateArgsUrls(42)).toBeNull();
     expect(validateArgsUrls(true)).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------
+  // v7.6.2 regression tests — QA audit findings
+  // ---------------------------------------------------------------------
+
+  // C1: trailing-dot hostname bypass
+  it("blocks http://localhost./ at the args walker level", () => {
+    const result = validateArgsUrls({ url: "http://localhost./secret" });
+    expect(result).toMatch(/url:/);
+    expect(result).toMatch(/Blocked host: localhost/);
+  });
+
+  // C2: IPv6 unspecified address bypass
+  it("blocks http://[::]/ at the args walker level", () => {
+    const result = validateArgsUrls({ url: "http://[::]/admin" });
+    expect(result).toMatch(/url:/);
+    expect(result).toMatch(/Blocked/);
+  });
+
+  // R4: javascript: URI via URL.canParse gate (previously bypassed)
+  it("blocks javascript: URI under url key", () => {
+    const result = validateArgsUrls({
+      url: 'javascript:fetch("http://169.254.169.254")',
+    });
+    expect(result).toMatch(/url:/);
+    expect(result).toMatch(/Blocked scheme: javascript:/);
+  });
+
+  it("blocks data: URI under url key", () => {
+    const result = validateArgsUrls({
+      url: "data:text/html,<script>alert(1)</script>",
+    });
+    expect(result).toMatch(/Blocked scheme: data:/);
+  });
+
+  it("blocks file: URI without // under url key", () => {
+    // Bare `file:/etc/passwd` (no //) — previously bypassed the regex gate.
+    // URL.canParse accepts it; validateOutboundUrl rejects the scheme.
+    const result = validateArgsUrls({ url: "file:/etc/passwd" });
+    expect(result).toMatch(/Blocked scheme: file:/);
+  });
+
+  // W1: expanded whitelist coverage
+  it("blocks URL under 'webhook_url' key (expanded whitelist)", () => {
+    const result = validateArgsUrls({
+      webhook_url: "http://127.0.0.1:9090/metrics",
+    });
+    expect(result).toMatch(/webhook_url:/);
+    expect(result).toMatch(/Blocked/);
+  });
+
+  it("blocks URL under 'callback_url' key", () => {
+    const result = validateArgsUrls({
+      callback_url: "http://10.0.0.5/callback",
+    });
+    expect(result).toMatch(/callback_url:/);
+  });
+
+  it("blocks URL under 'redirect_uri' key", () => {
+    const result = validateArgsUrls({
+      redirect_uri: "http://169.254.169.254/latest/meta-data",
+    });
+    expect(result).toMatch(/redirect_uri:/);
+  });
+
+  it("blocks URL under 'destination' key", () => {
+    const result = validateArgsUrls({
+      destination: "http://192.168.1.1/admin",
+    });
+    expect(result).toMatch(/destination:/);
+  });
+
+  it("blocks URL under 'api_url' key", () => {
+    const result = validateArgsUrls({
+      api_url: "http://[::1]:9090/metrics",
+    });
+    expect(result).toMatch(/api_url:/);
+  });
+
+  // W3: arrays of strings under URL-convention keys
+  it("blocks array of URL strings under 'urls' (wait — 'urls' not in whitelist)", () => {
+    // 'urls' is NOT in the whitelist. Only singular keys are. Document
+    // this as an explicit gap that future schema drift might hit.
+    const result = validateArgsUrls({
+      urls: ["http://localhost/first", "http://ok.com"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("blocks bad URL in array under 'url' (singular) key", () => {
+    // Rare pattern but legal: `{url: ["http://ok.com", "http://localhost/"]}`
+    // With W3 the walker now validates string elements when the parent
+    // key IS in URL_PARAM_KEYS.
+    const result = validateArgsUrls({
+      url: ["https://ok.com", "http://localhost:3000/api"],
+    });
+    expect(result).toMatch(/url\[1\]:/);
+    expect(result).toMatch(/Blocked/);
+  });
+
+  it("blocks bad URL in array under 'endpoint' key with nested object element", () => {
+    // Mixed array: string element + object element. Both should be
+    // walked.
+    const result = validateArgsUrls({
+      endpoint: ["https://ok.com", { target_url: "http://192.168.1.1" }],
+    });
+    expect(result).toMatch(/endpoint\[1\]\.target_url:/);
+  });
+
+  it("allows non-URL strings in array under URL key", () => {
+    // Array of strings under a URL key where the values are not URLs
+    // (e.g. relative paths or search terms) should be let through.
+    const result = validateArgsUrls({
+      url: ["./page1", "./page2", "search query"],
+    });
+    expect(result).toBeNull();
   });
 });

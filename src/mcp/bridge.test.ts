@@ -238,5 +238,132 @@ describe("createMcpTool", () => {
       expect(result).toBe("done");
       expect(callFn).toHaveBeenCalled();
     });
+
+    // v7.6.2 W5: audit log contract — future Pillar 6 validation item
+    // will scan journalctl for these `[mcp] blocked URL-bearing arg`
+    // lines to count attempted SSRF. The contract MUST be tested so a
+    // future refactor doesn't silently drop the log.
+    it("emits a [mcp] blocked audit warn on rejection", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      await tool.execute({ url: "http://127.0.0.1:9090/metrics" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /\[mcp\] blocked URL-bearing arg on playwright__browser_navigate: url: Blocked/,
+        ),
+      );
+      warnSpy.mockRestore();
+    });
+
+    // v7.6.2 W5: no audit warn on the happy path.
+    it("does NOT emit audit warn when the URL is safe", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const callFn: McpCallFn = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      await tool.execute({ url: "https://example.com" });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    // v7.6.2 W6: args shape resilience — undefined/null/empty.
+    it("handles undefined args without throwing", async () => {
+      const callFn: McpCallFn = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const tool = createMcpTool("browser", { name: "close" }, callFn);
+
+      // TypeScript says Record<string, unknown> but runtime can't enforce.
+      // A tool with no args (like browser_close) might receive {} or
+      // nothing at all from the upstream caller.
+      const result = await tool.execute(
+        undefined as unknown as Record<string, unknown>,
+      );
+      expect(result).toBe("ok");
+      expect(callFn).toHaveBeenCalled();
+    });
+
+    it("handles null args without throwing", async () => {
+      const callFn: McpCallFn = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const tool = createMcpTool("browser", { name: "close" }, callFn);
+
+      const result = await tool.execute(
+        null as unknown as Record<string, unknown>,
+      );
+      expect(result).toBe("ok");
+      expect(callFn).toHaveBeenCalled();
+    });
+
+    // v7.6.2 C1 integration: trailing-dot bypass also blocked at bridge.
+    it("blocks http://localhost./ (trailing dot FQDN) at bridge", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      const result = await tool.execute({ url: "http://localhost./secret" });
+      expect(JSON.parse(result).error).toMatch(/Blocked host: localhost/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
+    // v7.6.2 C2 integration: IPv6 [::] also blocked at bridge.
+    it("blocks http://[::]/ (IPv6 unspecified) at bridge", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      const result = await tool.execute({ url: "http://[::]/" });
+      expect(JSON.parse(result).error).toMatch(/Blocked/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
+    // v7.6.2 R4 integration: javascript: URI blocked at bridge.
+    it("blocks javascript: URI at bridge", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool(
+        "playwright",
+        { name: "browser_navigate" },
+        callFn,
+      );
+
+      const result = await tool.execute({
+        url: 'javascript:fetch("http://169.254.169.254")',
+      });
+      expect(JSON.parse(result).error).toMatch(/Blocked scheme: javascript:/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
+    // v7.6.2 W1 integration: expanded whitelist catches new key names.
+    it("blocks URL under expanded whitelist key 'webhook_url'", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool("hooks", { name: "send" }, callFn);
+
+      const result = await tool.execute({
+        webhook_url: "http://10.0.0.5/hook",
+      });
+      expect(JSON.parse(result).error).toMatch(/webhook_url:/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
   });
 });

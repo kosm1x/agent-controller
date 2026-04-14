@@ -134,7 +134,7 @@ Before starting v7 implementation, confirm after 30 days of production:
 
 ## Known Issues
 
-### ~~URL safety gap on MCP browser tools~~ ✅ CLOSED 2026-04-14 (v7.6.1)
+### ~~URL safety gap on MCP browser tools~~ ✅ CLOSED 2026-04-14 (v7.6.1 + v7.6.2 audit follow-up)
 
 **Discovered:** 2026-04-14 day 5 of the 30-day validation window during the `mc-ctl validation check` scope-classifier false-positive investigation. A scheduled PipeSong task on 2026-04-13 15:01 UTC had an LLM try `file:///root/claude/mission-control/.env` and `file:///root/claude/mission-control/src/tools/builtin/` via the MCP browser. Playwright's UnsupportedProtocol allowlist blocked both (no exfiltration), but the investigation found that SSRF targets looking like normal HTTP URLs (`http://localhost:3000/api/datasources/`, `http://10.x.x.x`, `http://192.168.x.x`, `http://127.0.0.1:9090/metrics`) would have reached Playwright with nothing in the way.
 
@@ -149,7 +149,28 @@ Before starting v7 implementation, confirm after 30 days of production:
 - **URL-key whitelist, not content-based detection.** The helper only inspects strings under specific key names. A `description: "see http://localhost/docs"` is NOT validated — we don't parse prose for URL substrings. This keeps false positives near zero at the cost of missing tools that use non-standard param names. Acceptable because the URL key set is easy to extend, and the current state was 0% coverage so any deterministic coverage is a strict improvement.
 - **Audit logging.** Every rejection emits `[mcp] blocked URL-bearing arg on <tool_name>: <path>: <reason>` to stderr via `console.warn` — surfaces attempted SSRF in journalctl without touching the tool result format.
 
-**Test coverage (v7.6.1):** 16 new tests in `src/lib/url-safety.test.ts` (allow paths, block paths, nested args, arrays, maxDepth enforcement, graceful handling of null/undefined/primitives) + 7 new tests in `src/mcp/bridge.test.ts` (file://, localhost, cloud metadata, RFC1918, public URL passthrough, non-URL-bearing args passthrough, non-URL string under url-named key passthrough). All 23 cases green. Full suite: 2071 → 2094 tests.
+**Test coverage (v7.6.1):** 16 new tests in `src/lib/url-safety.test.ts` + 7 new tests in `src/mcp/bridge.test.ts`. All 23 cases green. Full suite: 2071 → 2094 tests.
+
+**QA audit findings + v7.6.2 follow-up (same-day).** A dedicated qa-auditor pass on commit `0c29f84` surfaced three real bypasses in `validateOutboundUrl()` that pre-dated v7.6.1 but flowed through the new MCP surface unblocked — meaning the "Known Issue closed" claim would have been dishonest. All three plus four secondary findings shipped as v7.6.2 the same day:
+
+- **C1 (critical) — trailing-dot hostname bypass.** `http://localhost./` returned null (safe). DNS strips the trailing FQDN dot and resolves identically to `localhost`. **Fix:** strip trailing `.` from hostname before `BLOCKED_HOSTS.has()`. Regression test added.
+- **C2 (critical) — IPv6 unspecified address bypass.** `http://[::]/` returned null. `::` is not covered by `::1` / `fc00:` / `fe80:` patterns, routes to loopback on Linux. **Fix:** added `/^::0*$/` to `BLOCKED_IP_PATTERNS` (covers `::`, `::0`, `::00`, etc.). Regression test added.
+- **R4 (critical) — `javascript:` / `data:` / `vbscript:` / `file:` URIs without `//` bypassed the scheme gate.** The `^[a-z][a-z0-9+\-.]*:\/\/` regex required `://`, which these schemes lack. Playwright's own `checkUrlAllowed` only blocks `file:` — `javascript:fetch("http://169.254.169.254")` via `browser_navigate` would have been executed. **Fix:** replaced the regex gate with `URL.canParse()`. Schemes without `//` now parse successfully, reach `validateOutboundUrl()`, and get rejected by the `ALLOWED_SCHEMES` check. Regression tests for each URI scheme added.
+- **W1 (warning) — whitelist expansion.** Extended `URL_PARAM_KEYS` from 15 → 46 names to cover common third-party MCP conventions: `destination`, `webhook_url`, `callback_url`, `redirect_uri`, `redirect_url`, `return_url`, `api_url`, `base_url`, `endpoint_url`, `destination_url`, `ping_url`, `website`, and variants. Zero false-positive risk because `URL.canParse()` gates downstream.
+- **W3 (warning) — string arrays under URL-convention keys not walked.** `{url: ["http://ok.com", "http://localhost/"]}` was passed through unvalidated. **Fix:** when the parent key is in `URL_PARAM_KEYS` and the value is an array, string elements are now validated (not just objects).
+- **W5 (warning) — audit log contract not asserted in tests.** The `[mcp] blocked URL-bearing arg` log line is load-bearing for the future Pillar 6 validation item. Added `console.warn` spy assertions for both the block path and the no-op on happy path.
+- **W6 (warning) — `args = null/undefined` not tested at the bridge call site.** Added resilience tests covering both.
+
+**Test coverage (v7.6.2):** 21 additional tests in `url-safety.test.ts` (C1/C2/R4 regression coverage, W1 expanded whitelist keys, W3 array walking) + 8 additional tests in `bridge.test.ts` (audit log spy, null/undefined args, C1/C2/R4/W1 end-to-end via the bridge). Full suite: 2094 → 2123 tests.
+
+**Net v7.6.1 + v7.6.2 coverage:** 37 new url-safety tests + 15 new bridge tests = 52 new security tests total against the MCP URL attack surface.
+
+**Key design choices (post-audit):**
+
+- **URL.canParse() gate, not regex.** Catches schemes without `//` (javascript:, data:, vbscript:, file:, blob:) so they reach `validateOutboundUrl()`'s scheme check and get rejected. More permissive parse gate, stricter downstream semantic check.
+- **Generous whitelist, tight parse gate.** Adding keys to `URL_PARAM_KEYS` costs nothing because non-URL strings under those keys are filtered by `URL.canParse()`. The right tradeoff: wide-key + strict-value instead of narrow-key + loose-value.
+- **Single bridge intercept beats per-source wrappers.** One function, covers every current and future MCP server with one change. Strictly better than the v7.6 original plan to wrap `@playwright/mcp` as a ToolSource.
+- **Audit logging via `console.warn`, tested.** Every rejection emits a structured line to stderr that a future `mc-ctl validation check` Pillar 6 item will scan from journalctl.
 
 **Deferred follow-ups** (Pillar 6 defense-in-depth, not blocking v7.0):
 

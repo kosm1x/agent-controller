@@ -18,6 +18,9 @@ const BLOCKED_IP_PATTERNS = [
   /^169\.254\./, // Link-local / cloud metadata
   /^0\./, // Current network
   /^::1$/, // IPv6 loopback
+  // v7.6.2 C2: IPv6 unspecified address — routes to loopback on Linux.
+  // Previously missed by `::1` pattern. Covers ::, ::0, ::00, etc.
+  /^::0*$/,
   /^fc00:/i, // IPv6 unique local
   /^fe80:/i, // IPv6 link-local
 ];
@@ -50,8 +53,14 @@ export function validateOutboundUrl(url: string): string | null {
     return `Blocked scheme: ${parsed.protocol} (only http/https allowed)`;
   }
 
-  // Blocked hostnames — strip IPv6 brackets for matching
-  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // Blocked hostnames — strip IPv6 brackets for matching.
+  // v7.6.2 C1: also strip trailing FQDN dot. DNS treats `localhost.` and
+  // `localhost` identically, and without the strip the blocklist
+  // `BLOCKED_HOSTS.has("localhost.")` returned false → bypass.
+  const hostname = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
   if (BLOCKED_HOSTS.has(hostname)) {
     return `Blocked host: ${hostname}`;
   }
@@ -95,32 +104,68 @@ export function validateOutboundUrl(url: string): string | null {
 
 /**
  * Param keys that conventionally hold URLs in MCP tool schemas.
- * Matched case-insensitively. Keep this narrow — we'd rather miss a
- * non-standard name than false-positive on a query parameter that
- * happens to be under a url-shaped key.
+ * Matched case-insensitively. False positives are filtered downstream
+ * by `URL.canParse()` + `validateOutboundUrl()` — a non-URL string
+ * under these keys is let through unchanged. So we can be generous
+ * with the whitelist at zero false-positive cost.
+ *
+ * v7.6.2 W1: expanded from 15 → 30 keys per QA audit finding.
+ * Covers common third-party MCP server conventions (webhook_url,
+ * callback, redirect_uri, api_url, etc.) so future schema drift
+ * doesn't silently bypass validation.
  */
 const URL_PARAM_KEYS = new Set([
+  // Direct URL names
   "url",
   "uri",
   "href",
   "link",
+  "location",
+  "src",
+  "goto",
+  // Target / destination variants
   "target",
   "target_url",
   "targeturl",
-  "location",
-  "src",
+  "destination",
+  "destination_url",
+  "destinationurl",
+  "navigate_to",
+  "navigateto",
+  "href_to",
+  // Source variants
   "source_url",
   "sourceurl",
+  // API / endpoint variants
   "endpoint",
+  "endpoint_url",
+  "api_url",
+  "apiurl",
+  "base_url",
+  "baseurl",
+  // Page variants
   "page",
   "page_url",
   "pageurl",
-  "navigate_to",
-  "navigateto",
-  "goto",
+  "website",
+  // Webhook / callback / redirect variants (third-party MCP convention)
+  "webhook",
+  "webhook_url",
+  "webhookurl",
+  "callback",
+  "callback_url",
+  "callbackurl",
+  "redirect",
+  "redirect_uri",
+  "redirecturi",
+  "redirect_url",
+  "redirecturl",
+  "return_url",
+  "returnurl",
+  // Ping / probe / reach variants
+  "ping_url",
+  "pingurl",
 ]);
-
-const URL_SCHEME_RE = /^[a-z][a-z0-9+\-.]*:\/\//i;
 
 /**
  * Recursively scan an args object for URL-bearing string values and run
@@ -153,6 +198,22 @@ export function validateArgsUrls(
   return walk(args, "", maxDepth);
 }
 
+/**
+ * Validate a single string that we already know is under a URL-convention
+ * key. Returns an error message with the supplied path, or null if clean.
+ *
+ * v7.6.2 R4: uses `URL.canParse()` as the parse gate instead of a
+ * `scheme://` regex. This catches `javascript:`, `data:`, `blob:`,
+ * `vbscript:`, `file:` and other schemes that lack `//` — they all
+ * parse and then fail the scheme check in `validateOutboundUrl`.
+ */
+function validateUrlString(value: string, path: string): string | null {
+  if (!URL.canParse(value)) return null;
+  const err = validateOutboundUrl(value);
+  if (err) return `${path}: ${err}`;
+  return null;
+}
+
 function walk(
   value: unknown,
   path: string,
@@ -161,21 +222,12 @@ function walk(
   if (remainingDepth < 0) return null;
   if (value === null || value === undefined) return null;
 
-  if (typeof value === "string") {
-    // String values are ONLY validated if the leaf key we arrived here
-    // through is a known URL convention — enforced by the caller, so
-    // we just validate the string here.
-    if (!URL_SCHEME_RE.test(value)) return null;
-    const err = validateOutboundUrl(value);
-    if (err) return `${path}: ${err}`;
-    return null;
-  }
-
   if (Array.isArray(value)) {
+    // Generic array path: walks objects only (no key context for strings).
+    // The URL-key-parent array case is handled inline in the object branch
+    // below so string elements there get validated.
     for (let i = 0; i < value.length; i++) {
       const item = value[i];
-      // Arrays of strings: skip (no key context, too many false positives).
-      // Arrays of objects: walk into each.
       if (typeof item === "object" && item !== null) {
         const err = walk(item, `${path}[${i}]`, remainingDepth - 1);
         if (err) return err;
@@ -187,16 +239,34 @@ function walk(
   if (typeof value === "object") {
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
       const nextPath = path ? `${path}.${key}` : key;
-      if (URL_PARAM_KEYS.has(key.toLowerCase()) && typeof v === "string") {
-        // Validate this string directly — it's under a URL-convention key.
-        if (URL_SCHEME_RE.test(v)) {
-          const err = validateOutboundUrl(v);
-          if (err) return `${nextPath}: ${err}`;
+      const isUrlKey = URL_PARAM_KEYS.has(key.toLowerCase());
+
+      if (isUrlKey && typeof v === "string") {
+        // Direct string under a URL-convention key.
+        const err = validateUrlString(v, nextPath);
+        if (err) return err;
+        continue;
+      }
+
+      if (isUrlKey && Array.isArray(v)) {
+        // v7.6.2 W3: array under a URL-convention key — validate each
+        // string element AND walk object elements.
+        for (let i = 0; i < v.length; i++) {
+          const item = v[i];
+          const itemPath = `${nextPath}[${i}]`;
+          if (typeof item === "string") {
+            const err = validateUrlString(item, itemPath);
+            if (err) return err;
+          } else if (typeof item === "object" && item !== null) {
+            const err = walk(item, itemPath, remainingDepth - 1);
+            if (err) return err;
+          }
         }
         continue;
       }
-      // Not a URL-key string — recurse in case there are nested URL
-      // params (e.g. {config: {target_url: "..."}}).
+
+      // Not a URL-key string/array — recurse in case there are nested
+      // URL params (e.g. `{config: {target_url: "..."}}`).
       if (typeof v === "object" && v !== null) {
         const err = walk(v, nextPath, remainingDepth - 1);
         if (err) return err;
@@ -205,5 +275,10 @@ function walk(
     return null;
   }
 
+  // Primitive non-string values (numbers, booleans, symbols) have no
+  // URL semantics. Strings reached at root level (i.e. via a direct
+  // `validateArgsUrls("foo")` call) also have no key context and are
+  // ignored — callers who want to validate a single URL should use
+  // `validateOutboundUrl()` directly.
   return null;
 }
