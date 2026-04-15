@@ -35,6 +35,10 @@ All six operator decisions answered. F1 pre-plan is now implementation-ready sub
 
 **Implementation note:** `PolygonAdapter` replaces the original `YahooFinanceAdapter`. Same interface surface where possible. Macro series NOT implemented on Polygon (macro is FRED-only). Rate limit guarded by a per-minute local counter with exponential backoff.
 
+**Hostname config (from exploration item C, see `08-polygon-verification.md`):** polygon.io rebranded to Massive in early 2026. `PolygonAdapter` uses `api.massive.com` as the primary hostname and `api.polygon.io` as a transparent legacy alias (identical responses verified on both). Timestamp field `t` is unix **milliseconds UTC** — F1's `timezone.ts` must convert to America/New_York before insert.
+
+**Credential provisioning:** ✅ **`POLYGON_API_KEY` provisioned in `.env` on 2026-04-15.** Only the REST API Key is needed — Massive also issues S3-style Access Key ID + Secret Access Key credentials for flat-file bulk downloads, but Phase β doesn't need them (26-symbol × 2-year daily backfill = 26 REST requests, comfortably inside the free tier's 5 req/min).
+
 ### Decision 3: Initial watchlist — ✅ LOCKED: **default 20-30 list**
 
 **Equities + ETFs (20):** SPY, QQQ, DIA, IWM, VXX, GLD, TLT, AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, JPM, BAC, XLF, XLE, XLK, XLV

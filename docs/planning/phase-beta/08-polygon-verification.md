@@ -324,13 +324,13 @@ I'll fold these into `03-f1-preplan.md` as part of the commit that ships this re
 
 Before F1 session can start (in addition to the readiness gate):
 
-- [ ] **Sign up for a Massive (Polygon) account** at `https://massive.com/signup`
-- [ ] **Generate a free-tier API key** from the dashboard
-- [ ] **Provide the key to mission-control** via env var: `POLYGON_API_KEY=…` in `.env`
+- [x] **Signed up for a Massive (Polygon) account** — 2026-04-15
+- [x] **Generated a free-tier API key** — 2026-04-15
+- [x] **Provisioned `POLYGON_API_KEY` in `/root/claude/mission-control/.env`** — 2026-04-15 ✅
 
-This is a ~3-minute operator task. Can happen anytime during the 48h readiness gate window. No credit card required for the free tier (per earlier reality-check agent finding, not re-verified this run).
+**Clarification (operator question, 2026-04-15):** Massive issues two credential types — a REST **API Key** for on-demand queries and **Access Key ID + Secret Access Key** for S3-compatible flat-file bulk downloads. **F1-F10 only needs the REST API Key.** Flat Files are not required for Phase β because our volume (26 watchlist symbols × 2-year daily backfill = 26 REST requests ≈ 5 minutes at the free tier's 5 req/min) fits comfortably inside the REST API rate limit. Flat Files would only matter post-v7.0 if we ever want 20+ year backtest history, per-trade tick microstructure, or nightly bulk snapshots on a 260+ symbol watchlist — none of which are in the v7 roadmap.
 
-**Alpha Vantage key provisioning** (the primary source, $49.99 tier) is a separate operator task — already listed in the F1 pre-plan's operator checklist.
+**Alpha Vantage key provisioning** (the primary source, $49.99 tier) is a separate operator task — already listed in the F1 pre-plan's operator checklist, **still pending**.
 
 ---
 
