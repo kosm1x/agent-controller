@@ -330,7 +330,7 @@ Before F1 session can start (in addition to the readiness gate):
 
 **Clarification (operator question, 2026-04-15):** Massive issues two credential types — a REST **API Key** for on-demand queries and **Access Key ID + Secret Access Key** for S3-compatible flat-file bulk downloads. **F1-F10 only needs the REST API Key.** Flat Files are not required for Phase β because our volume (26 watchlist symbols × 2-year daily backfill = 26 REST requests ≈ 5 minutes at the free tier's 5 req/min) fits comfortably inside the REST API rate limit. Flat Files would only matter post-v7.0 if we ever want 20+ year backtest history, per-trade tick microstructure, or nightly bulk snapshots on a 260+ symbol watchlist — none of which are in the v7 roadmap.
 
-**Alpha Vantage key provisioning** (the primary source, $49.99 tier) is a separate operator task — already listed in the F1 pre-plan's operator checklist, **still pending**.
+**Alpha Vantage key provisioning** (the primary source, $49.99 tier) ✅ **already provisioned as `ALPHAVANTAGE_API_KEY` in `.env` on 2026-04-15** (verified via non-leaking grep count). Note the env var has no underscore between "ALPHA" and "VANTAGE" — F1's `AlphaVantageAdapter` must read `process.env.ALPHAVANTAGE_API_KEY`, not the hyphenated variant.
 
 ---
 

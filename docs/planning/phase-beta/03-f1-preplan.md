@@ -25,6 +25,8 @@ All six operator decisions answered. F1 pre-plan is now implementation-ready sub
 
 **Operating cost:** $49.99/mo baseline for v7.0. `api_call_budget` table enforces 80% ceiling so we never silently exceed tier 1.
 
+**Credential provisioning:** ✅ **`ALPHAVANTAGE_API_KEY` provisioned in `.env` on 2026-04-15** (verified via non-leaking grep count). **Note the env var name has no underscore between "ALPHA" and "VANTAGE"** — F1's `AlphaVantageAdapter` must read `process.env.ALPHAVANTAGE_API_KEY`, NOT `process.env.ALPHA_VANTAGE_API_KEY`. The config loader in `src/config.ts` should expose this as `config.alphaVantageApiKey` so the adapter never touches `process.env` directly — standard pattern for the rest of our API keys.
+
 ### Decision 2: F1 fallback source — ✅ LOCKED: **Polygon.io free tier**
 
 - [x] **Polygon.io free** — 5 req/min, 2-year historical, real-time WebSocket
