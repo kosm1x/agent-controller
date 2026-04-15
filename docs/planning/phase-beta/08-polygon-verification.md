@@ -332,6 +332,16 @@ Before F1 session can start (in addition to the readiness gate):
 
 **Alpha Vantage key provisioning** (the primary source, $49.99 tier) ✅ **already provisioned as `ALPHAVANTAGE_API_KEY` in `.env` on 2026-04-15** (verified via non-leaking grep count). Note the env var has no underscore between "ALPHA" and "VANTAGE" — F1's `AlphaVantageAdapter` must read `process.env.ALPHAVANTAGE_API_KEY`, not the hyphenated variant.
 
+**FRED key provisioning** (F5 macro source) ✅ **provisioned as `FRED_API_KEY` in `.env` on 2026-04-15**. Standard FRED convention matching `fred.stlouisfed.org` docs. All three Phase β F1-F5 credentials are now locked in `.env`:
+
+| Credential            | Env var                | Purpose                              |
+| --------------------- | ---------------------- | ------------------------------------ |
+| Alpha Vantage Premium | `ALPHAVANTAGE_API_KEY` | Primary equity/FX/macro ($49.99/mo)  |
+| Massive/Polygon       | `POLYGON_API_KEY`      | F1 fallback (free tier, 5 req/min)   |
+| FRED                  | `FRED_API_KEY`         | F5 macro (VIXCLS, ICSA, M2SL — free) |
+
+No further operator action needed for F1-F5 credentials. F6 (prediction markets) and later sessions have their own provisioning steps.
+
 ---
 
 ## 10. Cleanup

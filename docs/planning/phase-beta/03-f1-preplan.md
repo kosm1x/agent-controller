@@ -82,6 +82,8 @@ Both macro sources are used — AV for what AV has, FRED for what FRED has. Over
 
 F5 (Macro Regime Detection) reads from both `AlphaVantageAdapter.fetchMacroSeries()` and `FredAdapter.fetchSeries()` depending on which series it needs. The `DataLayer.getMacro()` facade hides the split from callers.
 
+**Credential provisioning:** ✅ **`FRED_API_KEY` provisioned in `.env` on 2026-04-15.** FRED's canonical env var convention (matches `fred.stlouisfed.org/docs/api/api_key.html`). F1's `FredAdapter` reads it via `config.fredApiKey` through the same config loader pattern as Alpha Vantage and Polygon — never directly from `process.env`.
+
 ### Decision 5: Second sentiment source for F6.5 — ✅ LOCKED: **CoinMarketCap Fear & Greed (free)**
 
 - [ ] LunarCrush — $20/mo (deferred, too early to pay)
