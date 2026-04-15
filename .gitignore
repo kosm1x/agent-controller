@@ -11,3 +11,6 @@ scripts/benchmark-*.json
 bin/
 monitoring/grafana/provisioning/alerting/contact-points.yml
 public/docs/
+# Session 67 operational cleanup: runtime artifacts that clutter git status
+backups/
+logs/
