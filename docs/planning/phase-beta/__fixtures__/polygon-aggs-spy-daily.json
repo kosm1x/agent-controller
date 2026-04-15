@@ -1,0 +1,44 @@
+{
+  "_comment_meta": "Golden-file fixture for F1 PolygonAdapter tests. Shape verified from massive.com docs (formerly polygon.io) on 2026-04-15 during exploration item C. Fixture values are REPRESENTATIVE — not live data. F1 tests mock fetch() and return this exact structure. Update with live data once an API key is provisioned.",
+  "_comment_endpoint": "GET https://api.massive.com/v2/aggs/ticker/SPY/range/1/day/2026-04-10/2026-04-14?adjusted=true",
+  "_comment_auth": "Authorization: Bearer <POLYGON_API_KEY> (or ?apiKey= query param)",
+  "ticker": "SPY",
+  "adjusted": true,
+  "queryCount": 3,
+  "resultsCount": 3,
+  "status": "OK",
+  "request_id": "6a7e94bba6b91a3d6f4f1c95c8b9e2a1",
+  "count": 3,
+  "results": [
+    {
+      "v": 68_432_100,
+      "vw": 512.8341,
+      "o": 511.45,
+      "c": 513.12,
+      "h": 514.05,
+      "l": 510.88,
+      "t": 1775894400000,
+      "n": 458_321
+    },
+    {
+      "v": 54_219_875,
+      "vw": 514.2198,
+      "o": 513.65,
+      "c": 515.38,
+      "h": 515.92,
+      "l": 513.04,
+      "t": 1775980800000,
+      "n": 412_095
+    },
+    {
+      "v": 72_108_442,
+      "vw": 516.8733,
+      "o": 515.5,
+      "c": 517.21,
+      "h": 518.08,
+      "l": 515.12,
+      "t": 1776067200000,
+      "n": 489_776
+    }
+  ]
+}

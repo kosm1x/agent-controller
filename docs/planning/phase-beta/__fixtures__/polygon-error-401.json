@@ -1,0 +1,7 @@
+{
+  "_comment": "Golden-file fixture for the Polygon 401 error response. Captured live on 2026-04-15 from both api.polygon.io and api.massive.com — identical shape. F1 PolygonAdapter error-handling tests assert this structure.",
+  "_comment_status_code": "HTTP 401",
+  "status": "ERROR",
+  "request_id": "a9fad2c15b902476ac9d41574dd6ef42",
+  "error": "API Key was not provided"
+}
