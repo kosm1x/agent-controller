@@ -392,7 +392,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support, sandbox E2E verified                                   |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
 
-See `V6-ROADMAP.md` for the full v6 roadmap and `docs/PROJECT-STATUS.md` for detailed phase history.
+See `docs/V7-ROADMAP.md` for the active roadmap and `docs/PROJECT-STATUS.md` for detailed phase history. v6 roadmap archived at `docs/archive/V6-ROADMAP-session67-final.md`.
 
 ### Jarvis — the user-facing persona
 

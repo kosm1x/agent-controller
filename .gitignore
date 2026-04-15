@@ -14,3 +14,6 @@ public/docs/
 # Session 67 operational cleanup: runtime artifacts that clutter git status
 backups/
 logs/
+
+# Env backups (never commit — may contain secrets)
+.env.bak-*
