@@ -13,35 +13,85 @@ F1 is the foundation of the entire F-series. It owns the 6-table schema, the mar
 
 If F1 ships with a schema gap or a validation hole, every downstream session works around it instead of fixing it. That's the most expensive kind of error in a critical-path stack.
 
-## Decisions required BEFORE coding starts
+## Decisions LOCKED (operator 2026-04-14)
 
-These three decisions are user-facing product choices, not tech choices. They must be locked before F1 pre-plan is final.
+All six operator decisions answered. F1 pre-plan is now implementation-ready subject to the readiness gate clearing on ~2026-04-17.
 
-### Decision 1: Alpha Vantage tier
+### Decision 1: Alpha Vantage tier — ✅ LOCKED: **$49.99/mo**
 
-- [ ] **$49.99/mo** — 75 req/min — sufficient for 10-30 symbol watchlist + daily macro pulls
-- [ ] $149.99/mo — 300 req/min — buffer for scaling
-- [ ] $249.99/mo — 1,200 req/min — overkill for current use
+- [x] **$49.99/mo** — 75 req/min — sufficient for 20-30 symbol watchlist + daily macro pulls
+- [ ] $149.99/mo — 300 req/min
+- [ ] $249.99/mo — 1,200 req/min
 
-**Recommendation:** $49.99/mo tier. Upgradeable later if watchlist grows.
+**Operating cost:** $49.99/mo baseline for v7.0. `api_call_budget` table enforces 80% ceiling so we never silently exceed tier 1.
 
-### Decision 2: F1 fallback source (replacing dead Yahoo Finance)
+### Decision 2: F1 fallback source — ✅ LOCKED: **Polygon.io free tier**
 
-- [ ] **Polygon.io free** — 5 req/min, 2-year historical, free real-time WS — best free option
-- [ ] Financial Modeling Prep free — 250 req/day, fundamentals focus, lower real-time fit
-- [ ] IEX Cloud paid — $19-$49/mo, official, highest reliability
-- [ ] stooq.com unofficial — historical only, no real-time, zero cost
-- [ ] No fallback — rely entirely on Alpha Vantage SLA
+- [x] **Polygon.io free** — 5 req/min, 2-year historical, real-time WebSocket
+- [ ] Financial Modeling Prep free
+- [ ] IEX Cloud paid
+- [ ] stooq.com unofficial
+- [ ] No fallback
 
-**Recommendation:** **Polygon.io free tier**. Highest request ceiling of the free options (5 req/min × 1440 min = 7,200 req/day vs FMP's 250/day), official documented API, no scraping risk. If Polygon's 5 req/min becomes a bottleneck mid-production, upgrade to $29/mo Developer tier.
+**Implementation note:** `PolygonAdapter` replaces the original `YahooFinanceAdapter`. Same interface surface where possible. Macro series NOT implemented on Polygon (macro is FRED-only). Rate limit guarded by a per-minute local counter with exponential backoff.
 
-### Decision 3: Watchlist scope at F1 launch
+### Decision 3: Initial watchlist — ✅ LOCKED: **default 20-30 list**
 
-- [ ] 5-10 symbols (equity/ETF only, no crypto) — minimum viable
-- [ ] 20-30 symbols + FX + 3-5 macro series — normal case
-- [ ] 50+ symbols + all sectors + crypto + commodities — aggressive
+**Equities + ETFs (20):** SPY, QQQ, DIA, IWM, VXX, GLD, TLT, AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, JPM, BAC, XLF, XLE, XLK, XLV
 
-**Recommendation:** Ship F1 with 20-30 symbols as the target. `api_call_budget` table enforces the ceiling dynamically — operator can raise it later.
+**FX (3):** EURUSD, USDJPY, GBPUSD
+
+**Macro (6):** FEDFUNDS, CPI, NONFARM (all via Alpha Vantage), VIXCLS, ICSA, M2SL (all via FRED)
+
+**Total:** 29 tracked symbols/series at F1 launch.
+
+**Design requirement per operator:** Changing the watchlist MUST be a trivial task for Jarvis via natural-language invocation. This is not optional polish — it's a first-class F1 acceptance criterion.
+
+Concretely, this means:
+
+- `market_watchlist_add`, `market_watchlist_remove`, `market_watchlist_list` tools get high-quality ACI descriptions following the v6.0 ACI design principles in CLAUDE.md (edge cases, enums, `.describe()` on every Zod field, poka-yoke for symbol input)
+- The `finance` scope group regex must fire on natural-language watchlist verbs in both Spanish and English: `/\b(agrega|añade|quita|elimina|muestra|lista|add|remove|show|list)\b.*\b(watchlist|watch\s*list|ticker|symbol|s[ií]mbolo|acci[oó]n)\b/i` plus symbol-pattern activation (`$SPY`, `SPY`, `AAPL`, etc.)
+- A smoke test at the end of F1 verifies "Jarvis, agrega TSLA a mi watchlist" → scope activates → `market_watchlist_add` fires with `{symbol: "TSLA", asset_class: "equity"}` → confirmation reply
+- Error messages from the tools are operator-friendly (not Zod validation stacktraces): "Ese símbolo no está en un formato válido (ejemplo válido: SPY, AAPL)"
+
+**Why this matters:** The watchlist is the only part of F1 the operator touches directly. Every other part is invisible infrastructure. If adding a symbol takes more than one WhatsApp message, F1 failed the usability test regardless of test coverage.
+
+### Decision 4: Macro series scope — ✅ LOCKED: **FRED + Alpha Vantage (both sources)**
+
+Both macro sources are used — AV for what AV has, FRED for what FRED has. Overlapping series (e.g., FEDFUNDS exists in both) default to Alpha Vantage for consistency with the equity/FX data provenance; FRED is the authoritative source for series AV doesn't expose.
+
+**Source split:**
+
+| Series                        | Provider      | Rationale              |
+| ----------------------------- | ------------- | ---------------------- |
+| FEDFUNDS (Federal Funds Rate) | Alpha Vantage | AV macro endpoint      |
+| TREASURY_YIELD                | Alpha Vantage | AV macro endpoint      |
+| CPI                           | Alpha Vantage | AV macro endpoint      |
+| UNEMPLOYMENT                  | Alpha Vantage | AV macro endpoint      |
+| NONFARM_PAYROLL               | Alpha Vantage | AV macro endpoint      |
+| REAL_GDP                      | Alpha Vantage | AV macro endpoint      |
+| VIXCLS (VIX close)            | FRED          | AV doesn't expose VIX  |
+| ICSA (Initial Jobless Claims) | FRED          | AV doesn't expose ICSA |
+| M2SL (M2 Money Stock)         | FRED          | AV doesn't expose M2   |
+
+F5 (Macro Regime Detection) reads from both `AlphaVantageAdapter.fetchMacroSeries()` and `FredAdapter.fetchSeries()` depending on which series it needs. The `DataLayer.getMacro()` facade hides the split from callers.
+
+### Decision 5: Second sentiment source for F6.5 — ✅ LOCKED: **CoinMarketCap Fear & Greed (free)**
+
+- [ ] LunarCrush — $20/mo (deferred, too early to pay)
+- [ ] Santiment — $30/mo (deferred)
+- [x] **CoinMarketCap Fear & Greed** — free, different methodology than alternative.me
+- [ ] Defer entirely
+
+**Impact on F6.5 scope:** Two sentiment adapters ship together — `AlternativeMeAdapter` and `CoinMarketCapFearGreedAdapter`. The F6.5 aggregator blends both readings (simple average or weighted by methodology confidence — to be decided in F6.5 pre-plan). Zero added operating cost. F6.5 session estimate stays at 0.7 sessions.
+
+**Future upgrade path:** If CoinMarketCap F&G turns out to correlate too tightly with alternative.me (both are market-sentiment aggregators), we can add LunarCrush/Santiment later as a third paid leg for on-chain + social depth. Not required at launch.
+
+### Decision 6: γ interleave during β — ✅ LOCKED: **NO — finish β first**
+
+Phase γ (v7.2 Graphify, v7.3 P2 SEO telemetry, v7.3 P3/P4, v7.4, v7.5) is strictly deferred until F9 exits the Phase β critical path. No interleaving, no slotting, no "while F7 compiles" detours.
+
+**Implication:** The ordering map in `04-ordering-map.md` is now the authoritative schedule. S1-S9 all contain only F-series work. γ work begins in S10+ after F9 ships and Phase β's validation window opens.
 
 ---
 

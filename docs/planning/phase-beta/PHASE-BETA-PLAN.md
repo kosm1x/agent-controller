@@ -33,9 +33,10 @@ The individual source files live alongside this one in `docs/planning/phase-beta
 
 **What needs to happen before F1 starts?**
 
-1. Operator decides: AV tier ($49.99 recommended), F1 fallback (Polygon.io free recommended), initial watchlist (20-30 symbols)
-2. Readiness gate clears (48h wait + 4 verifications)
-3. F1 pre-plan reviewed + approved
+1. ✅ Operator decisions LOCKED (2026-04-14) — see Part 6
+2. ⏳ Readiness gate clears (48h wait + 4 verifications) — target 2026-04-17 evening
+3. ⏳ F1 pre-plan reviewed one final time with locked decisions baked in
+4. ⏳ Optional: exploration plan items (see `05-exploration-plan.md`) executed during the wait to derisk F7/F8/F1-fallback
 
 **Biggest risk:** F1 is the bottleneck. If it slips, parallelization cascades break. We should NOT overpack F1 with adopt-on-the-way items. Keep it laser-focused.
 
@@ -263,27 +264,31 @@ Jarvis cannot push to main (SG1 invariant) — feature branches only, operator m
 
 ---
 
-## Part 6 — Open questions for the operator
+## Part 6 — Operator decisions ✅ LOCKED (2026-04-14)
 
-Before F1 starts, the operator must answer six questions:
+All six questions answered. F1 pre-plan is implementation-ready subject to the readiness gate clearing.
 
-1. **Alpha Vantage tier.** $49.99 / $149.99 / $249.99 / skip entirely? (Recommend $49.99.)
-2. **F1 fallback source.** Polygon.io free / FMP free / IEX Cloud paid / stooq / no fallback? (Recommend Polygon.io free.)
-3. **Initial watchlist.** Accept the 20-30 symbol default list or provide a custom list?
-4. **Macro series scope.** Accept the default FRED + AV macro set (FEDFUNDS, CPI, NONFARM, VIXCLS, ICSA, M2) or narrower/wider?
-5. **Second sentiment source for F6.5.** LunarCrush ($20/mo) / Santiment ($30/mo) / CoinMarketCap F&G (free, different methodology) / defer until we have F6.5 data?
-6. **Interleave γ work during β?** Recommend no — stay focused on the thesis. Operator may override if there's a business reason.
+1. **Alpha Vantage tier:** ✅ **$49.99/mo** (tier 1, 75 req/min)
+2. **F1 fallback source:** ✅ **Polygon.io free tier** (5 req/min, official API)
+3. **Initial watchlist:** ✅ **default 29-symbol list** (20 equity/ETF + 3 FX + 6 macro). **Design requirement from operator:** changing the watchlist must be a trivial task for Jarvis via natural-language invocation — this is a first-class F1 acceptance criterion, not optional polish.
+4. **Macro series scope:** ✅ **FRED + Alpha Vantage (both sources)** — AV for FEDFUNDS/TREASURY/CPI/UNEMPLOYMENT/NONFARM/REAL_GDP, FRED for VIXCLS/ICSA/M2SL.
+5. **Second sentiment source (F6.5):** ✅ **CoinMarketCap Fear & Greed (free)** — two free sentiment sources paired (alternative.me + CMC). F6.5 stays at zero added operating cost. LunarCrush/Santiment deferred as a possible future upgrade.
+6. **γ interleave during β:** ✅ **NO — finish β first.** S1-S9 contain only F-series work. γ begins in S10+ after F9 ships.
+
+**Monthly operating cost for v7.0 (locked):** $49.99/mo baseline (Alpha Vantage Premium tier 1). No other paid deps at Phase β launch.
+
+Full decision detail in `03-f1-preplan.md` → "Decisions LOCKED (operator 2026-04-14)".
 
 ---
 
 ## Part 7 — What happens next
 
-### If operator approves this plan as-is:
+### Current state (2026-04-14 session 67 wrap+2)
 
-1. **Wait for readiness gate to clear** (~48h, target 2026-04-17 evening)
-2. **Operator makes the 6 decisions above** (can do anytime in the 48h window)
-3. **F1 pre-plan finalized** with chosen fallback and watchlist baked in
-4. **Session S1 starts** — F1 implementation (~7h of focused work)
+1. ✅ **All 6 operator decisions locked** — see Part 6 above
+2. ⏳ **Readiness gate running** — 48h window, target clear 2026-04-17 evening
+3. ⏳ **Exploration plan proposed** — `05-exploration-plan.md`, operator picks slice
+4. **Session S1 (F1) starts** only after gate clears and F1 pre-plan is reviewed one final time with the locked decisions
 5. **F1 audit pass** — qa-auditor review BEFORE merge to main
 6. **F1 merges to main** only after audit pass
 7. **Operator approves S2** — F2+F4 begin
