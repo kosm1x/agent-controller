@@ -102,7 +102,7 @@ Polymarket received Designated Contract Market approval from the CFTC in Novembe
 
 ### pm-trader MCP status
 
-Repo: `agent-next/polymarket-paper-trader`. v0.1.6 (March 2026). 234⭐. **26 tools**, not 29 as v7 spec claimed. Python-based (not TypeScript). Ships installable via `npx clawhub install polymarket-paper-trader`. Uses SQLite WAL for state. Supports buy → track → outcome thesis loop. Uses live Polymarket order books for realistic fills.
+Repo: `agent-next/polymarket-paper-trader`. v0.1.7 (latest, April 2026). 234⭐. **30 tools verified via hands-on dry-run** (see `07-pm-trader-dryrun.md`). README says 26; v7 spec said 29. The repo shipped 4 new tools (`get_tags`, `get_markets_by_tag`, `get_event`, `cancel_all_orders`) since the README was last updated. Python-based (not TypeScript). Ships installable via `npx clawhub install polymarket-paper-trader` or `pip install polymarket-paper-trader`. Uses SQLite WAL for state. Supports buy → track → outcome thesis loop. Uses live Polymarket order books for realistic fills.
 
 Python vs TypeScript is NOT a blocker — MCP stdio transport means we spawn the server as a subprocess and the implementation language is invisible. F8 scope unchanged.
 

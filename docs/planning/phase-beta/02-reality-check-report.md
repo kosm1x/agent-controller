@@ -79,13 +79,15 @@ Free tier is now 25 req/day — effectively useless for production. Macro endpoi
 
 **What we assumed:** pm-trader MCP server with 29 tools, stdio transport.
 
-**What we found:** Repo is `agent-next/polymarket-paper-trader`, v0.1.6 (March 2026), 234⭐, **26 tools (not 29)**, actively maintained. **Python-based**, not TypeScript. Ships installable via `npx clawhub install polymarket-paper-trader` or direct pip install. SQLite (WAL mode) for state persistence. Supports buy → track → outcome thesis loop. Uses live Polymarket order books for realistic fills.
+**What we found (initial agent read):** Repo is `agent-next/polymarket-paper-trader`, v0.1.6 (March 2026 at time of first read), 234⭐, 26 tools claimed in README, actively maintained. **Python-based**, not TypeScript. Ships installable via `npx clawhub install polymarket-paper-trader` or direct pip install. SQLite (WAL mode) for state persistence. Supports buy → track → outcome thesis loop. Uses live Polymarket order books for realistic fills.
+
+**Updated after hands-on dry-run (item B, see `07-pm-trader-dryrun.md`):** actual version is **v0.1.7** (shipped since the first read), actual tool count is **30** (4 more than the README: `get_tags`, `get_markets_by_tag`, `get_event`, `cancel_all_orders`). The repo is moving faster than README updates. Dry-run confirmed the MCP stdio protocol round-trip works end-to-end (spawn 2.5ms, initialize 661ms, tools/list 2.9ms, tools/call 68ms) and surfaced a real `--data-dir` propagation bug in the `mcp` subcommand — fixable via a `HOME` env var workaround.
 
 **Impact:**
 
-- v7 spec's "29 tools" claim was aspirational — update to 26.
+- v7 spec's "29 tools" claim was close — **actual is 30**, verified by the dry-run.
 - Python vs TypeScript is a non-issue because MCP stdio transport means we spawn the server as a subprocess and communicate via JSON-RPC. The Python implementation is invisible to our TypeScript caller.
-- **F8 scope holds**, estimate unchanged at 1.5 sessions.
+- **F8 scope holds**, estimate unchanged at 1.5 sessions — the dry-run confirmed the happy path plus surfaced one small integration quirk (HOME env var workaround, 5 LOC).
 
 ---
 
