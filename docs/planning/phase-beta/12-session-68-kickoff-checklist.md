@@ -161,7 +161,7 @@ The first 30 minutes of F1 should be exactly this:
 
 ## Watchlist bootstrap reminder
 
-F1 needs at least one real symbol in `watchlist` to drive integration tests and the first live fetch. Per operator lock (Decision 3), seed with the locked default. If that list is not yet documented in `03-f1-preplan.md`, the first 15 minutes of F1 must capture it before any adapter code ships.
+F1 needs the locked default watchlist seeded into the `watchlist` table before adapters can be tested end-to-end. The **20-ticker adversarial bring-up set** is documented in `13-f1-watchlist-bootstrap.md` — paste the seed DDL block from that doc into `/tmp/f1-watchlist-seed.sql` and apply after the schema DDL. Each ticker has a dedicated test case; removing any of them breaks a specific F1 test.
 
 ---
 
