@@ -137,7 +137,7 @@ Centers each signal around zero. Prevents trending signals from appearing more v
 ### Step 3: Sample variance
 
 ```
-σ(i)² = (1/M) × Σ X(i,s)²
+σ(i)² = (1/(M-1)) × Σ X(i,s)²
 ```
 
 High variance = noisy/unpredictable. Low variance = consistent. Used in Step 10 to penalize unreliable signals.
@@ -152,7 +152,7 @@ After this step, a momentum signal in percentage points and a microstructure sig
 
 ### Step 5: Drop most recent observation
 
-Retain only first M periods in Y(i,s). Prevents look-ahead bias.
+Retain only first M−1 periods in Y(i,s). Prevents look-ahead bias.
 
 ### Step 6: Cross-sectional demean
 

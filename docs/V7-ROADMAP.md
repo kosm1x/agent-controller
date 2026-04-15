@@ -284,12 +284,12 @@
 
 > 1.5 sessions. Depends on F3 (needs signal data to render). Reference: `reference_quantagent.md`.
 
-| Item                                                                                               | Source     | Status      |
-| -------------------------------------------------------------------------------------------------- | ---------- | ----------- |
-| TradingView lightweight-charts + Puppeteer → PNG pipeline                                          | V7 spec    | **Planned** |
-| Candlestick + indicator overlays + signal markers                                                  | V7 spec    | **Planned** |
-| Vision chart pattern recognition — 4-agent pipeline (head-and-shoulders, triangles, wedges, flags) | quantagent | **Planned** |
-| Register as 6th signal layer in the alpha combination engine                                       | V7 spec    | **Planned** |
+| Item                                                                                                                                                                                                                                                     | Source     | Status      |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------- |
+| TradingView lightweight-charts + Puppeteer → PNG pipeline                                                                                                                                                                                                | V7 spec    | **Planned** |
+| Candlestick + indicator overlays + signal markers                                                                                                                                                                                                        | V7 spec    | **Planned** |
+| Vision chart pattern recognition — 4-agent pipeline (head-and-shoulders, triangles, wedges, flags)                                                                                                                                                       | quantagent | **Planned** |
+| Synthesize as 6th layer in post-F7 decision ranking via RRF (Reciprocal Rank Fusion) — chart patterns are discrete categorical signals that do not fit inside the F7 11-step continuous-return pipeline (see `planning/phase-beta/11-v71-chart-deps.md`) | explore F  | **Planned** |
 
 ---
 
