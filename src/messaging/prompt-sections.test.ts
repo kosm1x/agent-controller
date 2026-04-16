@@ -139,6 +139,12 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("grep");
   });
 
+  it("codingSection includes Karpathy coding principles", () => {
+    const s = codingSection();
+    expect(s).toContain("ANTES DE CODIFICAR");
+    expect(s).toContain("trazarse directamente al request");
+  });
+
   it("browserSection mentions browser__click", () => {
     const s = browserSection();
     expect(s).toContain("browser__click");

@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-14
+> Last updated: 2026-04-16
 
 ## Overview
 
@@ -10,14 +10,14 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 
 ## Metrics
 
-| Metric        | Value                                                                                                                                                                                                                                          |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source files  | 271                                                                                                                                                                                                                                            |
-| Test files    | 153                                                                                                                                                                                                                                            |
-| Tests passing | 2237                                                                                                                                                                                                                                           |
-| Type errors   | 0                                                                                                                                                                                                                                              |
-| Total tools   | 180 builtin + 8 jarvis\_\* MCP (read-only, env-gated) + 55 external MCP + 20 Google + 1 gws dispatch. 116 deferred — 52% prompt token reduction                                                                                                |
-| Dependencies  | 12 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp, @anthropic-ai/claude-agent-sdk + @whiskeysockets/baileys, grammy) |
+| Metric        | Value                                                                                                                                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source files  | 271                                                                                                                                                                                                                                                                  |
+| Test files    | 154                                                                                                                                                                                                                                                                  |
+| Tests passing | 2244                                                                                                                                                                                                                                                                 |
+| Type errors   | 0                                                                                                                                                                                                                                                                    |
+| Total tools   | 180 builtin + 8 jarvis\_\* MCP (read-only, env-gated) + 55 external MCP + 20 Google + 1 gws dispatch. 116 deferred — 52% prompt token reduction                                                                                                                      |
+| Dependencies  | 13 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp, @anthropic-ai/claude-agent-sdk, fingerprint-injector + @whiskeysockets/baileys, grammy) |
 
 ## Phase Status
 
