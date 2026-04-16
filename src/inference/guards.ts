@@ -34,6 +34,7 @@ const READ_ONLY_TOOLS = new Set([
   "gmail_read",
   "gsheets_read",
   "gdocs_read",
+  "gdocs_read_full",
   "gdrive_list",
   "calendar_list",
   // WordPress (read-only subset)

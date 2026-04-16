@@ -86,6 +86,48 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl db "SELECT ..."    # Raw SQLite query or interactive shell
 ```
 
+## Infrastructure
+
+### Deployment flow
+
+Source edits to mission-control have **NO effect** until deployed. The service runs compiled JS from `dist/`, not source.
+
+```bash
+./scripts/deploy.sh          # build + restart + verify (preferred)
+# or manually:
+npm run build && systemctl restart mission-control
+```
+
+After deploy, always verify:
+
+1. `systemctl is-active mission-control` — must be "active"
+2. `journalctl -u mission-control --since '30 sec ago' --no-pager | tail -10` — check for startup errors
+3. Test at least one affected endpoint or trigger one affected workflow
+
+### tsx caching gotcha
+
+`tsx` caches compiled files in `/tmp/tsx-0/`. When live behavior doesn't match source code:
+
+```bash
+rm -rf /tmp/tsx-0/ && systemctl restart mission-control
+```
+
+This applies to dev mode (`npm run dev`) and any tsx-based service.
+
+### Scope & deferred tools at runtime
+
+- Tools marked `deferred: true` are NOT loaded into the LLM prompt until scope activates them. This saves ~52% prompt tokens.
+- Scope groups are defined in `src/tools/scope.ts` — regex patterns match user messages to activate tool sets.
+- Rituals with ≤6 tools use `skipDeferral=true` (all tools loaded regardless of deferred flag).
+- If a tool "doesn't exist" at runtime, check: (1) is it deferred? (2) does the scope regex match? (3) is it in the ritual's tools list?
+
+### Database
+
+- SQLite at `data/mc.db` — contains Jarvis memories, conversations, embeddings, task history
+- **NEVER delete or reset** without explicit user approval — memories are irreplaceable
+- Additive schema changes (new tables/indexes) apply live: `sqlite3 ./data/mc.db < ddl.sql`
+- All DB access goes through `getDatabase()` singleton — no raw `sqlite3` CLI in tools
+
 ## Patterns
 
 ### Adding a new tool
