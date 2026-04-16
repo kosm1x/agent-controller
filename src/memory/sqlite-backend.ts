@@ -396,6 +396,12 @@ export class SqliteMemoryBackend implements MemoryService {
         .filter((r) => r._score >= MIN_RELEVANCE_SCORE);
       scored.sort((a, b) => b._score - a._score);
 
+      if (scored.length === 0 && allResults.size > 0) {
+        console.warn(
+          `[memory] Relevance filter discarded all ${allResults.size} results (threshold=${MIN_RELEVANCE_SCORE})`,
+        );
+      }
+
       // Graph-aware coherence reranker: boost entity-linked clusters as a
       // strict tiebreaker (capped at 15%). Fixes independent-top-K hitting
       // mixed-topic results when several memories share project/person
