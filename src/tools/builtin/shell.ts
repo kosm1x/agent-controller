@@ -96,6 +96,9 @@ function isMissionControlWriteAllowed(): boolean {
   }
 }
 
+/** Docs files Jarvis can write on main branch (operational logs, not source code). */
+const RITUAL_WRITABLE_DOCS = ["docs/EVOLUTION-LOG.md"];
+
 const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\/root\/claude\/mission-control\//,
@@ -186,6 +189,13 @@ export function validateShellCommand(command: string): {
           isMissionControlWriteAllowed()
         ) {
           continue;
+        }
+        // Narrow exception: ritual-writable docs (operational logs, not source)
+        if (targetPath.includes("/mission-control/")) {
+          const rel = targetPath.replace(/.*\/mission-control\//, "");
+          if (RITUAL_WRITABLE_DOCS.includes(rel)) {
+            continue;
+          }
         }
         return { allowed: false, reason: deny.reason };
       }
