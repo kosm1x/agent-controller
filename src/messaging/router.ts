@@ -122,6 +122,7 @@ import { autoPersistConversation } from "../memory/auto-persist.js";
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
 const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → actually give up (past SDK 10min hard timeout)
+const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
 
 /**
  * Fork child injection boilerplate for background agents (OpenClaude pattern).
@@ -1595,7 +1596,13 @@ export class MessageRouter {
       }
     }, TASK_TIMEOUT_FINAL_MS);
 
-    // Hard abandon: clean up after SDK timeout (10min) + 1min grace
+    // Hard abandon: coding tasks get 20min (55 turns × tool calls), others 11min
+    const isCodingTask = tools.some((t) =>
+      ["file_edit", "git_commit", "gh_create_pr"].includes(t),
+    );
+    const abandonMs = isCodingTask
+      ? TASK_TIMEOUT_ABANDON_CODING_MS
+      : TASK_TIMEOUT_ABANDON_MS;
     const abandonTimer = setTimeout(() => {
       const pending = this.pendingReplies.get(result.taskId);
       if (pending) {
@@ -1606,7 +1613,7 @@ export class MessageRouter {
           "Se agotó el tiempo. Puedes intentar de nuevo.",
         );
       }
-    }, TASK_TIMEOUT_ABANDON_MS);
+    }, abandonMs);
 
     this.pendingReplies.set(result.taskId, {
       channel: msg.channel,

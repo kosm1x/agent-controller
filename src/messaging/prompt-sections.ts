@@ -322,13 +322,16 @@ GIT Y GITHUB — OBLIGATORIO usar las herramientas de git, NUNCA shell_exec para
 Los tools de git tienen protecciones (verifican que el remote existe, renombran master→main,
 hacen rebase automático). shell_exec NO tiene estas protecciones y produce errores silenciosos.
 
-FLUJO para entregar código:
+FLUJO para entregar código — COMMITEA TEMPRANO, no esperes perfección:
 1. Haz los cambios (file_edit/file_write)
-2. Verifica (shell_exec: npx tsc --noEmit && npx vitest run)
-3. git_status para ver qué cambió
-4. git_commit con mensaje descriptivo del PORQUÉ
-5. git_push al remoto
-6. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
+2. Verifica rápido (shell_exec: npx tsc --noEmit) — typecheck es suficiente para commitear
+3. git_commit con mensaje descriptivo del PORQUÉ — NO esperes a correr toda la suite
+4. git_push al remoto
+5. Si pidieron PR: gh_create_pr INMEDIATAMENTE después del push
+6. DESPUÉS del PR, corre tests (npx vitest run). Si fallan, haz fix + nuevo commit + push
+7. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
+
+⚠️ PRIORIDAD: Un PR con typecheck limpio > no PR porque los tests tardaron. Fede revisa PRs — prefiere ver código temprano que esperar perfección.
 
 PROYECTO: /root/claude/mission-control
 STACK: TypeScript, ESM, vitest, better-sqlite3, Hono
