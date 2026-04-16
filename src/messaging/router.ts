@@ -121,7 +121,7 @@ import { autoPersistConversation } from "../memory/auto-persist.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
-const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → actually give up (past SDK 10min hard timeout)
+const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → give up (past SDK 15min timeout with grace)
 const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
 
 /**

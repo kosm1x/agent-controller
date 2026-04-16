@@ -282,7 +282,7 @@ FLUJO DE TRABAJO para cambios de código:
 1. **Entiende primero**: Usa grep/glob/list_dir para explorar el codebase
 2. **Lee antes de editar**: SIEMPRE usa file_read antes de file_edit (necesitas el texto exacto)
 3. **Edita con file_edit**: Cambios quirúrgicos, no reescrituras completas
-4. **Verifica**: Ejecuta tests/linters con shell_exec después de CADA cambio significativo — no solo al final
+4. **Verifica**: Ejecuta typecheck (npx tsc --noEmit) después de CADA cambio significativo. Suite completa al final o después del PR
 5. **Reporta**: Muestra qué cambió y el resultado de la verificación
 
 REGLAS de código:
