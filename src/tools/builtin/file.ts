@@ -42,6 +42,9 @@ const SELF_IMPROVEMENT_ALLOWED = [
   "src/video/",
 ];
 
+/** Docs files Jarvis can write on main branch (operational logs, not source code). */
+const RITUAL_WRITABLE_DOCS = ["docs/EVOLUTION-LOG.md"];
+
 function getJarvisBranchFile(): string {
   try {
     return execFileSync("git", ["branch", "--show-current"], {
@@ -79,6 +82,13 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
       // Dynamic override for mission-control on jarvis/* branches
       if (deny === "/root/claude/mission-control/" && isOnJarvisBranch()) {
         continue;
+      }
+      // Narrow exception: ritual-writable docs (operational logs, not source)
+      if (deny === "/root/claude/mission-control/") {
+        const rel = resolved.replace("/root/claude/mission-control/", "");
+        if (RITUAL_WRITABLE_DOCS.includes(rel)) {
+          continue;
+        }
       }
       return {
         allowed: false,
