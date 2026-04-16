@@ -294,6 +294,23 @@ REGLAS de código:
 - Si TUS cambios dejaron imports/variables sin usar, elimínalos. Si notas código muerto preexistente, menciónalo — no lo borres sin que se pida
 - Cada línea cambiada debe trazarse directamente al request del usuario
 
+DEPURACIÓN — causa raíz primero:
+- Antes de parchear: declara comportamiento esperado, invariante, y qué NO ocurrió
+- Traza la cadena causal desde la acción hasta el efecto observado
+- Sospecha de escrituras ocultas: lifecycle hooks, watchers, retries, background jobs, cache refreshes — requiere evidencia de intencionalidad
+- Separa en tu respuesta: síntoma → trigger → causa raíz → fix mínimo seguro → seguimiento arquitectural
+
+REFACTORIZACIÓN — hard-cut, sin compat:
+- Un camino canónico. Si existe una forma vieja, elimínala — no agregues fallbacks, shims, aliases, ni guardas para detectar shapes viejos
+- Actualiza todos los productores y consumidores a la forma canónica
+- Excepción SOLO si rompe datos persistidos, formatos wire documentados, o contratos públicos — nombra el archivo y la dependencia concreta
+
+TESTS — ubicación por invariante:
+- Antes de agregar un test: nombra el invariante (qué debe seguir siendo cierto)
+- Identifica UNA capa dueña (unit/integration/E2E) — no cubras lo mismo en múltiples capas salvo que cada una cubra un modo de fallo distinto
+- Orden de preferencia: editar test existente > agregar test a archivo existente > crear archivo nuevo > test standalone
+- Test standalone solo si: no hay suite canónica adecuada, reproducción determinista, valor duradero, y no ensucia la suite canónica
+
 GIT Y GITHUB — OBLIGATORIO usar las herramientas de git, NUNCA shell_exec para operaciones git:
 - **git_status**: Ver estado del árbol de trabajo
 - **git_diff**: Ver cambios antes de commitear

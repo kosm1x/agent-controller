@@ -145,6 +145,13 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("trazarse directamente al request");
   });
 
+  it("codingSection includes agent-skills methodology", () => {
+    const s = codingSection();
+    expect(s).toContain("causa raíz primero");
+    expect(s).toContain("hard-cut");
+    expect(s).toContain("invariante");
+  });
+
   it("browserSection mentions browser__click", () => {
     const s = browserSection();
     expect(s).toContain("browser__click");
