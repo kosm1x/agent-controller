@@ -153,9 +153,12 @@ export async function enrichContext(
           // Guard: don't mutate sections after timeout (race condition C1)
           if (pgTimedOut) return;
 
-          // Sort by score, take top 5
+          // Minimal sufficiency: filter low-relevance results, sort, take top 5
+          const PG_MIN_RELEVANCE = 0.15;
           allResults.sort((a, b) => b.combined_score - a.combined_score);
-          const topResults = allResults.slice(0, 5);
+          const topResults = allResults
+            .filter((r) => r.combined_score >= PG_MIN_RELEVANCE)
+            .slice(0, 5);
 
           if (topResults.length > 0) {
             const lines: string[] = [];

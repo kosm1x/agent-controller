@@ -72,6 +72,7 @@ Rules:
 - NEVER write facts about which tools were used, tool success rates, runner performance, or workflow patterns of the assistant. Those are system telemetry, not user knowledge, and recalling them poisons future prompts with self-referential guidance.
 - NEVER describe the assistant's own behavior as if it were a user preference ("user has recurring workflow pattern using tool X" is forbidden).
 - Skip procedural details ("I called tool X", "the file was created", "the task completed successfully").
+- DO capture operational failures, blocked capabilities, and recurring error patterns (e.g. "Google Slides access fails because Jarvis lacks browser session for Google Workspace"). Instructive failures help avoid repeating mistakes; tool success narratives do not.
 - If nothing is worth remembering, respond with "NONE"
 
 Format: one fact per line, no numbering, no bullets.`;
