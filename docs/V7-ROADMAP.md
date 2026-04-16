@@ -397,6 +397,37 @@
 | Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine                             | **Planned** |
 | Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                                    | **Planned** |
 
+### Session 69 Deferred Items — Review at v7.5 or Phase β F-step
+
+Items analyzed and approved in session 69 but not implemented. Each has a memory reference with full details.
+
+**Phase β F-step anchored (implement at stated F-step):**
+
+| Item                                                                                                          | F-step       | Memory Reference                       |
+| ------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------- |
+| Port orderbook walking, position tracking, P&L analytics, API caching, multi-account A/B                      | F5→F7 bridge | `reference_polymarket_paper_trader.md` |
+| Port Zeta composite, CVD divergence, order blocks, rejection-gate scoring, Fibonacci entry/exit               | F3/F7/F8     | `reference_bybit_screening_bot.md`     |
+| Fan-out→funnel multi-agent architecture, universal signal format, constraint-before-LLM, vol×corr risk sizing | F7           | `reference_ai_hedge_fund.md`           |
+
+**v7.5 anchored (implement during skill evolution engine):**
+
+| Item                                                                              | Source                          | Memory Reference                |
+| --------------------------------------------------------------------------------- | ------------------------------- | ------------------------------- |
+| Prometheus reflector: per-dimension critiques with evidence instead of pass/fail  | RationalRewards paper           | `reference_rational_rewards.md` |
+| Predictive consistency gate: rationale must predict outcome without seeing answer | RationalRewards paper           | `reference_rational_rewards.md` |
+| Skill evaluation loop: draft→test with/without→grade→improve cycle                | anthropics/skills skill-creator | `reference_anthropic_skills.md` |
+| Tool annotations: readOnlyHint, destructiveHint, idempotentHint on tool registry  | anthropics/skills mcp-builder   | `reference_anthropic_skills.md` |
+
+**Adopt during relevant feature work (no fixed timeline):**
+
+| Item                                               | Trigger                                | Memory Reference                    |
+| -------------------------------------------------- | -------------------------------------- | ----------------------------------- |
+| Browser pool with atomic slot reservation          | Multi-agent browser sharing            | `reference_maxun.md`                |
+| Pagination auto-detection (5 strategies)           | Building `web_crawl` tool              | `reference_maxun.md`                |
+| pg-boss job queue (PostgreSQL-backed)              | Rituals/scheduling reliability upgrade | `reference_maxun.md`                |
+| Landing page CRO framework                         | Client landing page work               | `reference_landing_page_cro.md`     |
+| Three-tier ownership (runtime/first-fix/canonical) | Multi-layer debugging sessions         | `reference_three_tier_ownership.md` |
+
 ---
 
 ## Dependency Graph
