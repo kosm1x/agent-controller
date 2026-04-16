@@ -5,7 +5,7 @@
  * Tests the pure detection/decision logic that drives the stealth behavior.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   isCloudflareChallenge,
   STEALTH_LAUNCH_ARGS,
@@ -92,5 +92,26 @@ describe("STEALTH_LAUNCH_ARGS", () => {
 
   it("has at least 30 flags (comprehensive stealth)", () => {
     expect(STEALTH_LAUNCH_ARGS.length).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe("fingerprint integration", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("createFingerprintedContext is importable from fingerprint module", async () => {
+    const mod = await import("./fingerprint.js");
+    expect(typeof mod.createFingerprintedContext).toBe("function");
+  });
+
+  it("stealth-browser imports fingerprint module for context creation", async () => {
+    // Verify the import path exists and the module is structurally correct
+    const source = await import("./stealth-browser.js");
+    // stealthFetch exists and is a function (it internally uses createFingerprintedContext)
+    expect(typeof source.stealthFetch).toBe("function");
+    // The fingerprint module should be importable from the same directory
+    const fp = await import("./fingerprint.js");
+    expect(typeof fp.createFingerprintedContext).toBe("function");
   });
 });

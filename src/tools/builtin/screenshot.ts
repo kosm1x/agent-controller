@@ -114,13 +114,24 @@ WORKFLOW for video content:
 
       // C1 audit fix: try/finally guarantees browser.close() on all paths
       try {
-        const context = await browser.newContext({
+        const screenshotContextOpts = {
           viewport: { width, height: 1920 },
           deviceScaleFactor: dsf,
-          ...(theme && {
-            colorScheme: theme,
-          }),
-        });
+          ...(theme && { colorScheme: theme }),
+        };
+
+        let context: import("playwright").BrowserContext;
+        try {
+          const { createFingerprintedContext } =
+            await import("../../lib/fingerprint.js");
+          context = await createFingerprintedContext(
+            browser,
+            screenshotContextOpts,
+          );
+        } catch {
+          // Fallback: original behavior without fingerprinting
+          context = await browser.newContext(screenshotContextOpts);
+        }
 
         // D4.5: Apply stealth patches to reduce bot detection
         try {

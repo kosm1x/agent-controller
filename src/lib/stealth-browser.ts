@@ -64,23 +64,6 @@ const STEALTH_ARGS = [
 /** Combined launch args for stealth browser. */
 export const STEALTH_LAUNCH_ARGS = [...DEFAULT_ARGS, ...STEALTH_ARGS];
 
-/**
- * Context options that mimic a real desktop Chrome session.
- * - ignoreHTTPSErrors: deliberate — some CF challenge redirects use intermediate domains
- * - permissions: deliberate — real browsers have geolocation/notifications granted
- */
-const STEALTH_CONTEXT_OPTIONS = {
-  viewport: { width: 1920, height: 1080 },
-  screen: { width: 1920, height: 1080 },
-  deviceScaleFactor: 2,
-  colorScheme: "dark" as const,
-  isMobile: false,
-  hasTouch: false,
-  ignoreHTTPSErrors: true,
-  serviceWorkers: "allow" as const,
-  permissions: ["geolocation", "notifications"] as string[],
-};
-
 // ---------------------------------------------------------------------------
 // Cloudflare Turnstile solver (ported from Scrapling _stealth.py)
 // ---------------------------------------------------------------------------
@@ -253,10 +236,24 @@ export async function stealthFetch(
     });
 
     try {
-      const context = await browser.newContext(STEALTH_CONTEXT_OPTIONS);
+      let context: import("playwright").BrowserContext;
+      try {
+        const { createFingerprintedContext } = await import("./fingerprint.js");
+        context = await createFingerprintedContext(browser);
+      } catch {
+        // Fallback: plain context without fingerprinting
+        context = await browser.newContext({
+          ignoreHTTPSErrors: true,
+          serviceWorkers: "allow" as const,
+        });
+      }
 
-      // Apply JS-level stealth patches (navigator.webdriver, etc.)
-      await applyStealthPatches(context);
+      // Apply JS-level stealth patches (navigator.webdriver, etc.) — best-effort
+      try {
+        await applyStealthPatches(context);
+      } catch {
+        // Non-fatal — stealth patches are supplementary
+      }
 
       const page = await context.newPage();
 

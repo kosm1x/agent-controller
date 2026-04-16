@@ -24,6 +24,7 @@
     "@playwright/mcp": "^0.0.69",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.7.0",
+    "fingerprint-injector": "^2.1.82",
     "grammy": "^1.41.1",
     "hono": "^4.7.0",
     "mammoth": "^1.12.0",
