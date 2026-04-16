@@ -98,8 +98,10 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 [1-2 sentences: observations relevant to the agent-user co-evolution paper. What phase are we in? Any milestone crossed?]
 \`\`\`
 
-4. Use file_write to APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md.
-   IMPORTANT: Read the file first with file_read, then write the FULL content back with the new entry appended at the end.
+4. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md.
+   Use shell_exec with: echo '<entry>' >> /root/claude/mission-control/docs/EVOLUTION-LOG.md
+   Or use file_write (read full file first, append entry, write back).
+   Both tools are available and authorized for this file.
 
 Do NOT modify existing entries. Only append.
 If there were zero interactions today, still write an entry noting the quiet day.`,
@@ -110,6 +112,7 @@ If there were zero interactions today, still write an entry noting the quiet day
       "memory_reflect",
       "file_read",
       "file_write",
+      "shell_exec",
     ],
   };
 }
