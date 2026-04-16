@@ -282,7 +282,7 @@ FLUJO DE TRABAJO para cambios de código:
 1. **Entiende primero**: Usa grep/glob/list_dir para explorar el codebase
 2. **Lee antes de editar**: SIEMPRE usa file_read antes de file_edit (necesitas el texto exacto)
 3. **Edita con file_edit**: Cambios quirúrgicos, no reescrituras completas
-4. **Verifica**: Ejecuta tests/linters con shell_exec después de CADA cambio significativo — no solo al final
+4. **Verifica**: Ejecuta typecheck (npx tsc --noEmit) después de CADA cambio significativo. Suite completa al final o después del PR
 5. **Reporta**: Muestra qué cambió y el resultado de la verificación
 
 REGLAS de código:
@@ -322,13 +322,40 @@ GIT Y GITHUB — OBLIGATORIO usar las herramientas de git, NUNCA shell_exec para
 Los tools de git tienen protecciones (verifican que el remote existe, renombran master→main,
 hacen rebase automático). shell_exec NO tiene estas protecciones y produce errores silenciosos.
 
-FLUJO para entregar código:
+CHECKLIST DE INTEGRACIÓN — tu código no está "listo" hasta tocar TODOS los puntos aplicables.
+
+Nueva/modificada HERRAMIENTA (tool) — 7 puntos obligatorios:
+1. Handler en src/tools/builtin/{name}.ts
+2. Registrada en AMBAS listas de src/tools/sources/{category}.ts (allTools + tools del registerTools)
+3. Agregada al grupo en src/messaging/scope.ts (GOOGLE_TOOLS, CODING_TOOLS, WORDPRESS_TOOLS, etc.)
+4. Si read-only → src/inference/guards.ts (READ_ONLY_TOOLS set)
+5. Si devuelve contenido para follow-up → src/memory/auto-persist.ts (Rule 2b)
+6. Si read-only en grupo con writes → src/runners/write-tools-sync.test.ts (grupo_READ_ONLY)
+7. Test file con mocks (e.g. google-docs.test.ts) — happy path + error paths
+
+Para otros tipos de cambio (runner, DB table, scope group, env var, dep), consulta la referencia completa:
+file_read /root/claude/mission-control/docs/INTEGRATION-CHECKLIST.md
+
+AUDITORÍA PRE-COMMIT — OBLIGATORIA, sin excepciones, aunque el PR sea revisado:
+Antes de llamar git_commit, HAZ esta secuencia:
+1. grep_code (o shell_exec: grep -rn) del símbolo nuevo → ¿aparece en TODOS los puntos de integración esperados?
+2. shell_exec: npx tsc --noEmit → zero errors
+3. Si es bug fix: grep del anti-patrón → ¿existe en otros archivos? Arréglalos AHORA, no en otra sesión
+4. Si falta algún punto de integración, NO commitees — arréglalo en el MISMO commit
+
+⚠️ Atrapar errores tú es 10x más rápido que encontrarlos en review. No confíes en que Fede los detecte — trabaja como si no hubiera revisión.
+
+FLUJO para entregar código — COMMITEA TEMPRANO, no esperes perfección:
 1. Haz los cambios (file_edit/file_write)
-2. Verifica (shell_exec: npx tsc --noEmit && npx vitest run)
-3. git_status para ver qué cambió
-4. git_commit con mensaje descriptivo del PORQUÉ
+2. Verifica rápido (shell_exec: npx tsc --noEmit) — typecheck es suficiente para commitear
+3. **AUDITORÍA PRE-COMMIT** (arriba) — OBLIGATORIA antes de commit
+4. git_commit con mensaje descriptivo del PORQUÉ — NO esperes a correr toda la suite
 5. git_push al remoto
-6. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
+6. Si pidieron PR: gh_create_pr INMEDIATAMENTE después del push
+7. DESPUÉS del PR, corre tests (npx vitest run). Si fallan, haz fix + nuevo commit + push
+8. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
+
+⚠️ PRIORIDAD: Un PR con auditoría pre-commit completa > un PR rápido con puntos de integración faltantes. La velocidad de commit-temprano NO te exime de la auditoría.
 
 PROYECTO: /root/claude/mission-control
 STACK: TypeScript, ESM, vitest, better-sqlite3, Hono

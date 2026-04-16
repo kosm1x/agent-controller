@@ -48,6 +48,7 @@ export const GOOGLE_TOOLS = [
   "gsheets_read",
   "gsheets_write",
   "gdocs_read",
+  "gdocs_read_full",
   "gdocs_write",
   "gdocs_replace",
   "gslides_read",

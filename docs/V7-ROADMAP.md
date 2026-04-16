@@ -366,7 +366,24 @@
 
 ## v7.4 — Video Production — **Planned**
 
-> 2 sessions. Depends on v7.3 Phase 4 (feeds marketing content). Reference: `reference_open_higgsfield.md`.
+> 2 sessions. Depends on v7.3 Phase 4 (feeds marketing content). References: `reference_open_higgsfield.md`, `reference_openmontage.md`, `reference_hyperframes.md`, `reference_redditvideomakerbbot.md`.
+
+### v7.4 S1 — Composition Engine (openmontage base + hyperframes Tier 1 patterns)
+
+| Item                                                                                             | Source                     | Status      |
+| ------------------------------------------------------------------------------------------------ | -------------------------- | ----------- |
+| openmontage-based `video_*` tool set (clean-room TS: video_create/script/tts/image/compose etc.) | `reference_openmontage.md` | **Planned** |
+| **Seek-by-frame protocol** (HfProtocol as composition contract, engine-agnostic)                 | hyperframes #1             | **Planned** |
+| **Deterministic frame quantization** (~20 LOC, same input → identical MP4)                       | hyperframes #2             | **Planned** |
+| **Parallel worker coordinator** (~300 LOC, auto-sized by CPU/memory)                             | hyperframes #3             | **Planned** |
+| **Skill gate pattern** (SKILL.md + house-style.md + visual-styles.md + Visual Identity Gate)     | hyperframes #5             | **Planned** |
+| **14 WebGL shader transitions** (inlined GLSL, GSAP-driven — domain-warp, ridged-burn, etc.)     | hyperframes #7             | **Planned** |
+| Stretch: pre-extract video frames pipeline (ffprobe + CDP injection, ~400 LOC)                   | hyperframes #4             | **Stretch** |
+| Stretch: 40-block registry (Reddit-post, IG-follow, YT-lower-third, data-chart)                  | hyperframes #8             | **Stretch** |
+| Stretch: Docker determinism mode (pinned Chrome + fonts)                                         | hyperframes #9             | **Stretch** |
+| Stretch: audio-reactive sampling pattern (pre-extracted frequency bands)                         | hyperframes #10            | **Stretch** |
+
+### v7.4 S2 — AI Generation + Storyboard + Lip-Sync
 
 | Item                                                         | Source          | Status      |
 | ------------------------------------------------------------ | --------------- | ----------- |
@@ -374,6 +391,23 @@
 | Storyboard pipeline — script → scene list → asset requests   | —               | **Planned** |
 | Lip sync for talking-head generation                         | open-higgsfield | **Planned** |
 | Cinema prompts library                                       | open-higgsfield | **Planned** |
+
+---
+
+## v7.4.3 — HTML-as-Composition DSL (hyperframes item #6) — **Planned**
+
+> 1 session, ~8-12h. Follow-up to v7.4 S1+S2. LLM-native composition format: single `index.html` file with `data-start` / `data-duration` / `data-track-index` / `data-layer` attributes, GSAP timeline, CSS styling. Agents already speak HTML — makes composition an end-to-end LLM-writable artifact.
+
+> Warrants its own session because it's a different composition paradigm than Remotion JSX (the v7.4 S1 default). Competing paradigms shouldn't both live in v7.4 simultaneously.
+
+| Item                                                                                  | Source         | Status      |
+| ------------------------------------------------------------------------------------- | -------------- | ----------- |
+| Port `packages/core/src/parsers/htmlParser.ts` — data-attribute → timeline extraction | hyperframes #6 | **Planned** |
+| `video_html_compose` tool — accepts HTML composition file, produces MP4               | —              | **Planned** |
+| BeginFrame CDP capture path (faster + more deterministic than page.screenshot)        | hyperframes    | **Planned** |
+| Pre-extract + inject video pipeline for `<video>` elements in composition             | hyperframes #4 | **Planned** |
+| Integration with skill gate (Visual Identity Gate applied to HTML path too)           | —              | **Planned** |
+| Scope decision: HTML DSL coexists with Remotion JSX or replaces it?                   | Design Q       | **Open**    |
 
 ---
 
@@ -397,18 +431,130 @@
 | Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine                             | **Planned** |
 | Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                                    | **Planned** |
 
-### Session 69 Deferred Items — Review at v7.5 or Phase β F-step
+---
+
+## v7.10 — Universal File Conversion (`file_convert` tool) — **Planned**
+
+> 1 session, ~2-3 hours. No F-step dependencies — can slot anywhere in Phase γ. Source: `reference_convertx.md` (ConvertX AGPL blocked; rebuild using apt-installed binaries is clean).
+
+**Motivation**: Jarvis can't read .epub/.mobi/.odt/.rtf/.pages/HEIC/video frames. All gaps closable via standard FLOSS CLI tools (calibre, libreoffice, pandoc, imagemagick, ffmpeg) invoked through shell_exec — no code-level GPL contamination.
+
+| Item                                                                                         | Source                     | Status      |
+| -------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
+| VPS prerequisites: `apt install calibre libreoffice pandoc imagemagick libvips-tools ffmpeg` | —                          | **Planned** |
+| `file_convert(input_path, target_format, output_path?)` tool handler (~200 LOC)              | `reference_convertx.md`    | **Planned** |
+| Format dispatch table (extension → binary mapping, not LLM-inferred)                         | —                          | **Planned** |
+| Source-extension whitelist + path validation (prevent shell_exec abuse)                      | Security                   | **Planned** |
+| Integration: scope group, guards (NOT read-only — writes /tmp), write-tools-sync test        | `INTEGRATION-CHECKLIST.md` | **Planned** |
+| Test file with mocked execFile: dispatch table, error paths, path validation                 | —                          | **Planned** |
+| **Explicit non-goal**: audio transcription — separate project (whisper.cpp or Deepgram)      | —                          | —           |
+
+---
+
+## v7.11 — Jarvis Teaching Module ("teach me anything") — **Planned**
+
+> 1.5-2 sessions. No F-step dependencies — slottable in Phase γ. Primary reference: `reference_deeptutor.md`. User intent: "I want Jarvis to teach me anything."
+>
+> **Scope honesty**: DeepTutor provides ~30% of this (decomposition/scoped-chat/summary prompts + state machine, ~400 LOC portable). The load-bearing 70% is Jarvis-native work: learner model, spaced repetition, misconception detection, Socratic loop, prerequisite graph. Do NOT plan this as "port DeepTutor" — plan it as a capability build with DeepTutor as one foundation.
+
+### Ported from DeepTutor (~30%, ~400 LOC)
+
+| Item                                                                                                       | Source                           | Status      |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------- |
+| Knowledge-point decomposition prompt — topic → 2-5 ordered atomic units with predicted difficulties        | `design_agent.yaml`              | **Planned** |
+| Scoped chat-agent contract — answers constrained to current unit, carries predicted difficulties as priors | `chat_agent.yaml`                | **Planned** |
+| Retrospective summary prompt — forces LLM to cite specific user questions as mastery evidence              | `summary_agent.yaml`             | **Planned** |
+| Quiz pipeline (idea→generate→followup) with dedup-vs-history                                               | `agents/question/coordinator.py` | **Planned** |
+| `GuidedSession` state machine — create_session / start_learning / chat / complete_learning flow            | `guide_manager.py`               | **Planned** |
+
+### Jarvis-native (~70%, load-bearing capabilities)
+
+| Item                                                                                                           | Notes                                                                                           | Status      |
+| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------- |
+| **Learner model table** — `concept → {last_seen, confidence, evidence_quotes, mastery_score, review_due_date}` | Core state. Updated by summary pass + spaced repetition scheduler                               | **Planned** |
+| **Spaced repetition ritual** — Leitner or SM-2 scheduling, Jarvis cron-side                                    | Morning ritual reads learner_model where `review_due_date <= today`, picks today's review units | **Planned** |
+| **Misconception detection loop** — during chat, detect user statements that contradict canonical concept       | Not prompt-only — requires comparison logic against concept definitions                         | **Planned** |
+| **Explain-back / Socratic loop** — periodically ask user to explain concept in own words, grade explanation    | Grading feeds mastery_score + evidence_quotes on learner_model                                  | **Planned** |
+| **Prerequisite graph** — LLM-generated on plan creation, persisted as directed graph                           | Blocks advancing to unit N until prereqs mastered                                               | **Planned** |
+| **Adaptive difficulty** — quiz difficulty adjusts based on learner_model mastery scores                        | Not static input                                                                                | **Planned** |
+
+### New tools (scope group `teaching`)
+
+| Tool                                      | Purpose                                                         |
+| ----------------------------------------- | --------------------------------------------------------------- |
+| `learning_plan_create(topic)`             | Decomposes + persists ordered knowledge_points                  |
+| `learning_plan_advance(plan_id)`          | Moves to next unit if prerequisites met                         |
+| `learning_plan_quiz(plan_id, unit_index)` | Generates adaptive-difficulty quiz                              |
+| `learning_plan_explain_back(plan_id)`     | Socratic loop — ask user to explain, grade response             |
+| `learning_plan_summarize(plan_id)`        | Updates learner_model + writes session summary with evidence    |
+| `learner_model_status`                    | Report: what concepts mastered, what due for review, what shaky |
+
+### New DB tables
+
+- `learning_plans(plan_id, topic, created_at, status, notes)`
+- `learning_plan_units(plan_id, unit_index, title, summary, predicted_difficulties, prerequisites, status, mastery_score)`
+- `learner_model(concept, last_seen, confidence, evidence_quotes, mastery_score, review_due_date)`
+- `learning_sessions(session_id, plan_id, unit_index, started_at, ended_at, mastery_delta)`
+
+### Scope activation
+
+Scope group `teaching` activates on: "enséñame", "teach me", "explícame X desde cero", "quiero aprender", "review today", "quiz me on X"
+
+### Ritual integration
+
+- **Morning ritual**: reads `learner_model` where `review_due_date <= today`, proposes today's review
+- **EOD ritual**: writes mastery deltas from the day's teaching sessions back to `learner_model`
+
+### Out of scope (explicit non-goals)
+
+- Interactive HTML unit rendering (chat-first, no frontend)
+- Video lectures or generated explainer videos (that's v7.4 territory)
+- Multi-user shared progress (single-user system)
+- Real-time collaboration with Fede's CRM team (different project)
+
+---
+
+## v7.12 — Diagram Generation (`diagram_generate` tool) — **Planned**
+
+> 1 session, ~2-3 hours. No F-step dependencies — slottable anywhere in Phase γ. Source: `reference_architecture_diagram_generator.md`. Cocoon-AI repo was a Claude.ai Skill (no code to port); we build native.
+
+**Motivation**: Jarvis has `chart` for data viz (QuickChart) but no structured diagram generation. Closes that gap with a thin dispatch tool over standard diagramming CLIs (Mermaid, D2, PlantUML, Graphviz) plus an inline SVG/HTML path.
+
+| Item                                                                                                                | Source                                        | Status      |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------- |
+| VPS prerequisites: `npm i -g @mermaid-js/mermaid-cli`, `apt install d2 graphviz`, PlantUML optional (JRE)           | —                                             | **Planned** |
+| `diagram_generate(description, format, diagram_type, theme?, output)` tool handler (~120 LOC)                       | `reference_architecture_diagram_generator.md` | **Planned** |
+| Format dispatch: mermaid → mmdc, d2 → d2, plantuml → plantuml.jar, graphviz → dot, svg_html → inline LLM generation | —                                             | **Planned** |
+| Port Cocoon palette + spacing rules + SVG craft (arrow z-ordering) into svg_html system prompt (~60 LOC)            | `reference_architecture_diagram_generator.md` | **Planned** |
+| Source-extension whitelist + path validation (prevent shell_exec abuse)                                             | Security                                      | **Planned** |
+| Integration: scope group, guards, write-tools-sync test                                                             | `INTEGRATION-CHECKLIST.md`                    | **Planned** |
+| Test file with mocked execFile: dispatch table, error paths, path validation                                        | —                                             | **Planned** |
+
+**Supported diagram types**: architecture, flowchart, sequence, ER, class, state
+**Output formats**: source (DSL text), svg, png, html
+
+---
+
+## Session 69 Deferred Items — Review at v7.5 or Phase β F-step
 
 Items analyzed and approved in session 69 but not implemented. Each has a memory reference with full details.
 
 **Phase β F-step anchored (implement at stated F-step):**
 
-| Item                                                                                                           | F-step       | Memory Reference                       |
-| -------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------- |
-| Port orderbook walking, position tracking, P&L analytics, API caching, multi-account A/B                       | F5→F7 bridge | `reference_polymarket_paper_trader.md` |
-| Port Zeta composite, CVD divergence, order blocks, rejection-gate scoring, Fibonacci entry/exit                | F3/F7/F8     | `reference_bybit_screening_bot.md`     |
-| Fan-out→funnel multi-agent architecture, universal signal format, constraint-before-LLM, vol×corr risk sizing  | F7           | `reference_ai_hedge_fund.md`           |
-| Kronos-mini forecast model (replaces TimesFM) — Python sidecar, OHLCV output, probabilistic 5-sample quantiles | F7           | `reference_kronos.md`                  |
+| Item                                                                                                             | F-step       | Memory Reference                       |
+| ---------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------- |
+| Port orderbook walking, position tracking, P&L analytics, API caching, multi-account A/B                         | F5→F7 bridge | `reference_polymarket_paper_trader.md` |
+| Port Zeta composite, CVD divergence, order blocks, rejection-gate scoring, Fibonacci entry/exit                  | F3/F7/F8     | `reference_bybit_screening_bot.md`     |
+| Fan-out→funnel multi-agent architecture, universal signal format, constraint-before-LLM, vol×corr risk sizing    | F7           | `reference_ai_hedge_fund.md`           |
+| Kronos-mini forecast model (replaces TimesFM) — Python sidecar, OHLCV output, probabilistic 5-sample quantiles   | F7           | `reference_kronos.md`                  |
+| Indicator condition DSL — declarative signal rules (crosses_above/below, compareMode value\|indicator, offsets)  | F3           | `reference_fincept_terminal.md`        |
+| Config-driven agent manifest — specialists as JSON `{model, instructions, tools, output_format}`, not classes    | F7           | `reference_fincept_terminal.md`        |
+| Guardrails pre-execution layer — position/confidence/symbol checks BEFORE broker call, clamp_quantity helper     | F8           | `reference_fincept_terminal.md`        |
+| BM25 reflection memory — per-agent banks, inject top-2 lessons from past P&L into next prompts (~220 LOC)        | F7 (M2+)     | `reference_trading_agents.md`          |
+| Adversarial critic pass — single bull/bear critic over Portfolio Manager draft + judge reconciliation (~150 LOC) | F7           | `reference_trading_agents.md`          |
+| Black-Litterman signal combiner — blend multi-agent signals as views into posterior beliefs (~150 LOC, mathjs)   | F7           | `reference_skfolio.md`                 |
+| HRP weight allocator — Lopez de Prado hierarchical risk parity, replaces heuristic confidence-weighted sum       | F7           | `reference_skfolio.md`                 |
+| Inverse-volatility + equal-weight baseline allocators — ship before HRP as fallbacks (~30 LOC)                   | F7 (M1)      | `reference_skfolio.md`                 |
 
 **v7.5 anchored (implement during skill evolution engine):**
 

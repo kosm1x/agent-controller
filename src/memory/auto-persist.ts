@@ -139,7 +139,11 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
   // Rule 2b: document reads — persist so follow-up turns recall the content
   if (
     toolCalls.some(
-      (t) => t === "gsheets_read" || t === "gdocs_read" || t === "file_read",
+      (t) =>
+        t === "gsheets_read" ||
+        t === "gdocs_read" ||
+        t === "gdocs_read_full" ||
+        t === "file_read",
     )
   )
     return true;

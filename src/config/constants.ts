@@ -44,14 +44,14 @@ export const PERSISTENT_FAILURE_THRESHOLD = int(
 // --- Token budgets (fast-runner) ---
 /** Token budget for fast (non-coding) tasks. */
 export const TOKEN_BUDGET_FAST = int("TOKEN_BUDGET_FAST", 28_000);
-/** Token budget for coding tasks (read→write→test→iterate→commit→push needs room). */
-export const TOKEN_BUDGET_CODING = int("TOKEN_BUDGET_CODING", 50_000);
+/** Token budget for coding tasks (read→write→test→iterate→commit→push→PR needs room). */
+export const TOKEN_BUDGET_CODING = int("TOKEN_BUDGET_CODING", 70_000);
 /** Token budget for Playwright browser tasks (SPAs need more context). */
 export const TOKEN_BUDGET_BROWSER = int("TOKEN_BUDGET_BROWSER", 40_000);
 /** Max inference rounds for fast tasks. */
 export const MAX_ROUNDS_DEFAULT = int("MAX_ROUNDS_DEFAULT", 20);
-/** Max inference rounds for coding tasks (plan→code→test→iterate→commit→push). */
-export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 35);
+/** Max inference rounds for coding tasks (plan→code→test→iterate→commit→push→PR). */
+export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 55);
 /** Max inference rounds for Playwright browser tasks (navigate+snapshot+click cycles). */
 export const MAX_ROUNDS_BROWSER = int("MAX_ROUNDS_BROWSER", 35);
 

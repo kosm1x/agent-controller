@@ -21,6 +21,11 @@ export async function googleFetch<T>(
     rawBody?: string;
     contentType?: string;
     timeout?: number;
+    /**
+     * When true, returns the raw response text instead of parsing JSON.
+     * Use for Drive export endpoints that return plain text (e.g. text/plain exports).
+     */
+    rawText?: boolean;
   },
 ): Promise<T> {
   const token = await getAccessToken();
@@ -55,6 +60,10 @@ export async function googleFetch<T>(
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(`Google API ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    if (options?.rawText) {
+      return (await response.text()) as unknown as T;
     }
 
     return (await response.json()) as T;

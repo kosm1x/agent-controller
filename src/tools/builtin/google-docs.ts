@@ -315,7 +315,10 @@ export const gdocsReadTool: Tool = {
 
 DO NOT USE browser__goto for Google Docs URLs — it hits an auth wall.
 Use this tool instead — it reads via the authenticated Docs API.
-Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
+Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).
+
+NOTE: For long documents (>8,000 chars), use gdocs_read_full which exports the full
+document as plain text with no truncation limit.`,
       parameters: {
         type: "object",
         properties: {
@@ -352,10 +355,85 @@ Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
         )
         .join("");
 
-      return JSON.stringify({ title: doc.title, text: text.slice(0, 8000) });
+      const truncated = text.length > 8000;
+      return JSON.stringify({
+        document_id: docId,
+        title: doc.title,
+        text: text.slice(0, 8000),
+        ...(truncated
+          ? {
+              warning: `Document truncated at 8,000 chars (total: ${text.length} chars). Use gdocs_read_full to read the complete document.`,
+            }
+          : {}),
+      });
     } catch (err) {
       return JSON.stringify({
         error: `Docs read failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// gdocs_read_full  — full document export via Drive API (no truncation)
+// ---------------------------------------------------------------------------
+
+export const gdocsReadFullTool: Tool = {
+  name: "gdocs_read_full",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "gdocs_read_full",
+      description: `Read the COMPLETE text content of a Google Doc without any truncation.
+
+USE THIS (not gdocs_read) when:
+- The document is long (articles, plans, reports, anything > 1 page)
+- gdocs_read returned a warning about truncation
+- You need to read the full content for analysis or summarization
+
+HOW IT WORKS: Uses Google Drive Export API to export the doc as plain text.
+This bypasses the structural element limit of the Docs API and returns ALL text.
+
+DO NOT USE for short documents or when you only need a preview — gdocs_read is faster.
+
+Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: {
+            type: "string",
+            description: "Google Doc ID",
+          },
+        },
+        required: ["document_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const docId = args.document_id as string;
+    try {
+      // Step 1: Get doc title from Docs API
+      const meta = await googleFetch<{ title: string }>(
+        `https://docs.googleapis.com/v1/documents/${docId}?fields=title`,
+      );
+
+      // Step 2: Export as plain text via Drive API — returns full content, no truncation.
+      // Extended timeout: large docs can exceed the default 10s.
+      const exportText = await googleFetch<string>(
+        `https://www.googleapis.com/drive/v3/files/${docId}/export?mimeType=text%2Fplain`,
+        { rawText: true, timeout: 30_000 },
+      );
+
+      return JSON.stringify({
+        document_id: docId,
+        title: meta.title,
+        text: exportText,
+        chars: exportText.length,
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: `Docs full read failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },
