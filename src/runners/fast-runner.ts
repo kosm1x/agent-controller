@@ -178,7 +178,12 @@ const VERIFICATION_NUDGE = `
 ⚠ **Verificación pendiente** — Esta tarea usó múltiples herramientas de escritura. Antes de considerar completado:
 - Leer ≠ verificar: confirma que los cambios surtieron efecto (lee el resultado, no asumas).
 - No caigas en el 80%: el happy path funciona, pero ¿qué pasa con edge cases, entradas vacías, o errores?
-- Si modificaste código: ¿corrieron los tests? ¿typecheck pasa?`;
+- Si modificaste código: ¿corrieron los tests? ¿typecheck pasa?
+- Autoevaluación dimensional — no digas "listo" sin evidencia por cada eje:
+  1. ¿Seguí la instrucción? (lo que se pidió, no lo que yo interpreté)
+  2. ¿Los datos/claims son correctos? (respaldados por resultados de tools, no inventados)
+  3. ¿Cubrí TODO lo pedido o dejé algo fuera?
+  4. ¿El formato y tono son apropiados para el usuario?`;
 
 /** Status suffix appended to chat system prompts. */
 const STATUS_SUFFIX = `
