@@ -91,6 +91,8 @@ export interface InferenceRequest {
   max_tokens?: number;
   /** Task ID for per-task failure dedup in provider metrics (v6.4 OH1.5). */
   taskId?: string;
+  /** Anthropic effort parameter — "low" for synthesis/wrap-up, "high" default. */
+  effort?: "low" | "medium" | "high";
 }
 
 export interface InferenceResponse {
@@ -446,6 +448,7 @@ async function callAnthropicProvider(
     request.tools,
     maxTokens,
     request.temperature,
+    request.effort,
   );
 
   const toolCount = request.tools?.length ?? 0;
@@ -1406,7 +1409,7 @@ export async function inferWithTools(
           `The system encountered an error continuing tool execution. Tools you called before the error: [${midToolList}]. Do NOT claim success for any action whose tool is NOT in that list. Provide your final response based ONLY on actual tool results. End with: STATUS: DONE_WITH_CONCERNS — [brief note on what went wrong]`,
         );
         const wrapUp = await infer(
-          { messages: leanContext, taskId: options?.taskId },
+          { messages: leanContext, taskId: options?.taskId, effort: "low" },
           {
             onTextChunk,
             signal,
@@ -1862,7 +1865,7 @@ CRITICAL: You ONLY called these tools: [${toolInventory}]. Do NOT claim to have 
 Provide your final response based ONLY on actual tool results. Do not request any more tools. End with: STATUS: DONE_WITH_CONCERNS — [what was incomplete]`,
     );
     const wrapUp = await infer(
-      { messages: leanContext, taskId: options?.taskId },
+      { messages: leanContext, taskId: options?.taskId, effort: "low" },
       { onTextChunk, signal },
     );
     totalPrompt += wrapUp.usage.prompt_tokens;

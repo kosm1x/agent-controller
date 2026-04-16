@@ -267,6 +267,30 @@ describe("buildAnthropicRequest", () => {
     expect(parsed.tools[0].name).toBe("test");
     expect(parsed.tool_choice).toEqual({ type: "auto" });
   });
+
+  it("includes output_config when effort is specified", () => {
+    const { body } = buildAnthropicRequest(
+      provider,
+      [{ role: "user", content: "Summarize" }],
+      undefined,
+      1024,
+      undefined,
+      "low",
+    );
+    const parsed = JSON.parse(body);
+    expect(parsed.output_config).toEqual({ effort: "low" });
+  });
+
+  it("omits output_config when effort is not specified", () => {
+    const { body } = buildAnthropicRequest(
+      provider,
+      [{ role: "user", content: "Hi" }],
+      undefined,
+      4096,
+    );
+    const parsed = JSON.parse(body);
+    expect(parsed.output_config).toBeUndefined();
+  });
 });
 
 describe("convertResponse", () => {

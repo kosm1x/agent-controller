@@ -238,6 +238,7 @@ export function buildAnthropicRequest(
   tools: ToolDefinition[] | undefined,
   maxTokens: number,
   temperature?: number,
+  effort?: "low" | "medium" | "high",
 ): { url: string; headers: Record<string, string>; body: string } {
   const { system, messages: anthropicMsgs } = convertMessages(messages);
 
@@ -250,6 +251,7 @@ export function buildAnthropicRequest(
 
   if (system) payload.system = system;
   if (temperature !== undefined) payload.temperature = temperature;
+  if (effort) payload.output_config = { effort };
   if (tools && tools.length > 0) {
     payload.tools = convertTools(tools);
     payload.tool_choice = { type: "auto" };
@@ -272,6 +274,7 @@ export function buildAnthropicStreamRequest(
   tools: ToolDefinition[] | undefined,
   maxTokens: number,
   temperature?: number,
+  effort?: "low" | "medium" | "high",
 ): { url: string; headers: Record<string, string>; body: string } {
   const req = buildAnthropicRequest(
     provider,
@@ -279,6 +282,7 @@ export function buildAnthropicStreamRequest(
     tools,
     maxTokens,
     temperature,
+    effort,
   );
   const payload = JSON.parse(req.body);
   payload.stream = true;
