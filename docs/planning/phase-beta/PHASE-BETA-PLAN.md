@@ -235,8 +235,11 @@ The other Hermes Tier 1 items (adaptive streaming backoff, `watch_patterns`) can
 - **F1 ships alone** on its own branch, full audit, merge before S2 starts
 - **F2+F4** ship as a single commit
 - **F6 ships alone** — three APIs, dedicated audit surface
+- **F6→F7 bridge**: Port 5 patterns from agent-next/polymarket-paper-trader to TypeScript: order book walking, position tracking schema, P&L analytics (Sharpe/drawdown/win rate), API caching strategy, multi-account A/B testing. Details in memory: `reference_polymarket_paper_trader.md`. Creates `src/finance/` module reused by F7 and F8.
+- **F7 architecture**: Fan-out → funnel multi-agent pattern from virattt/ai-hedge-fund. Replace sequential 11-step pipeline with parallel specialist agents (Technical, Fundamental, Sentiment, Macro, Crowd, **Kronos Forecast**) → Risk Manager (vol×corr constraints) → Portfolio Manager (LLM synthesis within valid actions). Universal signal format: `{ signal, confidence, reasoning }`. Details in memory: `reference_ai_hedge_fund.md`.
+- **F7 forecast model**: Kronos-mini (4.1M params, 500MB, 5-10s CPU) **replaces TimesFM** as primary. Financial-specific (45+ exchanges), native OHLCV output, probabilistic via 5-sample empirical quantiles. Python sidecar, no GPU. Details in memory: `reference_kronos.md`.
 - **F7 ships alone** — algorithmic core
-- **F8 ships alone** — pm-trader integration friction
+- **F8 ships alone** — pm-trader integration friction (lighter now with native TS port from F6→F7 bridge)
 - **F9 ships alone** — ritual scheduling has calendar edge cases
 
 Jarvis cannot push to main (SG1 invariant) — feature branches only, operator merges.

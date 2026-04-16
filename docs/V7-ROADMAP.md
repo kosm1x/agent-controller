@@ -403,11 +403,12 @@ Items analyzed and approved in session 69 but not implemented. Each has a memory
 
 **Phase β F-step anchored (implement at stated F-step):**
 
-| Item                                                                                                          | F-step       | Memory Reference                       |
-| ------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------- |
-| Port orderbook walking, position tracking, P&L analytics, API caching, multi-account A/B                      | F5→F7 bridge | `reference_polymarket_paper_trader.md` |
-| Port Zeta composite, CVD divergence, order blocks, rejection-gate scoring, Fibonacci entry/exit               | F3/F7/F8     | `reference_bybit_screening_bot.md`     |
-| Fan-out→funnel multi-agent architecture, universal signal format, constraint-before-LLM, vol×corr risk sizing | F7           | `reference_ai_hedge_fund.md`           |
+| Item                                                                                                           | F-step       | Memory Reference                       |
+| -------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------- |
+| Port orderbook walking, position tracking, P&L analytics, API caching, multi-account A/B                       | F5→F7 bridge | `reference_polymarket_paper_trader.md` |
+| Port Zeta composite, CVD divergence, order blocks, rejection-gate scoring, Fibonacci entry/exit                | F3/F7/F8     | `reference_bybit_screening_bot.md`     |
+| Fan-out→funnel multi-agent architecture, universal signal format, constraint-before-LLM, vol×corr risk sizing  | F7           | `reference_ai_hedge_fund.md`           |
+| Kronos-mini forecast model (replaces TimesFM) — Python sidecar, OHLCV output, probabilistic 5-sample quantiles | F7           | `reference_kronos.md`                  |
 
 **v7.5 anchored (implement during skill evolution engine):**
 
