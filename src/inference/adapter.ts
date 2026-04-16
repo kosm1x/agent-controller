@@ -92,7 +92,7 @@ export interface InferenceRequest {
   /** Task ID for per-task failure dedup in provider metrics (v6.4 OH1.5). */
   taskId?: string;
   /** Anthropic effort parameter — "low" for synthesis/wrap-up, "high" default. */
-  effort?: "low" | "medium" | "high";
+  effort?: "low" | "medium" | "high" | "max";
 }
 
 export interface InferenceResponse {

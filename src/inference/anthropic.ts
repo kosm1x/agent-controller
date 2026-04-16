@@ -238,7 +238,7 @@ export function buildAnthropicRequest(
   tools: ToolDefinition[] | undefined,
   maxTokens: number,
   temperature?: number,
-  effort?: "low" | "medium" | "high",
+  effort?: "low" | "medium" | "high" | "max",
 ): { url: string; headers: Record<string, string>; body: string } {
   const { system, messages: anthropicMsgs } = convertMessages(messages);
 
@@ -274,7 +274,7 @@ export function buildAnthropicStreamRequest(
   tools: ToolDefinition[] | undefined,
   maxTokens: number,
   temperature?: number,
-  effort?: "low" | "medium" | "high",
+  effort?: "low" | "medium" | "high" | "max",
 ): { url: string; headers: Record<string, string>; body: string } {
   const req = buildAnthropicRequest(
     provider,

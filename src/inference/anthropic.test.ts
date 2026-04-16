@@ -8,6 +8,7 @@ import {
   convertMessages,
   convertTools,
   buildAnthropicRequest,
+  buildAnthropicStreamRequest,
   convertResponse,
 } from "./anthropic.js";
 import type {
@@ -290,6 +291,20 @@ describe("buildAnthropicRequest", () => {
     );
     const parsed = JSON.parse(body);
     expect(parsed.output_config).toBeUndefined();
+  });
+
+  it("effort survives JSON round-trip in stream request", () => {
+    const { body } = buildAnthropicStreamRequest(
+      provider,
+      [{ role: "user", content: "Summarize" }],
+      undefined,
+      1024,
+      undefined,
+      "low",
+    );
+    const parsed = JSON.parse(body);
+    expect(parsed.stream).toBe(true);
+    expect(parsed.output_config).toEqual({ effort: "low" });
   });
 });
 

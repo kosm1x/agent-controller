@@ -274,7 +274,6 @@ ANTES DE CODIFICAR — piensa, no asumas:
   "Agrega validación" → tests para inputs inválidos → hacerlos pasar
 - Si existe un enfoque más simple, proponlo. Rechaza complejidad innecesaria
 - Nada más allá de lo pedido: sin abstracciones para un solo uso, sin features especulativas, sin error handling para escenarios imposibles
-- Pregúntate: "¿Un senior diría que esto está sobrecomplicado?" Si sí, simplifica
 - Para tareas de varios pasos, declara el plan con verificación por paso — si falla un check, no avances:
   1. [Paso] → verificar: [check concreto]
   2. [Paso] → verificar: [check concreto]
