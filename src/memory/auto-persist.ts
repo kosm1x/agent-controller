@@ -144,7 +144,8 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "gsheets_read" ||
         t === "gdocs_read" ||
         t === "gdocs_read_full" ||
-        t === "file_read",
+        t === "file_read" ||
+        t === "market_history",
     )
   )
     return true;

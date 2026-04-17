@@ -61,6 +61,11 @@ const READ_ONLY_TOOLS = new Set([
   "browser__semantic_tree",
   "browser__structuredData",
   "browser__interactiveElements",
+  // F1 finance — quote/history/list/budget are read-only
+  "market_quote",
+  "market_history",
+  "market_watchlist_list",
+  "market_budget_stats",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {

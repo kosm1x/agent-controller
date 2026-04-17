@@ -13,6 +13,7 @@ import {
   GOOGLE_TOOLS,
   WORDPRESS_TOOLS,
   CODING_TOOLS,
+  FINANCE_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -85,6 +86,24 @@ describe("WRITE_TOOLS sync", () => {
   it("every WRITE_TOOLS entry follows tool naming convention", () => {
     for (const tool of WRITE_TOOLS) {
       expect(tool).toMatch(/^[a-z][a-z0-9_]+$/);
+    }
+  });
+
+  it("includes all write-capable finance tools", () => {
+    // F1 finance: market_watchlist_add/remove are writes; quote/history/list/budget are reads
+    const FINANCE_READ_ONLY = new Set([
+      "market_quote",
+      "market_history",
+      "market_watchlist_list",
+      "market_budget_stats",
+    ]);
+    const financeWriteTools = FINANCE_TOOLS.filter(
+      (t) => !FINANCE_READ_ONLY.has(t),
+    );
+    for (const tool of financeWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
     }
   });
 });

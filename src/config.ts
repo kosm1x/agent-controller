@@ -91,6 +91,18 @@ export interface Config {
   tuningMaxCostUsd: number;
   /** Max experiments per tuning run (default: 25). */
   tuningMaxExperiments: number;
+
+  // v7.0 F1 Financial Stack — finance data layer credentials.
+  // Note: env var is ALPHAVANTAGE_API_KEY (no underscore between ALPHA and VANTAGE).
+  // All three are optional at boot; adapter constructors throw at first finance-tool call if missing.
+  /** Alpha Vantage API key (finance primary data provider). */
+  alphaVantageApiKey?: string;
+  /** Polygon.io / Massive API key (finance fallback data provider). */
+  polygonApiKey?: string;
+  /** Polygon base URL. Default https://api.massive.com/v2. Legacy alias: https://api.polygon.io/v2. */
+  polygonBaseUrl: string;
+  /** FRED API key (macro series: VIXCLS, ICSA, M2SL, etc.). */
+  fredApiKey?: string;
 }
 
 function required(key: string): string {
@@ -190,6 +202,13 @@ export function loadConfig(): Config {
     tuningEnabled: process.env.TUNING_ENABLED === "true",
     tuningMaxCostUsd: float("TUNING_MAX_COST_USD", 25.0),
     tuningMaxExperiments: int("TUNING_MAX_EXPERIMENTS", 25),
+
+    // v7.0 F1 finance credentials
+    alphaVantageApiKey: optional("ALPHAVANTAGE_API_KEY"),
+    polygonApiKey: optional("POLYGON_API_KEY"),
+    polygonBaseUrl:
+      process.env.POLYGON_BASE_URL ?? "https://api.massive.com/v2",
+    fredApiKey: optional("FRED_API_KEY"),
   };
 }
 
