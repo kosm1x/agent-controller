@@ -150,6 +150,8 @@ import {
   marketWatchlistRemoveTool,
   marketWatchlistListTool,
   marketBudgetStatsTool,
+  marketIndicatorsTool,
+  marketScanTool,
 } from "../builtin/market.js";
 import type { Tool } from "../types.js";
 
@@ -246,6 +248,9 @@ const BUILTIN_TOOLS: Tool[] = [
   marketWatchlistRemoveTool,
   marketWatchlistListTool,
   marketBudgetStatsTool,
+  // F2+F4 indicator engine + scan (v7.0 Phase β S2) — deferred, scope 'finance'
+  marketIndicatorsTool,
+  marketScanTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

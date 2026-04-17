@@ -276,3 +276,43 @@ Day 35. First Phase β session shipped clean. The impl-plan document was the sin
 Budget preview telemetry worth noting: the projected-daily-AV-calls guard (86,400 call ceiling at 80% of tier-1 108k) blocks only at the 865th watchlist symbol. With 29 symbols locked in the default list, we're at ~3% of ceiling. This is correct — the guard is for future-proofing, not throttling the common case.
 
 Shipped: 18 files changed (15 new incl. tests + fixtures, 3 modified), 43 new tests, 1 deploy, 0 rollbacks. v7 Phase β: 1 of 12 master-sequence items done.
+
+---
+
+### Session 73 — v7.0 F2 Indicator Engine + F4 Watchlist Tools
+
+**What happened**: Second Phase β session, bundled F2+F4 per ordering-map Window A. Built `src/finance/indicators.ts` with 9 pure-math indicators (SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R). Extended `src/tools/builtin/market.ts` with `marketIndicatorsTool` and `marketScanTool`. qa-auditor returned PASS WITH WARNINGS; closed 7 findings (W1-W6 + S1 + S3) before merge. Tests 2323 → 2361 (+38). Live smoke-tested on real Alpha Vantage data — SPY RSI(14) = 73.18 matched the expected overbought zone after the recent rally, MACD histogram = 6.60 confirmed bullish momentum, scan sorted descending for `gt` per the W2 fix.
+
+**Root cause of the audit escalation**: I had defaulted `market_indicators` to emit all 9 indicators — including VWAP on daily — and defaulted `market_scan` lookback to 50. Both decisions felt conservative at authoring time. qa-auditor caught three compound problems:
+
+1. VWAP on daily is _actively misleading_: our implementation is cumulative, no daily reset, so the value accumulates across the input's whole span. On daily data that's a meaningless anchor-VWAP-since-T-minus-N. The " [not meaningful on daily]" suffix I'd added wasn't strong enough — the value looked like a sensible price level.
+2. Default lookback=50 + `macd_hist` scan indicator silently produced empty results because MACD signal needs ≥35 bars, and our lookback clamp at min=20 permitted values too low.
+3. Scope regex didn't include "RSI/MACD/oversold/scan" — users asking "find oversold names" would never activate the finance group, and these tools (deferred) would never reach the LLM.
+
+All three would have surfaced on first real use. Audit caught them before first deploy.
+
+**What I learned**
+
+1. **"Default to all" on enum-list tool params fails silently when one option is toxic.** If one of the 9 indicators actively misleads the caller, defaulting to "all" makes the tool harder to use, not easier. Fix: split into contextual defaults. Here, `DAILY_DEFAULT_INDICATORS` excludes VWAP; intraday default includes everything. The symmetry is restored at the boundary where it matters.
+
+2. **Scope regex is a usability feature as much as a cost feature.** F1 shipped with a scope regex that required "mercado/market/NYSE/cotiza/precio" keywords. F2+F4 added tools that respond to indicator vocabulary ("RSI", "MACD", "oversold") which was NOT in the regex — so the deferred tools were unreachable for the natural phrasing users would actually type. Fix: every new tool that introduces a new vocabulary family needs its own activation pattern. The test suite for scope should include negative cases for each vocabulary family to lock the contract.
+
+3. **Sort direction is operator-dependent.** Simple thing to get wrong. For `lt` ("find oversold"), you want the lowest first; for `gt` ("above moving average"), you want the highest first; for `eq`, you want `|delta|` ascending. A single `matches.sort((a, b) => a.value - b.value)` covers one of three correctly. Audit W2.
+
+4. **Lookback min must match the deepest indicator in the enum.** MACD signal needs 35+ bars. Setting `Math.max(20, …)` as the floor means the tool silently returns empty scans for `macd_hist`. Raised to 35 everywhere and added a test asserting `computeSingleIndicator('macd_hist', bars.slice(0,20))` returns null, so a future refactor can't re-introduce the silent-empty failure.
+
+5. **Hand-computed test values age faster than invariant tests but catch real bugs.** The MACD invariant test (`histogram == macd - signal`) holds even if both `macd` and `signal` are off by a constant offset. Adding a hand-computed Bollinger(20,2) upper/middle/lower at index 29 gave the test suite something to catch a signed arithmetic bug in bollinger that the invariant tests wouldn't see. Trade-off: fragility to fixture updates. Acceptable here because bollinger formula is stable.
+
+**Friction points**
+
+- One typecheck iteration (unused `DAILY_DEFAULT_INDICATORS` marker until I wired it up).
+- One Response-body-reuse pattern in the F4 tool tests (same lesson as F1 session); caught by `vi.clearAllMocks()` in `beforeEach`.
+- Formatter ran four times on Edits; state stayed clean because the formatter is idempotent.
+
+**Research notes**
+
+Day 36. Pattern confirmed from F1: pre-plan → impl-plan → code → audit → fix. The impl-plan doc (`15-f2-f4-impl-plan.md`) locked 11 design decisions before coding; every one of them paid off in avoiding mid-session detours. Audit caught what the impl-plan missed — the _interaction_ between defaults and user intent (e.g., VWAP in default indicator set vs. daily intervals). No single design review could have caught those without exercising the tool; audit is where they surface.
+
+Phase β is 2 of 12 done. F5 (macro regime, 0.5 session) pairs with F3 (signal detector, 1 session) in S3. Live service is stable, no rollbacks across S1+S2. Scope regex now covers 4 activation patterns for `finance` — $SYMBOL, market-noun verbs, watchlist CRUD, indicator vocabulary. Watchlist currently holds SPY + AAPL from the smoke test; those can stay as the F3 seed.
+
+Shipped: 4 files changed (1 new indicator engine, 1 new impl plan, 1 new F4 tool test file, 1 modified market.ts), 38 new tests, 1 deploy, 0 rollbacks. v7 Phase β: 2 of 12 master-sequence items done.

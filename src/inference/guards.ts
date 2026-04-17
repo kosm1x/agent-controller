@@ -66,6 +66,9 @@ const READ_ONLY_TOOLS = new Set([
   "market_history",
   "market_watchlist_list",
   "market_budget_stats",
+  // F2+F4 finance — indicators/scan are pure-read computations
+  "market_indicators",
+  "market_scan",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {

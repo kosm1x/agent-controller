@@ -11,6 +11,18 @@ import { getDataLayer } from "../../finance/data-layer.js";
 import type { AssetClass, MarketBar } from "../../finance/types.js";
 import { budgetSummary } from "../../finance/budget.js";
 import { currentWindow, ceilings } from "../../finance/rate-limit.js";
+import {
+  sma,
+  ema,
+  rsi,
+  macd,
+  bollingerBands,
+  vwap,
+  atr,
+  roc,
+  williamsR,
+  latest,
+} from "../../finance/indicators.js";
 
 // ---------------------------------------------------------------------------
 // market_quote
@@ -354,3 +366,478 @@ Output: last-60s window usage vs ceilings + last-hour summary.`,
     return lines.join("\n");
   },
 };
+
+// ---------------------------------------------------------------------------
+// market_indicators (F2+F4)
+// ---------------------------------------------------------------------------
+
+type AllIndicatorName =
+  | "sma"
+  | "ema"
+  | "rsi"
+  | "macd"
+  | "bollinger"
+  | "vwap"
+  | "atr"
+  | "roc"
+  | "williams";
+
+const ALL_INDICATORS: AllIndicatorName[] = [
+  "sma",
+  "ema",
+  "rsi",
+  "macd",
+  "bollinger",
+  "vwap",
+  "atr",
+  "roc",
+  "williams",
+];
+
+/** Daily default excludes VWAP (not meaningful outside intraday sessions). Audit W3+W6. */
+const DAILY_DEFAULT_INDICATORS: AllIndicatorName[] = [
+  "sma",
+  "ema",
+  "rsi",
+  "macd",
+  "bollinger",
+  "atr",
+  "roc",
+  "williams",
+];
+
+export const marketIndicatorsTool: Tool = {
+  name: "market_indicators",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "market_indicators",
+      description: `Compute technical indicators over a symbol's recent price history.
+
+USE WHEN:
+- User asks for RSI, MACD, moving averages, Bollinger bands, or similar quant signals
+- Need quick overbought/oversold / trend / momentum read on a ticker
+
+NOT WHEN:
+- User wants to scan the watchlist for symbols matching a condition (use market_scan)
+- User wants raw historical bars (use market_history)
+
+Output: pre-formatted summary of latest indicator values. Default interval=daily, lookback=100 bars, all 9 indicators.
+
+VWAP is meaningful on intraday intervals (1min/5min/15min/60min); on daily bars it returns a cumulative value that is not the intraday-VWAP convention.`,
+      parameters: {
+        type: "object",
+        properties: {
+          symbol: {
+            type: "string",
+            description: "Ticker. Equity/ETF: SPY, AAPL.",
+          },
+          interval: {
+            type: "string",
+            enum: ["daily", "1min", "5min", "15min", "60min"],
+            description: "Bar interval. Default 'daily'.",
+          },
+          lookback: {
+            type: "number",
+            description:
+              "Number of bars to fetch before computing. Default 100. Must be >= 20 for Bollinger/SMA(20).",
+          },
+          indicators: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "sma",
+                "ema",
+                "rsi",
+                "macd",
+                "bollinger",
+                "vwap",
+                "atr",
+                "roc",
+                "williams",
+              ],
+            },
+            description: "Which indicators to compute. Default: all 9.",
+          },
+        },
+        required: ["symbol"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const symbol = (args.symbol as string | undefined)?.trim()?.toUpperCase();
+    if (!symbol) return JSON.stringify({ error: "symbol is required" });
+    const interval = (args.interval as string) ?? "daily";
+    // Audit W4 + R1: min 35 for MACD signal; finite-number guard.
+    const rawLookback = Number(args.lookback ?? 100);
+    const lookback = Number.isFinite(rawLookback)
+      ? Math.min(500, Math.max(35, Math.round(rawLookback)))
+      : 100;
+    // Audit W3+W6: exclude VWAP from default on daily — cumulative VWAP
+    // across multi-session daily bars is actively misleading.
+    const defaultIndicators =
+      interval === "daily" ? DAILY_DEFAULT_INDICATORS : ALL_INDICATORS;
+    const which =
+      (args.indicators as AllIndicatorName[] | undefined) ?? defaultIndicators;
+
+    try {
+      const layer = getDataLayer();
+      const result =
+        interval === "daily"
+          ? await layer.getDaily(symbol, { lookback })
+          : await layer.getIntraday(
+              symbol,
+              interval as "1min" | "5min" | "15min" | "60min",
+              { lookback },
+            );
+      if (result.bars.length === 0) {
+        return `${symbol}: no data available for ${interval}.`;
+      }
+      return formatIndicators(
+        symbol,
+        interval,
+        result.bars,
+        which,
+        result.stale,
+      );
+    } catch (err) {
+      return `No pude calcular indicadores de ${symbol}: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+function formatIndicators(
+  symbol: string,
+  interval: string,
+  bars: MarketBar[],
+  which: AllIndicatorName[],
+  stale: boolean | undefined,
+): string {
+  const closes = bars.map((b) => b.close);
+  const highs = bars.map((b) => b.high);
+  const lows = bars.map((b) => b.low);
+  const volumes = bars.map((b) => b.volume);
+
+  const lines: string[] = [
+    `${symbol} (${interval}, ${bars.length} bars) — latest values${stale ? " [STALE]" : ""}:`,
+  ];
+
+  for (const name of which) {
+    switch (name) {
+      case "sma": {
+        const v = latest(sma(closes, 20));
+        lines.push(`  SMA(20)       = ${fmtValue(v)}`);
+        break;
+      }
+      case "ema": {
+        const v = latest(ema(closes, 20));
+        lines.push(`  EMA(20)       = ${fmtValue(v)}`);
+        break;
+      }
+      case "rsi": {
+        const v = latest(rsi(closes, 14));
+        const zone =
+          v === null
+            ? ""
+            : v >= 70
+              ? " (overbought)"
+              : v <= 30
+                ? " (oversold)"
+                : " (neutral)";
+        lines.push(`  RSI(14)       = ${fmtValue(v)}${zone}`);
+        break;
+      }
+      case "macd": {
+        const m = macd(closes);
+        const ml = latest(m.macd);
+        const sl = latest(m.signal);
+        const hl = latest(m.histogram);
+        const hint =
+          hl === null ? "" : hl > 0 ? " (bullish bias)" : " (bearish bias)";
+        lines.push(
+          `  MACD(12,26,9) = ${fmtValue(ml)}, signal ${fmtValue(sl)}, hist ${fmtValue(hl)}${hint}`,
+        );
+        break;
+      }
+      case "bollinger": {
+        const b = bollingerBands(closes, 20, 2);
+        lines.push(
+          `  Bollinger(20,2) = upper ${fmtValue(latest(b.upper))}, mid ${fmtValue(latest(b.middle))}, lower ${fmtValue(latest(b.lower))}`,
+        );
+        break;
+      }
+      case "vwap": {
+        // Audit W6: on daily bars VWAP accumulates across sessions with no
+        // reset — the value is not the chart-convention intraday VWAP.
+        // Skip silently on daily (only emitted when user explicitly requests it).
+        if (interval === "daily") {
+          lines.push(
+            `  VWAP          = (skipped on daily — cumulative across sessions, use intraday interval)`,
+          );
+        } else {
+          const v = latest(vwap(highs, lows, closes, volumes));
+          lines.push(`  VWAP          = ${fmtValue(v)}`);
+        }
+        break;
+      }
+      case "atr": {
+        const v = latest(atr(highs, lows, closes, 14));
+        lines.push(`  ATR(14)       = ${fmtValue(v)}`);
+        break;
+      }
+      case "roc": {
+        const v = latest(roc(closes, 10));
+        const sign = v === null ? "" : v >= 0 ? "+" : "";
+        lines.push(`  ROC(10)       = ${sign}${fmtValue(v)}%`);
+        break;
+      }
+      case "williams": {
+        const v = latest(williamsR(highs, lows, closes, 14));
+        const zone =
+          v === null
+            ? ""
+            : v <= -80
+              ? " (oversold)"
+              : v >= -20
+                ? " (overbought)"
+                : " (neutral)";
+        lines.push(`  Williams %R(14) = ${fmtValue(v)}${zone}`);
+        break;
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function fmtValue(v: number | null): string {
+  return v === null ? "null" : v.toFixed(2);
+}
+
+// ---------------------------------------------------------------------------
+// market_scan (F4)
+// ---------------------------------------------------------------------------
+
+type SingleValueIndicatorName =
+  | "sma"
+  | "ema"
+  | "rsi"
+  | "macd_hist"
+  | "roc"
+  | "williams";
+type ScanOperator = "lt" | "le" | "gt" | "ge" | "eq";
+
+export const marketScanTool: Tool = {
+  name: "market_scan",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "market_scan",
+      description: `Scan the active watchlist for symbols matching an indicator threshold.
+
+USE WHEN:
+- User asks to find symbols meeting a condition (e.g., "what's oversold today?", "find symbols with RSI < 30", "which are above their 50-day SMA?")
+
+NOT WHEN:
+- User wants indicators on one specific symbol (use market_indicators)
+- User wants to add/remove symbols from the watchlist (use market_watchlist_{add,remove,list})
+
+The scan iterates the active watchlist, computes one indicator per symbol over recent bars, and filters by the operator+threshold. Cache-friendly: warm scans (after a morning data pull) cost zero API calls.
+
+Output: pre-formatted match list with cache-hit summary.`,
+      parameters: {
+        type: "object",
+        properties: {
+          indicator: {
+            type: "string",
+            enum: ["sma", "ema", "rsi", "macd_hist", "roc", "williams"],
+            description:
+              "Single-value indicator to scan against. Excludes multi-output indicators like full MACD or Bollinger.",
+          },
+          operator: {
+            type: "string",
+            enum: ["lt", "le", "gt", "ge", "eq"],
+            description: "Comparison: lt, le, gt, ge, eq.",
+          },
+          threshold: {
+            type: "number",
+            description:
+              "Value to compare against. RSI [0,100], Williams [-100,0], ROC percentage, SMA/EMA absolute price.",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Optional: only scan watchlist entries whose tags include ANY of these. Empty = whole watchlist.",
+          },
+          interval: {
+            type: "string",
+            enum: ["daily", "60min"],
+            description: "Bar interval. Default 'daily'.",
+          },
+          lookback: {
+            type: "number",
+            description: "Bars per symbol. Default 50.",
+          },
+        },
+        required: ["indicator", "operator", "threshold"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const indicator = args.indicator as SingleValueIndicatorName | undefined;
+    const operator = args.operator as ScanOperator | undefined;
+    const threshold = Number(args.threshold);
+    if (!indicator || !operator || !Number.isFinite(threshold)) {
+      return JSON.stringify({
+        error: "indicator, operator, threshold required",
+      });
+    }
+    const interval = (args.interval as "daily" | "60min") ?? "daily";
+    // Audit W4+R2: min 35 to ensure MACD signal has data; default raised to 60.
+    const rawLookback = Number(args.lookback ?? 60);
+    const lookback = Number.isFinite(rawLookback)
+      ? Math.min(200, Math.max(35, Math.round(rawLookback)))
+      : 60;
+    const tagsFilter = (args.tags as string[] | undefined) ?? [];
+
+    const layer = getDataLayer();
+    const watchlist = layer.listWatchlist();
+    if (watchlist.length === 0) {
+      return "market_scan: watchlist is empty. Add symbols with market_watchlist_add first.";
+    }
+    const filtered = tagsFilter.length
+      ? watchlist.filter((w) => w.tags.some((t) => tagsFilter.includes(t)))
+      : watchlist;
+    if (filtered.length === 0) {
+      return `market_scan: no watchlist symbols match tags ${JSON.stringify(tagsFilter)}.`;
+    }
+
+    const matches: { symbol: string; value: number }[] = [];
+    const skipped: { symbol: string; reason: string }[] = [];
+
+    for (const entry of filtered) {
+      try {
+        const result =
+          interval === "daily"
+            ? await layer.getDaily(entry.symbol, { lookback })
+            : await layer.getIntraday(entry.symbol, "60min", { lookback });
+        if (result.bars.length < 20) {
+          skipped.push({ symbol: entry.symbol, reason: "insufficient bars" });
+          continue;
+        }
+        const value = computeSingleIndicator(indicator, result.bars);
+        if (value === null) {
+          skipped.push({ symbol: entry.symbol, reason: "indicator null" });
+          continue;
+        }
+        if (matchesOp(value, operator, threshold)) {
+          matches.push({ symbol: entry.symbol, value });
+        }
+      } catch (err) {
+        skipped.push({
+          symbol: entry.symbol,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return formatScanResult(
+      indicator,
+      operator,
+      threshold,
+      filtered.length,
+      matches,
+      skipped,
+    );
+  },
+};
+
+function computeSingleIndicator(
+  name: SingleValueIndicatorName,
+  bars: MarketBar[],
+): number | null {
+  const closes = bars.map((b) => b.close);
+  const highs = bars.map((b) => b.high);
+  const lows = bars.map((b) => b.low);
+  switch (name) {
+    case "sma":
+      return latest(sma(closes, 20));
+    case "ema":
+      return latest(ema(closes, 20));
+    case "rsi":
+      return latest(rsi(closes, 14));
+    case "macd_hist":
+      return latest(macd(closes).histogram);
+    case "roc":
+      return latest(roc(closes, 10));
+    case "williams":
+      return latest(williamsR(highs, lows, closes, 14));
+  }
+}
+
+function matchesOp(
+  value: number,
+  op: ScanOperator,
+  threshold: number,
+): boolean {
+  switch (op) {
+    case "lt":
+      return value < threshold;
+    case "le":
+      return value <= threshold;
+    case "gt":
+      return value > threshold;
+    case "ge":
+      return value >= threshold;
+    case "eq":
+      return Math.abs(value - threshold) < 1e-9;
+  }
+}
+
+function formatScanResult(
+  indicator: string,
+  operator: string,
+  threshold: number,
+  scanned: number,
+  matches: { symbol: string; value: number }[],
+  skipped: { symbol: string; reason: string }[],
+): string {
+  const lines: string[] = [
+    `market_scan: indicator=${indicator} operator=${operator} threshold=${threshold} (scanned ${scanned})`,
+    `  Matches (${matches.length}):`,
+  ];
+  if (matches.length === 0) {
+    lines.push("    (none)");
+  } else {
+    // Audit W2: order matches by relevance to the predicate.
+    //   lt/le → ascending (deepest-below first)
+    //   gt/ge → descending (highest-above first)
+    //   eq    → ascending |delta| (closest-to-threshold first)
+    if (operator === "gt" || operator === "ge") {
+      matches.sort((a, b) => b.value - a.value);
+    } else if (operator === "eq") {
+      matches.sort(
+        (a, b) => Math.abs(a.value - threshold) - Math.abs(b.value - threshold),
+      );
+    } else {
+      matches.sort((a, b) => a.value - b.value);
+    }
+    for (const m of matches) {
+      lines.push(`    ${m.symbol}: ${m.value.toFixed(2)}`);
+    }
+  }
+  if (skipped.length > 0) {
+    lines.push(`  Skipped (${skipped.length}):`);
+    for (const s of skipped.slice(0, 5)) {
+      lines.push(`    ${s.symbol}: ${s.reason}`);
+    }
+    if (skipped.length > 5)
+      lines.push(`    ... and ${skipped.length - 5} more`);
+  }
+  return lines.join("\n");
+}
