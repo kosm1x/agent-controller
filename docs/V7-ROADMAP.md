@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-13 — **v7 pre-launch. v7.3 Phase 1 SEO/GEO shipped session 62. v7.8 Phase 1 autoreason lifts shipped session 63 (today). Rest planned across 3 tracks totaling ~25-27 sessions. Financial Stack critical path (v7.0) is the thesis and remains unstarted; v7.6-v7.8 infrastructure unblockers ship first.**
+> Last updated: 2026-04-17 (session 71 — deep reference sweep) — **v7 pre-launch. v7.3 Phase 1 SEO/GEO + v7.8 Phase 1 autoreason lifts shipped. v7.6 + v7.7 + v7.9 shipped. Rest planned across 3 tracks totaling ~33.5 sessions after session 71 enrichment. Financial Stack critical path (v7.0) is the thesis and remains unstarted; v7.6-v7.8 infrastructure unblockers already shipped. Session 71 added: v7.3 Phase 5 (GEO Depth), v7.13 (Structured PDF Ingestion), v7.14 (Infographic Generation), F11 (Live Polymarket Trading Engine). Scope enrichments in v7.1, v7.5, F6, F7, F7.5, F8, F10. Four new references shape F-series financial methodology: FinRL-X (𝒮), de Prado (labeling + validation), Wolff-Echterling (classification target), Nautilus Trader (infrastructure).**
 
 ## Status Key
 
@@ -192,13 +192,18 @@
 
 ## v7.0 F6 — Prediction Markets + Whale Tracker — **Planned**
 
-> 1.5 sessions. No F-series dependencies, can run in parallel with F3.
+> 1.5 sessions. No F-series dependencies, can run in parallel with F3. Read-side enriched by `reference_polymarket_cli.md` (Stage A). F11 handles the live-trading engine (Stage C).
 
-| Item                                                                 | Source  | Status      |
-| -------------------------------------------------------------------- | ------- | ----------- |
-| Polymarket API adapter — live market odds, volume, resolution        | V7 spec | **Planned** |
-| Kalshi API adapter — regulated US prediction markets                 | V7 spec | **Planned** |
-| Whale tracker — Polymarket trade history + SEC EDGAR insider filings | V7 spec | **Planned** |
+| Item                                                                                                                                              | Source                        | Status      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------- |
+| Polymarket API adapter — live market odds, volume, resolution (Gamma API for discovery, CLOB API for pricing)                                     | V7 spec                       | **Planned** |
+| Kalshi API adapter — regulated US prediction markets                                                                                              | V7 spec                       | **Planned** |
+| Whale tracker — Polymarket trade history + SEC EDGAR insider filings                                                                              | V7 spec                       | **Planned** |
+| **Stage A — polymarket-cli read-side enrichments:**                                                                                               | `reference_polymarket_cli.md` | —           |
+| Negative-risk market handling — multi-outcome markets (elections/championships) where only one outcome wins, special display + analysis semantics | polymarket-cli                | **Planned** |
+| Builder-leaderboard API — track high-performing builders alongside individual-address whales; richer smart-money signal                           | polymarket-cli                | **Planned** |
+| Gamma events API — event-level grouping (all markets for one election) enables cross-market correlation                                           | polymarket-cli                | **Planned** |
+| Market-metadata surface — standard pull of `tick-size`, `fee-rate`, `neg-risk`, `time`, `geoblock` alongside odds                                 | polymarket-cli                | **Planned** |
 
 ---
 
@@ -217,16 +222,19 @@
 
 ## v7.0 F7 — Alpha Combination Engine — **Planned**
 
-> 2 sessions. Depends on F3 + F5 + F6 + F6.5. See `V7-ALPHA-COMBINATION-EQUATIONS.md` for the 11-step spec.
+> 2-2.5 sessions. Depends on F3 + F5 + F6 + F6.5. See `V7-ALPHA-COMBINATION-EQUATIONS.md` for the 11-step spec. Composition enriched by FinRL-X (𝒮 selection), skfolio (𝒜 allocation), TradingAgents (analyst panel), ai-hedge-fund (fan-out→funnel), de Prado methodology (labeling + validation).
 
-| Item                                                                                              | Source  | Status      |
-| ------------------------------------------------------------------------------------------------- | ------- | ----------- |
-| 11-step combination pipeline — ingredient scoring → layer weights → aggregation → decision output | V7 spec | **Planned** |
-| Signal evolution tracking — how signal quality changes over time                                  | V7 spec | **Planned** |
-| ISQ (Ingredient Signal Quality) dimensions                                                        | V7 spec | **Planned** |
-| Per-layer freshness gates                                                                         | V7 spec | **Planned** |
-| Weight versioning                                                                                 | V7 spec | **Planned** |
-| Minimum signal threshold                                                                          | V7 spec | **Planned** |
+| Item                                                                                                                                                                            | Source               | Status      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- |
+| 11-step combination pipeline — ingredient scoring → layer weights → aggregation → decision output                                                                               | V7 spec              | **Planned** |
+| Signal evolution tracking — how signal quality changes over time                                                                                                                | V7 spec              | **Planned** |
+| ISQ (Ingredient Signal Quality) dimensions                                                                                                                                      | V7 spec              | **Planned** |
+| Per-layer freshness gates                                                                                                                                                       | V7 spec              | **Planned** |
+| Weight versioning                                                                                                                                                               | V7 spec              | **Planned** |
+| Minimum signal threshold                                                                                                                                                        | V7 spec              | **Planned** |
+| Triple-barrier labeling — TP/SL/time barriers w/ volatility-scaled thresholds + sample-weight-by-uniqueness; augments FinRL-X forward-log-return labels                         | de Prado (AFML ch.3) | **Planned** |
+| Meta-labeling — secondary classifier predicts bet/pass on primary's direction; precision-optimized; bet sizing from secondary probability; consumes LLM-panel signal as feature | de Prado (AFML ch.3) | **Planned** |
+| Purged k-fold CV with embargo — remove train samples whose label windows overlap test set; embargo ~1% of samples; replaces FinRL-X's walk-forward-only validation              | de Prado (AFML ch.7) | **Planned** |
 
 ---
 
@@ -234,25 +242,34 @@
 
 > 1 session. Depends on F7.
 
-| Item                                                                                               | Source  | Status      |
-| -------------------------------------------------------------------------------------------------- | ------- | ----------- |
-| Walk-forward validation — train months 1-6, test month 7, roll forward                             | V7 spec | **Planned** |
-| Stress test scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up)                    | V7 spec | **Planned** |
-| `backtest_results` table — per-strategy win rate, Sharpe, max drawdown, regime-conditional metrics | V7 spec | **Planned** |
+| Item                                                                                                                                                 | Source                | Status      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ----------- |
+| Walk-forward validation — train months 1-6, test month 7, roll forward                                                                               | V7 spec               | **Planned** |
+| Stress test scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up)                                                                      | V7 spec               | **Planned** |
+| `backtest_results` table — per-strategy win rate, Sharpe, max drawdown, regime-conditional metrics                                                   | V7 spec               | **Planned** |
+| Combinatorial Purged Cross-Validation (CPCV) — distribution of backtest Sharpes across purged partitions, input to PBO                               | de Prado (AFML ch.12) | **Planned** |
+| Probability of Backtest Overfitting (PBO) — fraction of paths where in-sample best fell below OOS median; ship-blocker if PBO > 50% without override | Bailey/de Prado 2014  | **Planned** |
+| Deflated Sharpe Ratio (DSR) — adjusts Sharpe for multiple-testing bias; reports p-value alongside raw Sharpe                                         | Bailey/de Prado 2014  | **Planned** |
 
 ---
 
 ## v7.0 F8 — Paper Trading (pm-trader MCP) — **Planned**
 
-> 1.5 sessions. Depends on F7.5.
+> 1.5 sessions. Depends on F7.5. Reference: `reference_nautilus_trader.md` for infrastructure-pattern folds (research-to-live parity + VenueAdapter interface).
+>
+> **Design invariant (from Nautilus research-to-live parity principle)**: F8 and F11 MUST share a common execution engine + order model + fill simulator + clock abstraction. Strategy code passes through the same interfaces in paper and live. Divergence risk is the single biggest operational hazard in trading systems — this invariant mitigates it at architecture time, not bolt-on later.
 
-| Item                                                                               | Source  | Status      |
-| ---------------------------------------------------------------------------------- | ------- | ----------- |
-| pm-trader MCP server integration (29 tools, stdio)                                 | V7 spec | **Planned** |
-| `trade_theses` table — thesis → trade → outcome commitment tracking                | V7 spec | **Planned** |
-| Transaction cost model (H5) — slippage, spread, commission                         | V7 spec | **Planned** |
-| Shadow portfolio — validates before user-facing alerts                             | V7 spec | **Planned** |
-| Replication scoring — am I trading like the winners? (Polymarket whale comparison) | V7 spec | **Planned** |
+| Item                                                                                                                                                                                                                                                                                                                                        | Source                         | Status      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ----------- |
+| pm-trader MCP server integration (29 tools, stdio)                                                                                                                                                                                                                                                                                          | V7 spec                        | **Planned** |
+| `trade_theses` table — thesis → trade → outcome commitment tracking                                                                                                                                                                                                                                                                         | V7 spec                        | **Planned** |
+| Transaction cost model (H5) — slippage, spread, commission                                                                                                                                                                                                                                                                                  | V7 spec                        | **Planned** |
+| Shadow portfolio — validates before user-facing alerts                                                                                                                                                                                                                                                                                      | V7 spec                        | **Planned** |
+| Replication scoring — am I trading like the winners? (Polymarket whale comparison)                                                                                                                                                                                                                                                          | V7 spec                        | **Planned** |
+| **`VenueAdapter` TS interface** — common abstraction with methods `getMarketData`, `getOrderBook`, `placeOrder(Order)`, `cancelOrder`, `getPositions`, `getBalance`, `getFills`. Shared domain model (Order / Fill / Position / Balance). pm-trader is first concrete implementation; F10 Binance WS and F11 Polymarket refactor to comply. | `reference_nautilus_trader.md` | **Planned** |
+| **Shared execution engine** — single Order state machine + fill simulator + event bus used by paper (F8) and live (F11). Strategy subscribes to typed events (fills, rejections, market data, timers) through one bus interface.                                                                                                            | `reference_nautilus_trader.md` | **Planned** |
+| **Shared clock abstraction** — strategy uses `clock.now()`, backtest replays historical timestamps, paper uses wall clock, live uses venue clock. Strategy code is time-source-agnostic.                                                                                                                                                    | `reference_nautilus_trader.md` | **Planned** |
+| **Research-to-live parity test** — reconciliation harness runs same strategy against backtest + paper + (post-F11) live; asserts output equivalence on matched-time windows. Ship-gate for F11 activation.                                                                                                                                  | `reference_nautilus_trader.md` | **Planned** |
 
 ---
 
@@ -273,10 +290,73 @@
 
 > 1 session. Parallel from F3. Optional — defer if not needed at v7.0 launch.
 
-| Item                                                            | Source  | Status      |
-| --------------------------------------------------------------- | ------- | ----------- |
-| Binance WebSocket adapter — tick-level BTC/ETH/SOL/etc.         | V7 spec | **Planned** |
-| Real-time signal dispatch (bypass polling for crypto watchlist) | V7 spec | **Planned** |
+| Item                                                                                                      | Source                                   | Status      |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
+| Binance WebSocket adapter — tick-level BTC/ETH/SOL/etc. Implemented as `VenueAdapter`-compliant (see F8). | V7 spec + `reference_nautilus_trader.md` | **Planned** |
+| Real-time signal dispatch (bypass polling for crypto watchlist)                                           | V7 spec                                  | **Planned** |
+
+---
+
+## v7.0 F11 — Live Polymarket Trading Engine — **Planned**
+
+> 2.5 sessions. Depends on F6 (read-side adapter), F8 (paper-trading track record — 30+ days), and the full prediction-suite learning stack listed below. Goal: Jarvis can autonomously place, manage, and exit positions on Polymarket with reward-farming + directional-betting strategies. Source: `reference_polymarket_cli.md` (Stage C).
+>
+> **Readiness gate (hard prerequisite)**: Stage B paper-trading must show 30+ days of positive risk-adjusted return (Sharpe > 0, max drawdown within configured cap) before any real-money deployment. Same discipline as F8 stock paper-trading graduation.
+
+### Apply-all-learnings fold matrix
+
+Every prediction-suite learning applies — cross-referenced to the source memory:
+
+| Learning source                                        | What it contributes to F11                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reference_polymarket_cli.md` (this ref)               | Full write-side API surface — CLOB orders, on-chain CTF ops, bridge, wallet, rewards API                                                                                                                                                                                                                      |
+| `reference_polymarket_paper_trader.md`                 | 5 patterns already ported for Stage B — orderbook walking, positions, P&L analytics, caching, multi-account A/B                                                                                                                                                                                               |
+| `reference_wolff_echterling_stock_picking.md`          | **Natural fit** — Polymarket markets ARE binary (YES/NO with probability 0-1). Classification-target framing maps directly: "true probability vs market price." Regularized logistic regression as baseline before complex ML.                                                                                |
+| `reference_lopez_de_prado_methodology.md`              | Meta-labeling as Kelly-sizing bridge — primary model predicts edge magnitude, secondary predicts bet/pass given fees + slippage. Purged CV for backtesting. PBO as strategy-quality gate. Triple-barrier labels adapt to Polymarket: upper = edge realized, lower = adverse move, vertical = market resolves. |
+| `reference_finrl_x.md`                                 | Weight-centric architecture `w = ℛ(𝒯(𝒜(𝒮(X))))` applies — 𝒮 = market selection, 𝒜 = position sizing, 𝒯 = timing (entry/exit), ℛ = portfolio-level risk overlay (concentration caps, max exposure)                                                                                                             |
+| `reference_asi_evolve.md`                              | **MAP-Elites island sampling** structures strategy variants as behavioral cells: directional-bet / market-making / arbitrage-across-related-markets. Prevents mode collapse into one strategy.                                                                                                                |
+| `reference_trading_agents.md`                          | BM25 reflection memory + adversarial critic — useful for event-driven markets where news interpretation matters (election polls, sports, geopolitical)                                                                                                                                                        |
+| `reference_quantagent.md` (v7.1 fold)                  | Event-chart pattern recognition — Polymarket markets often have their own price charts; vision-LLM pattern detection applies (breakout, channel, consolidation on market probability)                                                                                                                         |
+| F6 read-side                                           | Builder-leaderboard for strategy validation — compare Jarvis's builder-level performance against known high performers                                                                                                                                                                                        |
+| `feedback_audit_patterns.md`, security audit checklist | 10-item security pass for any new HTTP-exposed service. Critical here — wallet auth + order placement is attack-surface-heavy.                                                                                                                                                                                |
+
+### Scope table
+
+| Item                                                                                                                                                                                                                                                                                                                                                                                      | Source                                               | Status      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------- |
+| **Regulatory precheck** — geoblock call on every session start; user-location-aware gating; documented KYC posture. Jurisdiction where trade execution happens is a legal precondition, not a code question.                                                                                                                                                                              | polymarket-cli + legal                               | **Planned** |
+| **Wallet security architecture** — NEVER plain-config private key. Options in preference order: HashiCorp Vault self-hosted, hardware wallet (Ledger) via WebHID, env-var-from-secrets-manager. Dedicated session time budgeted.                                                                                                                                                          | polymarket-cli + security audit                      | **Planned** |
+| **CLOB write-path TS adapter** — `VenueAdapter`-compliant from start (see F8 interface). `createOrder`, `marketOrder`, `postOrders` (batch), all cancel variants, order-type enum (GTC/FOK/GTD/FAK + post-only). Structured error objects (code + message + retryable). Pin to polymarket-cli commit.                                                                                     | polymarket-cli CLOB + `reference_nautilus_trader.md` | **Planned** |
+| **Advanced order types** — OCO (One-Cancels-Other) for atomic bid+ask market-making pairs; OTO (One-Triggers-Other) for bracket orders (entry → auto-stop-loss); OUO (One-Updates-Other) for dynamic hedging; iceberg for size concealment. Gated by Polymarket API support — verify which types CLOB actually accepts; implement client-side emulation for unsupported types where safe. | `reference_nautilus_trader.md`                       | **Planned** |
+| **Shared execution engine compliance** — F11 uses the F8-defined shared Order state machine, fill simulator, event bus, and clock abstraction. NO F11-specific execution paths. Research-to-live parity test (from F8) is the ship-gate before any live-money activation.                                                                                                                 | `reference_nautilus_trader.md`                       | **Planned** |
+| **On-chain operations** — ERC-20 (USDC) + ERC-1155 (CTF) approvals, CTF split/merge/redeem, neg-risk redemption. OpenZeppelin ABIs. ethers.js Wallet abstraction.                                                                                                                                                                                                                         | polymarket-cli CTF + approve                         | **Planned** |
+| **Bridge integration** — USDC → Polygon deposit orchestration; supported-assets check; status polling                                                                                                                                                                                                                                                                                     | polymarket-cli bridge                                | **Planned** |
+| **Position + portfolio management** — risk limits (max per-market, max total exposure, concentration caps), multi-market tracking, resolution P&L realization with `redeem` on winning outcomes                                                                                                                                                                                           | Stage B patterns + V7 spec                           | **Planned** |
+| **Strategy selection via MAP-Elites cells** — behavioral cells: directional-bet / market-making / arbitrage. Cell-based candidate maintenance rather than single best-strategy.                                                                                                                                                                                                           | `reference_asi_evolve.md`                            | **Planned** |
+| **Directional-betting strategy** — Wolff-Echterling classification target + de Prado meta-labeling wrapper. Edge detection: `(model_probability - market_price)` vs `fees + expected_slippage`. Kelly sizing via secondary classifier probability.                                                                                                                                        | de Prado + Wolff-Echterling                          | **Planned** |
+| **Market-making strategy** — limit-order placement on liquid markets for fee rebates. Track `current-rewards` + `order-scoring` APIs. Bid-ask risk modeling (get-picked-off when news breaks). Not free money — compensation for real liquidity risk.                                                                                                                                     | polymarket-cli rewards                               | **Planned** |
+| **Arbitrage-across-related-markets** — Gamma events API groups related markets (e.g., multi-outcome election); arbitrage when sum of YES probabilities ≠ 1. Rare but clean edge.                                                                                                                                                                                                          | polymarket-cli Gamma + neg-risk                      | **Planned** |
+| **Backtest framework** — purged k-fold CV + PBO (from `reference_lopez_de_prado_methodology.md`) on Polymarket historical data. Probability of Backtest Overfitting as ship-gate (>50% blocks deployment).                                                                                                                                                                                | de Prado                                             | **Planned** |
+| **Builder-leaderboard comparison** — track Jarvis's builder-level performance, compare against known-good builders                                                                                                                                                                                                                                                                        | F6 Stage A                                           | **Planned** |
+| **Reward-tracking instrumentation** — persist `rewards`/`earnings`/`order-scoring` data; include in daily P&L attribution (trading gains vs reward income)                                                                                                                                                                                                                                | polymarket-cli rewards                               | **Planned** |
+| **Kill switch + circuit breakers** — daily loss cap, per-market loss cap, max-orders-per-hour. Automatic pause + notify on breach. Manual override required to resume.                                                                                                                                                                                                                    | Risk management                                      | **Planned** |
+| **Security audit (10-item pass)** — full checklist from `feedback_security_audit.md` before any live order placement                                                                                                                                                                                                                                                                      | `feedback_security_audit.md`                         | **Planned** |
+| **Integration touchpoints** — scope group (new `polymarket_trading` scope, destructive/confirmation-gated), tool definitions, write-tools-sync test, auto-persist rules for trade events, INTEGRATION-CHECKLIST.md full touchpoints                                                                                                                                                       | `INTEGRATION-CHECKLIST.md`                           | **Planned** |
+
+### Explicit non-goals
+
+- **Polymarket analytics dashboard** — out of scope, build only if needed for Jarvis's own operation
+- **Polymarket alongside other prediction venues simultaneously in F11** — Kalshi etc. are separate integrations; F11 is Polymarket-specific depth
+- **HFT / sub-second latency** — Polymarket resolution cadence doesn't need it; we're not co-located
+- **Social trading / copy-trading from whales** — separate signal (F6 whale tracker already covers this for read-side); F11 is Jarvis's own strategies
+
+### Concerns carried forward from reference
+
+1. polymarket-cli has **no declared license** — verify before any code copy, API reference-only is safe
+2. polymarket-cli is "early, experimental software" — pin to commit, subscribe to releases, expect breakage
+3. **Real money at risk** — Stage B track record (30+ days paper positive) is a hard prerequisite
+4. **Wallet security is the hardest operational question**, not a code question — budget session time explicitly
+5. **Reward farming ≠ free money** — market-making carries bid-ask risk, model it honestly
 
 ---
 
@@ -289,6 +369,10 @@
 | TradingView lightweight-charts + Puppeteer → PNG pipeline                                                                                                                                                                                                | V7 spec    | **Planned** |
 | Candlestick + indicator overlays + signal markers                                                                                                                                                                                                        | V7 spec    | **Planned** |
 | Vision chart pattern recognition — 4-agent pipeline (head-and-shoulders, triangles, wedges, flags)                                                                                                                                                       | quantagent | **Planned** |
+| Trend-channel-fitting algorithm — pivot detection + least-squares upper/lower bounds + slope quantification + consolidation-zone detection (~150 LOC TS, pure numerics, no LLM)                                                                          | quantagent | **Planned** |
+| Pattern-agent prompt design — chart PNG → vision LLM → named formation + confidence + candle-range location. Structured output schema                                                                                                                    | quantagent | **Planned** |
+| Indicator-layering prompt — single LLM call combines RSI + MACD + Stochastic + ROC + Williams %R into coherent read (alternative to call-then-fuse)                                                                                                      | quantagent | **Planned** |
+| Add ROC (Rate of Change, 10-period) and Williams %R (overbought/oversold, faster than RSI at extremes) to indicator set                                                                                                                                  | quantagent | **Planned** |
 | Synthesize as 6th layer in post-F7 decision ranking via RRF (Reciprocal Rank Fusion) — chart patterns are discrete categorical signals that do not fit inside the F7 11-step continuous-return pipeline (see `planning/phase-beta/11-v71-chart-deps.md`) | explore F  | **Planned** |
 
 ---
@@ -346,6 +430,21 @@
 | AI overview attribution tracking — which sources cited, rank position, over-time evolution | —      | **Planned** |
 | `ai_overview_tracking` table — time-series of query → presence + sources                   | —      | **Planned** |
 | Alert on attribution loss or competitor displacement                                       | —      | **Planned** |
+
+---
+
+## v7.3 Phase 5 — GEO Depth (Princeton + llms.txt + AI-bots) — **Planned**
+
+> 1 session. Depends on nothing. Source: `reference_geo_optimizer.md` (Auriti-Labs MIT). Fills content-quality diagnostic gap in Phase 1 audit + 2 new tools for emerging GEO standards.
+
+| Item                                                                                                                                                                                                                                                     | Source          | Status      |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------- |
+| `seo_llms_txt_generate` — sitemap → `/llms.txt` AI-readable site summary (emerging standard)                                                                                                                                                             | Auriti          | **Planned** |
+| Extend `seo_page_audit` with Princeton KDD 2024 content-quality signals (cite density +30-115%, stat density +40%, quote presence +30-40%, readability +15-30%, keyword-stuffing detection); impact-weighted scoring alongside existing structural score | Princeton paper | **Planned** |
+| `seo_robots_audit` — AI-bot robots.txt coverage report; training-vs-citation distinction; misconfiguration flagging                                                                                                                                      | Auriti          | **Planned** |
+| `ai-bots.ts` reference library (27 entries: OpenAI, Anthropic, Perplexity, Google, Microsoft, Apple, Meta, + others)                                                                                                                                     | Auriti          | **Planned** |
+
+~600 LOC TS total. No new deps. No license blockers (MIT). Ships independently of Phase 2/3/4.
 
 ---
 
@@ -417,19 +516,77 @@
 >
 > **MANDATORY PRE-PLAN TASK (NO SKIP):** Before any v7.5 implementation starts, run the full upstream sweep per `memory/feedback_v75_upstream_sweep_directive.md`. Budget: ~4 hours as its own half-day session. Scope: 48+ `reference_*.md` files with 10 core skill-evolution references read in depth (GEPA, SkillClaw, Hyperagents, Hermes, ACE, Memoria, claude-mem, mempalace, Superpowers, context-engineering). The sweep findings shape v7.5 scope — without it the skill-evolution engine is built against stale reference material from months earlier. Launch with parallel `Agent subagent_type=Explore` calls for the 10 core repos. Do NOT start coding v7.5 until every reference file has a "last reviewed" date within the current week AND Tier 1 findings are folded into the scope table below.
 
-| Item                                                                                                       | Source                                     | Status      |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------- |
-| **Pre-plan: bulk upstream sweep (48 refs, ~4h)**                                                           | `feedback_v75_upstream_sweep_directive.md` | **Blocker** |
-| Reflective mutation from execution traces — extract corrections, propose minimal config deltas             | GEPA + Phantom evolution                   | **Planned** |
-| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                   | GEPA                                       | **Planned** |
-| Pareto domain specialization — separate skill variants per task class                                      | GEPA                                       | **Planned** |
-| Failure source classification (skill / agent / env) — SkillClaw pattern                                    | SkillClaw                                  | **Planned** |
-| Session trajectory structuring — logged corrections promoted to golden suite                               | SkillClaw + Phantom                        | **Planned** |
-| Conservative editing principles — append-first, minimal replace, no remove of safety keywords              | Phantom constitution                       | **Planned** |
-| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety | Phantom evolution                          | **Planned** |
-| Triple-judge minority veto for safety-critical gates                                                       | Phantom judges                             | **Planned** |
-| Daily cost cap + heuristic fallback when budget exhausted                                                  | Phantom engine                             | **Planned** |
-| Upgrade overnight tuning loop to use the evolution engine                                                  | V7 spec                                    | **Planned** |
+| Item                                                                                                                                                                                                                               | Source                                     | Status      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------- |
+| **Pre-plan: bulk upstream sweep (48 refs, ~4h)**                                                                                                                                                                                   | `feedback_v75_upstream_sweep_directive.md` | **Blocker** |
+| Reflective mutation from execution traces — extract corrections, propose minimal config deltas                                                                                                                                     | GEPA + Phantom evolution                   | **Planned** |
+| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                                                                                                                                           | GEPA                                       | **Planned** |
+| Pareto domain specialization — separate skill variants per task class                                                                                                                                                              | GEPA                                       | **Planned** |
+| Failure source classification (skill / agent / env) — SkillClaw pattern                                                                                                                                                            | SkillClaw                                  | **Planned** |
+| Session trajectory structuring — logged corrections promoted to golden suite                                                                                                                                                       | SkillClaw + Phantom                        | **Planned** |
+| Conservative editing principles — append-first, minimal replace, no remove of safety keywords                                                                                                                                      | Phantom constitution                       | **Planned** |
+| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety                                                                                                                         | Phantom evolution                          | **Planned** |
+| Triple-judge minority veto for safety-critical gates                                                                                                                                                                               | Phantom judges                             | **Planned** |
+| Daily cost cap + heuristic fallback when budget exhausted                                                                                                                                                                          | Phantom engine                             | **Planned** |
+| Upgrade overnight tuning loop to use the evolution engine                                                                                                                                                                          | V7 spec                                    | **Planned** |
+| Two-layer memory separation — tag `kb_entries` with `layer` (`prior_knowledge` / `task_experience`); different retrieval per layer (cognition query uses sampled task node analyses, not raw user prompt)                          | ASI-Evolve (arxiv 2603.29640)              | **Planned** |
+| Dedicated Analyzer module — separate from mutator. Engineer emits rich output → Analyzer distills into structured `{decision, reasoning, actionable_insights[]}` → Researcher next round consumes distilled report, not raw traces | ASI-Evolve                                 | **Planned** |
+| MAP-Elites island sampling — quality-diversity alternative to UCB1/Thompson. Behavioral cells (tool-call pattern × response structure) preserve distinct variants; prevents mode collapse                                          | ASI-Evolve                                 | **Planned** |
+
+---
+
+## v7.13 — Structured PDF Ingestion (`kb_ingest_pdf_structured`) — **Planned**
+
+> 1.5 sessions. Depends on pgvector migration (✅ operational 2026-04-17). Blocks F7 retrieval quality on financial PDFs. Source: `reference_rag_anything.md` (HKUDS MIT).
+
+**Motivation**: Current PDF ingestion via `@opendataloader/pdf` flattens everything to text — tables, equations, charts lose structure. For Phase β financial stack, 10-K filings, earnings reports, and quant research papers need table/equation preservation. RAG-Anything framework conflicts with our pgvector direction; adopt 1 tool + 2 cheap patterns, not the framework.
+
+**Python exception approved 2026-04-17**: MinerU ML parser too heavy to port; runs as Python subprocess same pattern as pipesong/vLLM.
+
+| Item                                                                                                                    | Source                     | Status      |
+| ----------------------------------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
+| MinerU Python service — FastAPI `POST /parse { pdf_path } → { content_list }`, Docker self-contained, CPU default       | HKUDS RAG-Anything (MIT)   | **Planned** |
+| systemd unit + health endpoint (pipesong-pattern)                                                                       | Infrastructure             | **Planned** |
+| `kb_ingest_pdf_structured(pdf_path, namespace?)` TS tool — calls MinerU, generates embeddings, writes tagged pgvector   | —                          | **Planned** |
+| Modality field on `kb_entries` — `text` \| `table` \| `equation` \| `image_caption` (additive migration, no reset)      | —                          | **Planned** |
+| Tables stored as JSON (structure preserved) + row-serialized text duplicate (for vector embedding)                      | —                          | **Planned** |
+| Equations stored as LaTeX strings; image captions via existing vision adapter                                           | —                          | **Planned** |
+| Retrieval layer modality filter — infer intent (table/equation lookup) and bias retrieval                               | —                          | **Planned** |
+| Integration: scope group, guards, write-tools-sync test, INTEGRATION-CHECKLIST.md touchpoints                           | `INTEGRATION-CHECKLIST.md` | **Planned** |
+| Test fixtures: 10-K with tables, research paper with equations, analyst deck with charts — end-to-end integration tests | —                          | **Planned** |
+
+**Cheap wins — slottable independently (any session):**
+
+| Item                                                                                                        | Effort  | Status      |
+| ----------------------------------------------------------------------------------------------------------- | ------- | ----------- |
+| Hierarchical `belongs_to` metadata — `parent_doc_id`, `section_path[]`, `chunk_position` on `kb_entries`    | ~50 LOC | **Planned** |
+| `kb_batch_insert(entries)` — bypass chunker, accept pre-parsed content lists (Obsidian Drive, scraped data) | ~30 LOC | **Planned** |
+
+**Explicit non-goals**: full RAG-Anything framework adoption, multi-modal knowledge graph, VLM-enhanced retrieval, modality-specific processor plugin architecture. See `reference_rag_anything.md` for skip rationale.
+
+---
+
+## v7.14 — Infographic Generation (`infographic_generate` tool) — **Planned**
+
+> 1 session. No F-series dependencies. Source: `reference_antv_infographic.md` (antvis/Infographic MIT, TypeScript, Claude skills + plugin already packaged). Fills editorial visualization gap between v7.1 (financial charts) and v7.12 (system diagrams).
+
+**Motivation**: Jarvis currently delivers briefings, proposals, and content as text-heavy output. Editorial infographics (KPI grids, comparison tables, process timelines, ranking bars, summary cards) materially improve delivery quality for F9 morning/EOD rituals, CRM proposals, social-media-service content, daily briefings, and v7.3 P4 ad creative. AntV's library is TypeScript + MIT + already ships a Claude Code plugin — unusually cheap adoption.
+
+| Item                                                                                                                                                | Source                     | Status      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
+| Install `@antv/infographic` + deps; verify npm footprint (reject if pulls full G2/G6 viz stack)                                                     | antvis/Infographic         | **Planned** |
+| Theme configuration — pick dark-minimal default matching Jarvis aesthetic (`feedback_vlmp_ui_choice.md`); fix at integration, don't expose per-call | —                          | **Planned** |
+| Template curation — subset ~15-25 from ~200 covering briefing card / comparison table / KPI grid / timeline / ranking / chart-with-narrative        | AntV templates             | **Planned** |
+| `infographic_generate(description, data?, template?, theme?, output?)` tool — enum-constrained template, poka-yoke via typed params                 | —                          | **Planned** |
+| Tool description with "visual budget" heuristic — infographic for summary/hero, text for detail                                                     | —                          | **Planned** |
+| PNG conversion via existing Puppeteer/Playwright renderer (same pattern as v7.1 charts); shared renderer, not duplicate                             | v7.1 infra                 | **Planned** |
+| Preserve streaming/fault-tolerant rendering — AntV's progressive render is a genuine UX feature; don't collapse to batch-only                       | AntV                       | **Planned** |
+| Scope wiring — fold into `briefing` / `social` / `crm` scope groups rather than dedicated scope (called inside workflows, not standalone)           | `scope.ts`                 | **Planned** |
+| INTEGRATION-CHECKLIST touchpoints — handler, both lists, NOT read-only (writes files), auto-persist Rule 2b, write-tools-sync test, test file       | `INTEGRATION-CHECKLIST.md` | **Planned** |
+| Image-quality validation — real WhatsApp/Telegram delivery path test (CDN re-encoding risk for SVG text); block ship if degradation                 | —                          | **Planned** |
+| Cross-cutting pilot — at least one real workflow integration (F9 briefing OR CRM proposal) before ship                                              | —                          | **Planned** |
+
+**Explicit non-goals**: building infographic templates from scratch, full G2/G6 analytical chart coverage (already handled by v7.1 lightweight-charts), replacing diagram_generate (v7.12 remains canonical for mermaid/d2/plantuml). See `reference_antv_infographic.md` for scope fences.
 
 ---
 
@@ -603,6 +760,8 @@ FINANCIAL STACK (Tier A — phase β, critical path)
                                         F9 (scan rituals)
                                                    │
                                             F10 (crypto WS, parallel from F3)
+                                                   │
+                                            F11 (live Polymarket trading, after F6 + F8 track record)
 
 FEATURE VERTICALS (Tier B — phase γ, layered on top)
   v7.2 Graphify ────────────── independent
@@ -610,6 +769,9 @@ FEATURE VERTICALS (Tier B — phase γ, layered on top)
   v7.3 P2 SEO telemetry ─────── after v7.6
   v7.3 P3 AI overview monitor ─ after F1 schedule infra
   v7.3 P4 Ads buyer ──────────── independent
+  v7.3 P5 GEO depth ──────────── independent
+  v7.13 Structured PDF ingest ── after pgvector (✅); unblocks F7 retrieval
+  v7.14 Infographic generation ─ independent; cross-cuts F9/CRM/social
   v7.4 Video production ──────── after v7.3 P4
   v7.5 GEPA + SkillClaw ──────── after F9 (needs trace data)
 
@@ -670,35 +832,39 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 ## Total Effort
 
-| Version           | Theme                                          | Sessions | Status            |
-| ----------------- | ---------------------------------------------- | -------- | ----------------- |
-| v7.8 P1           | Autoreason lifts (CoT+k=2+gap telemetry)       | 1        | **Done**          |
-| v7.3 P1           | SEO/GEO tool suite                             | 1        | **Done**          |
-| v7.6              | Workspace expansion (gws)                      | 1        | **Planned**       |
-| v7.7              | Jarvis MCP server                              | 1        | **Planned**       |
-| v7.8 P2           | Autoreason tournament decision (fixed date)    | 0.5      | **Planned**       |
-| v7.0 F1           | Data layer (AV + Yahoo)                        | 1.5      | **Planned**       |
-| v7.0 F2           | Indicator engine                               | 1        | **Planned**       |
-| v7.0 F4           | Watchlist + market tools                       | 1        | **Planned**       |
-| v7.0 F5           | Macro regime detection                         | 0.5      | **Planned**       |
-| v7.0 F3           | Signal detector                                | 1        | **Planned**       |
-| v7.0 F6           | Prediction markets + whale tracker             | 1.5      | **Planned**       |
-| v7.0 F6.5         | Sentiment signals                              | 0.5      | **Planned**       |
-| v7.0 F7           | Alpha combination engine                       | 2        | **Planned**       |
-| v7.0 F7.5         | Strategy backtester                            | 1        | **Planned**       |
-| v7.0 F8           | Paper trading (pm-trader)                      | 1.5      | **Planned**       |
-| v7.0 F9           | Scan rituals + calendar                        | 1        | **Planned**       |
-| v7.0 F10          | Real-time crypto WebSocket                     | 1        | **Planned** (opt) |
-| v7.1              | Charts + vision chart patterns                 | 1.5      | **Planned**       |
-| v7.2              | Knowledge graph (Graphify)                     | 1.5      | **Planned**       |
-| v7.3 P2           | SEO telemetry (PageSpeed + GSC)                | 1        | **Planned**       |
-| v7.3 P3           | AI overview monitoring                         | 1        | **Planned**       |
-| v7.3 P4           | Digital marketing buyer (claude-ads + Ads API) | 3        | **Planned**       |
-| v7.4              | Video production                               | 2        | **Planned**       |
-| v7.5              | Skill evolution (GEPA + SkillClaw)             | 2        | **Planned**       |
-| v7.8 P3           | Autoreason tournament pilot (conditional)      | 2        | **Conditional**   |
-| **Total shipped** | 2 sessions                                     | **2**    |                   |
-| **Total planned** | 26 sessions critical path, ~20-22 parallelized | **~27**  |                   |
+| Version           | Theme                                            | Sessions  | Status            |
+| ----------------- | ------------------------------------------------ | --------- | ----------------- |
+| v7.8 P1           | Autoreason lifts (CoT+k=2+gap telemetry)         | 1         | **Done**          |
+| v7.3 P1           | SEO/GEO tool suite                               | 1         | **Done**          |
+| v7.6              | Workspace expansion (gws)                        | 1         | **Planned**       |
+| v7.7              | Jarvis MCP server                                | 1         | **Planned**       |
+| v7.8 P2           | Autoreason tournament decision (fixed date)      | 0.5       | **Planned**       |
+| v7.0 F1           | Data layer (AV + Yahoo)                          | 1.5       | **Planned**       |
+| v7.0 F2           | Indicator engine                                 | 1         | **Planned**       |
+| v7.0 F4           | Watchlist + market tools                         | 1         | **Planned**       |
+| v7.0 F5           | Macro regime detection                           | 0.5       | **Planned**       |
+| v7.0 F3           | Signal detector                                  | 1         | **Planned**       |
+| v7.0 F6           | Prediction markets + whale tracker               | 1.5       | **Planned**       |
+| v7.0 F6.5         | Sentiment signals                                | 0.5       | **Planned**       |
+| v7.0 F7           | Alpha combination engine                         | 2.5       | **Planned**       |
+| v7.0 F7.5         | Strategy backtester                              | 1         | **Planned**       |
+| v7.0 F8           | Paper trading (pm-trader)                        | 1.5       | **Planned**       |
+| v7.0 F9           | Scan rituals + calendar                          | 1         | **Planned**       |
+| v7.0 F10          | Real-time crypto WebSocket                       | 1         | **Planned** (opt) |
+| v7.0 F11          | Live Polymarket trading engine                   | 2.5       | **Planned**       |
+| v7.1              | Charts + vision chart patterns                   | 1.5       | **Planned**       |
+| v7.2              | Knowledge graph (Graphify)                       | 1.5       | **Planned**       |
+| v7.3 P2           | SEO telemetry (PageSpeed + GSC)                  | 1         | **Planned**       |
+| v7.3 P3           | AI overview monitoring                           | 1         | **Planned**       |
+| v7.3 P4           | Digital marketing buyer (claude-ads + Ads API)   | 3         | **Planned**       |
+| v7.3 P5           | GEO depth (llms.txt + Princeton + AI-bots)       | 1         | **Planned**       |
+| v7.13             | Structured PDF ingestion (MinerU + modality)     | 1.5       | **Planned**       |
+| v7.14             | Infographic generation (AntV)                    | 1         | **Planned**       |
+| v7.4              | Video production                                 | 2         | **Planned**       |
+| v7.5              | Skill evolution (GEPA + SkillClaw)               | 2         | **Planned**       |
+| v7.8 P3           | Autoreason tournament pilot (conditional)        | 2         | **Conditional**   |
+| **Total shipped** | 2 sessions                                       | **2**     |                   |
+| **Total planned** | 32.5 sessions critical path, ~25-27 parallelized | **~33.5** |                   |
 
 ---
 
