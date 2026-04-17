@@ -73,6 +73,11 @@ const READ_ONLY_TOOLS = new Set([
   // persists to market_signals table as audit log, not user-intentional state)
   "macro_regime",
   "market_signals",
+  // F6+F6.5 finance — all 3 are reads; prediction_markets caches to DB,
+  // whale_trades queries DB, sentiment_snapshot composes external reads
+  "prediction_markets",
+  "whale_trades",
+  "sentiment_snapshot",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {

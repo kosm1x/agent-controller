@@ -416,3 +416,55 @@ CREATE TABLE IF NOT EXISTS market_signals (
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_market_signals_symbol_time ON market_signals(symbol, triggered_at DESC);
+
+-- ===========================================================================
+-- F6 + F6.5 external signal layers (v7.0 Phase β, session 75) — 3 tables
+-- Prediction markets + whale tracker + sentiment readings
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS prediction_markets (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source          TEXT NOT NULL CHECK(source IN ('polymarket','kalshi','manual')),
+  market_id       TEXT NOT NULL,                              -- Polymarket condition_id or slug
+  slug            TEXT,
+  question        TEXT NOT NULL,
+  category        TEXT,
+  resolution_date TEXT,
+  outcome_tokens  TEXT,                                        -- JSON array of {id, outcome, price}
+  volume_usd      REAL,
+  liquidity_usd   REAL,
+  is_neg_risk     INTEGER DEFAULT 0 CHECK(is_neg_risk IN (0,1)),
+  event_id        TEXT,                                        -- Gamma events grouping
+  fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(source, market_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prediction_markets_source ON prediction_markets(source, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prediction_markets_event ON prediction_markets(event_id);
+
+CREATE TABLE IF NOT EXISTS whale_trades (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source          TEXT NOT NULL CHECK(source IN ('polymarket','sec_edgar','manual')),
+  wallet          TEXT NOT NULL,
+  market_id       TEXT,                                        -- Polymarket market or ticker for SEC
+  side            TEXT CHECK(side IN ('buy','sell','long','short')),
+  size_usd        REAL,
+  price           REAL,
+  occurred_at     TEXT NOT NULL,
+  metadata        TEXT,                                        -- JSON
+  fetched_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_whale_trades_wallet ON whale_trades(wallet, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whale_trades_market ON whale_trades(market_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS sentiment_readings (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source          TEXT NOT NULL,                               -- 'alternative_me', 'cmc_fng', 'binance_funding'
+  indicator       TEXT NOT NULL,                               -- 'fear_greed', 'funding_rate', 'liquidation', 'stablecoin_flow'
+  symbol          TEXT,                                        -- NULL for broad indicators
+  value           REAL NOT NULL,
+  value_text      TEXT,                                        -- classification e.g. "Greed", "Extreme Fear"
+  observed_at     TEXT NOT NULL,
+  fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(source, indicator, symbol, observed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_sentiment_readings_indicator ON sentiment_readings(indicator, observed_at DESC);

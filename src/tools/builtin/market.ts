@@ -34,6 +34,24 @@ import {
   type Signal,
   type SignalType,
 } from "../../finance/signals.js";
+import {
+  PolymarketAdapter,
+  persistMarkets,
+  type PredictionMarket,
+} from "../../finance/prediction-markets.js";
+import {
+  extractWhalesFromTrades,
+  persistWhaleTrades,
+  queryRecentWhales,
+  DEFAULT_WHALE_USD,
+  type WhaleTrade,
+} from "../../finance/whales.js";
+import {
+  getSentimentSnapshot,
+  persistSentimentReadings,
+  type SentimentReading,
+  type SentimentSnapshot,
+} from "../../finance/sentiment.js";
 
 // ---------------------------------------------------------------------------
 // market_quote
@@ -1177,6 +1195,361 @@ function formatSignalsResult(
     if (skipped.length > 5) {
       lines.push(`  ... and ${skipped.length - 5} more`);
     }
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// prediction_markets (F6)
+// ---------------------------------------------------------------------------
+
+export const predictionMarketsTool: Tool = {
+  name: "prediction_markets",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "prediction_markets",
+      description: `List / search active Polymarket prediction markets.
+
+USE WHEN:
+- User asks about Polymarket odds, binary markets, election markets,
+  sports betting markets, crowd-pricing on an outcome
+- Morning briefing includes crowd signal layer
+- Event grouping needed (e.g. "US election markets" across candidates)
+
+NOT WHEN:
+- User wants to place a trade (Phase δ F11 territory — not in v7.0)
+- User wants whale-trade activity (use whale_trades)
+
+Source: Polymarket Gamma API (public, no auth). Results include multi-outcome
+event grouping (negRisk flag) and outcome prices (0..1 probability).
+
+Cost: 1 Polymarket call per invocation (cached). Auto-persists metadata to
+prediction_markets table for F7 alpha-combination consumption.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Keyword filter on question text (client-side substring match).",
+          },
+          category: {
+            type: "string",
+            description: "Filter by category (Politics, Sports, Crypto, etc.).",
+          },
+          event_id: {
+            type: "string",
+            description:
+              "If provided, return the full event group (useful for negRisk multi-outcome events).",
+          },
+          limit: {
+            type: "number",
+            description: "Max markets. Default 20, hard cap 100.",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const adapter = PolymarketAdapter.create();
+    const limit = Math.min(
+      100,
+      Math.max(
+        1,
+        Math.round(
+          Number.isFinite(Number(args.limit)) ? Number(args.limit) : 20,
+        ),
+      ),
+    );
+    const eventId = args.event_id as string | undefined;
+    const query = (args.query as string | undefined)?.toLowerCase();
+    const category = args.category as string | undefined;
+
+    try {
+      let markets: PredictionMarket[];
+      if (eventId) {
+        markets = await adapter.fetchEventGroup(eventId);
+      } else {
+        markets = await adapter.fetchActiveMarkets({ limit, category });
+      }
+      if (query) {
+        markets = markets.filter((m) =>
+          m.question.toLowerCase().includes(query),
+        );
+      }
+      markets = markets.slice(0, limit);
+      persistMarkets(markets);
+      return formatPredictionMarkets(markets, {
+        eventId,
+        query,
+        category,
+      });
+    } catch (err) {
+      return `prediction_markets: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+function formatPredictionMarkets(
+  markets: PredictionMarket[],
+  filters: { eventId?: string; query?: string; category?: string },
+): string {
+  if (markets.length === 0) {
+    return `Polymarket: no markets matched filters ${JSON.stringify(filters)}.`;
+  }
+  const header = filters.eventId
+    ? `Polymarket event ${filters.eventId} — ${markets.length} markets (negRisk grouping: ${markets[0]?.isNegRisk ? "yes" : "no"})`
+    : `Polymarket — ${markets.length} active markets${filters.query ? ` matching '${filters.query}'` : ""}${filters.category ? ` in ${filters.category}` : ""}`;
+  const lines: string[] = [header + ":"];
+  markets.forEach((m, i) => {
+    const topOutcomes = m.outcomes
+      .slice(0, 2)
+      .map((o) => `${o.label} $${o.price.toFixed(2)}`)
+      .join(" / ");
+    const vol = m.volumeUsd
+      ? `${(m.volumeUsd / 1_000_000).toFixed(1)}M vol`
+      : "(vol n/a)";
+    const resolution = m.resolutionDate
+      ? `resolves ${m.resolutionDate.slice(0, 10)}`
+      : "";
+    lines.push(
+      `  ${i + 1}. ${m.question} (${vol}, ${topOutcomes}${resolution ? `, ${resolution}` : ""})`,
+    );
+  });
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// whale_trades (F6)
+// ---------------------------------------------------------------------------
+
+export const whaleTradesTool: Tool = {
+  name: "whale_trades",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "whale_trades",
+      description: `Recent whale activity (≥$5k default) on Polymarket markets.
+
+USE WHEN:
+- User asks about smart-money flow, whale trades, large positions
+- Need a smart-money signal alongside technical + macro layers
+- Assessing conviction behind a specific market (use market_id filter)
+
+Reads from the whale_trades table (F6 populates via Polymarket trade history).
+If table is empty or stale, call prediction_markets first then fetch-trades
+for a specific market.
+
+Default: last 24h, ≥$5,000 USD, 20 results. Output sorted by size descending.`,
+      parameters: {
+        type: "object",
+        properties: {
+          market_id: {
+            type: "string",
+            description: "Filter to a single Polymarket conditionId.",
+          },
+          min_size_usd: {
+            type: "number",
+            description:
+              "Minimum trade size (USD). Default 5000. Polymarket median trade is ~$100; 5k is the 'clearly not retail' threshold.",
+          },
+          hours: {
+            type: "number",
+            description: "Window in hours. Default 24. Max 720 (30 days).",
+          },
+          limit: {
+            type: "number",
+            description: "Default 20, max 200.",
+          },
+          fetch_live: {
+            type: "boolean",
+            description:
+              "If true AND market_id provided, hit Polymarket CLOB live and persist new whales before querying. Default false (DB-only).",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const marketId = args.market_id as string | undefined;
+    const minSize = Number.isFinite(Number(args.min_size_usd))
+      ? Number(args.min_size_usd)
+      : DEFAULT_WHALE_USD;
+    const hours = Math.min(
+      720,
+      Math.max(
+        1,
+        Math.round(
+          Number.isFinite(Number(args.hours)) ? Number(args.hours) : 24,
+        ),
+      ),
+    );
+    const limit = Math.min(
+      200,
+      Math.max(
+        1,
+        Math.round(
+          Number.isFinite(Number(args.limit)) ? Number(args.limit) : 20,
+        ),
+      ),
+    );
+    const fetchLive = args.fetch_live === true;
+
+    if (fetchLive && marketId) {
+      try {
+        const adapter = PolymarketAdapter.create();
+        const trades = await adapter.fetchRecentTrades(marketId, {
+          limit: 500,
+        });
+        const whales = extractWhalesFromTrades(trades, minSize);
+        persistWhaleTrades(whales);
+      } catch (err) {
+        // Non-fatal; fall through to DB query.
+        console.warn(
+          `[whale_trades] live fetch failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    const rows = queryRecentWhales({
+      marketId,
+      minSizeUsd: minSize,
+      hours,
+      limit,
+    });
+    return formatWhaleTrades(rows, { marketId, minSize, hours });
+  },
+};
+
+function formatWhaleTrades(
+  rows: WhaleTrade[],
+  opts: { marketId?: string; minSize: number; hours: number },
+): string {
+  const header = `whale_trades — last ${opts.hours}h, ≥$${opts.minSize.toLocaleString()}${opts.marketId ? `, market=${opts.marketId}` : " (all markets)"}`;
+  if (rows.length === 0) {
+    return `${header}\n  (no whale activity — try fetch_live=true if filtering a specific market_id)`;
+  }
+  // Sort by size DESC for readability
+  const sorted = [...rows].sort((a, b) => b.sizeUsd - a.sizeUsd);
+  const lines = [header + ":"];
+  for (const w of sorted) {
+    const shortWallet =
+      w.wallet.length > 12
+        ? `${w.wallet.slice(0, 6)}…${w.wallet.slice(-4)}`
+        : w.wallet;
+    const priceStr = w.price !== undefined ? ` @ $${w.price.toFixed(2)}` : "";
+    const mktStr = w.marketId ? ` | ${w.marketId.slice(0, 16)}` : "";
+    lines.push(
+      `  ${w.occurredAt} | ${w.source} | ${shortWallet} | ${w.side.toUpperCase().padEnd(5)} | $${w.sizeUsd.toLocaleString()}${priceStr}${mktStr}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// sentiment_snapshot (F6.5)
+// ---------------------------------------------------------------------------
+
+export const sentimentSnapshotTool: Tool = {
+  name: "sentiment_snapshot",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "sentiment_snapshot",
+      description: `Current crypto sentiment composite: Fear & Greed (2 sources) + funding rates.
+
+USE WHEN:
+- User asks about market mood, crowd sentiment, fear/greed
+- Morning briefing needs sentiment layer
+- Checking crowd extremes before a trading decision (contrarian context)
+
+Sources: alternative.me + CoinMarketCap (Fear & Greed 0-100), Binance premium
+index (8h funding rate on BTC/ETH/SOL USDT perps). All public/free endpoints.
+Composite interpretation highlights contrarian signals at extremes.
+
+No args — returns current snapshot with interpretation.`,
+      parameters: { type: "object", properties: {} },
+    },
+  },
+
+  async execute(): Promise<string> {
+    try {
+      const snap = await getSentimentSnapshot();
+      // Audit W2: persist to sentiment_readings so F7 can read historical series.
+      // Derives reading rows from the snapshot's embedded sources + funding rates.
+      const readings: SentimentReading[] = [];
+      if (snap.fearGreed) {
+        for (const src of snap.fearGreed.sources) {
+          readings.push({
+            source: src.source,
+            indicator: "fear_greed",
+            value: src.value,
+            valueText: src.classification,
+            observedAt: new Date().toISOString(),
+          });
+        }
+      }
+      for (const f of snap.fundingRates) {
+        readings.push({
+          source: "binance_funding",
+          indicator: "funding_rate",
+          symbol: f.symbol,
+          value: f.rate,
+          observedAt: new Date().toISOString(),
+        });
+      }
+      if (readings.length > 0) {
+        try {
+          persistSentimentReadings(readings);
+        } catch {
+          // Non-fatal: snapshot rendering must not fail if persistence does.
+        }
+      }
+      return formatSentimentSnapshot(snap);
+    } catch (err) {
+      return `sentiment_snapshot: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+function formatSentimentSnapshot(snap: SentimentSnapshot): string {
+  const lines: string[] = [];
+  if (snap.fearGreed) {
+    const srcList = snap.fearGreed.sources
+      .map((s) => `${s.source}=${s.value.toFixed(0)}`)
+      .join(", ");
+    lines.push(
+      `Fear & Greed: ${snap.fearGreed.value.toFixed(0)} (${snap.fearGreed.classification}) — avg of ${srcList}`,
+    );
+  } else {
+    lines.push("Fear & Greed: (unavailable — both sources down)");
+  }
+  if (snap.fundingRates.length > 0) {
+    const summary = snap.fundingRates
+      .map(
+        (f) =>
+          `${f.symbol.replace("USDT", "")} ${f.rate >= 0 ? "+" : ""}${(f.rate * 100).toFixed(4)}%`,
+      )
+      .join(", ");
+    const avg =
+      snap.fundingRates.reduce((a, b) => a + b.rate, 0) /
+      snap.fundingRates.length;
+    const avgApr = avg * 3 * 365 * 100;
+    lines.push(
+      `Funding (8h): ${summary} | avg ${avg >= 0 ? "+" : ""}${(avg * 100).toFixed(4)}% (${avgApr >= 0 ? "+" : ""}${avgApr.toFixed(1)}% APR)`,
+    );
+  } else {
+    lines.push("Funding: (unavailable)");
+  }
+  lines.push(`Interpretation: ${snap.interpretation}`);
+  if (snap.degradedSources.length > 0) {
+    lines.push(`Degraded: ${snap.degradedSources.length} source(s) down`);
   }
   return lines.join("\n");
 }

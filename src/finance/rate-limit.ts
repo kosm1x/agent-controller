@@ -19,6 +19,13 @@ const CEILINGS: Partial<Record<Provider, number>> = {
   alpha_vantage: 60,
   polygon: 4,
   fred: 100,
+  // F6 + F6.5 external signal providers. Polymarket raised to 60/min per
+  // audit W5 — community experience shows ≥100/min works fine in practice;
+  // 60 leaves headroom without throttling a full morning-briefing cascade.
+  polymarket: 60,
+  alternative_me: 30,
+  coinmarketcap: 30,
+  binance: 120,
 };
 
 /** Records call times per provider. Timestamps in ms. */

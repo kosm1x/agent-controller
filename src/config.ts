@@ -103,6 +103,8 @@ export interface Config {
   polygonBaseUrl: string;
   /** FRED API key (macro series: VIXCLS, ICSA, M2SL, etc.). */
   fredApiKey?: string;
+  /** CoinMarketCap Pro API key (optional — unlocks CMC pro F&G endpoint; data-api fallback used otherwise). */
+  cmcProApiKey?: string;
 }
 
 function required(key: string): string {
@@ -209,6 +211,7 @@ export function loadConfig(): Config {
     polygonBaseUrl:
       process.env.POLYGON_BASE_URL ?? "https://api.massive.com/v2",
     fredApiKey: optional("FRED_API_KEY"),
+    cmcProApiKey: optional("CMC_PRO_API_KEY"),
   };
 }
 

@@ -239,7 +239,7 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
-/** F1+F2+F3+F4+F5 finance tools — scope-gated: activate on market/ticker/watchlist verbs, $SYMBOL pattern, indicator/signal/macro vocabulary. */
+/** F1+F2+F3+F4+F5+F6+F6.5 finance tools — scope-gated on market/ticker/watchlist/indicator/signal/macro/prediction/whale/sentiment vocabulary. */
 export const FINANCE_TOOLS = [
   "market_quote",
   "market_history",
@@ -251,6 +251,9 @@ export const FINANCE_TOOLS = [
   "market_scan",
   "macro_regime",
   "market_signals",
+  "prediction_markets",
+  "whale_trades",
+  "sentiment_snapshot",
 ];
 
 // ---------------------------------------------------------------------------
@@ -429,6 +432,30 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // avoid false positives on general English.
     pattern:
       /\b(signals?|se[ñn]al(?:es)?|crossovers?|cruce|breakouts?|fuga|divergence|divergencia|confluence|confluencia|reversal|reversi[oó]n|gap\s+(?:up|down|alcista|bajista)|triggers?|detect(?:ar|ing|ed|s)?)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F6 prediction markets — Polymarket/Kalshi nouns + betting verbs +
+    // "probability/probabilidad". Per-audit W3 note: bare "probability" fires
+    // on weather / everyday speech (same tradeoff as "expansion" in F5). We
+    // accept that cost because a deferred tool sitting idle is cheaper than
+    // the LLM missing a finance intent.
+    pattern:
+      /\b(polymarket|kalshi|prediction\s+markets?|mercado(?:s)?\s+de\s+predicci[oó]n|betting|apuesta(?:s)?|odds|probabilit(?:y|ies)|probabilidad(?:es)?)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F6 whales — whale activity, smart money, insiders
+    pattern:
+      /\b(whales?|ballenas?|smart\s+money|dinero\s+inteligente|insider(?:s)?|privilegiad\w*|EDGAR|flujo\s+de\s+ballenas?)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F6.5 sentiment — fear/greed, funding rates, liquidations, panic.
+    // Audit W3: negative lookahead `(?!al|ales)` excludes "sentimental" /
+    // "sentimentales" so casual Spanish/English doesn't activate finance.
+    pattern:
+      /\b(fear\s*(?:&|and)?\s*greed|miedo\s+y\s+codicia|sentiment(?!al)|sentimiento(?!s?\s+(?:persona|rom[aá]ntic))|funding\s+rates?|tasa(?:s)?\s+de\s+financiaci[oó]n|liquidation(?:s)?|liquidaci[oó]n(?:es)?|panic|p[aá]nico)\b/i,
     group: "finance",
   },
   {

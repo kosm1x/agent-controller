@@ -101,6 +101,9 @@ describe("WRITE_TOOLS sync", () => {
       "market_scan",
       "macro_regime",
       "market_signals",
+      "prediction_markets",
+      "whale_trades",
+      "sentiment_snapshot",
     ]);
     const financeWriteTools = FINANCE_TOOLS.filter(
       (t) => !FINANCE_READ_ONLY.has(t),
