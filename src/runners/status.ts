@@ -28,8 +28,14 @@ const STATUS_RE =
  * a malformed JSON body). Without this check, the output has no STATUS line
  * and silently classifies as DONE — masking the outage in `mc-ctl stats`
  * and burying the real failure in a "successful" task row.
+ *
+ * Covers both "API Error: 4xx" (current SDK shape) and "Error: 5xx"
+ * (a future variant that might surface if the SDK ever returns a raw
+ * upstream error without its "API Error:" prefix). Line-start anchor
+ * `^` (no /m flag) is deliberate — mid-response mentions of "API Error"
+ * in legitimate Jarvis explanations MUST NOT demote to BLOCKED.
  */
-const API_ERROR_RE = /^\s*API Error:\s*\d{3}\b/;
+const API_ERROR_RE = /^\s*(?:API Error|Error):\s*\d{3}\b/;
 
 /**
  * Parse a STATUS: line from the end of LLM output.

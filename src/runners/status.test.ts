@@ -106,4 +106,26 @@ describe("parseRunnerStatus", () => {
     const result = parseRunnerStatus(content);
     expect(result.status).toBe("DONE");
   });
+
+  it("classifies leading-whitespace API-error variants as BLOCKED", () => {
+    expect(parseRunnerStatus("  API Error: 400 body").status).toBe("BLOCKED");
+    expect(parseRunnerStatus("\tAPI Error: 429 rate").status).toBe("BLOCKED");
+  });
+
+  it("classifies raw 'Error: 5xx' upstream shapes as BLOCKED", () => {
+    // Broadened regex covers future SDK paths that return a raw upstream
+    // error without the "API Error:" prefix.
+    expect(parseRunnerStatus("Error: 503 Service Unavailable").status).toBe(
+      "BLOCKED",
+    );
+    expect(parseRunnerStatus("Error: 529 overloaded").status).toBe("BLOCKED");
+  });
+
+  it("does not misclassify 4-digit non-HTTP numbers", () => {
+    // "API Error: 4000" should NOT match because \d{3}\b requires a word
+    // boundary after exactly 3 digits — the 4th digit is a \w char, so
+    // the boundary fails. Locks the regex contract against drift.
+    const result = parseRunnerStatus("API Error: 4000 custom code blah");
+    expect(result.status).toBe("DONE");
+  });
 });

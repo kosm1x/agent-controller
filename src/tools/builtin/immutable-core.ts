@@ -240,6 +240,10 @@ const PRECIOUS_JARVIS_PREFIXES = [
   "projects/",
   "NorthStar/",
   "directives/",
+  // logs/day-logs/ is the mechanical verbatim interaction log — never
+  // deleted, never overwritten by an LLM. The narrative companion lives
+  // under logs/day-narratives/ and is freely writable.
+  "logs/day-logs/",
 ];
 
 /**
