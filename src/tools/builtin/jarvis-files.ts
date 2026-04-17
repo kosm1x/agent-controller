@@ -222,6 +222,16 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       return JSON.stringify({ error: "All files must end with .md" });
     }
 
+    // Mechanically managed paths — LLM cannot overwrite. `appendDayLog()`
+    // in router.ts is the sole writer for `logs/day-logs/`. Curated
+    // narratives belong under `logs/day-narratives/`.
+    if (path.startsWith("logs/day-logs/")) {
+      return JSON.stringify({
+        error:
+          "logs/day-logs/ is mechanically managed (verbatim interaction log). Write the narrative companion to logs/day-narratives/ instead.",
+      });
+    }
+
     upsertFile(
       path,
       title,
@@ -296,6 +306,14 @@ USE WHEN:
     // Prevent LLM from self-promoting files to enforce — reserved for user
     if (qualifier === "enforce") {
       qualifier = "reference";
+    }
+
+    // Mechanically managed paths — LLM cannot append to the raw day log.
+    if (path.startsWith("logs/day-logs/")) {
+      return JSON.stringify({
+        error:
+          "logs/day-logs/ is mechanically managed (verbatim interaction log). Append narrative to logs/day-narratives/ instead.",
+      });
     }
 
     const existing = getFile(path);

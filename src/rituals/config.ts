@@ -42,6 +42,14 @@ export const rituals: RitualDefinition[] = [
     enabled: true,
   },
   {
+    id: "day-narrative",
+    title: "Day log narrative",
+    // 11:30 PM daily — reads raw day-log, writes curated narrative companion
+    // (between skill-evolution at 23:00 and evolution-log at 23:59)
+    cron: "30 23 * * *",
+    enabled: true,
+  },
+  {
     id: "evolution-log",
     title: "Evolution log",
     // 11:59 PM daily — captures full day of interactions

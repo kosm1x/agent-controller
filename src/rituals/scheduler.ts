@@ -15,6 +15,7 @@ import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
+import { createDayNarrative } from "./day-narrative.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
 import { createSignalIntelligence } from "./signal-intelligence.js";
@@ -40,6 +41,8 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       return createNightlyClose(date);
     case "skill-evolution":
       return createEvolutionRitual(date);
+    case "day-narrative":
+      return createDayNarrative(date);
     case "evolution-log":
       return createEvolutionLogEntry(date);
     case "weekly-review":

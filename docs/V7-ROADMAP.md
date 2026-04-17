@@ -1,37 +1,78 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-17 (session 71 — deep reference sweep) — **v7 pre-launch. v7.3 Phase 1 SEO/GEO + v7.8 Phase 1 autoreason lifts shipped. v7.6 + v7.7 + v7.9 shipped. Rest planned across 3 tracks totaling ~33.5 sessions after session 71 enrichment. Financial Stack critical path (v7.0) is the thesis and remains unstarted; v7.6-v7.8 infrastructure unblockers already shipped. Session 71 added: v7.3 Phase 5 (GEO Depth), v7.13 (Structured PDF Ingestion), v7.14 (Infographic Generation), F11 (Live Polymarket Trading Engine). Scope enrichments in v7.1, v7.5, F6, F7, F7.5, F8, F10. Four new references shape F-series financial methodology: FinRL-X (𝒮), de Prado (labeling + validation), Wolff-Echterling (classification target), Nautilus Trader (infrastructure).**
+> Last updated: 2026-04-17 (session 72 — sequential reorganization + F1 green-light). **Phase α shipped. Phase β (Financial Stack, v7.0 thesis) next up starting F1. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
 
 ## Status Key
 
 - **Done** — Implemented, tested, shipped
 - **Active** — Currently in progress
+- **Next** — Immediately next in queue
 - **Planned** — Scoped and sequenced
 - **Conditional** — Gated on a future decision or prerequisite
 - **Blocked** — Dependencies unresolved
 
 ---
 
-## Execution Tiers
+## Execution Phases (sequential)
 
-| Tier                  | Sessions  | Priority         | Rationale                                                                               |
-| --------------------- | --------- | ---------------- | --------------------------------------------------------------------------------------- |
-| A — Financial Stack   | F1–F10    | v7.0 thesis      | Detect, analyze, and alert on financial signals with paper-trading credibility          |
-| B — Feature Verticals | v7.1–v7.5 | Layered on top   | Charts, knowledge graph, digital marketing (SEO+ads), video production, skill evolution |
-| C — Infrastructure    | v7.6–v7.8 | Unblockers first | Workspace API coverage, MCP query surface, autoreason lifts from paper mining           |
+| Phase | Scope                                           | Versions                                                            | Status               | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | -------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**             | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**            | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Next (F1)**        | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**          | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9** | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**            | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**      | 2                    |
 
-**Ordering principle:** Tier C ships first because it unblocks downstream Tier A+B work. Tier A is the v7.0 thesis and ships on the critical path. Tier B verticals slot around Tier A where dependencies allow. Autoreason Phase 2 is a fixed-date decision (2026-04-20) independent of position.
+**Ordering invariants**
+
+1. Tier C infrastructure already shipped — nothing to unblock β.
+2. β is the v7.0 thesis. Nothing substitutes for shipping F1→F9.
+3. **No γ interleave during β** (operator Decision 6, 2026-04-14). Phase γ starts in S10+ after F9 ships.
+4. v7.8 P2 is a date-triggered decision (2026-04-20 09:00 CDMX), independent of β position.
+5. F11 is **not** inside β — it requires 30+ days of F8 paper-trading track record. Ships in Phase δ.
 
 ---
 
-## Execution Phases
+## Master Sequence (upcoming)
 
-| Phase | Scope                                  | Versions                              | Est. sessions |
-| ----- | -------------------------------------- | ------------------------------------- | ------------- |
-| α     | Infrastructure unblockers              | v7.6, v7.7, v7.8 P2                   | 2.5           |
-| β     | Financial Stack critical path (v7.0)   | F1–F10                                | 11 (7-8 par.) |
-| γ     | Feature verticals (v7.1–v7.5)          | v7.1, v7.2, v7.3 P2/P3/P4, v7.4, v7.5 | 12            |
-| δ     | Autoreason post-decision (conditional) | v7.8 P3                               | 2             |
+| #   | Session     | Output                                                 | Dep(s)              | Est. |
+| --- | ----------- | ------------------------------------------------------ | ------------------- | ---- |
+| 1   | S1 (**F1**) | Data layer (Alpha Vantage + Polygon + FRED + 6 tables) | —                   | 1.7  |
+| 2   | S2 (F2)     | Indicator engine (golden-file validated)               | F1                  | 1    |
+| 3   | S3 (F4)     | Watchlist + market_quote/history tools                 | F1                  | 1    |
+| 4   | S4 (F5)     | Macro regime detection (AV + FRED)                     | F1                  | 0.5  |
+| 5   | S5 (F3)     | Signal detector + market_signals                       | F2 + F4             | 1    |
+| 6   | S6 (F6)     | Prediction markets + whale tracker                     | —                   | 1.5  |
+| 7   | S7 (F6.5)   | Sentiment signals (F&G x2, funding, liq.)              | —                   | 0.7  |
+| 8   | S8 (v7.13)  | Structured PDF ingestion (MinerU) — pre-F7 gate        | pgvector ✅         | 1.5  |
+| 9   | S9 (F7)     | Alpha combination engine                               | F3+F5+F6+F6.5+v7.13 | 2.5  |
+| 10  | S10 (F7.5)  | Strategy backtester (CPCV, PBO, DSR)                   | F7                  | 1    |
+| 11  | S11 (F8)    | Paper trading (pm-trader MCP + VenueAdapter)           | F7.5                | 1.5  |
+| 12  | S12 (F9)    | Morning/EOD scan rituals + calendar                    | F8 + F4             | 1    |
+
+β subtotal: **~14.9 sessions sequential**, **~11 sessions with F2/F4/F5 + F6/F6.5 parallelized**.
+
+F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-capable).
+
+---
+
+# Phase α — Infrastructure Unblockers (Shipped)
+
+> All α work is complete. These sections document shipped scope for history and reference; skim them only if you need implementation details. **Phase β (F1) is where execution continues.**
+
+## v7.9 — Prometheus Sonnet Port — **Done**
+
+> Shipped 2026-04-15 (session 70). Final α item before Phase β. Claude Sonnet 4.6 replaces qwen in Prometheus executor. Wrap-up in `feedback_v79_deferred_followups.md`.
+
+| Item                                                                                          | Source    | Status       |
+| --------------------------------------------------------------------------------------------- | --------- | ------------ |
+| Prometheus executor model switched from qwen3-coder-plus → claude-sonnet-4-6                  | v7.9 plan | **Done**     |
+| Token-usage propagation fix — ExecutionResult/GoalResult carry `tokenUsage` through all paths | —         | **Done**     |
+| Reflector gap telemetry rebaselined on Sonnet output (gap distribution stable)                | —         | **Done**     |
+| Rollback plan documented + Prometheus-watch-list for promotion gate                           | W4 defer  | **Done**     |
+| Deferred follow-ups: 7 items (M1-M3, W2-W4, W7) with explicit defer rationale                 | QA audit  | **Deferred** |
 
 ---
 
@@ -52,7 +93,7 @@
 
 ---
 
-## v7.8 Phase 2 — Autoreason Tournament Feasibility Decision — **Planned** (fixed date 2026-04-20)
+## v7.8 Phase 2 — Autoreason Tournament Feasibility Decision — **Gated** (Phase α.2, fixed date 2026-04-20)
 
 > Scheduled nudge `eb3e4b14` fires 9 AM CDMX on 2026-04-20 via Telegram. Decision rules in `project_autoreason_phase2_decision.md`.
 
@@ -65,9 +106,9 @@
 
 ---
 
-## v7.8 Phase 3 — Autoreason Targeted Tournament Pilot — **Conditional**
+## v7.8 Phase 3 — Autoreason Targeted Tournament Pilot — **Conditional** (Phase ε)
 
-> Only if 2026-04-20 data shows `wide_gap_count > 10%` on specific task classes. Not a global tournament — scoped to the classes with measurable gap.
+> Phase ε — only if 2026-04-20 data shows `wide_gap_count > 10%` on specific task classes. Not a global tournament — scoped to the classes with measurable gap. Executes independently of β critical path.
 
 | Item                                                                                                       | Source          | Status          |
 | ---------------------------------------------------------------------------------------------------------- | --------------- | --------------- |
@@ -126,19 +167,29 @@
 
 ---
 
-## v7.0 F1 — Data Layer (Alpha Vantage + Yahoo Fallback) — **Planned**
+# Phase β — Financial Stack (v7.0 thesis) — NEXT
 
-> Critical path start. 1.5 sessions. Technical reference below.
+> Critical path. No γ interleave (Decision 6, 2026-04-14). Execute F1 → F2/F4/F5 (parallel) → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9.
+>
+> Implementation-readiness: all 6 operator decisions locked (see `docs/planning/phase-beta/03-f1-preplan.md`). Credentials provisioned 2026-04-15 (Alpha Vantage, Polygon/Massive, FRED). Initial watchlist locked: 20 equities+ETFs + 3 FX + 6 macro series = 29 tracked symbols.
 
-| Item                                                                                             | Source       | Status      |
-| ------------------------------------------------------------------------------------------------ | ------------ | ----------- |
-| 6-table schema: market_data, watchlist, backtest_results, trade_theses, api_call_budget, signals | V7 spec      | **Planned** |
-| Alpha Vantage premium adapter — adjusted daily, FX, macro, news sentiment                        | V7 spec      | **Planned** |
-| Yahoo Finance fallback adapter                                                                   | V7 spec      | **Planned** |
-| Data validation layer (H2) — sanity checks, missing-bar detection, corrupted-row rejection       | V7 hardening | **Planned** |
-| Timezone normalization (H3) — all timestamps to NY market time, DST-aware                        | V7 hardening | **Planned** |
-| api_call_budget tracking + per-service rate limits                                               | V7 spec      | **Planned** |
-| Gold via GLD ETF proxy                                                                           | V7 spec      | **Planned** |
+## v7.0 F1 — Data Layer (Alpha Vantage + Polygon + FRED) — **Next**
+
+> Critical path start. 1.7 sessions (revised from 1.5 after Yahoo → Polygon). Pre-plan: `docs/planning/phase-beta/03-f1-preplan.md`. Yahoo replaced by Polygon.io/Massive free tier (5 req/min, 2y history, REST). Macro dual-sourced: Alpha Vantage primary + FRED for VIX/ICSA/M2.
+
+| Item                                                                                             | Source         | Status      |
+| ------------------------------------------------------------------------------------------------ | -------------- | ----------- |
+| 6-table schema: market_data, watchlist, backtest_results, trade_theses, api_call_budget, signals | V7 spec        | **Planned** |
+| Alpha Vantage premium adapter — adjusted daily, FX, macro, news sentiment                        | V7 spec        | **Planned** |
+| Polygon.io/Massive fallback adapter (replaces Yahoo) — `api.massive.com` primary                 | F1 pre-plan D2 | **Planned** |
+| FRED adapter — VIX/ICSA/M2 (series AV doesn't expose)                                            | F1 pre-plan D4 | **Planned** |
+| Data validation layer (H2) — sanity checks, missing-bar detection, corrupted-row rejection       | V7 hardening   | **Planned** |
+| Timezone normalization (H3) — all timestamps to NY market time, DST-aware                        | V7 hardening   | **Planned** |
+| api_call_budget tracking + per-service rate limits (80% ceiling on AV tier-1)                    | V7 spec        | **Planned** |
+| Gold via GLD ETF proxy (XAU/USD not supported on AV FX endpoint)                                 | V7 spec        | **Planned** |
+| `market_watchlist_{add,remove,list}` tools — first-class natural-language CRUD (D3 requirement)  | F1 pre-plan D3 | **Planned** |
+| `finance` scope group with NL triggers (ES+EN watchlist verbs + `$SYMBOL` pattern)               | F1 pre-plan D3 | **Planned** |
+| Smoke test: "Jarvis, agrega TSLA a mi watchlist" → tool fires → confirmation                     | F1 pre-plan D3 | **Planned** |
 
 ---
 
@@ -297,68 +348,9 @@
 
 ---
 
-## v7.0 F11 — Live Polymarket Trading Engine — **Planned**
+# Phase γ — Feature Verticals (deferred until post-F9 per Decision 6)
 
-> 2.5 sessions. Depends on F6 (read-side adapter), F8 (paper-trading track record — 30+ days), and the full prediction-suite learning stack listed below. Goal: Jarvis can autonomously place, manage, and exit positions on Polymarket with reward-farming + directional-betting strategies. Source: `reference_polymarket_cli.md` (Stage C).
->
-> **Readiness gate (hard prerequisite)**: Stage B paper-trading must show 30+ days of positive risk-adjusted return (Sharpe > 0, max drawdown within configured cap) before any real-money deployment. Same discipline as F8 stock paper-trading graduation.
-
-### Apply-all-learnings fold matrix
-
-Every prediction-suite learning applies — cross-referenced to the source memory:
-
-| Learning source                                        | What it contributes to F11                                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reference_polymarket_cli.md` (this ref)               | Full write-side API surface — CLOB orders, on-chain CTF ops, bridge, wallet, rewards API                                                                                                                                                                                                                      |
-| `reference_polymarket_paper_trader.md`                 | 5 patterns already ported for Stage B — orderbook walking, positions, P&L analytics, caching, multi-account A/B                                                                                                                                                                                               |
-| `reference_wolff_echterling_stock_picking.md`          | **Natural fit** — Polymarket markets ARE binary (YES/NO with probability 0-1). Classification-target framing maps directly: "true probability vs market price." Regularized logistic regression as baseline before complex ML.                                                                                |
-| `reference_lopez_de_prado_methodology.md`              | Meta-labeling as Kelly-sizing bridge — primary model predicts edge magnitude, secondary predicts bet/pass given fees + slippage. Purged CV for backtesting. PBO as strategy-quality gate. Triple-barrier labels adapt to Polymarket: upper = edge realized, lower = adverse move, vertical = market resolves. |
-| `reference_finrl_x.md`                                 | Weight-centric architecture `w = ℛ(𝒯(𝒜(𝒮(X))))` applies — 𝒮 = market selection, 𝒜 = position sizing, 𝒯 = timing (entry/exit), ℛ = portfolio-level risk overlay (concentration caps, max exposure)                                                                                                             |
-| `reference_asi_evolve.md`                              | **MAP-Elites island sampling** structures strategy variants as behavioral cells: directional-bet / market-making / arbitrage-across-related-markets. Prevents mode collapse into one strategy.                                                                                                                |
-| `reference_trading_agents.md`                          | BM25 reflection memory + adversarial critic — useful for event-driven markets where news interpretation matters (election polls, sports, geopolitical)                                                                                                                                                        |
-| `reference_quantagent.md` (v7.1 fold)                  | Event-chart pattern recognition — Polymarket markets often have their own price charts; vision-LLM pattern detection applies (breakout, channel, consolidation on market probability)                                                                                                                         |
-| F6 read-side                                           | Builder-leaderboard for strategy validation — compare Jarvis's builder-level performance against known high performers                                                                                                                                                                                        |
-| `feedback_audit_patterns.md`, security audit checklist | 10-item security pass for any new HTTP-exposed service. Critical here — wallet auth + order placement is attack-surface-heavy.                                                                                                                                                                                |
-
-### Scope table
-
-| Item                                                                                                                                                                                                                                                                                                                                                                                      | Source                                               | Status      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------- |
-| **Regulatory precheck** — geoblock call on every session start; user-location-aware gating; documented KYC posture. Jurisdiction where trade execution happens is a legal precondition, not a code question.                                                                                                                                                                              | polymarket-cli + legal                               | **Planned** |
-| **Wallet security architecture** — NEVER plain-config private key. Options in preference order: HashiCorp Vault self-hosted, hardware wallet (Ledger) via WebHID, env-var-from-secrets-manager. Dedicated session time budgeted.                                                                                                                                                          | polymarket-cli + security audit                      | **Planned** |
-| **CLOB write-path TS adapter** — `VenueAdapter`-compliant from start (see F8 interface). `createOrder`, `marketOrder`, `postOrders` (batch), all cancel variants, order-type enum (GTC/FOK/GTD/FAK + post-only). Structured error objects (code + message + retryable). Pin to polymarket-cli commit.                                                                                     | polymarket-cli CLOB + `reference_nautilus_trader.md` | **Planned** |
-| **Advanced order types** — OCO (One-Cancels-Other) for atomic bid+ask market-making pairs; OTO (One-Triggers-Other) for bracket orders (entry → auto-stop-loss); OUO (One-Updates-Other) for dynamic hedging; iceberg for size concealment. Gated by Polymarket API support — verify which types CLOB actually accepts; implement client-side emulation for unsupported types where safe. | `reference_nautilus_trader.md`                       | **Planned** |
-| **Shared execution engine compliance** — F11 uses the F8-defined shared Order state machine, fill simulator, event bus, and clock abstraction. NO F11-specific execution paths. Research-to-live parity test (from F8) is the ship-gate before any live-money activation.                                                                                                                 | `reference_nautilus_trader.md`                       | **Planned** |
-| **On-chain operations** — ERC-20 (USDC) + ERC-1155 (CTF) approvals, CTF split/merge/redeem, neg-risk redemption. OpenZeppelin ABIs. ethers.js Wallet abstraction.                                                                                                                                                                                                                         | polymarket-cli CTF + approve                         | **Planned** |
-| **Bridge integration** — USDC → Polygon deposit orchestration; supported-assets check; status polling                                                                                                                                                                                                                                                                                     | polymarket-cli bridge                                | **Planned** |
-| **Position + portfolio management** — risk limits (max per-market, max total exposure, concentration caps), multi-market tracking, resolution P&L realization with `redeem` on winning outcomes                                                                                                                                                                                           | Stage B patterns + V7 spec                           | **Planned** |
-| **Strategy selection via MAP-Elites cells** — behavioral cells: directional-bet / market-making / arbitrage. Cell-based candidate maintenance rather than single best-strategy.                                                                                                                                                                                                           | `reference_asi_evolve.md`                            | **Planned** |
-| **Directional-betting strategy** — Wolff-Echterling classification target + de Prado meta-labeling wrapper. Edge detection: `(model_probability - market_price)` vs `fees + expected_slippage`. Kelly sizing via secondary classifier probability.                                                                                                                                        | de Prado + Wolff-Echterling                          | **Planned** |
-| **Market-making strategy** — limit-order placement on liquid markets for fee rebates. Track `current-rewards` + `order-scoring` APIs. Bid-ask risk modeling (get-picked-off when news breaks). Not free money — compensation for real liquidity risk.                                                                                                                                     | polymarket-cli rewards                               | **Planned** |
-| **Arbitrage-across-related-markets** — Gamma events API groups related markets (e.g., multi-outcome election); arbitrage when sum of YES probabilities ≠ 1. Rare but clean edge.                                                                                                                                                                                                          | polymarket-cli Gamma + neg-risk                      | **Planned** |
-| **Backtest framework** — purged k-fold CV + PBO (from `reference_lopez_de_prado_methodology.md`) on Polymarket historical data. Probability of Backtest Overfitting as ship-gate (>50% blocks deployment).                                                                                                                                                                                | de Prado                                             | **Planned** |
-| **Builder-leaderboard comparison** — track Jarvis's builder-level performance, compare against known-good builders                                                                                                                                                                                                                                                                        | F6 Stage A                                           | **Planned** |
-| **Reward-tracking instrumentation** — persist `rewards`/`earnings`/`order-scoring` data; include in daily P&L attribution (trading gains vs reward income)                                                                                                                                                                                                                                | polymarket-cli rewards                               | **Planned** |
-| **Kill switch + circuit breakers** — daily loss cap, per-market loss cap, max-orders-per-hour. Automatic pause + notify on breach. Manual override required to resume.                                                                                                                                                                                                                    | Risk management                                      | **Planned** |
-| **Security audit (10-item pass)** — full checklist from `feedback_security_audit.md` before any live order placement                                                                                                                                                                                                                                                                      | `feedback_security_audit.md`                         | **Planned** |
-| **Integration touchpoints** — scope group (new `polymarket_trading` scope, destructive/confirmation-gated), tool definitions, write-tools-sync test, auto-persist rules for trade events, INTEGRATION-CHECKLIST.md full touchpoints                                                                                                                                                       | `INTEGRATION-CHECKLIST.md`                           | **Planned** |
-
-### Explicit non-goals
-
-- **Polymarket analytics dashboard** — out of scope, build only if needed for Jarvis's own operation
-- **Polymarket alongside other prediction venues simultaneously in F11** — Kalshi etc. are separate integrations; F11 is Polymarket-specific depth
-- **HFT / sub-second latency** — Polymarket resolution cadence doesn't need it; we're not co-located
-- **Social trading / copy-trading from whales** — separate signal (F6 whale tracker already covers this for read-side); F11 is Jarvis's own strategies
-
-### Concerns carried forward from reference
-
-1. polymarket-cli has **no declared license** — verify before any code copy, API reference-only is safe
-2. polymarket-cli is "early, experimental software" — pin to commit, subscribe to releases, expect breakage
-3. **Real money at risk** — Stage B track record (30+ days paper positive) is a hard prerequisite
-4. **Wallet security is the hardest operational question**, not a code question — budget session time explicitly
-5. **Reward farming ≠ free money** — market-making carries bid-ask risk, model it honestly
-
----
+> Layered on top of Phase β. No γ work interleaves into β. When γ opens (post-F9), start with items that have no β dependencies (v7.2 graph, v7.3 P4 ads, v7.10–v7.12, v7.14). v7.1 charts + v7.3 P3 AI overview need β F1/F3 data. v7.5 skill evolution needs F9 trace data — ships last in γ.
 
 ## v7.1 — Chart Rendering + Vision Chart Patterns — **Planned**
 
@@ -692,6 +684,73 @@ Scope group `teaching` activates on: "enséñame", "teach me", "explícame X des
 
 ---
 
+# Phase δ — Live Trading (gated on 30d F8 paper-trading record)
+
+> **Not** part of Phase β. Ships only after F9 delivers and F8 produces 30+ days of positive risk-adjusted paper-trading telemetry. Real money at risk — wallet security architecture alone warrants dedicated session time.
+
+## v7.0 F11 — Live Polymarket Trading Engine — **Gated** (Phase δ)
+
+> 2.5 sessions. Depends on F6 (read-side adapter), F8 (paper-trading track record — 30+ days), and the full prediction-suite learning stack listed below. Goal: Jarvis can autonomously place, manage, and exit positions on Polymarket with reward-farming + directional-betting strategies. Source: `reference_polymarket_cli.md` (Stage C).
+>
+> **Readiness gate (hard prerequisite)**: Stage B paper-trading must show 30+ days of positive risk-adjusted return (Sharpe > 0, max drawdown within configured cap) before any real-money deployment. Same discipline as F8 stock paper-trading graduation.
+
+### Apply-all-learnings fold matrix
+
+Every prediction-suite learning applies — cross-referenced to the source memory:
+
+| Learning source                                        | What it contributes to F11                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reference_polymarket_cli.md` (this ref)               | Full write-side API surface — CLOB orders, on-chain CTF ops, bridge, wallet, rewards API                                                                                                                                                                                                                      |
+| `reference_polymarket_paper_trader.md`                 | 5 patterns already ported for Stage B — orderbook walking, positions, P&L analytics, caching, multi-account A/B                                                                                                                                                                                               |
+| `reference_wolff_echterling_stock_picking.md`          | **Natural fit** — Polymarket markets ARE binary (YES/NO with probability 0-1). Classification-target framing maps directly: "true probability vs market price." Regularized logistic regression as baseline before complex ML.                                                                                |
+| `reference_lopez_de_prado_methodology.md`              | Meta-labeling as Kelly-sizing bridge — primary model predicts edge magnitude, secondary predicts bet/pass given fees + slippage. Purged CV for backtesting. PBO as strategy-quality gate. Triple-barrier labels adapt to Polymarket: upper = edge realized, lower = adverse move, vertical = market resolves. |
+| `reference_finrl_x.md`                                 | Weight-centric architecture `w = ℛ(𝒯(𝒜(𝒮(X))))` applies — 𝒮 = market selection, 𝒜 = position sizing, 𝒯 = timing (entry/exit), ℛ = portfolio-level risk overlay (concentration caps, max exposure)                                                                                                             |
+| `reference_asi_evolve.md`                              | **MAP-Elites island sampling** structures strategy variants as behavioral cells: directional-bet / market-making / arbitrage-across-related-markets. Prevents mode collapse into one strategy.                                                                                                                |
+| `reference_trading_agents.md`                          | BM25 reflection memory + adversarial critic — useful for event-driven markets where news interpretation matters (election polls, sports, geopolitical)                                                                                                                                                        |
+| `reference_quantagent.md` (v7.1 fold)                  | Event-chart pattern recognition — Polymarket markets often have their own price charts; vision-LLM pattern detection applies (breakout, channel, consolidation on market probability)                                                                                                                         |
+| F6 read-side                                           | Builder-leaderboard for strategy validation — compare Jarvis's builder-level performance against known high performers                                                                                                                                                                                        |
+| `feedback_audit_patterns.md`, security audit checklist | 10-item security pass for any new HTTP-exposed service. Critical here — wallet auth + order placement is attack-surface-heavy.                                                                                                                                                                                |
+
+### Scope table
+
+| Item                                                                                                                                                                                                                                                                                                                                                                                      | Source                                               | Status      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------- |
+| **Regulatory precheck** — geoblock call on every session start; user-location-aware gating; documented KYC posture. Jurisdiction where trade execution happens is a legal precondition, not a code question.                                                                                                                                                                              | polymarket-cli + legal                               | **Planned** |
+| **Wallet security architecture** — NEVER plain-config private key. Options in preference order: HashiCorp Vault self-hosted, hardware wallet (Ledger) via WebHID, env-var-from-secrets-manager. Dedicated session time budgeted.                                                                                                                                                          | polymarket-cli + security audit                      | **Planned** |
+| **CLOB write-path TS adapter** — `VenueAdapter`-compliant from start (see F8 interface). `createOrder`, `marketOrder`, `postOrders` (batch), all cancel variants, order-type enum (GTC/FOK/GTD/FAK + post-only). Structured error objects (code + message + retryable). Pin to polymarket-cli commit.                                                                                     | polymarket-cli CLOB + `reference_nautilus_trader.md` | **Planned** |
+| **Advanced order types** — OCO (One-Cancels-Other) for atomic bid+ask market-making pairs; OTO (One-Triggers-Other) for bracket orders (entry → auto-stop-loss); OUO (One-Updates-Other) for dynamic hedging; iceberg for size concealment. Gated by Polymarket API support — verify which types CLOB actually accepts; implement client-side emulation for unsupported types where safe. | `reference_nautilus_trader.md`                       | **Planned** |
+| **Shared execution engine compliance** — F11 uses the F8-defined shared Order state machine, fill simulator, event bus, and clock abstraction. NO F11-specific execution paths. Research-to-live parity test (from F8) is the ship-gate before any live-money activation.                                                                                                                 | `reference_nautilus_trader.md`                       | **Planned** |
+| **On-chain operations** — ERC-20 (USDC) + ERC-1155 (CTF) approvals, CTF split/merge/redeem, neg-risk redemption. OpenZeppelin ABIs. ethers.js Wallet abstraction.                                                                                                                                                                                                                         | polymarket-cli CTF + approve                         | **Planned** |
+| **Bridge integration** — USDC → Polygon deposit orchestration; supported-assets check; status polling                                                                                                                                                                                                                                                                                     | polymarket-cli bridge                                | **Planned** |
+| **Position + portfolio management** — risk limits (max per-market, max total exposure, concentration caps), multi-market tracking, resolution P&L realization with `redeem` on winning outcomes                                                                                                                                                                                           | Stage B patterns + V7 spec                           | **Planned** |
+| **Strategy selection via MAP-Elites cells** — behavioral cells: directional-bet / market-making / arbitrage. Cell-based candidate maintenance rather than single best-strategy.                                                                                                                                                                                                           | `reference_asi_evolve.md`                            | **Planned** |
+| **Directional-betting strategy** — Wolff-Echterling classification target + de Prado meta-labeling wrapper. Edge detection: `(model_probability - market_price)` vs `fees + expected_slippage`. Kelly sizing via secondary classifier probability.                                                                                                                                        | de Prado + Wolff-Echterling                          | **Planned** |
+| **Market-making strategy** — limit-order placement on liquid markets for fee rebates. Track `current-rewards` + `order-scoring` APIs. Bid-ask risk modeling (get-picked-off when news breaks). Not free money — compensation for real liquidity risk.                                                                                                                                     | polymarket-cli rewards                               | **Planned** |
+| **Arbitrage-across-related-markets** — Gamma events API groups related markets (e.g., multi-outcome election); arbitrage when sum of YES probabilities ≠ 1. Rare but clean edge.                                                                                                                                                                                                          | polymarket-cli Gamma + neg-risk                      | **Planned** |
+| **Backtest framework** — purged k-fold CV + PBO (from `reference_lopez_de_prado_methodology.md`) on Polymarket historical data. Probability of Backtest Overfitting as ship-gate (>50% blocks deployment).                                                                                                                                                                                | de Prado                                             | **Planned** |
+| **Builder-leaderboard comparison** — track Jarvis's builder-level performance, compare against known-good builders                                                                                                                                                                                                                                                                        | F6 Stage A                                           | **Planned** |
+| **Reward-tracking instrumentation** — persist `rewards`/`earnings`/`order-scoring` data; include in daily P&L attribution (trading gains vs reward income)                                                                                                                                                                                                                                | polymarket-cli rewards                               | **Planned** |
+| **Kill switch + circuit breakers** — daily loss cap, per-market loss cap, max-orders-per-hour. Automatic pause + notify on breach. Manual override required to resume.                                                                                                                                                                                                                    | Risk management                                      | **Planned** |
+| **Security audit (10-item pass)** — full checklist from `feedback_security_audit.md` before any live order placement                                                                                                                                                                                                                                                                      | `feedback_security_audit.md`                         | **Planned** |
+| **Integration touchpoints** — scope group (new `polymarket_trading` scope, destructive/confirmation-gated), tool definitions, write-tools-sync test, auto-persist rules for trade events, INTEGRATION-CHECKLIST.md full touchpoints                                                                                                                                                       | `INTEGRATION-CHECKLIST.md`                           | **Planned** |
+
+### Explicit non-goals
+
+- **Polymarket analytics dashboard** — out of scope, build only if needed for Jarvis's own operation
+- **Polymarket alongside other prediction venues simultaneously in F11** — Kalshi etc. are separate integrations; F11 is Polymarket-specific depth
+- **HFT / sub-second latency** — Polymarket resolution cadence doesn't need it; we're not co-located
+- **Social trading / copy-trading from whales** — separate signal (F6 whale tracker already covers this for read-side); F11 is Jarvis's own strategies
+
+### Concerns carried forward from reference
+
+1. polymarket-cli has **no declared license** — verify before any code copy, API reference-only is safe
+2. polymarket-cli is "early, experimental software" — pin to commit, subscribe to releases, expect breakage
+3. **Real money at risk** — Stage B track record (30+ days paper positive) is a hard prerequisite
+4. **Wallet security is the hardest operational question**, not a code question — budget session time explicitly
+5. **Reward farming ≠ free money** — market-making carries bid-ask risk, model it honestly
+
+---
+
 ## Session 69 Deferred Items — Review at v7.5 or Phase β F-step
 
 Items analyzed and approved in session 69 but not implemented. Each has a memory reference with full details.
@@ -830,41 +889,90 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 ---
 
-## Total Effort
+## Total Effort (by phase)
 
-| Version           | Theme                                            | Sessions  | Status            |
-| ----------------- | ------------------------------------------------ | --------- | ----------------- |
-| v7.8 P1           | Autoreason lifts (CoT+k=2+gap telemetry)         | 1         | **Done**          |
-| v7.3 P1           | SEO/GEO tool suite                               | 1         | **Done**          |
-| v7.6              | Workspace expansion (gws)                        | 1         | **Planned**       |
-| v7.7              | Jarvis MCP server                                | 1         | **Planned**       |
-| v7.8 P2           | Autoreason tournament decision (fixed date)      | 0.5       | **Planned**       |
-| v7.0 F1           | Data layer (AV + Yahoo)                          | 1.5       | **Planned**       |
-| v7.0 F2           | Indicator engine                                 | 1         | **Planned**       |
-| v7.0 F4           | Watchlist + market tools                         | 1         | **Planned**       |
-| v7.0 F5           | Macro regime detection                           | 0.5       | **Planned**       |
-| v7.0 F3           | Signal detector                                  | 1         | **Planned**       |
-| v7.0 F6           | Prediction markets + whale tracker               | 1.5       | **Planned**       |
-| v7.0 F6.5         | Sentiment signals                                | 0.5       | **Planned**       |
-| v7.0 F7           | Alpha combination engine                         | 2.5       | **Planned**       |
-| v7.0 F7.5         | Strategy backtester                              | 1         | **Planned**       |
-| v7.0 F8           | Paper trading (pm-trader)                        | 1.5       | **Planned**       |
-| v7.0 F9           | Scan rituals + calendar                          | 1         | **Planned**       |
-| v7.0 F10          | Real-time crypto WebSocket                       | 1         | **Planned** (opt) |
-| v7.0 F11          | Live Polymarket trading engine                   | 2.5       | **Planned**       |
-| v7.1              | Charts + vision chart patterns                   | 1.5       | **Planned**       |
-| v7.2              | Knowledge graph (Graphify)                       | 1.5       | **Planned**       |
-| v7.3 P2           | SEO telemetry (PageSpeed + GSC)                  | 1         | **Planned**       |
-| v7.3 P3           | AI overview monitoring                           | 1         | **Planned**       |
-| v7.3 P4           | Digital marketing buyer (claude-ads + Ads API)   | 3         | **Planned**       |
-| v7.3 P5           | GEO depth (llms.txt + Princeton + AI-bots)       | 1         | **Planned**       |
-| v7.13             | Structured PDF ingestion (MinerU + modality)     | 1.5       | **Planned**       |
-| v7.14             | Infographic generation (AntV)                    | 1         | **Planned**       |
-| v7.4              | Video production                                 | 2         | **Planned**       |
-| v7.5              | Skill evolution (GEPA + SkillClaw)               | 2         | **Planned**       |
-| v7.8 P3           | Autoreason tournament pilot (conditional)        | 2         | **Conditional**   |
-| **Total shipped** | 2 sessions                                       | **2**     |                   |
-| **Total planned** | 32.5 sessions critical path, ~25-27 parallelized | **~33.5** |                   |
+### Phase α — Shipped (5 items, 5 sessions)
+
+| Version | Theme                                    | Sessions | Status   |
+| ------- | ---------------------------------------- | -------- | -------- |
+| v7.3 P1 | SEO/GEO tool suite                       | 1        | **Done** |
+| v7.6    | Workspace expansion (gws)                | 1        | **Done** |
+| v7.7    | Jarvis MCP server                        | 1        | **Done** |
+| v7.8 P1 | Autoreason lifts (CoT+k=2+gap telemetry) | 1        | **Done** |
+| v7.9    | Prometheus Sonnet port                   | 1        | **Done** |
+
+### Phase α.2 — Gated decision (0.5 session)
+
+| Version | Theme                                       | Sessions | Status                 |
+| ------- | ------------------------------------------- | -------- | ---------------------- |
+| v7.8 P2 | Autoreason tournament decision (2026-04-20) | 0.5      | **Gated** (fixed date) |
+
+### Phase β — Financial Stack critical path (12 items)
+
+| Version   | Theme                                     | Sessions | Status      |
+| --------- | ----------------------------------------- | -------- | ----------- |
+| v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Next**    |
+| v7.0 F2   | Indicator engine                          | 1        | **Planned** |
+| v7.0 F4   | Watchlist + market tools                  | 1        | **Planned** |
+| v7.0 F5   | Macro regime detection                    | 0.5      | **Planned** |
+| v7.0 F3   | Signal detector                           | 1        | **Planned** |
+| v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Planned** |
+| v7.0 F6.5 | Sentiment signals (F&G x2)                | 0.7      | **Planned** |
+| v7.13     | Structured PDF ingestion (pre-F7 enabler) | 1.5      | **Planned** |
+| v7.0 F7   | Alpha combination engine                  | 2.5      | **Planned** |
+| v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)      | 1        | **Planned** |
+| v7.0 F8   | Paper trading (pm-trader + VenueAdapter)  | 1.5      | **Planned** |
+| v7.0 F9   | Scan rituals + calendar                   | 1        | **Planned** |
+
+**β subtotal:** ~14.9 sessions sequential, ~11 sessions parallelized.
+
+### Phase β-opt — Optional parallel (1 session)
+
+| Version  | Theme                      | Sessions | Status      |
+| -------- | -------------------------- | -------- | ----------- |
+| v7.0 F10 | Real-time crypto WebSocket | 1        | **Planned** |
+
+### Phase γ — Feature verticals (post-F9, 13 items)
+
+| Version | Theme                                         | Sessions | Deps           | Status      |
+| ------- | --------------------------------------------- | -------- | -------------- | ----------- |
+| v7.2    | Knowledge graph (Graphify)                    | 1.5      | None           | **Planned** |
+| v7.3 P4 | Digital marketing buyer (claude-ads)          | 3        | None           | **Planned** |
+| v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None           | **Planned** |
+| v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None           | **Planned** |
+| v7.11   | Jarvis teaching module                        | 2        | None           | **Planned** |
+| v7.12   | Diagram generation (mermaid/d2/plantuml)      | 1        | None           | **Planned** |
+| v7.14   | Infographic generation (AntV)                 | 1        | None           | **Planned** |
+| v7.3 P2 | SEO telemetry (PageSpeed + GSC)               | 1        | v7.6 ✅        | **Planned** |
+| v7.3 P3 | AI overview monitoring                        | 1        | F1 schedule    | **Planned** |
+| v7.1    | Charts + vision chart patterns                | 1.5      | F3             | **Planned** |
+| v7.4    | Video production (S1+S2)                      | 2        | v7.3 P4        | **Planned** |
+| v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4           | **Planned** |
+| v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 + pre-sweep | **Planned** |
+
+**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents).
+
+### Phase δ — Live trading (gated on 30d F8 paper record)
+
+| Version  | Theme                          | Sessions | Status                      |
+| -------- | ------------------------------ | -------- | --------------------------- |
+| v7.0 F11 | Live Polymarket trading engine | 2.5      | **Gated** (30d paper track) |
+
+### Phase ε — Conditional (post 2026-04-20 decision)
+
+| Version | Theme                                | Sessions | Status          |
+| ------- | ------------------------------------ | -------- | --------------- |
+| v7.8 P3 | Autoreason targeted tournament pilot | 2        | **Conditional** |
+
+### Totals
+
+| Bucket                        | Count  | Sessions              |
+| ----------------------------- | ------ | --------------------- |
+| Shipped (α)                   | 5      | 5                     |
+| Gated / conditional (α.2+δ+ε) | 3      | 5                     |
+| β + β-opt critical path       | 13     | ~15 seq / ~12 par     |
+| γ verticals                   | 13     | ~19 seq / ~14 par     |
+| **Total committed**           | **34** | **~44 seq / ~36 par** |
 
 ---
 

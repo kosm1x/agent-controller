@@ -15,6 +15,7 @@ import {
   clearCheckpoint,
 } from "../runners/checkpoint.js";
 import { getEventBus } from "../lib/event-bus.js";
+import { safeSlice } from "../lib/unicode-safe.js";
 import {
   extractPattern,
   findRelevantPatterns,
@@ -732,7 +733,7 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
     });
 
     const path = `logs/day-logs/${date}.md`;
-    const entry = `- [${time}] **${role}**: ${text.slice(0, 500).replace(/\n/g, " ")}\n`;
+    const entry = `- [${time}] **${role}**: ${safeSlice(text, 500).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
     const existing = getFile(path);
@@ -1366,7 +1367,7 @@ export class MessageRouter {
 
         const cappedResponse =
           response.length > THREAD_RESPONSE_CAP
-            ? response.slice(0, THREAD_RESPONSE_CAP) + "..."
+            ? safeSlice(response, THREAD_RESPONSE_CAP) + "..."
             : response;
         pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
@@ -1534,8 +1535,8 @@ export class MessageRouter {
             `La tarea anterior (${cp.taskId}) no terminó (${cp.exitReason}, round ${cp.roundsCompleted}/${cp.maxRounds}).\n` +
             `**Lo que ya se hizo:** ${cp.toolsCalled.join(", ") || "nada"}\n` +
             `**Lo que falta:** Completar lo que el usuario pidió originalmente.\n\n` +
-            `**Solicitud original:**\n${cp.userMessage.slice(0, 2000)}\n\n` +
-            `**Último resultado parcial:**\n${cp.summary.slice(0, 500)}\n\n` +
+            `**Solicitud original:**\n${safeSlice(cp.userMessage, 2000)}\n\n` +
+            `**Último resultado parcial:**\n${safeSlice(cp.summary, 500)}\n\n` +
             `INSTRUCCIÓN: Continúa desde donde se quedó. NO repitas lo que ya se hizo. Enfócate en lo pendiente.`;
           console.log(
             `[router] Checkpoint injected for task ${cp.taskId} (${cp.exitReason})`,
@@ -1791,7 +1792,7 @@ export class MessageRouter {
       // Push to in-memory conversation thread (chronological, instant)
       const cappedResult =
         resultText.length > THREAD_RESPONSE_CAP
-          ? resultText.slice(0, THREAD_RESPONSE_CAP) + "..."
+          ? safeSlice(resultText, THREAD_RESPONSE_CAP) + "..."
           : resultText;
       pushToThread(
         pending.tk,
