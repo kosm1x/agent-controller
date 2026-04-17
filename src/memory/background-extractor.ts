@@ -21,6 +21,7 @@
 
 import { infer } from "../inference/adapter.js";
 import { generateEmbedding } from "../inference/embeddings.js";
+import { safeSlice } from "../lib/unicode-safe.js";
 import {
   isPgvectorEnabled,
   pgFindByHash,
@@ -89,9 +90,9 @@ export async function extractFacts(
   try {
     const toolList = [...new Set(toolCalls)].slice(0, 10).join(", ");
     const context =
-      `User: ${userMessage.slice(0, 500)}\n` +
+      `User: ${safeSlice(userMessage, 500)}\n` +
       `Tools (${toolCalls.length}): ${toolList}\n` +
-      `Response: ${responseText.slice(0, 2000)}`;
+      `Response: ${safeSlice(responseText, 2000)}`;
 
     const result = await infer(
       {
@@ -286,10 +287,10 @@ export async function extractLessons(
   try {
     const toolList = [...new Set(toolCalls)].slice(0, 15).join(", ");
     const context =
-      `User: ${userMessage.slice(0, 500)}\n` +
+      `User: ${safeSlice(userMessage, 500)}\n` +
       `Tools (${toolCalls.length}): ${toolList}\n` +
       `Duration: ${Math.round(durationMs / 1000)}s\n` +
-      `Response: ${responseText.slice(0, 2000)}`;
+      `Response: ${safeSlice(responseText, 2000)}`;
 
     const result = await infer(
       {

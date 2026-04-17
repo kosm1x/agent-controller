@@ -10,6 +10,7 @@
 
 import { getMemoryService } from "./index.js";
 import { upsertFile } from "../db/jarvis-fs.js";
+import { safeSlice } from "../lib/unicode-safe.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -170,12 +171,12 @@ export async function autoPersistConversation(
   const toolList = [...new Set(toolCalls)].slice(0, 10).join(", ");
   const responsePreview =
     responseText.length > 2000
-      ? responseText.slice(0, 2000) + "..."
+      ? safeSlice(responseText, 2000) + "..."
       : responseText;
 
   const summary =
     `[AUTO-PERSIST task=${taskId}]\n` +
-    `User: ${userText.slice(0, 200)}\n` +
+    `User: ${safeSlice(userText, 200)}\n` +
     `Tools (${toolCalls.length}): ${toolList}\n` +
     `Response: ${responsePreview}`;
 

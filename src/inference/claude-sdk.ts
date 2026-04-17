@@ -23,6 +23,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
 import { toolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
+import { sanitizeSurrogates, safeSlice } from "../lib/unicode-safe.js";
 import type {
   ChatMessage,
   InferenceResponse,
@@ -215,9 +216,17 @@ export async function queryClaudeSdk(opts: {
     abortController.abort();
   }, SDK_TIMEOUT_MS);
 
+  // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
+  // server rejects JSON containing unpaired surrogates with a 400 error
+  // ("no low surrogate in string"). This catches any upstream slice/substring
+  // truncation that cut a non-BMP char (emoji, etc.) mid-pair. One-pass, zero
+  // copy for clean strings — only allocates when repair is needed.
+  const safePromptText = sanitizeSurrogates(opts.prompt);
+  const safeSystemPromptText = sanitizeSurrogates(opts.systemPrompt);
+
   const options: SdkOptions = {
     model: opts.model ?? "claude-sonnet-4-6",
-    systemPrompt: opts.systemPrompt,
+    systemPrompt: safeSystemPromptText,
     mcpServers: { jarvis: mcpServer },
     allowedTools,
     tools: [], // Disable all Claude Code built-in tools
@@ -261,8 +270,8 @@ export async function queryClaudeSdk(opts: {
   // Otherwise use the plain string path (cheaper, preserves prompt caching).
   const sdkPrompt: string | AsyncIterable<SDKUserMessage> =
     opts.images && opts.images.length > 0
-      ? buildVisionPromptStream(opts.prompt, opts.images)
-      : opts.prompt;
+      ? buildVisionPromptStream(safePromptText, opts.images)
+      : safePromptText;
 
   const q = query({ prompt: sdkPrompt, options });
 
@@ -495,7 +504,9 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
       }
     } else if (m.role === "tool") {
       const text = normalizeContent(m.content);
-      const truncated = text.length > 600 ? `${text.slice(0, 600)}...` : text;
+      // safeSlice avoids stranding a UTF-16 high surrogate when a tool result
+      // contains an emoji near the 600-char boundary.
+      const truncated = text.length > 600 ? `${safeSlice(text, 600)}...` : text;
       blocks.push(`[previous tool result]\n${truncated}`);
     }
   }
