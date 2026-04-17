@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                    | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                  | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                 | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (4/12: F1+F2+F3+F4+F5 done, F6/F6.5 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                               | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                      | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                 | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                           | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                          | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                        | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                       | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (6/12: F1+F2+F3+F4+F5+F6+F6.5 done, v7.13 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                     | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                            | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                       | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                 | 2                    |
 
 **Ordering invariants**
 
@@ -268,33 +268,40 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.0 F6 — Prediction Markets + Whale Tracker — **Planned**
+## v7.0 F6 — Prediction Markets + Whale Tracker — **Done**
 
-> 1.5 sessions. No F-series dependencies, can run in parallel with F3. Read-side enriched by `reference_polymarket_cli.md` (Stage A). F11 handles the live-trading engine (Stage C).
+> Session 75 (2026-04-17), bundled with F6.5 per ordering-map Window B. Impl plan: `docs/planning/phase-beta/17-f6-f6.5-impl-plan.md`. Branch: `phase-beta/f6-f6.5-external-signals`.
 
-| Item                                                                                                                                              | Source                        | Status      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------- |
-| Polymarket API adapter — live market odds, volume, resolution (Gamma API for discovery, CLOB API for pricing)                                     | V7 spec                       | **Planned** |
-| Kalshi API adapter — regulated US prediction markets                                                                                              | V7 spec                       | **Planned** |
-| Whale tracker — Polymarket trade history + SEC EDGAR insider filings                                                                              | V7 spec                       | **Planned** |
-| **Stage A — polymarket-cli read-side enrichments:**                                                                                               | `reference_polymarket_cli.md` | —           |
-| Negative-risk market handling — multi-outcome markets (elections/championships) where only one outcome wins, special display + analysis semantics | polymarket-cli                | **Planned** |
-| Builder-leaderboard API — track high-performing builders alongside individual-address whales; richer smart-money signal                           | polymarket-cli                | **Planned** |
-| Gamma events API — event-level grouping (all markets for one election) enables cross-market correlation                                           | polymarket-cli                | **Planned** |
-| Market-metadata surface — standard pull of `tick-size`, `fee-rate`, `neg-risk`, `time`, `geoblock` alongside odds                                 | polymarket-cli                | **Planned** |
+| Item                                                                                             | Source         | Status                                                                                                |
+| ------------------------------------------------------------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------- |
+| Polymarket Gamma + CLOB read adapter — active markets, events, market-by-slug, recent trades     | V7 spec        | **Done**                                                                                              |
+| `prediction_markets` tool — search/list/event-group with negRisk propagation                     | V7 spec        | **Done**                                                                                              |
+| Whale tracker from Polymarket trade history — extractWhalesFromTrades with $5k default threshold | V7 spec        | **Done**                                                                                              |
+| `whale_trades` tool — DB query default, optional fetch_live for specific market                  | impl           | **Done**                                                                                              |
+| **Stage A — polymarket-cli read-side enrichments** (from `reference_polymarket_cli.md`):         | polymarket-cli | —                                                                                                     |
+| Negative-risk market flag — is_neg_risk column + event-level propagation                         | polymarket-cli | **Done**                                                                                              |
+| Gamma events API — event-level grouping (all markets for one election)                           | polymarket-cli | **Done**                                                                                              |
+| Market-metadata surface — question, category, resolution_date, volume_usd, liquidity_usd stored  | polymarket-cli | **Done**                                                                                              |
+| Builder-leaderboard API                                                                          | polymarket-cli | **Deferred** (lightweight read addition; F7 follow-up)                                                |
+| Kalshi API adapter — regulated US prediction markets                                             | V7 spec        | **Deferred** (scope fence per impl plan; non-goal for v7.0 launch)                                    |
+| SEC EDGAR insider filings (Form 4 XBRL)                                                          | V7 spec        | **Deferred** (separate integration effort; fold into F7 follow-up if whale-consensus signal needs it) |
 
 ---
 
-## v7.0 F6.5 — Sentiment Signals — **Planned**
+## v7.0 F6.5 — Sentiment Signals — **Done**
 
-> 0.5 sessions. No dependencies, parallel.
+> Session 75 (2026-04-17), bundled with F6.
 
-| Item                                               | Source  | Status      |
-| -------------------------------------------------- | ------- | ----------- |
-| Fear & Greed Index (alternative.me API)            | V7 spec | **Planned** |
-| Crypto funding rates (long/short leverage balance) | V7 spec | **Planned** |
-| Liquidation heatmaps (forced selling cascades)     | V7 spec | **Planned** |
-| Stablecoin flows (money entering/leaving crypto)   | V7 spec | **Planned** |
+| Item                                                                                                         | Source   | Status                                                                   |
+| ------------------------------------------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------ |
+| Fear & Greed Index (alternative.me API) — `fetchAltMeFearGreed`                                              | V7 spec  | **Done**                                                                 |
+| CoinMarketCap F&G dual source — pro-key path + public data-api fallback, per Decision 5 (2026-04-14)         | F1 D5    | **Done**                                                                 |
+| Crypto funding rates via Binance premiumIndex — 3 symbols (BTC/ETH/SOL USDT perps)                           | V7 spec  | **Done**                                                                 |
+| Composite `sentiment_snapshot` tool — graceful per-source degradation, contrarian interpretation at extremes | impl     | **Done**                                                                 |
+| `cmcProApiKey` config binding + `CMC_PRO_API_KEY` env — audit W1 closure                                     | audit W1 | **Done**                                                                 |
+| sentimentSnapshotTool persists readings to `sentiment_readings` table on every call for F7 consumption       | audit W2 | **Done**                                                                 |
+| Liquidation heatmaps — forced selling cascades                                                               | V7 spec  | **Deferred** (requires paid data source; F7 enhancement if value proven) |
+| Stablecoin flows — money entering/leaving crypto                                                             | V7 spec  | **Deferred** (complex on-chain analytics; F7/F8 if needed)               |
 
 ---
 
@@ -943,8 +950,8 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.0 F4   | Watchlist + market tools                  | 1        | **Done**    |
 | v7.0 F5   | Macro regime detection                    | 0.5      | **Done**    |
 | v7.0 F3   | Signal detector                           | 1        | **Done**    |
-| v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Planned** |
-| v7.0 F6.5 | Sentiment signals (F&G x2)                | 0.7      | **Planned** |
+| v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Done**    |
+| v7.0 F6.5 | Sentiment signals (F&G x2)                | 0.7      | **Done**    |
 | v7.13     | Structured PDF ingestion (pre-F7 enabler) | 1.5      | **Planned** |
 | v7.0 F7   | Alpha combination engine                  | 2.5      | **Planned** |
 | v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)      | 1        | **Planned** |

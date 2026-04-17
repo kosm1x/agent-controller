@@ -224,6 +224,43 @@ describe("scope pattern matching", () => {
     }
   });
 
+  it("finance activates on prediction-markets vocab (F6)", () => {
+    for (const msg of [
+      "Check Polymarket odds for the election",
+      "Show prediction markets on BTC",
+      "What does Kalshi show for recession?",
+      "Cuál es la probabilidad de que...",
+    ]) {
+      const tools = scope(msg);
+      expect(tools).toContain("prediction_markets");
+    }
+  });
+
+  it("finance activates on whale vocab (F6)", () => {
+    for (const msg of [
+      "Any whale trades today?",
+      "Show smart money flow on this market",
+      "What are the whales doing?",
+      "Insider filings",
+    ]) {
+      const tools = scope(msg);
+      expect(tools).toContain("whale_trades");
+    }
+  });
+
+  it("finance activates on sentiment vocab (F6.5)", () => {
+    for (const msg of [
+      "Fear and greed index?",
+      "Check funding rates",
+      "Any panic selling?",
+      "Sentiment snapshot",
+      "Miedo y codicia",
+    ]) {
+      const tools = scope(msg);
+      expect(tools).toContain("sentiment_snapshot");
+    }
+  });
+
   it("finance does NOT activate on unrelated English with 'expansion' or 'signal'", () => {
     // 'expansion' appears in our macro regex. Narrow false-positive risk:
     // 'cache expansion' should only activate via coding/browser context, not finance.

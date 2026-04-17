@@ -336,7 +336,7 @@ Shipped: 4 files changed (1 new indicator engine, 1 new impl plan, 1 new F4 tool
 
 2. **Magnitude-aware thresholds.** Any classifier that compares slopes/differences across series of radically different magnitudes needs either normalization (convert to %-change or z-score) or a threshold that scales. The fed-funds vs M2 problem shipped in my first draft because I only tested with series of similar magnitude during synthesis.
 
-3. **"Mixed" is an information loss when two hard signals agree on direction.** Audit W3 was a design call, not a bug per se — my first draft treated any multi-hard as mixed because I was worried about biasing. But recession_risk and tightening both firing hard is a _stronger_ recession signal, not a weaker one. Severity ranking is the right answer when the signals form a coherent narrative.
+3. **"Mixed" is an information loss when two hard signals agree on direction.** Audit W3 was a design call, not a bug per se — my first draft treated any multi-hard as mixed because I was worried about biasing. But recession*risk and tightening both firing hard is a \_stronger* recession signal, not a weaker one. Severity ranking is the right answer when the signals form a coherent narrative.
 
 4. **Strict product-based sign-change (`prev * curr >= 0 → continue`) is too strict for real-world floating-point data.** Audit W2 proposed it to filter spurious zero-grazing fires. I implemented it, then the MACD test's synthetic V-shape broke because the numerical histogram briefly touched zero mid-transition. Reverted to `Math.sign()` equality. In production, histogram hitting exactly 0.0 is essentially impossible due to floating-point math — the audit concern was theoretical. Documented the tradeoff in a code comment rather than ship a stricter-than-useful filter.
 
@@ -360,3 +360,57 @@ Day 37. Phase β is now 4 of 12 done (F1 + F2 + F3 + F4 + F5 all shipped in thre
 Flagged follow-up for S4: FRED/AV macro series ordering — adapter may return descending; my `latestMacroValue` assumes ascending. Triage with a `safeLatestByDate(series)` that sorts-by-date-before-picking if it becomes the actual fix (likely 2-line change in macro.ts + one test).
 
 Shipped: 10 files changed (4 new: macro.ts, signals.ts, macro.test.ts, signals.test.ts; 6 modified), 52 new tests, 1 deploy, 0 rollbacks. v7 Phase β: 4 of 12 master-sequence items done.
+
+---
+
+### Session 75 — v7.0 F6 Prediction Markets + Whale Tracker + F6.5 Sentiment
+
+**What happened**: Fourth Phase β session. Delivered the **crowd** and **sentiment** signal layers — the two remaining signal sources F7's alpha combination engine will ingest. 3 additive tables, 3 adapters, 3 new tools, 3 new scope activation patterns. 51 new tests (2413 → 2464). Live smoke returned 5 real Polymarket markets (including the comically grim "Will Jesus Christ return before GTA VI?" at $0.48) and Fear & Greed = **21 (Extreme Fear)** surfacing contrarian bullish interpretation. Binance funding rates geoblocked on VPS but the snapshot gracefully degraded to just alt.me.
+
+**Root cause of the audit escalation (4 WARNINGS)**:
+
+1. **W1 CMC pro key was dead code**. I wrote `fetchCmcFearGreed` with a cast `(cfg as unknown as {cmcProApiKey?: string})` to access a config field I never added to the `Config` interface. The test mocked `getConfig` directly so CI didn't catch the unreachable code path. Fixed by wiring `CMC_PRO_API_KEY` through `optional()` in the loader like every other F-series credential.
+2. **W2 sentiment readings never persisted**. I exported `persistSentimentReadings`, tested it in isolation, created the `sentiment_readings` table, but forgot to wire it into `sentimentSnapshotTool.execute()`. F7 will need historical sentiment series to compute return series per signal — empty table means F7 gets no crowd history to regress against. Fixed in the same pass.
+3. **W3 scope regex false positives on bare "sentimental" / "probabilidad"**. My first draft used `sentiment(?:al)?` which fires on "sentimental music" / "es sentimental". Narrowed with negative lookahead `sentiment(?!al)` and the same pattern for Spanish "sentimiento(?!s?\s+(?:persona|románt...))". "Probability" kept broad because the false-positive cost (extra 13 deferred tools in one prompt) is cheaper than missing a finance intent — same tradeoff accepted for "expansion" in F5.
+4. **W5 Polymarket 30/min self-throttle**. I picked 30/min conservatively because Polymarket doesn't publish rate limits. Audit flagged that community experience shows 100+/min works fine; 30 self-throttles a full morning-briefing cascade. Raised to 60/min with a comment documenting the rationale.
+
+**What I learned**
+
+1. **Type-hole casts (`as unknown as {...}`) hide wiring bugs.** Using `(cfg as unknown as {cmcProApiKey?: string})` let me write the pro-key branch without updating the `Config` interface. The code compiled and tests passed (because the test mocked the cast target), but at runtime the field was always undefined. If I'd added the field to `Config` properly, TypeScript would have forced me to wire `optional("CMC_PRO_API_KEY")` in the loader. **Rule: if a module reads from config, add the typed field. No casts.**
+
+2. **Write-through-a-new-table is half-done until consumers wire up.** I built the table, the persist function, the tests — then the consumer tool never called persist. Checking the end-to-end data flow (table exists → data lands → consumer reads) would have caught this during impl. From now on, every new table gets a smoke test that asserts the row count increases after the tool runs.
+
+3. **Conservative rate limits cost free throughput.** 30/min for Polymarket was pure caution; no evidence suggested it was needed. When a limit is undocumented, prefer **measuring via live smoke + gradual ramp** over guessing low. Audit W5 exposed that my 30/min caution translates to whole-watchlist scans stalling mid-pass. Doubled to 60, monitor.
+
+4. **Graceful degradation must surface in the output, not just not-throw.** `getSentimentSnapshot` was designed for partial outage from day one (Promise.all + catch-per-promise → `degradedSources` array). But the tool's initial formatter didn't render that field. Live smoke returned "3 sources down" in the tool output — exactly the transparency the user needs. Matches the F5 macroRegimeTool pattern where staleness surfaces in `reasons[]`.
+
+5. **Scope regex plural-form + negative lookahead together.** F5 taught me to add plurals. F6 taught me to add negative lookahead for common-word collisions. Composing both: `sentiment(?!al)s?` matches "sentiment" and "sentiments" but NOT "sentimental". Took two drafts + one test iteration to get right.
+
+**Friction points**
+
+- Vitest `mockQueryWhales.mock.results[...]?.value` accessor broke typecheck; switched to `vi.fn<(opts?: unknown) => unknown[]>(() => [])` which types cleanly.
+- SQLite UNIQUE with NULL: F1 lesson re-applied. Manual SELECT-then-INSERT dedup required for `sentiment_readings` when `symbol IS NULL` (F&G rows).
+- Audit re-run triggered by scope regex narrowing that killed 2 scope tests; re-tuned the regex with negative lookahead instead of anchor-word requirement.
+- Formatter ran 8+ times, idempotent.
+
+**Research notes**
+
+Day 38. Phase β = **6 of 12 done** in 4 sessions across the day. The external-signal module (F6+F6.5) completes the 4-layer signal input for F7 alpha combination:
+
+- Technical (F3 signals over F2 indicators)
+- Macro (F5 regime classifier over FRED+AV macro)
+- Crowd (F6 Polymarket markets + whale flow)
+- Sentiment (F6.5 F&G + funding rates)
+
+F7's 11-step combination engine will pull historical time series from 4 tables: `market_signals` (F3), `sentiment_readings` (F6.5). F5 regimes + F6 prediction markets will need small helper functions to synthesize "historical series" from point-in-time snapshots. That's an F7 pre-plan concern.
+
+Next session S5 = v7.13 (Structured PDF ingestion with MinerU) — the pre-F7 enabler for ingesting 10-K filings, earnings reports, quant research papers. v7.13 was deliberately slotted before F7 so F7's RAG layer has structured financial documents to retrieve from.
+
+Flagged follow-ups:
+
+- Binance funding alternate source (Bybit/OKX) for VPS-geoblocked environments
+- `whale_trades` retention ritual for F9 (`DELETE WHERE occurred_at < datetime('now','-90 days')`)
+- Builder-leaderboard read API (Polymarket Stage A item, small lift, F7 follow-up)
+- Kalshi + SEC EDGAR integrations if crowd/smart-money signal quality proves insufficient without them
+
+Shipped: 16 files changed (7 new: prediction-markets + test, whales + test, sentiment + test, impl plan; 9 modified), 51 new tests, 1 deploy, 0 rollbacks. v7 Phase β: **6 of 12** master-sequence items done.

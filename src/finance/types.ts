@@ -25,7 +25,16 @@ export type Interval =
 
 export type IntradayInterval = "1min" | "5min" | "15min" | "60min";
 
-export type Provider = "alpha_vantage" | "polygon" | "fmp" | "fred" | "manual";
+export type Provider =
+  | "alpha_vantage"
+  | "polygon"
+  | "fmp"
+  | "fred"
+  | "manual"
+  | "polymarket"
+  | "alternative_me"
+  | "coinmarketcap"
+  | "binance";
 
 export type BudgetStatus = "success" | "rate_limited" | "error" | "timeout";
 

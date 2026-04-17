@@ -39,11 +39,57 @@ vi.mock("../../finance/signals.js", async () => {
   };
 });
 
+// Mock prediction-markets + sentiment modules so tool tests don't hit live endpoints.
+const mockAdapter = {
+  fetchActiveMarkets: vi.fn(),
+  fetchEventGroup: vi.fn(),
+  fetchMarketBySlug: vi.fn(),
+  fetchRecentTrades: vi.fn(),
+};
+vi.mock("../../finance/prediction-markets.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../finance/prediction-markets.js")
+  >("../../finance/prediction-markets.js");
+  return {
+    ...actual,
+    PolymarketAdapter: {
+      create: () => mockAdapter,
+    },
+    persistMarkets: vi.fn(() => 0),
+  };
+});
+
+const mockQueryWhales = vi.fn<(opts?: unknown) => unknown[]>(() => []);
+vi.mock("../../finance/whales.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../finance/whales.js")
+  >("../../finance/whales.js");
+  return {
+    ...actual,
+    queryRecentWhales: (opts?: unknown) => mockQueryWhales(opts),
+    persistWhaleTrades: () => 0,
+  };
+});
+
+const mockGetSentimentSnapshot = vi.fn();
+vi.mock("../../finance/sentiment.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../finance/sentiment.js")
+  >("../../finance/sentiment.js");
+  return {
+    ...actual,
+    getSentimentSnapshot: () => mockGetSentimentSnapshot(),
+  };
+});
+
 import {
   marketIndicatorsTool,
   marketScanTool,
   macroRegimeTool,
   marketSignalsTool,
+  predictionMarketsTool,
+  whaleTradesTool,
+  sentimentSnapshotTool,
 } from "./market.js";
 import type { MarketBar, MacroPoint } from "../../finance/types.js";
 
@@ -499,5 +545,195 @@ describe("marketSignalsTool", () => {
     })) as string;
     // Even if nothing fires, the header should still appear
     expect(out).toContain("scanned 1 symbols");
+  });
+});
+
+describe("predictionMarketsTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.fetchActiveMarkets.mockReset();
+    mockAdapter.fetchEventGroup.mockReset();
+  });
+
+  it("lists active markets and filters by query substring", async () => {
+    mockAdapter.fetchActiveMarkets.mockResolvedValue([
+      {
+        source: "polymarket",
+        marketId: "m1",
+        question: "Will BTC hit $100k by 2026-12-31?",
+        category: "Crypto",
+        outcomes: [
+          { id: "y", label: "Yes", price: 0.18 },
+          { id: "n", label: "No", price: 0.82 },
+        ],
+        volumeUsd: 15_000_000,
+        isNegRisk: false,
+      },
+      {
+        source: "polymarket",
+        marketId: "m2",
+        question: "2028 US Election — Democrat wins?",
+        outcomes: [],
+        isNegRisk: true,
+      },
+    ]);
+    const out = (await predictionMarketsTool.execute({
+      query: "btc",
+    })) as string;
+    expect(out).toContain("active markets");
+    expect(out).toMatch(/BTC/);
+    expect(out).not.toMatch(/Election/);
+  });
+
+  it("returns event group when event_id is provided", async () => {
+    mockAdapter.fetchEventGroup.mockResolvedValue([
+      {
+        source: "polymarket",
+        marketId: "a",
+        question: "Candidate A?",
+        outcomes: [],
+        isNegRisk: true,
+        eventId: "100",
+      },
+      {
+        source: "polymarket",
+        marketId: "b",
+        question: "Candidate B?",
+        outcomes: [],
+        isNegRisk: true,
+        eventId: "100",
+      },
+    ]);
+    const out = (await predictionMarketsTool.execute({
+      event_id: "100",
+    })) as string;
+    expect(mockAdapter.fetchEventGroup).toHaveBeenCalledWith("100");
+    expect(out).toContain("event 100");
+    expect(out).toContain("negRisk grouping: yes");
+  });
+
+  it("surfaces empty-result message", async () => {
+    mockAdapter.fetchActiveMarkets.mockResolvedValue([]);
+    const out = (await predictionMarketsTool.execute({
+      query: "nothing",
+    })) as string;
+    expect(out).toMatch(/no markets matched/);
+  });
+
+  it("handles adapter errors gracefully", async () => {
+    mockAdapter.fetchActiveMarkets.mockRejectedValue(
+      new Error("Polymarket 503"),
+    );
+    const out = (await predictionMarketsTool.execute({})) as string;
+    expect(out).toMatch(/503/);
+  });
+});
+
+describe("whaleTradesTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockQueryWhales.mockReset();
+  });
+
+  it("defaults to last 24h and $5k threshold", async () => {
+    mockQueryWhales.mockReturnValue([]);
+    await whaleTradesTool.execute({});
+    const opts = mockQueryWhales.mock.calls[0]?.[0] as {
+      hours?: number;
+      minSizeUsd?: number;
+      limit?: number;
+    };
+    expect(opts.hours).toBe(24);
+    expect(opts.minSizeUsd).toBe(5000);
+  });
+
+  it("formats returned rows sorted by size descending", async () => {
+    mockQueryWhales.mockReturnValue([
+      {
+        source: "polymarket",
+        wallet: "0xAAAAAA",
+        marketId: "mkt-A",
+        side: "buy",
+        sizeUsd: 42_500,
+        price: 0.45,
+        occurredAt: "2026-04-17T14:20:00Z",
+      },
+      {
+        source: "polymarket",
+        wallet: "0xBBBBBB",
+        marketId: "mkt-A",
+        side: "sell",
+        sizeUsd: 12_000,
+        price: 0.55,
+        occurredAt: "2026-04-17T10:10:00Z",
+      },
+    ]);
+    const out = (await whaleTradesTool.execute({})) as string;
+    // 42,500 must appear before 12,000 in output (sorted desc)
+    const bigIdx = out.indexOf("42,500");
+    const smallIdx = out.indexOf("12,000");
+    expect(bigIdx).toBeGreaterThan(-1);
+    expect(smallIdx).toBeGreaterThan(-1);
+    expect(bigIdx).toBeLessThan(smallIdx);
+  });
+
+  it("no-rows fallback suggests fetch_live", async () => {
+    mockQueryWhales.mockReturnValue([]);
+    const out = (await whaleTradesTool.execute({
+      market_id: "unseen",
+    })) as string;
+    expect(out).toMatch(/no whale activity/);
+    expect(out).toMatch(/fetch_live=true/);
+  });
+});
+
+describe("sentimentSnapshotTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSentimentSnapshot.mockReset();
+  });
+
+  it("formats full snapshot with F&G + funding + interpretation", async () => {
+    mockGetSentimentSnapshot.mockResolvedValue({
+      fearGreed: {
+        value: 67,
+        classification: "Greed",
+        sources: [
+          { source: "alternative_me", value: 72, classification: "Greed" },
+          { source: "cmc_fng", value: 62, classification: "Greed" },
+        ],
+      },
+      fundingRates: [
+        { symbol: "BTCUSDT", rate: 0.0001, annualizedPct: 10.95 },
+        { symbol: "ETHUSDT", rate: 0.00008, annualizedPct: 8.76 },
+        { symbol: "SOLUSDT", rate: 0.00015, annualizedPct: 16.43 },
+      ],
+      interpretation: "crowd greedy; funding positive",
+      degradedSources: [],
+    });
+    const out = (await sentimentSnapshotTool.execute({})) as string;
+    expect(out).toContain("Fear & Greed: 67");
+    expect(out).toContain("Greed");
+    expect(out).toContain("BTC");
+    expect(out).toContain("Interpretation");
+  });
+
+  it("reports fear & greed unavailable when both sources down", async () => {
+    mockGetSentimentSnapshot.mockResolvedValue({
+      fearGreed: null,
+      fundingRates: [],
+      interpretation: "no sentiment data available",
+      degradedSources: ["alternative_me: 500", "coinmarketcap: 503"],
+    });
+    const out = (await sentimentSnapshotTool.execute({})) as string;
+    expect(out).toMatch(/Fear & Greed: \(unavailable/);
+    expect(out).toMatch(/Funding: \(unavailable/);
+    expect(out).toMatch(/Degraded: 2 source/);
+  });
+
+  it("handles thrown errors gracefully", async () => {
+    mockGetSentimentSnapshot.mockRejectedValue(new Error("catastrophe"));
+    const out = (await sentimentSnapshotTool.execute({})) as string;
+    expect(out).toMatch(/catastrophe/);
   });
 });

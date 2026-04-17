@@ -154,6 +154,9 @@ import {
   marketScanTool,
   macroRegimeTool,
   marketSignalsTool,
+  predictionMarketsTool,
+  whaleTradesTool,
+  sentimentSnapshotTool,
 } from "../builtin/market.js";
 import type { Tool } from "../types.js";
 
@@ -256,6 +259,10 @@ const BUILTIN_TOOLS: Tool[] = [
   // F3+F5 signal detector + macro regime (v7.0 Phase β S3) — deferred, scope 'finance'
   macroRegimeTool,
   marketSignalsTool,
+  // F6+F6.5 prediction markets + whales + sentiment (v7.0 Phase β S4) — deferred, scope 'finance'
+  predictionMarketsTool,
+  whaleTradesTool,
+  sentimentSnapshotTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured
