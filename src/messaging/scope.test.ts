@@ -261,6 +261,36 @@ describe("scope pattern matching", () => {
     }
   });
 
+  it("kb_ingest activates on 'ingest this pdf' (EN)", () => {
+    const tools = scope("ingest this pdf into the KB");
+    expect(tools).toContain("kb_ingest_pdf_structured");
+  });
+
+  it("kb_ingest activates on 'ingerir este pdf' (ES)", () => {
+    const tools = scope("por favor ingerir este pdf financiero");
+    expect(tools).toContain("kb_ingest_pdf_structured");
+  });
+
+  it("kb_ingest activates on 'extract tables from report.pdf'", () => {
+    const tools = scope("extract the tables from report.pdf");
+    expect(tools).toContain("kb_ingest_pdf_structured");
+  });
+
+  it("kb_ingest does NOT activate on neutral extract/parse phrases without file signal (audit C2)", () => {
+    for (const msg of [
+      "extract data from the document I just read",
+      "can you extract the table please",
+      "let's parse this document",
+      "extract the sale's profit margin from last year",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools.includes("kb_ingest_pdf_structured"),
+        `Expected kb_ingest NOT to activate on: "${msg}"`,
+      ).toBe(false);
+    }
+  });
+
   it("finance does NOT activate on unrelated English with 'expansion' or 'signal'", () => {
     // 'expansion' appears in our macro regex. Narrow false-positive risk:
     // 'cache expansion' should only activate via coding/browser context, not finance.

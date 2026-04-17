@@ -14,6 +14,7 @@ import {
   WORDPRESS_TOOLS,
   CODING_TOOLS,
   FINANCE_TOOLS,
+  KB_INGEST_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -109,6 +110,19 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !FINANCE_READ_ONLY.has(t),
     );
     for (const tool of financeWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable kb ingestion tools (v7.13 S5)", () => {
+    // KB_INGEST_TOOLS: both tools persist to pgvector (writes). None are read-only.
+    const KB_INGEST_READ_ONLY = new Set<string>([]);
+    const kbWriteTools = KB_INGEST_TOOLS.filter(
+      (t) => !KB_INGEST_READ_ONLY.has(t),
+    );
+    for (const tool of kbWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

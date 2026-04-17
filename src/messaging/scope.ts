@@ -256,6 +256,9 @@ export const FINANCE_TOOLS = [
   "sentiment_snapshot",
 ];
 
+/** v7.13 KB ingestion tools — scope-gated on ingest/parse/extract + PDF/tables vocab. */
+export const KB_INGEST_TOOLS = ["kb_ingest_pdf_structured", "kb_batch_insert"];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -457,6 +460,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(fear\s*(?:&|and)?\s*greed|miedo\s+y\s+codicia|sentiment(?!al)|sentimiento(?!s?\s+(?:persona|rom[aá]ntic))|funding\s+rates?|tasa(?:s)?\s+de\s+financiaci[oó]n|liquidation(?:s)?|liquidaci[oó]n(?:es)?|panic|p[aá]nico)\b/i,
     group: "finance",
+  },
+  {
+    // v7.13 KB ingestion — activation requires a strong file signal to avoid
+    // false positives on generic "extract data from the document" phrasing.
+    // Audit C2: doc-noun narrowed to file-extensions (.pdf, .txt, .md) or
+    // finance document keywords (10-K, earnings, filing, research paper).
+    // Plus direct tool-verb shortcut `kb_ingest`/`kb_batch`.
+    pattern:
+      /\b(ingest|ingerir|ingesta|parse|parsear|extract|extraer|import|importar)\b[^\n]{0,40}\b(pdf|\.pdf|10-?k|earnings\s+(?:call|report|transcript)?|filing|research\s+paper|academic\s+paper)\b|\bkb[_\s]?(?:ingest|batch)\b/i,
+    group: "kb_ingest",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -704,6 +717,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("finance")) {
     tools.push(...FINANCE_TOOLS);
+  }
+  if (activeGroups.has("kb_ingest")) {
+    tools.push(...KB_INGEST_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

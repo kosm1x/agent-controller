@@ -158,6 +158,10 @@ import {
   whaleTradesTool,
   sentimentSnapshotTool,
 } from "../builtin/market.js";
+import {
+  kbIngestPdfStructuredTool,
+  kbBatchInsertTool,
+} from "../builtin/kb-ingest.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -263,6 +267,9 @@ const BUILTIN_TOOLS: Tool[] = [
   predictionMarketsTool,
   whaleTradesTool,
   sentimentSnapshotTool,
+  // v7.13 structured PDF ingestion + batch insert (Phase β S5) — deferred, scope 'kb_ingest'
+  kbIngestPdfStructuredTool,
+  kbBatchInsertTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

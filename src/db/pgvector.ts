@@ -55,6 +55,13 @@ export interface KbEntry {
   related_to?: string[];
   created_at?: string;
   updated_at?: string;
+  // v7.13 structured PDF ingestion — hierarchical + modality metadata.
+  // Optional; migration adds columns with sensible defaults (modality='text',
+  // section_path='[]'). Unmigrated installs simply never read these fields.
+  modality?: "text" | "table" | "equation" | "image_caption";
+  parent_doc_id?: string;
+  section_path?: string[];
+  chunk_position?: number;
 }
 
 export interface SearchResult {
@@ -191,6 +198,19 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
     source_task_id: entry.source_task_id ?? null,
     related_to: entry.related_to ?? [],
     updated_at: new Date().toISOString(),
+    // v7.13 structured PDF ingestion fields; safe to send even if the
+    // Supabase column hasn't been migrated yet — PostgREST will 400 with
+    // a clear error that surfaces to callers.
+    ...(entry.modality !== undefined && { modality: entry.modality }),
+    ...(entry.parent_doc_id !== undefined && {
+      parent_doc_id: entry.parent_doc_id,
+    }),
+    ...(entry.section_path !== undefined && {
+      section_path: entry.section_path,
+    }),
+    ...(entry.chunk_position !== undefined && {
+      chunk_position: entry.chunk_position,
+    }),
   };
 
   try {
@@ -343,6 +363,13 @@ export async function pgBatchUpsert(
       stale: e.stale ?? false,
       related_to: e.related_to ?? [],
       updated_at: new Date().toISOString(),
+      // v7.13 structured-ingestion fields (same guard as pgUpsert)
+      ...(e.modality !== undefined && { modality: e.modality }),
+      ...(e.parent_doc_id !== undefined && { parent_doc_id: e.parent_doc_id }),
+      ...(e.section_path !== undefined && { section_path: e.section_path }),
+      ...(e.chunk_position !== undefined && {
+        chunk_position: e.chunk_position,
+      }),
     }));
 
     try {
