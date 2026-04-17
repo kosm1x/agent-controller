@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status               | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | -------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**             | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**            | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Next (F1)**        | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**          | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9** | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**            | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**      | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                             | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                           | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                          | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (F1 done, F2 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                        | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**               | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                          | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                    | 2                    |
 
 **Ordering invariants**
 
@@ -173,23 +173,29 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 >
 > Implementation-readiness: all 6 operator decisions locked (see `docs/planning/phase-beta/03-f1-preplan.md`). Credentials provisioned 2026-04-15 (Alpha Vantage, Polygon/Massive, FRED). Initial watchlist locked: 20 equities+ETFs + 3 FX + 6 macro series = 29 tracked symbols.
 
-## v7.0 F1 — Data Layer (Alpha Vantage + Polygon + FRED) — **Next**
+## v7.0 F1 — Data Layer (Alpha Vantage + Polygon + FRED) — **Done**
 
-> Critical path start. 1.7 sessions (revised from 1.5 after Yahoo → Polygon). Pre-plan: `docs/planning/phase-beta/03-f1-preplan.md`. Yahoo replaced by Polygon.io/Massive free tier (5 req/min, 2y history, REST). Macro dual-sourced: Alpha Vantage primary + FRED for VIX/ICSA/M2.
+> Session 72 (2026-04-17). Critical path start. 1.7 sessions budgeted — shipped within budget. Pre-plan: `docs/planning/phase-beta/03-f1-preplan.md`. Impl plan: `docs/planning/phase-beta/14-f1-impl-plan.md`. Branch: `phase-beta/f1-data-layer`.
 
-| Item                                                                                             | Source         | Status      |
-| ------------------------------------------------------------------------------------------------ | -------------- | ----------- |
-| 6-table schema: market_data, watchlist, backtest_results, trade_theses, api_call_budget, signals | V7 spec        | **Planned** |
-| Alpha Vantage premium adapter — adjusted daily, FX, macro, news sentiment                        | V7 spec        | **Planned** |
-| Polygon.io/Massive fallback adapter (replaces Yahoo) — `api.massive.com` primary                 | F1 pre-plan D2 | **Planned** |
-| FRED adapter — VIX/ICSA/M2 (series AV doesn't expose)                                            | F1 pre-plan D4 | **Planned** |
-| Data validation layer (H2) — sanity checks, missing-bar detection, corrupted-row rejection       | V7 hardening   | **Planned** |
-| Timezone normalization (H3) — all timestamps to NY market time, DST-aware                        | V7 hardening   | **Planned** |
-| api_call_budget tracking + per-service rate limits (80% ceiling on AV tier-1)                    | V7 spec        | **Planned** |
-| Gold via GLD ETF proxy (XAU/USD not supported on AV FX endpoint)                                 | V7 spec        | **Planned** |
-| `market_watchlist_{add,remove,list}` tools — first-class natural-language CRUD (D3 requirement)  | F1 pre-plan D3 | **Planned** |
-| `finance` scope group with NL triggers (ES+EN watchlist verbs + `$SYMBOL` pattern)               | F1 pre-plan D3 | **Planned** |
-| Smoke test: "Jarvis, agrega TSLA a mi watchlist" → tool fires → confirmation                     | F1 pre-plan D3 | **Planned** |
+| Item                                                                                                      | Source         | Status                                 |
+| --------------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------- |
+| 6-table schema: market_data, watchlist, backtest_results, trade_theses, api_call_budget, market_signals   | V7 spec        | **Done**                               |
+| Alpha Vantage premium adapter — adjusted daily, intraday, FX, quote, macro, news sentiment                | V7 spec        | **Done**                               |
+| Polygon.io/Massive fallback adapter — `api.massive.com` primary w/ `api.polygon.io` legacy alias via env  | F1 pre-plan D2 | **Done**                               |
+| FRED adapter — VIX/ICSA/M2 (series AV doesn't expose)                                                     | F1 pre-plan D4 | **Done**                               |
+| Data validation layer (H2) — price sanity, continuity ratio, volume anomaly warn-not-reject               | V7 hardening   | **Done**                               |
+| Timezone normalization (H3) — NY ISO via `Intl.DateTimeFormat`, DST-safe for EDT↔EST transitions          | V7 hardening   | **Done**                               |
+| api_call_budget tracking + 80% ceilings (AV 60/min, Polygon 4/min, FRED 100/min)                          | V7 spec        | **Done**                               |
+| Boot-seed rate limiter from recent budget rows so restarts don't desync                                   | audit W2       | **Done**                               |
+| L1 memory cache (FIFO-capped 500) + L2 market_data DB cache + in-flight dedup + stale-DB rescue           | design D-C     | **Done**                               |
+| Primary→fallback dispatch with full budget logging on every attempt                                       | design D-E     | **Done**                               |
+| `market_watchlist_{add,remove,list}` tools — D3 operator-friendly error surfaces                          | F1 pre-plan D3 | **Done**                               |
+| `market_quote` / `market_history` / `market_budget_stats` tools                                           | V7 spec        | **Done**                               |
+| `finance` scope group with 3 activation patterns ($SYMBOL + ES/EN verbs + watchlist CRUD)                 | F1 pre-plan D3 | **Done**                               |
+| `normalizeSymbol` on all read/write paths + `redactApiKeys` at every adapter error-rethrow (audit C1/C2)  | audit C1/C2    | **Done**                               |
+| 43 new tests (timezone 6 · validation 8 · FRED 4 · AV 8 · Polygon 6 · DataLayer 10 · write-tools-sync +1) | —              | **Done**                               |
+| Smoke tests live: SPY 5 daily bars via AV w/ -04:00 EDT offset; VIXCLS 9166 FRED points                   | live           | **Done**                               |
+| Live WhatsApp D3 acceptance test ("agrega TSLA a mi watchlist")                                           | F1 pre-plan D3 | **Deferred** (operator-run post-merge) |
 
 ---
 
@@ -911,7 +917,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 | Version   | Theme                                     | Sessions | Status      |
 | --------- | ----------------------------------------- | -------- | ----------- |
-| v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Next**    |
+| v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Done**    |
 | v7.0 F2   | Indicator engine                          | 1        | **Planned** |
 | v7.0 F4   | Watchlist + market tools                  | 1        | **Planned** |
 | v7.0 F5   | Macro regime detection                    | 0.5      | **Planned** |

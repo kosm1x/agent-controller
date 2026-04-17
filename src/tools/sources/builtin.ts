@@ -143,6 +143,14 @@ import { seoMetaGenerateTool } from "../builtin/seo-meta-generate.js";
 import { seoSchemaGenerateTool } from "../builtin/seo-schema-generate.js";
 import { seoContentBriefTool } from "../builtin/seo-content-brief.js";
 import { googleWorkspaceCliTool } from "../builtin/google-workspace-cli.js";
+import {
+  marketQuoteTool,
+  marketHistoryTool,
+  marketWatchlistAddTool,
+  marketWatchlistRemoveTool,
+  marketWatchlistListTool,
+  marketBudgetStatsTool,
+} from "../builtin/market.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -231,6 +239,13 @@ const BUILTIN_TOOLS: Tool[] = [
   seoMetaGenerateTool,
   seoSchemaGenerateTool,
   seoContentBriefTool,
+  // F1 finance tools (v7.0 Phase β S1) — deferred, scope 'finance'
+  marketQuoteTool,
+  marketHistoryTool,
+  marketWatchlistAddTool,
+  marketWatchlistRemoveTool,
+  marketWatchlistListTool,
+  marketBudgetStatsTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

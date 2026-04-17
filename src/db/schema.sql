@@ -324,3 +324,95 @@ CREATE TABLE IF NOT EXISTS mcp_tokens (
   revoked       INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_tokens_hash ON mcp_tokens(token_hash) WHERE revoked = 0;
+
+-- ===========================================================================
+-- F1 Data Layer (v7.0 Phase β, session 72) — 6 tables for Financial Stack
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS market_data (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol          TEXT NOT NULL,
+  provider        TEXT NOT NULL CHECK(provider IN ('alpha_vantage','polygon','fmp','fred','manual')),
+  interval        TEXT NOT NULL CHECK(interval IN ('1min','5min','15min','60min','daily','weekly','monthly')),
+  timestamp       TEXT NOT NULL,                              -- ISO 8601 America/New_York
+  open            REAL NOT NULL,
+  high            REAL NOT NULL,
+  low             REAL NOT NULL,
+  close           REAL NOT NULL,
+  volume          INTEGER NOT NULL,
+  adjusted_close  REAL,                                       -- for dividend/split adjustment
+  fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(symbol, provider, interval, timestamp)
+);
+CREATE INDEX IF NOT EXISTS idx_market_data_symbol_ts ON market_data(symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_market_data_interval ON market_data(interval, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+  symbol          TEXT PRIMARY KEY,
+  name            TEXT,
+  asset_class     TEXT NOT NULL CHECK(asset_class IN ('equity','etf','fx','commodity','crypto','macro')),
+  tags            TEXT NOT NULL DEFAULT '[]',                 -- JSON array
+  active          INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+  added_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS backtest_results (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy_id     TEXT NOT NULL,
+  symbol          TEXT NOT NULL,
+  period_start    TEXT NOT NULL,
+  period_end      TEXT NOT NULL,
+  win_rate        REAL,
+  sharpe          REAL,
+  max_drawdown    REAL,
+  total_trades    INTEGER,
+  regime          TEXT,                                       -- bull/bear/volatile/calm at time of test
+  metadata        TEXT,                                       -- JSON per-strategy config snapshot
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_strategy ON backtest_results(strategy_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS trade_theses (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol          TEXT NOT NULL,
+  thesis_text     TEXT NOT NULL,
+  entry_signal    TEXT NOT NULL,
+  entry_price     REAL,
+  entry_time      TEXT,
+  exit_condition  TEXT NOT NULL,
+  exit_price      REAL,
+  exit_time       TEXT,
+  pnl             REAL,
+  pnl_pct         REAL,
+  outcome         TEXT CHECK(outcome IN ('open','closed_profit','closed_loss','closed_breakeven','stopped_out')),
+  metadata        TEXT,                                       -- JSON signal chain, regime, confidence
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_theses_symbol ON trade_theses(symbol, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_theses_outcome ON trade_theses(outcome);
+
+CREATE TABLE IF NOT EXISTS api_call_budget (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider          TEXT NOT NULL,
+  call_time         TEXT NOT NULL DEFAULT (datetime('now')),
+  endpoint          TEXT NOT NULL,
+  status            TEXT NOT NULL CHECK(status IN ('success','rate_limited','error','timeout')),
+  response_time_ms  INTEGER,
+  cost_units        INTEGER NOT NULL DEFAULT 1                -- NEWS_SENTIMENT = 25, normal = 1
+);
+CREATE INDEX IF NOT EXISTS idx_budget_provider_time ON api_call_budget(provider, call_time DESC);
+
+-- F3 placeholder (renamed from 'signals' to avoid collision with intel signals table).
+CREATE TABLE IF NOT EXISTS market_signals (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol               TEXT NOT NULL,
+  signal_type          TEXT NOT NULL,                         -- ma_crossover, rsi_extreme, macd_cross, etc.
+  direction            TEXT NOT NULL CHECK(direction IN ('long','short','neutral')),
+  strength             REAL NOT NULL,                         -- 0-1
+  triggered_at         TEXT NOT NULL,
+  indicators_snapshot  TEXT,                                  -- JSON state at trigger
+  metadata             TEXT,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_market_signals_symbol_time ON market_signals(symbol, triggered_at DESC);

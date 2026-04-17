@@ -246,3 +246,33 @@ None with the user. Clean arc: user flagged the error → I diagnosed, proposed 
 Day 34 of the longitudinal record. This incident is a clean study in **silent-failure class**: the service was green by every traditional health signal (process running, API reachable, DB OK, inference OK, 100% run success), but all user-visible output was empty. The discovery path worked because the user noticed within minutes and asked directly — no monitoring alert would have caught this. Open question for future instrumentation: should the service probe its own successful-return rate distribution and page when tokens-per-call drops to zero across consecutive calls? Today the signal was there (`tokens=0` in logs, repeated), but nothing was watching for it.
 
 Shipped in this session: 8 files changed (2 new, 6 modified), 18 new tests, 2 deploys, 0 rollbacks. Total roadmap scope now 33.5 sessions across 4 tracks (locked by user at session 71 wrap: "We close v7 pre-plan here. No more add-ons.").
+
+---
+
+### Session 72 — v7.0 F1 Data Layer: Phase β begins
+
+**What happened**: First Phase β (v7.0 thesis) session. Built the financial-stack foundation on branch `phase-beta/f1-data-layer`. New `src/finance/` module (~1500 LOC, zero new npm deps): 6-table additive schema, 3 data adapters (AlphaVantage primary, Polygon/Massive fallback, FRED macro), a DataLayer facade with two-tier cache + in-flight dedup + primary→fallback dispatch + stale-DB rescue, and 6 deferred tools wired through a new `finance` scope group. 43 new tests, full suite 2280 → 2323 green, 0 type errors. Smoke-tested live: SPY 5-day history fetched from Alpha Vantage with correct `-04:00` EDT offset; VIXCLS 9166 observations fetched from FRED.
+
+**Root cause of the planning-shift**: Upstream `yfinance` died in February 2026 (Cloudflare blocking), so the locked F1 pre-plan swapped Yahoo → Polygon/Massive during session 67's 48-hour gate. The schema table `signals` collided with an existing intel collector table, so F1's version was renamed `market_signals` mid-build. Both were small corrections but the kind that cost a morning if not caught early.
+
+**What I learned**
+
+1. **Plan → Impl-plan → Code is the right cadence.** The pre-plan (`03-f1-preplan.md`, 444 lines) locked 6 operator decisions on 2026-04-14. An impl-plan (`14-f1-impl-plan.md`, 470 lines) resolved 12 design decisions the pre-plan left open (module location, config fail-fast semantics, cache tiering, normalization policy, fallback order). Coding then took ~2 hours end-to-end because every "what do I do here" had a cached answer. Skipping the impl-plan layer is where session budgets get torched.
+2. **`normalizeSymbol` enforcement must live on the public boundary, not the write path.** First cut of DataLayer called `normalizeSymbol` only inside `addToWatchlist`. The audit caught 4 read paths (`getDaily`, `getIntraday`, `getMacro`, `getQuote`) + `removeFromWatchlist` letting unvalidated strings straight into SQL + cache keys + outbound URL params. None were exploitable as SQLi thanks to prepared statements, but the **cache-key pollution** was real: a typo would create a permanent no-hit entry in L1 and a phantom row in `market_data`. Fixed by routing every public method through the normalizer with a sensible default asset-class hint.
+3. **API key leakage via fetch error messages is a pattern, not a one-off.** All 3 adapters construct their URLs with `?apiKey=<KEY>` query params. When `fetch` itself throws (TLS failure, name resolution, connection reset), Node's error messages sometimes include the full URL verbatim. That error was being re-thrown through `market_history`'s `catch` clause, through `market_history`'s string output, through the LLM, to Telegram. Added `redactApiKeys()` at every error-rethrow site in all 3 adapters. Lesson: **assume fetch errors leak the URL**; strip at the adapter boundary, not further downstream.
+4. **FIFO eviction is the right default for bounded in-memory caches.** Skipped LRU (needs a secondary data structure for access-order tracking) in favor of `Map` insertion-order FIFO eviction at a size cap. Works because market data has strong temporal locality — if a symbol/interval wasn't fetched in the last 500 entries, it's not worth cache cost.
+5. **Two audit rounds is still not enough in my head.** The F1 audit found 2 CRITICAL + 5 WARNING in a single pass. Round 2 wasn't triggered because Round 1 findings were mechanical + all fixes completed in one edit pass. But I should internalize: **budget for 2 audit rounds per sprint, deliver in 1 where possible, don't skip audits assuming "the code is simple."** The feedback memory captured this after session 71 ("audit iteration is not a platitude") proved correct in session 72.
+
+**Friction points**
+
+- One test expectation wrong (`"abc".slice(0, -1) === "ab"`, not `""`) — self-inflicted.
+- One collision I didn't anticipate: `signals` table name taken by intel. 1-minute fix.
+- `Response` body consumed after single read — two Polygon tests failed with `Body has already been read` because I reused the same `Response` object across `for` iterations. Switched to `mockImplementation(() => Promise.resolve(new Response(...)))` pattern.
+
+**Research notes**
+
+Day 35. First Phase β session shipped clean. The impl-plan document was the single most valuable artifact — it absorbed the "what if I did X" loops that would otherwise happen during coding. Next session: F2 (indicators, 1 session) + F4 (watchlist market tools, 1 session) can ship together per the ordering-map parallelization plan. F5 (macro regime, 0.5 session) slots alongside F3 in S3. No γ interleave per locked operator decision.
+
+Budget preview telemetry worth noting: the projected-daily-AV-calls guard (86,400 call ceiling at 80% of tier-1 108k) blocks only at the 865th watchlist symbol. With 29 symbols locked in the default list, we're at ~3% of ceiling. This is correct — the guard is for future-proofing, not throttling the common case.
+
+Shipped: 18 files changed (15 new incl. tests + fixtures, 3 modified), 43 new tests, 1 deploy, 0 rollbacks. v7 Phase β: 1 of 12 master-sequence items done.

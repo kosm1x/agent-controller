@@ -112,6 +112,15 @@ async function main(): Promise<void> {
     console.warn("[code-index] Build failed (non-fatal)");
   }
 
+  // F1 — seed rate limiter from api_call_budget so post-restart calls don't
+  // exceed provider ceilings for up to 60s before the window rebuilds.
+  try {
+    const { seedRateLimitersFromHistory } = await import("./finance/budget.js");
+    seedRateLimitersFromHistory();
+  } catch {
+    // Non-fatal — table may not exist on fresh installs
+  }
+
   // Initialize tool sources (plugin system)
   const sourceManager = new ToolSourceManager();
   sourceManager.addSource(new BuiltinToolSource());

@@ -239,6 +239,16 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
+/** F1 finance tools — scope-gated: activate on market/ticker/watchlist verbs or $SYMBOL pattern. */
+export const FINANCE_TOOLS = [
+  "market_quote",
+  "market_history",
+  "market_watchlist_add",
+  "market_watchlist_remove",
+  "market_watchlist_list",
+  "market_budget_stats",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -375,6 +385,23 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(seo|posicionamiento|palabras?\s+clave|keyword\s*research|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|rankings?|serp|pagespeed|core\s+web\s+vitals|lighthouse|sitemap|canonical|e-?e-?a-?t|content\s+brief|ai\s+overview|generative\s+engine|geo\s+(?:keywords?|signals?)|rich\s+results?|structured\s+data|open\s+graph|og\s+tags?|twitter\s+card)\b/i,
     group: "seo",
+  },
+  {
+    // v7.0 F1 finance — $SYMBOL pattern (e.g. "$SPY", "$AAPL cotiza?")
+    pattern: /\$[A-Z]{1,5}\b/,
+    group: "finance",
+  },
+  {
+    // v7.0 F1 finance — market verbs / noun activation (ES + EN)
+    pattern:
+      /\b(mercado|market|acci[oó]n|acciones|stock|ticker|bolsa|NYSE|NASDAQ|cotiza(?:ci[oó]n)?|precio\s+de|cu[aá]nto\s+(?:vale|cuesta)\s+(?:el|la)?|c[oó]mo\s+est[aá]\s+(?:el|la|mi)?)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F1 finance — watchlist CRUD verbs (operator Decision 6 requirement)
+    pattern:
+      /\b(agrega|añade|anade|quita|elimina|muestra|lista|trackea|add|remove|show|list|track)\b[^\n]{0,40}\b(watchlist|watch\s*list|ticker|symbol|s[ií]mbolo|acci[oó]n)\b/i,
+    group: "finance",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -619,6 +646,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("seo")) {
     tools.push(...SEO_TOOLS);
+  }
+  if (activeGroups.has("finance")) {
+    tools.push(...FINANCE_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

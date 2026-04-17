@@ -312,6 +312,9 @@ export const WRITE_TOOLS = new Set([
   "skill_save",
   "memory_store",
   "shell_exec",
+  // F1 finance writes (v7.0 Phase β)
+  "market_watchlist_add",
+  "market_watchlist_remove",
 ]);
 
 /**
