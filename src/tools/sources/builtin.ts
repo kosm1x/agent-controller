@@ -152,6 +152,8 @@ import {
   marketBudgetStatsTool,
   marketIndicatorsTool,
   marketScanTool,
+  macroRegimeTool,
+  marketSignalsTool,
 } from "../builtin/market.js";
 import type { Tool } from "../types.js";
 
@@ -251,6 +253,9 @@ const BUILTIN_TOOLS: Tool[] = [
   // F2+F4 indicator engine + scan (v7.0 Phase β S2) — deferred, scope 'finance'
   marketIndicatorsTool,
   marketScanTool,
+  // F3+F5 signal detector + macro regime (v7.0 Phase β S3) — deferred, scope 'finance'
+  macroRegimeTool,
+  marketSignalsTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

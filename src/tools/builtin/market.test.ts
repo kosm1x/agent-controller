@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockLayer = {
   getDaily: vi.fn(),
   getIntraday: vi.fn(),
+  getMacro: vi.fn(),
   listWatchlist: vi.fn(),
 };
 
@@ -27,8 +28,24 @@ vi.mock("../../finance/rate-limit.js", () => ({
   ceilings: () => ({}),
 }));
 
-import { marketIndicatorsTool, marketScanTool } from "./market.js";
-import type { MarketBar } from "../../finance/types.js";
+const mockPersistSignals = vi.fn<(sigs: unknown[]) => number>(() => 0);
+vi.mock("../../finance/signals.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../finance/signals.js")
+  >("../../finance/signals.js");
+  return {
+    ...actual,
+    persistSignals: (sigs: unknown[]) => mockPersistSignals(sigs),
+  };
+});
+
+import {
+  marketIndicatorsTool,
+  marketScanTool,
+  macroRegimeTool,
+  marketSignalsTool,
+} from "./market.js";
+import type { MarketBar, MacroPoint } from "../../finance/types.js";
 
 /** Build a monotonic-up series of `n` bars close to the given base price. */
 function makeBars(symbol: string, n: number, basePrice = 100): MarketBar[] {
@@ -280,5 +297,207 @@ describe("marketScanTool", () => {
     expect(JSON.parse(out as string).error).toMatch(
       /indicator, operator, threshold/,
     );
+  });
+});
+
+describe("macroRegimeTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function flatMacro(series: string, value: number, n = 10): MacroPoint[] {
+    return Array.from({ length: n }, (_, i) => ({
+      series,
+      date: `2025-${String((i % 12) + 1).padStart(2, "0")}-01`,
+      value,
+      provider: "fred" as const,
+    }));
+  }
+
+  it("fetches 8 macro series and formats a regime summary", async () => {
+    // Configure an expansion scenario: positive yield curve, falling unemployment, low VIX
+    mockLayer.getMacro.mockImplementation(async (series: string) => {
+      switch (series) {
+        case "TREASURY_10Y":
+          return flatMacro("T10", 4.5);
+        case "TREASURY_2Y":
+          return flatMacro("T2", 3.0);
+        case "UNEMPLOYMENT":
+          return Array.from({ length: 10 }, (_, i) => ({
+            series: "UE",
+            date: `2025-${String(i + 1).padStart(2, "0")}-01`,
+            value: 5.0 - i * 0.1,
+            provider: "fred" as const,
+          }));
+        case "VIXCLS":
+          return flatMacro("VIX", 15);
+        case "FEDFUNDS":
+          return flatMacro("FF", 4.25);
+        case "CPI":
+          return flatMacro("CPI", 300);
+        case "M2SL":
+          return flatMacro("M2", 20_000);
+        case "ICSA":
+          return flatMacro("ICSA", 210_000);
+        default:
+          return [];
+      }
+    });
+    const out = (await macroRegimeTool.execute({})) as string;
+    expect(out).toMatch(/Regime: expansion/);
+    expect(out).toContain("Yield curve");
+    expect(out).toContain("VIX");
+    expect(out).toContain("Fed funds");
+    expect(mockLayer.getMacro).toHaveBeenCalledTimes(8);
+  });
+
+  it("tolerates adapter errors and returns mixed when all series unavailable", async () => {
+    mockLayer.getMacro.mockRejectedValue(new Error("FRED down"));
+    const out = (await macroRegimeTool.execute({})) as string;
+    expect(out).toMatch(/Regime: mixed/);
+  });
+});
+
+describe("marketSignalsTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPersistSignals.mockReturnValue(0);
+  });
+
+  it("returns no-signals message on a synthetic quiet series", async () => {
+    // 100 ultra-quiet bars (flat close + flat volume) → no detectors fire
+    const quiet = Array.from({ length: 100 }, (_, i) => ({
+      symbol: "QUIET",
+      timestamp: `2026-01-${String((i % 28) + 1).padStart(2, "0")}T16:00:00-04:00`,
+      open: 100,
+      high: 100.1,
+      low: 99.9,
+      close: 100,
+      volume: 1_000_000,
+      provider: "alpha_vantage" as const,
+      interval: "daily" as const,
+    }));
+    mockLayer.getDaily.mockResolvedValue({
+      bars: quiet,
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({
+      symbol: "QUIET",
+    })) as string;
+    expect(out).toMatch(/No signals fired/);
+  });
+
+  it("detects and lists firings on a volatile series", async () => {
+    // Build a series that triggers rsi_extreme and volume_spike
+    const bars = Array.from({ length: 100 }, (_, i) => {
+      const close =
+        i < 50
+          ? 100 - i * 0.8 // falling to ~60 → oversold RSI
+          : 60 + (i - 50) * 0.5;
+      return {
+        symbol: "SPY",
+        timestamp: `2026-${String(Math.floor(i / 28) + 1).padStart(2, "0")}-${String((i % 28) + 1).padStart(2, "0")}T16:00:00-04:00`,
+        open: close - 0.3,
+        high: close + 0.5,
+        low: close - 0.5,
+        close,
+        volume: 1_000_000 + (i === 49 ? 20_000_000 : (i % 5) * 50_000),
+        provider: "alpha_vantage" as const,
+        interval: "daily" as const,
+      };
+    });
+    mockLayer.getDaily.mockResolvedValue({
+      bars,
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({ symbol: "SPY" })) as string;
+    expect(out).toContain("SPY");
+    expect(out).toMatch(/signals:/);
+    expect(mockPersistSignals).toHaveBeenCalled();
+  });
+
+  it("scans watchlist when no symbol passed", async () => {
+    mockLayer.listWatchlist.mockReturnValue([
+      {
+        symbol: "A",
+        assetClass: "equity",
+        tags: [],
+        active: true,
+        addedAt: "x",
+      },
+      {
+        symbol: "B",
+        assetClass: "equity",
+        tags: [],
+        active: true,
+        addedAt: "x",
+      },
+    ]);
+    mockLayer.getDaily.mockResolvedValue({
+      bars: Array.from({ length: 100 }, (_, i) => ({
+        symbol: "A",
+        timestamp: `2026-01-${String((i % 28) + 1).padStart(2, "0")}T16:00:00-04:00`,
+        open: 100,
+        high: 100.1,
+        low: 99.9,
+        close: 100,
+        volume: 1_000_000,
+        provider: "alpha_vantage" as const,
+        interval: "daily" as const,
+      })),
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({})) as string;
+    expect(out).toContain("scanned 2 symbols");
+  });
+
+  it("handles empty watchlist gracefully", async () => {
+    mockLayer.listWatchlist.mockReturnValue([]);
+    const out = (await marketSignalsTool.execute({})) as string;
+    expect(out).toMatch(/watchlist is empty/);
+  });
+
+  it("reports insufficient-bars skip", async () => {
+    mockLayer.getDaily.mockResolvedValue({
+      bars: Array.from({ length: 30 }, (_, i) => ({
+        symbol: "NEW",
+        timestamp: `2026-01-${String(i + 1).padStart(2, "0")}T16:00:00-04:00`,
+        open: 100,
+        high: 100.5,
+        low: 99.5,
+        close: 100,
+        volume: 1_000_000,
+        provider: "alpha_vantage" as const,
+        interval: "daily" as const,
+      })),
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({ symbol: "NEW" })) as string;
+    expect(out).toContain("Skipped");
+    expect(out).toContain("insufficient bars");
+  });
+
+  it("filters detector types when types[] provided", async () => {
+    const bars = Array.from({ length: 100 }, (_, i) => ({
+      symbol: "TEST",
+      timestamp: `2026-01-${String((i % 28) + 1).padStart(2, "0")}T16:00:00-04:00`,
+      open: 100,
+      high: 100.1,
+      low: 99.9,
+      close: 100,
+      volume: 1_000_000,
+      provider: "alpha_vantage" as const,
+      interval: "daily" as const,
+    }));
+    mockLayer.getDaily.mockResolvedValue({
+      bars,
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({
+      symbol: "TEST",
+      types: ["volume_spike"],
+    })) as string;
+    // Even if nothing fires, the header should still appear
+    expect(out).toContain("scanned 1 symbols");
   });
 });

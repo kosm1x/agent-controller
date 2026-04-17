@@ -8,7 +8,7 @@
 
 import type { Tool } from "../types.js";
 import { getDataLayer } from "../../finance/data-layer.js";
-import type { AssetClass, MarketBar } from "../../finance/types.js";
+import type { AssetClass, MacroPoint, MarketBar } from "../../finance/types.js";
 import { budgetSummary } from "../../finance/budget.js";
 import { currentWindow, ceilings } from "../../finance/rate-limit.js";
 import {
@@ -23,6 +23,17 @@ import {
   williamsR,
   latest,
 } from "../../finance/indicators.js";
+import {
+  classifyRegime,
+  type MacroSeriesBundle,
+  type MacroRegime,
+} from "../../finance/macro.js";
+import {
+  detectAllSignals,
+  persistSignals,
+  type Signal,
+  type SignalType,
+} from "../../finance/signals.js";
 
 // ---------------------------------------------------------------------------
 // market_quote
@@ -838,6 +849,334 @@ function formatScanResult(
     }
     if (skipped.length > 5)
       lines.push(`    ... and ${skipped.length - 5} more`);
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// macro_regime (F5)
+// ---------------------------------------------------------------------------
+
+export const macroRegimeTool: Tool = {
+  name: "macro_regime",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "macro_regime",
+      description: `Classify the current US macro regime from FRED + Alpha Vantage series.
+
+USE WHEN:
+- User asks about economic regime, recession risk, yield curve, inflation, fed policy
+- Need macro context before interpreting market signals
+- Morning briefing wants a regime snapshot
+
+Regimes: expansion / tightening / recession_risk / recovery / mixed
+Each classification includes: yield curve (10Y-2Y), fed funds, VIX, unemployment,
+CPI YoY, M2 YoY, initial jobless claims, plus a reasons[] list and confidence (0..1).
+
+Cost: one call pulls 8 macro series (FEDFUNDS + CPI + UNEMPLOYMENT + TREASURY_YIELD x2
+via AV, VIXCLS + ICSA + M2SL via FRED). Cache-friendly on repeat queries via the
+DataLayer macro cache (6-hour TTL).`,
+      parameters: { type: "object", properties: {} },
+    },
+  },
+
+  async execute(): Promise<string> {
+    const layer = getDataLayer();
+    const [
+      fedFunds,
+      cpi,
+      unemployment,
+      treasury2y,
+      treasury10y,
+      vixcls,
+      icsa,
+      m2,
+    ] = await Promise.all([
+      safeMacro(layer, "FEDFUNDS"),
+      safeMacro(layer, "CPI"),
+      safeMacro(layer, "UNEMPLOYMENT"),
+      safeMacro(layer, "TREASURY_2Y"),
+      safeMacro(layer, "TREASURY_10Y"),
+      safeMacro(layer, "VIXCLS"),
+      safeMacro(layer, "ICSA"),
+      safeMacro(layer, "M2SL"),
+    ]);
+    const bundle: MacroSeriesBundle = {
+      fedFunds,
+      cpi,
+      unemployment,
+      treasury2y,
+      treasury10y,
+      vixcls,
+      icsa,
+      m2,
+    };
+    // Audit W4: count unavailable series so the user sees when the regime
+    // classification is running on starved inputs.
+    const emptyCount = Object.values(bundle).filter(
+      (s: MacroPoint[]) => s.length === 0,
+    ).length;
+    const regime = classifyRegime(bundle);
+    let header = formatRegime(regime);
+    if (emptyCount >= 6) {
+      header =
+        `WARNING: ${emptyCount} of 8 macro series unavailable — regime classification unreliable.\n` +
+        header;
+    } else if (emptyCount >= 3) {
+      header =
+        `NOTE: ${emptyCount} of 8 macro series unavailable — treat regime with caution.\n` +
+        header;
+    }
+    return header;
+  },
+};
+
+async function safeMacro(
+  layer: ReturnType<typeof getDataLayer>,
+  series: string,
+) {
+  try {
+    return await layer.getMacro(series);
+  } catch {
+    return [];
+  }
+}
+
+function formatRegime(r: MacroRegime): string {
+  const lines: string[] = [
+    `Regime: ${r.regime} (confidence ${r.confidence.toFixed(2)})`,
+  ];
+  if (r.yieldCurve !== null) {
+    lines.push(`  Yield curve (10Y-2Y): ${r.yieldCurve.toFixed(2)}`);
+  }
+  if (r.fedRate !== null) lines.push(`  Fed funds: ${r.fedRate.toFixed(2)}`);
+  if (r.vix !== null) lines.push(`  VIX: ${r.vix.toFixed(1)}`);
+  if (r.unemployment !== null) {
+    lines.push(`  Unemployment: ${r.unemployment.toFixed(1)}`);
+  }
+  if (r.inflationYoY !== null) {
+    lines.push(`  CPI YoY: ${r.inflationYoY.toFixed(1)}%`);
+  }
+  if (r.m2GrowthYoY !== null) {
+    lines.push(`  M2 YoY: ${r.m2GrowthYoY.toFixed(1)}%`);
+  }
+  if (r.initialClaims !== null) {
+    lines.push(`  Initial claims: ${r.initialClaims.toLocaleString()}`);
+  }
+  if (r.reasons.length > 0) {
+    lines.push(`  Reasons: ${r.reasons.join("; ")}`);
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// market_signals (F3)
+// ---------------------------------------------------------------------------
+
+const ALL_SIGNAL_TYPES: SignalType[] = [
+  "ma_crossover",
+  "rsi_extreme",
+  "macd_crossover",
+  "bollinger_breakout",
+  "volume_spike",
+  "price_threshold",
+];
+
+export const marketSignalsTool: Tool = {
+  name: "market_signals",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "market_signals",
+      description: `Detect recent technical signals on one symbol or the whole watchlist.
+
+USE WHEN:
+- User asks "any signals firing?", "what's triggering?", "show me crossovers/breakouts"
+- Morning/EOD scan wants the recent signal list
+
+Detectors (6): ma_crossover (golden/death cross), rsi_extreme (overbought/oversold),
+macd_crossover (histogram sign change), bollinger_breakout (close outside bands),
+volume_spike (z-score > 2σ), price_threshold (explicit user thresholds).
+
+If 'symbol' is omitted, scans the active watchlist. Persists detected signals
+to the market_signals DB table for F7 alpha-combination consumption.`,
+      parameters: {
+        type: "object",
+        properties: {
+          symbol: {
+            type: "string",
+            description: "Single symbol to scan. Omit to scan whole watchlist.",
+          },
+          interval: {
+            type: "string",
+            enum: ["daily", "60min"],
+            description: "Bar interval. Default 'daily'.",
+          },
+          lookback: {
+            type: "number",
+            description: "Bars per symbol. Default 100, min 40, max 250.",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "If scanning watchlist, restrict to entries with any of these tags.",
+          },
+          types: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "ma_crossover",
+                "rsi_extreme",
+                "macd_crossover",
+                "bollinger_breakout",
+                "volume_spike",
+                "price_threshold",
+              ],
+            },
+            description: "Which detectors to run. Default: all six.",
+          },
+          price_thresholds: {
+            type: "array",
+            items: { type: "number" },
+            description:
+              "Specific price levels to monitor. Used only if types includes 'price_threshold'.",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const interval = (args.interval as "daily" | "60min") ?? "daily";
+    const rawLookback = Number(args.lookback ?? 100);
+    const lookback = Number.isFinite(rawLookback)
+      ? Math.min(250, Math.max(40, Math.round(rawLookback)))
+      : 100;
+    const typesFilter =
+      (args.types as SignalType[] | undefined) ?? ALL_SIGNAL_TYPES;
+    const priceThresholds =
+      (args.price_thresholds as number[] | undefined) ?? [];
+    const tagsFilter = (args.tags as string[] | undefined) ?? [];
+    const symbolArg = (args.symbol as string | undefined)
+      ?.trim()
+      ?.toUpperCase();
+
+    const layer = getDataLayer();
+    const targetSymbols: string[] = [];
+
+    if (symbolArg) {
+      targetSymbols.push(symbolArg);
+    } else {
+      const watchlist = layer.listWatchlist();
+      if (watchlist.length === 0) {
+        return "market_signals: no symbol provided and watchlist is empty.";
+      }
+      const filtered = tagsFilter.length
+        ? watchlist.filter((w) => w.tags.some((t) => tagsFilter.includes(t)))
+        : watchlist;
+      for (const w of filtered) targetSymbols.push(w.symbol);
+      if (targetSymbols.length === 0) {
+        return `market_signals: no watchlist entries match tags ${JSON.stringify(tagsFilter)}.`;
+      }
+      // Audit W5: cap whole-watchlist scans to prevent runaway budget spend.
+      // Explicit single-symbol calls bypass the cap (already bounded).
+      const SCAN_CAP = 50;
+      if (targetSymbols.length > SCAN_CAP) {
+        targetSymbols.length = SCAN_CAP;
+      }
+    }
+
+    const bySymbol = new Map<string, Signal[]>();
+    const skipped: { symbol: string; reason: string }[] = [];
+    let consecutiveRateLimit = 0;
+    let earlyExit = false;
+
+    for (const symbol of targetSymbols) {
+      if (earlyExit) {
+        skipped.push({ symbol, reason: "scan aborted (rate-limit cascade)" });
+        continue;
+      }
+      try {
+        const result =
+          interval === "daily"
+            ? await layer.getDaily(symbol, { lookback })
+            : await layer.getIntraday(symbol, "60min", { lookback });
+        if (result.bars.length < 40) {
+          skipped.push({ symbol, reason: "insufficient bars" });
+          continue;
+        }
+        consecutiveRateLimit = 0;
+        const all = detectAllSignals(result.bars, {
+          priceThresholds,
+        });
+        const filtered = all.filter((s) => typesFilter.includes(s.type));
+        bySymbol.set(symbol, filtered);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        skipped.push({ symbol, reason: msg });
+        // Audit W5: 3 consecutive rate-limit errors → bail out rather than
+        // burning through the rest of the watchlist with doomed calls.
+        if (
+          /rate.?limit/i.test(msg) ||
+          (err instanceof Error && err.name === "RateLimitedError")
+        ) {
+          consecutiveRateLimit++;
+          if (consecutiveRateLimit >= 3) earlyExit = true;
+        } else {
+          consecutiveRateLimit = 0;
+        }
+      }
+    }
+
+    // Persist
+    const allSignals: Signal[] = [];
+    for (const sigs of bySymbol.values()) allSignals.push(...sigs);
+    const inserted = persistSignals(allSignals);
+
+    return formatSignalsResult(targetSymbols, bySymbol, skipped, inserted);
+  },
+};
+
+function formatSignalsResult(
+  targets: string[],
+  bySymbol: Map<string, Signal[]>,
+  skipped: { symbol: string; reason: string }[],
+  inserted: number,
+): string {
+  const lines: string[] = [
+    `market_signals: scanned ${targets.length} symbols · ${inserted} new firings persisted`,
+  ];
+  const orderedSymbols = targets.filter((s) => bySymbol.has(s));
+  const withSignals = orderedSymbols.filter(
+    (s) => (bySymbol.get(s) ?? []).length > 0,
+  );
+  if (withSignals.length === 0) {
+    lines.push("  No signals fired.");
+  } else {
+    for (const symbol of withSignals) {
+      const sigs = bySymbol.get(symbol)!;
+      lines.push(`\n${symbol} — ${sigs.length} signals:`);
+      for (const s of sigs.slice(-10)) {
+        // cap output at last 10 per symbol for readability
+        lines.push(
+          `  ${s.timestamp} | ${s.type} | ${s.direction.padEnd(7)} | ${s.description}`,
+        );
+      }
+    }
+  }
+  if (skipped.length > 0) {
+    lines.push(`\nSkipped (${skipped.length}):`);
+    for (const s of skipped.slice(0, 5)) {
+      lines.push(`  ${s.symbol}: ${s.reason}`);
+    }
+    if (skipped.length > 5) {
+      lines.push(`  ... and ${skipped.length - 5} more`);
+    }
   }
   return lines.join("\n");
 }
