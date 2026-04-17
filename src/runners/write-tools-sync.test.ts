@@ -90,8 +90,8 @@ describe("WRITE_TOOLS sync", () => {
   });
 
   it("includes all write-capable finance tools", () => {
-    // F1/F2/F4 finance: market_watchlist_add/remove are writes;
-    // quote/history/list/budget/indicators/scan are reads.
+    // F1/F2/F3/F4/F5 finance: market_watchlist_add/remove are writes;
+    // quote/history/list/budget/indicators/scan/macro_regime/market_signals are reads.
     const FINANCE_READ_ONLY = new Set([
       "market_quote",
       "market_history",
@@ -99,6 +99,8 @@ describe("WRITE_TOOLS sync", () => {
       "market_budget_stats",
       "market_indicators",
       "market_scan",
+      "macro_regime",
+      "market_signals",
     ]);
     const financeWriteTools = FINANCE_TOOLS.filter(
       (t) => !FINANCE_READ_ONLY.has(t),

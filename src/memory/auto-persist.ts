@@ -145,7 +145,8 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "gdocs_read" ||
         t === "gdocs_read_full" ||
         t === "file_read" ||
-        t === "market_history",
+        t === "market_history" ||
+        t === "market_signals",
     )
   )
     return true;

@@ -69,6 +69,10 @@ const READ_ONLY_TOOLS = new Set([
   // F2+F4 finance — indicators/scan are pure-read computations
   "market_indicators",
   "market_scan",
+  // F3+F5 finance — macro regime (pure compute) + market_signals (detection;
+  // persists to market_signals table as audit log, not user-intentional state)
+  "macro_regime",
+  "market_signals",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {

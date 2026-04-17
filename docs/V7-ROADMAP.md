@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                         | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                       | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                      | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (2/12: F1+F2+F4 done, F5 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                    | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                           | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                      | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                    | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                  | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                 | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (4/12: F1+F2+F3+F4+F5 done, F6/F6.5 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                               | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                      | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                 | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                           | 2                    |
 
 **Ordering invariants**
 
@@ -231,28 +231,40 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.0 F5 — Macro Regime Detection — **Planned**
+## v7.0 F5 — Macro Regime Detection — **Done**
 
-> 0.5 sessions. Parallel to F2/F4. TypeScript fetch only, no Python sidecar.
+> Session 74 (2026-04-17), bundled with F3 per ordering-map Window B. Impl plan: `docs/planning/phase-beta/16-f5-f3-impl-plan.md`. Branch: `phase-beta/f5-f3-macro-and-signals`.
 
-| Item                                                                             | Source  | Status      |
-| -------------------------------------------------------------------------------- | ------- | ----------- |
-| Alpha Vantage macro pulls — fed funds, treasury, CPI, unemployment, payroll, GDP | V7 spec | **Planned** |
-| FRED REST API — VIX, ICSA, M2                                                    | V7 spec | **Planned** |
-| Regime classifier — bull/bear/volatile/calm based on composite macro + VIX       | V7 spec | **Planned** |
+| Item                                                                                                               | Source   | Status   |
+| ------------------------------------------------------------------------------------------------------------------ | -------- | -------- |
+| Alpha Vantage macro pulls — FEDFUNDS, TREASURY_YIELD×2, CPI, UNEMPLOYMENT, NONFARM, REAL_GDP                       | V7 spec  | **Done** |
+| FRED REST API — VIXCLS, ICSA, M2SL (dual source via existing F1 DataLayer.getMacro)                                | V7 spec  | **Done** |
+| Regime classifier — expansion / tightening / recession_risk / recovery / mixed with hard/soft confidence           | V7 spec  | **Done** |
+| Trend helpers: linearSlope, classifyTrend (rising/falling/flat/normalizing magnitude-scaled), yoyChange, staleness | impl     | **Done** |
+| Severity-ranked conflict resolution (recession_risk > tightening > expansion > recovery) per audit W3              | audit W3 | **Done** |
+| Yield-curve nearest-earlier-t2 lookup (handles daily/monthly cadence mismatch) per audit C1                        | audit C1 | **Done** |
+| `macro_regime` tool with staleness warnings (≥6/8 empty series → WARNING header; ≥3 → NOTE)                        | audit W4 | **Done** |
+| 16 new tests                                                                                                       | —        | **Done** |
 
 ---
 
-## v7.0 F3 — Signal Detector — **Planned**
+## v7.0 F3 — Signal Detector — **Done**
 
-> 1 session. Depends on F2 + F4.
+> Session 74 (2026-04-17), bundled with F5.
 
-| Item                                                                                                           | Source  | Status      |
-| -------------------------------------------------------------------------------------------------------------- | ------- | ----------- |
-| Signal detector: MA crossover, RSI extremes, MACD crossover, Bollinger breakout, volume spike, price threshold | V7 spec | **Planned** |
-| Composite signal logic (combine N indicators)                                                                  | V7 spec | **Planned** |
-| `market_signals` tool                                                                                          | V7 spec | **Planned** |
-| Transmission chain field — signal → decision → outcome linkage                                                 | V7 spec | **Planned** |
+| Item                                                                                                      | Source      | Status   |
+| --------------------------------------------------------------------------------------------------------- | ----------- | -------- |
+| 6 detectors: ma_crossover, rsi_extreme, macd_crossover, bollinger_breakout, volume_spike, price_threshold | V7 spec     | **Done** |
+| Fire-once semantics (sign change / zone entry / re-entry), not per-bar while-held                         | audit L     | **Done** |
+| detectAllSignals aggregator returning chronologically sorted merged list                                  | impl        | **Done** |
+| persistSignals with transactional INSERT + SELECT-then-INSERT dedup on (symbol,type,triggered_at)         | impl        | **Done** |
+| `market_signals` tool — single-symbol or whole-watchlist scan, 50-symbol cap + 3-rate-limit early exit    | audit W5    | **Done** |
+| market_signals scan persists firings to market_signals table for F7 alpha-combination consumption         | V7 spec     | **Done** |
+| price_threshold direction follows cross direction (long/short, not neutral) per audit I4                  | audit I4    | **Done** |
+| Transmission chain field — empty array at F3, F7/F8 populate                                              | V7 spec     | **Done** |
+| Scope regex: 2 new activation patterns (macro vocab + signals vocab) ES+EN                                | audit W6+I1 | **Done** |
+| auto-persist Rule 2b: `market_signals` output persisted for follow-up turns                               | impl        | **Done** |
+| 22 signal-detector tests + 8 tool tests + 6 scope tests = 36 new                                          | —           | **Done** |
 
 ---
 
@@ -929,8 +941,8 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Done**    |
 | v7.0 F2   | Indicator engine                          | 1        | **Done**    |
 | v7.0 F4   | Watchlist + market tools                  | 1        | **Done**    |
-| v7.0 F5   | Macro regime detection                    | 0.5      | **Planned** |
-| v7.0 F3   | Signal detector                           | 1        | **Planned** |
+| v7.0 F5   | Macro regime detection                    | 0.5      | **Done**    |
+| v7.0 F3   | Signal detector                           | 1        | **Done**    |
 | v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Planned** |
 | v7.0 F6.5 | Sentiment signals (F&G x2)                | 0.7      | **Planned** |
 | v7.13     | Structured PDF ingestion (pre-F7 enabler) | 1.5      | **Planned** |

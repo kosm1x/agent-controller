@@ -239,7 +239,7 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
-/** F1+F2+F4 finance tools — scope-gated: activate on market/ticker/watchlist verbs or $SYMBOL pattern. */
+/** F1+F2+F3+F4+F5 finance tools — scope-gated: activate on market/ticker/watchlist verbs, $SYMBOL pattern, indicator/signal/macro vocabulary. */
 export const FINANCE_TOOLS = [
   "market_quote",
   "market_history",
@@ -249,6 +249,8 @@ export const FINANCE_TOOLS = [
   "market_budget_stats",
   "market_indicators",
   "market_scan",
+  "macro_regime",
+  "market_signals",
 ];
 
 // ---------------------------------------------------------------------------
@@ -411,6 +413,22 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // "bollinger", "moving average", "indicators" without requiring market verbs.
     pattern:
       /\b(RSI|MACD|SMA|EMA|bollinger|vwap|atr|williams\s*%?r?|indicadores?|indicators?|oversold|overbought|sobrevendid\w*|sobrecomprad\w*|sobrecompra|sobreventa|momentum|moving\s+average|promedio\s+m[oó]vil|cruce\s+(?:de\s+)?medias?|golden\s+cross|death\s+cross|scan(?:ear)?|screener?|escanea\w*)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F5 macro — regime, yield curve, fed funds, inflation, unemployment,
+    // VIX, CPI, GDP, M2, jobless claims, interest rates. Audit I1 vocabulary.
+    pattern:
+      /\b(macro|r[eé]gimen|regime|yield\s+curve|curva\s+(?:de\s+)?rendimiento|fed\s+funds?|fed\s+rate|tasas?\s+(?:de\s+)?inter[eé]s|interest\s+rates?|inflation|inflaci[oó]n|unemployment|desempleo|jobless\s+claims?|recession|recesi[oó]n|VIX|M2|CPI|GDP|PIB|expansion|tightening|recovery)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F3 signals — crossover, breakout, divergence, trigger, confluence,
+    // reversal, gap. Includes plural forms (signals, crossovers, breakouts).
+    // Audit I1 vocabulary additions. Narrowed 'fire' to finance context to
+    // avoid false positives on general English.
+    pattern:
+      /\b(signals?|se[ñn]al(?:es)?|crossovers?|cruce|breakouts?|fuga|divergence|divergencia|confluence|confluencia|reversal|reversi[oó]n|gap\s+(?:up|down|alcista|bajista)|triggers?|detect(?:ar|ing|ed|s)?)\b/i,
     group: "finance",
   },
   {
