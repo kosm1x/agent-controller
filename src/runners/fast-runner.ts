@@ -315,6 +315,9 @@ export const WRITE_TOOLS = new Set([
   // F1 finance writes (v7.0 Phase β)
   "market_watchlist_add",
   "market_watchlist_remove",
+  // v7.13 KB ingestion writes (Phase β S5)
+  "kb_ingest_pdf_structured",
+  "kb_batch_insert",
 ]);
 
 /**

@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                          | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                        | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                       | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (6/12: F1+F2+F3+F4+F5+F6+F6.5 done, v7.13 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                     | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                            | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                       | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                 | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                         | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                       | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                      | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (7/12: F1-F6.5 + v7.13 Option B done, F7 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                    | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                           | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                      | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                | 2                    |
 
 **Ordering invariants**
 
@@ -561,32 +561,28 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.13 — Structured PDF Ingestion (`kb_ingest_pdf_structured`) — **Planned**
+## v7.13 — Structured PDF Ingestion (`kb_ingest_pdf_structured`) — **Done (Option B)**
 
-> 1.5 sessions. Depends on pgvector migration (✅ operational 2026-04-17). Blocks F7 retrieval quality on financial PDFs. Source: `reference_rag_anything.md` (HKUDS MIT).
+> Session 76 (2026-04-17), shipped as Option B: minimum-viable pre-F7 using the existing `@opendataloader/pdf` core dep, **no MinerU**. Full MinerU Python service deferred to v7.13-polish. Impl plan: `docs/planning/phase-beta/18-v7.13-impl-plan.md`. Branch: `phase-beta/v7.13-pdf-structured-ingestion`.
 
-**Motivation**: Current PDF ingestion via `@opendataloader/pdf` flattens everything to text — tables, equations, charts lose structure. For Phase β financial stack, 10-K filings, earnings reports, and quant research papers need table/equation preservation. RAG-Anything framework conflicts with our pgvector direction; adopt 1 tool + 2 cheap patterns, not the framework.
+**Why Option B**: MinerU is a 1.5-session Docker + systemd + ML-models infrastructure project. F7's 11-step alpha combination doesn't hard-depend on ML-quality extraction (numeric signal series from F3/F5/F6/F6.5 are sufficient). Zero-new-deps invariant held across S1-S5. If F7/F8 retrieval telemetry shows quality ceiling, MinerU ships as v7.13-polish with evidence.
 
-**Python exception approved 2026-04-17**: MinerU ML parser too heavy to port; runs as Python subprocess same pattern as pipesong/vLLM.
-
-| Item                                                                                                                    | Source                     | Status      |
-| ----------------------------------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
-| MinerU Python service — FastAPI `POST /parse { pdf_path } → { content_list }`, Docker self-contained, CPU default       | HKUDS RAG-Anything (MIT)   | **Planned** |
-| systemd unit + health endpoint (pipesong-pattern)                                                                       | Infrastructure             | **Planned** |
-| `kb_ingest_pdf_structured(pdf_path, namespace?)` TS tool — calls MinerU, generates embeddings, writes tagged pgvector   | —                          | **Planned** |
-| Modality field on `kb_entries` — `text` \| `table` \| `equation` \| `image_caption` (additive migration, no reset)      | —                          | **Planned** |
-| Tables stored as JSON (structure preserved) + row-serialized text duplicate (for vector embedding)                      | —                          | **Planned** |
-| Equations stored as LaTeX strings; image captions via existing vision adapter                                           | —                          | **Planned** |
-| Retrieval layer modality filter — infer intent (table/equation lookup) and bias retrieval                               | —                          | **Planned** |
-| Integration: scope group, guards, write-tools-sync test, INTEGRATION-CHECKLIST.md touchpoints                           | `INTEGRATION-CHECKLIST.md` | **Planned** |
-| Test fixtures: 10-K with tables, research paper with equations, analyst deck with charts — end-to-end integration tests | —                          | **Planned** |
-
-**Cheap wins — slottable independently (any session):**
-
-| Item                                                                                                        | Effort  | Status      |
-| ----------------------------------------------------------------------------------------------------------- | ------- | ----------- |
-| Hierarchical `belongs_to` metadata — `parent_doc_id`, `section_path[]`, `chunk_position` on `kb_entries`    | ~50 LOC | **Planned** |
-| `kb_batch_insert(entries)` — bypass chunker, accept pre-parsed content lists (Obsidian Drive, scraped data) | ~30 LOC | **Planned** |
+| Item                                                                                                                               | Source                | Status                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------ |
+| `KbEntry` interface + pgvector schema extended: `modality`, `parent_doc_id`, `section_path`, `chunk_position` (additive migration) | impl                  | **Done**                                                                 |
+| `src/kb/pdf-structured-ingest.ts` — markdown sectionizer + pipe-table detector + CJK-aware chunker w/ hard-slice fallback          | impl                  | **Done**                                                                 |
+| `kb_ingest_pdf_structured(pdf_path, namespace?, parent_doc_id?, tags?, max_chunks?)` tool — UUID validation + migration hint       | impl + audit C2/W3/S1 | **Done**                                                                 |
+| `kb_batch_insert(entries)` cheap-win tool — bypass chunker, accept pre-parsed content                                              | impl                  | **Done**                                                                 |
+| Hierarchical `belongs_to` metadata — parent_doc_id, section_path, chunk_position                                                   | impl                  | **Done**                                                                 |
+| Tables preserved as single chunks with pipe-format intact (modality='table')                                                       | impl                  | **Done**                                                                 |
+| New `kb_ingest` scope group w/ activation pattern (verb + file signal) — audit C2 negative-case tested                             | audit C2              | **Done**                                                                 |
+| WRITE_TOOLS + write-tools-sync test expanded                                                                                       | impl                  | **Done**                                                                 |
+| 44 new tests (25 ingester + 14 tool + 4 scope + 1 sync)                                                                            | —                     | **Done**                                                                 |
+| MinerU Python service (Docker + systemd + ML models) — equation LaTeX + image-caption modalities                                   | HKUDS RAG-Anything    | **Deferred** (v7.13-polish; trigger = F7/F8 retrieval quality telemetry) |
+| Retrieval layer modality filter (pgHybridSearch modality bias)                                                                     | F7 concern            | **Deferred** (F7 pre-plan item)                                          |
+| Vision adapter image-caption generation                                                                                            | v7.13-polish          | **Deferred**                                                             |
+| OCR fallback for scanned PDFs                                                                                                      | v7.13-polish          | **Deferred**                                                             |
+| Multi-doc cross-linking via `related_to[]`                                                                                         | F7+F9 concern         | **Deferred**                                                             |
 
 **Explicit non-goals**: full RAG-Anything framework adoption, multi-modal knowledge graph, VLM-enhanced retrieval, modality-specific processor plugin architecture. See `reference_rag_anything.md` for skip rationale.
 
@@ -943,20 +939,20 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 ### Phase β — Financial Stack critical path (12 items)
 
-| Version   | Theme                                     | Sessions | Status      |
-| --------- | ----------------------------------------- | -------- | ----------- |
-| v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Done**    |
-| v7.0 F2   | Indicator engine                          | 1        | **Done**    |
-| v7.0 F4   | Watchlist + market tools                  | 1        | **Done**    |
-| v7.0 F5   | Macro regime detection                    | 0.5      | **Done**    |
-| v7.0 F3   | Signal detector                           | 1        | **Done**    |
-| v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Done**    |
-| v7.0 F6.5 | Sentiment signals (F&G x2)                | 0.7      | **Done**    |
-| v7.13     | Structured PDF ingestion (pre-F7 enabler) | 1.5      | **Planned** |
-| v7.0 F7   | Alpha combination engine                  | 2.5      | **Planned** |
-| v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)      | 1        | **Planned** |
-| v7.0 F8   | Paper trading (pm-trader + VenueAdapter)  | 1.5      | **Planned** |
-| v7.0 F9   | Scan rituals + calendar                   | 1        | **Planned** |
+| Version   | Theme                                               | Sessions | Status      |
+| --------- | --------------------------------------------------- | -------- | ----------- |
+| v7.0 F1   | Data layer (AV + Polygon + FRED)                    | 1.7      | **Done**    |
+| v7.0 F2   | Indicator engine                                    | 1        | **Done**    |
+| v7.0 F4   | Watchlist + market tools                            | 1        | **Done**    |
+| v7.0 F5   | Macro regime detection                              | 0.5      | **Done**    |
+| v7.0 F3   | Signal detector                                     | 1        | **Done**    |
+| v7.0 F6   | Prediction markets + whale tracker                  | 1.5      | **Done**    |
+| v7.0 F6.5 | Sentiment signals (F&G x2)                          | 0.7      | **Done**    |
+| v7.13     | Structured PDF ingestion (pre-F7 enabler, Option B) | 0.5      | **Done**    |
+| v7.0 F7   | Alpha combination engine                            | 2.5      | **Planned** |
+| v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)                | 1        | **Planned** |
+| v7.0 F8   | Paper trading (pm-trader + VenueAdapter)            | 1.5      | **Planned** |
+| v7.0 F9   | Scan rituals + calendar                             | 1        | **Planned** |
 
 **β subtotal:** ~14.9 sessions sequential, ~11 sessions parallelized.
 
