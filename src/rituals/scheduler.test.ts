@@ -51,6 +51,7 @@ import { createNightlyClose } from "./nightly.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createSignalIntelligence } from "./signal-intelligence.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
+import { createDayNarrative } from "./day-narrative.js";
 import { createWeeklyReview } from "./weekly-review.js";
 
 beforeEach(() => {
@@ -67,8 +68,8 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Twelve: 6 rituals + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
-    expect(mockSchedule).toHaveBeenCalledTimes(12);
+    // Thirteen: 7 rituals (+ day-narrative) + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
+    expect(mockSchedule).toHaveBeenCalledTimes(13);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -90,7 +91,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(12);
+    expect(mockStop).toHaveBeenCalledTimes(13);
   });
 });
 
@@ -173,6 +174,20 @@ describe("task templates", () => {
     // Mechanical count injected — no LLM estimation
     expect(task.description).toContain("Pre-computed metrics");
     expect(task.description).toContain("Conversations today: 0");
+  });
+
+  it("day narrative has correct structure", () => {
+    const task = createDayNarrative("2026-04-17");
+    expect(task.title).toBe("Day log narrative — 2026-04-17");
+    expect(task.agentType).toBe("fast");
+    expect(task.tools).toContain("jarvis_file_read");
+    expect(task.tools).toContain("jarvis_file_write");
+    // Source path — raw log — must be read, never modified
+    expect(task.description).toContain("logs/day-logs/2026-04-17.md");
+    // Companion path — narrative output
+    expect(task.description).toContain("logs/day-narratives/2026-04-17.md");
+    // Immutability rule must be stated in the prompt
+    expect(task.description).toMatch(/inmutable|Do NOT modify/i);
   });
 
   it("weekly review has correct structure", () => {

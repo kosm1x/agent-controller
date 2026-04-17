@@ -78,4 +78,32 @@ describe("parseRunnerStatus", () => {
     expect(result.status).toBe("BLOCKED");
     expect(result.cleanContent).toBe("Result.");
   });
+
+  it("classifies raw API-error output as BLOCKED", () => {
+    // The real failure mode from 2026-04-17: the SDK wrapper returned the
+    // Anthropic API's raw error body as `text`, and the runner was marking
+    // it as status='completed' because there was no STATUS line to parse.
+    const content =
+      'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"The request body is not valid JSON: no low surrogate in string: line 1 column 68843 (char 68842)"},"request_id":"req_011Ca9mVnqF73cDQkRcknfqQ"}';
+    const result = parseRunnerStatus(content);
+    expect(result.status).toBe("BLOCKED");
+    expect(result.concerns).toBeDefined();
+    expect(result.concerns![0]).toContain("API Error: 400");
+    expect(result.cleanContent).toBe(content);
+  });
+
+  it("classifies API Error 500/429 as BLOCKED", () => {
+    const five = parseRunnerStatus("API Error: 500 internal server error");
+    expect(five.status).toBe("BLOCKED");
+    const rate = parseRunnerStatus("API Error: 429 rate_limit_error");
+    expect(rate.status).toBe("BLOCKED");
+  });
+
+  it("does not misclassify a narrative mention of 'API Error' mid-response", () => {
+    // Must anchor at line start so content that DISCUSSES an API error
+    // (e.g. Jarvis explaining a failure to the user) is not demoted.
+    const content = `The issue was that the Anthropic API Error: 400 rejected our body. I fixed it by...\nSTATUS: DONE`;
+    const result = parseRunnerStatus(content);
+    expect(result.status).toBe("DONE");
+  });
 });
