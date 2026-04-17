@@ -239,7 +239,7 @@ export const SEO_TOOLS = [
   "seo_content_brief",
 ];
 
-/** F1 finance tools — scope-gated: activate on market/ticker/watchlist verbs or $SYMBOL pattern. */
+/** F1+F2+F4 finance tools — scope-gated: activate on market/ticker/watchlist verbs or $SYMBOL pattern. */
 export const FINANCE_TOOLS = [
   "market_quote",
   "market_history",
@@ -247,6 +247,8 @@ export const FINANCE_TOOLS = [
   "market_watchlist_remove",
   "market_watchlist_list",
   "market_budget_stats",
+  "market_indicators",
+  "market_scan",
 ];
 
 // ---------------------------------------------------------------------------
@@ -401,6 +403,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // v7.0 F1 finance — watchlist CRUD verbs (operator Decision 6 requirement)
     pattern:
       /\b(agrega|añade|anade|quita|elimina|muestra|lista|trackea|add|remove|show|list|track)\b[^\n]{0,40}\b(watchlist|watch\s*list|ticker|symbol|s[ií]mbolo|acci[oó]n)\b/i,
+    group: "finance",
+  },
+  {
+    // v7.0 F2+F4 finance — technical-indicator vocabulary (ES + EN)
+    // Audit W1: activates on "RSI", "MACD", "oversold", "scan watchlist for X",
+    // "bollinger", "moving average", "indicators" without requiring market verbs.
+    pattern:
+      /\b(RSI|MACD|SMA|EMA|bollinger|vwap|atr|williams\s*%?r?|indicadores?|indicators?|oversold|overbought|sobrevendid\w*|sobrecomprad\w*|sobrecompra|sobreventa|momentum|moving\s+average|promedio\s+m[oó]vil|cruce\s+(?:de\s+)?medias?|golden\s+cross|death\s+cross|scan(?:ear)?|screener?|escanea\w*)\b/i,
     group: "finance",
   },
   {

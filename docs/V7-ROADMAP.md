@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                             | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                           | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                          | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (F1 done, F2 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                        | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**               | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                          | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                    | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                         | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                       | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                      | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (2/12: F1+F2+F4 done, F5 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                    | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                           | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                      | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                | 2                    |
 
 **Ordering invariants**
 
@@ -199,26 +199,35 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.0 F2 — Indicator Engine — **Planned**
+## v7.0 F2 — Indicator Engine — **Done**
 
-> 1 session. Depends on F1.
+> Session 73 (2026-04-17), bundled with F4. Impl plan: `docs/planning/phase-beta/15-f2-f4-impl-plan.md`. Branch: `phase-beta/f2-f4-indicators-and-tools`.
 
-| Item                                                                                      | Source       | Status      |
-| ----------------------------------------------------------------------------------------- | ------------ | ----------- |
-| Pure-math indicators: SMA, EMA, RSI, MACD, Bollinger, VWAP, ATR, ROC, Williams %R         | V7 spec      | **Planned** |
-| Golden-file tests (H1) — validate each indicator against Alpha Vantage server-side values | V7 hardening | **Planned** |
+| Item                                                                                                                 | Source       | Status                                                               |
+| -------------------------------------------------------------------------------------------------------------------- | ------------ | -------------------------------------------------------------------- |
+| Pure-math indicators: SMA, EMA, RSI (Wilder), MACD (12/26/9), Bollinger (20,2 sample σ), VWAP, ATR, ROC, Williams %R | V7 spec      | **Done**                                                             |
+| `latest()` utility — return last non-null value from indicator output                                                | F2 impl plan | **Done**                                                             |
+| Null-leading semantics preserved (input-length = output-length)                                                      | design D-E   | **Done**                                                             |
+| 28 tests — hand-computed happy paths + MACD/Bollinger invariants + golden-file cross-validation                      | design D-F   | **Done**                                                             |
+| Hand-computed Bollinger(20,2) values verified at index 29 to 0.1 tolerance                                           | audit S1     | **Done**                                                             |
+| RSI boundary behavior documented (avgLoss===0 && avgGain===0 → 50 neutral)                                           | audit S3     | **Done**                                                             |
+| Golden-file tests — AV server-side validation                                                                        | V7 hardening | **Deferred** (acceptance-test concern; hermetic unit tests in place) |
 
 ---
 
-## v7.0 F4 — Watchlist + Market Tools — **Planned**
+## v7.0 F4 — Watchlist + Market Tools — **Done**
 
-> 1 session. Parallel to F2. Depends on F1.
+> Session 72 (F1) shipped watchlist CRUD + market_quote + market_history + market_budget_stats. Session 73 (F2+F4 bundle) added the indicator-consumer tools.
 
-| Item                                                 | Source  | Status      |
-| ---------------------------------------------------- | ------- | ----------- |
-| Watchlist management (add/remove/list/tag)           | V7 spec | **Planned** |
-| `market_quote` tool — current snapshot               | V7 spec | **Planned** |
-| `market_history` tool — historical bars with filters | V7 spec | **Planned** |
+| Item                                                                                          | Source       | Status             |
+| --------------------------------------------------------------------------------------------- | ------------ | ------------------ |
+| Watchlist management (add/remove/list with tags + projected-budget guard)                     | V7 spec      | **Done** (S1 — F1) |
+| `market_quote` tool — current snapshot via AV GLOBAL_QUOTE                                    | V7 spec      | **Done** (S1 — F1) |
+| `market_history` tool — historical bars with interval + lookback filters                      | V7 spec      | **Done** (S1 — F1) |
+| `market_budget_stats` tool — AV/Polygon/FRED consumption vs ceilings                          | V7 spec      | **Done** (S1 — F1) |
+| `market_indicators` tool — compute 8/9 indicators on one symbol (VWAP auto-excluded on daily) | F4 impl plan | **Done** (S2)      |
+| `market_scan` tool — scan watchlist by indicator threshold, operator-aware sort order         | F4 impl plan | **Done** (S2)      |
+| Finance scope activation on indicator vocabulary (RSI, MACD, oversold, scan, etc. ES+EN)      | audit W1     | **Done** (S2)      |
 
 ---
 
@@ -918,8 +927,8 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | Version   | Theme                                     | Sessions | Status      |
 | --------- | ----------------------------------------- | -------- | ----------- |
 | v7.0 F1   | Data layer (AV + Polygon + FRED)          | 1.7      | **Done**    |
-| v7.0 F2   | Indicator engine                          | 1        | **Planned** |
-| v7.0 F4   | Watchlist + market tools                  | 1        | **Planned** |
+| v7.0 F2   | Indicator engine                          | 1        | **Done**    |
+| v7.0 F4   | Watchlist + market tools                  | 1        | **Done**    |
 | v7.0 F5   | Macro regime detection                    | 0.5      | **Planned** |
 | v7.0 F3   | Signal detector                           | 1        | **Planned** |
 | v7.0 F6   | Prediction markets + whale tracker        | 1.5      | **Planned** |
