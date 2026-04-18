@@ -11,12 +11,32 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockLayer = {
   getDaily: vi.fn(),
   getIntraday: vi.fn(),
+  getWeekly: vi.fn(),
   getMacro: vi.fn(),
   listWatchlist: vi.fn(),
+  addToWatchlist: vi.fn(),
 };
 
 vi.mock("../../finance/data-layer.js", () => ({
   getDataLayer: () => mockLayer,
+}));
+
+const mockSeedSymbol = vi.fn();
+vi.mock("../../finance/watchlist-seed.js", () => ({
+  seedSymbol: (sym: string, opts?: unknown) => mockSeedSymbol(sym, opts),
+  formatSeedResult: (r: {
+    symbol: string;
+    skipped: boolean;
+    barsInserted: number;
+    signalsInserted: number;
+    error?: string;
+  }) =>
+    r.error
+      ? `  ${r.symbol}: seed error — ${r.error}`
+      : r.skipped
+        ? `  ${r.symbol}: skipped`
+        : `  ${r.symbol}: +${r.barsInserted} bars, +${r.signalsInserted} signals`,
+  WATCHLIST_SEED_DEFAULTS: { minBars: 300, lookback: 520 },
 }));
 
 vi.mock("../../finance/budget.js", () => ({
@@ -90,6 +110,8 @@ import {
   predictionMarketsTool,
   whaleTradesTool,
   sentimentSnapshotTool,
+  marketWatchlistAddTool,
+  marketWatchlistReseedTool,
 } from "./market.js";
 import type { MarketBar, MacroPoint } from "../../finance/types.js";
 
@@ -735,5 +757,144 @@ describe("sentimentSnapshotTool", () => {
     mockGetSentimentSnapshot.mockRejectedValue(new Error("catastrophe"));
     const out = (await sentimentSnapshotTool.execute({})) as string;
     expect(out).toMatch(/catastrophe/);
+  });
+});
+
+describe("marketWatchlistAddTool", () => {
+  beforeEach(() => {
+    mockLayer.addToWatchlist.mockReset();
+    mockSeedSymbol.mockReset();
+  });
+
+  it("adds the row then auto-seeds weekly bars + signals", async () => {
+    mockLayer.addToWatchlist.mockReturnValue({
+      symbol: "NVDA",
+      assetClass: "equity",
+      tags: ["semi", "ai"],
+      active: true,
+      addedAt: "2026-04-18",
+    });
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "NVDA",
+      skipped: false,
+      barsBefore: 0,
+      barsAfter: 520,
+      barsInserted: 520,
+      signalsInserted: 187,
+    });
+    const out = (await marketWatchlistAddTool.execute({
+      symbol: "NVDA",
+      asset_class: "equity",
+      tags: ["semi", "ai"],
+    })) as string;
+    expect(out).toMatch(/OK: added NVDA/);
+    expect(out).toMatch(/\+520 weekly bars, \+187 signals/);
+    expect(mockSeedSymbol).toHaveBeenCalledWith("NVDA", { minBars: 300 });
+  });
+
+  it("skips seeding for macro asset class", async () => {
+    mockLayer.addToWatchlist.mockReturnValue({
+      symbol: "FEDFUNDS",
+      assetClass: "macro",
+      tags: [],
+      active: true,
+      addedAt: "2026-04-18",
+    });
+    const out = (await marketWatchlistAddTool.execute({
+      symbol: "FEDFUNDS",
+      asset_class: "macro",
+    })) as string;
+    expect(out).toMatch(/OK: added FEDFUNDS/);
+    expect(out).not.toMatch(/seed:/);
+    expect(mockSeedSymbol).not.toHaveBeenCalled();
+  });
+
+  it("surfaces seed errors without rolling back the watchlist row", async () => {
+    mockLayer.addToWatchlist.mockReturnValue({
+      symbol: "XYZ",
+      assetClass: "equity",
+      tags: [],
+      active: true,
+      addedAt: "2026-04-18",
+    });
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "XYZ",
+      skipped: false,
+      barsBefore: 0,
+      barsAfter: 0,
+      barsInserted: 0,
+      signalsInserted: 0,
+      error: "Rate limited by alpha_vantage",
+    });
+    const out = (await marketWatchlistAddTool.execute({
+      symbol: "XYZ",
+      asset_class: "equity",
+    })) as string;
+    expect(out).toMatch(/OK: added XYZ/);
+    expect(out).toMatch(/Rate limited/);
+    expect(out).toMatch(/market_watchlist_reseed/);
+  });
+
+  it("reports the skip reason when history is already sufficient", async () => {
+    mockLayer.addToWatchlist.mockReturnValue({
+      symbol: "SPY",
+      assetClass: "etf",
+      tags: [],
+      active: true,
+      addedAt: "2026-04-18",
+    });
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "SPY",
+      skipped: true,
+      barsBefore: 500,
+      barsAfter: 500,
+      barsInserted: 0,
+      signalsInserted: 0,
+    });
+    const out = (await marketWatchlistAddTool.execute({
+      symbol: "SPY",
+      asset_class: "etf",
+    })) as string;
+    expect(out).toMatch(/500 weekly bars already present/);
+  });
+});
+
+describe("marketWatchlistReseedTool", () => {
+  beforeEach(() => {
+    mockSeedSymbol.mockReset();
+  });
+
+  it("rejects empty symbol", async () => {
+    const out = (await marketWatchlistReseedTool.execute({})) as string;
+    expect(out).toMatch(/symbol is required/);
+  });
+
+  it("forwards min_bars override to seedSymbol", async () => {
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "TSLA",
+      skipped: false,
+      barsBefore: 0,
+      barsAfter: 200,
+      barsInserted: 200,
+      signalsInserted: 34,
+    });
+    await marketWatchlistReseedTool.execute({ symbol: "TSLA", min_bars: 150 });
+    expect(mockSeedSymbol).toHaveBeenCalledWith("TSLA", { minBars: 150 });
+  });
+
+  it("formats the seed result for the operator", async () => {
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "QQQ",
+      skipped: true,
+      barsBefore: 400,
+      barsAfter: 400,
+      barsInserted: 0,
+      signalsInserted: 0,
+    });
+    const out = (await marketWatchlistReseedTool.execute({
+      symbol: "QQQ",
+    })) as string;
+    expect(out).toMatch(/market_watchlist_reseed:/);
+    expect(out).toMatch(/QQQ: skipped/);
   });
 });

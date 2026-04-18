@@ -4,6 +4,7 @@
  * Premium tier $49.99/mo. 75 req/min. Rate limiter ceiling set to 60/min (80%).
  * Endpoints used:
  *   - TIME_SERIES_DAILY_ADJUSTED — daily OHLCV with split/div adjustment
+ *   - TIME_SERIES_WEEKLY_ADJUSTED — weekly OHLCV with split/div adjustment
  *   - TIME_SERIES_INTRADAY — 1/5/15/60 min bars
  *   - FX_DAILY — FX pair daily bars
  *   - GLOBAL_QUOTE — current snapshot
@@ -95,6 +96,38 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
       volume: parseInt(row["6. volume"], 10),
       provider: this.provider,
       interval: "daily" as const,
+    }));
+  }
+
+  async fetchWeekly(symbol: string, opts: FetchOpts): Promise<MarketBar[]> {
+    // TIME_SERIES_WEEKLY_ADJUSTED always returns full history (no outputsize).
+    // Bars are keyed by the Friday of each week.
+    const body = await this.request<Record<string, unknown>>(
+      "TIME_SERIES_WEEKLY_ADJUSTED",
+      { symbol },
+    );
+    const series = body["Weekly Adjusted Time Series"] as
+      | Record<string, Record<string, string>>
+      | undefined;
+    if (!series) {
+      throw new Error(
+        `AV weekly: unexpected shape, keys=${Object.keys(body).join(",")}`,
+      );
+    }
+    const entries = Object.entries(series)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .slice(-opts.lookback);
+    return entries.map(([date, row]) => ({
+      symbol,
+      timestamp: fromAlphaVantageDaily(date),
+      open: parseFloat(row["1. open"]),
+      high: parseFloat(row["2. high"]),
+      low: parseFloat(row["3. low"]),
+      close: parseFloat(row["4. close"]),
+      adjustedClose: parseFloat(row["5. adjusted close"]),
+      volume: parseInt(row["6. volume"], 10),
+      provider: this.provider,
+      interval: "weekly" as const,
     }));
   }
 

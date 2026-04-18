@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-18 (session 77 — F7 Alpha Combination Engine shipped). **Phase α shipped. Phase β in progress — 8/12 items done (F1–F6.5 + v7.13 + F7). F7.5 (backtester) up next. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
+> Last updated: 2026-04-18 (session 78 — weekly-first + watchlist auto-seed infrastructure shipped; F7 now runs on weekly bars over 10 symbols × 520 bars = 10 yr history). **Phase α shipped. Phase β in progress — 8/12 items done (F1–F6.5 + v7.13 + F7). F7.5 (backtester) up next, unblocked. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
 
 ## Status Key
 

@@ -246,6 +246,7 @@ export const FINANCE_TOOLS = [
   "market_watchlist_add",
   "market_watchlist_remove",
   "market_watchlist_list",
+  "market_watchlist_reseed",
   "market_budget_stats",
   "market_indicators",
   "market_scan",
@@ -413,7 +414,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     // v7.0 F1 finance — watchlist CRUD verbs (operator Decision 6 requirement)
     pattern:
-      /\b(agrega|añade|anade|quita|elimina|muestra|lista|trackea|add|remove|show|list|track)\b[^\n]{0,40}\b(watchlist|watch\s*list|ticker|symbol|s[ií]mbolo|acci[oó]n)\b/i,
+      /\b(agrega|añade|anade|quita|elimina|muestra|lista|trackea|add|remove|show|list|track|re-?seed|resembrar|re-?fetch|refresh|refrescar|re-?cargar|volver\s+a\s+cargar|volver\s+a\s+bajar)\b[^\n]{0,40}\b(watchlist|watch\s*list|ticker|symbol|s[ií]mbolo|acci[oó]n|historial)\b/i,
     group: "finance",
   },
   {

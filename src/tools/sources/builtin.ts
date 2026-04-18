@@ -149,6 +149,7 @@ import {
   marketWatchlistAddTool,
   marketWatchlistRemoveTool,
   marketWatchlistListTool,
+  marketWatchlistReseedTool,
   marketBudgetStatsTool,
   marketIndicatorsTool,
   marketScanTool,
@@ -261,6 +262,7 @@ const BUILTIN_TOOLS: Tool[] = [
   marketWatchlistAddTool,
   marketWatchlistRemoveTool,
   marketWatchlistListTool,
+  marketWatchlistReseedTool,
   marketBudgetStatsTool,
   // F2+F4 indicator engine + scan (v7.0 Phase β S2) — deferred, scope 'finance'
   marketIndicatorsTool,

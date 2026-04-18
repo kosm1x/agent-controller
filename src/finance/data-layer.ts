@@ -46,6 +46,11 @@ interface CacheEntry {
 }
 
 const DAILY_TTL_MS = 24 * 60 * 60 * 1000;
+// Weekly bars refresh Friday after close. A 5-day TTL guarantees the cache
+// expires before the next Friday no matter when it was populated (audit W4).
+const WEEKLY_TTL_MS = 5 * 24 * 60 * 60 * 1000;
+/** L2 freshness floor: accept stored rows if within 5% of the requested lookback. */
+const WEEKLY_L2_FRESHNESS_FLOOR = 0.95;
 const INTRADAY_TTL_MS = 10 * 60 * 1000;
 const MACRO_TTL_MS = 6 * 60 * 60 * 1000;
 /** Max L1 entries. Evicts oldest insert (FIFO) on overflow to bound memory. */
@@ -185,6 +190,98 @@ export class DataLayer {
     if (dbFallback.length > 0) {
       return dbFallback;
     }
+    throw new DataUnavailableError(attempts);
+  }
+
+  // -------------------------------------------------------------------------
+  // Weekly bars
+  // -------------------------------------------------------------------------
+
+  async getWeekly(
+    rawSymbol: string,
+    opts: { lookback: number },
+  ): Promise<FetchResult<MarketBar>> {
+    const symbol = normalizeSymbol(rawSymbol, "equity");
+    const key = `weekly:${symbol}:${opts.lookback}`;
+    const cached = this.l1Lookup(key, WEEKLY_TTL_MS);
+    if (cached) {
+      return { bars: cached, provider: cached[0]?.provider ?? "alpha_vantage" };
+    }
+
+    const dbRows = this.dbBars(symbol, "weekly", opts.lookback);
+    // Audit W4 round 1: accept L2 when count is within 5% of requested lookback.
+    // Exact-match-only would force a re-fetch for every call when DB is short
+    // by a single row — thrashes AV + burns through rate limit.
+    const l2Floor = Math.floor(opts.lookback * WEEKLY_L2_FRESHNESS_FLOOR);
+    if (dbRows.length >= l2Floor) {
+      const newest = dbRows[dbRows.length - 1]!;
+      const age = Date.now() - Date.parse(newest.timestamp);
+      if (age < WEEKLY_TTL_MS) {
+        this.l1Set(key, dbRows);
+        return { bars: dbRows, provider: newest.provider };
+      }
+    }
+
+    const existing = this.inflight.get(key);
+    if (existing) {
+      const bars = await existing;
+      return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
+    }
+
+    const fetchPromise = this.fetchWeeklyDispatch(
+      symbol,
+      opts.lookback,
+      dbRows,
+    );
+    this.inflight.set(key, fetchPromise);
+    try {
+      const bars = await fetchPromise;
+      this.l1Set(key, bars);
+      const stale = bars.length > 0 && bars === dbRows;
+      return {
+        bars,
+        provider: bars[0]?.provider ?? "alpha_vantage",
+        stale: stale ? true : undefined,
+      };
+    } finally {
+      this.inflight.delete(key);
+    }
+  }
+
+  private async fetchWeeklyDispatch(
+    symbol: string,
+    lookback: number,
+    dbFallback: MarketBar[],
+  ): Promise<MarketBar[]> {
+    const attempts: { provider: Provider; reason: string }[] = [];
+
+    if (this.av?.fetchWeekly && canCall("alpha_vantage")) {
+      try {
+        const bars = await this.av.fetchWeekly(symbol, { lookback });
+        this.persistBars(bars);
+        return bars;
+      } catch (err) {
+        attempts.push({
+          provider: "alpha_vantage",
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else if (this.av?.fetchWeekly) {
+      attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
+    } else {
+      attempts.push({
+        provider: "alpha_vantage",
+        reason: "weekly endpoint not supported",
+      });
+    }
+
+    // Polygon weekly fallback is not implemented at F1 — skip.
+    attempts.push({
+      provider: "polygon",
+      reason: "weekly endpoint not supported",
+    });
+
+    if (dbFallback.length > 0) return dbFallback;
     throw new DataUnavailableError(attempts);
   }
 
@@ -452,19 +549,38 @@ export class DataLayer {
   }
 
   private dbDaily(symbol: string, lookback: number): MarketBar[] {
+    return this.dbBars(symbol, "daily", lookback);
+  }
+
+  /**
+   * Generalized L2 read. Caller picks the interval; SQL filter matches.
+   * Used by getDaily / getWeekly; getIntraday goes through a separate path
+   * because intraday bars are never persisted to L2 (TTL too short).
+   *
+   * Ordering invariant: `ORDER BY timestamp DESC LIMIT ?` + `.reverse()` means
+   * the returned slice always ENDS with the newest bar available. Callers
+   * that check the L2 freshness floor (getWeekly) rely on this to guarantee
+   * the most recent bar is present whenever the returned length clears the
+   * floor. Do not change the ORDER clause without updating those callers.
+   */
+  private dbBars(
+    symbol: string,
+    interval: "daily" | "weekly" | "monthly",
+    lookback: number,
+  ): MarketBar[] {
     const db = getDatabase();
     const rows = db
       .prepare(
         `SELECT symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close
          FROM market_data
-         WHERE symbol=? AND interval='daily'
+         WHERE symbol=? AND interval=?
          ORDER BY timestamp DESC
          LIMIT ?`,
       )
-      .all(symbol, lookback) as {
+      .all(symbol, interval, lookback) as {
       symbol: string;
       provider: Provider;
-      interval: "daily";
+      interval: "daily" | "weekly" | "monthly";
       timestamp: string;
       open: number;
       high: number;
@@ -473,7 +589,6 @@ export class DataLayer {
       volume: number;
       adjusted_close: number | null;
     }[];
-    // Return ascending
     return rows
       .map((r) => ({
         symbol: r.symbol,
@@ -498,37 +613,44 @@ export class DataLayer {
         (symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    let prev: MarketBar | undefined;
-    const prevVols: number[] = [];
-    for (const bar of bars) {
-      const outcome = validateMarketBar(bar, {
-        previousBar: prev,
-        previousVolumes: prevVols.slice(-5),
-      });
-      if (!outcome.valid) {
-        recordBudget({
-          provider: bar.provider,
-          endpoint: "validate",
-          status: "error",
+    // Audit C2 round 1: wrap inserts in a single transaction. Without this,
+    // each insert.run is an implicit auto-commit → fsync-per-row. Auto-seed
+    // writes ~520 weekly bars × 10 symbols on first-use; non-transactional
+    // writes block the LLM tool dispatch loop for multiple seconds.
+    const tx = db.transaction((all: MarketBar[]) => {
+      let prev: MarketBar | undefined;
+      const prevVols: number[] = [];
+      for (const bar of all) {
+        const outcome = validateMarketBar(bar, {
+          previousBar: prev,
+          previousVolumes: prevVols.slice(-5),
         });
-        continue; // Skip invalid; don't poison the table
+        if (!outcome.valid) {
+          recordBudget({
+            provider: bar.provider,
+            endpoint: "validate",
+            status: "error",
+          });
+          continue; // Skip invalid; don't poison the table
+        }
+        insert.run(
+          bar.symbol,
+          bar.provider,
+          bar.interval,
+          bar.timestamp,
+          bar.open,
+          bar.high,
+          bar.low,
+          bar.close,
+          bar.volume,
+          bar.adjustedClose ?? null,
+        );
+        prev = bar;
+        prevVols.push(bar.volume);
+        if (prevVols.length > 10) prevVols.shift();
       }
-      insert.run(
-        bar.symbol,
-        bar.provider,
-        bar.interval,
-        bar.timestamp,
-        bar.open,
-        bar.high,
-        bar.low,
-        bar.close,
-        bar.volume,
-        bar.adjustedClose ?? null,
-      );
-      prev = bar;
-      prevVols.push(bar.volume);
-      if (prevVols.length > 10) prevVols.shift();
-    }
+    });
+    tx(bars);
   }
 }
 

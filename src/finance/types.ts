@@ -164,6 +164,8 @@ export interface MarketDataAdapter {
     interval: IntradayInterval,
     opts: FetchOpts,
   ): Promise<MarketBar[]>;
+  /** Weekly OHLCV bars. AV has TIME_SERIES_WEEKLY_ADJUSTED. Others optional. */
+  fetchWeekly?(symbol: string, opts: FetchOpts): Promise<MarketBar[]>;
   /** FX pair daily bars. Only AV has this at F1. Polygon skips. */
   fetchFxDaily?(
     from: string,

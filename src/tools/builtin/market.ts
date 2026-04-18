@@ -12,6 +12,11 @@ import type { AssetClass, MacroPoint, MarketBar } from "../../finance/types.js";
 import { budgetSummary } from "../../finance/budget.js";
 import { currentWindow, ceilings } from "../../finance/rate-limit.js";
 import {
+  seedSymbol,
+  formatSeedResult,
+  WATCHLIST_SEED_DEFAULTS,
+} from "../../finance/watchlist-seed.js";
+import {
   sma,
   ema,
   rsi,
@@ -269,19 +274,98 @@ rejects if projected daily API usage would exceed the Alpha Vantage tier ceiling
     if (!symbol || !assetClass) {
       return JSON.stringify({ error: "symbol and asset_class are required" });
     }
+    let row;
     try {
-      const row = getDataLayer().addToWatchlist({
+      row = getDataLayer().addToWatchlist({
         symbol,
         assetClass,
         name: args.name as string | undefined,
         tags: args.tags as string[] | undefined,
         notes: args.notes as string | undefined,
       });
-      const tagStr = row.tags.length ? ` [${row.tags.join(", ")}]` : "";
-      return `OK: added ${row.symbol} (${row.assetClass})${tagStr}${row.notes ? ` — ${row.notes}` : ""}`;
     } catch (err) {
       return `ERROR: could not add — ${err instanceof Error ? err.message : err}`;
     }
+    const tagStr = row.tags.length ? ` [${row.tags.join(", ")}]` : "";
+    const head = `OK: added ${row.symbol} (${row.assetClass})${tagStr}${row.notes ? ` — ${row.notes}` : ""}`;
+
+    // Auto-seed weekly history + signals for OHLCV-bearing asset classes.
+    // Macro and crypto are skipped: macro is date-only via FRED/AV macro
+    // endpoints, crypto is deferred to F10. The watchlist row is never
+    // rolled back on seed failure — operator can retry via market_watchlist_reseed.
+    const seedable: AssetClass[] = ["equity", "etf", "fx", "commodity"];
+    if (!seedable.includes(row.assetClass)) return head;
+
+    const seed = await seedSymbol(row.symbol, {
+      minBars: WATCHLIST_SEED_DEFAULTS.minBars,
+    });
+    if (seed.error) {
+      console.warn(
+        `[market_watchlist_add] seed error for ${row.symbol}: ${seed.error}`,
+      );
+      return `${head}\nseed: ${seed.error} (bars ${seed.barsBefore} → ${seed.barsAfter}). Retry with market_watchlist_reseed.`;
+    }
+    if (seed.skipped) {
+      return `${head}\nseed: ${seed.barsBefore} weekly bars already present — skipped`;
+    }
+    return `${head}\nseed: +${seed.barsInserted} weekly bars, +${seed.signalsInserted} signals`;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// market_watchlist_reseed
+// ---------------------------------------------------------------------------
+
+export const marketWatchlistReseedTool: Tool = {
+  name: "market_watchlist_reseed",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "market_watchlist_reseed",
+      description: `Refresh a symbol's weekly history + signals. Idempotent —
+skips if the symbol already has ≥300 weekly bars. Otherwise fetches via
+DataLayer.getWeekly, persists bars, re-runs detectAllSignals, persists firings.
+
+USE WHEN:
+- A prior market_watchlist_add returned a seed error (provider down, rate limit)
+- User explicitly asks to "refresh" or "re-seed" a symbol's history
+- After a long gap where the daily quote seed is stale
+
+NOT WHEN:
+- User wants the current price (use market_quote)
+- User wants indicators (use market_indicators)
+
+Output: one line with bars inserted + signals inserted, or skip reason.`,
+      parameters: {
+        type: "object",
+        properties: {
+          symbol: {
+            type: "string",
+            description:
+              "Ticker already in the watchlist. Equity/ETF/FX only; macro is skipped.",
+          },
+          min_bars: {
+            type: "number",
+            description: `Minimum weekly bars required to skip re-fetch. Default ${WATCHLIST_SEED_DEFAULTS.minBars}.`,
+          },
+        },
+        required: ["symbol"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const rawSymbol = args.symbol as string | undefined;
+    if (!rawSymbol) {
+      return "market_watchlist_reseed: symbol is required";
+    }
+    const minBars =
+      typeof args.min_bars === "number"
+        ? Math.max(1, Math.floor(args.min_bars))
+        : WATCHLIST_SEED_DEFAULTS.minBars;
+    const result = await seedSymbol(rawSymbol, { minBars });
+    return `market_watchlist_reseed:\n${formatSeedResult(result)}`;
   },
 };
 

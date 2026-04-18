@@ -26,6 +26,7 @@ import {
   type AlphaRunSignalResult,
   F7CorrelatedSignalsError,
   F7ConfigError,
+  F7_DEFAULTS,
 } from "../../finance/alpha-combination.js";
 import type { BarRow, FiringRow } from "../../finance/alpha-matrix.js";
 import {
@@ -67,7 +68,7 @@ function loadBarsInWindow(windowStart: string): BarRow[] {
     .prepare(
       `SELECT symbol, timestamp, close
          FROM market_data
-         WHERE interval = 'daily'
+         WHERE interval = 'weekly'
            AND substr(timestamp, 1, 10) >= ?
          ORDER BY timestamp ASC`,
     )
@@ -142,8 +143,8 @@ export const alphaRunTool: Tool = {
     function: {
       name: "alpha_run",
       description: `Run the F7 alpha combination engine — 11-step FLAM pipeline over
-the last 250 trading days of market_signals + market_data, producing
-weighted signal combination with per-signal ISQ dimensions.
+the last 104 weekly bars (2 years) of market_signals + market_data,
+producing weighted signal combination with per-signal ISQ dimensions.
 
 USE WHEN:
 - User asks for combined signal / megaalpha / alpha weights for today
@@ -180,17 +181,17 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
           window_m: {
             type: "number",
             description:
-              "Historical window size in trading days. Default 250 (1 year).",
+              "Historical window size in weekly bars. Default 104 (2 years).",
           },
           window_d: {
             type: "number",
             description:
-              "Forward-expected-return lookback. Default 20 (1 month).",
+              "Forward-expected-return lookback in weekly bars. Default 8 (~2 months).",
           },
           horizon: {
             type: "number",
             description:
-              "Forward-return bars per firing. Default 1 (next-day).",
+              "Forward-return bars per firing (weekly). Default 1 (next-week).",
           },
         },
         required: [],
@@ -209,16 +210,27 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
     }
     const asOf = rawAsOf ?? todayInNewYork();
     const windowM =
-      typeof args.window_m === "number" ? Math.floor(args.window_m) : 250;
+      typeof args.window_m === "number"
+        ? Math.floor(args.window_m)
+        : F7_DEFAULTS.windowM;
     const windowD =
-      typeof args.window_d === "number" ? Math.floor(args.window_d) : 20;
+      typeof args.window_d === "number"
+        ? Math.floor(args.window_d)
+        : F7_DEFAULTS.windowD;
     const horizon =
-      typeof args.horizon === "number" ? Math.floor(args.horizon) : 1;
+      typeof args.horizon === "number"
+        ? Math.floor(args.horizon)
+        : F7_DEFAULTS.horizon;
 
-    // Compute window-start date. 250 trading days ≈ 354 calendar days (~72
-    // weekends + ~10 holidays), so a naive `windowM + 14` pad shortchanges
-    // the SQL substr filter. Use 1.5× ratio + horizon buffer (audit R3).
-    const padDays = Math.ceil(windowM * 1.5) + horizon + 14;
+    // Weekly-bar mode: 1 bar ≈ 7 calendar days. Pad generously to catch AV's
+    // Friday-keyed weeks across holiday weeks, plus horizon for forward return.
+    // (When this tool was daily-mode the ratio was 1.5×; weekly bars need 7×.)
+    // Audit W2 round 1: 60-day floor protects small-windowM edge cases where
+    // ceil(windowM*7*1.1) alone leaves <2 months of lookback.
+    const padDays = Math.max(
+      60,
+      Math.ceil(windowM * 7 * 1.1) + horizon * 7 + 14,
+    );
     const start = new Date(asOf + "T12:00:00Z");
     start.setUTCDate(start.getUTCDate() - padDays);
     const windowStart = start.toISOString().slice(0, 10);

@@ -43,9 +43,12 @@ function makeDays(asOf: string, count: number): string[] {
 function seedBarsAndFirings(daysBack = 30) {
   const asOf = "2026-04-17";
   const days = makeDays(asOf, daysBack);
+  // F7 runs on weekly bars (operator lock 2026-04-18). This helper seeds
+  // synthetic weekly bars with the test's relative dates — spacing doesn't
+  // matter for the pipeline (it groups by date), interval label must match.
   const insertBar = db.prepare(
     `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
-     VALUES (?, 'alpha_vantage', 'daily', ?, ?, ?, ?, ?, 100000)`,
+     VALUES (?, 'alpha_vantage', 'weekly', ?, ?, ?, ?, ?, 100000)`,
   );
   const insertSignal = db.prepare(
     `INSERT INTO market_signals (symbol, signal_type, direction, strength, triggered_at)

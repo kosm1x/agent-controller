@@ -45,9 +45,12 @@ import {
 // Config + defaults
 // ---------------------------------------------------------------------------
 
+// F7 operates on weekly bars (operator lock, 2026-04-18). All window units below
+// are in weekly bars: windowM=104 → 2 years of history; windowD=8 → ~2 months
+// momentum lookback; horizon=1 week forward return.
 export const F7_DEFAULTS = {
-  windowM: 250,
-  windowD: 20,
+  windowM: 104,
+  windowD: 8,
   horizon: 1,
   /** σ below this is considered flat → exclude from pipeline. */
   flatVarianceEpsilon: 1e-6,

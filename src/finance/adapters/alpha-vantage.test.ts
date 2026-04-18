@@ -26,6 +26,12 @@ import { __resetForTests } from "../rate-limit.js";
 const avDailySpy = JSON.parse(
   readFileSync(resolve(__dirname, "../__fixtures__/av-daily-spy.json"), "utf8"),
 );
+const avWeeklySpy = JSON.parse(
+  readFileSync(
+    resolve(__dirname, "../__fixtures__/av-weekly-spy.json"),
+    "utf8",
+  ),
+);
 
 function okResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -57,6 +63,40 @@ describe("AlphaVantageAdapter", () => {
     expect(bars[2].volume).toBe(52345678);
     expect(bars[2].provider).toBe("alpha_vantage");
     expect(bars[2].interval).toBe("daily");
+  });
+
+  it("fetches TIME_SERIES_WEEKLY_ADJUSTED and normalizes timestamps", async () => {
+    const fakeFetch = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(okResponse(avWeeklySpy)),
+      ) as unknown as typeof fetch;
+    const adapter = new AlphaVantageAdapter("test-key", fakeFetch);
+    const bars = await adapter.fetchWeekly!("SPY", { lookback: 100 });
+    // 3 bars in fixture, all within lookback
+    expect(bars).toHaveLength(3);
+    // Sorted ascending, first bar is oldest week
+    expect(bars[0]!.timestamp.startsWith("2026-04-03T16:00:00")).toBe(true);
+    expect(bars[2]!.timestamp.startsWith("2026-04-17T16:00:00")).toBe(true);
+    expect(bars[2]!.close).toBe(523.45);
+    expect(bars[2]!.adjustedClose).toBe(523.45);
+    expect(bars[2]!.volume).toBe(152470391);
+    expect(bars[2]!.provider).toBe("alpha_vantage");
+    expect(bars[2]!.interval).toBe("weekly");
+    // AV returns full history; lookback slices the tail
+    const bars1 = await adapter.fetchWeekly!("SPY", { lookback: 1 });
+    expect(bars1).toHaveLength(1);
+    expect(bars1[0]!.timestamp.startsWith("2026-04-17")).toBe(true);
+  });
+
+  it("fetchWeekly throws on unexpected shape", async () => {
+    const fakeFetch = vi
+      .fn()
+      .mockResolvedValue(okResponse({})) as unknown as typeof fetch;
+    const adapter = new AlphaVantageAdapter("test-key", fakeFetch);
+    await expect(adapter.fetchWeekly!("SPY", { lookback: 10 })).rejects.toThrow(
+      /AV weekly: unexpected shape/,
+    );
   });
 
   it("fetches TIME_SERIES_INTRADAY (5min)", async () => {

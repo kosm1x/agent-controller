@@ -188,6 +188,54 @@ describe("DataLayer", () => {
     expect((av.fetchDaily as any).mock.calls.length).toBe(1);
   });
 
+  it("getWeekly routes to AV fetchWeekly and persists bars with interval='weekly'", async () => {
+    const weeklyBars = [
+      makeBar({
+        timestamp: "2026-04-10T16:00:00-04:00",
+        interval: "weekly",
+        close: 518.2,
+      }),
+      makeBar({
+        timestamp: "2026-04-17T16:00:00-04:00",
+        interval: "weekly",
+        close: 523.45,
+      }),
+    ];
+    const av = Object.create(AlphaVantageAdapter.prototype);
+    av.provider = "alpha_vantage";
+    av.fetchWeekly = vi.fn().mockResolvedValue(weeklyBars);
+    const layer = new DataLayer(av as AlphaVantageAdapter, null, null);
+    const res = await layer.getWeekly("SPY", { lookback: 2 });
+    expect(res.bars).toHaveLength(2);
+    expect(res.bars[0]!.interval).toBe("weekly");
+    expect(res.bars[1]!.close).toBe(523.45);
+
+    // Verify L2 persistence at interval='weekly'
+    const rows = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM market_data WHERE symbol='SPY' AND interval='weekly'",
+      )
+      .get() as { n: number };
+    expect(rows.n).toBe(2);
+    // Daily rows must not have been written
+    const dailyRows = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM market_data WHERE symbol='SPY' AND interval='daily'",
+      )
+      .get() as { n: number };
+    expect(dailyRows.n).toBe(0);
+  });
+
+  it("getWeekly throws DataUnavailable when AV has no fetchWeekly impl", async () => {
+    const av = Object.create(AlphaVantageAdapter.prototype);
+    av.provider = "alpha_vantage";
+    // Deliberately absent: av.fetchWeekly
+    const layer = new DataLayer(av as AlphaVantageAdapter, null, null);
+    await expect(
+      layer.getWeekly("SPY", { lookback: 2 }),
+    ).rejects.toBeInstanceOf(DataUnavailableError);
+  });
+
   it("addToWatchlist normalizes symbol and persists asset_class", () => {
     const layer = new DataLayer(null, null, null);
     const row = layer.addToWatchlist({

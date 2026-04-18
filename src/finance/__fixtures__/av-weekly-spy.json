@@ -1,0 +1,37 @@
+{
+  "Meta Data": {
+    "1. Information": "Weekly Adjusted Prices and Volumes",
+    "2. Symbol": "SPY",
+    "3. Last Refreshed": "2026-04-17",
+    "4. Time Zone": "US/Eastern"
+  },
+  "Weekly Adjusted Time Series": {
+    "2026-04-17": {
+      "1. open": "521.50",
+      "2. high": "524.20",
+      "3. low": "516.80",
+      "4. close": "523.45",
+      "5. adjusted close": "523.45",
+      "6. volume": "152470391",
+      "7. dividend amount": "0.0000"
+    },
+    "2026-04-10": {
+      "1. open": "512.30",
+      "2. high": "519.80",
+      "3. low": "509.15",
+      "4. close": "518.20",
+      "5. adjusted close": "518.20",
+      "6. volume": "148203456",
+      "7. dividend amount": "0.0000"
+    },
+    "2026-04-03": {
+      "1. open": "506.75",
+      "2. high": "514.60",
+      "3. low": "504.20",
+      "4. close": "511.90",
+      "5. adjusted close": "511.90",
+      "6. volume": "143829501",
+      "7. dividend amount": "1.7523"
+    }
+  }
+}
