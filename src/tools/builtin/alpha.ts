@@ -200,7 +200,14 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const mode = (args.mode as "returns" | "probability") ?? "returns";
-    const asOf = (args.as_of as string) ?? todayInNewYork();
+    // Audit W2 round 3: validate as_of at the tool boundary. An invalid string
+    // would otherwise flow into resolveTradingPeriods and silently accept all
+    // bars (lexicographic compare), or throw a generic RangeError.
+    const rawAsOf = args.as_of as string | undefined;
+    if (rawAsOf != null && !/^\d{4}-\d{2}-\d{2}$/.test(rawAsOf)) {
+      return `alpha_run: as_of must be YYYY-MM-DD (got '${rawAsOf}'). Omit to default to today in America/New_York.`;
+    }
+    const asOf = rawAsOf ?? todayInNewYork();
     const windowM =
       typeof args.window_m === "number" ? Math.floor(args.window_m) : 250;
     const windowD =
@@ -240,12 +247,32 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
         horizon,
       });
     } catch (err) {
+      // Audit W1 round 3: emit structured context on failure so the DB isn't
+      // the only forensic surface. console.warn pipes through pino/journald.
       if (err instanceof F7ConfigError) {
+        console.warn(
+          `[alpha_run] config error: ${err.message}`,
+          JSON.stringify({ mode, asOf, windowM, windowD, horizon }),
+        );
         return `alpha_run: config error — ${err.message}`;
       }
       if (err instanceof F7CorrelatedSignalsError) {
+        console.warn(
+          `[alpha_run] correlation guard exhausted`,
+          JSON.stringify({
+            mode,
+            asOf,
+            windowM,
+            excludedCount: err.excluded.length,
+            excluded: err.excluded,
+          }),
+        );
         return `alpha_run: correlation guard exhausted after 3 exclusions. Excluded signals: ${err.excluded.join(", ") || "(none)"}. No weights persisted.`;
       }
+      console.warn(
+        `[alpha_run] unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+        JSON.stringify({ mode, asOf, windowM, windowD, horizon }),
+      );
       return `alpha_run: ${err instanceof Error ? err.message : String(err)}`;
     }
 
@@ -254,6 +281,21 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
     }
 
     const stats = persistAlphaRun(result);
+    // Audit W1 round 3: log success with structured metrics for forensic
+    // traceability. F8 paper-trading will rely on this signal trail if a
+    // downstream decision turns out to be based on a stale/bad weight.
+    console.log(
+      `[alpha_run] ok run_id=${result.runId}`,
+      JSON.stringify({
+        mode: result.mode,
+        N: result.N,
+        excluded: result.NExcluded,
+        n_effective: Number(result.NEffective.toFixed(3)),
+        regime: result.regime,
+        durationMs: result.durationMs,
+        persisted: stats.weightsInserted,
+      }),
+    );
     const summary = formatRunSummary(result);
     return `${summary}\n  persisted: ${stats.weightsInserted} weight rows, ${stats.isqInserted} isq rows`;
   },

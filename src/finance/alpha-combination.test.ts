@@ -92,6 +92,11 @@ describe("runAlphaCombination — config validation", () => {
       F7ConfigError,
     );
   });
+  it("throws F7ConfigError when horizon < 1 (audit S2 round 3)", () => {
+    expect(() => runAlphaCombination(baseOpts({ horizon: 0 }))).toThrow(
+      F7ConfigError,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

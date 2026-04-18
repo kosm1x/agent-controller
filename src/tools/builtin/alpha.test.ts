@@ -123,6 +123,13 @@ describe("alphaRunTool", () => {
     expect(out).toContain("config error");
   });
 
+  it("rejects malformed as_of at tool boundary (audit W2 round 3)", async () => {
+    const out = (await alphaRunTool.execute({
+      as_of: "banana",
+    })) as string;
+    expect(out).toMatch(/as_of must be YYYY-MM-DD/);
+  });
+
   it("defaults as_of to today-in-NY when omitted", async () => {
     seedBarsAndFirings();
     // Should not throw; just verify it ran
