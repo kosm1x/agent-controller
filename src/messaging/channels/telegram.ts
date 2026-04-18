@@ -195,14 +195,26 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.bot) return; // Shutdown happened during delay — abort restart
       try {
         await this.bot.api.deleteWebhook({ drop_pending_updates: true });
-        this.bot.start({
-          drop_pending_updates: true,
-          onStart: () => {
-            console.log("[telegram] Polling restarted successfully");
-            this.pollingActive = true;
-            this.restartAttempts = 0; // Reset on success
-          },
-        });
+        // Attach .catch for the same reason as the initial start() —
+        // polling-infra errors reject the promise and would otherwise go
+        // unhandled. Route them back into restartPolling() via backoff.
+        this.bot
+          .start({
+            drop_pending_updates: true,
+            onStart: () => {
+              console.log("[telegram] Polling restarted successfully");
+              this.pollingActive = true;
+              this.restartAttempts = 0; // Reset on success
+            },
+          })
+          .catch((err) => {
+            console.error(
+              "[telegram] Polling loop died after restart:",
+              err instanceof Error ? err.message : err,
+            );
+            this.pollingActive = false;
+            this.restartPolling();
+          });
       } catch (err) {
         console.error(
           "[telegram] Polling restart failed:",
@@ -235,14 +247,30 @@ export class TelegramAdapter implements ChannelAdapter {
     // Clear any stale polling sessions
     await this.bot.api.deleteWebhook({ drop_pending_updates: true });
 
-    // Start polling in background — don't await (it resolves only on stop)
-    this.bot.start({
-      drop_pending_updates: true,
-      onStart: () => {
-        console.log("[telegram] Polling started");
-        this.pollingActive = true;
-      },
-    });
+    // Start polling in background — don't await (it resolves only on stop).
+    // The .catch below is load-bearing: grammy's `bot.catch(...)` handles
+    // MIDDLEWARE errors (inside command/message handlers), NOT polling-infra
+    // errors from getUpdates. A 409 Conflict on getUpdates rejects the
+    // start() promise, and without this .catch the rejection becomes an
+    // `unhandled rejection` — the polling loop dies silently and Telegram
+    // stays dead until a manual systemd restart. Route the rejection into
+    // the same restartPolling() path middleware errors already use.
+    this.bot
+      .start({
+        drop_pending_updates: true,
+        onStart: () => {
+          console.log("[telegram] Polling started");
+          this.pollingActive = true;
+        },
+      })
+      .catch((err) => {
+        console.error(
+          "[telegram] Polling loop died:",
+          err instanceof Error ? err.message : err,
+        );
+        this.pollingActive = false;
+        this.restartPolling();
+      });
 
     // Give polling a moment to confirm no 409
     await new Promise((r) => setTimeout(r, 2000));
