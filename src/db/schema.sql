@@ -491,7 +491,7 @@ CREATE TABLE IF NOT EXISTS signal_weights (
   regime          TEXT,                                        -- F5 regime label or null
   n_effective     REAL,                                        -- 1 / Σw² redundant per row for queryability
   excluded        INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0,1)),
-  exclude_reason  TEXT,                                        -- 'ic_le_zero','flat_variance','missing_data','singular'
+  exclude_reason  TEXT,                                        -- 'missing_data','ic_le_zero','flat_variance','correlated','singular'
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   -- Audit W5: one signal_key per run_id; prevents accidental double-writes.
   UNIQUE(run_id, signal_key)

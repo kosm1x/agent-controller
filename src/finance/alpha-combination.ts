@@ -175,6 +175,12 @@ export function runAlphaCombination(opts: RunAlphaOpts): AlphaRunResult {
       `windowD must be in [1, windowM] (got ${windowD} for M=${windowM}).`,
     );
   }
+  // Audit S2 round 3: surface horizon error via F7ConfigError so the tool
+  // handler classifies it alongside the other config-error responses rather
+  // than falling through to the generic catch branch.
+  if (horizon < 1) {
+    throw new F7ConfigError(`horizon must be >= 1 (got ${horizon}).`);
+  }
 
   const runId = opts.runId ?? randomUUID();
   const runTimestamp = new Date().toISOString();
