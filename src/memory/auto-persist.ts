@@ -149,7 +149,10 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "market_signals" ||
         t === "prediction_markets" ||
         t === "whale_trades" ||
-        t === "sentiment_snapshot",
+        t === "sentiment_snapshot" ||
+        t === "alpha_run" ||
+        t === "alpha_latest" ||
+        t === "alpha_explain",
     )
   )
     return true;
