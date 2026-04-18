@@ -161,6 +161,12 @@ export class TelegramAdapter implements ChannelAdapter {
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
   private pollingActive = false;
   private restartAttempts = 0;
+  // Audit W1 round 1: guards against a single failure incrementing the
+  // restart counter twice (e.g. synchronous throw + async .catch both firing).
+  private restartScheduled = false;
+  // Audit W2 round 1: suppresses the "giving up" log when stop() closed the
+  // bot on purpose. Set in stop(), checked at restartPolling() entry.
+  private shuttingDown = false;
   private static readonly MAX_RESTART_ATTEMPTS = 5;
 
   /** Expose bot instance for streaming controller. */
@@ -175,6 +181,16 @@ export class TelegramAdapter implements ChannelAdapter {
 
   /** Restart polling after a fatal error. Caps at 5 attempts, then gives up. */
   private restartPolling(): void {
+    // Shutdown: silently exit. stop() already set shuttingDown + nulled bot.
+    if (this.shuttingDown) {
+      this.pollingActive = false;
+      return;
+    }
+    // Re-entry guard (audit W1): if a restart is already scheduled, drop
+    // duplicate calls rather than double-incrementing the counter. A single
+    // failure that fires both `bot.start().catch` and the outer `try/catch`
+    // would otherwise burn through two attempt slots per real failure.
+    if (this.restartScheduled) return;
     if (
       this.restartAttempts >= TelegramAdapter.MAX_RESTART_ATTEMPTS ||
       !this.bot
@@ -187,11 +203,13 @@ export class TelegramAdapter implements ChannelAdapter {
     }
     this.restartAttempts++;
     this.pollingActive = false;
+    this.restartScheduled = true;
     const delay = Math.min(5000 * this.restartAttempts, 30_000);
     console.warn(
       `[telegram] Restarting polling in ${delay}ms (attempt ${this.restartAttempts}/${TelegramAdapter.MAX_RESTART_ATTEMPTS})`,
     );
     setTimeout(async () => {
+      this.restartScheduled = false;
       if (!this.bot) return; // Shutdown happened during delay — abort restart
       try {
         await this.bot.api.deleteWebhook({ drop_pending_updates: true });
@@ -502,6 +520,11 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    // Audit W2 round 1: signal shutdown BEFORE bot.stop() so any late
+    // start() rejection that fires during teardown is silently absorbed
+    // by restartPolling() instead of logging "giving up".
+    this.shuttingDown = true;
+    this.pollingActive = false;
     if (this.bot) {
       this.bot.stop();
       this.bot = null;
