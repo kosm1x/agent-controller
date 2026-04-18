@@ -259,6 +259,9 @@ export const FINANCE_TOOLS = [
 /** v7.13 KB ingestion tools — scope-gated on ingest/parse/extract + PDF/tables vocab. */
 export const KB_INGEST_TOOLS = ["kb_ingest_pdf_structured", "kb_batch_insert"];
 
+/** F7 alpha combination tools — scope-gated on alpha/combination/megaalpha/weights vocab. */
+export const ALPHA_TOOLS = ["alpha_run", "alpha_latest", "alpha_explain"];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -470,6 +473,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(ingest|ingerir|ingesta|parse|parsear|extract|extraer|import|importar)\b[^\n]{0,40}\b(pdf|\.pdf|10-?k|earnings\s+(?:call|report|transcript)?|filing|research\s+paper|academic\s+paper)\b|\bkb[_\s]?(?:ingest|batch)\b/i,
     group: "kb_ingest",
+  },
+  {
+    // v7.0 F7 alpha combination — activation on alpha/combination/megaalpha
+    // vocabulary. Requires a strong signal-weights context so `alpha version`
+    // / `alpha release` don't activate. ES + EN coverage.
+    pattern:
+      /\b(alpha[_\s-]?(?:run|latest|explain|combination|engine)|mega[_\s-]?alpha|megaalpha|signal[_\s-]?weights?|combin(?:e|ar|aci[oó]n)\s+(?:signals?|se[nñ]ales?)|pondera(?:ci[oó]n|r)\s+(?:signals?|se[nñ]ales?)|pesos?\s+de\s+se[nñ]ales?)\b/i,
+    group: "alpha",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -720,6 +731,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("kb_ingest")) {
     tools.push(...KB_INGEST_TOOLS);
+  }
+  if (activeGroups.has("alpha")) {
+    tools.push(...ALPHA_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

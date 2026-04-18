@@ -162,6 +162,11 @@ import {
   kbIngestPdfStructuredTool,
   kbBatchInsertTool,
 } from "../builtin/kb-ingest.js";
+import {
+  alphaRunTool,
+  alphaLatestTool,
+  alphaExplainTool,
+} from "../builtin/alpha.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -270,6 +275,10 @@ const BUILTIN_TOOLS: Tool[] = [
   // v7.13 structured PDF ingestion + batch insert (Phase β S5) — deferred, scope 'kb_ingest'
   kbIngestPdfStructuredTool,
   kbBatchInsertTool,
+  // F7 alpha combination engine (v7.0 Phase β S6) — deferred, scope 'alpha'
+  alphaRunTool,
+  alphaLatestTool,
+  alphaExplainTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

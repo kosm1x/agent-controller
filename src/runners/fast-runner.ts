@@ -318,6 +318,8 @@ export const WRITE_TOOLS = new Set([
   // v7.13 KB ingestion writes (Phase β S5)
   "kb_ingest_pdf_structured",
   "kb_batch_insert",
+  // F7 alpha combination write (Phase β S6) — persists to signal_weights + signal_isq
+  "alpha_run",
 ]);
 
 /**

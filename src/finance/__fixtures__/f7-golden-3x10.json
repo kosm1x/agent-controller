@@ -1,0 +1,59 @@
+{
+  "description": "F7 alpha combination golden fixture. Do NOT edit by hand — regenerate via generate-f7-golden.ts if the pipeline math changes intentionally.",
+  "generatedAt": "2026-04-18T16:13:06.614Z",
+  "inputs": {
+    "asOf": "2026-04-17",
+    "windowM": 20,
+    "windowD": 12,
+    "horizon": 1,
+    "minFiringsForIc": 5,
+    "watchlistSize": 10,
+    "regime": "bull",
+    "symbols": [
+      "AAPL",
+      "TSLA",
+      "NVDA"
+    ],
+    "firingsCount": 30,
+    "barsCount": 60
+  },
+  "expected": {
+    "N": 3,
+    "NExcluded": 1,
+    "NEffective": 1.9410981741899347,
+    "mode": "returns",
+    "regime": "bull",
+    "signals": [
+      {
+        "signalKey": "ma_crossover:AAPL",
+        "weight": 0.5870984912976535,
+        "epsilon": 0.12388945566388257,
+        "sigma": 0.005336813545691664,
+        "eNorm": -0.048478394775648255,
+        "ic30d": 0.0025388967254362516,
+        "excluded": false,
+        "excludeReason": null
+      },
+      {
+        "signalKey": "ma_crossover:NVDA",
+        "weight": 0.4129015087023466,
+        "epsilon": 0.1238894556638778,
+        "sigma": 0.0075883355109536066,
+        "eNorm": 0.29625730610341533,
+        "ic30d": 0.004657141035951939,
+        "excluded": false,
+        "excludeReason": null
+      },
+      {
+        "signalKey": "ma_crossover:TSLA",
+        "weight": 0,
+        "epsilon": null,
+        "sigma": null,
+        "eNorm": null,
+        "ic30d": -0.0010018512216412923,
+        "excluded": true,
+        "excludeReason": "ic_le_zero"
+      }
+    ]
+  }
+}

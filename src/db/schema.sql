@@ -468,3 +468,54 @@ CREATE TABLE IF NOT EXISTS sentiment_readings (
   UNIQUE(source, indicator, symbol, observed_at)
 );
 CREATE INDEX IF NOT EXISTS idx_sentiment_readings_indicator ON sentiment_readings(indicator, observed_at DESC);
+
+-- ===========================================================================
+-- F7 Alpha Combination Engine (v7.0 Phase β, session 77) — 2 tables
+-- signal_weights: append-only per-run weight log. Read by run_id (never by
+--   "latest" column-wise) — F8 + F9 pick the most-recent completed run_id.
+-- signal_isq: per-signal-per-run Ingredient Signal Quality dimensions.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS signal_weights (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id          TEXT NOT NULL,                               -- UUID generated per F7 run
+  run_timestamp   TEXT NOT NULL,                               -- ISO 8601 America/New_York
+  mode            TEXT NOT NULL CHECK(mode IN ('returns','probability')),
+  signal_key      TEXT NOT NULL,                               -- "{type}:{symbol}" or "{source}:{indicator}:{symbol}"
+  signal_name     TEXT NOT NULL,                               -- snapshot display name at run time
+  weight          REAL NOT NULL,                               -- w(i) from Step 10; 0 if excluded
+  epsilon         REAL,                                        -- residual ε(i); null if excluded
+  sigma           REAL,                                        -- σ(i); null if excluded pre-variance
+  e_norm          REAL,                                        -- E_normalized(i); null if excluded
+  ic_30d          REAL,                                        -- 30-day IC snapshot; null if <30 firings
+  regime          TEXT,                                        -- F5 regime label or null
+  n_effective     REAL,                                        -- 1 / Σw² redundant per row for queryability
+  excluded        INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0,1)),
+  exclude_reason  TEXT,                                        -- 'ic_le_zero','flat_variance','missing_data','singular'
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Audit W5: one signal_key per run_id; prevents accidental double-writes.
+  UNIQUE(run_id, signal_key)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_weights_run ON signal_weights(run_id);
+CREATE INDEX IF NOT EXISTS idx_signal_weights_time ON signal_weights(run_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_signal_weights_signal ON signal_weights(signal_key, run_timestamp DESC);
+-- Unique index is equivalent to UNIQUE constraint and is additive on live DBs
+-- where the original CREATE TABLE shipped without the constraint.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_signal_weights_runkey
+  ON signal_weights(run_id, signal_key);
+
+CREATE TABLE IF NOT EXISTS signal_isq (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id          TEXT NOT NULL,                               -- logical FK to signal_weights.run_id
+  signal_key      TEXT NOT NULL,
+  efficiency      REAL NOT NULL,
+  timeliness      REAL NOT NULL,
+  coverage        REAL NOT NULL,
+  stability       REAL NOT NULL,
+  forward_ic      REAL NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(run_id, signal_key)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_isq_run ON signal_isq(run_id, signal_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_signal_isq_runkey
+  ON signal_isq(run_id, signal_key);

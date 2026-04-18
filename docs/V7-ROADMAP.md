@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-17 (session 72 — sequential reorganization + F1 green-light). **Phase α shipped. Phase β (Financial Stack, v7.0 thesis) next up starting F1. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
+> Last updated: 2026-04-18 (session 77 — F7 Alpha Combination Engine shipped). **Phase α shipped. Phase β in progress — 8/12 items done (F1–F6.5 + v7.13 + F7). F7.5 (backtester) up next. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
 
 ## Status Key
 
@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                         | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                       | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                      | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (7/12: F1-F6.5 + v7.13 Option B done, F7 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                    | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                           | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                      | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                       | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                     | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                    | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (8/12: F1-F6.5 + v7.13 + F7 done, F7.5 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                  | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                         | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                    | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                              | 2                    |
 
 **Ordering invariants**
 
@@ -47,8 +47,8 @@
 | 6   | S6 (F6)     | Prediction markets + whale tracker                     | —                   | 1.5  |
 | 7   | S7 (F6.5)   | Sentiment signals (F&G x2, funding, liq.)              | —                   | 0.7  |
 | 8   | S8 (v7.13)  | Structured PDF ingestion (MinerU) — pre-F7 gate        | pgvector ✅         | 1.5  |
-| 9   | S9 (F7)     | Alpha combination engine                               | F3+F5+F6+F6.5+v7.13 | 2.5  |
-| 10  | S10 (F7.5)  | Strategy backtester (CPCV, PBO, DSR)                   | F7                  | 1    |
+| 9   | S9 (F7) ✅  | Alpha combination engine — **shipped 2026-04-18**      | F3+F5+F6+F6.5+v7.13 | 2.5  |
+| 10  | S10 (F7.5)  | Strategy backtester (CPCV, PBO, DSR) — **next**        | F7 ✅               | 1    |
 | 11  | S11 (F8)    | Paper trading (pm-trader MCP + VenueAdapter)           | F7.5                | 1.5  |
 | 12  | S12 (F9)    | Morning/EOD scan rituals + calendar                    | F8 + F4             | 1    |
 
@@ -305,21 +305,31 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.0 F7 — Alpha Combination Engine — **Planned**
+## v7.0 F7 — Alpha Combination Engine — **Done**
 
-> 2-2.5 sessions. Depends on F3 + F5 + F6 + F6.5. See `V7-ALPHA-COMBINATION-EQUATIONS.md` for the 11-step spec. Composition enriched by FinRL-X (𝒮 selection), skfolio (𝒜 allocation), TradingAgents (analyst panel), ai-hedge-fund (fan-out→funnel), de Prado methodology (labeling + validation).
+> Session 77 (2026-04-18). 11-step FLAM pipeline with Fama-MacBeth scalar-β reading of Step 9 (N×(M−1) multivariate interpretation underdetermined at production dimensions — see impl plan §D-F). Schema additions: `signal_weights` + `signal_isq` tables (additive, no DB reset). Tools: `alpha_run` (write), `alpha_latest` + `alpha_explain` (read). Scope group `alpha`. Impl plan: `docs/planning/phase-beta/19-f7-impl-plan.md`. Branch: `phase-beta/f7-alpha-combination`.
 
-| Item                                                                                                                                                                            | Source               | Status      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- |
-| 11-step combination pipeline — ingredient scoring → layer weights → aggregation → decision output                                                                               | V7 spec              | **Planned** |
-| Signal evolution tracking — how signal quality changes over time                                                                                                                | V7 spec              | **Planned** |
-| ISQ (Ingredient Signal Quality) dimensions                                                                                                                                      | V7 spec              | **Planned** |
-| Per-layer freshness gates                                                                                                                                                       | V7 spec              | **Planned** |
-| Weight versioning                                                                                                                                                               | V7 spec              | **Planned** |
-| Minimum signal threshold                                                                                                                                                        | V7 spec              | **Planned** |
-| Triple-barrier labeling — TP/SL/time barriers w/ volatility-scaled thresholds + sample-weight-by-uniqueness; augments FinRL-X forward-log-return labels                         | de Prado (AFML ch.3) | **Planned** |
-| Meta-labeling — secondary classifier predicts bet/pass on primary's direction; precision-optimized; bet sizing from secondary probability; consumes LLM-panel signal as feature | de Prado (AFML ch.3) | **Planned** |
-| Purged k-fold CV with embargo — remove train samples whose label windows overlap test set; embargo ~1% of samples; replaces FinRL-X's walk-forward-only validation              | de Prado (AFML ch.7) | **Planned** |
+| Item                                                                                                                                                                    | Source                | Status                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------ |
+| 11-step FLAM pipeline — serial demean → variance (Bessel) → normalize → truncate → cross-sectional demean → momentum (d=20) → scalar-β OLS → weight → Σ\|w\|=1          | V7 spec               | **Done**                                                                 |
+| `alpha-linalg.ts` primitives — scalar OLS no-intercept, correlation matrix, vector helpers (~150 LOC, zero new deps)                                                    | impl                  | **Done**                                                                 |
+| `buildReturnMatrix()` — signal identity `{type}:{symbol}`, direction-adjusted R, missing-close flagging, >5% flagged → exclude pre-pipeline                             | impl + addendum P1    | **Done**                                                                 |
+| ISQ (Ingredient Signal Quality) — 5 dimensions (efficiency/timeliness/coverage/stability/forward_ic), all clamped [0,1]                                                 | addendum P4           | **Done**                                                                 |
+| Per-signal IC tracking with flagged-day skip (audit W8) + benefit-of-doubt for <30 firings                                                                              | addendum P8.4 + audit | **Done**                                                                 |
+| Correlation guard (supersedes addendum Jacobi/Cholesky — not needed under scalar-β) — pair-max \|corr\|>0.95 iterative exclusion, 3-iter cap → F7CorrelatedSignalsError | impl + addendum P5    | **Done**                                                                 |
+| Weight versioning — append-only `signal_weights` table with UNIQUE(run_id, signal_key) + idx                                                                            | addendum P3           | **Done**                                                                 |
+| Tool surface (3 deferred tools): `alpha_run` / `alpha_latest` / `alpha_explain`                                                                                         | impl                  | **Done**                                                                 |
+| Golden-file regression fixture (`f7-golden-3x10.json`) + generator script + regression test with 1e-6 tolerance                                                         | impl                  | **Done**                                                                 |
+| 92 new tests (18 linalg + 16 matrix + 14 isq + 21 combination + 13 tool + 1 write-tools-sync subtest) — 2508 → 2603                                                     | impl + audit          | **Done**                                                                 |
+| 2-pass QA audit (Round 1: 3 Critical + 8 Warning + 4 Standards + 7 Recommendations; Round 2: 3 Warnings, 0 Critical, 0 regressions)                                     | audit                 | **Done**                                                                 |
+| Live smoke: `alpha_run` on real `market_signals` data → Σ\|w\|=1.000000 exact, 4 signals, 3ms duration, persisted                                                       | smoke                 | **Done**                                                                 |
+| Triple-barrier labeling — TP/SL/time barriers w/ volatility-scaled thresholds; sample-weight-by-uniqueness; augments FinRL-X forward-log-return labels                  | de Prado (AFML ch.3)  | **Deferred** (F7.5 backtester concern; F7 v1 uses simpler return matrix) |
+| Meta-labeling — secondary classifier predicts bet/pass on primary direction                                                                                             | de Prado (AFML ch.3)  | **Deferred** (F7.5 or post-launch)                                       |
+| Purged k-fold CV with embargo — replaces FinRL-X's walk-forward-only validation                                                                                         | de Prado (AFML ch.7)  | **Deferred** (F7.5 backtester owns this)                                 |
+| Kelly sizing — moves to F8 per addendum P8.3 (sizing ≠ combination; depends on mid-price + CV_edge Monte Carlo)                                                         | addendum P8.3         | **Deferred → F8**                                                        |
+| Probability mode — schema column + `mode` parameter shipped; pipeline throws `NotImplementedError`. Unlocks when F6/F6.5.x persist probability time-series              | addendum P8.2         | **Deferred → F6.5.x**                                                    |
+| Regime-conditional weights — `regime` column present, not branched on. Post-launch once ≥30 runs per regime class exist                                                 | addendum P7           | **Deferred** (post-launch)                                               |
+| PCA singularity fallback — current guard uses correlation-matrix exclusion. Revisit in F7.5 if aborts become frequent                                                   | addendum P5           | **Deferred** (F7.5)                                                      |
 
 ---
 
