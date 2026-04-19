@@ -152,7 +152,10 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "sentiment_snapshot" ||
         t === "alpha_run" ||
         t === "alpha_latest" ||
-        t === "alpha_explain",
+        t === "alpha_explain" ||
+        t === "backtest_run" ||
+        t === "backtest_latest" ||
+        t === "backtest_explain",
     )
   )
     return true;

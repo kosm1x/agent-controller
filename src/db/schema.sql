@@ -519,3 +519,80 @@ CREATE TABLE IF NOT EXISTS signal_isq (
 CREATE INDEX IF NOT EXISTS idx_signal_isq_run ON signal_isq(run_id, signal_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_signal_isq_runkey
   ON signal_isq(run_id, signal_key);
+
+-- ============================================================================
+-- F7.5 — Strategy Backtester (Phase β S10)
+-- CPCV (Combinatorial Purged Cross-Validation) + PBO + DSR overfit firewall.
+-- All tables additive, live-applicable via `sqlite3 data/mc.db < schema.sql`.
+-- Weekly-first: one bar = one week; rebalance_bars default = 1.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id            TEXT NOT NULL UNIQUE,                       -- UUID
+  run_timestamp     TEXT NOT NULL,                              -- ISO 8601 America/New_York
+  strategy          TEXT NOT NULL,                              -- 'flam' at v1; 'equal_weight' baseline
+  mode              TEXT NOT NULL CHECK(mode IN ('returns','probability')),
+  window_start      TEXT NOT NULL,                              -- ISO date, first bar
+  window_end        TEXT NOT NULL,                              -- ISO date, last bar
+  cost_bps          REAL NOT NULL DEFAULT 5,
+  rebalance_bars    INTEGER NOT NULL DEFAULT 1,                 -- weekly: 1 bar = 1 week
+  -- Walk-forward summary
+  wf_sharpe         REAL,
+  wf_cum_return     REAL,
+  wf_max_drawdown   REAL,
+  wf_calmar         REAL,
+  wf_win_rate       REAL,
+  wf_total_trades   INTEGER,
+  -- CPCV aggregate
+  cpcv_n_trials     INTEGER,                                    -- trial grid size
+  cpcv_n_folds      INTEGER,                                    -- C(N, k)
+  cpcv_sharpe_mean  REAL,
+  cpcv_sharpe_std   REAL,
+  cpcv_n_aborted    INTEGER NOT NULL DEFAULT 0,                 -- trials × folds that errored
+  -- Overfit firewall
+  pbo               REAL,                                       -- [0, 1]
+  dsr_ratio         REAL,
+  dsr_pvalue        REAL,
+  ship_blocked      INTEGER NOT NULL DEFAULT 0 CHECK(ship_blocked IN (0,1)),
+  override_ship     INTEGER NOT NULL DEFAULT 0 CHECK(override_ship IN (0,1)),
+  regime            TEXT,                                       -- dominant F5 regime over window; nullable
+  duration_ms       INTEGER,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_time ON backtest_runs(run_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy ON backtest_runs(strategy, run_timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS backtest_paths (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id           TEXT NOT NULL,                               -- logical FK to backtest_runs.run_id
+  trial_index      INTEGER NOT NULL,                            -- 0..N_trials-1 in grid order
+  fold_index       INTEGER NOT NULL,                            -- 0..N_folds-1
+  window_m         INTEGER NOT NULL,
+  window_d         INTEGER NOT NULL,
+  corr_threshold   REAL NOT NULL,
+  is_sharpe        REAL,                                        -- in-sample Sharpe on train
+  oos_sharpe       REAL,                                        -- out-of-sample Sharpe on test
+  oos_cum_return   REAL,
+  oos_n_bars       INTEGER,
+  aborted          INTEGER NOT NULL DEFAULT 0 CHECK(aborted IN (0,1)),
+  abort_reason     TEXT,                                        -- 'correlated_signals','too_few_firings',...
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(run_id, trial_index, fold_index)
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_paths_run ON backtest_paths(run_id, trial_index, fold_index);
+
+CREATE TABLE IF NOT EXISTS backtest_overfit (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                TEXT NOT NULL UNIQUE,                   -- one-row-per-run
+  pbo                   REAL NOT NULL,                          -- [0, 1]
+  pbo_threshold         REAL NOT NULL DEFAULT 0.5,
+  dsr_observed_sharpe   REAL NOT NULL,
+  dsr_expected_null     REAL NOT NULL,                          -- SR_expected_under_null term
+  dsr_sharpe_variance   REAL NOT NULL,                          -- V[SR_trials]
+  dsr_skewness          REAL,
+  dsr_kurtosis          REAL,
+  dsr_ratio             REAL NOT NULL,
+  dsr_pvalue            REAL NOT NULL,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);

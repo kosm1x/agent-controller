@@ -16,6 +16,7 @@ import {
   FINANCE_TOOLS,
   KB_INGEST_TOOLS,
   ALPHA_TOOLS,
+  BACKTEST_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -136,6 +137,23 @@ describe("WRITE_TOOLS sync", () => {
     const ALPHA_READ_ONLY = new Set<string>(["alpha_latest", "alpha_explain"]);
     const alphaWriteTools = ALPHA_TOOLS.filter((t) => !ALPHA_READ_ONLY.has(t));
     for (const tool of alphaWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable backtester tools (F7.5 Phase β S10)", () => {
+    // backtest_run persists to backtest_runs/paths/overfit (write).
+    // backtest_latest + backtest_explain are read-only.
+    const BACKTEST_READ_ONLY = new Set<string>([
+      "backtest_latest",
+      "backtest_explain",
+    ]);
+    const backtestWriteTools = BACKTEST_TOOLS.filter(
+      (t) => !BACKTEST_READ_ONLY.has(t),
+    );
+    for (const tool of backtestWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

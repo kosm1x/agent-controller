@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-18 (session 78 — weekly-first + watchlist auto-seed infrastructure shipped; F7 now runs on weekly bars over 10 symbols × 520 bars = 10 yr history). **Phase α shipped. Phase β in progress — 8/12 items done (F1–F6.5 + v7.13 + F7). F7.5 (backtester) up next, unblocked. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
+> Last updated: 2026-04-19 (session 79 — F7.5 Strategy Backtester shipped: CPCV + PBO + DSR firewall over the seeded weekly dataset, 2 QA audit passes, live smoke honest-blocked at DSR_pvalue=0.20). **Phase α shipped. Phase β in progress — 9/12 items done (F1–F6.5 + v7.13 + F7 + F7.5). F8 (paper trading) up next, unblocked. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
 
 ## Status Key
 
@@ -15,15 +15,15 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                       | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                     | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                    | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (8/12: F1-F6.5 + v7.13 + F7 done, F7.5 next)** | ~11.5 seq / ~7–8 par |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                  | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                         | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                    | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                              | 2                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                            | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                          | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                         | 0.5 (Apr 20)         |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (9/12: F1-F6.5 + v7.13 + F7 + F7.5 done, F8 next)** | ~11.5 seq / ~7–8 par |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                       | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                              | ~14–15               |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                         | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                   | 2                    |
 
 **Ordering invariants**
 
@@ -37,20 +37,20 @@
 
 ## Master Sequence (upcoming)
 
-| #   | Session     | Output                                                 | Dep(s)              | Est. |
-| --- | ----------- | ------------------------------------------------------ | ------------------- | ---- |
-| 1   | S1 (**F1**) | Data layer (Alpha Vantage + Polygon + FRED + 6 tables) | —                   | 1.7  |
-| 2   | S2 (F2)     | Indicator engine (golden-file validated)               | F1                  | 1    |
-| 3   | S3 (F4)     | Watchlist + market_quote/history tools                 | F1                  | 1    |
-| 4   | S4 (F5)     | Macro regime detection (AV + FRED)                     | F1                  | 0.5  |
-| 5   | S5 (F3)     | Signal detector + market_signals                       | F2 + F4             | 1    |
-| 6   | S6 (F6)     | Prediction markets + whale tracker                     | —                   | 1.5  |
-| 7   | S7 (F6.5)   | Sentiment signals (F&G x2, funding, liq.)              | —                   | 0.7  |
-| 8   | S8 (v7.13)  | Structured PDF ingestion (MinerU) — pre-F7 gate        | pgvector ✅         | 1.5  |
-| 9   | S9 (F7) ✅  | Alpha combination engine — **shipped 2026-04-18**      | F3+F5+F6+F6.5+v7.13 | 2.5  |
-| 10  | S10 (F7.5)  | Strategy backtester (CPCV, PBO, DSR) — **next**        | F7 ✅               | 1    |
-| 11  | S11 (F8)    | Paper trading (pm-trader MCP + VenueAdapter)           | F7.5                | 1.5  |
-| 12  | S12 (F9)    | Morning/EOD scan rituals + calendar                    | F8 + F4             | 1    |
+| #   | Session       | Output                                                        | Dep(s)              | Est. |
+| --- | ------------- | ------------------------------------------------------------- | ------------------- | ---- |
+| 1   | S1 (**F1**)   | Data layer (Alpha Vantage + Polygon + FRED + 6 tables)        | —                   | 1.7  |
+| 2   | S2 (F2)       | Indicator engine (golden-file validated)                      | F1                  | 1    |
+| 3   | S3 (F4)       | Watchlist + market_quote/history tools                        | F1                  | 1    |
+| 4   | S4 (F5)       | Macro regime detection (AV + FRED)                            | F1                  | 0.5  |
+| 5   | S5 (F3)       | Signal detector + market_signals                              | F2 + F4             | 1    |
+| 6   | S6 (F6)       | Prediction markets + whale tracker                            | —                   | 1.5  |
+| 7   | S7 (F6.5)     | Sentiment signals (F&G x2, funding, liq.)                     | —                   | 0.7  |
+| 8   | S8 (v7.13)    | Structured PDF ingestion (MinerU) — pre-F7 gate               | pgvector ✅         | 1.5  |
+| 9   | S9 (F7) ✅    | Alpha combination engine — **shipped 2026-04-18**             | F3+F5+F6+F6.5+v7.13 | 2.5  |
+| 10  | S10 (F7.5) ✅ | Strategy backtester (CPCV, PBO, DSR) — **shipped 2026-04-19** | F7 ✅               | 1    |
+| 11  | S11 (F8)      | Paper trading (pm-trader MCP + VenueAdapter) — **next**       | F7.5 ✅             | 1.5  |
+| 12  | S12 (F9)      | Morning/EOD scan rituals + calendar                           | F8 + F4             | 1    |
 
 β subtotal: **~14.9 sessions sequential**, **~11 sessions with F2/F4/F5 + F6/F6.5 parallelized**.
 
@@ -333,18 +333,21 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.0 F7.5 — Strategy Backtester — **Planned**
+## v7.0 F7.5 — Strategy Backtester — **Done**
 
-> 1 session. Depends on F7.
+> Shipped session 79 (2026-04-19). Impl plan: `docs/planning/phase-beta/20-f7.5-impl-plan.md`. Branch: `phase-beta/f75-backtester`. 2 QA audit passes. Live smoke on 10-symbol × 520-weekly-bar seed produced walk-forward Sharpe 0.26, cum return +32% / 10 yr, PBO 0.27, DSR_pvalue 0.20 — honestly ship-blocked by DSR firewall. 2.7s runtime.
 
-| Item                                                                                                                                                 | Source                | Status      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ----------- |
-| Walk-forward validation — train months 1-6, test month 7, roll forward                                                                               | V7 spec               | **Planned** |
-| Stress test scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up)                                                                      | V7 spec               | **Planned** |
-| `backtest_results` table — per-strategy win rate, Sharpe, max drawdown, regime-conditional metrics                                                   | V7 spec               | **Planned** |
-| Combinatorial Purged Cross-Validation (CPCV) — distribution of backtest Sharpes across purged partitions, input to PBO                               | de Prado (AFML ch.12) | **Planned** |
-| Probability of Backtest Overfitting (PBO) — fraction of paths where in-sample best fell below OOS median; ship-blocker if PBO > 50% without override | Bailey/de Prado 2014  | **Planned** |
-| Deflated Sharpe Ratio (DSR) — adjusts Sharpe for multiple-testing bias; reports p-value alongside raw Sharpe                                         | Bailey/de Prado 2014  | **Planned** |
+| Item                                                                                                                          | Source                | Status                                              |
+| ----------------------------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------- |
+| Walk-forward replay — windowM rolling, rebalance_bars=1 weekly, transaction-cost model                                        | V7 spec               | **Done**                                            |
+| CPCV — N=6 groups × k=2 test → 15 folds; embargo=horizon weekly bars; default 24-trial grid                                   | de Prado (AFML ch.12) | **Done**                                            |
+| PBO — Bailey/de Prado 2014 logit, rank<(N+1)/2 check (audit C1 round 1); ship-gate at > 0.50                                  | Bailey/de Prado 2014  | **Done**                                            |
+| Deflated Sharpe Ratio (DSR) — eq. 14 with de-annualization via √periodsPerYear (audit C2 round 1); ship-gate at pvalue > 0.05 | Bailey/de Prado 2014  | **Done**                                            |
+| 3 new tables (additive, live-applied): `backtest_runs`, `backtest_paths`, `backtest_overfit`                                  | —                     | **Done**                                            |
+| 3 new tools — `backtest_run` (write), `backtest_latest` (read), `backtest_explain` (read); all deferred, new `backtest` scope | ACI pattern           | **Done**                                            |
+| Ship-gate with NaN = blocked (audit C3 round 1)                                                                               | —                     | **Done**                                            |
+| Stress test scenarios (2008, 2020, rate shock, credit crisis, liquidity dry-up)                                               | V7 spec               | **Deferred** (F7.5.1; needs ≥8 yr of ingested data) |
+| Triple-barrier labeling, meta-labeling, regime-conditional PBO, Monte Carlo bootstrap, Kelly-sized P&L, order-book slippage   | de Prado (AFML ch.3)  | **Deferred** (F7.5.1 / F8 per plan §9 triggers)     |
 
 ---
 

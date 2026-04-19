@@ -464,3 +464,83 @@ Flagged follow-ups for F7+:
 - MinerU polish if retrieval telemetry demands it
 - Embedding batch API (512 chunks sequential is slow; Gemini supports up to 100/call)
 - pgvector direct pgvector.test.ts for modality round-trip (audit S2 coverage gap)
+
+---
+
+## 2026-04-17 — Daily Log
+
+### System state
+
+| Metric                | Value                                                                      |
+| --------------------- | -------------------------------------------------------------------------- |
+| Tasks processed today | 0 (no completions recorded — no snapshot available)                        |
+| Total tasks           | 35 tracked in NorthStar INDEX (~22 in_progress, 10 not_started, 2 on_hold) |
+| Conversations today   | 46 (telegram: 46)                                                          |
+| Streak days           | Not available — no streak snapshot                                         |
+
+### Interactions summary
+
+Today was operationally dense across two distinct arcs. The morning opened with a recurring API 400 error (`no low surrogate in string`) caused by a truncated emoji surrogate pair in the thread history — the bug silently disabled all Telegram responses for approximately 30 minutes before Fede detected and escalated it. Jarvis diagnosed the root cause, shipped `safeSlice` + `sanitizeSurrogates` hardening (Session 71 Pt B), and deployed cleanly. In parallel, Fede ran multiple health checks (some failing due to the same encoding bug), requested market and geopolitical intelligence (S&P snapshot, Iran ceasefire window, Ukraine territorial analysis), and surfaced the day-log infrastructure gap — the hourly consolidation schedule created on April 3 is no longer active, meaning no canonical day-log exists for today.
+
+### What Jarvis learned
+
+The surrogate-safety incident confirmed a critical blind spot: `status='completed'` in the runner does not imply a successful user-visible response. The system logged 100% task success while all output was empty for 30 minutes — a silent-failure pattern where every traditional health signal (process running, API reachable, DB OK) read green. Flagged as a latent observability gap: runs whose output begins with `"API Error:"` should be promoted to `status='failed'` so the dashboard reflects reality. Additionally, the day-logger infrastructure has silently lapsed since early April — the schedule is absent from the active cron list, so interaction logs are not being consolidated. Fede discovered this by asking directly, not through any system alert.
+
+### Friction points
+
+Two friction sources dominated. First, the API 400 silent failure: 4 consecutive health check attempts failed with no notification triggered — discovery was entirely user-initiated. Second, the day-log infrastructure gap: the hourly consolidation schedule from April 3 is missing from active schedules, leaving today's 46 interactions unlogged to the canonical file. Both issues share the same root pattern — silent degradation with no failure surfaced at the interaction layer.
+
+### Research notes
+
+Day 34+ of the longitudinal record. Today's API 400 incident is a textbook case of **silent-failure class** in human-agent systems: all traditional health signals were green, but all user-visible output was empty. Recovery depended entirely on Fede noticing within ~30 minutes and escalating — no automated detection would have caught it. The observation-expectation gap is narrowing (Fede now expects self-monitoring capability) but the instrumentation for that — e.g., tokens-per-call anomaly detection, zero-output rate alerts — is not yet implemented. Phase: active co-evolution, infrastructure hardening cycle.
+
+## 2026-04-18
+
+### System state
+
+| Metric                | Value                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| Tasks processed today | 0 (no completions recorded in snapshot)                                                |
+| Total tasks           | 35 tracked in NorthStar INDEX (22 in_progress, 10 not_started, 2 on_hold, 1 recurring) |
+| Conversations today   | 33 (telegram: 33)                                                                      |
+| Streak days           | Not available — no streak snapshot                                                     |
+
+### Interactions summary
+
+Today was dominated by a single high-stakes strategic session: Fede worked on Plan 2027, a multi-week project to defend and grow TV Azteca's revenue through the post-World Cup 2027 contraction year. Jarvis analyzed historical sales data (Azteca 2017–2025) across multiple Google Sheets tabs — monthly seasonality, top 50 advertisers, and sector-level trends — producing data-heavy strategic analysis. Key themes included the structural decline of telecom ad spend, the explosive rise of e-commerce advertisers (Mercado Libre +556%), and the Tienditas Telcel "Big Bang" partnership concept. Separately, recurring health-check API failures (400 `no low surrogate` errors) appeared again, and a NorthStar sync was confirmed clean (59 items, no drift).
+
+### What Jarvis learned
+
+The Plan 2027 session reveals a clear user preference: Fede wants deep, data-anchored strategic analysis structured as a multi-session incremental build — not a single monolithic document. He explicitly instructed Jarvis to "generate a plan for incremental stages, consolidate findings progressively," signaling tolerance for slow-burn synthesis over fast but shallow answers. Positivity markers ("Excelente", "Excelente trabajo Piotr", "Buen avance") confirm the quality bar was met when analysis was richly quantified. The `health.age = 16` deletion and "Confirmo" interaction suggest Fede is actively curating KB data precision — a sign of growing trust in the system as a reliable store.
+
+### Friction points
+
+The recurring API 400 `no low surrogate` error appeared again in at least 3 health-check attempts — the same class of failure documented on 2026-04-17. Despite the `safeSlice` + `sanitizeSurrogates` fix shipped yesterday, the bug is still surfacing. This suggests the encoding guard is either not deployed, not covering all paths, or the corrupted data is being re-introduced via a new message. Pattern is now 2 consecutive days — warrants a root-cause re-audit.
+
+### Research notes
+
+Day 35+ of the longitudinal record. Today marks a notable milestone in the co-evolution arc: Fede is using Jarvis as a strategic thinking partner for a multi-week, multi-document corporate planning exercise (Plan 2027 for TV Azteca). This goes well beyond task execution — the agent is now contributing synthesis, benchmarking, and scenario analysis at a business strategy level. The transition from "tool-user" to "thinking partner" framing appears to be solidifying. The next session flag ("Futbol Nacional — análisis de venta y oferta") confirms ongoing engagement at this same strategic depth.
+
+## 2026-04-19
+
+### System state
+
+| Metric        | Value                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source files  | 336 (+7 this sprint: backtest-sim / stats / backtest-walkforward / backtest-cpcv / backtest-overfit / backtest-persist / tools/builtin/backtest) |
+| Test files    | 184 (+6; persistence shares alpha pattern, no separate test file)                                                                                |
+| Tests passing | 2728 (+103 since session 78)                                                                                                                     |
+| Tools         | 204 builtin (+3: backtest_run / backtest_latest / backtest_explain)                                                                              |
+| Phase β       | 9/12 done (F1–F6.5 + v7.13 + F7 + F7.5). F8 next.                                                                                                |
+
+### What shipped
+
+**F7.5 Strategy Backtester (Phase β S10)** — the overfitting firewall that gates F8 paper trading. 22-step cadence in one session: impl plan at `docs/planning/phase-beta/20-f7.5-impl-plan.md`, 3 new additive tables (`backtest_runs` / `backtest_paths` / `backtest_overfit`), 6-module math layer (pure-functional P&L sim, stats helpers for DSR, walk-forward, CPCV, PBO+DSR, persistence), 3 new deferred tools in new `backtest` scope group. Zero new deps. Honest live smoke on the 10-symbol × 520-weekly-bar seed produced walk-forward Sharpe 0.26 / cum return +32% over 10 yr, PBO 0.27, DSR p-value 0.20 → **ship_blocked by DSR firewall**. Runtime 2.7s.
+
+### What Jarvis learned
+
+Audit-finds-3-critical-every-time held once more — and this time all three were in the paper's direction of mattering. Round-1 qa-auditor caught (C1) PBO applying `logit()` to what was already a logit input, quietly shifting the "below-median" threshold from `rank < (N+1)/2` to `rank < (N+1)/3` — PBO under-reported; overfit strategies slip through. (C2) DSR math used annualized Sharpes where Bailey/de Prado's eq. 14 expects per-period — Z-stat over-inflated by √52, producing spurious high-confidence p-values. (C3) NaN ship-gate bypass: degenerate runs (all folds aborted) landed as `ship_ok` because `Number.isFinite(NaN) && x > threshold` is false for both clauses. All three fixed with hand-anchored regression tests (rank-just-below-median for PBO, periodsPerYear=1 equivalence + weekly-Sharpe-1.0-not-significant for DSR). Round-2 audit passed with two new low-impact warnings, both fixed in the same pass. Lesson: the overfit firewall is the load-bearing purpose of F7.5; math correctness compounds with ship-gate correctness, and both compound with persistence sanitization. The 22-step cadence's "2 audit passes budget" is load-bearing — a pure math sprint without audit rounds would have shipped C1+C2 silently.
+
+### Research notes
+
+Day 36+ of the longitudinal record. F7.5 closes the gap between "strategy produces weights" and "strategy is shippable" — everything downstream (F8 paper, F9 rituals, F11 live) assumes the backtester's ship_gate is truthful. The firewall correctly reports the current FLAM strategy as not-yet-shippable on the seeded dataset (DSR p=0.20 > 0.05 threshold), which is the right answer given a 4-config trial grid on 10 years of weekly data — a positive signal that the math is calibrated. F8 is unblocked for the next session.

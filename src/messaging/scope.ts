@@ -263,6 +263,13 @@ export const KB_INGEST_TOOLS = ["kb_ingest_pdf_structured", "kb_batch_insert"];
 /** F7 alpha combination tools — scope-gated on alpha/combination/megaalpha/weights vocab. */
 export const ALPHA_TOOLS = ["alpha_run", "alpha_latest", "alpha_explain"];
 
+/** F7.5 strategy backtester tools — scope-gated on backtest/CPCV/PBO/overfit vocab. */
+export const BACKTEST_TOOLS = [
+  "backtest_run",
+  "backtest_latest",
+  "backtest_explain",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -482,6 +489,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(alpha[_\s-]?(?:run|latest|explain|combination|engine)|mega[_\s-]?alpha|megaalpha|signal[_\s-]?weights?|combin(?:e|ar|aci[oó]n)\s+(?:signals?|se[nñ]ales?)|pondera(?:ci[oó]n|r)\s+(?:signals?|se[nñ]ales?)|pesos?\s+de\s+se[nñ]ales?)\b/i,
     group: "alpha",
+  },
+  {
+    // v7.0 F7.5 strategy backtester — activation on backtest/overfit/CPCV/PBO/DSR/
+    // walk-forward vocab + Spanish equivalents. Tight anchors to avoid false
+    // positives on generic "walk" or "test" words. Audit I2 round 1: `pbo`
+    // alone could collide with "Pension Benefit Obligation" accounting text;
+    // require it to co-occur with Sharpe/overfit/backtest/CPCV context.
+    pattern:
+      /\b(backtest(?:s|ing|ed|er)?|back[\s-]test(?:s|ing|ed|er)?|cpcv|deflat(?:ed|ion)?\s+sharpe|dsr|walk[_\s-]?forward|overfit(?:ting)?|sobre[_\s-]?ajust\w*|respald\w*\s+(?:la\s+)?(?:estrategia|strategy)|historial\s+de\s+backtests?|ship[_\s-]?block\w*)\b|\bpbo\b(?=[\s\S]{0,200}\b(?:sharpe|overfit|backtest|cpcv|dsr)\b)/i,
+    group: "backtest",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -735,6 +752,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("alpha")) {
     tools.push(...ALPHA_TOOLS);
+  }
+  if (activeGroups.has("backtest")) {
+    tools.push(...BACKTEST_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
