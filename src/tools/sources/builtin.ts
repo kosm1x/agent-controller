@@ -168,6 +168,11 @@ import {
   alphaLatestTool,
   alphaExplainTool,
 } from "../builtin/alpha.js";
+import {
+  backtestRunTool,
+  backtestLatestTool,
+  backtestExplainTool,
+} from "../builtin/backtest.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -281,6 +286,10 @@ const BUILTIN_TOOLS: Tool[] = [
   alphaRunTool,
   alphaLatestTool,
   alphaExplainTool,
+  // F7.5 strategy backtester (v7.0 Phase β S10) — deferred, scope 'backtest'
+  backtestRunTool,
+  backtestLatestTool,
+  backtestExplainTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

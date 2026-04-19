@@ -321,6 +321,8 @@ export const WRITE_TOOLS = new Set([
   "kb_batch_insert",
   // F7 alpha combination write (Phase β S6) — persists to signal_weights + signal_isq
   "alpha_run",
+  // F7.5 strategy backtester write (Phase β S10) — persists to backtest_runs/paths/overfit
+  "backtest_run",
 ]);
 
 /**
