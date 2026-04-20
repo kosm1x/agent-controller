@@ -333,6 +333,9 @@ export const WRITE_TOOLS = new Set([
   // Narrating "I converted the file to X" without the tool call is a
   // hallucination the WRITE_TOOLS guard catches.
   "file_convert",
+  // v7.12 diagram generation — writes SVG/HTML output to /tmp or /workspace.
+  // Same hallucination-guard rationale.
+  "diagram_generate",
 ]);
 
 /**

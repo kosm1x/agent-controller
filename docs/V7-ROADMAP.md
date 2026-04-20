@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-20 (session 85 — v7.10 `file_convert` shipped: closes 5 format gaps (`.epub/.mobi` ebooks, `.odt/.rtf/.pages` office docs, HEIC/AVIF/JXL images, doc↔doc via pandoc, video frames via ffmpeg). Single new deferred tool dispatching via `execFile` no-shell to apt-installed binaries (calibre, libreoffice, pandoc, imagemagick, ffmpeg). Zero npm deps; ~2GB of apt binaries on the VPS. 2 QA audit passes closed 2 critical (symlink-bypass of input allow-list via statSync-follows-symlinks; `Infinity` timestamp reaching ffmpeg argv) + 2 major (UTILITY_TOOLS not covered by write-tools-sync test; ES `transforma` regex asymmetric with EN branch, over-corrected once then clitic-form broken) + 3 warnings (LibreOffice `--outdir` rename unification, silent-overwrite documentation, ES clitic regex W-R2-1). Live smoke: pandoc .md→.html 304B/152ms, imagemagick .png→.jpeg 336B/17ms, libreoffice .md→.docx→.pdf 31KB/2.4s (warm start), symlink /tmp/link→/etc/passwd correctly rejected. 2/13 γ items done. Previous: session 84 — v7.2 Graphify MCP shipped, **Phase γ opens**: TS-native integration of the `graphifyy==0.4.23` Python MCP server against an AST-built knowledge graph of `src/` (335 files → 1757 nodes, 4686 edges, 25 communities, 63% EXTRACTED / 37% INFERRED). 7 new deferred tools (`graphify-code__query_graph`, `_get_node`, `_get_neighbors`, `_get_community`, `_god_nodes`, `_graph_stats`, `_shortest_path`), 1 new scope group (`graph`, bilingual EN/ES with negative-lookahead on `graphic`/`graphene`/`paragraph`/`gráfica`). Isolated `./venv/graphify/` + pinned-version bootstrap script with CWD + version guards. 2 QA audit passes: round 1 closed 2 major (`god_nodes` literal didn't activate scope; no fresh-VPS bootstrap doc) + 4 warnings (weak test assertion, missing MCP manager test, unpinned internal API use, CWD assumption). Round 2 clean PASS. Live smoke: stdio MCP handshake end-to-end → graph_stats + god_nodes return semantically coherent results (`getDatabase()` top hub at 257 deg, matches codebase singleton pattern). Scope-shift-as-design-decision: pivoted from docs corpus to code at impl-plan step 4 after discovering `collect_files` doesn't handle markdown (requires skill-driven LLM semantic pass — deferred to v7.2.1). CRM graph + cross-source router + semantic-pass codebase graph all deferred to v7.2.1 with explicit triggers. **Phase γ S1 of 13 done.** Previous: session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
+> Last updated: 2026-04-20 (session 86 — v7.12 `diagram_generate` shipped (MVP): single deferred tool dispatching to `dot` (graphviz) or inline LLM (svg_html with Cocoon palette). Scope pivot during impl-plan step 2: mermaid-cli (mmdc) v11 AND v10.9.1 both hang with `ProtocolError: DOM.resolveNode timed out` on this VPS's puppeteer/Chromium (4+ min, 0 output on both versions). Mermaid deferred to v7.12.1 with trigger (mmdc fix OR Node-API replacement). D2 + PlantUML also deferred. Ships 2 formats: graphviz `dot -Tsvg` (<1s, deterministic auto-layout) + svg_html (LLM + Cocoon palette + JetBrains Mono, dark/light themes). New `diagram` scope group with EN+ES regex (diagrama/diagram/flowchart/flujograma/sequence diagram/digraph/etc.). 2 QA audit passes: round 1 clean (0 critical, 0 major, 6 warnings all mechanical cleanup — anchor `looksLikeDot` to start-of-string, clean up DOT temp via finally/unlinkSync, clean up tmpPath on rename-failure fallback, drop `/tmp` bare-equality branch, add boundary + rename-fallback tests); round 2 clean PASS verifying all 6 fixes + zero regressions. Live smoke: raw DOT → 1.8KB SVG in 36ms; NL → LLM (qwen 237→202 tokens) → DOT → dot → 4.4KB SVG in 6.2s. Third consecutive sprint (F8.1b, v7.2, v7.12) with step-1-or-2 recon pivot — now a recognized cadence, not exception. Previous: session 85 — v7.10 `file_convert` shipped: closes 5 format gaps (`.epub/.mobi` ebooks, `.odt/.rtf/.pages` office docs, HEIC/AVIF/JXL images, doc↔doc via pandoc, video frames via ffmpeg). Single new deferred tool dispatching via `execFile` no-shell to apt-installed binaries (calibre, libreoffice, pandoc, imagemagick, ffmpeg). Zero npm deps; ~2GB of apt binaries on the VPS. 2 QA audit passes closed 2 critical (symlink-bypass of input allow-list via statSync-follows-symlinks; `Infinity` timestamp reaching ffmpeg argv) + 2 major (UTILITY_TOOLS not covered by write-tools-sync test; ES `transforma` regex asymmetric with EN branch, over-corrected once then clitic-form broken) + 3 warnings (LibreOffice `--outdir` rename unification, silent-overwrite documentation, ES clitic regex W-R2-1). Live smoke: pandoc .md→.html 304B/152ms, imagemagick .png→.jpeg 336B/17ms, libreoffice .md→.docx→.pdf 31KB/2.4s (warm start), symlink /tmp/link→/etc/passwd correctly rejected. 2/13 γ items done. Previous: session 84 — v7.2 Graphify MCP shipped, **Phase γ opens**: TS-native integration of the `graphifyy==0.4.23` Python MCP server against an AST-built knowledge graph of `src/` (335 files → 1757 nodes, 4686 edges, 25 communities, 63% EXTRACTED / 37% INFERRED). 7 new deferred tools (`graphify-code__query_graph`, `_get_node`, `_get_neighbors`, `_get_community`, `_god_nodes`, `_graph_stats`, `_shortest_path`), 1 new scope group (`graph`, bilingual EN/ES with negative-lookahead on `graphic`/`graphene`/`paragraph`/`gráfica`). Isolated `./venv/graphify/` + pinned-version bootstrap script with CWD + version guards. 2 QA audit passes: round 1 closed 2 major (`god_nodes` literal didn't activate scope; no fresh-VPS bootstrap doc) + 4 warnings (weak test assertion, missing MCP manager test, unpinned internal API use, CWD assumption). Round 2 clean PASS. Live smoke: stdio MCP handshake end-to-end → graph_stats + god_nodes return semantically coherent results (`getDatabase()` top hub at 257 deg, matches codebase singleton pattern). Scope-shift-as-design-decision: pivoted from docs corpus to code at impl-plan step 4 after discovering `collect_files` doesn't handle markdown (requires skill-driven LLM semantic pass — deferred to v7.2.1). CRM graph + cross-source router + semantic-pass codebase graph all deferred to v7.2.1 with explicit triggers. **Phase γ S1 of 13 done.** Previous: session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
 
 ## Status Key
 
@@ -788,24 +788,28 @@ Scope group `teaching` activates on: "enséñame", "teach me", "explícame X des
 
 ---
 
-## v7.12 — Diagram Generation (`diagram_generate` tool) — **Planned**
+## v7.12 — Diagram Generation (`diagram_generate` tool) — **Done (MVP)**
 
-> 1 session, ~2-3 hours. No F-step dependencies — slottable anywhere in Phase γ. Source: `reference_architecture_diagram_generator.md`. Cocoon-AI repo was a Claude.ai Skill (no code to port); we build native.
+> Session 86 (2026-04-20). Phase γ S3. Impl plan: `docs/planning/phase-gamma/03-v7.12-impl-plan.md`.
 
-**Motivation**: Jarvis has `chart` for data viz (QuickChart) but no structured diagram generation. Closes that gap with a thin dispatch tool over standard diagramming CLIs (Mermaid, D2, PlantUML, Graphviz) plus an inline SVG/HTML path.
+**Scope pivot (during impl-plan step 2)**: mermaid-cli (`mmdc`) v11 AND v10.9.1 both hang with `ProtocolError: DOM.resolveNode timed out` on this VPS's puppeteer/Chromium combo (4+ minute wall-clock, 0 svg produced on both). Mermaid deferred to v7.12.1. MVP ships with graphviz + svg_html only. Scope-pivot was recorded in impl-plan §1; third consecutive sprint (F8.1b, v7.2, v7.12) with a step-1-or-2 recon pivot — the pattern is now expected, not exceptional.
 
-| Item                                                                                                                | Source                                        | Status      |
-| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------- |
-| VPS prerequisites: `npm i -g @mermaid-js/mermaid-cli`, `apt install d2 graphviz`, PlantUML optional (JRE)           | —                                             | **Planned** |
-| `diagram_generate(description, format, diagram_type, theme?, output)` tool handler (~120 LOC)                       | `reference_architecture_diagram_generator.md` | **Planned** |
-| Format dispatch: mermaid → mmdc, d2 → d2, plantuml → plantuml.jar, graphviz → dot, svg_html → inline LLM generation | —                                             | **Planned** |
-| Port Cocoon palette + spacing rules + SVG craft (arrow z-ordering) into svg_html system prompt (~60 LOC)            | `reference_architecture_diagram_generator.md` | **Planned** |
-| Source-extension whitelist + path validation (prevent shell_exec abuse)                                             | Security                                      | **Planned** |
-| Integration: scope group, guards, write-tools-sync test                                                             | `INTEGRATION-CHECKLIST.md`                    | **Planned** |
-| Test file with mocked execFile: dispatch table, error paths, path validation                                        | —                                             | **Planned** |
+| Item                                                                                                         | Source                     | Status               |
+| ------------------------------------------------------------------------------------------------------------ | -------------------------- | -------------------- |
+| VPS prerequisite: `apt install graphviz`                                                                     | —                          | **Done**             |
+| `diagram_generate(description, format, diagram_type?, theme?, output_path?, emit?)` tool handler             | Cocoon reference           | **Done**             |
+| Format dispatch: graphviz → `dot -Tsvg`, svg_html → inline LLM with Cocoon palette                           | —                          | **Done**             |
+| Raw-DSL short-circuit (DOT + HTML detected, skips LLM — saves ~6s per call for hand-written DSL)             | —                          | **Done**             |
+| Cocoon palette + layout rules ported to `diagram-svg-prompt.ts` (dark + light themes)                        | Cocoon reference           | **Done**             |
+| Security: `execFile` (no shell), output-path whitelist, temp-file cleanup, description size cap (8000 chars) | Security                   | **Done**             |
+| Integration: new `DIAGRAM_TOOLS` scope group + regex, WRITE_TOOLS guard, write-tools-sync test               | `INTEGRATION-CHECKLIST.md` | **Done**             |
+| 26 tests (dispatch, validation, errors, security, boundary, cleanup)                                         | —                          | **Done**             |
+| Mermaid format via Node API (`@mermaid-js/mermaid` + jsdom/happy-dom) instead of mmdc CLI                    | —                          | **Deferred v7.12.1** |
+| D2 format (out-of-band installer; low demand until first ask)                                                | —                          | **Deferred v7.12.1** |
+| PlantUML format (JRE + ~200MB deps; graphviz covers the UML-ish topology cases)                              | —                          | **Deferred v7.12.1** |
 
 **Supported diagram types**: architecture, flowchart, sequence, ER, class, state
-**Output formats**: source (DSL text), svg, png, html
+**Output formats**: svg (graphviz), html (svg_html), plus `emit: source` to return DSL text without rendering.
 
 ---
 
@@ -1075,7 +1079,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None          | **Planned**                 |
 | v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None          | **Done** — session 85       |
 | v7.11   | Jarvis teaching module                        | 2        | None          | **Planned**                 |
-| v7.12   | Diagram generation (mermaid/d2/plantuml)      | 1        | None          | **Planned**                 |
+| v7.12   | Diagram generation (graphviz + svg_html)      | 1        | None          | **Done (MVP)** — session 86 |
 | v7.14   | Infographic generation (AntV)                 | 1        | None          | **Planned**                 |
 | v7.3 P2 | SEO telemetry (PageSpeed + GSC)               | 1        | v7.6 ✅       | **Planned**                 |
 | v7.3 P3 | AI overview monitoring                        | 1        | F1 ✅         | **Planned**                 |
@@ -1084,7 +1088,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4          | **Planned**                 |
 | v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 ✅ + sweep | **Planned**                 |
 
-**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **2/13 done; 11 remaining.**
+**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **3/13 done; 10 remaining.**
 
 ### v7.2.1 — v7.2 follow-ups (queued, not yet scheduled)
 
@@ -1111,12 +1115,12 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 | Bucket                                 | Count  | Sessions              |
 | -------------------------------------- | ------ | --------------------- |
-| Shipped (α + β + β-addendum + γ S1-S2) | **21** | ~23                   |
+| Shipped (α + β + β-addendum + γ S1-S3) | **22** | ~24                   |
 | Gated / conditional (δ + ε)            | 2      | 4.5                   |
 | β-opt (optional)                       | 1      | 1                     |
-| γ remaining                            | 11     | ~16.5                 |
+| γ remaining                            | 10     | ~15.5                 |
 | **Total committed**                    | **35** | **~45 seq / ~36 par** |
-| **Remaining to close v7**              | **14** | **~22 seq / ~17 par** |
+| **Remaining to close v7**              | **13** | **~21 seq / ~17 par** |
 
 ---
 

@@ -581,6 +581,54 @@ describe("scope pattern matching", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // v7.12 diagram — diagram_generate scope group (graphviz / svg_html).
+  // Mermaid deferred (mmdc hangs on this VPS), but the scope regex includes
+  // "mermaid" so a user request routed to diagram_generate still produces a
+  // helpful "mermaid deferred" error from the tool — better than the scope
+  // not firing at all.
+  // ---------------------------------------------------------------------------
+
+  it("diagram scope activates on diagram/flowchart vocab (EN + ES)", () => {
+    for (const msg of [
+      "draw me an architecture diagram of the service",
+      "genera un diagrama de arquitectura",
+      "sequence diagram for the login flow",
+      "diagrama de secuencia del login",
+      "flowchart showing the request pipeline",
+      "flujograma del pipeline",
+      "ER diagram for the database",
+      "diagrama ER de la base de datos",
+      "state diagram of the order lifecycle",
+      "class diagram for these modules",
+      "diagrama de clases",
+      "graphviz architecture of our infra",
+      "digraph G { A -> B; }",
+      "render a diagram of the service topology",
+      "diagram_generate please",
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `diagram_generate missing for "${msg}"`).toContain(
+        "diagram_generate",
+      );
+    }
+  });
+
+  it("diagram scope does NOT activate on unrelated mentions", () => {
+    for (const msg of [
+      "the diagnosis is fine", // no diagram token
+      "diagnose the service",
+      "dot product of vectors",
+      "use the shell to ls the dir",
+      "hello",
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `unexpected diagram_generate for "${msg}"`).not.toContain(
+        "diagram_generate",
+      );
+    }
+  });
+
   it("utility does NOT activate file_convert on unrelated format mentions", () => {
     // These should NOT pull the utility scope — "send me a PDF" shouldn't
     // leak file_convert into the tool set for every prompt that mentions

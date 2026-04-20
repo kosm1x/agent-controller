@@ -295,6 +295,12 @@ export const PM_PAPER_TOOLS = [
 ];
 
 /**
+ * v7.12 diagram_generate — scope-gated on diagram/flowchart/architecture
+ * vocabulary. Dispatches to graphviz `dot` or inline LLM SVG+HTML.
+ */
+export const DIAGRAM_TOOLS = ["diagram_generate"];
+
+/**
  * v7.2 graphify-code knowledge-graph tools (MCP-sourced, namespaced with `__`).
  * Scope-gated on graph/knowledge-graph vocabulary. The server (graphify-code)
  * loads a prebuilt AST graph of src/ at boot; these tools are read-only
@@ -592,6 +598,15 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "pm_paper",
   },
   {
+    // v7.12 diagram_generate — activates on diagram/flowchart/architecture
+    // vocabulary. Bilingual EN/ES. Negative lookahead on `diagram` not
+    // needed (rare false-positive surface). Tool-name shortcuts for
+    // `diagram_generate`, graphviz/dot invocation requests.
+    pattern:
+      /\b(diagrama?(?:\s+de\s+(?:secuencia|arquitectura|clases?|estados?|flujo|datos|er))?|diagram(?:s)?(?:\s+(?:of|for|showing))?|flowchart|flujograma|flujo\s+(?:de|del)|sequence\s+diagram|architecture\s+diagram|class\s+diagram|state\s+diagram|er\s+diagram|diagrama[_\s-]?generate|diagram[_\s-]?generate|graphviz|\bdigraph\s+\w|dot\s+graph|render\s+(?:a|the)\s+diagram|mermaid|d2\s+diagram|plantuml)\b/i,
+    group: "diagram",
+  },
+  {
     // v7.2 knowledge graph — graphify-code MCP tools. Activates on
     // graph/knowledge-graph vocabulary. Negative lookahead on `graph` blocks
     // common English collisions: "graphic", "graphics", "grapheme", "graphene",
@@ -872,6 +887,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("graph")) {
     tools.push(...GRAPH_TOOLS);
+  }
+  if (activeGroups.has("diagram")) {
+    tools.push(...DIAGRAM_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

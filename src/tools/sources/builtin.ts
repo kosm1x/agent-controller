@@ -189,6 +189,7 @@ import {
   pmPaperHistoryTool,
 } from "../builtin/pm-paper-trading.js";
 import { fileConvertTool } from "../builtin/file-convert.js";
+import { diagramGenerateTool } from "../builtin/diagram-generate.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -321,6 +322,7 @@ const BUILTIN_TOOLS: Tool[] = [
   pmPaperPortfolioTool,
   pmPaperHistoryTool,
   fileConvertTool,
+  diagramGenerateTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured
