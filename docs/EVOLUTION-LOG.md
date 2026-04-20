@@ -544,3 +544,31 @@ Audit-finds-3-critical-every-time held once more — and this time all three wer
 ### Research notes
 
 Day 36+ of the longitudinal record. F7.5 closes the gap between "strategy produces weights" and "strategy is shippable" — everything downstream (F8 paper, F9 rituals, F11 live) assumes the backtester's ship_gate is truthful. The firewall correctly reports the current FLAM strategy as not-yet-shippable on the seeded dataset (DSR p=0.20 > 0.05 threshold), which is the right answer given a 4-config trial grid on 10 years of weekly data — a positive signal that the math is calibrated. F8 is unblocked for the next session.
+
+## 2026-04-20
+
+### System state
+
+| Metric        | Value                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Source files  | 343 (+7: venue-types / clock / paper-persist / paper-equity-adapter / paper-executor / paper-trading tool + impl plan) |
+| Test files    | 190 (+6)                                                                                                               |
+| Tests passing | 2800 (+72 since session 79)                                                                                            |
+| Tools         | 207 builtin (+3: paper_rebalance / paper_portfolio / paper_history)                                                    |
+| Phase β       | 10/12 done (F1–F6.5 + v7.13 + F7 + F7.5 + F8). F9 next.                                                                |
+
+### What shipped
+
+**F8 Paper Trading (Phase β S11)** — the prove-before-you-ship layer. VenueAdapter TS interface + Clock abstraction (WallClock / FixedClock) + PaperEquityAdapter as first concrete impl + weekly-rebalance executor consuming F7 weights and F7.5 ship_gate. 3 additive tables (`paper_balance`, `paper_portfolio`, `paper_fills`); reuses existing `trade_theses` with `symbol='PORTFOLIO'` sentinel. 3 new deferred tools in a new `paper` scope group. Zero new deps. 22-step cadence, 2 QA audit passes (round 1: 7 warnings all fixed; round 2: 6 polish warnings all fixed). Live smoke with `override_ship_gate=true` produced 4 fills (TLT/SPY/JPM/AAPL) + 6 short-sell rejects (F7 emits negative weights, v1 rejects shorts) + 1 thesis row + consistent mark-to-market.
+
+### Scope-shift decision
+
+The original V7-ROADMAP §F8 scope led with pm-trader MCP (Polymarket paper trading) — that pre-dates the 2026-04-18 weekly-equity lock on F7/F7.5. Since F7 now produces equity weights, F8 must execute equity orders, not prediction-market positions. Re-scoped to equity-first; pm-trader deferred to F8.1 with written trigger ("ship when a prediction-market alpha layer exists that produces Polymarket-positionable signals"). Architecture (VenueAdapter + Clock + shared execution engine) keeps per-Nautilus parity principles so F8.1 / F10 / F11 adapters slot in without refactor.
+
+### What Jarvis learned
+
+Audit-finds-N-warnings-every-time held again, with zero criticals this time — F8 is architecturally simpler than F7.5's overfit-math layer, so the failure modes are coupling/UX/integration rather than correctness. Round-1 caught: (W1) hardcoded `"flam"` in ship-gate lookup; (W2) silent stale-quote fallback distorting `totalEquity`; (W3) dead helper with LIKE-wildcard injection risk; (W4) fills never linked to thesis; (W5) scope regex gaps on ES plurals + bare-`rebalance` false positive; (W6) rejects path untested; (W7) concurrent-rebalance race deferred. Round-2 surfaced: scope missing English determiners (`the/my/your`); stale-abort invisible in tool output; `allowStale` unwired in tool; linkFills by time-window vulnerable to concurrent-rebalance misattribution (fixed to UUID list); aborted thesis with default `outcome='open'` (constrained by existing CHECK, encoded as `metadata.aborted=true`); no thesis_id linkage test; silent strategy fallback. All fixed. **Lesson**: for execution-engine layers, most bugs live at the tool/executor/adapter seams, not in math. Budget audit time for integration UX, not just algorithms.
+
+### Research notes
+
+Day 37+ of the longitudinal record. F8 completes the build-to-fire arc: F1 ingests, F2-F6.5 detect, F7 combines, F7.5 gates, F8 executes. The only remaining Phase β item is F9 (morning/EOD ritual) which glues the pieces into a daily operational loop. Still weekly-first per operator lock. The 6-of-10 short-sell rejects in the live smoke are actually informative: F7 is not emitting a long-only portfolio, so either (a) the alpha combination needs a long-only constraint for equities, or (b) F8 needs a long-only filter at the boundary. Both paths are F8.2+ concerns — v1 correctly rejects what it can't model.

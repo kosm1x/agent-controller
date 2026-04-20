@@ -270,6 +270,13 @@ export const BACKTEST_TOOLS = [
   "backtest_explain",
 ];
 
+/** F8 paper-trading tools — scope-gated on paper/rebalance/portfolio/fills vocab. */
+export const PAPER_TOOLS = [
+  "paper_rebalance",
+  "paper_portfolio",
+  "paper_history",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -499,6 +506,18 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(backtest(?:s|ing|ed|er)?|back[\s-]test(?:s|ing|ed|er)?|cpcv|deflat(?:ed|ion)?\s+sharpe|dsr|walk[_\s-]?forward|overfit(?:ting)?|sobre[_\s-]?ajust\w*|respald\w*\s+(?:la\s+)?(?:estrategia|strategy)|historial\s+de\s+backtests?|ship[_\s-]?block\w*)\b|\bpbo\b(?=[\s\S]{0,200}\b(?:sharpe|overfit|backtest|cpcv|dsr)\b)/i,
     group: "backtest",
+  },
+  {
+    // v7.0 F8 paper trading — activation on paper/rebalance/portfolio/fills +
+    // Spanish equivalents. Anchored so generic "paper" (document) doesn't
+    // collide: require paper-trading context (paper_trade / paper trade /
+    // paper-trade / papertrade). Audit W5 round 1: expanded `fills\s+recient\w*`
+    // + `últimos fills` + `mis fills`; dropped bare `rebalance` verb (was
+    // false-positive on "rebalance the disk"); require rebalance-of-PORTFOLIO
+    // or cartera/posiciones context.
+    pattern:
+      /\b(paper[_\s-]?(?:trade|trading|rebalanc\w*|portfolio|history|fills?)|papertrade|paper\s+trade\w*|rebalanc(?:e|ear|eo|ed|ing)\s+(?:(?:la|el|del|de\s+la|the|my|your|this|a)\s+)?(?:cartera|portafolio|portfolio|posiciones|positions|paper)|portafolio|portfolio\s+actual|(?:ultimos|[úu]ltimos|mis|last|recent)\s+fills?|fills?\s+(?:recient\w*|recent\w*)|rotar\s+posiciones|ejecuta\s+(?:el\s+)?paper|ship[_\s-]?gate|override[_\s-]?ship)\b|\bpaper[_\s-]?equity\b/i,
+    group: "paper",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -755,6 +774,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("backtest")) {
     tools.push(...BACKTEST_TOOLS);
+  }
+  if (activeGroups.has("paper")) {
+    tools.push(...PAPER_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

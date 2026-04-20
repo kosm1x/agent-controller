@@ -596,3 +596,53 @@ CREATE TABLE IF NOT EXISTS backtest_overfit (
   dsr_pvalue            REAL NOT NULL,
   created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ============================================================================
+-- F8 — Paper Trading (Phase β S11)
+-- Equity paper trader consuming F7 weights + F7.5 ship_gate. Weekly rebalance.
+-- Reuses trade_theses (per-rebalance snapshot, symbol='PORTFOLIO' sentinel).
+-- Additive, live-applicable via `sqlite3 data/mc.db < schema.sql`.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS paper_balance (
+  account         TEXT PRIMARY KEY DEFAULT 'default',
+  cash            REAL NOT NULL DEFAULT 100000,
+  initial_cash    REAL NOT NULL DEFAULT 100000,
+  last_updated    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS paper_portfolio (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  account         TEXT NOT NULL DEFAULT 'default',
+  symbol          TEXT NOT NULL,
+  shares          REAL NOT NULL,                              -- fractional allowed
+  avg_cost        REAL NOT NULL,                              -- weighted average entry
+  opened_at       TEXT NOT NULL,                              -- first buy timestamp
+  last_updated    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_portfolio_account
+  ON paper_portfolio(account, symbol);
+
+CREATE TABLE IF NOT EXISTS paper_fills (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  fill_id         TEXT NOT NULL UNIQUE,                       -- UUID from adapter
+  thesis_id       INTEGER,                                    -- FK trade_theses.id (logical)
+  account         TEXT NOT NULL DEFAULT 'default',
+  symbol          TEXT NOT NULL,
+  side            TEXT NOT NULL CHECK(side IN ('buy','sell')),
+  shares          REAL NOT NULL,
+  fill_price      REAL NOT NULL,
+  gross_notional  REAL NOT NULL,
+  commission      REAL NOT NULL DEFAULT 0,
+  slippage_bps    REAL NOT NULL DEFAULT 0,
+  realized_pnl    REAL,                                       -- non-null for sells
+  filled_at       TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_paper_fills_account_time
+  ON paper_fills(account, filled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paper_fills_symbol
+  ON paper_fills(symbol, filled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paper_fills_thesis
+  ON paper_fills(thesis_id);
