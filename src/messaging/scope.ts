@@ -421,8 +421,28 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "schedule",
   },
   {
+    // WordPress scope — covers the bilingual vocabulary operators use in
+    // practice. Bug fix 2026-04-20: regex previously required `wp[-_]` with
+    // a separator and missed bare `WP` (ES shorthand "en WP", "el WP"),
+    // integer-referenced posts (`el articulo 546`), and ES update-verb +
+    // WP-noun forms (`actualiza el articulo`, `edítalo`). Scope miss
+    // caused `WORDPRESS_TOOLS` to be dropped from the prompt, pushing the
+    // LLM toward `shell_exec`/`curl` via the `coding` scope.
+    //
+    // Design choices after round-1 audit:
+    // - Bare `wp\b` catches operator shorthand ("en WP,") — the outer `\b(`
+    //   already provides the leading boundary so no inner `\b` needed.
+    // - Integer-ref posts require a preceding article/possessive (`el|la|
+    //   los|las|mi|tu|este|esta`) to avoid firing on dev chatter like
+    //   "post 12 on issue" or "commit 42".
+    // - Update-verb alternation accepts ES subjunctive (`actualice|edite|
+    //   modifique|cambie`) and accented clitic stems (`act[uú]al[ií]za`
+    //   for `actualízalo`, `ed[ií]ta` for `edítalo`, etc.).
+    // - `p[aá]gina` deliberately EXCLUDED from the update-verb noun list —
+    //   it's the default ES word for any UI screen and over-fires on
+    //   generic frontend work ("actualiza la pagina de login").
     pattern:
-      /\b(wordpress|blogs?\s+(?:post|entry|article|entrada)|wp[-_]|publi(?:ca|car|que)\s+(?:en\s+)?(?:el\s+)?(?:blog|sitio|wordpress)|drafts?\s+(?:del?\s+)?blog|borrador\s+(?:del?\s+)?blog|featured\s*image|hero\s*image|plugin(?:s)?\s+(?:de\s+)?wp|theme\s+(?:de\s+)?wp|sitio\s+web|header|footer|tracker|tracking|GA4|analytics|widget|snippet|(?:livingjoyfully|redlightinsider)\.(?:art|com)|genera.*imagen.*blog|sube.*imagen.*(?:blog|wp|sitio)|media.*upload.*(?:blog|wp))/i,
+      /\b(wordpress|blogs?\s+(?:post|entry|article|entrada)|wp[-_]|wp\b|(?:el|la|los|las|mi|tu|este|esta)\s+(?:art[ií]culo|post|entrada)s?\s+\d{1,6}\b|(?:actual[ií]za|actualice|ed[ií]ta|edite|modif[ií]ca|modifique|c[aá]mbia|cambie)(?:r|lo|la|las|los)?\s+(?:(?:el|la|los|las|un|una|mi|tu|este|esta)\s+)?(?:post|art[ií]culo|entrada|p[aá]ginas?\s+(?:del?\s+)?(?:blog|sitio|wordpress|wp\b))|publi(?:ca|car|que)\s+(?:en\s+)?(?:el\s+)?(?:blog|sitio|wordpress)|drafts?\s+(?:del?\s+)?blog|borrador\s+(?:del?\s+)?blog|featured\s*image|hero\s*image|plugin(?:s)?\s+(?:de\s+)?wp|theme\s+(?:de\s+)?wp|sitio\s+web|header|footer|tracker|tracking|GA4|analytics|widget|snippet|(?:livingjoyfully|redlightinsider)\.(?:art|com)|genera.*imagen.*blog|sube.*imagen.*(?:blog|wp|sitio)|media.*upload.*(?:blog|wp))/i,
     group: "wordpress",
   },
   {

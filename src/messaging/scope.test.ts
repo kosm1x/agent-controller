@@ -861,6 +861,132 @@ describe("wordpress positive", () => {
     const tools = scope("Publica el artículo en WordPress");
     expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
   });
+
+  // --- 2026-04-20 bug fix: bare WP + integer-ref posts + ES update verbs ---
+  // Bug: `wp[-_]` required a separator so `en WP,` missed; `articulo 546`
+  // and ES update forms also missed. Fix extends the scope regex with
+  // bare `wp\b`, article-anchored `(?:el|la|...)\s+(?:articulo|post|
+  // entrada)\s+\d{1,6}`, and ES verb alternation `actual[ií]za|actualice|
+  // ed[ií]ta|edite|modif[ií]ca|modifique|c[aá]mbia|cambie` + post/articulo/
+  // entrada noun. `pagina` intentionally NOT in the noun list (over-fires).
+
+  it("activates on bare 'WP' with comma (ES shorthand)", () => {
+    const tools = scope("Continua con el articulo 546 en WP, por favor");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'el WP' (article + bare shorthand)", () => {
+    const tools = scope("Revisa el WP ahorita");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on article + integer-referenced 'el articulo 546'", () => {
+    const tools = scope("Abre el articulo 546 para revisarlo");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'el post 123' integer reference", () => {
+    const tools = scope("Dame el post 123");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'la entrada 7' integer reference", () => {
+    const tools = scope("Lee la entrada 7");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on ES update-verb + WP-noun ('actualiza el articulo')", () => {
+    const tools = scope("actualiza el articulo con lo nuevo");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'edita la entrada' (ES edit verb + noun)", () => {
+    const tools = scope("Edita la entrada para agregar la foto");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on ES subjunctive 'actualice el articulo' (formal register)", () => {
+    const tools = scope("Por favor actualice el articulo");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on accented clitic 'edítalo' in verb+noun context", () => {
+    // Real accented form: stem `edíta` + clitic `lo` + article + noun.
+    // Exercises the accented-verb arm (`ed[ií]ta(?:lo)?`) specifically.
+    const tools = scope("Edítalo este post ahora");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'edita la pagina del blog' (round-2 gap fix)", () => {
+    // Round-2 audit caught the coverage regression: removing p[aá]gina
+    // from the generic noun list killed this hit. Restored via targeted
+    // `p[aá]ginas?\s+(?:del?\s+)?(?:blog|sitio|wordpress|wp)` arm.
+    const tools = scope("edita la pagina del blog");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'actualiza la página del sitio'", () => {
+    const tools = scope("actualiza la página del sitio por favor");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'modifique la entrada' (subjunctive edit)", () => {
+    const tools = scope("modifique la entrada que te pasé");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("still activates on 'wp-stats' (existing coverage preserved)", () => {
+    const tools = scope("Revisa los wp-stats");
+    expect(hasAll(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+});
+
+describe("wordpress negative (false-positive guards)", () => {
+  // These keep the broader lexicon from over-firing WP scope.
+
+  it("'the post office is closed' should NOT trigger wordpress", () => {
+    const tools = scope("the post office is closed today");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("generic 'update the article' without WP context should NOT trigger", () => {
+    const tools = scope("update the article about something");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("'articulo' alone without integer should NOT trigger wordpress", () => {
+    // Bare "articulo" — no digit, no blog context, no update verb.
+    // Note: "blogs article" still matches via existing `blogs?\s+article`.
+    const tools = scope("hazme un resumen de articulo");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("bare 'articulo 5 de la constitución' (no article) should NOT trigger", () => {
+    // Round-1 audit fix: integer-ref alternation now requires a preceding
+    // article/possessive so legal/reference prose no longer fires WP.
+    const tools = scope("articulo 5 de la constitución");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("'post 12 comments' dev jargon should NOT trigger wordpress", () => {
+    // Round-1 audit M1: integer-ref alternation requires ES article,
+    // so bare EN `post N` dev chatter no longer activates WP.
+    const tools = scope("please post 12 comments here");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("'actualiza la pagina de login' (generic UI) should NOT trigger", () => {
+    // Round-1 audit M2: `pagina` removed from update-verb noun list,
+    // so generic frontend work no longer activates WP scope.
+    const tools = scope("actualiza la pagina de login del CRM");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
+
+  it("'edita la pagina 404' should NOT trigger wordpress", () => {
+    // Same M2 guard — UI page edits are not WP work.
+    const tools = scope("edita la pagina 404 del dashboard");
+    expect(hasNone(tools, WORDPRESS_TOOLS)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

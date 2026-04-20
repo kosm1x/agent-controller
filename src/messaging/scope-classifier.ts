@@ -46,7 +46,7 @@ GROUPS (return only the ones that apply):
 - browser: navigating websites, scraping, login, React/SPA apps, playwright
 - coding: code, deploy, git, github, commit, push, files, scripts, debug, build, test, npm
 - schedule: recurring tasks, cron, reports, reminders, automation, programar, cada día/hora
-- wordpress: blog posts, WordPress, livingjoyfully.art, redlightinsider.com, publish to blog
+- wordpress: blog posts, WordPress, livingjoyfully.art, redlightinsider.com, publish to blog. Also fires on bare "WP" shorthand ("en WP", "el WP"), article-anchored integer-referenced posts ("el articulo 546", "el post 123", "la entrada 7"), and ES update-verb forms including subjunctive and accented clitic stems ("actualiza/actualice el articulo", "edita/edítalo el post", "modifica/modifique la entrada", "cambia/cámbialo"). Does NOT fire on generic UI "páginas" (login, 404, dashboard) — those are frontend work, not WP
 - crm: CRM, Azteca, customer management (only when explicitly mentioned)
 - intel: intelligence, signals, market, earthquake, cyber, threats, bitcoin, treasury
 - video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration
