@@ -336,6 +336,8 @@ export const WRITE_TOOLS = new Set([
   // v7.12 diagram generation — writes SVG/HTML output to /tmp or /workspace.
   // Same hallucination-guard rationale.
   "diagram_generate",
+  // v7.14 infographic generation — writes SVG output via AntV SSR.
+  "infographic_generate",
 ]);
 
 /**

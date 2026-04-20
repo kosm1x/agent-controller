@@ -23,6 +23,7 @@ import {
   PM_PAPER_TOOLS,
   UTILITY_TOOLS,
   DIAGRAM_TOOLS,
+  SPECIALTY_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -249,6 +250,28 @@ describe("WRITE_TOOLS sync", () => {
     // WRITE_TOOLS to defeat "I drew the diagram" hallucination without a
     // tool call.
     for (const tool of DIAGRAM_TOOLS) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable specialty tools (v7.14)", () => {
+    // v7.14: infographic_generate (the first SPECIALTY entry that writes
+    // to the filesystem) was added to WRITE_TOOLS. Other SPECIALTY entries
+    // (chart_generate via QuickChart URL, rss_read, gemini_image, hf_*,
+    // batch_decompose) are reads or produce data-URL responses rather
+    // than filesystem artifacts.
+    const SPECIALTY_READ_ONLY = new Set<string>([
+      "chart_generate",
+      "rss_read",
+      "gemini_image",
+      "hf_generate",
+      "hf_spaces",
+      "batch_decompose",
+    ]);
+    for (const tool of SPECIALTY_TOOLS) {
+      if (SPECIALTY_READ_ONLY.has(tool)) continue;
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );
