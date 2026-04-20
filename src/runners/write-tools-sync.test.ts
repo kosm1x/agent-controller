@@ -18,6 +18,7 @@ import {
   ALPHA_TOOLS,
   BACKTEST_TOOLS,
   PAPER_TOOLS,
+  MARKET_RITUAL_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -173,6 +174,17 @@ describe("WRITE_TOOLS sync", () => {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );
+    }
+  });
+
+  it("F9 market-ritual helpers are all read-only (Phase β S12)", () => {
+    // market_calendar + alert_budget_status are pure reads — must NOT appear
+    // in WRITE_TOOLS. Regression guard against accidental promotion.
+    for (const tool of MARKET_RITUAL_TOOLS) {
+      expect(
+        WRITE_TOOLS.has(tool),
+        `Should NOT be in WRITE_TOOLS: ${tool}`,
+      ).toBe(false);
     }
   });
 });

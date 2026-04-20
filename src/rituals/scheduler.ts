@@ -20,18 +20,21 @@ import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
 import { createSignalIntelligence } from "./signal-intelligence.js";
 import { executeOvernightTuning } from "./overnight-tuning.js";
+import { createMarketMorningScan } from "./market-morning-scan.js";
+import { createMarketEodScan } from "./market-eod-scan.js";
+import { isNyseTradingDay } from "../finance/market-calendar.js";
 import { getConfig } from "../config.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
-function todayLabel(): string {
-  return new Date().toLocaleDateString("en-CA", {
-    timeZone: RITUALS_TIMEZONE,
-  });
+function todayLabel(timezone: string = RITUALS_TIMEZONE): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
 }
 
 function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
-  const date = todayLabel();
+  // Audit W1 round 1: compute date in the ritual's own timezone so title +
+  // dedup keys align across DST / day-boundary edges between MX and NY.
+  const date = todayLabel(ritual.timezone);
   switch (ritual.id) {
     case "signal-intelligence":
       return createSignalIntelligence(date);
@@ -47,6 +50,10 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       return createEvolutionLogEntry(date);
     case "weekly-review":
       return createWeeklyReview(date);
+    case "market-morning-scan":
+      return createMarketMorningScan(date);
+    case "market-eod-scan":
+      return createMarketEodScan(date);
     default:
       throw new Error(`Unknown ritual: ${ritual.id}`);
   }
@@ -58,7 +65,7 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
  */
 function alreadyRanToday(ritual: RitualDefinition): boolean {
   const db = getDatabase();
-  const date = todayLabel();
+  const date = todayLabel(ritual.timezone);
   const titlePattern = `${ritual.title} — ${date}`;
 
   const row = db
@@ -73,9 +80,23 @@ function alreadyRanToday(ritual: RitualDefinition): boolean {
 async function executeRitual(ritual: RitualDefinition): Promise<void> {
   if (alreadyRanToday(ritual)) {
     console.log(
-      `[rituals] ${ritual.id}: already ran today (${todayLabel()}), skipping`,
+      `[rituals] ${ritual.id}: already ran today (${todayLabel(ritual.timezone)}), skipping`,
     );
     return;
+  }
+
+  // Audit W4 round 1: belt-and-braces trading-day gate at the scheduler
+  // level. Prompt-level gate in the ritual template is the first line of
+  // defense; this catches the hallucination case where the LLM ignores the
+  // calendar instruction and proceeds into a full-budget run on a holiday.
+  if (ritual.id === "market-morning-scan" || ritual.id === "market-eod-scan") {
+    const today = todayLabel(ritual.timezone);
+    if (!isNyseTradingDay(today)) {
+      console.log(
+        `[rituals] ${ritual.id}: NYSE not trading on ${today}, skipping`,
+      );
+      return;
+    }
   }
 
   // Overnight tuning runs its own async loop instead of submitting a task.
@@ -117,14 +138,15 @@ export function startRitualScheduler(): void {
       continue;
     }
 
+    // Allow per-ritual timezone override (F9 market rituals use
+    // America/New_York so 8:00 AM / 4:30 PM align with NYSE hours across DST).
+    const tz = ritual.timezone ?? RITUALS_TIMEZONE;
     const job = cron.schedule(ritual.cron, () => void executeRitual(ritual), {
-      timezone: RITUALS_TIMEZONE,
+      timezone: tz,
     });
 
     scheduledJobs.push(job);
-    console.log(
-      `[rituals] ${ritual.id}: scheduled (${ritual.cron}, tz=${RITUALS_TIMEZONE})`,
-    );
+    console.log(`[rituals] ${ritual.id}: scheduled (${ritual.cron}, tz=${tz})`);
   }
 
   // Mechanical backups + autonomous improvement + safeguards + canary + consolidation
