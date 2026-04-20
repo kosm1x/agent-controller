@@ -603,6 +603,42 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
 
+## 2026-04-20 (session 85) — Phase γ S2: v7.10 file_convert
+
+### System state
+
+| Metric        | Value                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| Source files  | 359 (+1: `file-convert.ts`)                                                                  |
+| Test files    | 201 (+1: `file-convert.test.ts`)                                                             |
+| Tests passing | 2994 (+29 since session 84: 28 new file-convert + 1 write-tools-sync + 2 scope, -2 adjusted) |
+| Tools         | 215 builtin (+1: `file_convert`). 155 deferred (+1).                                         |
+| Phase γ       | **2/13 done.** Next: v7.12 / v7.14 / v7.3 P5 (1-session independents) or v7.11 (2 sessions). |
+
+### What shipped
+
+**v7.10 `file_convert` (Phase γ S2)** — single deferred tool dispatching to FLOSS CLI binaries installed via apt (calibre `ebook-convert`, libreoffice `--headless`, pandoc, imagemagick `convert`, ffmpeg frame extraction). Fixed dispatch table (input extension → binary); target format is an enum. Closes 5 real format gaps: `.epub/.mobi` ebooks, `.odt/.rtf/.pages/.doc/.ppt/.xls` office docs, HEIC/AVIF/JXL images, any-doc-to-any-doc via pandoc, video frames for vision analysis.
+
+Security posture: `execFile(bin, [args…])` — no shell, no string concatenation. Input path must be absolute + canonical + under a whitelisted read sandbox (`/tmp/`, `/workspace/`, `/root/claude/jarvis-kb/`, `/root/claude/projects/`, mission-control's `public/docs/`). Output path must be under `/tmp/` or `/workspace/`. Symlinks rejected outright (`lstatSync.isSymbolicLink()`). Realpath re-validated against the same allow-list to defeat intermediate-link escapes. `timestamp_sec` validated `Number.isFinite && >= 0 && < 86400` before reaching ffmpeg's `-ss` argv. 60s timeout per call.
+
+Scope-group: extended existing `utility` (previously weather/currency/geocoding only) with `file_convert`. New scope regex adds bilingual conversion vocab (EN `convert/transform X to/into Y`; ES `convertir`, `convierte`, `transformalo a Y` clitic form, `transforma X en Y`), tool shortcuts (`pandoc`, `libreoffice`, `imagemagick`, `ffmpeg frame`, `file_convert`, `ebook-convert`), frame-extraction verbs, and file-extension anchors (`\.epub|\.mobi|\.heic|\.heif|\.avif|\.jxl|\.odt|\.rtf|\.pages|\.pptx|\.docx|\.adoc|\.rst`).
+
+Live smoke: pandoc `.md → .html` 304 bytes / 152ms; imagemagick `.png → .jpeg` 336 bytes / 17ms; libreoffice `.md → .docx → .pdf` 31629 bytes / 2367ms (warm start); symlink `/tmp/hackish.md → /etc/passwd` correctly rejected with `"input_path must not be a symlink"`. Tool count 221 → 222.
+
+### What Jarvis learned
+
+Round 1 caught 2 critical bugs — both in the "security check runs but doesn't actually prevent the attack" class. **C1**: `statSync` follows symlinks by default. Every guard passed (absolute, canonical, under whitelist, exists, isFile()) on a `/tmp/link → /etc/shadow` symlink — the binary would have happily converted the target. Fix: `lstatSync` for the symlink check + `realpathSync` re-validation against the allow-list. **C2**: `typeof === "number" && > 0` passes `Infinity`. Fell through to `-ss Infinity` in ffmpeg's argv. Not a shell injection, but an opaque failure surface. Fix: `Number.isFinite` + range cap.
+
+Round 2 caught an M2 "fix-for-fix" regression: my Round 1 fix to the ES `transforma` regex required BOTH a determiner AND a preposition around the object, which broke the ES clitic form `"transformalo a pdf"` (the `-lo` IS the direct object, no separate object token). Fixed with a two-alternative pattern: `(?:transforma(?:lo|la)|transformar?)\s+(?:object-phrase\s+)?(?:prep)\b`. Matches both clitic-form (no separate object) and non-clitic form.
+
+**Meta-pattern reinforced — 2-audit-pass discipline**: round 2 found the fix-for-fix regression even though round 1 was clean in code-correctness terms. My Round 2 fix to the regex also required its own cross-check (the "fix-for-fix-for-fix" risk), which is why I added a test case for `transformalo a pdf` specifically after the second round of fixes. Without it, the ES clitic form would regress the next time anyone tweaks the file-conversion scope regex.
+
+**New meta-pattern — `statSync` is a silent allow-list bypass**: the same pattern could exist anywhere else in the codebase that whitelists paths and then calls `existsSync`/`statSync` without an `lstatSync` check. Candidate sweep surface: `shell_exec`'s write-path guard, `file_write`, `file_edit`, any tool that takes a user-supplied path and validates it before exec. Not a drop-everything sweep since shell_exec has a wider denylist and `file_write` has its own guards, but worth a targeted audit next session if we add another path-taking tool.
+
+### Research notes
+
+Day 41+ of the longitudinal record. Phase γ at 2/13 with v7.2 (knowledge graph) + v7.10 (file convert) done. Pattern emerging: the 1-session independent γ items cost ~2-3 hours real-time including 2 audit rounds and close as clean, small, self-contained commits. Plausible to close another 1-2 of v7.12 / v7.14 / v7.3 P5 in the same 24h window if operator gives go-ahead. Higher-value items (v7.11 teaching, v7.3 P4 ads) are multi-session by their own scope and should get their own day.
+
 ## 2026-04-20 (session 84) — Phase γ S1: v7.2 Graphify MCP knowledge graph
 
 ### System state

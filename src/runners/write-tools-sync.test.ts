@@ -21,6 +21,7 @@ import {
   MARKET_RITUAL_TOOLS,
   PM_ALPHA_TOOLS,
   PM_PAPER_TOOLS,
+  UTILITY_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -215,6 +216,26 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !PM_PAPER_READ_ONLY.has(t),
     );
     for (const tool of pmPaperWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable utility tools (v7.10)", () => {
+    // v7.10 file_convert writes converted output to /tmp or /workspace.
+    // weather_forecast / currency_convert / geocode_address are pure reads.
+    // Audit M1: this assertion was absent pre-v7.10 — UTILITY_TOOLS was
+    // all-read so the sync test skipped it. Now one write has landed.
+    const UTILITY_READ_ONLY = new Set<string>([
+      "weather_forecast",
+      "currency_convert",
+      "geocode_address",
+    ]);
+    const utilityWriteTools = UTILITY_TOOLS.filter(
+      (t) => !UTILITY_READ_ONLY.has(t),
+    );
+    for (const tool of utilityWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );
