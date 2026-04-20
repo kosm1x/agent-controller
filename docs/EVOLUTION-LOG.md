@@ -603,6 +603,50 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
 
+## 2026-04-20 (session 86) — Phase γ S3: v7.12 diagram_generate
+
+### System state
+
+| Metric        | Value                                                                              |
+| ------------- | ---------------------------------------------------------------------------------- |
+| Source files  | 361 (+2: `diagram-generate.ts` + `diagram-svg-prompt.ts`)                          |
+| Test files    | 202 (+1: `diagram-generate.test.ts`)                                               |
+| Tests passing | 3023 (+29 since session 85: 26 diagram + 2 scope + 1 write-tools-sync)             |
+| Tools         | 216 builtin (+1: `diagram_generate`). 156 deferred (+1).                           |
+| Phase γ       | **3/13 done.** Next 1-session candidates: v7.14 infographics or v7.3 P5 GEO depth. |
+
+### What shipped
+
+**v7.12 `diagram_generate` MVP (Phase γ S3)** — single deferred tool that renders diagrams from natural-language descriptions OR raw DSL. Two formats shipped: `graphviz` (dispatch to `dot -Tsvg` via `execFile`, sub-second deterministic auto-layout) and `svg_html` (inline LLM generating a single self-contained HTML file with the Cocoon palette + layout rules + JetBrains Mono stack). Raw-DSL short-circuit detects `digraph G {` / `<!doctype html` at the head of the description and skips the LLM roundtrip — saves ~6s per call when caller provides hand-written source.
+
+Port of the Cocoon-AI skill's design system: 2 palettes (dark = slate-950 base, light = zinc-50 base), 11 semantic colors per theme (primary/muted text, surface, border, 5 accent classes for component states), explicit 20px grid layout rules, SVG arrow z-ordering pattern (draw arrows first, overlay component rects). Extracted into `diagram-svg-prompt.ts` (~70 LOC of prose + a `svgHtmlSystemPrompt(theme)` factory).
+
+Security posture same as v7.10 file_convert: `execFile("dot", [...])` with arg array, no shell interpretation; output path absolute + canonical + under `/tmp/` or `/workspace/`; DOT source written to a fresh `/tmp/diagram-src-<uuid>.dot` by the handler, never takes user-supplied paths; description capped at 8000 chars before reaching LLM or binary. Temp files cleaned up in `finally` blocks (both the DOT source after render AND the svg_html tmp on rename-fallback).
+
+Scope wiring: new `DIAGRAM_TOOLS = ["diagram_generate"]` group with bilingual EN+ES regex (`diagrama(?:\s+de\s+...)?|diagram|flowchart|flujograma|sequence diagram|architecture diagram|digraph|graphviz|mermaid|d2 diagram|plantuml|...`). Scope activates on mermaid mentions even though mermaid is deferred — the tool returns a clear "mermaid deferred to v7.12.1" error rather than scope going dark (better UX than silent scope miss).
+
+Live smoke: raw DOT input → 1.8KB SVG in 36ms; NL `"request flow: user → WAF → gateway → service → db"` → qwen-3.5-plus (237 prompt / 202 completion tokens) → valid DOT → dot → 4.4KB SVG in 6.2s total. Tool count 222 → 223.
+
+Scope pivot during impl-plan step 2: original plan targeted 3 formats (mermaid + graphviz + svg_html). Recon revealed `mmdc` v11 AND v10.9.1 both hang with `ProtocolError: DOM.resolveNode timed out` on this VPS's puppeteer/Chromium combination — 4+ minute wall-clock with zero SVG produced. Mermaid deferred to v7.12.1 with trigger = upstream DOM.resolveNode fix OR switch to a Node-API renderer (`@mermaid-js/mermaid` + jsdom/happy-dom) bypassing mmdc's puppeteer stack entirely. D2 + PlantUML also deferred: d2 requires out-of-band `curl | sh` installer; PlantUML needs JRE + ~200MB Java deps and graphviz covers the UML-topology cases adequately.
+
+### What Jarvis learned
+
+Round 1 caught 0 critical + 0 major + 6 warnings, all mechanical cleanup. Notable ones:
+
+- **W1**: `looksLikeDot` detector was `/\b(?:di)?graph\s+[\w"]*\s*\{/` matched anywhere in the first 400 chars. A description like `"Please draw something like digraph G { A -> B; }"` would short-circuit the LLM and hand the raw text to dot. Anchored to `/^(?:strict\s+)?(?:di)?graph.../` — now only triggers when the description STARTS with DSL.
+- **W2 + W3**: both DOT source temp file (graphviz branch) and HTML tmp file (svg_html rename-fallback branch) leaked on some paths. Added `unlinkSync` with best-effort try/catch in a `finally` block + in the rename-failure catch.
+- **W4**: `isUnderPrefix` had an `abs === p.replace(/\/$/, "")` exact-equality branch alongside the `startsWith` prefix check. Accepting a bare `/tmp` path is user-error-prone (writeFileSync errors EISDIR). Dropped; prefix check is what the code actually meant.
+
+Round 2 clean PASS verifying all fixes + 2 residual informational items (cosmetic test-name gap + untested `strict digraph` variant — neither blocks ship).
+
+**Meta-pattern — scope-pivot-during-recon is now a recognized cadence** (3rd consecutive γ sprint). F8.1b (β-addendum S14) declined the pm-trader MCP at impl-plan §0. v7.2 (γ S1) pivoted docs→code corpus at step 4. v7.12 (γ S3) pivoted mermaid→graphviz+svg_html at step 2. Pattern holds: the first cheap integration experiment reveals a constraint that rewrites scope. Record the pivot in §1 of the impl-plan (not just in commit messages) so the decision chain is auditable forever.
+
+**Meta-pattern — non-logic sprints still produce cleanup warnings**. v7.2 was non-logic (config + regex + tests) and had a very clean round 2 (only 1 residual doc gap). v7.10 was logic-heavy (2 criticals + fix-for-fix regression in round 2). v7.12 sits in between: mostly new runtime code (dispatch + cleanup + LLM calls + path validation) but the round-1 findings were all WARNINGS-only, not criticals. Hypothesis: the 2-audit-pass ceiling of cleanup is proportional to the volume of new runtime code paths introduced. Small-surface sprints (v7.2) clear round 2 in minutes; medium-surface (v7.12) take a second round of mechanical fixes; high-risk (v7.10) earn their 2 criticals.
+
+### Research notes
+
+Day 41+ of the longitudinal record. 3/13 Phase γ items done on what is turning into a high-cadence day: v7.2 + v7.10 + v7.12 shipped in ~5 hours of wall-clock with 2 audit passes apiece and zero rolled-back commits. This is sustainable for 1-session γ items because each is genuinely independent — no shared surface area, no cross-cutting dependencies, each closes a distinct capability gap. v7.11 (teaching module, 2 sessions) and v7.3 P4 (digital marketing buyer, 3 sessions) will demand their own days; they're load-bearing not drop-in.
+
 ## 2026-04-20 (session 85) — Phase γ S2: v7.10 file_convert
 
 ### System state

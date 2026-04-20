@@ -22,6 +22,7 @@ import {
   PM_ALPHA_TOOLS,
   PM_PAPER_TOOLS,
   UTILITY_TOOLS,
+  DIAGRAM_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -236,6 +237,18 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !UTILITY_READ_ONLY.has(t),
     );
     for (const tool of utilityWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable diagram tools (v7.12)", () => {
+    // v7.12 diagram_generate writes an SVG/HTML output to /tmp or /workspace.
+    // No read-only counterparts; every entry in DIAGRAM_TOOLS must be in
+    // WRITE_TOOLS to defeat "I drew the diagram" hallucination without a
+    // tool call.
+    for (const tool of DIAGRAM_TOOLS) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );
