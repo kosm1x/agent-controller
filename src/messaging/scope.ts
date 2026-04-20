@@ -305,6 +305,14 @@ export const PM_PAPER_TOOLS = [
 export const DIAGRAM_TOOLS = ["diagram_generate"];
 
 /**
+ * v7.1 chart rendering + vision pattern recognition. Scope-gated on chart/
+ * pattern vocabulary. market_chart_render produces a PNG of OHLC + overlays;
+ * market_chart_patterns classifies a PNG (or auto-renders first) into a named
+ * formation and writes the result to `chart_patterns` for post-F7 RRF fusion.
+ */
+export const CHART_TOOLS = ["market_chart_render", "market_chart_patterns"];
+
+/**
  * v7.2 graphify-code knowledge-graph tools (MCP-sourced, namespaced with `__`).
  * Scope-gated on graph/knowledge-graph vocabulary. The server (graphify-code)
  * loads a prebuilt AST graph of src/ at boot; these tools are read-only
@@ -371,7 +379,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric|infographics?|infograf[ií]as?|summary\s+card|comparison\s+(?:card|table)|ranking\s+(?:card|pyramid)|SWOT|cuadro\s+resumen|tarjeta\s+(?:resumen|KPI)|timeline\s+card|briefing\s+visual)/i,
+      /\b(chart_generate|(?:bar|line|pie|doughnut|radar|scatter)\s+chart|gr[aá]fica\s+(?:de\s+)?(?:barras|pastel|l[ií]nea|circular|dona|radar|dispersi[oó]n)|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric|infographics?|infograf[ií]as?|summary\s+card|comparison\s+(?:card|table)|ranking\s+(?:card|pyramid)|SWOT|cuadro\s+resumen|tarjeta\s+(?:resumen|KPI)|timeline\s+card|briefing\s+visual)/i,
     group: "specialty",
   },
   {
@@ -640,6 +648,32 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(graphify|knowledge[_\s-]?graph|concept[_\s-]?map|god[_\s-]?nodes?|shortest[_\s-]?path|community\s+detection|neighbors?\s+of|call[_\s-]?graph|dependency\s+graph|grafo\s+(?:de|del|codigo|c[oó]digo|conocimiento)|mapa\s+conceptual|grafo\s+conceptual|query[_\s-]?graph|graph[_\s-]?stats?|get[_\s-]?neighbors?|get[_\s-]?community|get[_\s-]?node)\b/i,
     group: "graph",
+  },
+  {
+    // v7.1 chart rendering + vision pattern recognition. Bilingual EN/ES.
+    // Fires on:
+    //  - Tool-name shortcuts: market_chart_render, market_chart_patterns
+    //  - Financial chart vocabulary paired with a symbol / interval / pattern
+    //    word (so bare "chart" without a finance anchor does NOT fire —
+    //    generic chart_generate stays separate, as do diagram/infographic)
+    //  - Named pattern keywords: head-and-shoulders, triangle, wedge, flag,
+    //    channel, cup and handle, double top/bottom
+    // `patterns` / `patrones` are intentionally broad — when an operator asks
+    // about patterns on a financial symbol, WP/other scopes won't collide.
+    pattern:
+      /\b(market[_\s-]?chart[_\s-]?(?:render|patterns?)|candlestick|velas\s+japonesas|head[_\s-]and[_\s-]shoulders|hombro[_\s-]cabeza[_\s-]hombro|cabeza\s+y\s+hombros|double\s+(?:top|bottom)|doble\s+(?:techo|suelo|piso)|(?:ascending|descending|symmetrical)\s+triangle|tri[aá]ngulo\s+(?:ascendente|descendente|sim[eé]trico)|(?:rising|falling)\s+wedge|cu[nñ]a\s+(?:ascendente|descendente|alcista|bajista)|bull\s+flag|bear\s+flag|bandera\s+(?:alcista|bajista)|cup\s+and\s+handle|taza\s+(?:con|y)\s+asa|trend\s+channel|canal\s+de\s+tendencia|chart\s+pattern|patr[oó]n\s+(?:gr[aá]fic\w+|t[eé]cnic\w+|de\s+precio)|patrones?\s+(?:en|del?)\s+(?:el\s+)?(?:gr[aá]fic\w+|chart))\b/i,
+    group: "chart",
+  },
+  {
+    // v7.1 chart — ticker-anchored variant. Case-sensitive: "chart of SPY"
+    // fires but "chart of these" doesn't, because the ticker arm requires
+    // an uppercase 1-5-letter symbol (optionally $-prefixed). Negative
+    // lookahead blocks common English 2-3-letter caps that are NOT tickers
+    // (IT, US, EU, UK, ALL, NEW, WHO, CEO, CFO, CTO, COO, ETC, AKA, FAQ,
+    // GDP, GPS, HR, PR, THE, ANY) — round-1 audit M2.
+    pattern:
+      /\b(?:chart|gr[aá]fico)\s+(?:of|for|de|para)\s+\$?(?!(?:IT|US|EU|UK|ALL|NEW|WHO|CEO|CFO|CTO|COO|ETC|AKA|FAQ|GDP|GPS|HR|PR|THE|ANY|ONE|YOU|ME)\b)[A-Z]{1,5}\b/,
+    group: "chart",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -914,6 +948,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("diagram")) {
     tools.push(...DIAGRAM_TOOLS);
+  }
+  if (activeGroups.has("chart")) {
+    tools.push(...CHART_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

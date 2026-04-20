@@ -24,6 +24,7 @@ import {
   UTILITY_TOOLS,
   DIAGRAM_TOOLS,
   SPECIALTY_TOOLS,
+  CHART_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -250,6 +251,18 @@ describe("WRITE_TOOLS sync", () => {
     // WRITE_TOOLS to defeat "I drew the diagram" hallucination without a
     // tool call.
     for (const tool of DIAGRAM_TOOLS) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all chart tools (v7.1)", () => {
+    // v7.1 market_chart_render writes a PNG; market_chart_patterns writes a
+    // chart_patterns row (and may internally render, which writes too).
+    // Both must be in WRITE_TOOLS so the hallucination guard catches "I
+    // drew the chart" / "I identified the pattern" without a tool call.
+    for (const tool of CHART_TOOLS) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

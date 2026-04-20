@@ -19,6 +19,7 @@ import {
   MISC_TOOLS,
   CRM_TOOLS_SCOPE,
   SEO_TOOLS,
+  CHART_TOOLS,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -89,8 +90,12 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("playwright__browser_snapshot");
   });
 
-  it("specialty activates on chart/rss/image keywords", () => {
-    const tools = scope("Genera un gráfico de ventas");
+  it("specialty activates on chart_generate / rss / image keywords", () => {
+    // Round-1 audit M1 (v7.1): specialty previously fired on bare "gráfic"
+    // and "chart", double-loading with the new `chart` group. Narrowed to
+    // chart_generate + anchored bar/line/pie constructs. This test now
+    // exercises the RSS keyword (unchanged) and the generic bar-chart form.
+    const tools = scope("dame una bar chart con los valores mensuales");
     expect(hasAll(tools, SPECIALTY_TOOLS)).toBe(true);
   });
 
@@ -1269,8 +1274,8 @@ describe("detectActiveGroups", () => {
     expect(groups.has("meta")).toBe(true);
   });
 
-  it("detects specialty on chart/image keywords", () => {
-    const groups = detect("Genera un gráfico");
+  it("detects specialty on chart_generate / image keywords", () => {
+    const groups = detect("genera un pie chart con estos valores");
     expect(groups.has("specialty")).toBe(true);
   });
 
@@ -1434,5 +1439,115 @@ describe("scope pattern regression suite (v6.4 OH2)", () => {
     const tools = scope("Crea una tarea y sincroniza con NorthStar");
     const unique = new Set(tools);
     expect(tools.length).toBe(unique.size);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v7.1 chart scope group
+// ---------------------------------------------------------------------------
+
+describe("chart scope group (v7.1)", () => {
+  it("activates on 'market_chart_render' tool name", () => {
+    const tools = scope("run market_chart_render for SPY");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'chart of SPY' (EN, symbol anchored)", () => {
+    const tools = scope("give me a chart of SPY");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'gráfico de AAPL' (ES, symbol anchored)", () => {
+    const tools = scope("hazme un gráfico de AAPL");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("activates on named pattern 'head and shoulders'", () => {
+    const tools = scope("do you see a head and shoulders forming?");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("activates on ES 'triángulo ascendente'", () => {
+    const tools = scope("hay un triángulo ascendente en el gráfico");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'canal de tendencia'", () => {
+    const tools = scope("traza el canal de tendencia");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  // --- Negative guards ---
+
+  it("generic 'bar chart' without finance anchor should NOT trigger chart", () => {
+    const tools = scope("make a bar chart of these numbers");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'diagram of architecture' should NOT trigger chart (diagram group)", () => {
+    const tools = scope("draw a diagram of the architecture");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'infografía' should NOT trigger chart (infographic lives elsewhere)", () => {
+    const tools = scope("hazme una infografía del producto");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("bare 'gráfica de barras' (ES generic bar chart) should NOT trigger", () => {
+    const tools = scope("quiero una gráfica de barras con ventas mensuales");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  // --- Round-1 audit M2 negatives: uppercase non-ticker tokens ---
+
+  it("'chart of IT teams' should NOT trigger chart (IT is not a ticker)", () => {
+    const tools = scope("chart of IT teams performance");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'chart of US economy' should NOT trigger chart (US is not a ticker)", () => {
+    const tools = scope("chart of US economy trend");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'chart of THE data' should NOT trigger chart (THE is not a ticker)", () => {
+    const tools = scope("chart of THE data set");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'chart of $US economy' should NOT trigger chart ($US bypass fix, round-2)", () => {
+    // Round-2 audit critical: the `\$?` was initially placed after the
+    // negative lookahead, allowing `$US` (dollar prefix on excluded stem)
+    // to bypass. Moved `\$?` inside the consume-position so the lookahead
+    // tests the remaining stem.
+    const tools = scope("chart of $US economy");
+    expect(hasNone(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  it("'chart of $SPY' still triggers chart ($-prefixed real ticker)", () => {
+    const tools = scope("chart of $SPY over the last month");
+    expect(hasAll(tools, CHART_TOOLS)).toBe(true);
+  });
+
+  // --- Round-1 audit M1: specialty/chart separation ---
+
+  it("'chart of SPY' activates chart but NOT specialty (separation)", () => {
+    const groups = detectActiveGroups(
+      "chart of SPY with bollinger",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    expect(groups.has("chart")).toBe(true);
+    expect(groups.has("specialty")).toBe(false);
+  });
+
+  it("'bar chart' still activates specialty (chart_generate path)", () => {
+    const groups = detectActiveGroups(
+      "make a bar chart of monthly sales",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    expect(groups.has("specialty")).toBe(true);
   });
 });

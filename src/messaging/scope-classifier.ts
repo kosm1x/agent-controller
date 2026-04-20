@@ -32,6 +32,7 @@ const VALID_GROUPS = new Set([
   "specialty",
   "research",
   "seo",
+  "chart",
 ]);
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
@@ -55,6 +56,7 @@ GROUPS (return only the ones that apply):
 - specialty: charts, RSS, images, text humanization, dashboards, KPI, batch processing, research tools
 - research: deep analysis, study guides, podcasts, PDF analysis, document research
 - seo: SEO audits, keyword research, meta tags, schema markup (JSON-LD), rankings, SERP, PageSpeed, Core Web Vitals, content briefs, E-E-A-T, AI overviews / generative engine optimization (GEO), Open Graph, Twitter cards
+- chart: financial chart rendering + vision pattern recognition. "gráfico de SPY", "renderiza un chart de AAPL con SMA50", "¿qué patrón ves en el chart?", "head and shoulders", "triángulo ascendente", "bull flag", "canal de tendencia", "candlestick". NOT generic bar/line charts (that is chart_generate in specialty). NOT diagrams (diagram_generate, v7.12) or infographics (infographic_generate, v7.14)
 
 RULES:
 - Return ONLY groups needed. Empty array [] for greetings/small talk.

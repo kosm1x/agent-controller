@@ -338,6 +338,10 @@ export const WRITE_TOOLS = new Set([
   "diagram_generate",
   // v7.14 infographic generation — writes SVG output via AntV SSR.
   "infographic_generate",
+  // v7.1 chart rendering + patterns — render writes PNG to /tmp or /workspace;
+  // patterns writes a row to chart_patterns (and may internally render first).
+  "market_chart_render",
+  "market_chart_patterns",
 ]);
 
 /**

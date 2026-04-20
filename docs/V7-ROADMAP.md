@@ -473,20 +473,26 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 > Layered on top of Phase β. No γ work interleaves into β. When γ opens (post-F9), start with items that have no β dependencies (v7.2 graph, v7.3 P4 ads, v7.10–v7.12, v7.14). v7.1 charts + v7.3 P3 AI overview need β F1/F3 data. v7.5 skill evolution needs F9 trace data — ships last in γ.
 
-## v7.1 — Chart Rendering + Vision Chart Patterns — **Planned**
+## v7.1 — Chart Rendering + Vision Chart Patterns — **Done**
 
-> 1.5 sessions. Depends on F3 (needs signal data to render). Reference: `reference_quantagent.md`.
+> Session 88 (2026-04-20). Phase γ S5. Impl plan: `docs/planning/phase-gamma/05-v7.1-impl-plan.md`. Reference: `reference_quantagent.md`.
+>
+> **Scope pivot (mid-session)**: pre-explore chose lightweight-charts + Playwright for PNG rendering. Live smoke failed — headless Chromium on this VPS crashes the renderer process on any non-trivial page load (same class as v7.12's mermaid-cli hang; confirmed via minimal `data:text/html` test). Pivoted to a pure-TS SVG string builder (~250 LOC). Zero browser dep; PNG path delegates to ImageMagick `convert` (already apt-installed from v7.14.1). Live verified: SPY 60-bar daily SVG with SMA50+Bollinger in 4ms (15.5KB); AAPL PNG via convert in 393ms (71KB).
 
-| Item                                                                                                                                                                                                                                                     | Source     | Status      |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------- |
-| TradingView lightweight-charts + Puppeteer → PNG pipeline                                                                                                                                                                                                | V7 spec    | **Planned** |
-| Candlestick + indicator overlays + signal markers                                                                                                                                                                                                        | V7 spec    | **Planned** |
-| Vision chart pattern recognition — 4-agent pipeline (head-and-shoulders, triangles, wedges, flags)                                                                                                                                                       | quantagent | **Planned** |
-| Trend-channel-fitting algorithm — pivot detection + least-squares upper/lower bounds + slope quantification + consolidation-zone detection (~150 LOC TS, pure numerics, no LLM)                                                                          | quantagent | **Planned** |
-| Pattern-agent prompt design — chart PNG → vision LLM → named formation + confidence + candle-range location. Structured output schema                                                                                                                    | quantagent | **Planned** |
-| Indicator-layering prompt — single LLM call combines RSI + MACD + Stochastic + ROC + Williams %R into coherent read (alternative to call-then-fuse)                                                                                                      | quantagent | **Planned** |
-| Add ROC (Rate of Change, 10-period) and Williams %R (overbought/oversold, faster than RSI at extremes) to indicator set                                                                                                                                  | quantagent | **Planned** |
-| Synthesize as 6th layer in post-F7 decision ranking via RRF (Reciprocal Rank Fusion) — chart patterns are discrete categorical signals that do not fit inside the F7 11-step continuous-return pipeline (see `planning/phase-beta/11-v71-chart-deps.md`) | explore F  | **Planned** |
+| Item                                                                                                                                           | Source      | Status                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------- |
+| Pure-TS SVG candlestick renderer (`chart-svg.ts`, ~250 LOC, no browser, no canvas, no deps)                                                    | pivot       | **Done**                                                                   |
+| Candlestick + indicator overlays (SMA20/50/200, EMA20/50, Bollinger, VWAP) + signal markers (buy/sell/note arrows)                             | V7 spec     | **Done**                                                                   |
+| Vision chart pattern recognition (`market_chart_patterns` tool) — vision LLM classifies PNG into named formation + confidence + candle range   | quantagent  | **Done**                                                                   |
+| Trend-channel-fitting algorithm — pivot detection + least-squares upper/lower + slope + consolidation detection (`trend-channel.ts`, ~160 LOC) | quantagent  | **Done**                                                                   |
+| Pattern-agent prompt — structured JSON output with 20+ named formations, confidence-clamped, rationale + candle range                          | quantagent  | **Done**                                                                   |
+| ROC + Williams %R indicators                                                                                                                   | quantagent  | **Done** (F2 already)                                                      |
+| `chart_patterns` table + helpers (`chart-patterns-persist.ts`)                                                                                 | F1 schema   | **Done**                                                                   |
+| `chart` scope group — bilingual EN/ES keyword regex + ticker-anchored variant with non-ticker exclusion list                                   | scope.ts    | **Done**                                                                   |
+| PNG output via ImageMagick `convert` (reuses v7.14.1 apt binary)                                                                               | v7.14.1     | **Done**                                                                   |
+| Playwright + lightweight-charts render path                                                                                                    | pre-explore | **Deferred v7.1.1** (headless Chromium chronically unreliable on this VPS) |
+| RRF fusion of `chart_patterns` into post-F7 decision ranking                                                                                   | explore F   | **Deferred v7.1.1** (separate ranking-synthesis sprint)                    |
+| Indicator-layering single-LLM-call prompt (RSI + MACD + Stochastic + ROC + Williams %R coherent read)                                          | quantagent  | **Deferred v7.1.1**                                                        |
 
 ---
 

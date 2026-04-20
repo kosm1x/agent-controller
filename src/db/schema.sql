@@ -749,3 +749,19 @@ CREATE INDEX IF NOT EXISTS idx_pm_paper_fills_market
   ON pm_paper_fills(market_id, outcome, filled_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pm_paper_fills_thesis
   ON pm_paper_fills(thesis_id);
+
+-- v7.1 chart pattern persistence — vision LLM output
+CREATE TABLE IF NOT EXISTS chart_patterns (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol        TEXT NOT NULL,
+  interval      TEXT NOT NULL CHECK(interval IN ('daily','weekly')),
+  pattern_label TEXT NOT NULL,
+  confidence    REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+  candle_start  INTEGER,
+  candle_end    INTEGER,
+  png_path      TEXT,
+  rationale     TEXT,
+  detected_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_chart_patterns_symbol_detected
+  ON chart_patterns(symbol, detected_at DESC);
