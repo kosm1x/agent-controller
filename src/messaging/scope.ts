@@ -280,6 +280,9 @@ export const PAPER_TOOLS = [
 /** F9 market-ritual helpers — scope-gated on market-calendar / alert-budget vocab. */
 export const MARKET_RITUAL_TOOLS = ["market_calendar", "alert_budget_status"];
 
+/** F8.1a prediction-market alpha tools — scope-gated on pm_alpha / polymarket alpha vocab. */
+export const PM_ALPHA_TOOLS = ["pm_alpha_run", "pm_alpha_latest"];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -529,6 +532,15 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(market[_\s-]?calendar|nyse(?:\s+(?:calendar|holiday|open|closed?))?|trading[_\s-]?day|half[_\s-]?day|early[_\s-]?close|(?:market\w*|mercado\w*)\s+(?:abre|cierra|abierto|cerrado|feriado|holiday)|feriado\s+(?:nyse|de\s+mercado)|alert[_\s-]budget(?:[_\s-]?(?:status|remaining|consumed|exhausted|left|agotado))?|budget\s+(?:de\s+alertas?|del?\s+ritual|agotado))\b/i,
     group: "market_ritual",
+  },
+  {
+    // v7.0 F8.1a PM alpha — prediction-market alpha combination. Anchors on
+    // pm_alpha tool names + polymarket alpha phrasings + Spanish equivalents.
+    // Generic "alpha" is avoided here (that's F7 equity scope); require
+    // prediction-market context (polymarket / pm_alpha / mercados predicción).
+    pattern:
+      /\b(pm[_\s-]?alpha(?:[_\s-]?(?:run|latest|weights?))?|polymarket[_\s-]?alpha|prediction[_\s-]?market[_\s-]?(?:alpha|weights?|signals?)|mercados?\s+(?:de\s+)?predicci[oó]n\s+(?:alpha|pesos?|signals?)|alpha\s+(?:de\s+)?(?:polymarket|mercados?\s+(?:de\s+)?predicci[oó]n)|pondera(?:r|ci[oó]n)\s+(?:polymarket|mercados?\s+(?:de\s+)?predicci[oó]n))\b/i,
+    group: "pm_alpha",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -791,6 +803,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("market_ritual")) {
     tools.push(...MARKET_RITUAL_TOOLS);
+  }
+  if (activeGroups.has("pm_alpha")) {
+    tools.push(...PM_ALPHA_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

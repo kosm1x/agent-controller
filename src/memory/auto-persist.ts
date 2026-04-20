@@ -160,7 +160,9 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "paper_portfolio" ||
         t === "paper_history" ||
         t === "market_calendar" ||
-        t === "alert_budget_status",
+        t === "alert_budget_status" ||
+        t === "pm_alpha_run" ||
+        t === "pm_alpha_latest",
     )
   )
     return true;

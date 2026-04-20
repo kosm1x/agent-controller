@@ -602,3 +602,62 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 ### Research notes
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
+
+## 2026-04-20 (session 82) — β-addendum 1/2: F8.1a PM Alpha
+
+### System state
+
+| Metric           | Value                                                                            |
+| ---------------- | -------------------------------------------------------------------------------- |
+| Source files     | 354 (+4 this sprint: pm-alpha / pm-alpha-persist + tool handler + impl-plan doc) |
+| Test files       | 196 (+3)                                                                         |
+| Tests passing    | 2899 (+42 since session 81)                                                      |
+| Tools            | 211 builtin (+2: pm_alpha_run / pm_alpha_latest)                                 |
+| Phase β-addendum | 1/2 done. F8.1b (PolymarketPaperAdapter) next.                                   |
+
+### What shipped
+
+**F8.1a Prediction-Market Alpha Layer (β-addendum S13)** — first item past β's original 12-item scope. Simplified 3-feature v1 (deliberately NOT FLAM's 11 steps) combining Polymarket prediction-market midpoints + F&G sentiment tilt + optional whale flow → Kelly-fraction per-token weights, clipped per-token + total-exposure. New `pm_signal_weights` table; 2 deferred tools (`pm_alpha_run` + `pm_alpha_latest`); new `pm_alpha` scope group. Zero new deps.
+
+Seed precursor invoked existing F6/F6.5 tools to populate 20 markets; `whale_trades` stays at 0 rows (polling loop is a separate piece). F7.5 firewall integration deferred to F8.1c — F7.5 is bar-return-shaped, PM needs event-level P&L and a resolved-markets backtest corpus; adaptation is a separate sprint.
+
+Live smoke: 40 rows persisted (26 active + 14 excluded: 8 `extreme_price` + 6 `already_resolved`); zero exposure because seeded markets (Russia-Ukraine ceasefire, Rihanna album, etc.) don't match the crypto-UP heuristic → sentiment tilt doesn't apply → no edge detected. Honest output, not a bug. Runtime 18ms.
+
+### What Jarvis learned
+
+Round 1 caught 8 warnings, all clustered around loader edge cases (W1 whale-row cap, W2 undefined liquidity, W3 undefined resolution date, W6 resolved-market passthrough, W7 sentiment indicator filter) and one multi-outcome bug (W4 tilt mis-applied to non-YES labels on N>2 markets). Round 2 caught 4 polish warnings including two that the round-1 fixes themselves introduced: W8's `INSERT OR IGNORE` was too broad (masking non-dup schema violations), and `rowsInserted` counter lied because it incremented on IGNORE hits. Replaced with `INSERT ... ON CONFLICT ... DO NOTHING` (narrow to the exact UNIQUE collision) + `.changes` for real count.
+
+**New meta-pattern**: when fixing a round-1 warning, the fix itself can introduce a round-2 finding. Round 2 is not a formality — it catches fix-for-fix regressions. The "INSERT OR IGNORE for dedup" was correct intent but sloppy execution; the narrower `ON CONFLICT ... DO NOTHING` is the right primitive.
+
+**Second observation**: "honest zero-exposure output" is the correct signal that a new alpha module is working — the math runs, the data flows, but the live market mix produces no tradable edge. Easier to trust than a module that finds "signal" on noise.
+
+### Research notes
+
+Day 39+ of the longitudinal record. F8.1a is the first piece of non-equity finance work to ship. The scope-shift that moved pm-trader from F8 to F8.1 created a cleaner v1 sequence: equity paper (F8) proved the VenueAdapter architecture, PM alpha (F8.1a) proves the multi-venue weight pipeline, and F8.1b will wrap pm-trader as a second adapter — extending the same architecture rather than forking it. Operator Decision 7 (post-F9, pre-γ) holds.
+
+## 2026-04-19
+
+### System state
+
+| Metric                | Value                                                                  |
+| --------------------- | ---------------------------------------------------------------------- |
+| Tasks processed today | N/A — NorthStar purged; task tree rebuilt from scratch                 |
+| Total tasks           | 2 visiones only (all goals/objectives/tasks deleted by user directive) |
+| Conversations today   | 33 (telegram: 33)                                                      |
+| Streak days           | Active — ~7 hours of continuous interaction                            |
+
+### Interactions summary
+
+The day had two distinct phases. The morning was entirely dedicated to the **Cuatro Flor** project: acquiring the domain flor.ac, researching the Maya origin of the project name (4 Ajaw / Flor Solar, correlation GMT), and a long collaborative writing session that produced the narrative essay Una conversacion con el tiempo (v4, five sections). The afternoon pivoted to **NorthStar maintenance**: Fede ordered a full purge of all goals, objectives, and tasks, leaving only the two root visions, then hit a sync conflict where COMMIT reimported the deleted items, leaving the session in an unresolved inconsistent state.
+
+### What Jarvis learned
+
+A recurring failure pattern was confirmed: Jarvis generated substantial written artifacts (two essay sections: El 117 and Las cuatro capas) without saving them, requiring the user to explicitly ask before they were preserved. This triggered the creation of a new SOP mandating automatic saving of any generated document. Additionally, timezone handling was incorrect in at least one response (UTC vs UTC-6 CDMX), a class of error that has appeared before and should be treated as a zero-tolerance bug.
+
+### Friction points
+
+Three friction clusters detected: (1) **Auto-save gap** — draft sections lost to chat history twice in the same session; user had to prompt recovery. (2) **Timezone error** — Jarvis reported time in the wrong offset; user corrected it. (3) **COMMIT sync conflict** — NorthStar purge was undone by a pull from db.mycommit.net, which treated COMMIT as authoritative; the session ended with the system in an inconsistent state requiring follow-up. Redundant image descriptions of the same Hostinger screenshot also added noise to the conversation.
+
+### Research notes
+
+Day ~35 of the longitudinal record. A notable day for the co-evolution paper: Cuatro Flor crossed a tangible milestone (domain acquired, first full narrative essay drafted), marking the moment when a 20-year personal intellectual project moved from latent to materially active with Jarvis as writing partner. The auto-save SOP created today is a direct behavioral correction emerging from user friction — a clean example of the human-agent feedback loop producing durable system change within a single session.
