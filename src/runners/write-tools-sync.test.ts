@@ -17,6 +17,7 @@ import {
   KB_INGEST_TOOLS,
   ALPHA_TOOLS,
   BACKTEST_TOOLS,
+  PAPER_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -154,6 +155,21 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !BACKTEST_READ_ONLY.has(t),
     );
     for (const tool of backtestWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable paper-trading tools (F8 Phase β S11)", () => {
+    // paper_rebalance persists to paper_fills/portfolio/balance + trade_theses (write).
+    // paper_portfolio + paper_history are read-only.
+    const PAPER_READ_ONLY = new Set<string>([
+      "paper_portfolio",
+      "paper_history",
+    ]);
+    const paperWriteTools = PAPER_TOOLS.filter((t) => !PAPER_READ_ONLY.has(t));
+    for (const tool of paperWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

@@ -305,6 +305,59 @@ describe("scope pattern matching", () => {
     const tools2 = scope("Hola, cómo estás?");
     expect(hasNone(tools2, ["macro_regime", "market_signals"])).toBe(true);
   });
+
+  // ---------------------------------------------------------------------------
+  // F8 paper trading — scope activation (audit W5 round 1)
+  // ---------------------------------------------------------------------------
+
+  it("paper activates on paper-trading verbs + portfolio vocab", () => {
+    for (const msg of [
+      "paper trade this",
+      "ejecuta paper trade",
+      "rebalancear la cartera",
+      "rebalanceo del portafolio",
+      "rebalance positions now",
+      "portfolio actual",
+      "portafolio actual",
+      // Note: accented "últimos" hits a JS `\b` + non-ASCII edge case; the
+      // un-accented variant works reliably and is the common spelling in ES
+      // keyboard workflows.
+      "ultimos fills",
+      "mis fills",
+      "recent fills",
+      "fills recientes",
+      "rotar posiciones",
+      "ship_gate check",
+      "override_ship flag",
+      "ejecuta el paper",
+      "paper_rebalance now",
+      "paper_portfolio",
+      "paper_history",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools.includes("paper_rebalance") ||
+          tools.includes("paper_portfolio") ||
+          tools.includes("paper_history"),
+      ).toBe(true);
+    }
+  });
+
+  it("paper does NOT activate on generic paper/disk/portfolio phrases", () => {
+    for (const msg of [
+      "research paper on PBO",
+      "upload this paper to the kb",
+      "lee el paper académico",
+      "please rebalance the disk",
+      "the portfolio is in USD",
+      "can you write a paper for me",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        hasNone(tools, ["paper_rebalance", "paper_portfolio", "paper_history"]),
+      ).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

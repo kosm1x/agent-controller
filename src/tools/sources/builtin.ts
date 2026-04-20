@@ -173,6 +173,11 @@ import {
   backtestLatestTool,
   backtestExplainTool,
 } from "../builtin/backtest.js";
+import {
+  paperRebalanceTool,
+  paperPortfolioTool,
+  paperHistoryTool,
+} from "../builtin/paper-trading.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -290,6 +295,10 @@ const BUILTIN_TOOLS: Tool[] = [
   backtestRunTool,
   backtestLatestTool,
   backtestExplainTool,
+  // F8 paper trading (v7.0 Phase β S11) — deferred, scope 'paper'
+  paperRebalanceTool,
+  paperPortfolioTool,
+  paperHistoryTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

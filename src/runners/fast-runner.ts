@@ -323,6 +323,8 @@ export const WRITE_TOOLS = new Set([
   "alpha_run",
   // F7.5 strategy backtester write (Phase β S10) — persists to backtest_runs/paths/overfit
   "backtest_run",
+  // F8 paper trading write (Phase β S11) — persists to paper_fills/portfolio/balance + trade_theses
+  "paper_rebalance",
 ]);
 
 /**
