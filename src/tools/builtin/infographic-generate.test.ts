@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   statSync: vi.fn(),
   renameSync: vi.fn(),
   unlinkSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("@antv/infographic/ssr", () => ({
@@ -30,6 +31,10 @@ vi.mock("node:fs", () => ({
   statSync: mocks.statSync,
   renameSync: mocks.renameSync,
   unlinkSync: mocks.unlinkSync,
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: mocks.execFile,
 }));
 
 vi.mock("../../inference/adapter.js", () => ({
@@ -399,5 +404,168 @@ describe("infographic_generate — dimensions", () => {
     // Neither set on init
     expect(seen!.init.width).toBeUndefined();
     expect(seen!.init.height).toBeUndefined();
+  });
+});
+
+describe("infographic_generate — PNG output (v7.14.1)", () => {
+  function mockConvertOnce(
+    opts: {
+      exitCode?: number;
+      code?: string;
+      killed?: boolean;
+      signal?: string;
+      captureArgv?: (bin: string, args: string[]) => void;
+    } = {},
+  ) {
+    mocks.execFile.mockImplementationOnce(
+      (
+        binary: string,
+        args: string[],
+        _execOpts: Record<string, unknown>,
+        cb: (err: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        opts.captureArgv?.(binary, args);
+        if (opts.code === "ENOENT") {
+          const err = new Error("spawn ENOENT") as Error & { code?: string };
+          err.code = "ENOENT";
+          cb(err, "", "");
+        } else if (opts.killed && opts.signal === "SIGTERM") {
+          const err = new Error("timed out") as Error & {
+            killed?: boolean;
+            signal?: string;
+          };
+          err.killed = true;
+          err.signal = "SIGTERM";
+          cb(err, "", "");
+        } else if (opts.exitCode && opts.exitCode !== 0) {
+          const err = new Error(`exit ${opts.exitCode}`) as Error & {
+            code?: number;
+          };
+          err.code = opts.exitCode;
+          cb(err, "", "some stderr");
+        } else {
+          cb(null, "", "");
+        }
+        return { pid: 77 } as unknown as ReturnType<typeof mocks.execFile>;
+      },
+    );
+  }
+
+  it("format=png shells out to `convert` with argv [svg, png]", async () => {
+    let seen: { bin: string; argv: string[] } | null = null;
+    mockConvertOnce({
+      captureArgv: (bin, argv) => {
+        seen = { bin, argv };
+      },
+    });
+
+    const result = (await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label A\n",
+      format: "png",
+      output_path: "/tmp/out.png",
+    })) as string;
+
+    expect(seen!.bin).toBe("convert");
+    // argv: [svgTmpPath, outputPngPath]
+    expect(seen!.argv).toHaveLength(2);
+    expect(seen!.argv[0]).toMatch(/^\/tmp\/infographic-svg-[0-9a-f-]+\.svg$/);
+    expect(seen!.argv[1]).toBe("/tmp/out.png");
+    expect(result).toContain("format=png");
+    expect(result).toContain("output: /tmp/out.png");
+  });
+
+  it("format=png defaults output extension to .png when output_path omitted", async () => {
+    mockConvertOnce();
+    const result = (await infographicGenerateTool.execute({
+      description:
+        "infographic list-column-done-list\ndata\n  lists\n    - label x\n",
+      format: "png",
+    })) as string;
+    const match = result.match(/output: (\/tmp\/infographic-[0-9a-f-]+\.png)/);
+    expect(match).not.toBeNull();
+  });
+
+  it("format=svg default still writes SVG (no convert call)", async () => {
+    await infographicGenerateTool.execute({
+      description:
+        "infographic list-column-done-list\ndata\n  lists\n    - label x\n",
+      format: "svg",
+      output_path: "/tmp/out.svg",
+    });
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it("surfaces ENOENT for missing convert binary with helpful apt hint", async () => {
+    mockConvertOnce({ code: "ENOENT" });
+    const out = (await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label x\n",
+      format: "png",
+    })) as string;
+    const err = JSON.parse(out);
+    expect(err.error).toMatch(/ImageMagick `convert` not installed/);
+    expect(err.error).toMatch(/apt install imagemagick/);
+  });
+
+  it("surfaces SIGTERM timeout on convert hang", async () => {
+    mockConvertOnce({ killed: true, signal: "SIGTERM" });
+    const out = (await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label x\n",
+      format: "png",
+    })) as string;
+    expect(JSON.parse(out).error).toMatch(/PNG conversion timed out/);
+  });
+
+  it("surfaces non-zero exit from convert with dispatch mode tag", async () => {
+    mockConvertOnce({ exitCode: 1 });
+    const out = (await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label x\n",
+      format: "png",
+    })) as string;
+    const err = JSON.parse(out);
+    expect(err.error).toMatch(/PNG conversion failed/);
+    expect(err.mode).toBe("dsl");
+  });
+
+  it("rejects unknown format value", async () => {
+    const out = (await infographicGenerateTool.execute({
+      description: "x",
+      format: "webp",
+    })) as string;
+    expect(JSON.parse(out).error).toMatch(/format must be one of/);
+  });
+
+  it("cleans up SVG tmp file after convert succeeds", async () => {
+    let capturedSvgPath = "";
+    mockConvertOnce({
+      captureArgv: (_bin, argv) => {
+        capturedSvgPath = argv[0];
+      },
+    });
+    await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label x\n",
+      format: "png",
+    });
+    expect(mocks.unlinkSync).toHaveBeenCalledWith(capturedSvgPath);
+  });
+
+  it("cleans up SVG tmp file after convert fails", async () => {
+    let capturedSvgPath = "";
+    mockConvertOnce({
+      exitCode: 1,
+      captureArgv: (_bin, argv) => {
+        capturedSvgPath = argv[0];
+      },
+    });
+    await infographicGenerateTool.execute({
+      description:
+        "infographic list-row-simple-horizontal-arrow\ndata\n  lists\n    - label x\n",
+      format: "png",
+    });
+    expect(mocks.unlinkSync).toHaveBeenCalledWith(capturedSvgPath);
   });
 });
