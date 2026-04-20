@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-20 (session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
+> Last updated: 2026-04-20 (session 84 — v7.2 Graphify MCP shipped, **Phase γ opens**: TS-native integration of the `graphifyy==0.4.23` Python MCP server against an AST-built knowledge graph of `src/` (335 files → 1757 nodes, 4686 edges, 25 communities, 63% EXTRACTED / 37% INFERRED). 7 new deferred tools (`graphify-code__query_graph`, `_get_node`, `_get_neighbors`, `_get_community`, `_god_nodes`, `_graph_stats`, `_shortest_path`), 1 new scope group (`graph`, bilingual EN/ES with negative-lookahead on `graphic`/`graphene`/`paragraph`/`gráfica`). Isolated `./venv/graphify/` + pinned-version bootstrap script with CWD + version guards. 2 QA audit passes: round 1 closed 2 major (`god_nodes` literal didn't activate scope; no fresh-VPS bootstrap doc) + 4 warnings (weak test assertion, missing MCP manager test, unpinned internal API use, CWD assumption). Round 2 clean PASS. Live smoke: stdio MCP handshake end-to-end → graph_stats + god_nodes return semantically coherent results (`getDatabase()` top hub at 257 deg, matches codebase singleton pattern). Scope-shift-as-design-decision: pivoted from docs corpus to code at impl-plan step 4 after discovering `collect_files` doesn't handle markdown (requires skill-driven LLM semantic pass — deferred to v7.2.1). CRM graph + cross-source router + semantic-pass codebase graph all deferred to v7.2.1 with explicit triggers. **Phase γ S1 of 13 done.** Previous: session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
 
 ## Status Key
 
@@ -490,16 +490,22 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.2 — Knowledge Graph (Graphify MCP) — **Planned**
+## v7.2 — Knowledge Graph (Graphify MCP) — **Done (MVP)**
 
-> 1.5 sessions. No v7 dependencies, can run anytime. Reference: `reference_graphify.md`.
+> Session 84 (2026-04-20). **Phase γ opens with S1.** Shipped MVP: the integration plumbing + a working code-only corpus. Markdown/CRM/cross-source deferred to v7.2.1 with written triggers. Impl plan: `docs/planning/phase-gamma/01-v7.2-impl-plan.md`.
+>
+> **Scope-shift at impl-plan step 4**: original plan indexed `docs/` markdown; recon revealed graphify's `collect_files` only handles code extensions (markdown requires the skill-driven LLM semantic pass). Pivoted to `src/` AST-only build: 335 files → 1757 nodes / 4686 edges / 25 communities. Zero LLM cost. God nodes surface semantically-correct singletons (`getDatabase()` top at 257 edges).
 
-| Item                                                                                    | Source         | Status      |
-| --------------------------------------------------------------------------------------- | -------------- | ----------- |
-| Graphify MCP integration — code + docs + media knowledge graph                          | graphify       | **Planned** |
-| CRM entity graph — prospects, deals, conversations, decision-makers                     | graphify + CRM | **Planned** |
-| Codebase graph — source files, functions, call chains, test coverage                    | graphify       | **Planned** |
-| Cross-source queries — "which prospects connect to which deals via which conversations" | graphify       | **Planned** |
+| Item                                                                                | Source         | Status                                                          |
+| ----------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------- |
+| Graphify MCP integration — 7-tool `graphify-code` server (namespaced, deferred)     | graphify       | **Done**                                                        |
+| Code corpus AST graph — `src/*.ts` (excl. test files), 1757 nodes / 4686 edges      | graphify       | **Done**                                                        |
+| `graph` scope group — bilingual EN/ES regex, negative-lookahead collision avoidance | scope.ts       | **Done**                                                        |
+| Bootstrap script + pinned version guard + deployment doc                            | —              | **Done**                                                        |
+| Codebase **semantic** graph — LLM-derived cross-references, docstring concepts      | graphify + LLM | **Deferred v7.2.1** (upstream #451 fix or 30-file trial passes) |
+| CRM entity graph — prospects, deals, conversations, decision-makers                 | graphify + CRM | **Deferred v7.2.1** (needs md-export pipeline from crm-azteca)  |
+| Cross-source queries — unified router across multiple graphify corpora              | native tool    | **Deferred v7.2.1** (after CRM + semantic graphs ship)          |
+| Automatic rebuild cron — weekly `--update` pass                                     | cron           | **Deferred v7.2.1** (first stale-graph incident triggers it)    |
 
 ---
 

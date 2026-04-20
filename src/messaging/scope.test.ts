@@ -488,6 +488,67 @@ describe("scope pattern matching", () => {
       ).toBe(true);
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v7.2 graph — graphify-code knowledge-graph MCP tools
+  // ---------------------------------------------------------------------------
+
+  it("graph activates on knowledge-graph vocab (EN + ES) and assembles all 7 tools", () => {
+    // Audit W1 fix: verify the FULL tool set flows through, not just one.
+    // Otherwise a rename of a single tool silently passes this test.
+    const EXPECTED_TOOLS = [
+      "graphify-code__query_graph",
+      "graphify-code__get_node",
+      "graphify-code__get_neighbors",
+      "graphify-code__get_community",
+      "graphify-code__god_nodes",
+      "graphify-code__graph_stats",
+      "graphify-code__shortest_path",
+    ];
+    for (const msg of [
+      "show me the knowledge graph stats",
+      "query_graph for F7",
+      "graphify-code__god_nodes",
+      "what are the god nodes in the codebase",
+      "god_nodes top 10", // Audit M1 fix: underscore form must activate
+      "god-nodes please", // Audit M1 fix: hyphen form must activate
+      "shortest path between MacroFeatureRow and runAlpha",
+      "get_neighbors of paper-executor",
+      "community detection on src",
+      "muéstrame el grafo de código",
+      "grafo de conocimiento del proyecto",
+      "mapa conceptual de los sprints",
+      "graph_stats",
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `expected all 7 GRAPH_TOOLS for "${msg}"`).toEqual(
+        expect.arrayContaining(EXPECTED_TOOLS),
+      );
+    }
+  });
+
+  it("graph does NOT activate on graphic/graphene/paragraph/gráfica", () => {
+    for (const msg of [
+      "graphic design for the landing page",
+      "make me some graphics",
+      "grapheme clusters in Unicode",
+      "graphene sheets chemistry",
+      "paragraph formatting",
+      "gráfica de ventas mensuales", // ES "chart", NOT graph
+      "gráfico de barras",
+      "hazme una gráfica bonita",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        hasNone(tools, [
+          "graphify-code__query_graph",
+          "graphify-code__graph_stats",
+          "graphify-code__god_nodes",
+        ]),
+        `unexpected graph scope on "${msg}"`,
+      ).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

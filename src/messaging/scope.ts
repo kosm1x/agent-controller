@@ -290,6 +290,22 @@ export const PM_PAPER_TOOLS = [
   "pm_paper_history",
 ];
 
+/**
+ * v7.2 graphify-code knowledge-graph tools (MCP-sourced, namespaced with `__`).
+ * Scope-gated on graph/knowledge-graph vocabulary. The server (graphify-code)
+ * loads a prebuilt AST graph of src/ at boot; these tools are read-only
+ * NetworkX queries and safe to expose once the graph.json exists.
+ */
+export const GRAPH_TOOLS = [
+  "graphify-code__query_graph",
+  "graphify-code__get_node",
+  "graphify-code__get_neighbors",
+  "graphify-code__get_community",
+  "graphify-code__god_nodes",
+  "graphify-code__graph_stats",
+  "graphify-code__shortest_path",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -560,6 +576,17 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "pm_paper",
   },
   {
+    // v7.2 knowledge graph — graphify-code MCP tools. Activates on
+    // graph/knowledge-graph vocabulary. Negative lookahead on `graph` blocks
+    // common English collisions: "graphic", "graphics", "grapheme", "graphene",
+    // "graphene", "paragraph" (leading `para` excluded via word boundary but
+    // also explicit exclusion). ES: "grafo" (not "grafica"/"grafico" which mean
+    // "chart"). Also fires on explicit tool names and graphify CLI keywords.
+    pattern:
+      /\b(graphify|knowledge[_\s-]?graph|concept[_\s-]?map|god[_\s-]?nodes?|shortest[_\s-]?path|community\s+detection|neighbors?\s+of|call[_\s-]?graph|dependency\s+graph|grafo\s+(?:de|del|codigo|c[oó]digo|conocimiento)|mapa\s+conceptual|grafo\s+conceptual|query[_\s-]?graph|graph[_\s-]?stats?|get[_\s-]?neighbors?|get[_\s-]?community|get[_\s-]?node)\b/i,
+    group: "graph",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -826,6 +853,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("pm_paper")) {
     tools.push(...PM_PAPER_TOOLS);
+  }
+  if (activeGroups.has("graph")) {
+    tools.push(...GRAPH_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
