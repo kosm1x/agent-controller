@@ -1030,24 +1030,33 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | ------- | ------------------------------------------- | -------- | ---------------------- |
 | v7.8 P2 | Autoreason tournament decision (2026-04-20) | 0.5      | **Gated** (fixed date) |
 
-### Phase β — Financial Stack critical path (12 items)
+### Phase β — Financial Stack critical path (12 items, all shipped)
 
-| Version   | Theme                                               | Sessions | Status      |
-| --------- | --------------------------------------------------- | -------- | ----------- |
-| v7.0 F1   | Data layer (AV + Polygon + FRED)                    | 1.7      | **Done**    |
-| v7.0 F2   | Indicator engine                                    | 1        | **Done**    |
-| v7.0 F4   | Watchlist + market tools                            | 1        | **Done**    |
-| v7.0 F5   | Macro regime detection                              | 0.5      | **Done**    |
-| v7.0 F3   | Signal detector                                     | 1        | **Done**    |
-| v7.0 F6   | Prediction markets + whale tracker                  | 1.5      | **Done**    |
-| v7.0 F6.5 | Sentiment signals (F&G x2)                          | 0.7      | **Done**    |
-| v7.13     | Structured PDF ingestion (pre-F7 enabler, Option B) | 0.5      | **Done**    |
-| v7.0 F7   | Alpha combination engine                            | 2.5      | **Planned** |
-| v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)                | 1        | **Planned** |
-| v7.0 F8   | Paper trading (pm-trader + VenueAdapter)            | 1.5      | **Planned** |
-| v7.0 F9   | Scan rituals + calendar                             | 1        | **Planned** |
+| Version   | Theme                                               | Sessions | Status   |
+| --------- | --------------------------------------------------- | -------- | -------- |
+| v7.0 F1   | Data layer (AV + Polygon + FRED)                    | 1.7      | **Done** |
+| v7.0 F2   | Indicator engine                                    | 1        | **Done** |
+| v7.0 F4   | Watchlist + market tools                            | 1        | **Done** |
+| v7.0 F5   | Macro regime detection                              | 0.5      | **Done** |
+| v7.0 F3   | Signal detector                                     | 1        | **Done** |
+| v7.0 F6   | Prediction markets + whale tracker                  | 1.5      | **Done** |
+| v7.0 F6.5 | Sentiment signals (F&G x2)                          | 0.7      | **Done** |
+| v7.13     | Structured PDF ingestion (pre-F7 enabler, Option B) | 0.5      | **Done** |
+| v7.0 F7   | Alpha combination engine                            | 2.5      | **Done** |
+| v7.0 F7.5 | Strategy backtester (CPCV, PBO, DSR)                | 1        | **Done** |
+| v7.0 F8   | Paper trading (pm-trader + VenueAdapter)            | 1.5      | **Done** |
+| v7.0 F9   | Scan rituals + calendar                             | 1        | **Done** |
 
-**β subtotal:** ~14.9 sessions sequential, ~11 sessions parallelized.
+**β subtotal:** ~14.9 sessions sequential. **All 12 items shipped by session 81 (2026-04-20).**
+
+### Phase β-addendum — Polymarket coverage (2 items, all shipped)
+
+| Version    | Theme                              | Sessions | Status   |
+| ---------- | ---------------------------------- | -------- | -------- |
+| v7.0 F8.1a | Prediction-market alpha layer      | 1        | **Done** |
+| v7.0 F8.1b | PolymarketPaperAdapter (TS-native) | 1.5      | **Done** |
+
+**β-addendum subtotal:** 2.5 sessions. **Both shipped by session 83 (2026-04-20). Phase β closes.**
 
 ### Phase β-opt — Optional parallel (1 session)
 
@@ -1055,25 +1064,34 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | -------- | -------------------------- | -------- | ----------- |
 | v7.0 F10 | Real-time crypto WebSocket | 1        | **Planned** |
 
-### Phase γ — Feature verticals (post-F9, 13 items)
+### Phase γ — Feature verticals (post-β, 13 items — 1 shipped, 12 remaining)
 
-| Version | Theme                                         | Sessions | Deps           | Status      |
-| ------- | --------------------------------------------- | -------- | -------------- | ----------- |
-| v7.2    | Knowledge graph (Graphify)                    | 1.5      | None           | **Planned** |
-| v7.3 P4 | Digital marketing buyer (claude-ads)          | 3        | None           | **Planned** |
-| v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None           | **Planned** |
-| v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None           | **Planned** |
-| v7.11   | Jarvis teaching module                        | 2        | None           | **Planned** |
-| v7.12   | Diagram generation (mermaid/d2/plantuml)      | 1        | None           | **Planned** |
-| v7.14   | Infographic generation (AntV)                 | 1        | None           | **Planned** |
-| v7.3 P2 | SEO telemetry (PageSpeed + GSC)               | 1        | v7.6 ✅        | **Planned** |
-| v7.3 P3 | AI overview monitoring                        | 1        | F1 schedule    | **Planned** |
-| v7.1    | Charts + vision chart patterns                | 1.5      | F3             | **Planned** |
-| v7.4    | Video production (S1+S2)                      | 2        | v7.3 P4        | **Planned** |
-| v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4           | **Planned** |
-| v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 + pre-sweep | **Planned** |
+| Version | Theme                                         | Sessions | Deps          | Status                      |
+| ------- | --------------------------------------------- | -------- | ------------- | --------------------------- |
+| v7.2    | Knowledge graph (Graphify)                    | 1.5      | None          | **Done (MVP)** — session 84 |
+| v7.3 P4 | Digital marketing buyer (claude-ads)          | 3        | None          | **Planned**                 |
+| v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None          | **Planned**                 |
+| v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None          | **Planned**                 |
+| v7.11   | Jarvis teaching module                        | 2        | None          | **Planned**                 |
+| v7.12   | Diagram generation (mermaid/d2/plantuml)      | 1        | None          | **Planned**                 |
+| v7.14   | Infographic generation (AntV)                 | 1        | None          | **Planned**                 |
+| v7.3 P2 | SEO telemetry (PageSpeed + GSC)               | 1        | v7.6 ✅       | **Planned**                 |
+| v7.3 P3 | AI overview monitoring                        | 1        | F1 ✅         | **Planned**                 |
+| v7.1    | Charts + vision chart patterns                | 1.5      | F3 ✅         | **Planned**                 |
+| v7.4    | Video production (S1+S2)                      | 2        | v7.3 P4       | **Planned**                 |
+| v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4          | **Planned**                 |
+| v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 ✅ + sweep | **Planned**                 |
 
-**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents).
+**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **1/13 done; 12 remaining.**
+
+### v7.2.1 — v7.2 follow-ups (queued, not yet scheduled)
+
+| Item                              | Trigger                                                        |
+| --------------------------------- | -------------------------------------------------------------- |
+| Codebase **semantic** graph       | Upstream graphify issue #451 closes OR 30-file TS trial clears |
+| CRM entity graph                  | md-export pipeline designed in crm-azteca                      |
+| Cross-source unified query router | After ≥2 graphs ship                                           |
+| Automatic rebuild cron            | First stale-graph incident                                     |
 
 ### Phase δ — Live trading (gated on 30d F8 paper record)
 
@@ -1089,13 +1107,14 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 ### Totals
 
-| Bucket                        | Count  | Sessions              |
-| ----------------------------- | ------ | --------------------- |
-| Shipped (α)                   | 5      | 5                     |
-| Gated / conditional (α.2+δ+ε) | 3      | 5                     |
-| β + β-opt critical path       | 13     | ~15 seq / ~12 par     |
-| γ verticals                   | 13     | ~19 seq / ~14 par     |
-| **Total committed**           | **34** | **~44 seq / ~36 par** |
+| Bucket                              | Count  | Sessions              |
+| ----------------------------------- | ------ | --------------------- |
+| Shipped (α + β + β-addendum + γ S1) | **20** | ~22                   |
+| Gated / conditional (δ + ε)         | 2      | 4.5                   |
+| β-opt (optional)                    | 1      | 1                     |
+| γ remaining                         | 12     | ~17.5                 |
+| **Total committed**                 | **35** | **~45 seq / ~36 par** |
+| **Remaining to close v7**           | **15** | **~24 seq / ~18 par** |
 
 ---
 
