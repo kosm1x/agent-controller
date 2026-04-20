@@ -596,4 +596,54 @@ describe("McpManager lazy-load", () => {
     const parsed = JSON.parse(result);
     expect(parsed.error).toMatch(/shut down/);
   });
+
+  // v7.2 — graphify-code MCP server registration.
+  // Audit W2 fix: guard against an upstream rename of any of the 7 tools
+  // silently breaking the scope group wiring.
+  it("registers graphify-code 7 tools with deferred flag", async () => {
+    const GRAPHIFY_TOOLS = [
+      "query_graph",
+      "get_node",
+      "get_neighbors",
+      "get_community",
+      "god_nodes",
+      "graph_stats",
+      "shortest_path",
+    ];
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(
+      makeMcpTools(
+        GRAPHIFY_TOOLS.map((name) => ({
+          name,
+          description: `${name} tool`,
+          inputSchema: { type: "object", properties: {} },
+        })),
+      ),
+    );
+
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+
+    await manager.init(
+      {
+        "graphify-code": {
+          command: "./venv/graphify/bin/python",
+          args: [
+            "-m",
+            "graphify.serve",
+            "./data/graphify/code/graphify-out/graph.json",
+          ],
+          deferredTools: GRAPHIFY_TOOLS,
+        },
+      },
+      registry,
+    );
+
+    for (const name of GRAPHIFY_TOOLS) {
+      const fullName = `graphify-code__${name}`;
+      expect(registry.has(fullName), `${fullName} not registered`).toBe(true);
+      expect(registry.get(fullName)?.deferred).toBe(true);
+    }
+    await manager.shutdown();
+  });
 });

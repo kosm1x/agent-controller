@@ -7,5 +7,22 @@
     "command": "node",
     "args": ["./mcp-servers/weather.js"],
     "enabled": false
+  },
+  "graphify-code": {
+    "command": "./venv/graphify/bin/python",
+    "args": [
+      "-m",
+      "graphify.serve",
+      "./data/graphify/code/graphify-out/graph.json"
+    ],
+    "deferredTools": [
+      "query_graph",
+      "get_node",
+      "get_neighbors",
+      "get_community",
+      "god_nodes",
+      "graph_stats",
+      "shortest_path"
+    ]
   }
 }

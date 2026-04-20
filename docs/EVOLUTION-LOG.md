@@ -603,6 +603,44 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
 
+## 2026-04-20 (session 84) — Phase γ S1: v7.2 Graphify MCP knowledge graph
+
+### System state
+
+| Metric        | Value                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| Source files  | 358 (no change — no new `src/*.ts`; only `scripts/`, `docs/`, and config)                          |
+| Test files    | 200 (no change)                                                                                    |
+| Tests passing | 2965 (+3 since session 83: 2 scope-pattern tests + 1 MCP manager test)                             |
+| Tools         | 214 builtin (no change) + 62 external MCP (+7: graphify-code). 154 deferred (+7).                  |
+| Phase γ       | **1/13 done.** Next candidates: v7.10/7.12/7.14 (1-session independents) or v7.11 teaching module. |
+
+### What shipped
+
+**v7.2 Graphify MCP (Phase γ S1)** — TS-native integration of the `graphifyy==0.4.23` Python MCP server. Isolated venv (`./venv/graphify/`), pinned install, AST-only knowledge-graph build over `src/*.ts` (excluding test files): 335 source files → 1757 nodes / 4686 edges / 25 communities / 63% EXTRACTED / 37% INFERRED. God-node ranking surfaces `getDatabase()` top-hub at 257 edges — matches CLAUDE.md's "singleton discipline" invariant, validating the extract pipeline's semantic accuracy on our codebase.
+
+Surface: 7 new deferred MCP tools namespaced `graphify-code__*` (`query_graph` / `get_node` / `get_neighbors` / `get_community` / `god_nodes` / `graph_stats` / `shortest_path`), 1 new `graph` scope group with bilingual EN/ES regex (negative-lookahead anchors `graphic`/`graphene`/`paragraph`/`gráfica` to avoid false activation), bootstrap script (`scripts/build-graphify-code.sh`) with CWD + pinned-version guards, deployment runbook (`docs/deployment/graphify-bootstrap.md`).
+
+Live smoke: stdio MCP handshake end-to-end → initialize → tools/list returns 7 → `graph_stats` returns "Nodes: 1757, Edges: 4686, Communities: 25, EXTRACTED: 63%, INFERRED: 37%" → `god_nodes` returns the correct semantic hubs. mission-control boot log confirms `graphify-code: connected, 7 tools`.
+
+Deferrals intentionally booked: codebase **semantic** graph (adds LLM-derived relationships; blocked on upstream #451 validation), CRM entity graph (needs md-export pipeline from crm-azteca), cross-source unified router (ships after 2+ graphs exist), automatic rebuild cron (first stale-graph incident triggers it). All four have written triggers in `docs/planning/phase-gamma/01-v7.2-impl-plan.md §8`.
+
+### What Jarvis learned
+
+Round 1 caught 2 major + 6 warnings. M1: scope regex `god\s+nodes?` matched whitespace-only form, missed the literal tool name `god_nodes`/`god-nodes` — the most natural way a user refers to the MCP tool. Test passed accidentally via the surrounding `graphify` alternative, hiding the gap. M2: no fresh-VPS bootstrap doc, so `data/graphify/` + `venv/` + `mcp-servers.json` being gitignored made the feature silently broken on any new clone. W1: scope test used `.some()` — would pass even if only one of the seven tools made it through assembly. W2: no MCP manager test to catch upstream rename drift. W4/W5: bootstrap script imported internal graphify APIs without version assertion, and the CWD assumption wasn't asserted. All closed.
+
+Round 2: clean PASS on the fixes, surfaced one residual doc gap (bootstrap runbook didn't mention `cp mcp-servers.example.json mcp-servers.json` as step 0 — the very gotcha I had named in round 1 without fixing). 1-line patch.
+
+**New meta-pattern — scope-shift-during-recon**: this is the second consecutive sprint where the impl-plan's declared target changed during early recon (F8.1b declined pm-trader MCP at step 4; v7.2 pivoted from docs→code corpus at step 4). Pattern: the first cheap integration experiment reveals a constraint that rewrites the scope. Both times, the plan doc was updated to record the pivot-in-place rather than the final-state-only, so the scope change is auditable. This is now a repeatable pattern to expect — the planned scope at the impl-plan write time is a hypothesis, not a contract.
+
+**Pattern reinforced — "fix-for-fix" isn't universal**: F8.1a and F8.1b both had round-2 findings caused by round-1 fixes. v7.2 did not — round 2 caught only a pre-existing doc gap, not a regression. Small-surface sprints (just MCP config + scope regex + test, no new runtime logic) don't create new surface area for round 1 to break. Keep this lever for future non-logic sprints.
+
+### Research notes
+
+Day 40+ of the longitudinal record. **Phase γ opens with v7.2.** 1/13 γ items done. The MVP ships the plumbing + 1 working corpus; v7.2.1 will extend to semantic + CRM + cross-source when the upstream + md-export preconditions clear. For the next γ item: the 1-session independents (v7.10 file conversion / v7.12 diagram generation / v7.14 infographics) queue naturally, while v7.11 teaching module is higher-value but 2 sessions. Operator picks next.
+
+Small observation worth noting: graphify surfaced `getDatabase()` as the #1 hub with 257 edges. That confirms an assertion in CLAUDE.md ("singleton discipline — `getDatabase()`, `toolRegistry`, `eventBus`, `config`, use existing singletons") that was previously a written-down convention. The code graph now independently derives it from topology. Structural-truth observability — the graph isn't just for retrieval, it's an external check on our invariants.
+
 ## 2026-04-20 (session 83) — β-addendum 2/2: F8.1b PolymarketPaperAdapter
 
 ### System state

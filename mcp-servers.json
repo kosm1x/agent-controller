@@ -3,8 +3,14 @@
     "command": "./bin/lightpanda",
     "args": ["mcp"],
     "deferredTools": [
-      "links", "click", "fill", "scroll", "evaluate",
-      "interactiveElements", "semantic_tree", "structuredData"
+      "links",
+      "click",
+      "fill",
+      "scroll",
+      "evaluate",
+      "interactiveElements",
+      "semantic_tree",
+      "structuredData"
     ]
   },
   "playwright": {
@@ -12,35 +18,108 @@
     "args": ["@playwright/mcp", "--headless", "--browser", "chromium"],
     "lazy": true,
     "deferredTools": [
-      "browser_close", "browser_resize", "browser_console_messages",
-      "browser_handle_dialog", "browser_evaluate", "browser_file_upload",
-      "browser_fill_form", "browser_press_key", "browser_type",
-      "browser_navigate_back", "browser_network_requests", "browser_run_code",
-      "browser_drag", "browser_hover", "browser_select_option",
-      "browser_tabs", "browser_wait_for"
+      "browser_close",
+      "browser_resize",
+      "browser_console_messages",
+      "browser_handle_dialog",
+      "browser_evaluate",
+      "browser_file_upload",
+      "browser_fill_form",
+      "browser_press_key",
+      "browser_type",
+      "browser_navigate_back",
+      "browser_network_requests",
+      "browser_run_code",
+      "browser_drag",
+      "browser_hover",
+      "browser_select_option",
+      "browser_tabs",
+      "browser_wait_for"
     ],
     "tools": [
       { "name": "browser_close", "description": "Close the page" },
       { "name": "browser_resize", "description": "Resize the browser window" },
-      { "name": "browser_console_messages", "description": "Returns all console messages" },
+      {
+        "name": "browser_console_messages",
+        "description": "Returns all console messages"
+      },
       { "name": "browser_handle_dialog", "description": "Handle a dialog" },
-      { "name": "browser_evaluate", "description": "Execute JavaScript in the browser console" },
-      { "name": "browser_file_upload", "description": "Upload one or more files" },
+      {
+        "name": "browser_evaluate",
+        "description": "Execute JavaScript in the browser console"
+      },
+      {
+        "name": "browser_file_upload",
+        "description": "Upload one or more files"
+      },
       { "name": "browser_fill_form", "description": "Fill out a form field" },
-      { "name": "browser_press_key", "description": "Press a key on the keyboard" },
-      { "name": "browser_type", "description": "Type text into an editable field" },
+      {
+        "name": "browser_press_key",
+        "description": "Press a key on the keyboard"
+      },
+      {
+        "name": "browser_type",
+        "description": "Type text into an editable field"
+      },
       { "name": "browser_navigate", "description": "Navigate to a URL" },
-      { "name": "browser_navigate_back", "description": "Go back to the previous page" },
-      { "name": "browser_network_requests", "description": "Returns all network requests since loading the page" },
-      { "name": "browser_run_code", "description": "Run Playwright code in the browser context" },
-      { "name": "browser_take_screenshot", "description": "Take a screenshot of the current page" },
-      { "name": "browser_snapshot", "description": "Capture accessibility snapshot of the current page" },
-      { "name": "browser_click", "description": "Click an element on the page" },
-      { "name": "browser_drag", "description": "Drag an element to a target location" },
-      { "name": "browser_hover", "description": "Hover over an element on the page" },
-      { "name": "browser_select_option", "description": "Select an option in a select element" },
+      {
+        "name": "browser_navigate_back",
+        "description": "Go back to the previous page"
+      },
+      {
+        "name": "browser_network_requests",
+        "description": "Returns all network requests since loading the page"
+      },
+      {
+        "name": "browser_run_code",
+        "description": "Run Playwright code in the browser context"
+      },
+      {
+        "name": "browser_take_screenshot",
+        "description": "Take a screenshot of the current page"
+      },
+      {
+        "name": "browser_snapshot",
+        "description": "Capture accessibility snapshot of the current page"
+      },
+      {
+        "name": "browser_click",
+        "description": "Click an element on the page"
+      },
+      {
+        "name": "browser_drag",
+        "description": "Drag an element to a target location"
+      },
+      {
+        "name": "browser_hover",
+        "description": "Hover over an element on the page"
+      },
+      {
+        "name": "browser_select_option",
+        "description": "Select an option in a select element"
+      },
       { "name": "browser_tabs", "description": "List browser tabs" },
-      { "name": "browser_wait_for", "description": "Wait for text to appear or disappear on the page" }
+      {
+        "name": "browser_wait_for",
+        "description": "Wait for text to appear or disappear on the page"
+      }
+    ]
+  },
+  "graphify-code": {
+    "command": "./venv/graphify/bin/python",
+    "args": [
+      "-m",
+      "graphify.serve",
+      "./data/graphify/code/graphify-out/graph.json"
+    ],
+    "deferredTools": [
+      "query_graph",
+      "get_node",
+      "get_neighbors",
+      "get_community",
+      "god_nodes",
+      "graph_stats",
+      "shortest_path"
     ]
   }
 }
