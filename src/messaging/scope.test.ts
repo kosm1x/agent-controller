@@ -549,6 +549,54 @@ describe("scope pattern matching", () => {
       ).toBe(true);
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v7.10 utility — file_convert (dispatches to calibre / libreoffice /
+  // pandoc / imagemagick / ffmpeg). Activates on conversion verbs, tool
+  // shortcuts, frame-extraction phrasing, and explicit file-format anchors.
+  // ---------------------------------------------------------------------------
+
+  it("utility activates on file-conversion vocab and includes file_convert", () => {
+    for (const msg of [
+      "convert this .epub to txt",
+      "convertir el archivo a pdf",
+      "convierte book.mobi a html",
+      "transform the odt to docx",
+      "transforma el pptx en pdf",
+      // Audit W-R2-1: ES clitic forms without a determiner must still match.
+      "transformalo a pdf",
+      "transformalo en html",
+      "extract a frame from the video at 5s",
+      "extraer un frame del mp4",
+      "ebook-convert book.epub output.txt",
+      "run pandoc on my markdown",
+      "file_convert please",
+      "I have a .heic from my iPhone",
+      "report.pages needs converting",
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `file_convert missing for "${msg}"`).toContain(
+        "file_convert",
+      );
+    }
+  });
+
+  it("utility does NOT activate file_convert on unrelated format mentions", () => {
+    // These should NOT pull the utility scope — "send me a PDF" shouldn't
+    // leak file_convert into the tool set for every prompt that mentions
+    // PDFs. The regex is narrow (leading `.` anchors file extensions).
+    for (const msg of [
+      "send me a PDF version of the report", // naked "PDF" — no dot, no verb
+      "write me a docx summary", // "write" not "convert"; "docx" no dot
+      "share a png of the dashboard", // "share" + "png" alone
+      "the pdf attached to that email", // descriptive, no action
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `unexpected file_convert scope on "${msg}"`).not.toContain(
+        "file_convert",
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -329,6 +329,10 @@ export const WRITE_TOOLS = new Set([
   "pm_alpha_run",
   // F8.1b PM paper trading write (β-addendum) — persists to pm_paper_fills/portfolio/balance + trade_theses
   "pm_paper_rebalance",
+  // v7.10 file conversion — writes converted output to /tmp or /workspace.
+  // Narrating "I converted the file to X" without the tool call is a
+  // hallucination the WRITE_TOOLS guard catches.
+  "file_convert",
 ]);
 
 /**

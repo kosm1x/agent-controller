@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-20 (session 84 — v7.2 Graphify MCP shipped, **Phase γ opens**: TS-native integration of the `graphifyy==0.4.23` Python MCP server against an AST-built knowledge graph of `src/` (335 files → 1757 nodes, 4686 edges, 25 communities, 63% EXTRACTED / 37% INFERRED). 7 new deferred tools (`graphify-code__query_graph`, `_get_node`, `_get_neighbors`, `_get_community`, `_god_nodes`, `_graph_stats`, `_shortest_path`), 1 new scope group (`graph`, bilingual EN/ES with negative-lookahead on `graphic`/`graphene`/`paragraph`/`gráfica`). Isolated `./venv/graphify/` + pinned-version bootstrap script with CWD + version guards. 2 QA audit passes: round 1 closed 2 major (`god_nodes` literal didn't activate scope; no fresh-VPS bootstrap doc) + 4 warnings (weak test assertion, missing MCP manager test, unpinned internal API use, CWD assumption). Round 2 clean PASS. Live smoke: stdio MCP handshake end-to-end → graph_stats + god_nodes return semantically coherent results (`getDatabase()` top hub at 257 deg, matches codebase singleton pattern). Scope-shift-as-design-decision: pivoted from docs corpus to code at impl-plan step 4 after discovering `collect_files` doesn't handle markdown (requires skill-driven LLM semantic pass — deferred to v7.2.1). CRM graph + cross-source router + semantic-pass codebase graph all deferred to v7.2.1 with explicit triggers. **Phase γ S1 of 13 done.** Previous: session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
+> Last updated: 2026-04-20 (session 85 — v7.10 `file_convert` shipped: closes 5 format gaps (`.epub/.mobi` ebooks, `.odt/.rtf/.pages` office docs, HEIC/AVIF/JXL images, doc↔doc via pandoc, video frames via ffmpeg). Single new deferred tool dispatching via `execFile` no-shell to apt-installed binaries (calibre, libreoffice, pandoc, imagemagick, ffmpeg). Zero npm deps; ~2GB of apt binaries on the VPS. 2 QA audit passes closed 2 critical (symlink-bypass of input allow-list via statSync-follows-symlinks; `Infinity` timestamp reaching ffmpeg argv) + 2 major (UTILITY_TOOLS not covered by write-tools-sync test; ES `transforma` regex asymmetric with EN branch, over-corrected once then clitic-form broken) + 3 warnings (LibreOffice `--outdir` rename unification, silent-overwrite documentation, ES clitic regex W-R2-1). Live smoke: pandoc .md→.html 304B/152ms, imagemagick .png→.jpeg 336B/17ms, libreoffice .md→.docx→.pdf 31KB/2.4s (warm start), symlink /tmp/link→/etc/passwd correctly rejected. 2/13 γ items done. Previous: session 84 — v7.2 Graphify MCP shipped, **Phase γ opens**: TS-native integration of the `graphifyy==0.4.23` Python MCP server against an AST-built knowledge graph of `src/` (335 files → 1757 nodes, 4686 edges, 25 communities, 63% EXTRACTED / 37% INFERRED). 7 new deferred tools (`graphify-code__query_graph`, `_get_node`, `_get_neighbors`, `_get_community`, `_god_nodes`, `_graph_stats`, `_shortest_path`), 1 new scope group (`graph`, bilingual EN/ES with negative-lookahead on `graphic`/`graphene`/`paragraph`/`gráfica`). Isolated `./venv/graphify/` + pinned-version bootstrap script with CWD + version guards. 2 QA audit passes: round 1 closed 2 major (`god_nodes` literal didn't activate scope; no fresh-VPS bootstrap doc) + 4 warnings (weak test assertion, missing MCP manager test, unpinned internal API use, CWD assumption). Round 2 clean PASS. Live smoke: stdio MCP handshake end-to-end → graph_stats + god_nodes return semantically coherent results (`getDatabase()` top hub at 257 deg, matches codebase singleton pattern). Scope-shift-as-design-decision: pivoted from docs corpus to code at impl-plan step 4 after discovering `collect_files` doesn't handle markdown (requires skill-driven LLM semantic pass — deferred to v7.2.1). CRM graph + cross-source router + semantic-pass codebase graph all deferred to v7.2.1 with explicit triggers. **Phase γ S1 of 13 done.** Previous: session 83 — F8.1b PolymarketPaperAdapter shipped: TS-native Polymarket paper-trading adapter declining the pm-trader MCP (singleton-DB discipline + 660ms cold start + cross-language complexity). `PolymarketPaperAdapter implements VenueAdapter`, 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new tables (`pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`), `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with type guards. 2 QA audit passes closed 7 round-1 warnings (dust-filter blocked full-exits, no stale-abort gate, scope regex head-noun-first gap, test union access without narrowing) + 3 round-2 warnings (tool `allow_stale` parameter, aborted thesis metadata flag, NaN weight filter). Live smoke: $10K fresh cash → 1 BUY fill 186.54 sh @ 0.5361 (midpoint × 1+20bps) → thesis_id persisted → portfolio + history reflect correctly. Deferrals booked for F8.1b.2 (orderbook walking + NO-side shorting), F8.1c (F7.5 firewall integration + live pm-trader MCP + replication scoring). **Phase β-addendum 2/2 done; Phase γ opens.**
 
 ## Status Key
 
@@ -705,21 +705,23 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.10 — Universal File Conversion (`file_convert` tool) — **Planned**
+## v7.10 — Universal File Conversion (`file_convert` tool) — **Done**
 
-> 1 session, ~2-3 hours. No F-step dependencies — can slot anywhere in Phase γ. Source: `reference_convertx.md` (ConvertX AGPL blocked; rebuild using apt-installed binaries is clean).
+> Session 85 (2026-04-20). Phase γ S2. Impl plan: `docs/planning/phase-gamma/02-v7.10-impl-plan.md`. Source: `reference_convertx.md` (ConvertX AGPL blocked; rebuilt native via apt binaries — clean).
 
-**Motivation**: Jarvis can't read .epub/.mobi/.odt/.rtf/.pages/HEIC/video frames. All gaps closable via standard FLOSS CLI tools (calibre, libreoffice, pandoc, imagemagick, ffmpeg) invoked through shell_exec — no code-level GPL contamination.
+Jarvis can now read `.epub/.mobi/.odt/.rtf/.pages/HEIC/AVIF` and extract video frames. One deferred tool, dispatches to FLOSS CLI binaries via `execFile` (no shell). 2 QA audit passes closed 2 critical (symlink bypass, `Infinity` timestamp) + 2 major (UTILITY_TOOLS sync gap, ES regex asymmetry) + 3 warnings. Live smoke: pandoc .md→.html, imagemagick .png→.jpeg, libreoffice .docx→.pdf, symlink rejection all verified.
 
-| Item                                                                                         | Source                     | Status      |
-| -------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
-| VPS prerequisites: `apt install calibre libreoffice pandoc imagemagick libvips-tools ffmpeg` | —                          | **Planned** |
-| `file_convert(input_path, target_format, output_path?)` tool handler (~200 LOC)              | `reference_convertx.md`    | **Planned** |
-| Format dispatch table (extension → binary mapping, not LLM-inferred)                         | —                          | **Planned** |
-| Source-extension whitelist + path validation (prevent shell_exec abuse)                      | Security                   | **Planned** |
-| Integration: scope group, guards (NOT read-only — writes /tmp), write-tools-sync test        | `INTEGRATION-CHECKLIST.md` | **Planned** |
-| Test file with mocked execFile: dispatch table, error paths, path validation                 | —                          | **Planned** |
-| **Explicit non-goal**: audio transcription — separate project (whisper.cpp or Deepgram)      | —                          | —           |
+| Item                                                                                         | Source                     | Status   |
+| -------------------------------------------------------------------------------------------- | -------------------------- | -------- |
+| VPS prerequisites: `apt install calibre libreoffice pandoc imagemagick libvips-tools ffmpeg` | —                          | **Done** |
+| `file_convert(input_path, target_format, output_path?, timestamp_sec?)` tool handler         | `reference_convertx.md`    | **Done** |
+| Format dispatch table (extension → binary, not LLM-inferred)                                 | —                          | **Done** |
+| Source-extension whitelist + path validation (absolute, canonical, symlink-rejecting)        | Security                   | **Done** |
+| realpath re-validation (defeats intermediate-symlink sandbox escape)                         | Security                   | **Done** |
+| LibreOffice `--outdir` rename-to-requested-name unification                                  | UX                         | **Done** |
+| Integration: scope group, guards (NOT read-only), WRITE_TOOLS guard, sync test               | `INTEGRATION-CHECKLIST.md` | **Done** |
+| Test file: dispatch + validation + security + error + regression (28 tests)                  | —                          | **Done** |
+| **Explicit non-goal**: audio transcription — separate project (whisper.cpp or Deepgram)      | —                          | —        |
 
 ---
 
@@ -1071,7 +1073,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.2    | Knowledge graph (Graphify)                    | 1.5      | None          | **Done (MVP)** — session 84 |
 | v7.3 P4 | Digital marketing buyer (claude-ads)          | 3        | None          | **Planned**                 |
 | v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None          | **Planned**                 |
-| v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None          | **Planned**                 |
+| v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None          | **Done** — session 85       |
 | v7.11   | Jarvis teaching module                        | 2        | None          | **Planned**                 |
 | v7.12   | Diagram generation (mermaid/d2/plantuml)      | 1        | None          | **Planned**                 |
 | v7.14   | Infographic generation (AntV)                 | 1        | None          | **Planned**                 |
@@ -1082,7 +1084,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4          | **Planned**                 |
 | v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 ✅ + sweep | **Planned**                 |
 
-**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **1/13 done; 12 remaining.**
+**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **2/13 done; 11 remaining.**
 
 ### v7.2.1 — v7.2 follow-ups (queued, not yet scheduled)
 
@@ -1107,14 +1109,14 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 ### Totals
 
-| Bucket                              | Count  | Sessions              |
-| ----------------------------------- | ------ | --------------------- |
-| Shipped (α + β + β-addendum + γ S1) | **20** | ~22                   |
-| Gated / conditional (δ + ε)         | 2      | 4.5                   |
-| β-opt (optional)                    | 1      | 1                     |
-| γ remaining                         | 12     | ~17.5                 |
-| **Total committed**                 | **35** | **~45 seq / ~36 par** |
-| **Remaining to close v7**           | **15** | **~24 seq / ~18 par** |
+| Bucket                                 | Count  | Sessions              |
+| -------------------------------------- | ------ | --------------------- |
+| Shipped (α + β + β-addendum + γ S1-S2) | **21** | ~23                   |
+| Gated / conditional (δ + ε)            | 2      | 4.5                   |
+| β-opt (optional)                       | 1      | 1                     |
+| γ remaining                            | 11     | ~16.5                 |
+| **Total committed**                    | **35** | **~45 seq / ~36 par** |
+| **Remaining to close v7**              | **14** | **~22 seq / ~17 par** |
 
 ---
 

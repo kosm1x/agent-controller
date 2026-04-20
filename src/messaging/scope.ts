@@ -223,11 +223,15 @@ export const INTEL_TOOLS = [
   "intel_baseline",
 ];
 
-/** Utility tools — weather, currency, geocoding. Scope-gated to save tokens. */
+/** Utility tools — weather, currency, geocoding, file conversion. Scope-gated to save tokens. */
 export const UTILITY_TOOLS = [
   "weather_forecast",
   "currency_convert",
   "geocode_address",
+  // v7.10: file_convert — dispatches to FLOSS CLI tools (calibre,
+  // libreoffice, pandoc, imagemagick, ffmpeg). Scope activates on
+  // conversion verbs + format nouns.
+  "file_convert",
 ];
 
 /** SEO/GEO tools — scope-gated: only when SEO/rankings/schema/meta keywords detected. */
@@ -435,6 +439,18 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
       /\b(clima|weather|temperatura|temperature|lluvia|rain|pron[oó]stico|forecast|moneda|currency|convert|tipo\s+de\s+cambio|d[oó]lar|exchange\s+rate|coordenadas|coordinates|direcci[oó]n.*geocod|geocod|ubicaci[oó]n\s+de)\b/i,
+    group: "utility",
+  },
+  {
+    // v7.10 file_convert — activates on ES "convertir/convierte/transforma"
+    // (the base "convert" pattern already covers EN), explicit tool-name
+    // shortcut, frame-extraction phrasing, and strong file-format anchors
+    // that alone imply a conversion task. Narrowly scoped: bare "pdf" or
+    // "docx" alone does NOT fire (would false-positive on "send me a PDF"
+    // asks); the regex requires the format to be preceded by a conversion
+    // verb OR appear as a file extension (leading dot).
+    pattern:
+      /\b(convertir|convierte|conviérte(?:lo|la)|(?:transforma(?:lo|la)|transformar?)\s+(?:(?:(?:el|la|lo|un|una|este|esta|mi|tu)\s+)?\S+\s+)?(?:a|al|en|hacia)\b|transform(?:s|ed|ing|ation)?\s+(?:(?:the|a|my|this|your)\s+)?\S+\s+(?:to|into)\b|extraer?\s+(?:un\s+)?(?:frame|imagen|cuadro)|extract\s+(?:a\s+)?frame|file[_\s-]?convert|ebook[-\s]?convert|pandoc|libreoffice|imagemagick|ffmpeg\s+frame)\b|\.(?:epub|mobi|heic|heif|avif|jxl|odt|rtf|pages|pptx|docx|adoc|rst)\b/i,
     group: "utility",
   },
   {
