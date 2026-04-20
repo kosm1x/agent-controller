@@ -20,8 +20,9 @@
 | α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                | 5 shipped            |
 | α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                               | 0.5 (Apr 20)         |
 | β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (10/12: F1-F6.5 + v7.13 + F7 + F7.5 + F8 done, F9 next)** | ~11.5 seq / ~7–8 par |
+| β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (prediction-market alpha) → F8.1b (PolymarketPaperAdapter)    | **Planned** — queued after F9 per operator 2026-04-20                   | 2.5                  |
 | β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                             | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-F9**                                                    | ~14–15               |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-β-add**                                                 | ~14–15               |
 | δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                               | 2.5                  |
 | ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                         | 2                    |
 
@@ -29,30 +30,34 @@
 
 1. Tier C infrastructure already shipped — nothing to unblock β.
 2. β is the v7.0 thesis. Nothing substitutes for shipping F1→F9.
-3. **No γ interleave during β** (operator Decision 6, 2026-04-14). Phase γ starts in S10+ after F9 ships.
+3. **No γ interleave during β** (operator Decision 6, 2026-04-14). Phase γ starts after the β-addendum (F8.1a + F8.1b) closes, not immediately after F9.
 4. v7.8 P2 is a date-triggered decision (2026-04-20 09:00 CDMX), independent of β position.
 5. F11 is **not** inside β — it requires 30+ days of F8 paper-trading track record. Ships in Phase δ.
+6. **β-addendum slot (F8.1a + F8.1b)** (operator Decision 7, 2026-04-20): Polymarket coverage executes AFTER F9 and BEFORE γ verticals. The equity pipeline gets its morning/EOD ritual first; then the prediction-market alpha layer + PolymarketPaperAdapter extend the same VenueAdapter architecture. This prevents β from "shipping" with a known structural gap (pm-trader MCP deferred) and keeps γ verticals as pure non-financial work.
 
 ---
 
 ## Master Sequence (upcoming)
 
-| #   | Session       | Output                                                                     | Dep(s)              | Est. |
-| --- | ------------- | -------------------------------------------------------------------------- | ------------------- | ---- |
-| 1   | S1 (**F1**)   | Data layer (Alpha Vantage + Polygon + FRED + 6 tables)                     | —                   | 1.7  |
-| 2   | S2 (F2)       | Indicator engine (golden-file validated)                                   | F1                  | 1    |
-| 3   | S3 (F4)       | Watchlist + market_quote/history tools                                     | F1                  | 1    |
-| 4   | S4 (F5)       | Macro regime detection (AV + FRED)                                         | F1                  | 0.5  |
-| 5   | S5 (F3)       | Signal detector + market_signals                                           | F2 + F4             | 1    |
-| 6   | S6 (F6)       | Prediction markets + whale tracker                                         | —                   | 1.5  |
-| 7   | S7 (F6.5)     | Sentiment signals (F&G x2, funding, liq.)                                  | —                   | 0.7  |
-| 8   | S8 (v7.13)    | Structured PDF ingestion (MinerU) — pre-F7 gate                            | pgvector ✅         | 1.5  |
-| 9   | S9 (F7) ✅    | Alpha combination engine — **shipped 2026-04-18**                          | F3+F5+F6+F6.5+v7.13 | 2.5  |
-| 10  | S10 (F7.5) ✅ | Strategy backtester (CPCV, PBO, DSR) — **shipped 2026-04-19**              | F7 ✅               | 1    |
-| 11  | S11 (F8) ✅   | Paper trading (VenueAdapter + PaperEquityAdapter) — **shipped 2026-04-20** | F7.5 ✅             | 1.5  |
-| 12  | S12 (F9)      | Morning/EOD scan rituals + calendar — **next**                             | F8 ✅ + F4          | 1    |
+| #   | Session       | Output                                                                                                                                                                                                                                                               | Dep(s)              | Est. |
+| --- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---- |
+| 1   | S1 (**F1**)   | Data layer (Alpha Vantage + Polygon + FRED + 6 tables)                                                                                                                                                                                                               | —                   | 1.7  |
+| 2   | S2 (F2)       | Indicator engine (golden-file validated)                                                                                                                                                                                                                             | F1                  | 1    |
+| 3   | S3 (F4)       | Watchlist + market_quote/history tools                                                                                                                                                                                                                               | F1                  | 1    |
+| 4   | S4 (F5)       | Macro regime detection (AV + FRED)                                                                                                                                                                                                                                   | F1                  | 0.5  |
+| 5   | S5 (F3)       | Signal detector + market_signals                                                                                                                                                                                                                                     | F2 + F4             | 1    |
+| 6   | S6 (F6)       | Prediction markets + whale tracker                                                                                                                                                                                                                                   | —                   | 1.5  |
+| 7   | S7 (F6.5)     | Sentiment signals (F&G x2, funding, liq.)                                                                                                                                                                                                                            | —                   | 0.7  |
+| 8   | S8 (v7.13)    | Structured PDF ingestion (MinerU) — pre-F7 gate                                                                                                                                                                                                                      | pgvector ✅         | 1.5  |
+| 9   | S9 (F7) ✅    | Alpha combination engine — **shipped 2026-04-18**                                                                                                                                                                                                                    | F3+F5+F6+F6.5+v7.13 | 2.5  |
+| 10  | S10 (F7.5) ✅ | Strategy backtester (CPCV, PBO, DSR) — **shipped 2026-04-19**                                                                                                                                                                                                        | F7 ✅               | 1    |
+| 11  | S11 (F8) ✅   | Paper trading (VenueAdapter + PaperEquityAdapter) — **shipped 2026-04-20**                                                                                                                                                                                           | F7.5 ✅             | 1.5  |
+| 12  | S12 (F9)      | Morning/EOD scan rituals + calendar — **next**                                                                                                                                                                                                                       | F8 ✅ + F4          | 1    |
+| 13  | S13 (F8.1a)   | **Prediction-market alpha layer** — combines `prediction_markets` + `sentiment_snapshot` + `whale_trades` into portfolio weights over Polymarket tokens (analogue to F7 FLAM for equities)                                                                           | F6 + F6.5 + F7 ✅   | 1.5  |
+| 14  | S14 (F8.1b)   | **PolymarketPaperAdapter** — pm-trader MCP wrapped as `VenueAdapter`; order-book walking + level-by-level fill simulation (~200 LOC TS port from `reference_polymarket_paper_trader.md`); cross-venue `paper_rebalance` unifies equity + prediction-market positions | F8.1a + F8 ✅       | 1    |
 
 β subtotal: **~14.9 sessions sequential**, **~11 sessions with F2/F4/F5 + F6/F6.5 parallelized**.
+β-addendum (S13–S14, F8.1a+b): **~2.5 sessions** — fires after F9, before Phase γ. Explicitly slotted per operator decision 2026-04-20: Polymarket coverage completes β before γ verticals begin.
 
 F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-capable).
 
@@ -359,25 +364,67 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 >
 > **Live smoke** (ship_gate override, since F7.5 currently blocks on DSR=0.20): 4 fills landed against the seeded dataset (TLT/SPY/JPM/AAPL), 6 short-sell rejects (F7 produced negative weights, v1 rejects shorts per plan), portfolio mark-to-market consistent, thesis row persisted.
 
-| Item                                                                                                                                                                                           | Source                         | Status                                                          |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------- |
-| `VenueAdapter` TS interface — shared Order/Fill/Position/Balance/MarketQuote domain model; `placeOrder/getPositions/getBalance/getFills/getMarketData`                                         | `reference_nautilus_trader.md` | **Done**                                                        |
-| Clock abstraction — `WallClock` (paper default) + `FixedClock` (tests); strategies read `clock.now()`, never `new Date()`                                                                      | `reference_nautilus_trader.md` | **Done**                                                        |
-| `PaperEquityAdapter` — first concrete VenueAdapter; AV-backed market data via `DataLayer.getWeekly`; synthetic fills at close × slippage; atomic cash + portfolio updates via `db.transaction` | impl                           | **Done**                                                        |
-| Execution engine (`paper-executor.ts`) — weekly rebalance: read F7 weights → check F7.5 ship_gate → diff vs current → SELLS before BUYS → persist thesis → back-link fills by fill_id          | impl                           | **Done**                                                        |
-| 3 new additive tables: `paper_balance`, `paper_portfolio`, `paper_fills`; reuse existing `trade_theses` with `symbol='PORTFOLIO'` sentinel                                                     | impl                           | **Done**                                                        |
-| 3 new deferred tools — `paper_rebalance` (write), `paper_portfolio` (read), `paper_history` (read); new `paper` scope group with ES+EN regex                                                   | ACI pattern                    | **Done**                                                        |
-| Ship-gate enforcement — refuses to trade when F7.5 `ship_blocked=1` unless `override_ship_gate=true`; override logged in thesis row                                                            | impl                           | **Done**                                                        |
-| Stale-quote abort — refuses to rebalance when held positions have stale marks (>5 weeks); `override_stale=true` bypass with visible warning (audit W2/W-R2-2/W-R2-3)                           | audit r1+r2                    | **Done**                                                        |
-| Transaction cost model — fixed 5 bps slippage per side + configurable commission; matches F7.5 backtest default to minimize divergence                                                         | impl                           | **Done**                                                        |
-| Fractional-share support — 4dp precision so low-weight positions aren't rounded to zero                                                                                                        | impl                           | **Done**                                                        |
-| Target cash buffer — derate target notional by 20 bps so buys still fit after slippage; MIN_REBALANCE_FRACTION=25 bps prevents buffer-dust churn                                               | impl                           | **Done**                                                        |
-| pm-trader MCP server integration (Polymarket paper, 30 tools stdio)                                                                                                                            | V7 spec                        | **Deferred** (F8.1; prediction-market alpha layer prerequisite) |
-| Replication scoring vs Polymarket whales                                                                                                                                                       | V7 spec                        | **Deferred** (F8.1; same trigger)                               |
-| Research-to-live parity reconciliation test                                                                                                                                                    | `reference_nautilus_trader.md` | **Deferred** (F11; needs live adapter to compare)               |
-| Shared execution event bus (fill/reject/market-data events)                                                                                                                                    | `reference_nautilus_trader.md` | **Deferred** (F8.2 if operator requests)                        |
-| Multi-account A/B testing                                                                                                                                                                      | V7 spec                        | **Deferred** (F8.2; schema keeps `account` column)              |
-| LIMIT / STOP order types, margin, short-sell, options, tax-lot tracking                                                                                                                        | —                              | **Deferred** (out of v7.0 scope)                                |
+| Item                                                                                                                                                                                           | Source                         | Status                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------- |
+| `VenueAdapter` TS interface — shared Order/Fill/Position/Balance/MarketQuote domain model; `placeOrder/getPositions/getBalance/getFills/getMarketData`                                         | `reference_nautilus_trader.md` | **Done**                                                  |
+| Clock abstraction — `WallClock` (paper default) + `FixedClock` (tests); strategies read `clock.now()`, never `new Date()`                                                                      | `reference_nautilus_trader.md` | **Done**                                                  |
+| `PaperEquityAdapter` — first concrete VenueAdapter; AV-backed market data via `DataLayer.getWeekly`; synthetic fills at close × slippage; atomic cash + portfolio updates via `db.transaction` | impl                           | **Done**                                                  |
+| Execution engine (`paper-executor.ts`) — weekly rebalance: read F7 weights → check F7.5 ship_gate → diff vs current → SELLS before BUYS → persist thesis → back-link fills by fill_id          | impl                           | **Done**                                                  |
+| 3 new additive tables: `paper_balance`, `paper_portfolio`, `paper_fills`; reuse existing `trade_theses` with `symbol='PORTFOLIO'` sentinel                                                     | impl                           | **Done**                                                  |
+| 3 new deferred tools — `paper_rebalance` (write), `paper_portfolio` (read), `paper_history` (read); new `paper` scope group with ES+EN regex                                                   | ACI pattern                    | **Done**                                                  |
+| Ship-gate enforcement — refuses to trade when F7.5 `ship_blocked=1` unless `override_ship_gate=true`; override logged in thesis row                                                            | impl                           | **Done**                                                  |
+| Stale-quote abort — refuses to rebalance when held positions have stale marks (>5 weeks); `override_stale=true` bypass with visible warning (audit W2/W-R2-2/W-R2-3)                           | audit r1+r2                    | **Done**                                                  |
+| Transaction cost model — fixed 5 bps slippage per side + configurable commission; matches F7.5 backtest default to minimize divergence                                                         | impl                           | **Done**                                                  |
+| Fractional-share support — 4dp precision so low-weight positions aren't rounded to zero                                                                                                        | impl                           | **Done**                                                  |
+| Target cash buffer — derate target notional by 20 bps so buys still fit after slippage; MIN_REBALANCE_FRACTION=25 bps prevents buffer-dust churn                                               | impl                           | **Done**                                                  |
+| pm-trader MCP server integration (Polymarket paper, 30 tools stdio)                                                                                                                            | V7 spec                        | **Moved to F8.1b** (queued after F9, operator Decision 7) |
+| Replication scoring vs Polymarket whales                                                                                                                                                       | V7 spec                        | **Moved to F8.1b** (same sprint)                          |
+| Research-to-live parity reconciliation test                                                                                                                                                    | `reference_nautilus_trader.md` | **Deferred** (F11; needs live adapter to compare)         |
+| Shared execution event bus (fill/reject/market-data events)                                                                                                                                    | `reference_nautilus_trader.md` | **Deferred** (F8.2 if operator requests)                  |
+| Multi-account A/B testing                                                                                                                                                                      | V7 spec                        | **Deferred** (F8.2; schema keeps `account` column)        |
+| LIMIT / STOP order types, margin, short-sell, options, tax-lot tracking                                                                                                                        | —                              | **Deferred** (out of v7.0 scope)                          |
+
+---
+
+## v7.0 F8.1 — Polymarket Coverage (β-addendum) — **Planned**
+
+> 2.5 sessions total across two sprints (F8.1a + F8.1b). Fires AFTER F9 ships, BEFORE Phase γ starts (operator Decision 7, 2026-04-20). Extends the VenueAdapter architecture shipped in F8 to prediction markets so β closes with complete Polymarket coverage, not just equities.
+>
+> **Why post-F9, not between F8 and F9**: F9 is the operational top of the equity pipeline — once the morning/EOD ritual fires with a real equity portfolio, operators have a complete end-to-end flow they can exercise daily. F8.1 then extends that flow laterally (prediction markets as a second venue) without breaking the demonstrated equity path.
+>
+> **Why not deferred to γ**: pm-trader MCP was explicitly listed in the original V7-ROADMAP §F8 scope; shipping F8 without it leaves a known structural gap. Closing that gap is still "finance stack" work, semantically β, not γ (which is non-financial verticals).
+
+### F8.1a — Prediction-Market Alpha Layer (1.5 sessions)
+
+The piece that doesn't exist yet. Analogue to F7 FLAM, but for Polymarket tokens instead of equity symbols. Takes `prediction_markets` (YES/NO prices) + `sentiment_snapshot` (fear/greed, funding) + `whale_trades` (Polymarket trade history) as inputs; produces per-token portfolio weights.
+
+| Item                                                                                                                                                              | Source                                 | Status      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------- |
+| Prediction-market return matrix — build analogue of F7's `buildReturnMatrix` for (token, event) firings with resolution-time labels                               | —                                      | **Planned** |
+| Token-universe resolver — query Polymarket Gamma API for active markets + outcomes; filter by liquidity / time-to-resolution                                      | `reference_polymarket_paper_trader.md` | **Planned** |
+| Crowd-signal features: midpoint price, bid-ask width, funding rate, whale-flow direction, fear/greed overlay                                                      | F6 + F6.5                              | **Planned** |
+| FLAM-like 11-step alpha combination adapted for binary outcomes — separate `pm_alpha_run` tool + `pm_signal_weights` table, isolated from equity `signal_weights` | F7 spec                                | **Planned** |
+| Shared ISQ dimensions + run_id semantics so F7.5 backtester can reuse the math layer; CPCV/PBO/DSR firewall applies                                               | F7.5                                   | **Planned** |
+| Ship-gate semantics: F7.5 runs a `pm_alpha` strategy backtest; ship_blocked propagates to F8.1b rebalance the same way it does for equities                       | F7.5                                   | **Planned** |
+| Kelly-fraction sizing for binary outcomes — `(edge × 2) / (1 − edge)` clipped to conservative multiplier; separate from equity sizing path                        | V7 spec                                | **Planned** |
+
+### F8.1b — PolymarketPaperAdapter (1 session)
+
+Wraps pm-trader MCP as a concrete `VenueAdapter` so `paper_rebalance` handles equities + Polymarket in one unified call. Ports the order-book walking + fill simulation patterns from `reference_polymarket_paper_trader.md` (~200 LOC TS).
+
+| Item                                                                                                                                                                                      | Source                                           | Status      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------- |
+| `PolymarketPaperAdapter: VenueAdapter` — implements `getMarketData` (CLOB midpoint) + `placeOrder` (orderbook walk) + `getPositions` (pm-trader portfolio API) + `getBalance` (USDC cash) | `reference_polymarket_paper_trader.md`           | **Planned** |
+| `Position` interface extension — add `{ kind: "equity", symbol } \| { kind: "polymarket", market_id, outcome }` discriminated union so adapters can coexist in one `getPositions()` view  | impl                                             | **Planned** |
+| Order-book walking (`simulateBuyFill` / `simulateSellFill`) — level-by-level fill w/ exact slippage, FOK vs FAK, fee formula `(bps/10000) × min(price, 1−price) × size`                   | `reference_polymarket_paper_trader.md` pattern 1 | **Planned** |
+| pm-trader MCP registration in `mcp-servers.json` — subprocess management + env-gated on `POLYMARKET_API_KEY`; 30 tools namespace `pm_trader__*`                                           | `07-pm-trader-dryrun.md`                         | **Planned** |
+| Shared `paper_rebalance` executor — same tool call handles equity + Polymarket target weights; `trade_theses` row records both asset classes under one PORTFOLIO thesis                   | F8 executor extension                            | **Planned** |
+| Cross-venue portfolio view in `paper_portfolio` — equity + Polymarket positions listed together with unified total_equity                                                                 | F8 tool extension                                | **Planned** |
+| Replication scoring — "am I trading like the whales?" — join `whale_trades` positions vs `paper_portfolio` Polymarket positions, compute alignment %                                      | V7 spec                                          | **Planned** |
+| pm-trader workaround for `--data-dir` bug (per `07-pm-trader-dryrun.md`) — set `HOME` env var when spawning subprocess; file upstream issue                                               | `07-pm-trader-dryrun.md`                         | **Planned** |
+| Architectural prereq already in place: `VenueAdapter` interface shipped in F8 (2026-04-20) is stable — this sprint is a translation task, not a design task                               | F8 ✅                                            | **Ready**   |
+
+**Explicit non-goals for F8.1**: F11 live Polymarket trading (requires 30+ days paper record), order-book-depth-aware slippage for equities (F11 concern), multi-resolution event joins (F9 ritual concern).
 
 ---
 
