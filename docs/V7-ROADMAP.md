@@ -1,6 +1,6 @@
 # v7 Roadmap — Financial Intelligence + Feature Verticals
 
-> Last updated: 2026-04-20 (session 80 — F8 Paper Trading shipped: VenueAdapter + Clock abstraction + PaperEquityAdapter + weekly rebalance executor + 3 deferred tools + ship_gate enforcement. Live smoke (ship_gate override) produced 4 fills against the seeded dataset. pm-trader MCP explicitly deferred to F8.1 — scope shift flagged in `21-f8-impl-plan.md`). **Phase α shipped. Phase β in progress — 10/12 items done (F1–F6.5 + v7.13 + F7 + F7.5 + F8). F9 (morning/EOD ritual) up next, unblocked. Strict no-γ-interleave per operator Decision 6 (2026-04-14): all Phase γ verticals deferred until F9 completes.**
+> Last updated: 2026-04-20 (session 81 — F9 Morning/EOD Scan Rituals shipped: NYSE market calendar (2024-2027), daily alert-budget tracker with consume-loop closed on both task.completed + task.failed, 2 new cron rituals (morning 8AM ET + EOD 4:30PM ET, NY-tz + trading-day-gated at scheduler level), 2 new read tools. 2 QA audit passes. **Phase β closes on original 12-item scope with F9 shipped. β-addendum (F8.1a → F8.1b) queues next per operator Decision 7.**
 
 ## Status Key
 
@@ -19,7 +19,7 @@
 | ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
 | α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                | 5 shipped            |
 | α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                               | 0.5 (Apr 20)         |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **In progress (10/12: F1-F6.5 + v7.13 + F7 + F7.5 + F8 done, F9 next)** | ~11.5 seq / ~7–8 par |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)** | ~11.5 seq / ~7–8 par |
 | β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (prediction-market alpha) → F8.1b (PolymarketPaperAdapter)    | **Planned** — queued after F9 per operator 2026-04-20                   | 2.5                  |
 | β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                             | 1                    |
 | γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-β-add**                                                 | ~14–15               |
@@ -52,7 +52,7 @@
 | 9   | S9 (F7) ✅    | Alpha combination engine — **shipped 2026-04-18**                                                                                                                                                                                                                    | F3+F5+F6+F6.5+v7.13 | 2.5  |
 | 10  | S10 (F7.5) ✅ | Strategy backtester (CPCV, PBO, DSR) — **shipped 2026-04-19**                                                                                                                                                                                                        | F7 ✅               | 1    |
 | 11  | S11 (F8) ✅   | Paper trading (VenueAdapter + PaperEquityAdapter) — **shipped 2026-04-20**                                                                                                                                                                                           | F7.5 ✅             | 1.5  |
-| 12  | S12 (F9)      | Morning/EOD scan rituals + calendar — **next**                                                                                                                                                                                                                       | F8 ✅ + F4          | 1    |
+| 12  | S12 (F9) ✅   | Morning/EOD scan rituals + NYSE calendar + alert budget — **shipped 2026-04-20**                                                                                                                                                                                     | F8 ✅ + F4          | 1    |
 | 13  | S13 (F8.1a)   | **Prediction-market alpha layer** — combines `prediction_markets` + `sentiment_snapshot` + `whale_trades` into portfolio weights over Polymarket tokens (analogue to F7 FLAM for equities)                                                                           | F6 + F6.5 + F7 ✅   | 1.5  |
 | 14  | S14 (F8.1b)   | **PolymarketPaperAdapter** — pm-trader MCP wrapped as `VenueAdapter`; order-book walking + level-by-level fill simulation (~200 LOC TS port from `reference_polymarket_paper_trader.md`); cross-venue `paper_rebalance` unifies equity + prediction-market positions | F8.1a + F8 ✅       | 1    |
 
@@ -428,16 +428,23 @@ Wraps pm-trader MCP as a concrete `VenueAdapter` so `paper_rebalance` handles eq
 
 ---
 
-## v7.0 F9 — Morning/EOD Scan Rituals — **Planned**
+## v7.0 F9 — Morning/EOD Scan Rituals — **Done**
 
-> 1 session. Depends on F8 + F4. Last on the critical path — needs track record from paper trading.
+> Shipped session 81 (2026-04-20). Impl plan: `docs/planning/phase-beta/22-f9-impl-plan.md`. Branch: `phase-beta/f9-rituals`. 2 QA audit passes.
+>
+> **Phase β closes** on its original 12-item scope with F9 merged. β-addendum (F8.1a prediction-market alpha layer → F8.1b PolymarketPaperAdapter, per operator Decision 7) queues next before Phase γ opens.
 
-| Item                                                                              | Source  | Status      |
-| --------------------------------------------------------------------------------- | ------- | ----------- |
-| Morning scan ritual — pre-market signals + macro regime + overnight news          | V7 spec | **Planned** |
-| EOD scan ritual — close-price signals + day's trade performance + next-day setup  | V7 spec | **Planned** |
-| Market calendar (H4) — NYSE/NASDAQ holidays, half-days, early close               | V7 spec | **Planned** |
-| Dynamic alert budget — per-day token/cost cap, degrades gracefully when exhausted | V7 spec | **Planned** |
+| Item                                                                                                                                                                                         | Source   | Status   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------- |
+| `src/finance/market-calendar.ts` — NYSE 2024–2027 holidays + early-close dates; `isNyseTradingDay` / `isEarlyClose` / `nextTradingDay` / `prevTradingDay` helpers; America/New_York anchored | impl     | **Done** |
+| `src/rituals/alert-budget.ts` — per-ritual daily token budget; `consumeBudget` + `getBudgetStatus` + `recordRitualTokensForTask` wired into router task.completed + task.failed              | impl     | **Done** |
+| `market-morning-scan` ritual — cron `0 8 * * 1-5` America/New_York; reads macro_regime, alpha_latest, backtest_latest, paper_portfolio, intel_query, market_signals; Telegram + email        | V7 spec  | **Done** |
+| `market-eod-scan` ritual — cron `30 16 * * 1-5` America/New_York; reads market_history, paper_portfolio, paper_history, intel_query; Friday-only rebalance nudge section                     | V7 spec  | **Done** |
+| 2 new read tools — `market_calendar`, `alert_budget_status`; new `market_ritual` scope group with ES+EN regex                                                                                | ACI      | **Done** |
+| Scheduler-level trading-day gate — `executeRitual` short-circuits market rituals when `isNyseTradingDay(today)` is false (belt-and-braces with LLM prompt gate)                              | audit W4 | **Done** |
+| Per-ritual timezone override (`RitualDefinition.timezone?`) — market rituals use America/New_York so 8 AM / 4:30 PM track NYSE hours across DST                                              | audit W1 | **Done** |
+| Ritual delivery via `router.watchRitualTask` → `broadcastToAll` — final task-output text is the Telegram message; no `telegram_send` tool needed (audit C1 removed phantom reference)        | impl     | **Done** |
+| End-to-end reachability tests — every tool name in ritual templates resolves in the real registry (catches round-1 C1-class regressions)                                                     | audit R1 | **Done** |
 
 ---
 

@@ -158,7 +158,9 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "backtest_explain" ||
         t === "paper_rebalance" ||
         t === "paper_portfolio" ||
-        t === "paper_history",
+        t === "paper_history" ||
+        t === "market_calendar" ||
+        t === "alert_budget_status",
     )
   )
     return true;

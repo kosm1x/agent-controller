@@ -572,3 +572,33 @@ Audit-finds-N-warnings-every-time held again, with zero criticals this time — 
 ### Research notes
 
 Day 37+ of the longitudinal record. F8 completes the build-to-fire arc: F1 ingests, F2-F6.5 detect, F7 combines, F7.5 gates, F8 executes. The only remaining Phase β item is F9 (morning/EOD ritual) which glues the pieces into a daily operational loop. Still weekly-first per operator lock. The 6-of-10 short-sell rejects in the live smoke are actually informative: F7 is not emitting a long-only portfolio, so either (a) the alpha combination needs a long-only constraint for equities, or (b) F8 needs a long-only filter at the boundary. Both paths are F8.2+ concerns — v1 correctly rejects what it can't model.
+
+## 2026-04-20 (session 81) — Phase β closes
+
+### System state
+
+| Metric        | Value                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Source files  | 350 (+7: market-calendar / alert-budget / market-morning-scan / market-eod-scan / market-ritual tool + 22-f9-impl-plan) |
+| Test files    | 193 (+3)                                                                                                                |
+| Tests passing | 2857 (+57 since session 80)                                                                                             |
+| Tools         | 209 builtin (+2: market_calendar / alert_budget_status)                                                                 |
+| Phase β       | **12/12 Done** (original scope). β-addendum F8.1a+b queues next per Decision 7; then γ.                                 |
+
+### What shipped
+
+**F9 Morning/EOD Scan Rituals (Phase β S12)** — the daily operational loop that glues F1–F8 into a single rhythm. NYSE market calendar covers 2024–2027 holidays + half-days; the ritual scheduler respects it as a belt-and-braces gate (prompt + scheduler both check `isNyseTradingDay`). Two new cron rituals (8:00 AM + 4:30 PM America/New_York, weekdays only) read the full stack (macro_regime / alpha_latest / backtest_latest / paper_portfolio / market_signals / intel_query) and emit a single Spanish-Mexican summary; the messaging router's `watchRitualTask → broadcastToAll` carries delivery — no `telegram_send` tool exists. Per-ritual daily token budget (`alert_budget` table) caps runaway loops at 10k/8k tokens; the consume loop is closed on BOTH task.completed AND task.failed to prevent failed-ritual bypass.
+
+Zero new deps. 22-step cadence, 2 QA audit passes (round 1: 2 criticals + 4 warnings + recommendations, all fixed; round 2: 3 polish warnings, all fixed). Live smoke (without invoking LLM) verified: templates build cleanly with no phantom tool references, market_calendar correctly identifies 2026-04-20 as trading day, alert_budget_status shows read-only defaults then reflects consumption.
+
+### What Jarvis learned
+
+Round 1 caught two criticals of a class new to this sprint: **phantom-tool references in prompts**. `telegram_send` was documented in the plan §D-E as if it existed — it never did; the existing ritual pattern (`morning.ts`, `nightly.ts`) relies on the router's post-completion broadcast, not an in-prompt telegram tool. The plan-doc assumption leaked into two production files, and unit tests didn't catch it because nothing asserted that every tool name in a ritual's `tools:` array resolves in the real registry. Added two `R1` reachability tests that would have failed instantly. The second critical (`consumeBudget` was never called) is a symmetric dead-wiring bug: the budget cap existed as a well-tested module but nothing actually invoked it on task completion; the whole firewall was shelfware. Fixed by wiring `recordRitualTokensForTask` into both the task.completed + task.failed handlers in the router, via dynamic import to avoid a router↔rituals cycle.
+
+Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume on task.completed, leaving failed tasks — which is exactly the runaway-loop case the budget is designed to cap — still uncharged. Fixed.
+
+**Lesson**: when shipping an enforcement mechanism (firewall, budget cap, ship_gate), the critical test is "does the enforcement path actually fire in production code on the triggering event?" Not "does the module compute the right answer?". The latter is necessary but not sufficient. Both F7.5 (ship_gate on NaN), F8 (ship_gate override path), and now F9 (budget consume on completion + failure) shipped with a dead-wiring critical on round 1.
+
+### Research notes
+
+Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.

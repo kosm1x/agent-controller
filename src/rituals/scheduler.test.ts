@@ -68,8 +68,9 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Thirteen: 7 rituals (+ day-narrative) + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
-    expect(mockSchedule).toHaveBeenCalledTimes(13);
+    // Fifteen: 7 base rituals (+ day-narrative) + 2 F9 market rituals (morning-scan + eod-scan)
+    //   + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
+    expect(mockSchedule).toHaveBeenCalledTimes(15);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -91,7 +92,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(13);
+    expect(mockStop).toHaveBeenCalledTimes(15);
   });
 });
 
@@ -119,6 +120,36 @@ describe("idempotency", () => {
     await callback();
 
     expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  // F9 audit W-R2-3: scheduler-level trading-day gate for market rituals.
+  // On a non-trading day the scheduler must short-circuit before submitTask —
+  // even if the LLM instruction to check market_calendar is ignored.
+  it("should skip market rituals on NYSE non-trading days", async () => {
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+
+    // Spy on the calendar module so we force !isNyseTradingDay.
+    const calendarModule = await import("../finance/market-calendar.js");
+    const spy = vi
+      .spyOn(calendarModule, "isNyseTradingDay")
+      .mockReturnValue(false);
+
+    startRitualScheduler();
+
+    // Find the cron callback for market-morning-scan (index may shift if other
+    // rituals change; look it up by inspecting the schedule registry.)
+    const { rituals } = await import("./config.js");
+    const morningIdx = rituals
+      .filter((r) => (r.id === "overnight-tuning" ? false : r.enabled))
+      .findIndex((r) => r.id === "market-morning-scan");
+    expect(morningIdx).toBeGreaterThanOrEqual(0);
+    const callback = mockSchedule.mock.calls[
+      morningIdx
+    ][1] as () => Promise<void>;
+    await callback();
+
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
@@ -196,6 +227,65 @@ describe("task templates", () => {
     expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("gmail_send");
+  });
+
+  // F9 audit R1: end-to-end reachability — every tool name referenced in
+  // market-ritual templates MUST resolve in the real builtin registry. This
+  // catches regressions like round-1 C1 (telegram_send doesn't exist).
+  // Tools registered dynamically at runtime (MCP servers, Google Workspace
+  // bridge, etc.) — not part of BuiltinToolSource. Rituals are allowed to
+  // reference these; the regression we're guarding against is *phantom* tool
+  // names that exist nowhere (like F9 round-1 C1's `telegram_send`).
+  const RUNTIME_REGISTERED_TOOLS = new Set<string>([
+    "gmail_send",
+    "gmail_read",
+    "gmail_search",
+    "gdocs_read",
+    "gdocs_read_full",
+    "gsheets_read",
+    "gsheets_write",
+    "gdrive_list",
+    "calendar_list",
+    "calendar_create",
+  ]);
+
+  it("market-morning-scan tools all exist in the registry", async () => {
+    const { createMarketMorningScan } =
+      await import("./market-morning-scan.js");
+    const { ToolRegistry } = await import("../tools/registry.js");
+    const { BuiltinToolSource } = await import("../tools/sources/builtin.js");
+    const reg = new ToolRegistry();
+    await new BuiltinToolSource().registerTools(reg);
+    const tpl = createMarketMorningScan("2026-04-20");
+    for (const t of tpl.tools ?? []) {
+      if (RUNTIME_REGISTERED_TOOLS.has(t)) continue;
+      expect(reg.get(t), `tool missing: ${t}`).toBeDefined();
+    }
+    for (const t of tpl.requiredTools ?? []) {
+      expect(
+        tpl.tools,
+        `requiredTools entry ${t} must appear in tools`,
+      ).toContain(t);
+    }
+  });
+
+  it("market-eod-scan tools all exist in the registry", async () => {
+    const { createMarketEodScan } = await import("./market-eod-scan.js");
+    const { ToolRegistry } = await import("../tools/registry.js");
+    const { BuiltinToolSource } = await import("../tools/sources/builtin.js");
+    const reg = new ToolRegistry();
+    await new BuiltinToolSource().registerTools(reg);
+    const tpl = createMarketEodScan("2026-04-20");
+    for (const t of tpl.tools ?? []) {
+      if (RUNTIME_REGISTERED_TOOLS.has(t)) continue;
+      expect(reg.get(t), `tool missing: ${t}`).toBeDefined();
+    }
+    for (const t of tpl.requiredTools ?? []) {
+      expect(
+        tpl.tools,
+        `requiredTools entry ${t} must appear in tools`,
+      ).toContain(t);
+    }
   });
 });
 

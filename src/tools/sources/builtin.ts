@@ -178,6 +178,10 @@ import {
   paperPortfolioTool,
   paperHistoryTool,
 } from "../builtin/paper-trading.js";
+import {
+  marketCalendarTool,
+  alertBudgetStatusTool,
+} from "../builtin/market-ritual.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -299,6 +303,9 @@ const BUILTIN_TOOLS: Tool[] = [
   paperRebalanceTool,
   paperPortfolioTool,
   paperHistoryTool,
+  // F9 morning/EOD ritual helpers (v7.0 Phase β S12) — deferred, scope 'market_ritual'
+  marketCalendarTool,
+  alertBudgetStatusTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

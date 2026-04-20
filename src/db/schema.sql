@@ -646,3 +646,20 @@ CREATE INDEX IF NOT EXISTS idx_paper_fills_symbol
   ON paper_fills(symbol, filled_at DESC);
 CREATE INDEX IF NOT EXISTS idx_paper_fills_thesis
   ON paper_fills(thesis_id);
+
+-- ============================================================================
+-- F9 — Morning/EOD market scan rituals (Phase β S12)
+-- Dynamic alert budget per ritual per day. Additive; live-applicable.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS alert_budget (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  date            TEXT NOT NULL,                              -- ISO YYYY-MM-DD in America/New_York
+  ritual_id       TEXT NOT NULL,                              -- 'market-morning-scan' | 'market-eod-scan' | ...
+  tokens_consumed INTEGER NOT NULL DEFAULT 0,
+  tokens_limit    INTEGER NOT NULL,
+  exhausted_at    TEXT,                                       -- ISO timestamp when budget first hit 0
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(date, ritual_id)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_budget_date ON alert_budget(date DESC);

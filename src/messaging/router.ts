@@ -1703,6 +1703,26 @@ export class MessageRouter {
           console.error(`[router] Ritual broadcast failed:`, err);
         });
       }
+      // F9 audit C2: close the alert-budget loop for budget-aware rituals.
+      // Market-morning-scan + market-eod-scan consume from the daily cap; a
+      // runaway loop shuts down next-day retries. Swallow errors so this
+      // never breaks delivery above.
+      if (
+        ritualId === "market-morning-scan" ||
+        ritualId === "market-eod-scan"
+      ) {
+        // Dynamic import avoids a router↔rituals hard dep; rituals depend on
+        // the router interface for delivery. `import()` returns a Promise
+        // synchronously, so the inner `.catch` handles both import-time and
+        // runtime failures.
+        import("../rituals/alert-budget.js")
+          .then(({ recordRitualTokensForTask }) => {
+            recordRitualTokensForTask(ritualId, taskId);
+          })
+          .catch((err) => {
+            console.error(`[router] alert-budget consume failed:`, err);
+          });
+      }
       return;
     }
 
@@ -1975,8 +1995,20 @@ export class MessageRouter {
   private handleTaskFailed(data: TaskFailedPayload): void {
     const taskId = data.task_id;
 
-    // Clean up ritual watches
+    // Clean up ritual watches. F9 audit W-R2-1: failed budget-aware rituals
+    // still consumed tokens — charge the budget before clearing the watch so
+    // runaway failure loops eventually trip the daily cap.
+    const ritualId = this.ritualWatches.get(taskId);
     this.ritualWatches.delete(taskId);
+    if (ritualId === "market-morning-scan" || ritualId === "market-eod-scan") {
+      import("../rituals/alert-budget.js")
+        .then(({ recordRitualTokensForTask }) => {
+          recordRitualTokensForTask(ritualId, taskId);
+        })
+        .catch((err) => {
+          console.error(`[router] alert-budget consume (failed task):`, err);
+        });
+    }
 
     // Clean up proactive scan tracking (prevents Set leak)
     if (isProactiveTask(taskId)) {

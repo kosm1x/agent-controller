@@ -10,6 +10,13 @@ export interface RitualDefinition {
   title: string;
   cron: string;
   enabled: boolean;
+  /**
+   * Timezone for the cron schedule. Defaults to RITUALS_TIMEZONE
+   * (America/Mexico_City). Market rituals override to America/New_York so
+   * 8:00 AM / 4:30 PM map to NYSE pre-open / post-close regardless of local
+   * MX time or DST drift.
+   */
+  timezone?: string;
 }
 
 export const rituals: RitualDefinition[] = [
@@ -69,5 +76,24 @@ export const rituals: RitualDefinition[] = [
     // 1:00 AM MX, Tue/Thu/Sat — off-peak self-improvement
     cron: "0 1 * * 2,4,6",
     enabled: false, // controlled by TUNING_ENABLED env var at runtime
+  },
+  {
+    id: "market-morning-scan",
+    title: "Market morning scan",
+    // 8:00 AM ET weekdays — 1.5h before NYSE open. Timezone override so DST
+    // transitions don't shift the fire time relative to market hours.
+    cron: "0 8 * * 1-5",
+    enabled: true,
+    timezone: "America/New_York",
+  },
+  {
+    id: "market-eod-scan",
+    title: "Market EOD scan",
+    // 4:30 PM ET weekdays — 30 min after regular close. On early-close days
+    // (13:00 ET close), the ritual's own trading-day-gate still allows the
+    // scan; it will reflect the half-day's close via market_history.
+    cron: "30 16 * * 1-5",
+    enabled: true,
+    timezone: "America/New_York",
   },
 ];

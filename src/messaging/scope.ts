@@ -277,6 +277,9 @@ export const PAPER_TOOLS = [
   "paper_history",
 ];
 
+/** F9 market-ritual helpers — scope-gated on market-calendar / alert-budget vocab. */
+export const MARKET_RITUAL_TOOLS = ["market_calendar", "alert_budget_status"];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -518,6 +521,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(paper[_\s-]?(?:trade|trading|rebalanc\w*|portfolio|history|fills?)|papertrade|paper\s+trade\w*|rebalanc(?:e|ear|eo|ed|ing)\s+(?:(?:la|el|del|de\s+la|the|my|your|this|a)\s+)?(?:cartera|portafolio|portfolio|posiciones|positions|paper)|portafolio|portfolio\s+actual|(?:ultimos|[úu]ltimos|mis|last|recent)\s+fills?|fills?\s+(?:recient\w*|recent\w*)|rotar\s+posiciones|ejecuta\s+(?:el\s+)?paper|ship[_\s-]?gate|override[_\s-]?ship)\b|\bpaper[_\s-]?equity\b/i,
     group: "paper",
+  },
+  {
+    // v7.0 F9 market-ritual helpers — market calendar + alert budget vocab.
+    // Anchored so generic "calendar" / "budget" don't collide with NorthStar /
+    // AV-budget contexts; require market/NYSE/trading-day/holiday/alert-budget.
+    pattern:
+      /\b(market[_\s-]?calendar|nyse(?:\s+(?:calendar|holiday|open|closed?))?|trading[_\s-]?day|half[_\s-]?day|early[_\s-]?close|(?:market\w*|mercado\w*)\s+(?:abre|cierra|abierto|cerrado|feriado|holiday)|feriado\s+(?:nyse|de\s+mercado)|alert[_\s-]budget(?:[_\s-]?(?:status|remaining|consumed|exhausted|left|agotado))?|budget\s+(?:de\s+alertas?|del?\s+ritual|agotado))\b/i,
+    group: "market_ritual",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -777,6 +788,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("paper")) {
     tools.push(...PAPER_TOOLS);
+  }
+  if (activeGroups.has("market_ritual")) {
+    tools.push(...MARKET_RITUAL_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

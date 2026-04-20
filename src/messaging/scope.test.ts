@@ -358,6 +358,47 @@ describe("scope pattern matching", () => {
       ).toBe(true);
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // F9 market-ritual helpers — scope activation
+  // ---------------------------------------------------------------------------
+
+  it("market_ritual activates on calendar + budget vocab", () => {
+    for (const msg of [
+      "is tomorrow a trading day?",
+      "market_calendar for next friday",
+      "nyse holiday next week",
+      "mercado abre mañana?",
+      "mercado cerrado por feriado?",
+      "early close this week?",
+      "half-day friday?",
+      "how much alert budget is left today",
+      "budget de alertas remaining",
+      "alert_budget_status",
+      "budget del ritual agotado",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools.includes("market_calendar") ||
+          tools.includes("alert_budget_status"),
+      ).toBe(true);
+    }
+  });
+
+  it("market_ritual does NOT activate on generic calendar/budget phrases", () => {
+    for (const msg of [
+      "open my calendar",
+      "schedule a meeting calendar",
+      "what's my AV api budget",
+      "project budget status",
+      "alpha vantage budget remaining",
+    ]) {
+      const tools = scope(msg);
+      expect(hasNone(tools, ["market_calendar", "alert_budget_status"])).toBe(
+        true,
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
