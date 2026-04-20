@@ -3,8 +3,10 @@
  *
  * Editorial data-storytelling via AntV Infographic (@antv/infographic).
  * Uses the package's `/ssr` subpath to render in pure Node (linkedom DOM
- * shim) — no Chromium, no puppeteer, no network. Output is SVG text
- * written to /tmp or /workspace.
+ * shim) — no Chromium, no puppeteer, no network. SVG output lands in
+ * /tmp or /workspace. Optional PNG output via ImageMagick `convert`
+ * (v7.14.1 — added for WhatsApp/Telegram delivery paths that prefer
+ * raster over SVG).
  *
  * Dispatch decision:
  *  1. `data` provided → renderToString({ template, data, theme, ... })
@@ -14,19 +16,26 @@
  *  3. Else → LLM converts NL → AntV DSL with curated-template hints,
  *     then renderToString(dsl, ...)
  *
- * Security: pure in-process JS (no execFile, no shell). Output path
- * absolute + canonical + under /tmp or /workspace. Description capped
- * at MAX_DESCRIPTION_CHARS. Template name validated against the full
- * runtime catalog to block typos or injection attempts.
+ * Security: pure in-process JS for the SVG path (no execFile, no shell).
+ * PNG path shells out via `execFile("convert", [svg, png])` with arg
+ * array — no shell interpretation. Output path absolute + canonical +
+ * under /tmp or /workspace. Description capped at MAX_DESCRIPTION_CHARS.
+ * Template name validated against the full runtime catalog to block
+ * typos or injection attempts.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { writeFileSync, statSync, renameSync, unlinkSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
 
+const execFileAsync = promisify(execFile);
+
 const DEFAULT_TIMEOUT_MS = 30_000;
+const PNG_CONVERT_TIMEOUT_MS = 20_000;
 const MAX_DESCRIPTION_CHARS = 8000;
 
 const OUTPUT_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
@@ -36,6 +45,9 @@ type Theme = (typeof THEMES)[number];
 
 const EMIT_MODES = ["render", "source"] as const;
 type EmitMode = (typeof EMIT_MODES)[number];
+
+const FORMATS = ["svg", "png"] as const;
+type OutputFormat = (typeof FORMATS)[number];
 
 /**
  * Curated 15-template subset of AntV's 276. These cover the Jarvis use
@@ -78,9 +90,10 @@ function isUnderPrefix(abs: string, prefixes: readonly string[]): boolean {
 
 function resolveOutputPath(
   outputRaw: string | undefined,
+  format: OutputFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
   if (!outputRaw) {
-    return { ok: true, abs: `/tmp/infographic-${randomUUID()}.svg` };
+    return { ok: true, abs: `/tmp/infographic-${randomUUID()}.${format}` };
   }
   if (!outputRaw.startsWith("/")) {
     return { ok: false, error: "output_path must be absolute" };
@@ -204,11 +217,12 @@ PARAMS:
 - template: optional exact template name (validated against full 276)
 - theme: "light" | "dark" | "hand-drawn" (default "dark")
 - data: optional structured data object — if provided, skips LLM and renders directly
-- output_path: absolute under /tmp or /workspace (default /tmp/infographic-<uuid>.svg)
+- format: "svg" (default, editable text) | "png" (raster via ImageMagick convert — use for WhatsApp/Telegram delivery where CDNs can re-encode SVG text poorly)
+- output_path: absolute under /tmp or /workspace (default /tmp/infographic-<uuid>.<format>)
 - emit: "render" (default) | "source" (returns DSL text without rendering)
 - width / height: optional canvas dimensions
 
-Output is SVG. Raw DSL bypasses the LLM; structured \`data\` also bypasses the LLM. Output file is overwritten if present.`,
+Output is SVG unless format=png. Raw DSL bypasses the LLM; structured \`data\` also bypasses the LLM. Output file is overwritten if present.`,
       parameters: {
         type: "object",
         properties: {
@@ -251,6 +265,12 @@ Output is SVG. Raw DSL bypasses the LLM; structured \`data\` also bypasses the L
             type: "number",
             description: "Canvas height in pixels. Optional.",
           },
+          format: {
+            type: "string",
+            enum: [...FORMATS],
+            description:
+              "Output image format. 'svg' (default, editable text, smallest) or 'png' (raster via ImageMagick convert — better for WhatsApp/Telegram delivery where SVG text re-encodes poorly).",
+          },
         },
         required: ["description"],
       },
@@ -264,6 +284,7 @@ Output is SVG. Raw DSL bypasses the LLM; structured \`data\` also bypasses the L
       typeof args.template === "string" ? args.template : undefined;
     const theme = (args.theme as Theme) ?? "dark";
     const emit = (args.emit as EmitMode) ?? "render";
+    const format = (args.format as OutputFormat) ?? "svg";
     const outputRaw = args.output_path as string | undefined;
     const data = args.data as Record<string, unknown> | undefined;
     const width =
@@ -301,8 +322,13 @@ Output is SVG. Raw DSL bypasses the LLM; structured \`data\` also bypasses the L
         error: `emit must be one of: ${EMIT_MODES.join(", ")}`,
       });
     }
+    if (!FORMATS.includes(format)) {
+      return JSON.stringify({
+        error: `format must be one of: ${FORMATS.join(", ")}`,
+      });
+    }
 
-    const outputCheck = resolveOutputPath(outputRaw);
+    const outputCheck = resolveOutputPath(outputRaw, format);
     if (!outputCheck.ok) return JSON.stringify({ error: outputCheck.error });
 
     let antv: Awaited<ReturnType<typeof loadAntv>>;
@@ -391,23 +417,69 @@ ${JSON.stringify(dslOrOptions, null, 2)}`;
       });
     }
 
-    // Write via tmp + rename for atomic visibility. Matches the v7.10 /
-    // v7.12 pattern. Fallback to direct write on cross-fs EXDEV.
-    const tmpPath = `/tmp/infographic-tmp-${randomUUID()}.svg`;
-    writeFileSync(tmpPath, svg, "utf8");
-    try {
-      renameSync(tmpPath, outputCheck.abs);
-    } catch {
+    // SVG path: write via tmp + rename for atomic visibility. Matches the
+    // v7.10 / v7.12 pattern. Fallback to direct write on cross-fs EXDEV.
+    // PNG path: write SVG to a temp file, shell out to ImageMagick `convert`
+    // to produce PNG at the final output path, then clean up the SVG temp.
+    if (format === "svg") {
+      const tmpPath = `/tmp/infographic-tmp-${randomUUID()}.svg`;
+      writeFileSync(tmpPath, svg, "utf8");
       try {
-        unlinkSync(tmpPath);
+        renameSync(tmpPath, outputCheck.abs);
+      } catch {
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          /* best-effort */
+        }
+        writeFileSync(outputCheck.abs, svg, "utf8");
+      }
+    } else {
+      // v7.14.1 PNG output via ImageMagick `convert`. No shell — execFile
+      // with argv array. SVG lands in /tmp first then convert reads it.
+      const svgTmp = `/tmp/infographic-svg-${randomUUID()}.svg`;
+      writeFileSync(svgTmp, svg, "utf8");
+      try {
+        await execFileAsync("convert", [svgTmp, outputCheck.abs], {
+          timeout: PNG_CONVERT_TIMEOUT_MS,
+          maxBuffer: 10 * 1024 * 1024,
+        });
+      } catch (err) {
+        try {
+          unlinkSync(svgTmp);
+        } catch {
+          /* best-effort */
+        }
+        const e = err as Error & {
+          code?: number | string;
+          killed?: boolean;
+          signal?: string;
+        };
+        if (e.code === "ENOENT") {
+          return JSON.stringify({
+            error:
+              "ImageMagick `convert` not installed. Run `apt install imagemagick` on the VPS (or use format=svg).",
+          });
+        }
+        if (e.killed && e.signal === "SIGTERM") {
+          return JSON.stringify({
+            error: `PNG conversion timed out after ${PNG_CONVERT_TIMEOUT_MS}ms`,
+          });
+        }
+        return JSON.stringify({
+          error: `PNG conversion failed: ${e.message || String(err)}`,
+          mode: dispatchMode,
+        });
+      }
+      try {
+        unlinkSync(svgTmp);
       } catch {
         /* best-effort */
       }
-      writeFileSync(outputCheck.abs, svg, "utf8");
     }
 
     const bytes = statSync(outputCheck.abs).size;
-    return `infographic_generate: ${dispatchMode}-mode
+    return `infographic_generate: ${dispatchMode}-mode, format=${format}
   output: ${outputCheck.abs}
   bytes:  ${bytes}
   dur_ms: ${Date.now() - start}
