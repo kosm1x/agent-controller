@@ -173,7 +173,13 @@ export async function runRebalance(
   // Audit W2 round 1: if any held position has a stale quote, refuse the
   // rebalance rather than size against a distorted totalEquity. The operator
   // must either refresh market data or drop the stale symbols.
-  const staleSymbols = posBefore.filter((p) => p.stale).map((p) => p.symbol);
+  // F8.1b: paper-executor only handles equity positions — narrow via `kind`.
+  const equityPositions = posBefore.filter(
+    (p): p is import("./venue-types.js").EquityPosition => p.kind === "equity",
+  );
+  const staleSymbols = equityPositions
+    .filter((p) => p.stale)
+    .map((p) => p.symbol);
   if (staleSymbols.length > 0 && !opts.allowStale) {
     const nowIso = adapter.clock.now().toISOString();
     // Audit W-R2-5 round 2: mark aborted theses with `aborted=true` in
@@ -209,7 +215,7 @@ export async function runRebalance(
 
   // Build a {symbol → shares} map from current positions.
   const currentShares: Record<string, number> = {};
-  for (const p of posBefore) currentShares[p.symbol] = p.shares;
+  for (const p of equityPositions) currentShares[p.symbol] = p.shares;
 
   // Fetch quotes for every symbol we might trade. Cache misses surface as
   // "no_price" skips so the rebalance degrades gracefully rather than aborts.

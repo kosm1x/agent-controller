@@ -183,6 +183,11 @@ import {
   alertBudgetStatusTool,
 } from "../builtin/market-ritual.js";
 import { pmAlphaRunTool, pmAlphaLatestTool } from "../builtin/pm-alpha.js";
+import {
+  pmPaperRebalanceTool,
+  pmPaperPortfolioTool,
+  pmPaperHistoryTool,
+} from "../builtin/pm-paper-trading.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -310,6 +315,10 @@ const BUILTIN_TOOLS: Tool[] = [
   // F8.1a PM alpha layer (β-addendum) — deferred, scope 'pm_alpha'
   pmAlphaRunTool,
   pmAlphaLatestTool,
+  // F8.1b Polymarket paper trading (β-addendum) — deferred, scope 'pm_paper'
+  pmPaperRebalanceTool,
+  pmPaperPortfolioTool,
+  pmPaperHistoryTool,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

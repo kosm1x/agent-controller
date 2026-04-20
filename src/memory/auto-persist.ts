@@ -162,7 +162,10 @@ export function shouldAutoPersist(input: AutoPersistInput): boolean {
         t === "market_calendar" ||
         t === "alert_budget_status" ||
         t === "pm_alpha_run" ||
-        t === "pm_alpha_latest",
+        t === "pm_alpha_latest" ||
+        t === "pm_paper_rebalance" ||
+        t === "pm_paper_portfolio" ||
+        t === "pm_paper_history",
     )
   )
     return true;

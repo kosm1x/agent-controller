@@ -21,7 +21,7 @@ import { FixedClock } from "./clock.js";
 import { PaperEquityAdapter } from "./paper-equity-adapter.js";
 import type { DataLayer } from "./data-layer.js";
 import type { MarketBar } from "./types.js";
-import { isFill, isOrderReject } from "./venue-types.js";
+import { isFill, isOrderReject, isEquityPosition } from "./venue-types.js";
 
 /** Build a mock DataLayer whose getWeekly returns a synthetic bar. */
 function mockDataLayer(
@@ -144,9 +144,12 @@ describe("PaperEquityAdapter.placeOrder (buy)", () => {
 
     const positions = await adapter.getPositions();
     expect(positions.length).toBe(1);
-    expect(positions[0]!.symbol).toBe("AAPL");
-    expect(positions[0]!.shares).toBe(10);
-    expect(positions[0]!.avgCost).toBeCloseTo(result.price, 10);
+    const pos0 = positions[0]!;
+    expect(isEquityPosition(pos0)).toBe(true);
+    if (!isEquityPosition(pos0)) throw new Error("expected equity position");
+    expect(pos0.symbol).toBe("AAPL");
+    expect(pos0.shares).toBe(10);
+    expect(pos0.avgCost).toBeCloseTo(result.price, 10);
   });
 
   it("rejects a buy with insufficient cash", async () => {

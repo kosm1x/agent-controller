@@ -65,21 +65,59 @@ export function isOrderReject(r: OrderResult): r is OrderReject {
   return "reason" in r && !("fillId" in r);
 }
 
-export interface Position {
-  symbol: string;
+/**
+ * Common fields every Position variant carries regardless of asset class.
+ * Use via the `Position` discriminated union below — don't reference this
+ * type directly outside `venue-types.ts`.
+ */
+interface PositionCommon {
   shares: number;
-  /** Weighted-average entry price over all open buys. */
+  /** Weighted-average entry price over all open buys. Equity: USD/share; PM: USDC/share (≤ 1). */
   avgCost: number;
   /** Latest quote × shares (computed by adapter, not stored). */
   marketValue: number;
   /** marketValue − shares × avgCost. Can be negative. */
   unrealizedPnl: number;
   /**
-   * True when the adapter could not obtain a fresh quote for this symbol and
-   * fell back to `avg_cost` as the mark-to-market price. Downstream callers
-   * must treat `marketValue` / `unrealizedPnl` as unreliable for stale rows.
+   * True when the adapter could not obtain a fresh quote and fell back to
+   * `avg_cost`. Downstream callers must treat `marketValue` / `unrealizedPnl`
+   * as unreliable for stale rows.
    */
   stale: boolean;
+}
+
+/** Equity position (PaperEquityAdapter). */
+export interface EquityPosition extends PositionCommon {
+  kind: "equity";
+  symbol: string;
+}
+
+/** Polymarket prediction-market position (PolymarketPaperAdapter). F8.1b. */
+export interface PolymarketPosition extends PositionCommon {
+  kind: "polymarket";
+  marketId: string;
+  outcome: string; // "Yes" | "No" | custom label
+  slug: string | null;
+  tokenId: string | null;
+}
+
+/**
+ * Discriminated union across all venues. Callers narrow via `p.kind`.
+ *
+ * Backwards compat note: existing code that read `position.symbol` must now
+ * type-guard with `if (p.kind === "equity")`. This is intentional — forces
+ * explicit handling of multi-venue portfolios.
+ */
+export type Position = EquityPosition | PolymarketPosition;
+
+/** Narrow a Position to the equity variant. */
+export function isEquityPosition(p: Position): p is EquityPosition {
+  return p.kind === "equity";
+}
+
+/** Narrow a Position to the Polymarket variant. */
+export function isPolymarketPosition(p: Position): p is PolymarketPosition {
+  return p.kind === "polymarket";
 }
 
 export interface Balance {

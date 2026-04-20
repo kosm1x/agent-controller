@@ -439,6 +439,55 @@ describe("scope pattern matching", () => {
       expect(hasNone(tools, ["pm_alpha_run", "pm_alpha_latest"])).toBe(true);
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // F8.1b pm_paper — PM paper trading (β-addendum)
+  // ---------------------------------------------------------------------------
+
+  it("pm_paper activates on PM paper trading vocab", () => {
+    for (const msg of [
+      "pm_paper_rebalance",
+      "pm_paper_portfolio",
+      "pm_paper_history",
+      "polymarket paper",
+      "paper polymarket",
+      "rebalance polymarket",
+      "rotar polymarket",
+      "rebalancear posiciones polymarket",
+      "posiciones polymarket",
+      "portafolio polymarket",
+      "polymarket positions",
+      "polymarket fills",
+      "historial polymarket",
+      "pm paper rebalance",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools.includes("pm_paper_rebalance") ||
+          tools.includes("pm_paper_portfolio") ||
+          tools.includes("pm_paper_history"),
+      ).toBe(true);
+    }
+  });
+
+  it("pm_paper does NOT collide with F8 equity `paper` scope", () => {
+    for (const msg of [
+      "paper_rebalance", // F8 equity
+      "paper trade",
+      "rebalance the portfolio", // F8 equity
+      "portafolio actual",
+      "mis fills",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        hasNone(tools, [
+          "pm_paper_rebalance",
+          "pm_paper_portfolio",
+          "pm_paper_history",
+        ]),
+      ).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
