@@ -603,6 +603,53 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
 
+## 2026-04-20 (session 87) — Phase γ S4: v7.14 infographic_generate
+
+### System state
+
+| Metric        | Value                                                                                |
+| ------------- | ------------------------------------------------------------------------------------ |
+| Source files  | 362 (+1: `infographic-generate.ts`)                                                  |
+| Test files    | 203 (+1: `infographic-generate.test.ts`)                                             |
+| Tests passing | 3050 (+27 since session 86: 24 infographic + 1 write-tools-sync + 2 scope)           |
+| Tools         | 217 builtin (+1: `infographic_generate`). 157 deferred (+1).                         |
+| Dependencies  | 14 core + 2 messaging (+1: `@antv/infographic@0.2.17`)                               |
+| Phase γ       | **4/13 done.** Next: 1-session candidate v7.3 P5 OR 2-session v7.11 teaching module. |
+
+### What shipped
+
+**v7.14 `infographic_generate` (Phase γ S4)** — editorial data-storytelling via AntV Infographic (@antv/infographic@0.2.17, MIT, TypeScript). The package ships a pure-Node SSR path (`renderToString` + `linkedom` DOM shim) that produces SVG text without puppeteer, Chromium, or any browser dep. Dep tree is 13 pure-JS transitives — no g2/g6/react/vue/heavy-viz stack pulled in. 64MB node_modules addition.
+
+Three dispatch modes:
+
+1. **data-mode**: caller supplies structured `data` object → passed directly to `renderToString` with `template` + `theme`. Skips LLM. Fastest path (25ms observed for a KPI grid).
+2. **dsl-mode**: `description` starts with `infographic <template>` → raw DSL passed verbatim to renderer. Skips LLM. 39ms observed.
+3. **llm-mode**: NL description → `infer()` produces AntV DSL using the 15 curated-template recommendations as prompt guidance → renderer. ~3s observed for qwen-3.5-plus on a KPI grid (439 prompt / 74 completion tokens).
+
+15 curated templates documented in the tool description covering the Jarvis use-case surface (briefing cards, KPI grids, comparisons, timelines, rankings, charts-with-narrative). The full 276-template catalog is validated at runtime via `getTemplates()` — exotic templates remain reachable when an LLM picks one outside the curation, but typos and injection attempts are rejected cleanly.
+
+Themes: `light`, `dark` (default — matches `feedback_vlmp_ui_choice.md`), `hand-drawn`. Caller can override per-call.
+
+Scope wiring: folded into existing `specialty` group rather than a dedicated scope, per the roadmap's "called inside workflows, not standalone" guidance. Specialty regex extended with EN + ES infographic vocabulary (`infographics?|infograf[ií]as?|summary card|comparison (card|table)|ranking (card|pyramid)|SWOT|cuadro resumen|tarjeta (resumen|KPI)|timeline card|briefing visual`).
+
+Integration complete: tool registered in `SPECIALTY_TOOLS`, added to fast-runner `WRITE_TOOLS` hallucination guard, `write-tools-sync.test.ts` extended with a `SPECIALTY_READ_ONLY` set so future SPECIALTY write tools are auto-caught. CLAUDE.md dep count bumped 13 → 14 with `@antv/infographic` added to the list.
+
+### What Jarvis learned
+
+Round 1 caught 0 critical + 1 major + 0 warnings. The one major (M1) is interesting: the initial regex `infograph(?:ic|ía|ia)s?` tried to share an EN/ES root but EN uses `infograph` and ES uses `infograf`. Forcing `infograph` as shared root broke all ES forms — `infografía`, `infografías`, `infografia`, `infografias` all silently failed to match. The `|infografía` literal catch caught ONE accented-singular form, masking the bug in manual testing.
+
+Fix: split into two alternations — `infographics?|infograf[ií]as?`. The `[ií]` character class handles both accented (`infografía`) and unaccented (`infografia`) ES forms. Round 2 clean PASS with 12-form positive + 3-form negative regression tests pinning the shape.
+
+**Pattern — ES/EN morphology in bilingual regex deserves per-language alternations**: trying to share roots across languages produces subtle bugs that look right under English-only testing. ES "infograf" + `ía/ías/ia/ias` suffixes, EN "infograph" + `ic/ics` suffixes. Cost of fixing: one-line regex change + per-language regression tests. Cost of NOT fixing: silent scope miss on the majority of Spanish-language inputs (which is the primary operator language).
+
+**Meta — this sprint had NO scope pivot.** v7.2 (docs→code corpus), v7.10 (apt packages), v7.12 (mermaid→graphviz). v7.14 did not. Pattern: the sprint cost is roughly proportional to whether upstream's integration surface matches what the roadmap predicted at plan time. AntV pre-packaged an SSR path (`/ssr` subpath export with linkedom shim) specifically for Node consumers, which is what the reference file forecasted ("genuine v7.14 cheap adoption"). When the upstream has already solved "how do I run this headless in Node", we skip the recon pivot.
+
+**Meta — 4 γ items in one wall-clock day.** v7.2 + v7.10 + v7.12 + v7.14 all landed today with 2 audit passes apiece, zero rollbacks, clean merges. The cadence is sustainable for 1-session γ items because each is genuinely independent — no shared surface area, no cross-cutting dependencies.
+
+### Research notes
+
+Day 41+ of the longitudinal record. 4/13 γ items done. Remaining 1-session γ candidates: v7.3 P5 (GEO depth, 1 session), v7.10 was already shipped today, v7.3 P2 (SEO telemetry, 1 session — needs v7.6 ✅), v7.3 P3 (AI overview monitoring, 1 session — needs F1 schedule ✅), v7.1 (charts + vision, 1.5 sessions — needs F3 ✅). Higher-value multi-session candidates: v7.11 teaching (2 sessions), v7.3 P4 ads (3 sessions), v7.4 video (2 sessions, needs v7.3 P4), v7.5 skill evolution (2 sessions, needs F9 ✅). 20-22 total sessions remaining to close v7 (per appendix rollup).
+
 ## 2026-04-20 (session 86) — Phase γ S3: v7.12 diagram_generate
 
 ### System state

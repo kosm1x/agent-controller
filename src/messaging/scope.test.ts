@@ -645,6 +645,49 @@ describe("scope pattern matching", () => {
       );
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v7.14 specialty — infographic_generate vocabulary (EN + ES, 6 forms).
+  // Audit M1: original regex `infograph(?:ic|ía|ia)s?` forced a shared EN
+  // root `infograph` which broke all ES forms (`infografía` uses root
+  // `infograf`). Fix: separate alternations per-language.
+  // ---------------------------------------------------------------------------
+
+  it("specialty activates on all infographic forms (EN sing/plur + ES accented/unaccented sing/plur)", () => {
+    for (const msg of [
+      "make me an infographic of Q4 results", // EN singular
+      "generate three infographics for the deck", // EN plural
+      "hazme una infografía del Q4", // ES accented singular
+      "hazme una infografia del Q4", // ES unaccented singular
+      "crea dos infografías para el cliente", // ES accented plural
+      "crea dos infografias para el cliente", // ES unaccented plural
+      "SWOT analysis for project X", // SWOT shortcut
+      "summary card of this week", // summary card
+      "cuadro resumen de la semana", // ES summary card
+      "tarjeta resumen Q4", // ES KPI card
+      "ranking pyramid of top 5 clients", // ranking pyramid
+      "timeline card of the project", // timeline card
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `infographic_generate missing for "${msg}"`).toContain(
+        "infographic_generate",
+      );
+    }
+  });
+
+  it("specialty infographic regex does NOT over-match (infograph/infographia non-words)", () => {
+    for (const msg of [
+      "the programmable infrastructure", // contains `infr` not `infograf`
+      "photograph of the team", // `photograph` is unrelated
+      "choreography of the dance", // `-ography` word
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools,
+        `unexpected infographic_generate for "${msg}"`,
+      ).not.toContain("infographic_generate");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -166,6 +166,10 @@ export const SPECIALTY_TOOLS = [
   "hf_generate",
   "hf_spaces",
   "batch_decompose",
+  // v7.14: infographic_generate — editorial data-storytelling (KPI grids,
+  // comparison tables, timelines, ranking pyramids) via AntV Infographic.
+  // Writes SVG to /tmp; classified as write-capable.
+  "infographic_generate",
 ];
 
 /** Gemini research tools — document analysis, Q&A, podcast generation.
@@ -367,7 +371,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric)/i,
+      /\b(gr[aá]fic|chart|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric|infographics?|infograf[ií]as?|summary\s+card|comparison\s+(?:card|table)|ranking\s+(?:card|pyramid)|SWOT|cuadro\s+resumen|tarjeta\s+(?:resumen|KPI)|timeline\s+card|briefing\s+visual)/i,
     group: "specialty",
   },
   {
