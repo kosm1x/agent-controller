@@ -254,7 +254,13 @@ Read-only, ~100ms. Marks to market using latest weekly close per symbol.`,
       return lines.join("\n");
     }
     lines.push(`  positions:`);
-    const sorted = [...positions].sort((a, b) => b.marketValue - a.marketValue);
+    // F8.1b: paper_portfolio displays equity positions only. Polymarket
+    // positions surface via `pm_paper_portfolio`. Narrow via the kind
+    // discriminator — non-equity rows wouldn't have a `symbol` to display.
+    const equityPositions = positions.filter((p) => p.kind === "equity");
+    const sorted = [...equityPositions].sort(
+      (a, b) => b.marketValue - a.marketValue,
+    );
     for (const p of sorted) {
       const unrPct =
         p.avgCost > 0

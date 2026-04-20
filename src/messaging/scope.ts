@@ -283,6 +283,13 @@ export const MARKET_RITUAL_TOOLS = ["market_calendar", "alert_budget_status"];
 /** F8.1a prediction-market alpha tools — scope-gated on pm_alpha / polymarket alpha vocab. */
 export const PM_ALPHA_TOOLS = ["pm_alpha_run", "pm_alpha_latest"];
 
+/** F8.1b PM paper trading tools — scope-gated on pm_paper / polymarket rebalance vocab. */
+export const PM_PAPER_TOOLS = [
+  "pm_paper_rebalance",
+  "pm_paper_portfolio",
+  "pm_paper_history",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -541,6 +548,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(pm[_\s-]?alpha(?:[_\s-]?(?:run|latest|weights?))?|polymarket[_\s-]?alpha|prediction[_\s-]?market[_\s-]?(?:alpha|weights?|signals?)|mercados?\s+(?:de\s+)?predicci[oó]n\s+(?:alpha|pesos?|signals?)|alpha\s+(?:de\s+)?(?:polymarket|mercados?\s+(?:de\s+)?predicci[oó]n)|pondera(?:r|ci[oó]n)\s+(?:polymarket|mercados?\s+(?:de\s+)?predicci[oó]n))\b/i,
     group: "pm_alpha",
+  },
+  {
+    // v7.0 F8.1b PM paper trading — rebalance + portfolio + history for the
+    // Polymarket paper account. Scope activates on pm_paper tool names,
+    // polymarket-rebalance phrasings, pm-positions/fills, and Spanish
+    // equivalents. Distinct from F8 `paper` scope (equity) — generic "paper"
+    // alone does NOT activate; must co-occur with pm / polymarket.
+    pattern:
+      /\b(pm[_\s-]?paper(?:[_\s-]?(?:rebalanc\w*|portfolio|history|fills?))?|polymarket[_\s-]?paper|paper[_\s-]?(?:polymarket|pm)|(?:rebalanc(?:e|ear|eo|ed|ing)|rotar)\s+(?:posiciones?\s+)?(?:polymarket|pm|prediction[_\s-]?market)|(?:posiciones|portafolio|portfolio|fills?|historial)\s+(?:de\s+)?(?:polymarket|pm)|polymarket\s+(?:rebalanc\w*|positions|portfolio|portafolio|posiciones|fills?|historial|history)|pm\s+(?:rebalanc\w*|portfolio|portafolio|posiciones|positions|fills?|historial|history)|prediction[_\s-]?market\s+(?:rebalanc\w*|positions|portfolio|portafolio|posiciones|fills?|historial|history))\b/i,
+    group: "pm_paper",
   },
   {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
@@ -806,6 +823,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("pm_alpha")) {
     tools.push(...PM_ALPHA_TOOLS);
+  }
+  if (activeGroups.has("pm_paper")) {
+    tools.push(...PM_PAPER_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");

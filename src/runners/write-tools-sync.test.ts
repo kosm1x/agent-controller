@@ -20,6 +20,7 @@ import {
   PAPER_TOOLS,
   MARKET_RITUAL_TOOLS,
   PM_ALPHA_TOOLS,
+  PM_PAPER_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -197,6 +198,23 @@ describe("WRITE_TOOLS sync", () => {
       (t) => !PM_ALPHA_READ_ONLY.has(t),
     );
     for (const tool of pmAlphaWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("includes all write-capable pm-paper trading tools (F8.1b β-addendum)", () => {
+    // pm_paper_rebalance persists to pm_paper_fills/portfolio/balance + trade_theses (write).
+    // pm_paper_portfolio + pm_paper_history are read-only.
+    const PM_PAPER_READ_ONLY = new Set<string>([
+      "pm_paper_portfolio",
+      "pm_paper_history",
+    ]);
+    const pmPaperWriteTools = PM_PAPER_TOOLS.filter(
+      (t) => !PM_PAPER_READ_ONLY.has(t),
+    );
+    for (const tool of pmPaperWriteTools) {
       expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
         true,
       );

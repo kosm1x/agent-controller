@@ -327,6 +327,8 @@ export const WRITE_TOOLS = new Set([
   "paper_rebalance",
   // F8.1a PM alpha write (β-addendum) — persists to pm_signal_weights
   "pm_alpha_run",
+  // F8.1b PM paper trading write (β-addendum) — persists to pm_paper_fills/portfolio/balance + trade_theses
+  "pm_paper_rebalance",
 ]);
 
 /**

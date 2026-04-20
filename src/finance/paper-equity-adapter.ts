@@ -242,6 +242,7 @@ export class PaperEquityAdapter implements VenueAdapter {
       // path above; future intraday_quote handling may diverge.
       void price;
       out.push({
+        kind: "equity",
         symbol: row.symbol,
         shares: row.shares,
         avgCost: row.avg_cost,

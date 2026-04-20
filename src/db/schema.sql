@@ -696,3 +696,56 @@ CREATE INDEX IF NOT EXISTS idx_pm_signal_weights_run
   ON pm_signal_weights(run_id);
 CREATE INDEX IF NOT EXISTS idx_pm_signal_weights_market
   ON pm_signal_weights(market_id, run_timestamp DESC);
+
+-- ============================================================================
+-- F8.1b — PolymarketPaperAdapter (β-addendum)
+-- Parallel to F8 equity paper tables; keyed by (market_id, outcome) instead
+-- of symbol. USDC-denominated balance. Additive; live-applicable.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS pm_paper_balance (
+  account         TEXT PRIMARY KEY DEFAULT 'default',
+  cash_usdc       REAL NOT NULL DEFAULT 10000,
+  initial_cash    REAL NOT NULL DEFAULT 10000,
+  last_updated    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pm_paper_portfolio (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  account         TEXT NOT NULL DEFAULT 'default',
+  market_id       TEXT NOT NULL,
+  outcome         TEXT NOT NULL,
+  token_id        TEXT,
+  slug            TEXT,
+  shares          REAL NOT NULL,                              -- 4dp fractional
+  avg_cost        REAL NOT NULL,                              -- USDC / share; ≤ 1
+  opened_at       TEXT NOT NULL,
+  last_updated    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account, market_id, outcome)
+);
+CREATE INDEX IF NOT EXISTS idx_pm_paper_portfolio_account
+  ON pm_paper_portfolio(account);
+
+CREATE TABLE IF NOT EXISTS pm_paper_fills (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  fill_id         TEXT NOT NULL UNIQUE,                       -- UUID
+  thesis_id       INTEGER,                                    -- logical FK to trade_theses
+  account         TEXT NOT NULL DEFAULT 'default',
+  market_id       TEXT NOT NULL,
+  outcome         TEXT NOT NULL,
+  token_id        TEXT,
+  side            TEXT NOT NULL CHECK(side IN ('buy','sell')),
+  shares          REAL NOT NULL,
+  fill_price      REAL NOT NULL,                              -- midpoint ± slippage
+  gross_notional  REAL NOT NULL,
+  slippage_bps    REAL NOT NULL DEFAULT 0,
+  realized_pnl    REAL,                                        -- non-null on sells
+  filled_at       TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pm_paper_fills_account_time
+  ON pm_paper_fills(account, filled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pm_paper_fills_market
+  ON pm_paper_fills(market_id, outcome, filled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pm_paper_fills_thesis
+  ON pm_paper_fills(thesis_id);

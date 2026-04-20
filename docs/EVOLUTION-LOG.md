@@ -603,6 +603,40 @@ Round 2 found one load-bearing follow-on: the initial C2 fix only wired consume 
 
 Day 38+ of the longitudinal record. F9 closes Phase β on its original 12-item scope. The operational arc is now complete end-to-end: F1 ingests → F2-F6.5 compute signals → F7 combines → F7.5 gates → F8 executes → F9 schedules + reports daily. With the weekly-equity operator lock held through 5 sprints (F7, F7.5, F8, F9, + seed infrastructure), the pipeline is coherent: weekly bars flow through weekly-cadence rebalance, with a daily intelligence ritual on top. Next: β-addendum F8.1a (prediction-market alpha) + F8.1b (PolymarketPaperAdapter) extends the same VenueAdapter architecture laterally to Polymarket before γ verticals open. Operator's Decision 7 preserves the "no γ-interleave during β" invariant by classifying F8.1 as β-addendum not γ.
 
+## 2026-04-20 (session 83) — β-addendum 2/2: F8.1b PolymarketPaperAdapter
+
+### System state
+
+| Metric           | Value                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------- |
+| Source files     | 358 (+4: pm-paper-adapter / pm-paper-executor / pm-paper-persist / pm-paper-trading tool + impl-plan) |
+| Test files       | 200 (+4)                                                                                              |
+| Tests passing    | 2962 (+63 since session 82)                                                                           |
+| Tools            | 214 builtin (+3: pm_paper_rebalance / pm_paper_portfolio / pm_paper_history)                          |
+| Phase β-addendum | **2/2 done. Phase γ opens.**                                                                          |
+
+### What shipped
+
+**F8.1b PolymarketPaperAdapter (β-addendum S14)** — TS-native Polymarket paper-trading adapter. The impl plan explicitly declines the pm-trader MCP (singleton-DB discipline + ~660ms cold start + cross-language opacity); the replacement is a ~310 LOC `PolymarketPaperAdapter implements VenueAdapter` with synthetic midpoint × (1 ± 20bps) fills. 3 new deferred tools (`pm_paper_rebalance` write + `pm_paper_portfolio` / `pm_paper_history` read), 3 new additive tables (`pm_paper_balance` / `pm_paper_portfolio` / `pm_paper_fills`), new `pm_paper` scope group with ES+EN regex. `Position` widened to `{kind:"equity"}|{kind:"polymarket"}` discriminated union with `isEquityPosition` / `isPolymarketPosition` guards — PaperEquityAdapter + paper-executor + paper-trading tool all migrated to narrow at boundaries.
+
+Deferrals intentionally booked: orderbook walking + NO-side shorting (F8.1b.2), pm-trader MCP + live Polymarket Gamma fetch + F7.5 firewall adaptation + replication scoring (F8.1c).
+
+Live smoke: $10K fresh cash → patched one real `pm_signal_weights` row to `weight=0.01` → `pm_paper_rebalance` filled 1 BUY @ 186.54 shares × 0.5361 (= midpoint 0.5348 × (1 + 20 bps)) = $100 notional, thesis persisted, portfolio + history reflected the position. Cleanup reset cash + fills + positions. End-to-end runtime well under 1s.
+
+### What Jarvis learned
+
+Round 1 caught 7 warnings: dust filter blocked full-exit sells on penny positions, no stale-position abort gate, no cash buffer against slip/rounding, scope regex missed head-noun-first phrasings (`polymarket rebalance`, `pm portfolio`), `paper-equity-adapter.test.ts` accessed `.symbol` on the union without narrowing, missing regression test for the dust-exit case, dead `void marketId; void outcome;` artifact. All closed.
+
+Round 2 caught 3 new warnings — all consequences of round 1 introducing new surface area: the `allow_stale` flag added to the executor never got threaded through the tool schema, the `aborted` thesis-metadata field defined in `pm-paper-persist` never got populated, and the tool's `Math.abs(t.weight) < 1e-9` filter didn't reject NaN weights. All closed with explicit tests.
+
+**Pattern reinforced**: "fix-for-fix" findings (round-1 remediation introducing round-2 issues) happened again — first seen in F8.1a. The round-2 audit is where new surface area gets scrutinized; it's not a rubber-stamp pass.
+
+**New meta-pattern — scope-shift as a first-class design decision**: F8.1b was the first sprint where a major prior-planned integration (pm-trader MCP) was _declined_ at impl-plan time based on operational principles (singleton-DB + cold-start + cross-language observability). Previous sprints declined features via "defer to next sprint"; this one said "no, the cost-benefit is wrong, build TS-native instead." Recording the rationale in impl-plan §0 (not just the commit message) makes the scope-shift auditable.
+
+### Research notes
+
+Day 40+ of the longitudinal record. **Phase β-addendum closes with F8.1b shipped.** Original β (12 items) + β-addendum (2 items) = 14 sprints complete over roughly 4 sessions per week since 2026-04-14. The pipeline now handles equity + Polymarket paper trading through parallel but unified `VenueAdapter` architecture. F8.1c and F8.2 items have written deferral triggers. Phase γ (non-financial verticals) opens cleanly with zero known β structural debt.
+
 ## 2026-04-20 (session 82) — β-addendum 1/2: F8.1a PM Alpha
 
 ### System state
