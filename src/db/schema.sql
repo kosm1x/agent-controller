@@ -663,3 +663,36 @@ CREATE TABLE IF NOT EXISTS alert_budget (
   UNIQUE(date, ritual_id)
 );
 CREATE INDEX IF NOT EXISTS idx_alert_budget_date ON alert_budget(date DESC);
+
+-- ============================================================================
+-- F8.1a — Prediction-Market Alpha Layer (β-addendum)
+-- Per-token weights from simplified 3-feature model over Polymarket tokens.
+-- Additive; live-applicable.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS pm_signal_weights (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id          TEXT NOT NULL,                              -- UUID
+  run_timestamp   TEXT NOT NULL,                              -- ISO 8601 America/New_York
+  market_id       TEXT NOT NULL,                              -- Polymarket condition_id
+  slug            TEXT,                                        -- convenience field
+  outcome         TEXT NOT NULL,                              -- 'YES' | 'NO' | custom
+  token_id        TEXT,                                        -- CLOB token_id; nullable
+  market_price    REAL NOT NULL,                              -- midpoint 0..1 at run time
+  p_estimate      REAL NOT NULL,                              -- our estimate 0..1
+  edge            REAL NOT NULL,                              -- p_estimate - market_price
+  whale_flow_usd  REAL,                                        -- signed; null if no data
+  sentiment_tilt  REAL NOT NULL DEFAULT 0,                    -- [-0.02, +0.02]
+  kelly_raw       REAL NOT NULL,                              -- pre-clip
+  weight          REAL NOT NULL,                              -- post-clip, signed
+  liquidity_usd   REAL,
+  resolution_date TEXT,
+  excluded        INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0,1)),
+  exclude_reason  TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(run_id, market_id, outcome)
+);
+CREATE INDEX IF NOT EXISTS idx_pm_signal_weights_run
+  ON pm_signal_weights(run_id);
+CREATE INDEX IF NOT EXISTS idx_pm_signal_weights_market
+  ON pm_signal_weights(market_id, run_timestamp DESC);

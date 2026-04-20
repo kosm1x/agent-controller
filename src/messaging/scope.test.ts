@@ -399,6 +399,46 @@ describe("scope pattern matching", () => {
       );
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // F8.1a pm_alpha — PM alpha layer (β-addendum)
+  // ---------------------------------------------------------------------------
+
+  it("pm_alpha activates on prediction-market alpha vocab", () => {
+    for (const msg of [
+      "pm_alpha_run",
+      "pm_alpha_latest",
+      "pm alpha weights",
+      "polymarket alpha",
+      "polymarket_alpha",
+      "prediction market alpha",
+      "prediction-market weights",
+      "mercados predicción alpha",
+      "mercados de predicción pesos",
+      "alpha de polymarket",
+      "ponderar polymarket",
+      "ponderación polymarket",
+    ]) {
+      const tools = scope(msg);
+      expect(
+        tools.includes("pm_alpha_run") || tools.includes("pm_alpha_latest"),
+      ).toBe(true);
+    }
+  });
+
+  it("pm_alpha does NOT activate on generic alpha / market phrases", () => {
+    for (const msg of [
+      "alpha_run",
+      "mega alpha weights",
+      "alpha combination",
+      "ponderación de señales técnicas",
+      "market indicators",
+      "polymarket odds on BTC", // F6 read, not alpha
+    ]) {
+      const tools = scope(msg);
+      expect(hasNone(tools, ["pm_alpha_run", "pm_alpha_latest"])).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

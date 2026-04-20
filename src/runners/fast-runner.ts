@@ -325,6 +325,8 @@ export const WRITE_TOOLS = new Set([
   "backtest_run",
   // F8 paper trading write (Phase β S11) — persists to paper_fills/portfolio/balance + trade_theses
   "paper_rebalance",
+  // F8.1a PM alpha write (β-addendum) — persists to pm_signal_weights
+  "pm_alpha_run",
 ]);
 
 /**

@@ -19,6 +19,7 @@ import {
   BACKTEST_TOOLS,
   PAPER_TOOLS,
   MARKET_RITUAL_TOOLS,
+  PM_ALPHA_TOOLS,
 } from "../messaging/scope.js";
 
 /** Google tools that are read-only (not expected in WRITE_TOOLS). */
@@ -185,6 +186,20 @@ describe("WRITE_TOOLS sync", () => {
         WRITE_TOOLS.has(tool),
         `Should NOT be in WRITE_TOOLS: ${tool}`,
       ).toBe(false);
+    }
+  });
+
+  it("includes all write-capable pm-alpha tools (F8.1a β-addendum)", () => {
+    // pm_alpha_run persists to pm_signal_weights (write).
+    // pm_alpha_latest is read-only.
+    const PM_ALPHA_READ_ONLY = new Set<string>(["pm_alpha_latest"]);
+    const pmAlphaWriteTools = PM_ALPHA_TOOLS.filter(
+      (t) => !PM_ALPHA_READ_ONLY.has(t),
+    );
+    for (const tool of pmAlphaWriteTools) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
     }
   });
 });
