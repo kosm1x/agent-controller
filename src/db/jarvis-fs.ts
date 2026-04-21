@@ -36,6 +36,12 @@ export interface JarvisFile {
   related_to: string;
   created_at: string;
   updated_at: string;
+  user_edit_time: string | null;
+}
+
+export interface UpsertFileOptions {
+  /** When true, do not bump user_edit_time (use for sync-driven writes). */
+  skipUserEdit?: boolean;
 }
 
 export interface JarvisFileSummary {
@@ -73,26 +79,51 @@ export function upsertFile(
   priority = 50,
   condition: string | null = null,
   relatedTo: string[] = [],
+  opts: UpsertFileOptions = {},
 ): void {
   const db = getDatabase();
-  db.prepare(
-    `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(path) DO UPDATE SET
-       id = excluded.id, title = excluded.title, content = excluded.content,
-       tags = excluded.tags, qualifier = excluded.qualifier, condition = excluded.condition,
-       priority = excluded.priority, related_to = excluded.related_to, updated_at = datetime('now')`,
-  ).run(
-    path,
-    path,
-    title,
-    content,
-    JSON.stringify(tags),
-    qualifier,
-    condition,
-    priority,
-    JSON.stringify(relatedTo),
-  );
+  // Sync-driven writes (skipUserEdit=true) must not bump user_edit_time.
+  // Real user edits (default) bump both updated_at and user_edit_time.
+  if (opts.skipUserEdit) {
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(path) DO UPDATE SET
+         id = excluded.id, title = excluded.title, content = excluded.content,
+         tags = excluded.tags, qualifier = excluded.qualifier, condition = excluded.condition,
+         priority = excluded.priority, related_to = excluded.related_to, updated_at = datetime('now')`,
+    ).run(
+      path,
+      path,
+      title,
+      content,
+      JSON.stringify(tags),
+      qualifier,
+      condition,
+      priority,
+      JSON.stringify(relatedTo),
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, condition, priority, related_to, updated_at, user_edit_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(path) DO UPDATE SET
+         id = excluded.id, title = excluded.title, content = excluded.content,
+         tags = excluded.tags, qualifier = excluded.qualifier, condition = excluded.condition,
+         priority = excluded.priority, related_to = excluded.related_to,
+         updated_at = datetime('now'), user_edit_time = datetime('now')`,
+    ).run(
+      path,
+      path,
+      title,
+      content,
+      JSON.stringify(tags),
+      qualifier,
+      condition,
+      priority,
+      JSON.stringify(relatedTo),
+    );
+  }
   mirrorToDisk(path, content);
 
   // Dual-write to pgvector (fire-and-forget, async, non-blocking)

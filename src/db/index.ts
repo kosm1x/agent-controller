@@ -151,6 +151,29 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_jarvis_files_priority ON jarvis_files(priority)",
   );
+  // user_edit_time — distinct from updated_at which is bumped by any write (including sync).
+  // Only real user edits (file_write/file_edit/jarvis_file_update) bump this.
+  try {
+    _db.exec("ALTER TABLE jarvis_files ADD COLUMN user_edit_time TEXT");
+  } catch {
+    /* column already exists */
+  }
+
+  // NorthStar ↔ COMMIT sync journal — lets LWW distinguish "never existed" from "was deleted".
+  _db.exec(`CREATE TABLE IF NOT EXISTS northstar_sync_state (
+    commit_id              TEXT PRIMARY KEY,
+    kind                   TEXT NOT NULL CHECK(kind IN ('vision','goal','objective','task')),
+    local_path             TEXT NOT NULL,
+    last_commit_edited_at  TEXT,
+    last_local_edit_time   TEXT,
+    last_sync_at           TEXT DEFAULT (datetime('now'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_nss_kind ON northstar_sync_state(kind)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_nss_path ON northstar_sync_state(local_path)",
+  );
 
   // SG4: Safeguard state — generic key-value for safeguard enforcement
   _db.exec(`CREATE TABLE IF NOT EXISTS safeguard_state (

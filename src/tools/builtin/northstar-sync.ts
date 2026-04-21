@@ -1,26 +1,64 @@
 /**
- * NorthStar Sync — bidirectional sync with COMMIT db.mycommit.net.
+ * NorthStar Sync — true 2-way LWW + tombstone-based delete propagation.
  *
- * Reads visions/goals/objectives/tasks from both NorthStar files and COMMIT DB.
- * Latest entry wins (compare updated_at timestamps).
- * COMMIT UUIDs embedded in file content for deterministic matching.
+ * Record identity: COMMIT UUID (embedded in file content as `COMMIT_ID: <uuid>`).
+ * Journal: `northstar_sync_state` — remembers every record we've seen, so we can
+ * distinguish "never existed" from "was deleted on one side."
  *
- * User: fede@eurekamd.net (a8ad98e1-b9c6-4447-ab80-bac467835b3a)
+ * Unsynced-edit detection:
+ *   - COMMIT side: `modified_by == "user"` means the last writer was the app, not
+ *     our sync. Triggers on the COMMIT tables auto-bump `last_edited_at` on any
+ *     PATCH, so we can't compare timestamps alone; `modified_by` is the gate.
+ *   - Jarvis side: `jarvis_files.user_edit_time` is bumped only by real file
+ *     edits (file_write/file_edit/jarvis_file_update), never by sync upserts.
+ *
+ * Bootstrap (empty journal): propagate both directions to union, no deletes.
+ * Subsequent runs: full LWW — latest wins for updates AND deletes. Always.
  */
 
 import type { Tool } from "../types.js";
-import { upsertFile, getFile } from "../../db/jarvis-fs.js";
+import {
+  upsertFile,
+  getFile,
+  deleteFile,
+  listFiles,
+} from "../../db/jarvis-fs.js";
+import { getDatabase } from "../../db/index.js";
 
 const BASE_URL = "https://db.mycommit.net/rest/v1";
 const USER_ID = "a8ad98e1-b9c6-4447-ab80-bac467835b3a";
 const TIMEOUT_MS = 15_000;
 
+type Kind = "vision" | "goal" | "objective" | "task";
+
+const KIND_TO_TABLE: Record<Kind, string> = {
+  vision: "visions",
+  goal: "goals",
+  objective: "objectives",
+  task: "tasks",
+};
+const KIND_TO_PATH: Record<Kind, string> = {
+  vision: "NorthStar/visions",
+  goal: "NorthStar/goals",
+  objective: "NorthStar/objectives",
+  task: "NorthStar/tasks",
+};
+const KINDS: Kind[] = ["vision", "goal", "objective", "task"];
+
+/** Columns each table accepts on PATCH (superset of fields we extract from files). */
+const PUSH_FIELDS: Record<Kind, string[]> = {
+  vision: ["title", "description", "status", "target_date"],
+  goal: ["title", "description", "status", "target_date"],
+  objective: ["title", "description", "status", "priority", "target_date"],
+  task: ["title", "description", "status", "priority", "due_date", "notes"],
+};
+
 interface CommitItem {
   id: string;
   title: string;
   status: string;
-  description: string;
-  priority?: string;
+  description: string | null;
+  priority?: string | null;
   target_date?: string | null;
   due_date?: string | null;
   notes?: string | null;
@@ -28,6 +66,17 @@ interface CommitItem {
   goal_id?: string | null;
   objective_id?: string | null;
   updated_at: string;
+  last_edited_at: string;
+  modified_by: string;
+}
+
+interface SyncStateRow {
+  commit_id: string;
+  kind: Kind;
+  local_path: string;
+  last_commit_edited_at: string | null;
+  last_local_edit_time: string | null;
+  last_sync_at: string;
 }
 
 function slugify(text: string): string {
@@ -40,13 +89,20 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
+/**
+ * Derive a collision-proof local path. Format: `{base}/{slug}--{id8}.md`.
+ * The 8-char UUID prefix disambiguates same-title records — shipped once
+ * without this and a title collision caused spurious deletes.
+ */
+function buildLocalPath(basePath: string, id: string, title: string): string {
+  return `${basePath}/${slugify(title)}--${id.slice(0, 8)}.md`;
+}
+
 async function fetchTable(
   table: string,
   apiKey: string,
-  statusFilter: string,
 ): Promise<CommitItem[]> {
-  const filter = statusFilter ? `&${statusFilter}` : "";
-  const url = `${BASE_URL}/${table}?select=*&user_id=eq.${USER_ID}${filter}&order=order.asc`;
+  const url = `${BASE_URL}/${table}?select=*&user_id=eq.${USER_ID}&order=order.asc`;
   const res = await fetch(url, {
     headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -60,7 +116,7 @@ async function patchItem(
   id: string,
   updates: Record<string, unknown>,
   apiKey: string,
-): Promise<boolean> {
+): Promise<{ ok: boolean; lastEditedAt?: string }> {
   const url = `${BASE_URL}/${table}?id=eq.${id}`;
   const res = await fetch(url, {
     method: "PATCH",
@@ -68,9 +124,9 @@ async function patchItem(
       apikey: apiKey,
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      Prefer: "return=minimal",
+      Prefer: "return=representation",
     },
-    body: JSON.stringify(updates),
+    body: JSON.stringify({ ...updates, modified_by: "system" }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) {
@@ -78,22 +134,58 @@ async function patchItem(
     console.warn(
       `[northstar-sync] PATCH ${table}/${id} failed: HTTP ${res.status} ${body.slice(0, 200)}`,
     );
+    return { ok: false };
+  }
+  try {
+    const rows = (await res.json()) as Array<{ last_edited_at?: string }>;
+    return { ok: true, lastEditedAt: rows[0]?.last_edited_at };
+  } catch {
+    return { ok: true };
+  }
+}
+
+async function deleteItem(
+  table: string,
+  id: string,
+  apiKey: string,
+): Promise<boolean> {
+  const url = `${BASE_URL}/${table}?id=eq.${id}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      apikey: apiKey,
+      Authorization: `Bearer ${apiKey}`,
+      Prefer: "return=minimal",
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(
+      `[northstar-sync] DELETE ${table}/${id} failed: HTTP ${res.status} ${body.slice(0, 200)}`,
+    );
   }
   return res.ok;
 }
 
-/** Extract a field value from file content */
 function extractField(content: string, field: string): string | null {
   const match = content.match(new RegExp(`^${field}:\\s*(.+)$`, "m"));
   return match ? match[1].trim() : null;
 }
 
-/** Build NorthStar file content with COMMIT_ID embedded */
+function extractCommitId(content: string): string | null {
+  return extractField(content, "COMMIT_ID");
+}
+
+function extractTitle(content: string): string | null {
+  const m = content.match(/^#\s+(.+)$/m);
+  return m ? m[1].trim() : null;
+}
+
 function buildFileContent(
   item: CommitItem,
-  type: string,
+  kind: Kind,
   parentTitle?: string,
-  children?: string,
 ): string {
   const lines = [
     `# ${item.title}`,
@@ -103,15 +195,323 @@ function buildFileContent(
   if (item.priority) lines.push(`Priority: ${item.priority}`);
   if (parentTitle)
     lines.push(
-      `${type === "goal" ? "Vision" : type === "objective" ? "Goal" : "Objective"}: ${parentTitle}`,
+      `${kind === "goal" ? "Vision" : kind === "objective" ? "Goal" : "Objective"}: ${parentTitle}`,
     );
   if (item.target_date) lines.push(`Target: ${item.target_date}`);
   if (item.due_date) lines.push(`Due: ${item.due_date}`);
   if (item.description) lines.push(`Description: ${item.description}`);
   if (item.notes) lines.push(`Notes: ${item.notes}`);
-  if (children) lines.push("", children);
   lines.push("", `Last sync: ${new Date().toISOString()}`);
   return lines.join("\n");
+}
+
+/** Extract patchable fields from file content. Returns only fields present. */
+function extractPatchFields(
+  content: string,
+  kind: Kind,
+): Record<string, string | null> {
+  const fields: Record<string, string | null> = {};
+  const allowed = PUSH_FIELDS[kind];
+
+  const title = extractTitle(content);
+  if (allowed.includes("title") && title) fields.title = title;
+
+  const description = extractField(content, "Description");
+  if (allowed.includes("description") && description !== null)
+    fields.description = description;
+
+  const status = extractField(content, "Status");
+  if (allowed.includes("status") && status) fields.status = status;
+
+  const priority = extractField(content, "Priority");
+  if (allowed.includes("priority") && priority) fields.priority = priority;
+
+  const target = extractField(content, "Target");
+  if (allowed.includes("target_date") && target) fields.target_date = target;
+
+  const due = extractField(content, "Due");
+  if (allowed.includes("due_date") && due) fields.due_date = due;
+
+  const notes = extractField(content, "Notes");
+  if (allowed.includes("notes") && notes !== null) fields.notes = notes;
+
+  return fields;
+}
+
+// -- Journal helpers --------------------------------------------------------
+
+function loadJournal(): Map<string, SyncStateRow> {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT commit_id, kind, local_path, last_commit_edited_at,
+              last_local_edit_time, last_sync_at
+       FROM northstar_sync_state`,
+    )
+    .all() as SyncStateRow[];
+  return new Map(rows.map((r) => [r.commit_id, r]));
+}
+
+function upsertJournal(
+  commitId: string,
+  kind: Kind,
+  localPath: string,
+  lastCommitEditedAt: string | null,
+  lastLocalEditTime: string | null,
+): void {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT INTO northstar_sync_state (commit_id, kind, local_path,
+       last_commit_edited_at, last_local_edit_time, last_sync_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(commit_id) DO UPDATE SET
+       kind = excluded.kind, local_path = excluded.local_path,
+       last_commit_edited_at = excluded.last_commit_edited_at,
+       last_local_edit_time = excluded.last_local_edit_time,
+       last_sync_at = datetime('now')`,
+  ).run(commitId, kind, localPath, lastCommitEditedAt, lastLocalEditTime);
+}
+
+function deleteJournal(commitId: string): void {
+  const db = getDatabase();
+  db.prepare("DELETE FROM northstar_sync_state WHERE commit_id = ?").run(
+    commitId,
+  );
+}
+
+// -- Local-side enumeration -------------------------------------------------
+
+interface LocalEntry {
+  path: string;
+  commitId: string;
+  content: string;
+  userEditTime: string | null;
+}
+
+function enumerateLocal(kind: Kind): Map<string, LocalEntry> {
+  const prefix = `${KIND_TO_PATH[kind]}/`;
+  const files = listFiles({ prefix });
+  const map = new Map<string, LocalEntry>();
+  for (const f of files) {
+    if (!f.path.endsWith(".md")) continue;
+    const full = getFile(f.path);
+    if (!full) continue;
+    const commitId = extractCommitId(full.content);
+    if (!commitId) continue; // unmatched local files deferred
+    map.set(commitId, {
+      path: f.path,
+      commitId,
+      content: full.content,
+      userEditTime: full.user_edit_time,
+    });
+  }
+  return map;
+}
+
+// -- Sync core --------------------------------------------------------------
+
+interface SyncReport {
+  pulled: number;
+  pushed: number;
+  deletedLocal: number;
+  deletedRemote: number;
+  unchanged: number;
+  skipped: number;
+  destructive: string[];
+}
+
+async function syncKind(
+  kind: Kind,
+  commitItems: CommitItem[],
+  commitData: Record<string, CommitItem[]>,
+  journal: Map<string, SyncStateRow>,
+  bootstrap: boolean,
+  apiKey: string,
+  report: SyncReport,
+): Promise<void> {
+  const table = KIND_TO_TABLE[kind];
+  const basePath = KIND_TO_PATH[kind];
+  const locals = enumerateLocal(kind);
+  const commitById = new Map(commitItems.map((c) => [c.id, c]));
+
+  // Union of every commit_id we care about for this kind.
+  const ids = new Set<string>();
+  for (const c of commitItems) ids.add(c.id);
+  for (const [id] of locals) ids.add(id);
+  for (const [id, row] of journal) if (row.kind === kind) ids.add(id);
+
+  for (const id of ids) {
+    const commit = commitById.get(id) ?? null;
+    const local = locals.get(id) ?? null;
+    const journalRow = journal.get(id) ?? null;
+
+    // Branch: journal-only (both gone) → drop row
+    if (!commit && !local && journalRow) {
+      deleteJournal(id);
+      continue;
+    }
+
+    // Compute parent title for file rendering
+    const parentTitle = commit
+      ? findParentTitle(commit, commitData)
+      : undefined;
+
+    // Branch: missing locally
+    if (commit && !local) {
+      if (journalRow && !bootstrap) {
+        // Local was deleted → propagate to COMMIT
+        const ok = await deleteItem(table, id, apiKey);
+        if (ok) {
+          report.deletedRemote++;
+          report.destructive.push(`DELETE ${table}/${id} "${commit.title}"`);
+          deleteJournal(id);
+        } else {
+          report.skipped++;
+        }
+      } else {
+        // New on COMMIT (or bootstrap) → create local
+        const filePath = buildLocalPath(basePath, commit.id, commit.title);
+        const content = buildFileContent(commit, kind, parentTitle);
+        upsertFile(
+          filePath,
+          commit.title,
+          content,
+          ["northstar", kind],
+          "reference",
+          30,
+          null,
+          [],
+          { skipUserEdit: true },
+        );
+        upsertJournal(id, kind, filePath, commit.last_edited_at, null);
+        report.pulled++;
+      }
+      continue;
+    }
+
+    // Branch: missing on COMMIT
+    if (!commit && local) {
+      if (journalRow && !bootstrap) {
+        // COMMIT deleted → delete local file
+        const ok = deleteFile(local.path);
+        if (ok) {
+          report.deletedLocal++;
+          report.destructive.push(`delete ${local.path}`);
+          deleteJournal(id);
+        } else {
+          report.skipped++;
+        }
+      } else {
+        // New locally (or bootstrap with local-only) → push to COMMIT
+        const fields = extractPatchFields(local.content, kind);
+        // Note: PostgREST doesn't accept INSERT via PATCH; we'd need POST.
+        // For bootstrap-era records we skip push if we can't tell commit's state.
+        // This is a v1 limitation — local-only records without COMMIT_ID already
+        // skipped by enumerateLocal(); those WITH COMMIT_ID that don't exist on
+        // COMMIT mean COMMIT actually deleted them before journal was installed.
+        // Treat as "commit deleted, delete local" in bootstrap too? Safer: skip.
+        void fields;
+        report.skipped++;
+      }
+      continue;
+    }
+
+    // Branch: both present
+    if (commit && local) {
+      // Commit counts as "user-edited since last sync" only when the app wrote
+      // last AND the last_edited_at advanced past what we recorded in the journal.
+      // Without the timestamp check, every post-pull sync would loop (modified_by
+      // stays "user" but the value hasn't actually changed).
+      const commitEdited =
+        commit.modified_by === "user" &&
+        (!journalRow ||
+          !journalRow.last_commit_edited_at ||
+          commit.last_edited_at > journalRow.last_commit_edited_at);
+      const localEditedAfterSync = (() => {
+        if (!local.userEditTime) return false;
+        if (!journalRow) return true; // bootstrap: local has edits, treat as unsynced
+        return local.userEditTime > journalRow.last_sync_at;
+      })();
+
+      let winner: "commit" | "local" | "none";
+      if (commitEdited && localEditedAfterSync) {
+        // Both edited since last sync — tiebreak by timestamp
+        const commitTs = new Date(commit.last_edited_at).getTime();
+        const localTs = new Date(local.userEditTime!).getTime();
+        winner = commitTs >= localTs ? "commit" : "local";
+      } else if (commitEdited) {
+        winner = "commit";
+      } else if (localEditedAfterSync) {
+        winner = "local";
+      } else {
+        winner = "none";
+      }
+
+      if (winner === "commit") {
+        const content = buildFileContent(commit, kind, parentTitle);
+        upsertFile(
+          local.path,
+          commit.title,
+          content,
+          ["northstar", kind],
+          "reference",
+          30,
+          null,
+          [],
+          { skipUserEdit: true },
+        );
+        upsertJournal(id, kind, local.path, commit.last_edited_at, null);
+        report.pulled++;
+      } else if (winner === "local") {
+        const fields = extractPatchFields(local.content, kind);
+        if (Object.keys(fields).length === 0) {
+          report.skipped++;
+        } else {
+          const result = await patchItem(table, id, fields, apiKey);
+          if (result.ok) {
+            // Store the post-PATCH last_edited_at so the next sync correctly
+            // sees modified_by="system" + timestamp matches → no spurious pull.
+            upsertJournal(
+              id,
+              kind,
+              local.path,
+              result.lastEditedAt ?? commit.last_edited_at,
+              local.userEditTime,
+            );
+            report.pushed++;
+          } else {
+            report.skipped++;
+          }
+        }
+      } else {
+        // Nothing to do — just refresh journal to mark "seen this run"
+        if (!journalRow) {
+          upsertJournal(
+            id,
+            kind,
+            local.path,
+            commit.last_edited_at,
+            local.userEditTime,
+          );
+        }
+        report.unchanged++;
+      }
+    }
+  }
+}
+
+function findParentTitle(
+  item: CommitItem,
+  commitData: Record<string, CommitItem[]>,
+): string | undefined {
+  if (item.vision_id)
+    return commitData.visions?.find((v) => v.id === item.vision_id)?.title;
+  if (item.goal_id)
+    return commitData.goals?.find((g) => g.id === item.goal_id)?.title;
+  if (item.objective_id)
+    return commitData.objectives?.find((o) => o.id === item.objective_id)
+      ?.title;
+  return undefined;
 }
 
 export const northstarSyncTool: Tool = {
@@ -128,42 +528,30 @@ export const northstarSyncTool: Tool = {
     type: "function",
     function: {
       name: "northstar_sync",
-      description: `Bidirectional sync between NorthStar files (local KB) and COMMIT database (db.mycommit.net).
+      description: `Bidirectional Last-Write-Wins sync between NorthStar files and COMMIT (db.mycommit.net).
 
-MERGE RULES (field-level, not full-overwrite):
-- COMMIT wins: status, priority (user is the authority on task state)
-- NorthStar wins: dates, notes, details (Jarvis manages these)
-- Latest entry wins for other fields (compares updated_at timestamps)
+RULES:
+- Record-level LWW: whichever side edited most recently wins the whole record.
+- Unsynced-edit detection:
+  * COMMIT side: \`modified_by == "user"\` means the app edited since our last sync.
+  * Jarvis side: \`user_edit_time\` bumped only by real file edits, not by sync writes.
+- Deletions propagate both ways via the \`northstar_sync_state\` journal:
+  * record in journal + missing on one side → deleted by user → propagate delete
+  * record not in journal + missing on one side → new, just created → propagate create
+- First run (empty journal) is bootstrap mode: create across the gap, NO deletes.
 
-USE WHEN:
-- User says "sync", "sincroniza", "actualiza NorthStar", "sync con COMMIT"
-- After completing a task or updating goals (push changes back)
+DIRECTION: always full bidirectional — no direction param anymore (the old
+field-level merge is gone; record-level LWW is the only mode).
 
-DIRECTION:
-- "both" (default): pull then push — safe, idempotent
-- "pull": COMMIT → NorthStar only (read from app)
-- "push": NorthStar → COMMIT only (write to app)
-
-GOTCHA: 0 pulled + 0 pushed means everything is already in sync — normal, not an error.`,
+GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
       parameters: {
         type: "object",
-        properties: {
-          include_completed: {
-            type: "boolean",
-            description: "Include completed items (default: false)",
-          },
-          direction: {
-            type: "string",
-            enum: ["both", "pull", "push"],
-            description:
-              "Sync direction: both (default), pull (COMMIT→NorthStar), push (NorthStar→COMMIT)",
-          },
-        },
+        properties: {},
       },
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(_args: Record<string, unknown>): Promise<string> {
     const apiKey = process.env.COMMIT_DB_KEY;
     if (!apiKey) {
       return JSON.stringify({
@@ -172,164 +560,60 @@ GOTCHA: 0 pulled + 0 pushed means everything is already in sync — normal, not 
       });
     }
 
-    const includeCompleted = args.include_completed === true;
-    const direction = (args.direction as string) || "both";
-    const statusFilter = includeCompleted ? "" : "status=neq.completed";
-
     try {
-      const tables = ["visions", "goals", "objectives", "tasks"] as const;
-      const typeMap = {
-        visions: "vision",
-        goals: "goal",
-        objectives: "objective",
-        tasks: "task",
-      } as const;
-      const pathMap = {
-        visions: "NorthStar/visions",
-        goals: "NorthStar/goals",
-        objectives: "NorthStar/objectives",
-        tasks: "NorthStar/tasks",
-      } as const;
-
-      // Fetch all COMMIT data
+      // Fetch all 4 tables — NO status filter (we need every record for correct
+      // journal diffing; filtering would masquerade "completed on COMMIT" as deleted).
       const commitData: Record<string, CommitItem[]> = {};
-      for (const table of tables) {
-        commitData[table] = await fetchTable(table, apiKey, statusFilter);
+      for (const kind of KINDS) {
+        commitData[KIND_TO_TABLE[kind]] = await fetchTable(
+          KIND_TO_TABLE[kind],
+          apiKey,
+        );
       }
 
-      let pulled = 0;
-      let pushed = 0;
-      let unchanged = 0;
+      const journal = loadJournal();
+      const bootstrap = journal.size === 0;
 
-      for (const table of tables) {
-        const items = commitData[table];
-        const type = typeMap[table];
-        const basePath = pathMap[table];
+      const report: SyncReport = {
+        pulled: 0,
+        pushed: 0,
+        deletedLocal: 0,
+        deletedRemote: 0,
+        unchanged: 0,
+        skipped: 0,
+        destructive: [],
+      };
 
-        for (const item of items) {
-          const slug = slugify(item.title);
-          const filePath = `${basePath}/${slug}.md`;
-          const existing = getFile(filePath);
-
-          // Find parent title for context
-          let parentTitle: string | undefined;
-          if ("vision_id" in item && item.vision_id) {
-            parentTitle = commitData.visions.find(
-              (v) => v.id === item.vision_id,
-            )?.title;
-          } else if ("goal_id" in item && item.goal_id) {
-            parentTitle = commitData.goals.find(
-              (g) => g.id === item.goal_id,
-            )?.title;
-          } else if ("objective_id" in item && item.objective_id) {
-            parentTitle = commitData.objectives.find(
-              (o) => o.id === item.objective_id,
-            )?.title;
-          }
-
-          if (!existing) {
-            // File doesn't exist — pull from COMMIT
-            if (direction !== "push") {
-              const content = buildFileContent(item, type, parentTitle);
-              upsertFile(
-                filePath,
-                item.title,
-                content,
-                ["northstar", type],
-                "reference",
-                30,
-              );
-              pulled++;
-            }
-            continue;
-          }
-
-          // Both exist — merge strategy:
-          // COMMIT wins for: status, priority (user is authority on the app)
-          // NorthStar wins for: due_date, target_date, notes (Jarvis manages these)
-          // On conflict: COMMIT status always overrides file status
-          const commitTime = new Date(item.updated_at).getTime();
-          const fileTime = new Date(existing.updated_at).getTime();
-          let didPull = false;
-          let didPush = false;
-
-          // STEP 1: Always pull status/priority from COMMIT if different
-          if (direction !== "push") {
-            const fileStatus = extractField(existing.content, "Status");
-            const filePriority = extractField(existing.content, "Priority");
-            if (
-              (fileStatus && fileStatus !== item.status) ||
-              (filePriority && filePriority !== (item.priority ?? ""))
-            ) {
-              // COMMIT status/priority wins — rebuild file with COMMIT data
-              const content = buildFileContent(item, type, parentTitle);
-              upsertFile(
-                filePath,
-                item.title,
-                content,
-                ["northstar", type],
-                "reference",
-                30,
-              );
-              didPull = true;
-            }
-          }
-
-          // STEP 2: Push dates/notes from file to COMMIT if file is newer
-          if (fileTime > commitTime && direction !== "pull" && !didPull) {
-            const newDescription = extractField(
-              existing.content,
-              "Description",
-            );
-            const newNotes = extractField(existing.content, "Notes");
-            const newTarget = extractField(existing.content, "Target");
-            const newDue = extractField(existing.content, "Due");
-
-            const updates: Record<string, unknown> = {
-              updated_at: new Date().toISOString(),
-            };
-            // Never push status — COMMIT is authority
-            if (newDescription && newDescription !== item.description)
-              updates.description = newDescription;
-            if (newNotes && newNotes !== item.notes) updates.notes = newNotes;
-            if (newTarget && newTarget !== item.target_date)
-              updates.target_date = newTarget;
-            if (newDue && newDue !== item.due_date) updates.due_date = newDue;
-
-            if (Object.keys(updates).length > 1) {
-              const ok = await patchItem(table, item.id, updates, apiKey);
-              if (ok) didPush = true;
-              else
-                console.warn(
-                  `[northstar-sync] Failed to push ${item.title} to ${table}`,
-                );
-            }
-          }
-
-          if (didPull) pulled++;
-          else if (didPush) pushed++;
-          else unchanged++;
-        }
+      for (const kind of KINDS) {
+        await syncKind(
+          kind,
+          commitData[KIND_TO_TABLE[kind]],
+          commitData,
+          journal,
+          bootstrap,
+          apiKey,
+          report,
+        );
       }
 
-      // Regenerate NorthStar INDEX
+      // Rebuild INDEX.md from current COMMIT state (purely informational).
       const indexLines = ["# NorthStar — Hierarchy\n"];
-      for (const table of tables) {
-        const items = commitData[table];
-        const basePath = pathMap[table];
+      for (const kind of KINDS) {
+        const items = commitData[KIND_TO_TABLE[kind]];
+        const basePath = KIND_TO_PATH[kind];
         indexLines.push(
-          `## ${table.charAt(0).toUpperCase() + table.slice(1)} (${items.length})`,
+          `## ${KIND_TO_TABLE[kind].charAt(0).toUpperCase() + KIND_TO_TABLE[kind].slice(1)} (${items.length})`,
         );
         for (const item of items) {
-          const slug = slugify(item.title);
+          const p = buildLocalPath(basePath, item.id, item.title);
           indexLines.push(
-            `- [${item.title}](${basePath}/${slug}.md) — ${item.status}${item.priority ? ` (${item.priority})` : ""}`,
+            `- [${item.title}](${p}) — ${item.status}${item.priority ? ` (${item.priority})` : ""}`,
           );
         }
         indexLines.push("");
       }
       indexLines.push(
-        `---\nLast sync: ${new Date().toISOString()}\nSource: db.mycommit.net (user fede@eurekamd.net)\nDirection: ${direction}`,
+        `---\nLast sync: ${new Date().toISOString()}\nMode: ${bootstrap ? "bootstrap (no deletes)" : "LWW (deletes propagated)"}\nSource: db.mycommit.net (user fede@eurekamd.net)`,
       );
 
       upsertFile(
@@ -339,9 +623,18 @@ GOTCHA: 0 pulled + 0 pushed means everything is already in sync — normal, not 
         ["northstar", "index"],
         "reference",
         5,
+        null,
+        [],
+        { skipUserEdit: true },
       );
 
-      return `NorthStar sync complete (${direction}). Pulled: ${pulled}, Pushed: ${pushed}, Unchanged: ${unchanged}. Total: ${Object.values(commitData).flat().length} items.`;
+      if (report.destructive.length > 0) {
+        console.warn(
+          `[northstar-sync] destructive ops:\n  ${report.destructive.join("\n  ")}`,
+        );
+      }
+
+      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,
