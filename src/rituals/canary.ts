@@ -16,6 +16,20 @@ import { getRouter } from "../messaging/index.js";
 
 const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 
+/**
+ * Ritual titles whose task submission includes gmail_send. A task with one of
+ * these prefixes is expected to email the user. Keep in sync with the `title`
+ * field in the corresponding ritual file — a silent rename there will cause
+ * the canary to stop observing that ritual without any test failure.
+ */
+export const RITUAL_EMAIL_TITLE_PREFIXES = [
+  "Morning briefing",
+  "Nightly close",
+  "Signal intelligence",
+  "Weekly review",
+  "Market morning scan",
+] as const;
+
 interface CanaryResult {
   taskSuccessRate: number;
   totalTasks: number;
@@ -52,22 +66,62 @@ export function runCanaryCheck(): CanaryResult {
     );
   }
 
-  // 2. Delivery misses (tasks with gmail_send in tools but not in output.toolCalls)
+  // 2. Scheduled/ritual email deliveries that DIDN'T call gmail_send.
+  //
+  // Earlier version filtered on `metadata LIKE '%gmail_send%'` — which matched
+  // every chat task, because the default chat tool allowlist always includes
+  // gmail_send. Users asking "Lista mi NorthStar" would complete_with_concerns
+  // and get counted as "missed email deliveries" even though no email was ever
+  // requested. At alert threshold of 2, the canary fired daily on user chatter.
+  //
+  // The real signal is: was this a task that was *designed* to email? Two
+  // shapes: (1) dynamic scheduled tasks (metadata tags contain "scheduled"),
+  // (2) rituals whose titles follow known prefixes. Filtering on those cleanly
+  // excludes chat traffic.
+  //
+  // Status: `completed_with_concerns` OR `failed`. The `failed` case is the
+  // one the canary MOST wants to catch — rituals that require gmail_send in
+  // `requiredTools` get downgraded to `failed` when the dispatcher's retry
+  // also misses the tool. Plain `completed` is excluded deliberately: rituals
+  // where gmail_send is optional (e.g. market-morning-scan's "also send email
+  // copy") may land `completed` without emailing by design, and counting them
+  // would reintroduce noise.
   let deliveryMisses = 0;
   try {
+    // Build `(title LIKE ? OR title LIKE ?)` groups for each prefix — two
+    // patterns per prefix to match both `Prefix — 2026-04-21` (the dateful
+    // form all rituals use) and a bare `Prefix` fallback. Parameter-bound to
+    // keep the SQL injection-proof even if the constant grows to include
+    // user-contributed prefixes someday.
+    const titleClauses = RITUAL_EMAIL_TITLE_PREFIXES.map(
+      () => "(title LIKE ? OR title LIKE ?)",
+    ).join(" OR ");
+    const titleParams: string[] = [];
+    for (const prefix of RITUAL_EMAIL_TITLE_PREFIXES) {
+      titleParams.push(`${prefix} —%`, prefix);
+    }
     const emailTasks = db
       .prepare(
         `SELECT output FROM tasks
-         WHERE created_at > ? AND status = 'completed_with_concerns'
-         AND metadata LIKE '%gmail_send%'`,
+         WHERE created_at > ?
+         AND status IN ('completed_with_concerns', 'failed')
+         AND (
+           (metadata LIKE '%"scheduled"%' AND metadata LIKE '%gmail_send%')
+           OR ${titleClauses}
+         )`,
       )
-      .all(cutoff) as Array<{ output: string | null }>;
+      .all(cutoff, ...titleParams) as Array<{ output: string | null }>;
 
     for (const t of emailTasks) {
       if (!t.output) continue;
       try {
-        const parsed = JSON.parse(t.output);
-        const toolCalls = parsed.toolCalls ?? [];
+        const parsed = JSON.parse(t.output) as { toolCalls?: unknown };
+        // swarm-runner writes `toolCalls: <count>` as a number; only fast /
+        // heavy / nanoclaw write it as an array. Rituals route to fast so
+        // this is latent today, but don't throw if the shape changes.
+        const toolCalls = Array.isArray(parsed.toolCalls)
+          ? (parsed.toolCalls as string[])
+          : [];
         if (!toolCalls.includes("gmail_send")) {
           deliveryMisses++;
         }
@@ -78,7 +132,7 @@ export function runCanaryCheck(): CanaryResult {
 
     if (deliveryMisses > 2) {
       alerts.push(
-        `${deliveryMisses} email delivery misses in last 24h — above threshold of 2`,
+        `${deliveryMisses} scheduled/ritual email deliveries did not call gmail_send in last 24h — above threshold of 2`,
       );
     }
   } catch {
