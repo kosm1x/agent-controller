@@ -245,8 +245,51 @@ function extractField(content: string, field: string): string | null {
   // with an empty value (`COMMIT_ID: \n`) would match the NEXT line's content.
   // Previously caused `extractCommitId` on a local-new file to return
   // "Status: in_progress" and corrupt the push-new flow.
-  const match = content.match(new RegExp(`^${field}:[ \\t]*(.+)$`, "m"));
+  const match = content.match(new RegExp(`^${field}:[ \\t]*(.+)$`, "mi"));
   return match ? match[1].trim() : null;
+}
+
+/**
+ * Like extractField but also accepts aliased key names.
+ * Handles the common mismatch where local files use `target_date:` (snake_case)
+ * instead of the canonical `Target:` form that buildFileContent emits.
+ */
+function extractFieldWithAlias(
+  content: string,
+  canonical: string,
+  ...aliases: string[]
+): string | null {
+  const result = extractField(content, canonical);
+  if (result !== null) return result;
+  for (const alias of aliases) {
+    const alt = extractField(content, alias);
+    if (alt !== null) return alt;
+  }
+  return null;
+}
+
+/**
+ * Extract a multi-line description from a section heading like `## Descripción`.
+ * Returns all non-empty lines as a single space-joined string, or null.
+ *
+ * No `m` flag — the `$` in the stop-lookahead must mean end-of-string, not
+ * end-of-line. `(?:^|\n)##` handles "heading at line start" without `m`.
+ * (The earlier `\z` was a Ruby anchor that JS silently treats as literal `z`.)
+ */
+function extractDescriptionSection(content: string): string | null {
+  // Stop lookahead must reject `###` (sub-heading) — `##` is a prefix of `###`,
+  // so `(?=\n##|$)` would truncate at the first sub-heading. `[^#]` on the
+  // third char enforces exactly-two-hashes.
+  const m = content.match(
+    /(?:^|\n)##[ \t]+(?:Descripci[oó]n|Description)[ \t]*\n([\s\S]*?)(?=\n##[^#]|$)/i,
+  );
+  if (!m) return null;
+  const text = m[1]
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(" ");
+  return text || null;
 }
 
 function extractCommitId(content: string): string | null {
@@ -292,17 +335,19 @@ function extractPatchFields(
   const title = extractTitle(content);
   if (allowed.includes("title") && title) fields.title = title;
 
-  const description = extractField(content, "Description");
+  const description =
+    extractFieldWithAlias(content, "Description") ??
+    extractDescriptionSection(content);
   if (allowed.includes("description") && description !== null)
     fields.description = description;
 
-  const status = extractField(content, "Status");
+  const status = extractFieldWithAlias(content, "Status");
   if (allowed.includes("status") && status) fields.status = status;
 
   const priority = extractField(content, "Priority");
   if (allowed.includes("priority") && priority) fields.priority = priority;
 
-  const target = extractField(content, "Target");
+  const target = extractFieldWithAlias(content, "Target", "target_date");
   if (allowed.includes("target_date") && target) fields.target_date = target;
 
   const due = extractField(content, "Due");
@@ -436,15 +481,17 @@ function buildCreateFields(
   const fields: Record<string, unknown> = {
     title: entry.title,
   };
-  const description = extractField(entry.content, "Description");
+  const description =
+    extractFieldWithAlias(entry.content, "Description") ??
+    extractDescriptionSection(entry.content);
   if (description) fields.description = description;
-  const status = extractField(entry.content, "Status");
+  const status = extractFieldWithAlias(entry.content, "Status");
   fields.status = status ?? "in_progress";
   const priority = extractField(entry.content, "Priority");
   if (priority && kind !== "vision" && kind !== "goal") {
     fields.priority = priority;
   }
-  const target = extractField(entry.content, "Target");
+  const target = extractFieldWithAlias(entry.content, "Target", "target_date");
   if (target) fields.target_date = target;
   const due = extractField(entry.content, "Due");
   if (due && kind === "task") fields.due_date = due;

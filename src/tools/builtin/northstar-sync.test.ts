@@ -793,7 +793,9 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Created remote: 1");
 
-    const postCall = mockCalls.find((c) => c.method === "POST");
+    const postCall = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    );
     expect(postCall).toBeDefined();
     expect(postCall?.url).toContain("/rest/v1/goals");
     const body = postCall?.body as Record<string, unknown>;
@@ -830,10 +832,9 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Created remote: 1");
 
-    const postBody = mockCalls.find((c) => c.method === "POST")?.body as Record<
-      string,
-      unknown
-    >;
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    )?.body as Record<string, unknown>;
     expect(postBody.vision_id).toBe(visionId);
   });
 
@@ -923,10 +924,9 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Created remote: 1");
 
-    const body = mockCalls.find((c) => c.method === "POST")?.body as Record<
-      string,
-      unknown
-    >;
+    const body = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/tasks\b/.test(c.url),
+    )?.body as Record<string, unknown>;
     expect(body.title).toBe("Solo task");
     expect(body.priority).toBe("high");
     expect(body.due_date).toBe("2026-06-01");
@@ -1120,5 +1120,124 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     // vision POST (present in the prior POST's body).
     const visionBody = postCalls[0].body as Record<string, unknown>;
     expect(goalBody.vision_id).toBe(visionBody.id);
+  });
+
+  it("extracts description from a `## Descripción` section heading (multi-line)", async () => {
+    const parentGoalId = "11111111-2222-3333-4444-555555555555";
+    const filePath = "NorthStar/objectives/xolo-section-desc--new.md";
+    upsertFile(
+      filePath,
+      "Detallar el Business Model",
+      `# Detallar el Business Model
+
+COMMIT_ID:
+Goal: Lanzar Xolo Rides
+Status: not_started
+Target: 2026-05-05
+
+## Descripción
+El modelo debe estar tan completo como se pueda.
+No debe haber cabos sueltos.
+`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      parentGoalId,
+      "goal",
+      "NorthStar/goals/lanzar-xolo-rides.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.goals = [makeCommitItem(parentGoalId, "Lanzar Xolo Rides")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/objectives\b/.test(c.url),
+    )?.body as Record<string, unknown>;
+    expect(postBody).toBeDefined();
+    expect(postBody.title).toBe("Detallar el Business Model");
+    expect(postBody.goal_id).toBe(parentGoalId);
+    expect(postBody.status).toBe("not_started");
+    expect(postBody.target_date).toBe("2026-05-05");
+    // The critical assertion: description pulled from the `## Descripción` section,
+    // space-joined, not null.
+    expect(postBody.description).toBe(
+      "El modelo debe estar tan completo como se pueda. No debe haber cabos sueltos.",
+    );
+  });
+
+  it("keeps `### Subsection` content inside a `## Descripción` section", async () => {
+    const parentGoalId = "11111111-2222-3333-4444-555555555555";
+    upsertFile(
+      "NorthStar/objectives/subheaded-desc--new.md",
+      "Con subseccion",
+      `# Con subseccion
+COMMIT_ID:
+Goal: Lanzar Xolo Rides
+Status: not_started
+
+## Descripción
+Parrafo introductorio.
+
+### Sub-seccion
+Detalles adicionales que NO deben perderse.
+`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      parentGoalId,
+      "goal",
+      "NorthStar/goals/lanzar-xolo-rides.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.goals = [makeCommitItem(parentGoalId, "Lanzar Xolo Rides")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/objectives\b/.test(c.url),
+    )?.body as Record<string, unknown>;
+    expect(postBody).toBeDefined();
+    // The key regression — `##` prefix-matching `###` would silently drop
+    // the sub-section content. Both must survive.
+    expect(postBody.description).toContain("Parrafo introductorio.");
+    expect(postBody.description).toContain("Sub-seccion");
+    expect(postBody.description).toContain(
+      "Detalles adicionales que NO deben perderse.",
+    );
+  });
+
+  it("accepts lowercase field keys and `target_date:` snake_case alias", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    upsertFile(
+      "NorthStar/goals/lowercase-keys--new.md",
+      "Lowercase goal",
+      `# Lowercase goal\nCOMMIT_ID: \nstatus: in_progress\nVision: ${visionId}\ntarget_date: 2026-12-31\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    )?.body as Record<string, unknown>;
+    expect(postBody.status).toBe("in_progress");
+    expect(postBody.target_date).toBe("2026-12-31");
   });
 });

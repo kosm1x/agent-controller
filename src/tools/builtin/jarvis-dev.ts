@@ -10,12 +10,18 @@ import type { Tool } from "../types.js";
 
 const MC_DIR = "/root/claude/mission-control";
 const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
-const TIMEOUT_MS = 120_000; // 2 min for test suite
+// Full suite runs ~105s on an idle VPS. 120s left <15% headroom, so any
+// concurrent inference/swap pressure pushed it over and ETIMEDOUT was then
+// misparsed as "tests failed" by the catch-branch regex. 300s is 3x headroom.
+const TIMEOUT_MS = 300_000;
+// Git ops (status/add/commit/push) can take longer than 10s on a loaded box.
+// `push` in particular hits the network and does pre-commit hooks.
+const GIT_TIMEOUT_MS = 60_000;
 
 function run(args: string[], opts?: { timeout?: number }): string {
   return execFileSync("git", args, {
     cwd: MC_DIR,
-    timeout: opts?.timeout ?? 10_000,
+    timeout: opts?.timeout ?? GIT_TIMEOUT_MS,
     encoding: "utf-8",
   }).trim();
 }
@@ -48,7 +54,7 @@ function actionBranch(type: string, slug: string): string {
   // Ensure we're on main and up to date
   try {
     run(["checkout", "main"]);
-    run(["pull", "origin", "main"], { timeout: 30_000 });
+    run(["pull", "origin", "main"]);
   } catch {
     // pull may fail if no remote — continue anyway
   }
@@ -118,19 +124,37 @@ function actionTest(): string {
       encoding: "utf-8",
       stdio: "pipe",
     });
-    // Extract summary line
     const summaryMatch = output.match(/Tests\s+(\d+)\s+passed/);
     results.tests = summaryMatch ? `PASS (${summaryMatch[1]} tests)` : "PASS";
   } catch (err) {
-    const msg =
-      err instanceof Error
-        ? ((err as { stdout?: string }).stdout ?? err.message)
-        : String(err);
-    // Extract failure info
-    const failMatch = msg.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
-    results.tests = failMatch
-      ? `FAIL: ${failMatch[1]} failed, ${failMatch[2]} passed`
-      : `FAIL: ${msg.slice(0, 500)}`;
+    // Distinguish timeout (ETIMEDOUT or signal=SIGTERM) from test-failure.
+    // A timed-out vitest has partial stdout that can match the "N failed" regex
+    // even when the ONLY failure was the kill signal — don't trust that as a
+    // real failure count.
+    const e = err as {
+      code?: string;
+      signal?: string;
+      stdout?: string;
+      message?: string;
+    };
+    // ETIMEDOUT + SIGTERM = Node's own timeout. SIGKILL = external kill
+    // (OOM-killer, resource cap) — also a "killed before finishing" signal,
+    // so report it as timeout rather than parsing partial stdout as failures.
+    const timedOut =
+      e.code === "ETIMEDOUT" ||
+      e.signal === "SIGTERM" ||
+      e.signal === "SIGKILL";
+    if (timedOut) {
+      results.tests = `TIMEOUT: vitest exceeded ${TIMEOUT_MS / 1000}s. Re-run locally; if the suite passes in isolation, the gate was killed by load.`;
+    } else {
+      const msg = e.stdout ?? e.message ?? String(err);
+      const summaryMatch = msg.match(
+        /Tests\s+(\d+)\s+failed(?:\s+\|\s+(\d+)\s+passed)?/,
+      );
+      results.tests = summaryMatch
+        ? `FAIL: ${summaryMatch[1]} failed, ${summaryMatch[2] ?? "?"} passed`
+        : `FAIL: ${msg.slice(0, 500)}`;
+    }
   }
 
   return JSON.stringify({
@@ -182,7 +206,7 @@ function actionPr(title: string, body: string): string {
   }
 
   try {
-    run(["push", "-u", "origin", branch], { timeout: 30_000 });
+    run(["push", "-u", "origin", branch]);
   } catch (err) {
     return JSON.stringify({
       error: `Push failed: ${err instanceof Error ? err.message : err}`,
@@ -210,7 +234,7 @@ function actionPr(title: string, body: string): string {
       ],
       {
         cwd: MC_DIR,
-        timeout: 30_000,
+        timeout: GIT_TIMEOUT_MS,
         encoding: "utf-8",
       },
     ).trim();
