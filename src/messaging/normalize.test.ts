@@ -43,6 +43,24 @@ describe("normalizeForMatching", () => {
     expect(result).toContain("commit");
     expect(result).toContain("deploy");
   });
+
+  it("normalizes NFD (decomposed) accents to NFC so scope regex char classes match", () => {
+    // NFD form: "i" (U+0069) + combining acute U+0301 → displays as "í"
+    // Some mobile keyboards / autocorrect deliver NFD; our scope regexes use
+    // character classes like `art[ií]culo` that only match single-codepoint
+    // NFC. Without this normalization, "el artículo 546" in NFD form fails
+    // to activate the wordpress scope group.
+    const nfd = "art\u0069\u0301culo 546";
+    const nfc = normalizeForMatching(nfd);
+    expect(nfc).toContain("art\u00EDculo");
+    // NFC form is one codepoint shorter than NFD.
+    expect(nfc.length).toBeLessThan(nfd.length);
+  });
+
+  it("leaves already-NFC text unchanged (idempotent)", () => {
+    const nfc = "artículo 546";
+    expect(normalizeForMatching(nfc)).toBe(nfc);
+  });
 });
 
 describe("wasNormalized", () => {

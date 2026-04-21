@@ -66,8 +66,15 @@ const TYPO_MAP: Record<string, string> = {
  * - Sentence restructuring
  */
 export function normalizeForMatching(text: string): string {
+  // Unicode NFC normalization — composes decomposed accents (e.g., "i" + U+0301
+  // combining acute → "í" single codepoint). Telegram / WhatsApp payloads can
+  // arrive in NFD form on some devices, which makes character classes like
+  // `art[ií]culo` in scope regexes miss the accented stem. Normalizing to NFC
+  // first guarantees the scope regex sees the composed form.
+  const nfc = text.normalize("NFC");
+
   // Word-level typo correction
-  let corrected = text.replace(/\b\w+\b/g, (word) => {
+  const corrected = nfc.replace(/\b\w+\b/g, (word) => {
     const lower = word.toLowerCase();
     const fix = TYPO_MAP[lower];
     if (fix) {
