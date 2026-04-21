@@ -57,8 +57,13 @@ USE WHEN operator asks to "rebalance polymarket positions", "pm paper trade",
 NOT WHEN equity rebalance (use \`paper_rebalance\` — F8) or alpha analysis only
 (use \`pm_alpha_run\` / \`pm_alpha_latest\`).
 
-No F7.5 ship_gate at v1 — deferred to F8.1c. Negative weights at v1 exit
-existing YES positions; they do NOT open NO-side positions (F8.1b.2 concern).
+No F7.5 ship_gate at v1 — deferred to F8.1d. Negative α weights now open
+NO-side positions (buy the complement outcome) as of F8.1c; legacy v1
+exit-only behavior is no longer active.
+
+Cadence param (F8.1c): "weekly" (default, preserves F8.1b behavior) or
+"daily". Daily cadence uses a 24h staleness gate + tags thesis entry_signal
+as pm_daily_rebalance for audit separation.
 
 Takes ~0.5-1s. Starts with $10K USDC paper cash on first run. No leverage.
 MARKET orders only. Dust threshold: $10 per trade.`,
@@ -83,12 +88,18 @@ MARKET orders only. Dust threshold: $10 per trade.`,
           override_ship_gate: {
             type: "boolean",
             description:
-              "Placeholder for F8.1c firewall; logged in thesis for audit. No effect at v1.",
+              "Placeholder for F8.1d firewall; logged in thesis for audit. No effect at v1 (no ship-gate exists yet).",
           },
           allow_stale: {
             type: "boolean",
             description:
-              "When true, bypass the pre-trade stale-position abort. Default false — held positions with stale marks (>5d old or missing quotes) make sizing untrustworthy and orders are skipped.",
+              "When true, bypass the pre-trade stale-position abort. Default false — held positions with stale marks make sizing untrustworthy and orders are skipped.",
+          },
+          cadence: {
+            type: "string",
+            enum: ["weekly", "daily"],
+            description:
+              "Rebalance cadence (F8.1c). 'weekly' (default) uses the 5d staleness gate and tags entry_signal=pm_weekly_rebalance. 'daily' uses a 24h staleness gate and tags entry_signal=pm_daily_rebalance — used by the PM daily ritual.",
           },
         },
         required: [],
@@ -111,6 +122,10 @@ MARKET orders only. Dust threshold: $10 per trade.`,
       typeof args.notes === "string" ? args.notes.slice(0, 500) : undefined;
     const overrideShip = args.override_ship_gate === true;
     const allowStale = args.allow_stale === true;
+    const cadence: "weekly" | "daily" =
+      args.cadence === "daily" ? "daily" : "weekly";
+    const quoteStaleMs =
+      cadence === "daily" ? 24 * 60 * 60 * 1000 : 5 * 24 * 60 * 60 * 1000;
 
     const pmAlpha = readLatestPmAlphaRun();
     if (!pmAlpha) {
@@ -140,6 +155,7 @@ MARKET orders only. Dust threshold: $10 per trade.`,
     const adapter = new PolymarketPaperAdapter({
       initialCash,
       slippageBps: costBps,
+      quoteStaleMs,
     });
 
     const summary = await runPmRebalance({
@@ -149,11 +165,12 @@ MARKET orders only. Dust threshold: $10 per trade.`,
       shipOverride: overrideShip,
       notes,
       allowStale,
+      cadence,
     });
 
     const lines: string[] = [];
     lines.push(
-      `pm_paper_rebalance: thesis_id=${summary.thesisId}  pm_alpha=${pmAlpha.runId.slice(0, 8)}`,
+      `pm_paper_rebalance: thesis_id=${summary.thesisId}  pm_alpha=${pmAlpha.runId.slice(0, 8)}  cadence=${cadence}`,
     );
     lines.push(
       `  equity: ${fmt(summary.totalEquityBefore)} → ${fmt(summary.totalEquityAfter)}  cash: ${fmt(summary.cashBefore)} → ${fmt(summary.cashAfter)}`,

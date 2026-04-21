@@ -96,4 +96,16 @@ export const rituals: RitualDefinition[] = [
     enabled: true,
     timezone: "America/New_York",
   },
+  {
+    id: "pm-daily-rebalance",
+    title: "PM daily rebalance",
+    // F8.1c — 6:00 AM ET every day INCLUDING weekends. Prediction markets
+    // don't follow the equity calendar; political / sports / breaking-news
+    // events resolve on their own clocks, so weekend rebalance catches
+    // Saturday-Sunday midpoint moves before Monday. No NYSE trading-day
+    // gate applies — explicitly opt-out via the scheduler's gate-list.
+    cron: "0 6 * * *",
+    enabled: true,
+    timezone: "America/New_York",
+  },
 ];

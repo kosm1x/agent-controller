@@ -320,6 +320,12 @@ export interface PmPortfolioThesisInput {
   targetWeights: Record<string, { outcome: string; weight: number }>;
   notes?: string;
   aborted?: boolean;
+  /**
+   * Rebalance cadence — drives `trade_theses.entry_signal` so audit queries
+   * can separate weekly from daily runs. Defaults to "weekly" for backward
+   * compat with F8.1b callers that don't pass the param.
+   */
+  cadence?: "weekly" | "daily";
 }
 
 export function insertPmPortfolioThesis(
@@ -348,7 +354,7 @@ export function insertPmPortfolioThesis(
     .run(
       "PORTFOLIO",
       thesisText,
-      "pm_weekly_rebalance",
+      `pm_${input.cadence ?? "weekly"}_rebalance`,
       nowIso,
       "next_pm_rebalance",
       "open",

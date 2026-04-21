@@ -55,6 +55,13 @@ export interface PolymarketPaperAdapterOpts {
   clock?: Clock;
   slippageBps?: number;
   initialCash?: number;
+  /**
+   * F8.1c — override the quote staleness threshold. Default 5d (weekly
+   * cadence). Daily PM rebalance ritual passes 24h. Any positive integer
+   * (ms). Values <= 0 are clamped to the 5d default to prevent accidental
+   * "always stale" misconfiguration.
+   */
+  quoteStaleMs?: number;
 }
 
 /**
@@ -124,11 +131,17 @@ export class PolymarketPaperAdapter implements VenueAdapter {
   public readonly clock: Clock;
   public readonly account: string;
   private readonly slippageBps: number;
+  private readonly quoteStaleMs: number;
 
   constructor(opts: PolymarketPaperAdapterOpts = {}) {
     this.clock = opts.clock ?? new WallClock();
     this.account = opts.account ?? DEFAULT_PM_ACCOUNT;
     this.slippageBps = opts.slippageBps ?? PM_PAPER_DEFAULT_SLIPPAGE_BPS;
+    const rawStale = opts.quoteStaleMs;
+    this.quoteStaleMs =
+      typeof rawStale === "number" && Number.isFinite(rawStale) && rawStale > 0
+        ? rawStale
+        : PM_PAPER_QUOTE_STALE_MS;
     // Idempotent — safe on repeated instantiation.
     initPmAccount(this.account, opts.initialCash ?? DEFAULT_PM_INITIAL_CASH);
   }
@@ -143,9 +156,9 @@ export class PolymarketPaperAdapter implements VenueAdapter {
     }
     const asOfMs = Date.parse(cached.asOf);
     const age = this.clock.now().getTime() - asOfMs;
-    if (age > PM_PAPER_QUOTE_STALE_MS) {
+    if (age > this.quoteStaleMs) {
       throw new Error(
-        `polymarket_paper: stale quote for ${marketId}/${outcome} (fetched ${cached.asOf}, age ${Math.round(age / 86400000)}d)`,
+        `polymarket_paper: stale quote for ${marketId}/${outcome} (fetched ${cached.asOf}, age ${Math.round(age / 3600000)}h, threshold ${Math.round(this.quoteStaleMs / 3600000)}h)`,
       );
     }
     return {

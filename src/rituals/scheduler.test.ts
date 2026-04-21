@@ -68,9 +68,10 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Fifteen: 7 base rituals (+ day-narrative) + 2 F9 market rituals (morning-scan + eod-scan)
+    // Sixteen: 7 base rituals (+ day-narrative) + 2 F9 market rituals (morning-scan + eod-scan)
     //   + 1 KB backup + 1 autonomous improvement + 1 diff digest + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
-    expect(mockSchedule).toHaveBeenCalledTimes(15);
+    //   + 1 PM daily rebalance (F8.1c)
+    expect(mockSchedule).toHaveBeenCalledTimes(16);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -92,7 +93,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(15);
+    expect(mockStop).toHaveBeenCalledTimes(16);
   });
 });
 
@@ -286,6 +287,82 @@ describe("task templates", () => {
         `requiredTools entry ${t} must appear in tools`,
       ).toContain(t);
     }
+  });
+
+  // F8.1c — PM daily rebalance ritual
+  it("pm-daily-rebalance tools all exist in the registry", async () => {
+    const { createPmDailyRebalance } = await import("./pm-daily-rebalance.js");
+    const { ToolRegistry } = await import("../tools/registry.js");
+    const { BuiltinToolSource } = await import("../tools/sources/builtin.js");
+    const reg = new ToolRegistry();
+    await new BuiltinToolSource().registerTools(reg);
+    const tpl = createPmDailyRebalance("2026-04-21");
+    for (const t of tpl.tools ?? []) {
+      if (RUNTIME_REGISTERED_TOOLS.has(t)) continue;
+      expect(reg.get(t), `tool missing: ${t}`).toBeDefined();
+    }
+    for (const t of tpl.requiredTools ?? []) {
+      expect(
+        tpl.tools,
+        `requiredTools entry ${t} must appear in tools`,
+      ).toContain(t);
+    }
+  });
+
+  it("pm-daily-rebalance dispatch case is wired in getTaskTemplate", async () => {
+    // startRitualScheduler iterates rituals[] and dispatches via getTaskTemplate.
+    // Confirm the scheduler actually calls createPmDailyRebalance for the new id.
+    // R2 MAJ-1: the cron callback is `() => void executeRitual(ritual)` — the
+    // void wrapper swallows rejected promises, so a not-toThrow check is a
+    // false-positive. Instead assert that submitTask was called (i.e. the
+    // dispatch path resolved the template successfully and reached submission)
+    // by forcing alreadyRanToday=false.
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+    mockSubmitTask.mockClear();
+
+    const { rituals } = await import("./config.js");
+    const r = rituals.find((x) => x.id === "pm-daily-rebalance");
+    expect(r).toBeDefined();
+
+    startRitualScheduler();
+    const enabled = rituals.filter((x) =>
+      x.id === "overnight-tuning" ? false : x.enabled,
+    );
+    const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
+    // Drive the callback and await its async work. If getTaskTemplate's
+    // switch is missing the pm-daily-rebalance case, executeRitual throws
+    // "Unknown ritual" and submitTask is never called.
+    await callback();
+    expect(mockSubmitTask).toHaveBeenCalled();
+    // And confirm the submitted task title came from createPmDailyRebalance,
+    // not some other ritual template — tight binding of dispatch → template.
+    const submission = mockSubmitTask.mock.calls[0][0];
+    expect(submission.title).toMatch(/PM daily rebalance/);
+  });
+
+  // F8.1c N-R2-2: confirm PM daily rebalance is NOT gated by NYSE trading-day
+  // check — PM markets don't follow equity calendar. Force non-trading-day
+  // and assert the PM ritual still submits.
+  it("pm-daily-rebalance is NOT gated by NYSE trading-day check", async () => {
+    mockGet.mockReturnValue(undefined);
+    mockSubmitTask.mockClear();
+    const calendarModule = await import("../finance/market-calendar.js");
+    const spy = vi
+      .spyOn(calendarModule, "isNyseTradingDay")
+      .mockReturnValue(false);
+
+    const { rituals } = await import("./config.js");
+    startRitualScheduler();
+    const enabled = rituals.filter((x) =>
+      x.id === "overnight-tuning" ? false : x.enabled,
+    );
+    const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
+    const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
+    await callback();
+    expect(mockSubmitTask).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

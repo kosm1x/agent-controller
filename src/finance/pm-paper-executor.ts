@@ -4,13 +4,16 @@
  * Consumes `pm_alpha_latest` weights, sizes each active token by
  * `|weight| × total_equity`, diffs vs current holdings, generates orders
  * (sells-first), executes via the injected adapter, persists a
- * `trade_theses` row with `entry_signal='pm_weekly_rebalance'`.
+ * `trade_theses` row with `entry_signal='pm_{cadence}_rebalance'`.
  *
  * Parallel to F8's equity `paper-executor.ts` but keyed on
- * (marketId, outcome) rather than symbol. v1 handles positive weights only;
- * negative weights (shorting YES = buying NO from zero) are deferred to
- * F8.1b.2 — current behavior: negative weight on a held YES sells what's
- * there, zero-opens NO side.
+ * (marketId, outcome) rather than symbol.
+ *
+ * F8.1c — negative α-weights open NO-side positions by rewriting the target
+ * onto the complement outcome (binary markets only). Multi-outcome markets
+ * skip the short and log `multi_outcome_short_unsupported`. `cadence` param
+ * threads through to `entry_signal` so daily vs weekly runs are separable
+ * in audit queries.
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,6 +29,7 @@ import {
   insertPmPortfolioThesis,
   linkPmFillsToThesis,
 } from "./pm-paper-persist.js";
+import { getDatabase } from "../db/index.js";
 
 const SHARES_PRECISION = 1e4;
 const DUST_MIN_NOTIONAL = 10; // $10 USDC — don't churn on sub-threshold deltas
@@ -65,6 +69,12 @@ export interface PmRebalanceOpts {
    * explicitly. Defaults to false — stale marks make sizing untrustworthy.
    */
   allowStale?: boolean;
+  /**
+   * F8.1c — rebalance cadence. Drives the persisted `entry_signal` so audit
+   * queries can distinguish weekly-equity-rhythm runs from PM-native daily
+   * runs. Default "weekly" preserves F8.1b behavior.
+   */
+  cadence?: "weekly" | "daily";
 }
 
 export interface PmRebalanceSummary {
@@ -98,6 +108,66 @@ function tokenSymbol(marketId: string, outcome: string): string {
   return `${marketId}:${outcome}`;
 }
 
+/**
+ * F8.1c — resolve the complement outcome for NO-side opens. Binary PM markets
+ * use Yes/No (or SÍ/NO, True/False). We match by common complement pairs.
+ * Returns null if the market has >2 outcomes or the primary isn't a known
+ * side — in which case NO-side shorting is skipped (logged exclusion).
+ */
+const COMPLEMENT_PAIRS: Array<[string, string]> = [
+  ["yes", "no"],
+  ["no", "yes"],
+  ["true", "false"],
+  ["false", "true"],
+  ["up", "down"],
+  ["down", "up"],
+  ["si", "no"],
+  ["sí", "no"],
+];
+
+/**
+ * F8.1c W1 fix — read the cached outcome count for a market to decide
+ * whether NO-side shorting is semantically safe. Markets with >2 outcomes
+ * can't be shorted by "buying the complement" because the complement's
+ * probability mass is spread across multiple tokens, not a single NO token.
+ * Returns undefined for unknown markets; the caller treats undefined as
+ * "assume binary, proceed" — any subsequent `complementOutcome` or
+ * `getMarketData` failure then surfaces a `no_quote` skip instead of a
+ * silent mis-hedge. Flip-check: if fail-closed is preferred, caller can
+ * treat undefined as "skip" by changing the guard at the call site.
+ */
+export function marketOutcomeCount(marketId: string): number | undefined {
+  try {
+    const db = getDatabase();
+    const row = db
+      .prepare(
+        `SELECT outcome_tokens FROM prediction_markets
+           WHERE market_id = ? ORDER BY fetched_at DESC LIMIT 1`,
+      )
+      .get(marketId) as { outcome_tokens: string | null } | undefined;
+    if (!row?.outcome_tokens) return undefined;
+    const parsed = JSON.parse(row.outcome_tokens);
+    return Array.isArray(parsed) ? parsed.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function complementOutcome(primary: string): string | null {
+  const key = primary.trim().toLowerCase();
+  for (const [a, b] of COMPLEMENT_PAIRS) {
+    if (key === a) {
+      // Preserve capitalization pattern of the primary ("Yes" → "No", "YES" → "NO").
+      if (primary === primary.toUpperCase()) return b.toUpperCase();
+      if (primary[0] === primary[0].toUpperCase()) {
+        return b.charAt(0).toUpperCase() + b.slice(1);
+      }
+      return b;
+    }
+  }
+  return null;
+}
+
 export async function runPmRebalance(
   opts: PmRebalanceOpts,
 ): Promise<PmRebalanceSummary> {
@@ -119,13 +189,42 @@ export async function runPmRebalance(
     if (p.stale) staleMarkets.push(key);
   }
 
-  // Fetch quotes for every target. No-quote tokens skip cleanly.
+  // Fetch quotes for every target. No-quote tokens skip cleanly. For NO-side
+  // opens (negative weight), resolve the complement outcome and fetch its
+  // quote — the rebalance acts on the NO key, not the YES key.
   const quotes = new Map<string, number>();
   const skipped: string[] = [];
   const targetByKey = new Map<string, PmTokenTarget>();
   for (const t of opts.targets) {
-    const key = tokenSymbol(t.marketId, t.outcome);
-    targetByKey.set(key, t);
+    let effectiveOutcome = t.outcome;
+    if (t.weight < 0) {
+      // Binary-only guard: if the market has >2 outcomes, "buying the
+      // complement" doesn't cleanly hedge the short. Skip with explicit
+      // reason so audit queries can spot semantic gaps in alpha output.
+      const outcomeCount = marketOutcomeCount(t.marketId);
+      if (outcomeCount !== undefined && outcomeCount > 2) {
+        skipped.push(
+          `${tokenSymbol(t.marketId, t.outcome)}:multi_outcome_short_unsupported`,
+        );
+        continue;
+      }
+      const complement = complementOutcome(t.outcome);
+      if (!complement) {
+        skipped.push(
+          `${tokenSymbol(t.marketId, t.outcome)}:multi_outcome_short_unsupported`,
+        );
+        continue;
+      }
+      effectiveOutcome = complement;
+    }
+    const key = tokenSymbol(t.marketId, effectiveOutcome);
+    // Rewrite target to the effective (possibly complemented) outcome and
+    // flip weight to positive — downstream sizing math is now uniform.
+    targetByKey.set(key, {
+      marketId: t.marketId,
+      outcome: effectiveOutcome,
+      weight: Math.abs(t.weight),
+    });
     try {
       const q = await adapter.getMarketData(key);
       quotes.set(key, q.price);
@@ -167,12 +266,12 @@ export async function runPmRebalance(
       if (price === undefined || !(price > 0)) continue;
       const held = currentShares.get(key) ?? 0;
       const target = targetByKey.get(key);
-      const weight = target?.weight ?? 0;
-      // |weight| × equity = target notional. Negative weight → target 0 on YES
-      // side; pure exit at v1 (shorting-via-NO-side deferred to F8.1b.2).
-      const effectiveWeight = Math.max(0, weight);
-      const targetNotional =
-        balBefore.totalEquity * cashBufferFactor * effectiveWeight;
+      // targetByKey rewriting (above) has already flipped NO-side shorts onto
+      // their complement key with positive weight; this path only sees non-
+      // negative weights now. Clamp defensively to 0 so any rogue negative
+      // (e.g. hand-constructed targets) still collapses to full exit.
+      const weight = Math.max(0, target?.weight ?? 0);
+      const targetNotional = balBefore.totalEquity * cashBufferFactor * weight;
       const targetShares = roundShares(targetNotional / price);
       const delta = roundShares(targetShares - held);
       if (delta === 0) continue;
@@ -214,6 +313,9 @@ export async function runPmRebalance(
   const targetWeightsDump: Record<string, { outcome: string; weight: number }> =
     {};
   for (const t of opts.targets) {
+    // Record the INTENT weight (signed) from the alpha layer, not the
+    // rewritten complement — downstream audit wants to see the original
+    // alpha decision.
     targetWeightsDump[t.marketId] = { outcome: t.outcome, weight: t.weight };
   }
   // Annotate thesis when aborted so downstream audit queries can distinguish
@@ -232,6 +334,7 @@ export async function runPmRebalance(
       targetWeights: targetWeightsDump,
       notes: notesWithAbort,
       aborted: stalePositionsAborted,
+      cadence: opts.cadence ?? "weekly",
     },
     nowIso,
   );
