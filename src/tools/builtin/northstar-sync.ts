@@ -582,22 +582,34 @@ export const northstarSyncTool: Tool = {
     type: "function",
     function: {
       name: "northstar_sync",
-      description: `Bidirectional Last-Write-Wins sync between NorthStar files and COMMIT (db.mycommit.net).
+      description: `Reconciliation between NorthStar files (Jarvis local) and COMMIT (db.mycommit.net app). NorthStar and COMMIT are PEER data stores, not master-mirror. Changes on either side stay local until THIS tool is invoked.
 
 RULES:
-- Record-level LWW: whichever side edited most recently wins the whole record.
-- Unsynced-edit detection:
-  * COMMIT side: \`modified_by == "user"\` means the app edited since our last sync.
-  * Jarvis side: \`user_edit_time\` bumped only by real file edits, not by sync writes.
-- Deletions propagate both ways via the \`northstar_sync_state\` journal:
-  * record in journal + missing on one side → deleted by user → propagate delete
-  * record not in journal + missing on one side → new, just created → propagate create
-- First run (empty journal) is bootstrap mode: create across the gap, NO deletes.
+- Record-level LWW for updates: whichever side edited most recently wins the whole record.
+  * COMMIT-side user edit = \`modified_by == "user"\` + advanced \`last_edited_at\`
+  * Jarvis-side user edit = \`user_edit_time > journal.last_sync_at\`
+- Deletions propagate BOTH ways via the \`northstar_sync_state\` journal:
+  * journal has it + missing on one side → propagate delete to other side
+  * journal empty on first run → bootstrap mode (create across the gap, NO deletes)
+- Create propagation (v1 — LIMITED): COMMIT→Jarvis only. COMMIT-side new
+  records are pulled down as local files. LOCAL-side new records (files
+  without a COMMIT_ID) are SILENTLY SKIPPED — they don't appear in the sync
+  report at all. Bidirectional create is planned as v2.
 
-DIRECTION: always full bidirectional — no direction param anymore (the old
-field-level merge is gone; record-level LWW is the only mode).
+USE WHEN:
+- User explicitly asks to "sync" / "reconcilia" / "actualiza COMMIT".
+- Verifying state after a series of edits or deletes.
 
-GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
+DO NOT CALL:
+- Right after \`jarvis_file_write\` creating a NEW NorthStar item. The new file
+  has no COMMIT_ID and sync won't push it; calling sync will look like a no-op
+  and will tempt you to escalate (e.g. asking for Supabase credentials to
+  INSERT directly). Don't. The local file is a complete, valid record on its
+  own — that's the design. The user will reconcile via the app when ready.
+
+GOTCHA: "0 pulled + 0 pushed + 0 deleted, Unchanged: N" means everything's in
+sync. "Skipped: N" with file paths listed means local records have COMMIT_IDs
+that don't exist on COMMIT (orphaned IDs; v1 limitation).`,
       parameters: {
         type: "object",
         properties: {},

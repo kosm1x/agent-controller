@@ -131,7 +131,7 @@ USE WHEN:
 
 PATHS — follow the hierarchy:
 - "directives/*.md" — standing orders (enforce). DO NOT create new ones without user approval.
-- "NorthStar/**/*.md" — visions, goals, objectives, tasks
+- "NorthStar/**/*.md" — visions, goals, objectives, tasks. Local creation is a COMPLETE operation: the file IS the record. Leave \`COMMIT_ID:\` empty for new items. Do NOT call northstar_sync expecting it to push the new file to COMMIT — sync is reconciliation between existing peer records, not creation. COMMIT (the app at db.mycommit.net) and NorthStar (Jarvis's local files) are peers; changes stay local until explicit sync.
 - "projects/{slug}/*.md" — project-specific files. README.md in each project.
 - "knowledge/people/*.md" — contacts, relationships
 - "knowledge/procedures/*.md" — SOPs, protocols
