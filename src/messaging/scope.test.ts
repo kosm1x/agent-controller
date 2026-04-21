@@ -751,13 +751,60 @@ describe("northstar_write sub-patterns", () => {
     expect(tools).toContain("jarvis_file_delete");
   });
 
-  it("clitic delete pronoun: 'elimínala'", () => {
+  it("clitic + noun in same message: 'esa meta, elimínala'", () => {
+    // The clitic resolves because "meta" appears in the same message, activating
+    // both destructive (via clitic verb) and northstar_read (via noun) — the
+    // co-occurrence rule promotes it to northstar_write.
     const tools = scope("Esa meta ya no sirve, elimínala");
     expect(tools).toContain("jarvis_file_delete");
   });
 
-  it("clitic delete pronoun: 'bórralo'", () => {
-    const tools = scope("Ese objetivo está obsoleto, bórralo");
+  it("non-NorthStar clitic does NOT pull jarvis_file_delete", () => {
+    // "borra esta imagen, bórrala" → destructive present but no NorthStar
+    // noun → co-occurrence rule does NOT fire → write tools stay out of scope.
+    const tools = scope("borra esta imagen, bórrala del feed");
+    expect(tools).not.toContain("jarvis_file_delete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Classifier-path regression: destructive + northstar_read (the shape the
+// LLM classifier returns for bare "elimina la tarea X") must promote to
+// northstar_write so jarvis_file_delete loads. This is the real-world path
+// that reproduced the user's "can't delete" bug after the regex-only fix.
+// ---------------------------------------------------------------------------
+
+describe("destructive + northstar co-occurrence (classifier path)", () => {
+  it("classifier groups [destructive, northstar_read] → jarvis_file_delete present", () => {
+    const tools = scopeToolsForMessage(
+      "elimina la tarea de prueba",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive", "northstar_read"]),
+    );
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("classifier groups [destructive] alone → jarvis_file_delete NOT present", () => {
+    const tools = scopeToolsForMessage(
+      "borra eso",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive"]),
+    );
+    expect(tools).not.toContain("jarvis_file_delete");
+  });
+
+  it("classifier groups [destructive, northstar_journal] → jarvis_file_delete present", () => {
+    const tools = scopeToolsForMessage(
+      "borra la entrada de diario de ayer",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive", "northstar_journal"]),
+    );
     expect(tools).toContain("jarvis_file_delete");
   });
 });

@@ -403,17 +403,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // "quita el objetivo Y", "delete task Z", "remove goal A".
     // jarvis_file_delete still gates on isPreciousPath, so activation only
     // exposes the tool — confirmation is still required before any write.
+    // Unanchored clitic deletes ("elimínala", "bórralo") are handled by the
+    // destructive + NorthStar co-occurrence rule in scopeToolsForMessage
+    // (fires on referential inheritance when a NorthStar noun appeared in a
+    // prior turn), not by a standalone regex here — that was too loose.
     pattern:
-      /\b(?:elim[ií]na(?:r|la|lo|las|los|me)?|b[oó]rra(?:r|la|lo|las|los|me)?|quita(?:r)?|elim[ií]name|delete|remove)\w*(?:\s+\S+){0,4}\s*(?:tarea|meta|objetivo|visi[oó]n|goal|task|objective|vision)/i,
-    group: "northstar_write",
-  },
-  {
-    // Clitic delete forms referring to a previously-mentioned NorthStar item:
-    // "elimínala", "bórralo", "quítalos", "borrarlas", "elimínalas".
-    // Narrow set — only fires on delete-verb + pronoun suffix. No file-ish
-    // anchor needed because clitics imply referential continuity.
-    pattern:
-      /\b(?:elim[ií]na|b[oó]rra|qu[ií]ta)(?:lo|la|los|las|rlo|rla|rlos|rlas)\b/i,
+      /\b(?:elim[ií]na(?:r|la|lo|las|los)?|b[oó]rra(?:r|la|lo|las|los)?|quita(?:r)?|delete|remove)\w*(?:\s+\S+){0,4}\s*(?:tarea|meta|objetivo|visi[oó]n|goal|task|objective|vision)/i,
     group: "northstar_write",
   },
   {
@@ -443,8 +438,13 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "jarvis_write",
   },
   {
+    // Destructive intent detection — accented ES clitics (elim[ií]na/b[oó]rra/
+    // qu[ií]ta) must match so "elimínala" / "bórralo" count as delete intent.
+    // Without the accent-tolerant char-class, the classifier's destructive
+    // activation misses stressed forms and the co-occurrence rule in
+    // scopeToolsForMessage never fires → jarvis_file_delete stays offscope.
     pattern:
-      /\b(elimina(r|la|las|lo|los)?|borra(r|la|las|lo|los)?|delete|quita(r)?|remove)\b/i,
+      /\b(elim[ií]na(r|la|las|lo|los)?|b[oó]rra(r|la|las|lo|los)?|delete|qu[ií]ta(r)?|remove)\b/i,
     group: "destructive", // Intent detection only — destructive tools (file_delete, etc.) live in their domain groups (CODING, GOOGLE)
   },
   {
@@ -880,6 +880,22 @@ export function scopeToolsForMessage(
       }
     }
     // else: no scope signals and not a short follow-up → core tools only
+  }
+
+  // Destructive intent in a NorthStar context → NorthStar write intent.
+  // The classifier routes bare delete verbs ("elimina la tarea X") to
+  // `destructive`, which by itself does NOT wire `JARVIS_WRITE_TOOLS`.
+  // Without this rule, the user-visible bug is "Jarvis says it can't delete
+  // NorthStar entries". Co-occurrence with any NorthStar group gates the
+  // activation so we don't leak write tools into non-NorthStar deletes
+  // (e.g. "borra esta imagen").
+  if (
+    activeGroups.has("destructive") &&
+    (activeGroups.has("northstar_read") ||
+      activeGroups.has("northstar_write") ||
+      activeGroups.has("northstar_journal"))
+  ) {
+    activeGroups.add("northstar_write");
   }
 
   // Assemble scoped tool list — start with minimal core

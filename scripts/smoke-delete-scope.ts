@@ -22,14 +22,37 @@ const cases = [
   "hola Jarvis",
 ];
 
+const OPTS = {
+  hasGoogle: true,
+  hasWordpress: false,
+  hasMemory: true,
+  hasCrm: false,
+};
+
+console.log("--- regex-fallback path ---");
 for (const msg of cases) {
-  const tools = scopeToolsForMessage(msg, [], DEFAULT_SCOPE_PATTERNS, {
-    hasGoogle: true,
-    hasWordpress: false,
-    hasMemory: true,
-    hasCrm: false,
-  });
+  const tools = scopeToolsForMessage(msg, [], DEFAULT_SCOPE_PATTERNS, OPTS);
   const hasDelete = tools.includes("jarvis_file_delete");
-  const mark = hasDelete ? "DELETE" : "-----";
-  console.log(`${mark}  ${msg}`);
+  console.log(`${hasDelete ? "DELETE" : "-----"}  ${msg}`);
+}
+
+console.log("\n--- classifier path (simulating LLM output) ---");
+const classifierCases: [string, string[]][] = [
+  ["elimina la tarea de prueba", ["destructive", "northstar_read"]],
+  ["borra esa meta que ya no aplica", ["destructive", "northstar_read"]],
+  ["borra esta imagen", ["destructive"]],
+  ["elimínala", []], // classifier returns empty, needs referential inheritance
+];
+for (const [msg, groups] of classifierCases) {
+  const tools = scopeToolsForMessage(
+    msg,
+    [],
+    DEFAULT_SCOPE_PATTERNS,
+    OPTS,
+    new Set(groups),
+  );
+  const hasDelete = tools.includes("jarvis_file_delete");
+  console.log(
+    `${hasDelete ? "DELETE" : "-----"}  [${groups.join(",")}]  ${msg}`,
+  );
 }

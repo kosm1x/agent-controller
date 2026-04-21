@@ -40,7 +40,7 @@ const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI a
 
 GROUPS (return only the ones that apply):
 - northstar_read: reading tasks, goals, objectives, visions, NorthStar, pendientes, sync with db.mycommit
-- northstar_write: creating/updating/completing tasks, goals, objectives. "marca como completada", "crea una tarea"
+- northstar_write: creating/updating/completing/deleting tasks, goals, objectives, visions. "marca como completada", "crea una tarea", "elimina la tarea X", "borra esa meta", "quita ese objetivo", "delete that goal". Any mutation of a NorthStar item — including deletion — is northstar_write, NOT destructive.
 - northstar_journal: writing diary/journal entries
 - jarvis_write: writing/updating notes, SOPs, directives, rules, facts, lessons, procedures into Jarvis's knowledge base (the KB / base de conocimiento / jarvis_file_*). "guarda esta nota en el KB", "agrega una SOP", "registra esta regla", "escribe un SOP". Read-only KB consultations do NOT activate this group.
 - destructive: deleting, removing, cleaning up items
