@@ -24,12 +24,38 @@ interface ParsedPage {
   images_without_alt: number;
   word_count: number;
   raw_length: number;
+  plain_text?: string;
 }
 
 interface Finding {
   severity: "critical" | "warning" | "info";
   message: string;
   points_lost: number;
+}
+
+/**
+ * Content-quality signals from the Princeton KDD 2024 paper "GEO: Generative
+ * Engine Optimization" (https://arxiv.org/abs/2409.09978). Scored independently
+ * from the structural rubric so existing consumers of `score` are unaffected.
+ */
+interface ContentQuality {
+  /** Signals per 1000 words. Cite/stat density, plus presence flags + scalar scores. */
+  cite_density_per_1k: number;
+  stat_density_per_1k: number;
+  quote_count: number;
+  quote_presence: boolean;
+  /**
+   * Flesch-Kincaid grade level. Calibrated for English; Spanish/other
+   * non-English text will be skewed by the anglo syllable heuristic. Treat
+   * the grade as a relative signal across pages in the same language, not
+   * an absolute metric.
+   */
+  readability_grade: number;
+  keyword_stuffing_ratio: number; // highest single-noun repetition / total words
+  keyword_stuffing_term?: string;
+  /** Impact-weighted 0-100 score. Rewards cite/stat/quote density + readability. */
+  score: number;
+  notes: string[];
 }
 
 interface AuditResult {
@@ -40,6 +66,7 @@ interface AuditResult {
     good: string[];
   };
   parsed: ParsedPage;
+  content_quality?: ContentQuality;
 }
 
 /** Extract a domain from a URL safely. */
@@ -72,7 +99,7 @@ function parseJinaMarkdown(markdown: string): ParsedPage {
   const h1 = Array.from(body.matchAll(/^#\s+(.+)$/gm)).map((m) => m[1].trim());
   const h2 = Array.from(body.matchAll(/^##\s+(.+)$/gm)).map((m) => m[1].trim());
   const h3 = Array.from(body.matchAll(/^###\s+(.+)$/gm)).map((m) =>
-    m[3] ? m[3].trim() : m[1].trim(),
+    m[1].trim(),
   );
 
   // JSON-LD scripts (rare in Jina's markdown output — flag if present)
@@ -109,6 +136,255 @@ function parseJinaMarkdown(markdown: string): ParsedPage {
     images_without_alt: withoutAlt,
     word_count: wordCount,
     raw_length: markdown.length,
+    plain_text: plainText,
+  };
+}
+
+// -- Content-quality (Princeton KDD 2024 GEO signals) ----------------------
+
+/** Rough syllable count per word — enough for Flesch-Kincaid. */
+function countSyllables(word: string): number {
+  const w = word.toLowerCase().replace(/[^a-záéíóúñü]/g, "");
+  if (w.length === 0) return 0;
+  if (w.length <= 3) return 1;
+  const trimmed = w.replace(/(es|ed|e)$/, "").replace(/^y/, "");
+  const groups = trimmed.match(/[aeiouyáéíóúü]+/g);
+  return Math.max(1, groups?.length ?? 1);
+}
+
+/** Flesch-Kincaid Grade Level from plain text. */
+function fleschKincaidGrade(text: string): number {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 0;
+  const sentences = Math.max(1, text.split(/[.!?]+\s/).filter(Boolean).length);
+  const syllables = words.reduce((sum, w) => sum + countSyllables(w), 0);
+  const wordsPerSentence = words.length / sentences;
+  const syllablesPerWord = syllables / words.length;
+  const grade = 0.39 * wordsPerSentence + 11.8 * syllablesPerWord - 15.59;
+  return Math.max(0, Math.round(grade * 10) / 10);
+}
+
+/** Stopwords excluded from keyword-stuffing analysis. EN + ES union. */
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "have",
+  "has",
+  "are",
+  "was",
+  "were",
+  "you",
+  "your",
+  "yours",
+  "will",
+  "would",
+  "could",
+  "should",
+  "their",
+  "they",
+  "them",
+  "our",
+  "ours",
+  "about",
+  "into",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "been",
+  "being",
+  "than",
+  "also",
+  "some",
+  "such",
+  "more",
+  "most",
+  "very",
+  "just",
+  "there",
+  "here",
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "que",
+  "por",
+  "con",
+  "para",
+  "pero",
+  "como",
+  "este",
+  "esta",
+  "estos",
+  "estas",
+  "esa",
+  "ese",
+  "esos",
+  "esas",
+  "del",
+  "de",
+  "lo",
+  "al",
+  "su",
+  "sus",
+  "se",
+  "le",
+  "les",
+  "nos",
+  "mi",
+  "tu",
+  "es",
+  "son",
+  "era",
+  "eran",
+  "sin",
+  "sobre",
+  "entre",
+  "hasta",
+  "desde",
+  "muy",
+  "mas",
+  "más",
+  "menos",
+  "qué",
+  "cuál",
+]);
+
+function keywordStuffing(text: string): {
+  ratio: number;
+  term?: string;
+} {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^\p{L}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 4 && !STOPWORDS.has(t));
+  if (tokens.length < 50) return { ratio: 0 };
+  const counts = new Map<string, number>();
+  for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
+  let topTerm = "";
+  let topCount = 0;
+  for (const [t, c] of counts) {
+    if (c > topCount) {
+      topCount = c;
+      topTerm = t;
+    }
+  }
+  return { ratio: topCount / tokens.length, term: topTerm };
+}
+
+function computeContentQuality(parsed: ParsedPage): ContentQuality {
+  const text = parsed.plain_text ?? "";
+  const notes: string[] = [];
+  // Short-circuit on thin content — emitting "low citation density (0/1k words)"
+  // on a 20-word page is noise, not signal.
+  if (!text || parsed.word_count < 50) {
+    return {
+      cite_density_per_1k: 0,
+      stat_density_per_1k: 0,
+      quote_count: 0,
+      quote_presence: false,
+      readability_grade: 0,
+      keyword_stuffing_ratio: 0,
+      score: 0,
+      notes: ["Content too short for quality analysis (<50 words)"],
+    };
+  }
+  const words = Math.max(1, parsed.word_count);
+  const per1k = (n: number) => Math.round((n / words) * 10000) / 10;
+
+  // Citations: [1]-style brackets OR (Author, Year) OR inline-URL pattern.
+  const bracketCites = text.match(/\[\d{1,3}\]/g)?.length ?? 0;
+  const authorYearCites =
+    text.match(
+      /\([A-Z][a-z]+(?:\s(?:et al\.?|&|and)\s[A-Z][a-z]+)?,\s*\d{4}\)/g,
+    )?.length ?? 0;
+  const hyperlinks = text.match(/\bhttps?:\/\/\S+/g)?.length ?? 0;
+  const cites = bracketCites + authorYearCites + hyperlinks;
+
+  // Statistics: numbers with % / percent / × / x / std units.
+  const stats =
+    text.match(/\b\d+(?:\.\d+)?\s*(?:%|percent|×|x\b|USD|EUR|GBP)/gi)?.length ??
+    0;
+
+  // Quotes: ASCII double, curly double (U+201C/U+201D), OR >blockquote lines.
+  const straightQuotes = text.match(/"[^"]{5,}"/g)?.length ?? 0;
+  const curlyQuotes = text.match(/[“][^“”]{5,}[”]/g)?.length ?? 0;
+  const blockQuotes = text.match(/(?:^|\n)>\s+/g)?.length ?? 0;
+  const quoteCount = straightQuotes + curlyQuotes + blockQuotes;
+
+  const grade = fleschKincaidGrade(text);
+  const stuffing = keywordStuffing(text);
+
+  // Impact-weighted score. Cite-density and stat-density are the highest-lift
+  // Princeton signals (+30-115% and +40% citation-likelihood respectively).
+  let score = 100;
+  const citeDensity = per1k(cites);
+  const statDensity = per1k(stats);
+  if (citeDensity < 2) {
+    score -= 15;
+    notes.push(
+      `Low citation density (${citeDensity}/1k words) — Princeton finds citations lift AI-overview inclusion 30-115%`,
+    );
+  } else {
+    notes.push(`Citation density: ${citeDensity}/1k words`);
+  }
+  if (statDensity < 1) {
+    score -= 15;
+    notes.push(
+      `Low statistic density (${statDensity}/1k words) — hard numbers lift citation likelihood ~40%`,
+    );
+  } else {
+    notes.push(`Statistic density: ${statDensity}/1k words`);
+  }
+  if (quoteCount === 0) {
+    score -= 10;
+    notes.push(
+      "No quotes detected — Princeton finds quote presence lifts inclusion 30-40%",
+    );
+  } else {
+    notes.push(`Quote presence: ${quoteCount} quotes`);
+  }
+  if (grade > 16) {
+    score -= 15;
+    notes.push(
+      `Readability grade ${grade} is very high — AI overviews favor grade 10-14 content`,
+    );
+  } else if (grade < 8) {
+    score -= 5;
+    notes.push(
+      `Readability grade ${grade} — may be too basic for authority signals`,
+    );
+  } else {
+    notes.push(`Readability grade ${grade} (AI-overview-friendly)`);
+  }
+  if (stuffing.ratio > 0.03) {
+    score -= 15;
+    notes.push(
+      `Possible keyword stuffing — "${stuffing.term}" appears ${(stuffing.ratio * 100).toFixed(1)}% of tokens`,
+    );
+  }
+
+  return {
+    cite_density_per_1k: citeDensity,
+    stat_density_per_1k: statDensity,
+    quote_count: quoteCount,
+    quote_presence: quoteCount > 0,
+    readability_grade: grade,
+    keyword_stuffing_ratio: Math.round(stuffing.ratio * 10000) / 10000,
+    keyword_stuffing_term: stuffing.term,
+    score: Math.max(0, score),
+    notes,
   };
 }
 
@@ -290,6 +566,7 @@ function scorePage(parsed: ParsedPage, targetKeyword?: string): AuditResult {
       good,
     },
     parsed,
+    content_quality: computeContentQuality(parsed),
   };
 }
 
@@ -426,6 +703,7 @@ Returns score, prioritized issues (critical first), and a list of what's already
       domain,
       score: result.score,
       findings: result.findings,
+      content_quality: result.content_quality,
       parsed_summary: {
         title: parsed.title,
         meta_description: parsed.meta_description,

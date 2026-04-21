@@ -188,6 +188,42 @@ describe("seo_page_audit", () => {
     ).toBe(true);
   });
 
+  it("surfaces content_quality section with Princeton signals", async () => {
+    const richMarkdown = mockJinaMarkdown({
+      title: "How LLMs Index Content — Princeton 2024 Study Results",
+      description:
+        "Princeton researchers found specific citation and statistic density signals predict AI overview inclusion rates strongly.",
+      h1: ["How LLMs Index Content"],
+      h2: ["Findings", "Methods"],
+      body:
+        "The Princeton KDD 2024 study [1] found citation density lifts AI-overview inclusion 30%. " +
+        'Another key signal: "We observed a 40% increase in attribution when pages contain hard statistics" (Smith, 2024). ' +
+        "Content with a 15% citation rate outperformed median pages. Our analysis [2] of 100000 queries confirmed this. " +
+        'Quote: "Structured evidence beats sparse prose." Readability grade 11 correlates strongly. ' +
+        "References: https://arxiv.org/abs/2409.09978 and https://example.org/gsc-data.",
+      images: [{ alt: "study fig 1" }],
+      jsonLd: '{"@context":"https://schema.org"}',
+    });
+    mockWebReadExecute.mockResolvedValueOnce(
+      JSON.stringify({
+        content: richMarkdown,
+        url: "https://example.com/princeton-study",
+      }),
+    );
+    const result = JSON.parse(
+      await seoPageAuditTool.execute({
+        url: "https://example.com/princeton-study",
+      }),
+    );
+    expect(result.content_quality).toBeDefined();
+    expect(result.content_quality.cite_density_per_1k).toBeGreaterThan(0);
+    expect(result.content_quality.stat_density_per_1k).toBeGreaterThan(0);
+    expect(result.content_quality.quote_presence).toBe(true);
+    expect(result.content_quality.readability_grade).toBeGreaterThan(0);
+    expect(result.content_quality.score).toBeGreaterThan(0);
+    expect(Array.isArray(result.content_quality.notes)).toBe(true);
+  });
+
   it("returns error when fetch fails", async () => {
     mockWebReadExecute.mockResolvedValueOnce(
       JSON.stringify({ error: "Failed to fetch", url: "https://example.com" }),

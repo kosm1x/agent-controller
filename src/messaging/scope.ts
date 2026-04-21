@@ -245,6 +245,13 @@ export const SEO_TOOLS = [
   "seo_meta_generate",
   "seo_schema_generate",
   "seo_content_brief",
+  // v7.3 Phase 5 — GEO depth
+  "seo_robots_audit",
+  "seo_llms_txt_generate",
+  // v7.3 Phase 2 — SEO telemetry
+  "seo_telemetry",
+  // v7.3 Phase 3 — AI Overview monitoring
+  "ai_overview_track",
 ];
 
 /** F1+F2+F3+F4+F5+F6+F6.5 finance tools — scope-gated on market/ticker/watchlist/indicator/signal/macro/prediction/whale/sentiment vocabulary. */
@@ -508,7 +515,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     // v7.3 SEO/GEO scope — activates on explicit SEO terminology.
     pattern:
-      /\b(seo|posicionamiento|palabras?\s+clave|keyword\s*research|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|rankings?|serp|pagespeed|core\s+web\s+vitals|lighthouse|sitemap|canonical|e-?e-?a-?t|content\s+brief|ai\s+overview|generative\s+engine|geo\s+(?:keywords?|signals?)|rich\s+results?|structured\s+data|open\s+graph|og\s+tags?|twitter\s+card)\b/i,
+      /\b(seo|posicionamiento|palabras?\s+clave|keyword\s*research|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|rankings?|serp|pagespeed|core\s+web\s+vitals|lighthouse|sitemap|canonical|e-?e-?a-?t|content\s+brief|ai\s+overview|generative\s+engine|geo\s+(?:keywords?|signals?|depth)|rich\s+results?|structured\s+data|open\s+graph|og\s+tags?|twitter\s+card|llms\.txt|ai[-\s]?bots?|robots\.txt|readability|flesch|citation\s+density|stat(?:istic)?\s+density|search\s+console|gsc\b|impressions|clicks|ctr\b|panel\s+(?:ia|ai)|resumen\s+(?:ia|ai)|sge\b|aio\b)/i,
     group: "seo",
   },
   {

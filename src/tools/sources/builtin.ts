@@ -142,6 +142,10 @@ import { seoKeywordResearchTool } from "../builtin/seo-keyword-research.js";
 import { seoMetaGenerateTool } from "../builtin/seo-meta-generate.js";
 import { seoSchemaGenerateTool } from "../builtin/seo-schema-generate.js";
 import { seoContentBriefTool } from "../builtin/seo-content-brief.js";
+import { seoRobotsAuditTool } from "../builtin/seo-robots-audit.js";
+import { seoLlmsTxtGenerateTool } from "../builtin/seo-llms-txt-generate.js";
+import { seoTelemetryTool } from "../builtin/seo-telemetry.js";
+import { aiOverviewTrackTool } from "../builtin/ai-overview-track.js";
 import { googleWorkspaceCliTool } from "../builtin/google-workspace-cli.js";
 import {
   marketQuoteTool,
@@ -282,6 +286,10 @@ const BUILTIN_TOOLS: Tool[] = [
   seoMetaGenerateTool,
   seoSchemaGenerateTool,
   seoContentBriefTool,
+  seoRobotsAuditTool,
+  seoLlmsTxtGenerateTool,
+  seoTelemetryTool,
+  aiOverviewTrackTool,
   // F1 finance tools (v7.0 Phase β S1) — deferred, scope 'finance'
   marketQuoteTool,
   marketHistoryTool,

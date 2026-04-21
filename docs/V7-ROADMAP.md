@@ -561,7 +561,7 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.3 Phase 2 — SEO Telemetry (PageSpeed Insights + Search Console) — **Planned**
+## v7.3 Phase 2 — SEO Telemetry (PageSpeed Insights + Search Console) — **Done** (2026-04-21)
 
 > 1 session. Depends on v7.6 (uses gws OAuth/Discovery pattern for Search Console).
 
@@ -574,7 +574,7 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.3 Phase 3 — AI Overview Monitoring — **Planned**
+## v7.3 Phase 3 — AI Overview Monitoring — **Done** (2026-04-21, MVP)
 
 > 1 session. Depends on F1 schedule infrastructure. The GEO differentiator toprank lacks.
 
@@ -587,7 +587,7 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.3 Phase 5 — GEO Depth (Princeton + llms.txt + AI-bots) — **Planned**
+## v7.3 Phase 5 — GEO Depth (Princeton + llms.txt + AI-bots) — **Done** (2026-04-21)
 
 > 1 session. Depends on nothing. Source: `reference_geo_optimizer.md` (Auriti-Labs MIT). Fills content-quality diagnostic gap in Phase 1 audit + 2 new tools for emerging GEO standards.
 

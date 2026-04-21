@@ -159,6 +159,40 @@ export function initDatabase(dbPath: string): Database.Database {
     /* column already exists */
   }
 
+  // v7.3 Phase 2: SEO telemetry snapshots (PSI + GSC time-series)
+  _db.exec(`CREATE TABLE IF NOT EXISTS seo_telemetry_snapshots (
+    id                 INTEGER PRIMARY KEY,
+    url                TEXT NOT NULL,
+    captured_at        TEXT DEFAULT (datetime('now')),
+    psi_lcp_ms         INTEGER,
+    psi_inp_ms         INTEGER,
+    psi_cls            REAL,
+    psi_perf_score     INTEGER,
+    psi_seo_score      INTEGER,
+    gsc_clicks_28d     INTEGER,
+    gsc_impressions_28d INTEGER,
+    gsc_ctr_28d        REAL,
+    gsc_top_queries    TEXT,
+    raw                TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_seo_telemetry_url ON seo_telemetry_snapshots(url, captured_at DESC)",
+  );
+
+  // v7.3 Phase 3: AI-overview presence tracking (time-series per query)
+  _db.exec(`CREATE TABLE IF NOT EXISTS ai_overview_tracking (
+    id           INTEGER PRIMARY KEY,
+    query        TEXT NOT NULL,
+    captured_at  TEXT DEFAULT (datetime('now')),
+    present      INTEGER NOT NULL CHECK(present IN (0,1)),
+    sources      TEXT,
+    serp_top     TEXT,
+    fetch_status TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_aio_query ON ai_overview_tracking(query, captured_at DESC)",
+  );
+
   // NorthStar ↔ COMMIT sync journal — lets LWW distinguish "never existed" from "was deleted".
   _db.exec(`CREATE TABLE IF NOT EXISTS northstar_sync_state (
     commit_id              TEXT PRIMARY KEY,
