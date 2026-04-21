@@ -54,6 +54,15 @@ function installFetchMock() {
       if (method === "DELETE") {
         return new Response(null, { status: 204 });
       }
+      if (method === "POST") {
+        // Configurable per-test POST response. Default: HTTP 201 minimal.
+        if (postStatus >= 400) {
+          return new Response(`mock POST error ${postStatus}`, {
+            status: postStatus,
+          });
+        }
+        return new Response(null, { status: postStatus });
+      }
       return new Response("", { status: 200 });
     }),
   );
@@ -61,6 +70,8 @@ function installFetchMock() {
 
 // Controls the simulated post-PATCH last_edited_at from the server trigger.
 let patchedLastEditedAt = "2026-04-21T00:00:00Z";
+// Per-test POST response status — 201 by default, set to 400+ to simulate error.
+let postStatus = 201;
 
 // --- Test fixture helpers --------------------------------------------------
 
@@ -128,6 +139,7 @@ beforeEach(() => {
   mockCalls = [];
   commitTables = { visions: [], goals: [], objectives: [], tasks: [] };
   patchedLastEditedAt = "2026-04-21T00:00:00Z";
+  postStatus = 201;
   installFetchMock();
 });
 
@@ -749,5 +761,218 @@ describe("northstar_sync — no-op stability", () => {
     const deleteCalls = mockCalls.filter((c) => c.method === "DELETE");
     expect(patchCalls).toHaveLength(0);
     expect(deleteCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-suite: push-new-to-COMMIT — local files without COMMIT_ID get POSTed
+// and rewritten with the generated UUID.
+// ---------------------------------------------------------------------------
+
+describe("northstar_sync — push-new-to-COMMIT", () => {
+  it("POSTs a new goal with Vision: UUID and rewrites file with COMMIT_ID", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const filePath = "NorthStar/goals/lanzar-xolo-rides--new.md";
+    upsertFile(
+      filePath,
+      "Lanzar Xolo Rides",
+      `# Lanzar Xolo Rides\nCOMMIT_ID: \nStatus: in_progress\nTarget: 2026-07-21\nVision: ${visionId}\nDescription: Test goal\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    // Seed a journal row (non-bootstrap) + parent vision in commitData.
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postCall = mockCalls.find((c) => c.method === "POST");
+    expect(postCall).toBeDefined();
+    expect(postCall?.url).toContain("/rest/v1/goals");
+    const body = postCall?.body as Record<string, unknown>;
+    expect(body.title).toBe("Lanzar Xolo Rides");
+    expect(body.vision_id).toBe(visionId);
+    expect(body.status).toBe("in_progress");
+    expect(body.modified_by).toBe("system");
+    expect(typeof body.id).toBe("string");
+
+    const rewritten = getFile(filePath);
+    expect(rewritten).not.toBeNull();
+    expect(rewritten!.content).toMatch(/^COMMIT_ID: [0-9a-f-]{36}$/m);
+    expect(rewritten!.content).not.toMatch(/^COMMIT_ID:\s*$/m);
+  });
+
+  it("resolves parent Vision by title when UUID not provided", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    upsertFile(
+      "NorthStar/goals/titled-parent--new.md",
+      "Goal using title parent",
+      `# Goal using title parent\nCOMMIT_ID: \nStatus: in_progress\nVision: Libertad Financiera\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find((c) => c.method === "POST")?.body as Record<
+      string,
+      unknown
+    >;
+    expect(postBody.vision_id).toBe(visionId);
+  });
+
+  it("skips goal without resolvable Vision: parent and reports the error", async () => {
+    const orphanPath = "NorthStar/goals/orphan-goal--new.md";
+    upsertFile(
+      orphanPath,
+      "Orphan",
+      `# Orphan\nCOMMIT_ID: \nStatus: in_progress\nVision: NonexistentVisionTitle\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      "00000000-0000-0000-0000-000000000999",
+      "vision",
+      "NorthStar/visions/placeholder.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = []; // no parent pool
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 0");
+    expect(result).toContain("Skipped");
+    expect(result).toContain(orphanPath);
+
+    // Filter to NorthStar-table POSTs only; mockCalls also captures pgvector
+    // `kb_entries` upsert POSTs fired by the file-mirror side-effect.
+    const postCalls = mockCalls.filter(
+      (c) =>
+        c.method === "POST" &&
+        /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
+    );
+    expect(postCalls).toHaveLength(0);
+
+    // Local file untouched — COMMIT_ID still empty.
+    const still = getFile(orphanPath);
+    expect(still!.content).toMatch(/^COMMIT_ID:\s*$/m);
+  });
+
+  it("surfaces POST failure without mutating the local file", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const filePath = "NorthStar/goals/post-fails--new.md";
+    upsertFile(
+      filePath,
+      "Will fail",
+      `# Will fail\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    postStatus = 400;
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 0");
+    expect(result).toContain("POST failed: HTTP 400");
+
+    // Local file still has empty COMMIT_ID — didn't get rewritten.
+    const still = getFile(filePath);
+    expect(still!.content).toMatch(/^COMMIT_ID:\s*$/m);
+  });
+
+  it("allows a task to be created without Objective: (orphan tasks supported)", async () => {
+    const filePath = "NorthStar/tasks/solo-task--new.md";
+    upsertFile(
+      filePath,
+      "Solo task",
+      `# Solo task\nCOMMIT_ID: \nStatus: not_started\nPriority: high\nDue: 2026-06-01\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      "00000000-0000-0000-0000-000000000111",
+      "vision",
+      "NorthStar/visions/placeholder.md",
+      "2026-04-01T00:00:00Z",
+    );
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const body = mockCalls.find((c) => c.method === "POST")?.body as Record<
+      string,
+      unknown
+    >;
+    expect(body.title).toBe("Solo task");
+    expect(body.priority).toBe("high");
+    expect(body.due_date).toBe("2026-06-01");
+    expect(body.objective_id).toBeUndefined();
+  });
+
+  it("creates vision + goal in the same sync run (goal finds vision POSTed moments earlier)", async () => {
+    upsertFile(
+      "NorthStar/visions/new-vision--new.md",
+      "Future vision",
+      `# Future vision\nCOMMIT_ID: \nStatus: in_progress\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    upsertFile(
+      "NorthStar/goals/child-of-new-vision--new.md",
+      "Child goal",
+      `# Child goal\nCOMMIT_ID: \nStatus: in_progress\nVision: Future vision\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    // Seed unrelated journal row so we're not in bootstrap.
+    seedJournalRow(
+      "99999999-9999-9999-9999-999999999999",
+      "task",
+      "NorthStar/tasks/unrelated.md",
+      "2026-04-01T00:00:00Z",
+    );
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 2");
+
+    const postCalls = mockCalls.filter(
+      (c) =>
+        c.method === "POST" &&
+        /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
+    );
+    expect(postCalls).toHaveLength(2);
+    expect(postCalls[0].url).toContain("/visions");
+    expect(postCalls[1].url).toContain("/goals");
+    const goalBody = postCalls[1].body as Record<string, unknown>;
+    // Goal's vision_id should be the UUID that was just generated for the
+    // vision POST (present in the prior POST's body).
+    const visionBody = postCalls[0].body as Record<string, unknown>;
+    expect(goalBody.vision_id).toBe(visionBody.id);
   });
 });

@@ -200,8 +200,52 @@ async function deleteItem(
   return res.ok;
 }
 
+/**
+ * Create a new record on COMMIT. Client-generated UUID — PostgREST accepts
+ * caller-provided IDs and we need to know the UUID before we rewrite the
+ * local file. `modified_by: "system"` matches the sync write convention so
+ * the next sync's LWW gate correctly treats this as a non-user edit.
+ */
+async function createItem(
+  table: string,
+  id: string,
+  fields: Record<string, unknown>,
+  apiKey: string,
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const url = `${BASE_URL}/${table}`;
+  const body = {
+    id,
+    user_id: USER_ID,
+    modified_by: "system",
+    ...fields,
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      apikey: apiKey,
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.warn(
+      `[northstar-sync] POST ${table} failed: HTTP ${res.status} ${errText.slice(0, 200)}`,
+    );
+    return { ok: false, status: res.status, error: errText.slice(0, 200) };
+  }
+  return { ok: true, status: res.status };
+}
+
 function extractField(content: string, field: string): string | null {
-  const match = content.match(new RegExp(`^${field}:\\s*(.+)$`, "m"));
+  // `[ \t]*` — NOT `\s*` — because `\s` includes `\n`, which means a field
+  // with an empty value (`COMMIT_ID: \n`) would match the NEXT line's content.
+  // Previously caused `extractCommitId` on a local-new file to return
+  // "Status: in_progress" and corrupt the push-new flow.
+  const match = content.match(new RegExp(`^${field}:[ \\t]*(.+)$`, "m"));
   return match ? match[1].trim() : null;
 }
 
@@ -320,6 +364,168 @@ interface LocalEntry {
   userEditTime: string | null;
 }
 
+interface LocalNewEntry {
+  path: string;
+  content: string;
+  title: string;
+}
+
+/**
+ * Files under `NorthStar/{kind}/` with NO `COMMIT_ID:` line (or blank value).
+ * These are local-only creates awaiting a push to COMMIT.
+ */
+function enumerateLocalNew(kind: Kind): LocalNewEntry[] {
+  const prefix = `${KIND_TO_PATH[kind]}/`;
+  const files = listFiles({ prefix });
+  const out: LocalNewEntry[] = [];
+  for (const f of files) {
+    if (!f.path.endsWith(".md")) continue;
+    if (f.path.endsWith("INDEX.md")) continue;
+    const full = getFile(f.path);
+    if (!full) continue;
+    const commitId = extractCommitId(full.content);
+    if (commitId && commitId.length > 0) continue; // already synced
+    const title = extractTitle(full.content);
+    if (!title) continue; // no heading = skip, can't POST without title
+    out.push({ path: f.path, content: full.content, title });
+  }
+  return out;
+}
+
+/**
+ * Resolve a parent reference string (from `Vision:` / `Goal:` / `Objective:`
+ * lines) to a COMMIT UUID. Accepts two forms:
+ *   - UUID form: "dd05f172-9eb5-423a-bcec-e94a06ebee67" — used directly
+ *   - Title form: "Libertad Financiera" — looked up in commitData
+ * Returns null when no match or no ref present.
+ */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function resolveParentRef(
+  rawRef: string | null,
+  parentKind: Kind,
+  commitData: Record<string, CommitItem[]>,
+): string | null {
+  if (!rawRef) return null;
+  const ref = rawRef.trim();
+  if (UUID_RE.test(ref)) return ref;
+  const pool = commitData[KIND_TO_TABLE[parentKind]] ?? [];
+  const match = pool.find(
+    (c) => c.title.trim().toLowerCase() === ref.toLowerCase(),
+  );
+  return match?.id ?? null;
+}
+
+/**
+ * Build the POST body for a new COMMIT record from a local file's content.
+ * Returns either the fields dict or an error message for the skipped report.
+ */
+function buildCreateFields(
+  entry: LocalNewEntry,
+  kind: Kind,
+  commitData: Record<string, CommitItem[]>,
+): { fields?: Record<string, unknown>; error?: string } {
+  const fields: Record<string, unknown> = {
+    title: entry.title,
+  };
+  const description = extractField(entry.content, "Description");
+  if (description) fields.description = description;
+  const status = extractField(entry.content, "Status");
+  fields.status = status ?? "in_progress";
+  const priority = extractField(entry.content, "Priority");
+  if (priority && kind !== "vision" && kind !== "goal") {
+    fields.priority = priority;
+  }
+  const target = extractField(entry.content, "Target");
+  if (target) fields.target_date = target;
+  const due = extractField(entry.content, "Due");
+  if (due && kind === "task") fields.due_date = due;
+  const notes = extractField(entry.content, "Notes");
+  if (notes && kind === "task") fields.notes = notes;
+
+  // Parent FK resolution (required for goals and objectives; optional for tasks;
+  // N/A for visions).
+  if (kind === "goal") {
+    const ref = resolveParentRef(
+      extractField(entry.content, "Vision"),
+      "vision",
+      commitData,
+    );
+    if (!ref) {
+      return {
+        error:
+          "goal requires Vision: <uuid|title> referencing an existing vision on COMMIT",
+      };
+    }
+    fields.vision_id = ref;
+  } else if (kind === "objective") {
+    const ref = resolveParentRef(
+      extractField(entry.content, "Goal"),
+      "goal",
+      commitData,
+    );
+    if (!ref) {
+      return {
+        error:
+          "objective requires Goal: <uuid|title> referencing an existing goal on COMMIT",
+      };
+    }
+    fields.goal_id = ref;
+  } else if (kind === "task") {
+    const ref = resolveParentRef(
+      extractField(entry.content, "Objective"),
+      "objective",
+      commitData,
+    );
+    if (ref) fields.objective_id = ref;
+    // Tasks may be orphans — no error.
+  }
+  return { fields };
+}
+
+/**
+ * Rewrite a local file after successful POST: insert/fill the COMMIT_ID line.
+ * Preserves all other content verbatim.
+ */
+function populateCommitIdInFile(
+  path: string,
+  title: string,
+  oldContent: string,
+  newCommitId: string,
+): void {
+  let newContent: string;
+  if (/^COMMIT_ID:/m.test(oldContent)) {
+    // `[^\n]*` not `.*\s*` — must not cross newline boundaries, else an
+    // empty-value line (`COMMIT_ID: \n`) gobbles the following `Status:` line.
+    newContent = oldContent.replace(
+      /^COMMIT_ID:[^\n]*$/m,
+      `COMMIT_ID: ${newCommitId}`,
+    );
+  } else {
+    // Insert after the first `# Heading` line, or prepend.
+    const headingMatch = oldContent.match(/^#\s+.+$/m);
+    if (headingMatch) {
+      newContent = oldContent.replace(
+        headingMatch[0],
+        `${headingMatch[0]}\nCOMMIT_ID: ${newCommitId}`,
+      );
+    } else {
+      newContent = `COMMIT_ID: ${newCommitId}\n${oldContent}`;
+    }
+  }
+  upsertFile(
+    path,
+    title,
+    newContent,
+    ["northstar"],
+    "reference",
+    30,
+    null,
+    [],
+    { skipUserEdit: true },
+  );
+}
+
 function enumerateLocal(kind: Kind): Map<string, LocalEntry> {
   const prefix = `${KIND_TO_PATH[kind]}/`;
   const files = listFiles({ prefix });
@@ -345,6 +551,7 @@ function enumerateLocal(kind: Kind): Map<string, LocalEntry> {
 interface SyncReport {
   pulled: number;
   pushed: number;
+  createdRemote: number;
   deletedLocal: number;
   deletedRemote: number;
   unchanged: number;
@@ -591,25 +798,26 @@ RULES:
 - Deletions propagate BOTH ways via the \`northstar_sync_state\` journal:
   * journal has it + missing on one side → propagate delete to other side
   * journal empty on first run → bootstrap mode (create across the gap, NO deletes)
-- Create propagation (v1 — LIMITED): COMMIT→Jarvis only. COMMIT-side new
-  records are pulled down as local files. LOCAL-side new records (files
-  without a COMMIT_ID) are SILENTLY SKIPPED — they don't appear in the sync
-  report at all. Bidirectional create is planned as v2.
+- Create propagation is BIDIRECTIONAL:
+  * COMMIT→Jarvis: new COMMIT records pulled down as local files.
+  * Jarvis→COMMIT: local files without a COMMIT_ID get POSTed to their
+    table with a generated UUID. The local file is rewritten with the
+    populated COMMIT_ID. Parent-FK references (Vision: / Goal: /
+    Objective:) accept either the parent's UUID or its exact title.
+    Goals + objectives require a resolvable parent; tasks may be orphans.
 
 USE WHEN:
 - User explicitly asks to "sync" / "reconcilia" / "actualiza COMMIT".
-- Verifying state after a series of edits or deletes.
+- Verifying state after a series of edits, deletes, or creates.
+- After creating new NorthStar records locally and wanting them
+  reflected in the COMMIT app.
 
-DO NOT CALL:
-- Right after \`jarvis_file_write\` creating a NEW NorthStar item. The new file
-  has no COMMIT_ID and sync won't push it; calling sync will look like a no-op
-  and will tempt you to escalate (e.g. asking for Supabase credentials to
-  INSERT directly). Don't. The local file is a complete, valid record on its
-  own — that's the design. The user will reconcile via the app when ready.
-
-GOTCHA: "0 pulled + 0 pushed + 0 deleted, Unchanged: N" means everything's in
-sync. "Skipped: N" with file paths listed means local records have COMMIT_IDs
-that don't exist on COMMIT (orphaned IDs; v1 limitation).`,
+GOTCHA: "0 created + 0 pulled + 0 pushed + 0 deleted, Unchanged: N"
+means everything's already in sync. "Skipped: N" with file paths listed
+means those records couldn't propagate — usually because a goal/objective
+references a parent that doesn't exist on COMMIT (create the parent
+first, or include both in the same sync — parents are processed before
+children so goal + vision in one sync works).`,
       parameters: {
         type: "object",
         properties: {},
@@ -655,6 +863,7 @@ that don't exist on COMMIT (orphaned IDs; v1 limitation).`,
       const report: SyncReport = {
         pulled: 0,
         pushed: 0,
+        createdRemote: 0,
         deletedLocal: 0,
         deletedRemote: 0,
         unchanged: 0,
@@ -663,6 +872,88 @@ that don't exist on COMMIT (orphaned IDs; v1 limitation).`,
         destructive: [],
       };
 
+      // Phase 1: push-new-to-COMMIT. Local files with no COMMIT_ID (user
+      // created via `jarvis_file_write`, never existed on COMMIT) are POSTed
+      // to their table with a client-generated UUID. On success, the local
+      // file is rewritten with the new COMMIT_ID and the journal is seeded.
+      // Order matters: run visions first so goals can reference them by title;
+      // then goals, so objectives can reference; then objectives, so tasks can.
+      // If a parent isn't resolvable, the child is skipped and surfaced.
+      // Parents CREATED in this same sync run ARE resolvable because we push
+      // them into commitData in-place after the POST.
+      for (const kind of KINDS) {
+        const newEntries = enumerateLocalNew(kind);
+        for (const entry of newEntries) {
+          const { fields, error } = buildCreateFields(entry, kind, commitData);
+          if (error) {
+            report.skipped++;
+            report.skippedPaths.push(`${entry.path} (${error})`);
+            continue;
+          }
+          const newId = crypto.randomUUID();
+          const res = await createItem(
+            KIND_TO_TABLE[kind],
+            newId,
+            fields!,
+            apiKey,
+          );
+          if (!res.ok) {
+            report.skipped++;
+            report.skippedPaths.push(
+              `${entry.path} (POST failed: HTTP ${res.status}${res.error ? ` ${res.error}` : ""})`,
+            );
+            continue;
+          }
+          // Success: rewrite local file with populated COMMIT_ID, seed journal,
+          // and inject the record into commitData so subsequent kinds can
+          // resolve it as a parent + syncKind sees it as already-matched.
+          populateCommitIdInFile(entry.path, entry.title, entry.content, newId);
+          const nowIso = new Date().toISOString();
+          upsertJournal(newId, kind, entry.path, nowIso, nowIso);
+          const injected: CommitItem = {
+            id: newId,
+            title: entry.title,
+            status: String(fields!.status ?? "in_progress"),
+            description:
+              typeof fields!.description === "string"
+                ? fields!.description
+                : null,
+            priority:
+              typeof fields!.priority === "string" ? fields!.priority : null,
+            target_date:
+              typeof fields!.target_date === "string"
+                ? fields!.target_date
+                : null,
+            due_date:
+              typeof fields!.due_date === "string" ? fields!.due_date : null,
+            notes: typeof fields!.notes === "string" ? fields!.notes : null,
+            vision_id:
+              typeof fields!.vision_id === "string" ? fields!.vision_id : null,
+            goal_id:
+              typeof fields!.goal_id === "string" ? fields!.goal_id : null,
+            objective_id:
+              typeof fields!.objective_id === "string"
+                ? fields!.objective_id
+                : null,
+            updated_at: nowIso,
+            last_edited_at: nowIso,
+            modified_by: "system",
+          };
+          commitData[KIND_TO_TABLE[kind]].push(injected);
+          // Refresh the journal map so downstream syncKind sees the new row.
+          journal.set(newId, {
+            commit_id: newId,
+            kind,
+            local_path: entry.path,
+            last_commit_edited_at: nowIso,
+            last_local_edit_time: nowIso,
+            last_sync_at: nowIso,
+          });
+          report.createdRemote++;
+        }
+      }
+
+      // Phase 2: normal LWW sync across the (now-updated) union.
       for (const kind of KINDS) {
         await syncKind(
           kind,
@@ -756,7 +1047,7 @@ that don't exist on COMMIT (orphaned IDs; v1 limitation).`,
       const transitionNote = bootstrap
         ? " Bootstrap complete — record-level deletion detection enabled starting next sync."
         : "";
-      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${skippedNote}${transitionNote}`;
+      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Created remote: ${report.createdRemote}, Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${skippedNote}${transitionNote}`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,
