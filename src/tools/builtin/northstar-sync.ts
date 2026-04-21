@@ -57,6 +57,20 @@ const PUSH_FIELDS: Record<Kind, string[]> = {
   task: ["title", "description", "status", "priority", "due_date", "notes"],
 };
 
+/**
+ * Fields that can legitimately be null on COMMIT — removing the line from a
+ * local file means "clear this value" and we push `null`. `title` and `status`
+ * are NOT in this set: a record can't meaningfully exist without them, so if
+ * the user deletes those lines we preserve whatever was there.
+ */
+const CLEARABLE_FIELDS: ReadonlySet<string> = new Set([
+  "priority",
+  "description",
+  "notes",
+  "target_date",
+  "due_date",
+]);
+
 interface CommitItem {
   id: string;
   title: string;
@@ -481,15 +495,31 @@ async function syncKind(
         report.pulled++;
       } else if (winner === "local") {
         const allFields = extractPatchFields(local.content, kind);
-        // Diff against commit — only PATCH fields that actually changed. Cuts
-        // trigger-bump churn and makes the live trail easier to read.
+        // Diff against commit with field-remove semantics:
+        //  - Line present locally + different from commit → push new value.
+        //  - Line absent locally + commit has a value + field is clearable → push null to clear.
+        //  - Line absent locally + field is NOT clearable (title/status) → preserve.
         const fields: Record<string, string | null> = {};
-        for (const [k, v] of Object.entries(allFields)) {
-          const cur = (commit as unknown as Record<string, unknown>)[k];
-          if (cur !== v) fields[k] = v;
+        const commitRec = commit as unknown as Record<string, unknown>;
+        for (const k of PUSH_FIELDS[kind]) {
+          const localVal = allFields[k];
+          const commitVal = commitRec[k];
+          if (localVal !== undefined) {
+            if (commitVal !== localVal) fields[k] = localVal;
+          } else if (
+            CLEARABLE_FIELDS.has(k) &&
+            commitVal !== null &&
+            commitVal !== undefined &&
+            commitVal !== ""
+          ) {
+            fields[k] = null;
+          }
         }
         if (Object.keys(fields).length === 0) {
-          report.skipped++;
+          // Local won but every field already matches commit — no-op, count as
+          // unchanged (not skipped — skipped is reserved for the genuine
+          // "can't decide what to do" branches).
+          report.unchanged++;
         } else {
           const result = await patchItem(table, id, fields, apiKey);
           if (result.ok) {

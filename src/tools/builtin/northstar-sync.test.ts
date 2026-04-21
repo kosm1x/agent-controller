@@ -326,6 +326,92 @@ describe("northstar_sync — LWW update branches", () => {
     expect(body.status).toBeUndefined();
   });
 
+  it("field-remove — deleting a Notes line pushes null to clear remote", async () => {
+    const taskId = "12340000-0000-0000-0000-000000000001";
+    const filePath = "NorthStar/tasks/clear-notes.md";
+    upsertFile(
+      filePath,
+      "Clear notes",
+      `# Clear notes\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nNotes: old notes\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(taskId, "task", filePath, "2026-04-01T00:00:00Z");
+    // User edits: removes the Notes line entirely.
+    upsertFile(
+      filePath,
+      "Clear notes",
+      `# Clear notes\nCOMMIT_ID: ${taskId}\nStatus: in_progress\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+    );
+
+    commitTables.tasks = [
+      makeCommitItem(taskId, "Clear notes", {
+        modified_by: "system",
+        notes: "old notes",
+      }),
+    ];
+
+    await northstarSyncTool.execute({});
+
+    const patchCall = mockCalls.find((c) => c.method === "PATCH");
+    const body = patchCall?.body as Record<string, unknown>;
+    expect(body.notes).toBeNull();
+  });
+
+  it("field-remove — title and status are preserved when lines are absent", async () => {
+    // `title` and `status` must never be nulled via sync — a record without a
+    // title or status is nonsense. If the user accidentally deletes the `# …`
+    // or `Status:` line, we leave the remote alone.
+    const goalId = "12340000-0000-0000-0000-000000000002";
+    const filePath = "NorthStar/goals/no-headers.md";
+    upsertFile(
+      filePath,
+      "Headerless",
+      `# Headerless\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nDescription: still here\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(goalId, "goal", filePath, "2026-04-01T00:00:00Z");
+    // User mutilates the file — no `# …`, no `Status:` line — but keeps Description.
+    upsertFile(
+      filePath,
+      "Headerless",
+      `COMMIT_ID: ${goalId}\nDescription: changed\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+    );
+
+    commitTables.goals = [
+      makeCommitItem(goalId, "Headerless", {
+        modified_by: "system",
+        description: "old",
+        status: "in_progress",
+      }),
+    ];
+
+    await northstarSyncTool.execute({});
+
+    const patchCall = mockCalls.find((c) => c.method === "PATCH");
+    const body = patchCall?.body as Record<string, unknown>;
+    expect(body.description).toBe("changed");
+    expect(body.title).toBeUndefined();
+    expect(body.status).toBeUndefined();
+    // modified_by is always stamped — that's fine, it's not a clearable field.
+    expect(body.modified_by).toBe("system");
+  });
+
   it("modified_by='system' blocks pull even if last_edited_at advanced", async () => {
     // Proves `modified_by` is an independent gate on top of the timestamp
     // comparison. Without this guard, a trigger-bumped last_edited_at after
