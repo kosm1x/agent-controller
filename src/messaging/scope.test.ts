@@ -730,6 +730,36 @@ describe("northstar_write sub-patterns", () => {
     const tools = scope("La tarea de ayer necesita cambios, actualízala");
     expect(tools).toContain("jarvis_file_write");
   });
+
+  it("delete verb + noun (ES): 'Elimina la tarea de prueba'", () => {
+    const tools = scope("Elimina la tarea de prueba");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("delete verb + noun (ES, 'borra'): 'Borra esa meta'", () => {
+    const tools = scope("Borra esa meta que ya no aplica");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("delete verb + noun (ES, 'quita'): 'Quita el objetivo'", () => {
+    const tools = scope("Quita el objetivo de Q2 por favor");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("delete verb + noun (EN): 'Delete that task'", () => {
+    const tools = scope("Delete that task from my list");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("clitic delete pronoun: 'elimínala'", () => {
+    const tools = scope("Esa meta ya no sirve, elimínala");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("clitic delete pronoun: 'bórralo'", () => {
+    const tools = scope("Ese objetivo está obsoleto, bórralo");
+    expect(tools).toContain("jarvis_file_delete");
+  });
 });
 
 // ---------------------------------------------------------------------------

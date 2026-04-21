@@ -399,6 +399,24 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "northstar_write",
   },
   {
+    // Delete verb + NorthStar noun: "elimina la tarea X", "borra esa meta",
+    // "quita el objetivo Y", "delete task Z", "remove goal A".
+    // jarvis_file_delete still gates on isPreciousPath, so activation only
+    // exposes the tool — confirmation is still required before any write.
+    pattern:
+      /\b(?:elim[ií]na(?:r|la|lo|las|los|me)?|b[oó]rra(?:r|la|lo|las|los|me)?|quita(?:r)?|elim[ií]name|delete|remove)\w*(?:\s+\S+){0,4}\s*(?:tarea|meta|objetivo|visi[oó]n|goal|task|objective|vision)/i,
+    group: "northstar_write",
+  },
+  {
+    // Clitic delete forms referring to a previously-mentioned NorthStar item:
+    // "elimínala", "bórralo", "quítalos", "borrarlas", "elimínalas".
+    // Narrow set — only fires on delete-verb + pronoun suffix. No file-ish
+    // anchor needed because clitics imply referential continuity.
+    pattern:
+      /\b(?:elim[ií]na|b[oó]rra|qu[ií]ta)(?:lo|la|los|las|rlo|rla|rlos|rlas)\b/i,
+    group: "northstar_write",
+  },
+  {
     pattern:
       /\b(chart_generate|(?:bar|line|pie|doughnut|radar|scatter)\s+chart|gr[aá]fica\s+(?:de\s+)?(?:barras|pastel|l[ií]nea|circular|dona|radar|dispersi[oó]n)|rss|feed|noticias|investigar?|exa_search|genera.*imagen|image.*genera|gemini|hugging\s?face|hf_generate|hf_spaces|text.to.(?:speech|image|video|music)|genera.*(?:audio|video|voz|m[uú]sica)|(?:audio|video|voz|m[uú]sica).*genera|TTS\b|crea.*(?:audio|video|imagen|m[uú]sica|canci[oó]n)|genera.*(?:speech|music|song)|jingle|soundtrack|busca.*spaces?|humaniz|limpia.*\btexto\b|revisa\s+mi\s+texto|reescrib|dashboard|visualiz|KPI|m[eé]tric|infographics?|infograf[ií]as?|summary\s+card|comparison\s+(?:card|table)|ranking\s+(?:card|pyramid)|SWOT|cuadro\s+resumen|tarjeta\s+(?:resumen|KPI)|timeline\s+card|briefing\s+visual)/i,
     group: "specialty",
