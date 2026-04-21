@@ -401,6 +401,15 @@ function enumerateLocalNew(kind: Kind): LocalNewEntry[] {
  */
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Accent- AND case-insensitive normalization for parent-title comparison.
+ * NFD decomposes accented chars, the regex strips combining marks, so
+ * "Visión" and "Vision" compare equal. Mirrors the slugify strategy.
+ */
+function normalizeForMatch(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+}
+
 function resolveParentRef(
   rawRef: string | null,
   parentKind: Kind,
@@ -409,10 +418,9 @@ function resolveParentRef(
   if (!rawRef) return null;
   const ref = rawRef.trim();
   if (UUID_RE.test(ref)) return ref;
+  const needle = normalizeForMatch(ref);
   const pool = commitData[KIND_TO_TABLE[parentKind]] ?? [];
-  const match = pool.find(
-    (c) => c.title.trim().toLowerCase() === ref.toLowerCase(),
-  );
+  const match = pool.find((c) => normalizeForMatch(c.title) === needle);
   return match?.id ?? null;
 }
 
@@ -881,9 +889,27 @@ children so goal + vision in one sync works).`,
       // If a parent isn't resolvable, the child is skipped and surfaced.
       // Parents CREATED in this same sync run ARE resolvable because we push
       // them into commitData in-place after the POST.
+      // Defensive: if a previous sync run POSTed but crashed before populating
+      // the local file's COMMIT_ID, the journal row is keyed by local_path.
+      // Short-circuit re-POST when we see that path already journaled.
+      const journaledPaths = new Set<string>();
+      for (const row of journal.values()) journaledPaths.add(row.local_path);
+
       for (const kind of KINDS) {
         const newEntries = enumerateLocalNew(kind);
         for (const entry of newEntries) {
+          if (journaledPaths.has(entry.path)) {
+            // File path already exists in the journal from a prior run where
+            // POST succeeded but the local rewrite or journal seed didn't
+            // complete. Skip to avoid a duplicate remote record — operator
+            // should re-inspect the file manually (the COMMIT record is
+            // already there with a UUID; the file just didn't get rewritten).
+            report.skipped++;
+            report.skippedPaths.push(
+              `${entry.path} (already journaled from prior run — commit record exists; rewrite local file manually or delete it)`,
+            );
+            continue;
+          }
           const { fields, error } = buildCreateFields(entry, kind, commitData);
           if (error) {
             report.skipped++;
@@ -891,6 +917,16 @@ children so goal + vision in one sync works).`,
             continue;
           }
           const newId = crypto.randomUUID();
+          // Seed the journal BEFORE the POST so a mid-operation crash leaves
+          // a tombstone that blocks duplicate POSTs on the next run. The
+          // journal row at this point points at a UUID that doesn't yet
+          // exist on COMMIT — that's fine; phase 2's logic treats it as a
+          // no-op (nothing to compare against) until a subsequent successful
+          // run catches up.
+          const nowIso = new Date().toISOString();
+          upsertJournal(newId, kind, entry.path, nowIso, nowIso);
+          journaledPaths.add(entry.path);
+
           const res = await createItem(
             KIND_TO_TABLE[kind],
             newId,
@@ -898,18 +934,20 @@ children so goal + vision in one sync works).`,
             apiKey,
           );
           if (!res.ok) {
+            // POST failed — drop the pre-seeded journal row so the next run
+            // can retry with a fresh UUID. Local file is untouched.
+            deleteJournal(newId);
+            journaledPaths.delete(entry.path);
             report.skipped++;
             report.skippedPaths.push(
               `${entry.path} (POST failed: HTTP ${res.status}${res.error ? ` ${res.error}` : ""})`,
             );
             continue;
           }
-          // Success: rewrite local file with populated COMMIT_ID, seed journal,
-          // and inject the record into commitData so subsequent kinds can
-          // resolve it as a parent + syncKind sees it as already-matched.
+          // Success: rewrite local file with populated COMMIT_ID, and inject
+          // the record into commitData so subsequent kinds can resolve it
+          // as a parent + syncKind sees it as already-matched.
           populateCommitIdInFile(entry.path, entry.title, entry.content, newId);
-          const nowIso = new Date().toISOString();
-          upsertJournal(newId, kind, entry.path, nowIso, nowIso);
           const injected: CommitItem = {
             id: newId,
             title: entry.title,

@@ -933,6 +933,98 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     expect(body.objective_id).toBeUndefined();
   });
 
+  it("resolves accented parent title (Visión vs Vision)", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    upsertFile(
+      "NorthStar/goals/accented--new.md",
+      "Child of visión",
+      `# Child of visión\nCOMMIT_ID: \nStatus: in_progress\nVision: Vision Financiera\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/vision-financiera.md",
+      "2026-04-01T00:00:00Z",
+    );
+    // Remote title has an accent; local ref does not.
+    commitTables.visions = [makeCommitItem(visionId, "Visión Financiera")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    )?.body as Record<string, unknown>;
+    expect(postBody.vision_id).toBe(visionId);
+  });
+
+  it("skips re-POSTing when the file's path is already journaled from a prior run", async () => {
+    // Simulates: previous run seeded journal but mid-operation crash left
+    // the local file with an empty COMMIT_ID. Next run must NOT re-POST.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const stalePath = "NorthStar/goals/stale-retry--new.md";
+    upsertFile(
+      stalePath,
+      "Stale retry",
+      `# Stale retry\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    // Journal has a row pointing at this path (from the hypothetical crashed run).
+    seedJournalRow(
+      "aaaa0000-0000-0000-0000-aaaaaaaaaaaa",
+      "goal",
+      stalePath,
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 0");
+    expect(result).toContain("already journaled from prior run");
+
+    const postCalls = mockCalls.filter(
+      (c) =>
+        c.method === "POST" &&
+        /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it("rolls back the seeded journal row when POST fails", async () => {
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    upsertFile(
+      "NorthStar/goals/rollback--new.md",
+      "Rollback",
+      `# Rollback\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    postStatus = 500;
+
+    await northstarSyncTool.execute({});
+
+    // Journal must NOT have a row with this file's path (rolled back on failure).
+    const journalAfter = getDatabase()
+      .prepare(
+        "SELECT commit_id FROM northstar_sync_state WHERE local_path = ?",
+      )
+      .all("NorthStar/goals/rollback--new.md") as unknown[];
+    expect(journalAfter).toHaveLength(0);
+  });
+
   it("creates vision + goal in the same sync run (goal finds vision POSTed moments earlier)", async () => {
     upsertFile(
       "NorthStar/visions/new-vision--new.md",
