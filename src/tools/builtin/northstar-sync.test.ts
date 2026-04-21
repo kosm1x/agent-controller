@@ -1240,4 +1240,83 @@ Detalles adicionales que NO deben perderse.
     expect(postBody.status).toBe("in_progress");
     expect(postBody.target_date).toBe("2026-12-31");
   });
+
+  it("maps `Due:` on an objective to target_date (user-typo alias — Xolo Rides shape)", async () => {
+    const parentGoalId = "aaaa1111-bbbb-2222-cccc-333333333333";
+    upsertFile(
+      "NorthStar/objectives/objective-with-due--new.md",
+      "Detallar el Business Model",
+      `# Detallar el Business Model\nCOMMIT_ID: \nGoal: Lanzar Xolo Rides\nStatus: not_started\nDue: 2026-05-05\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      parentGoalId,
+      "goal",
+      "NorthStar/goals/lanzar-xolo-rides.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.goals = [makeCommitItem(parentGoalId, "Lanzar Xolo Rides")];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postBody = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/objectives\b/.test(c.url),
+    )?.body as Record<string, unknown>;
+    expect(postBody).toBeDefined();
+    // `Due:` on an objective → target_date (users conflate the two fields).
+    expect(postBody.target_date).toBe("2026-05-05");
+    // Objectives have no due_date column — must NOT leak.
+    expect(postBody.due_date).toBeUndefined();
+  });
+
+  it("does NOT leak target_date on a task POST (Due: stays due_date, Target: ignored)", async () => {
+    const parentObjectiveId = "bbbb2222-cccc-3333-dddd-444444444444";
+    // Task file with canonical `Due:` (written by buildFileContent for tasks).
+    // The alias-extension fix must NOT route Due→target_date on tasks,
+    // otherwise every task POST gets both target_date + due_date, breaking
+    // the round-trip case and failing PostgREST schema validation.
+    upsertFile(
+      "NorthStar/tasks/regression-task--new.md",
+      "Regression task",
+      `# Regression task\nCOMMIT_ID: \nObjective: Parent Objective\nStatus: not_started\nPriority: medium\nDue: 2026-06-15\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    // Also cover the reverse-confusion case: a task with stray `Target:`.
+    upsertFile(
+      "NorthStar/tasks/stray-target-task--new.md",
+      "Stray target task",
+      `# Stray target task\nCOMMIT_ID: \nObjective: Parent Objective\nStatus: not_started\nTarget: 2026-07-01\nDue: 2026-07-15\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      parentObjectiveId,
+      "objective",
+      "NorthStar/objectives/parent-objective.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.objectives = [
+      makeCommitItem(parentObjectiveId, "Parent Objective"),
+    ];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 2");
+
+    const taskPosts = mockCalls.filter(
+      (c) => c.method === "POST" && /\/rest\/v1\/tasks\b/.test(c.url),
+    );
+    expect(taskPosts).toHaveLength(2);
+    for (const call of taskPosts) {
+      const body = call.body as Record<string, unknown>;
+      expect(body.due_date).toBeDefined();
+      // The critical assertion — tasks MUST NOT carry target_date.
+      expect(body.target_date).toBeUndefined();
+    }
+  });
 });

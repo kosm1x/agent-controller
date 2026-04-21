@@ -347,7 +347,11 @@ function extractPatchFields(
   const priority = extractField(content, "Priority");
   if (allowed.includes("priority") && priority) fields.priority = priority;
 
-  const target = extractFieldWithAlias(content, "Target", "target_date");
+  // `Due:` is canonical on tasks (maps to due_date), but a common user typo on
+  // non-task kinds where they mean target_date. Accept it as a target alias;
+  // the `allowed.includes("target_date")` guard prevents it from leaking into
+  // task PATCHes (tasks have no target_date column).
+  const target = extractFieldWithAlias(content, "Target", "target_date", "Due");
   if (allowed.includes("target_date") && target) fields.target_date = target;
 
   const due = extractField(content, "Due");
@@ -491,8 +495,18 @@ function buildCreateFields(
   if (priority && kind !== "vision" && kind !== "goal") {
     fields.priority = priority;
   }
-  const target = extractFieldWithAlias(entry.content, "Target", "target_date");
-  if (target) fields.target_date = target;
+  // Tasks have no target_date column — skip entirely. For other kinds, accept
+  // `Due:` as an alias for `target_date` (common user typo on objectives/goals
+  // where they mean "target date" but wrote the tasks-canonical `Due:`).
+  if (kind !== "task") {
+    const target = extractFieldWithAlias(
+      entry.content,
+      "Target",
+      "target_date",
+      "Due",
+    );
+    if (target) fields.target_date = target;
+  }
   const due = extractField(entry.content, "Due");
   if (due && kind === "task") fields.due_date = due;
   const notes = extractField(entry.content, "Notes");
