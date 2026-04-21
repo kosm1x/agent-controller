@@ -961,10 +961,14 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     expect(postBody.vision_id).toBe(visionId);
   });
 
-  it("skips re-POSTing when the file's path is already journaled from a prior run", async () => {
-    // Simulates: previous run seeded journal but mid-operation crash left
-    // the local file with an empty COMMIT_ID. Next run must NOT re-POST.
+  it("self-heals when prior run's POST succeeded but local file wasn't populated", async () => {
+    // Reproduces the mid-operation crash scenario: prior run POSTed a goal
+    // to COMMIT (record exists with commit_id X) AND seeded the journal row,
+    // but populateCommitIdInFile crashed so the local file still has empty
+    // COMMIT_ID. Next sync MUST NOT re-POST (duplicate) and MUST NOT delete
+    // the surviving COMMIT record. It must repair the local file in place.
     const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const goalId = "aaaa0000-0000-0000-0000-aaaaaaaaaaaa";
     const stalePath = "NorthStar/goals/stale-retry--new.md";
     upsertFile(
       stalePath,
@@ -974,18 +978,17 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
       "reference",
       30,
     );
-    // Journal has a row pointing at this path (from the hypothetical crashed run).
-    seedJournalRow(
-      "aaaa0000-0000-0000-0000-aaaaaaaaaaaa",
-      "goal",
-      stalePath,
-      "2026-04-01T00:00:00Z",
-    );
+    seedJournalRow(goalId, "goal", stalePath, "2026-04-01T00:00:00Z");
     commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    // CRITICAL: the prior POST succeeded — COMMIT has the record.
+    commitTables.goals = [
+      makeCommitItem(goalId, "Stale retry", {
+        vision_id: visionId,
+        modified_by: "system",
+      }),
+    ];
 
-    const result = await northstarSyncTool.execute({});
-    expect(result).toContain("Created remote: 0");
-    expect(result).toContain("already journaled from prior run");
+    await northstarSyncTool.execute({});
 
     const postCalls = mockCalls.filter(
       (c) =>
@@ -993,6 +996,47 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
         /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
     );
     expect(postCalls).toHaveLength(0);
+    // MUST NOT DELETE — the stranded file being "local-missing-by-id" must
+    // self-heal via file rewrite, not cascade into a destructive DELETE.
+    const deleteCalls = mockCalls.filter(
+      (c) =>
+        c.method === "DELETE" &&
+        /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
+    );
+    expect(deleteCalls).toHaveLength(0);
+    // Local file now has the correct COMMIT_ID populated.
+    const repaired = getFile(stalePath);
+    expect(repaired!.content).toContain(`COMMIT_ID: ${goalId}`);
+  });
+
+  it("drops orphan journal row and retries when prior POST never persisted remotely", async () => {
+    // Variant: journal has a row but COMMIT doesn't have the record (prior
+    // POST may have rolled back, or remote was later deleted). Sync must
+    // drop the orphan journal row and retry the POST with a fresh UUID.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const orphanId = "bbbb0000-0000-0000-0000-bbbbbbbbbbbb";
+    const path = "NorthStar/goals/orphan-journal--new.md";
+    upsertFile(
+      path,
+      "Orphan journal",
+      `# Orphan journal\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(orphanId, "goal", path, "2026-04-01T00:00:00Z");
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    commitTables.goals = []; // commit does NOT have orphanId
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const postCall = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    );
+    const postBody = postCall?.body as Record<string, unknown>;
+    // The new UUID must differ from the orphan one (orphan was dropped + retried).
+    expect(postBody.id).not.toBe(orphanId);
   });
 
   it("rolls back the seeded journal row when POST fails", async () => {

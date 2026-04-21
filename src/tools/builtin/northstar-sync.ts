@@ -889,26 +889,49 @@ children so goal + vision in one sync works).`,
       // If a parent isn't resolvable, the child is skipped and surfaced.
       // Parents CREATED in this same sync run ARE resolvable because we push
       // them into commitData in-place after the POST.
-      // Defensive: if a previous sync run POSTed but crashed before populating
-      // the local file's COMMIT_ID, the journal row is keyed by local_path.
-      // Short-circuit re-POST when we see that path already journaled.
-      const journaledPaths = new Set<string>();
-      for (const row of journal.values()) journaledPaths.add(row.local_path);
+      // Build a path→journalRow index so we can self-heal files whose prior
+      // sync run POSTed successfully but crashed before populateCommitIdInFile
+      // rewrote the local COMMIT_ID. Without this, phase-2 sees (journal +
+      // commit + !local-with-matching-ID) → propagates DELETE against COMMIT
+      // and silently destroys the user's record. Self-heal: rewrite the local
+      // file with the journaled UUID so phase-2 sees a matched record.
+      const journalByPath = new Map<string, SyncStateRow>();
+      for (const row of journal.values())
+        journalByPath.set(row.local_path, row);
 
       for (const kind of KINDS) {
         const newEntries = enumerateLocalNew(kind);
         for (const entry of newEntries) {
-          if (journaledPaths.has(entry.path)) {
-            // File path already exists in the journal from a prior run where
-            // POST succeeded but the local rewrite or journal seed didn't
-            // complete. Skip to avoid a duplicate remote record — operator
-            // should re-inspect the file manually (the COMMIT record is
-            // already there with a UUID; the file just didn't get rewritten).
-            report.skipped++;
-            report.skippedPaths.push(
-              `${entry.path} (already journaled from prior run — commit record exists; rewrite local file manually or delete it)`,
+          const existingJournal = journalByPath.get(entry.path);
+          if (existingJournal) {
+            // Prior run seeded this journal row. Check whether COMMIT has the
+            // matching record. Three outcomes:
+            //   (a) commit has it → repair the local file with the journaled
+            //       UUID and move on. Phase 2 will see everything in sync.
+            //   (b) commit missing + journal present → prior run never finished
+            //       POST (or remote side later deleted it). Drop the journal
+            //       row and retry the POST with a fresh UUID.
+            const table = KIND_TO_TABLE[existingJournal.kind];
+            const commitMatch = commitData[table]?.find(
+              (c) => c.id === existingJournal.commit_id,
             );
-            continue;
+            if (commitMatch) {
+              populateCommitIdInFile(
+                entry.path,
+                entry.title,
+                entry.content,
+                existingJournal.commit_id,
+              );
+              // File is now normal; phase 2 handles LWW from here. Count as
+              // unchanged (the record was already on COMMIT, just unlinked).
+              report.unchanged++;
+              continue;
+            }
+            // (b): journal points at a ghost record — drop it so we can retry.
+            deleteJournal(existingJournal.commit_id);
+            journal.delete(existingJournal.commit_id);
+            journalByPath.delete(entry.path);
+            // Fall through to the normal create path below.
           }
           const { fields, error } = buildCreateFields(entry, kind, commitData);
           if (error) {
@@ -925,7 +948,14 @@ children so goal + vision in one sync works).`,
           // run catches up.
           const nowIso = new Date().toISOString();
           upsertJournal(newId, kind, entry.path, nowIso, nowIso);
-          journaledPaths.add(entry.path);
+          journalByPath.set(entry.path, {
+            commit_id: newId,
+            kind,
+            local_path: entry.path,
+            last_commit_edited_at: nowIso,
+            last_local_edit_time: nowIso,
+            last_sync_at: nowIso,
+          });
 
           const res = await createItem(
             KIND_TO_TABLE[kind],
@@ -937,7 +967,7 @@ children so goal + vision in one sync works).`,
             // POST failed — drop the pre-seeded journal row so the next run
             // can retry with a fresh UUID. Local file is untouched.
             deleteJournal(newId);
-            journaledPaths.delete(entry.path);
+            journalByPath.delete(entry.path);
             report.skipped++;
             report.skippedPaths.push(
               `${entry.path} (POST failed: HTTP ${res.status}${res.error ? ` ${res.error}` : ""})`,
