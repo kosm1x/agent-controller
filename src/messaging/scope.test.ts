@@ -797,6 +797,26 @@ describe("destructive + northstar co-occurrence (classifier path)", () => {
     expect(tools).not.toContain("jarvis_file_delete");
   });
 
+  it("classifier groups [destructive] + regex-activated northstar_read on noun → jarvis_file_delete present", () => {
+    // Classifier may emit just [destructive] for a "cleanup" phrasing; the
+    // NorthStar noun in the message still activates northstar_read via the
+    // regex sweep, and the co-occurrence rule promotes → write tools load.
+    const tools = scopeToolsForMessage(
+      "limpia las tareas viejas",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive"]),
+    );
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
+  it("clitic 'quítala' matches destructive and resolves with noun context", () => {
+    // Symmetric ES clitic coverage for quita — round-2 audit W1 closure.
+    const tools = scope("Esa meta ya no aplica, quítala");
+    expect(tools).toContain("jarvis_file_delete");
+  });
+
   it("classifier groups [destructive, northstar_journal] → jarvis_file_delete present", () => {
     const tools = scopeToolsForMessage(
       "borra la entrada de diario de ayer",

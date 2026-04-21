@@ -444,7 +444,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // activation misses stressed forms and the co-occurrence rule in
     // scopeToolsForMessage never fires → jarvis_file_delete stays offscope.
     pattern:
-      /\b(elim[ií]na(r|la|las|lo|los)?|b[oó]rra(r|la|las|lo|los)?|delete|qu[ií]ta(r)?|remove)\b/i,
+      /\b(elim[ií]na(r|la|las|lo|los)?|b[oó]rra(r|la|las|lo|los)?|delete|qu[ií]ta(r|la|las|lo|los)?|remove)\b/i,
     group: "destructive", // Intent detection only — destructive tools (file_delete, etc.) live in their domain groups (CODING, GOOGLE)
   },
   {
@@ -812,6 +812,21 @@ export function scopeToolsForMessage(
       )
     ) {
       activeGroups.add("seo");
+    }
+    // NorthStar noun injection — classifier may emit `destructive` alone for
+    // "limpia las tareas viejas" (reads "limpia" as cleanup, misses the
+    // NorthStar noun). Without `northstar_read`, the destructive + NorthStar
+    // co-occurrence rule below won't fire and jarvis_file_delete stays
+    // offscope. Mirror the SEO/Google injection pattern to close this gap.
+    if (
+      !activeGroups.has("northstar_read") &&
+      !activeGroups.has("northstar_write") &&
+      !activeGroups.has("northstar_journal") &&
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|vision|pendientes?|northstar|north\s*star)\b/i.test(
+        currentMessage,
+      )
+    ) {
+      activeGroups.add("northstar_read");
     }
     // General scope inheritance safety net: always scan prior user messages
     // with the full pattern set and merge any matches into the classifier's
