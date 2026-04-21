@@ -29,6 +29,10 @@ const BASE_URL = "https://db.mycommit.net/rest/v1";
 const USER_ID = "a8ad98e1-b9c6-4447-ab80-bac467835b3a";
 const TIMEOUT_MS = 15_000;
 
+// Module-level reentrancy guard — prevents concurrent invocations from racing
+// on the journal. Cleared in the finally block of execute().
+let syncInFlight = false;
+
 type Kind = "vision" | "goal" | "objective" | "task";
 
 const KIND_TO_TABLE: Record<Kind, string> = {
@@ -98,11 +102,25 @@ function buildLocalPath(basePath: string, id: string, title: string): string {
   return `${basePath}/${slugify(title)}--${id.slice(0, 8)}.md`;
 }
 
+/**
+ * Parse any supported timestamp (PostgREST ISO `2026-04-20T00:00:00Z` or
+ * SQLite `datetime('now')` `"2026-04-20 00:00:00"`) to epoch ms. NaN when
+ * parsing fails (NULL/undefined/garbage), which sorts as "older than anything"
+ * in Math.max / `>` comparisons — the conservative default.
+ */
+function ts(s: string | null | undefined): number {
+  if (!s) return 0;
+  const t = Date.parse(s.includes("T") ? s : s.replace(" ", "T") + "Z");
+  return Number.isNaN(t) ? 0 : t;
+}
+
 async function fetchTable(
   table: string,
   apiKey: string,
 ): Promise<CommitItem[]> {
-  const url = `${BASE_URL}/${table}?select=*&user_id=eq.${USER_ID}&order=order.asc`;
+  // `order=created_at.asc` not `order=order.asc` — every table has created_at,
+  // `order` is a reserved word + not guaranteed to exist on all 4 tables.
+  const url = `${BASE_URL}/${table}?select=*&user_id=eq.${USER_ID}&order=created_at.asc`;
   const res = await fetch(url, {
     headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -317,6 +335,7 @@ interface SyncReport {
   deletedRemote: number;
   unchanged: number;
   skipped: number;
+  skippedPaths: string[];
   destructive: string[];
 }
 
@@ -345,9 +364,10 @@ async function syncKind(
     const local = locals.get(id) ?? null;
     const journalRow = journal.get(id) ?? null;
 
-    // Branch: journal-only (both gone) → drop row
+    // Branch: journal-only (both gone) → drop row.
+    // Skip on bootstrap — journal is empty, this branch is unreachable anyway.
     if (!commit && !local && journalRow) {
-      deleteJournal(id);
+      if (!bootstrap) deleteJournal(id);
       continue;
     }
 
@@ -402,16 +422,12 @@ async function syncKind(
           report.skipped++;
         }
       } else {
-        // New locally (or bootstrap with local-only) → push to COMMIT
-        const fields = extractPatchFields(local.content, kind);
-        // Note: PostgREST doesn't accept INSERT via PATCH; we'd need POST.
-        // For bootstrap-era records we skip push if we can't tell commit's state.
-        // This is a v1 limitation — local-only records without COMMIT_ID already
-        // skipped by enumerateLocal(); those WITH COMMIT_ID that don't exist on
-        // COMMIT mean COMMIT actually deleted them before journal was installed.
-        // Treat as "commit deleted, delete local" in bootstrap too? Safer: skip.
-        void fields;
+        // Local-only with COMMIT_ID embedded but no matching remote record.
+        // v1 limitation: we can't POST a new record (no INSERT path yet), and
+        // the record may be a user-typed stub without a real remote row. Skip
+        // and surface the path so the operator knows which files are stuck.
         report.skipped++;
+        report.skippedPaths.push(local.path);
       }
       continue;
     }
@@ -426,19 +442,20 @@ async function syncKind(
         commit.modified_by === "user" &&
         (!journalRow ||
           !journalRow.last_commit_edited_at ||
-          commit.last_edited_at > journalRow.last_commit_edited_at);
+          ts(commit.last_edited_at) > ts(journalRow.last_commit_edited_at));
       const localEditedAfterSync = (() => {
         if (!local.userEditTime) return false;
         if (!journalRow) return true; // bootstrap: local has edits, treat as unsynced
-        return local.userEditTime > journalRow.last_sync_at;
+        return ts(local.userEditTime) > ts(journalRow.last_sync_at);
       })();
 
       let winner: "commit" | "local" | "none";
       if (commitEdited && localEditedAfterSync) {
         // Both edited since last sync — tiebreak by timestamp
-        const commitTs = new Date(commit.last_edited_at).getTime();
-        const localTs = new Date(local.userEditTime!).getTime();
-        winner = commitTs >= localTs ? "commit" : "local";
+        winner =
+          ts(commit.last_edited_at) >= ts(local.userEditTime!)
+            ? "commit"
+            : "local";
       } else if (commitEdited) {
         winner = "commit";
       } else if (localEditedAfterSync) {
@@ -463,7 +480,14 @@ async function syncKind(
         upsertJournal(id, kind, local.path, commit.last_edited_at, null);
         report.pulled++;
       } else if (winner === "local") {
-        const fields = extractPatchFields(local.content, kind);
+        const allFields = extractPatchFields(local.content, kind);
+        // Diff against commit — only PATCH fields that actually changed. Cuts
+        // trigger-bump churn and makes the live trail easier to read.
+        const fields: Record<string, string | null> = {};
+        for (const [k, v] of Object.entries(allFields)) {
+          const cur = (commit as unknown as Record<string, unknown>)[k];
+          if (cur !== v) fields[k] = v;
+        }
         if (Object.keys(fields).length === 0) {
           report.skipped++;
         } else {
@@ -560,16 +584,28 @@ GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
       });
     }
 
+    // Reentrancy guard — two concurrent syncs would race on the journal and
+    // could emit destructive ops that contradict each other.
+    if (syncInFlight) {
+      return JSON.stringify({
+        error: "Sync already in progress — wait for it to finish.",
+      });
+    }
+    syncInFlight = true;
+
     try {
       // Fetch all 4 tables — NO status filter (we need every record for correct
       // journal diffing; filtering would masquerade "completed on COMMIT" as deleted).
       const commitData: Record<string, CommitItem[]> = {};
       for (const kind of KINDS) {
-        commitData[KIND_TO_TABLE[kind]] = await fetchTable(
-          KIND_TO_TABLE[kind],
-          apiKey,
-        );
+        commitData[KIND_TO_TABLE[kind]] = [];
       }
+      const fetched = await Promise.all(
+        KINDS.map((k) => fetchTable(KIND_TO_TABLE[k], apiKey)),
+      );
+      KINDS.forEach((k, i) => {
+        commitData[KIND_TO_TABLE[k]] = fetched[i];
+      });
 
       const journal = loadJournal();
       const bootstrap = journal.size === 0;
@@ -581,6 +617,7 @@ GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
         deletedRemote: 0,
         unchanged: 0,
         skipped: 0,
+        skippedPaths: [],
         destructive: [],
       };
 
@@ -634,11 +671,20 @@ GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
         );
       }
 
-      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.`;
+      const skippedNote =
+        report.skippedPaths.length > 0
+          ? ` Skipped paths: ${report.skippedPaths.slice(0, 5).join(", ")}${report.skippedPaths.length > 5 ? ` (+${report.skippedPaths.length - 5} more)` : ""}.`
+          : "";
+      const transitionNote = bootstrap
+        ? " Bootstrap complete — record-level deletion detection enabled starting next sync."
+        : "";
+      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${skippedNote}${transitionNote}`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,
       });
+    } finally {
+      syncInFlight = false;
     }
   },
 };

@@ -39,13 +39,28 @@ function installFetchMock() {
           status: 200,
         });
       }
-      if (method === "PATCH" || method === "DELETE") {
+      if (method === "PATCH") {
+        // Simulate the PostgREST trigger bumping last_edited_at on every PATCH.
+        // Tests rely on this to verify the journal stores the post-PATCH timestamp.
+        const idMatch = url.match(/id=eq\.([0-9a-f-]+)/i);
+        const row = {
+          id: idMatch?.[1],
+          ...(body as Record<string, unknown>),
+          last_edited_at: patchedLastEditedAt,
+          modified_by: "system",
+        };
+        return new Response(JSON.stringify([row]), { status: 200 });
+      }
+      if (method === "DELETE") {
         return new Response(null, { status: 204 });
       }
       return new Response("", { status: 200 });
     }),
   );
 }
+
+// Controls the simulated post-PATCH last_edited_at from the server trigger.
+let patchedLastEditedAt = "2026-04-21T00:00:00Z";
 
 // --- Test fixture helpers --------------------------------------------------
 
@@ -112,6 +127,7 @@ beforeEach(() => {
   process.env.COMMIT_DB_KEY = "test-key";
   mockCalls = [];
   commitTables = { visions: [], goals: [], objectives: [], tasks: [] };
+  patchedLastEditedAt = "2026-04-21T00:00:00Z";
   installFetchMock();
 });
 
@@ -249,6 +265,7 @@ describe("northstar_sync — LWW update branches", () => {
       }),
     ];
 
+    patchedLastEditedAt = "2026-04-21T12:00:00Z";
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Pushed: 1");
 
@@ -258,6 +275,85 @@ describe("northstar_sync — LWW update branches", () => {
     const body = patchCall?.body as Record<string, unknown>;
     expect(body.description).toBe("NEW NOTES FROM USER");
     expect(body.modified_by).toBe("system");
+
+    // Journal must capture the trigger-bumped last_edited_at, not the
+    // pre-PATCH value from commit. This proves the return=representation
+    // plumbing works end-to-end.
+    const row = journalGet(goalId);
+    expect(row?.last_commit_edited_at).toBe("2026-04-21T12:00:00Z");
+  });
+
+  it("field diff — PATCH omits fields that match commit's current value", async () => {
+    const goalId = "ddddcccc-dddd-cccc-dddd-ccccddddcccc";
+    const filePath = "NorthStar/goals/diff.md";
+    // Seed the local file via sync so skipUserEdit=true (no user edit), then
+    // user edits only the description — status/title should NOT be in the PATCH.
+    upsertFile(
+      filePath,
+      "Diffable",
+      `# Diffable\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nDescription: original\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(goalId, "goal", filePath, "2026-04-01T00:00:00Z");
+    upsertFile(
+      filePath,
+      "Diffable",
+      `# Diffable\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nDescription: changed\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+    );
+
+    commitTables.goals = [
+      makeCommitItem(goalId, "Diffable", {
+        modified_by: "system",
+        description: "original",
+        status: "in_progress",
+      }),
+    ];
+
+    await northstarSyncTool.execute({});
+
+    const patchCall = mockCalls.find((c) => c.method === "PATCH");
+    const body = patchCall?.body as Record<string, unknown>;
+    expect(body.description).toBe("changed");
+    expect(body.title).toBeUndefined();
+    expect(body.status).toBeUndefined();
+  });
+
+  it("modified_by='system' blocks pull even if last_edited_at advanced", async () => {
+    // Proves `modified_by` is an independent gate on top of the timestamp
+    // comparison. Without this guard, a trigger-bumped last_edited_at after
+    // our own sync PATCH would masquerade as a user edit.
+    const goalId = "eeeedddd-eeee-dddd-eeee-ddddeeeedddd";
+    const filePath = "NorthStar/goals/sys-advanced.md";
+    upsertFile(
+      filePath,
+      "System advanced",
+      `# System advanced\nCOMMIT_ID: ${goalId}\nStatus: in_progress\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(goalId, "goal", filePath, "2026-04-01T00:00:00Z");
+
+    commitTables.goals = [
+      makeCommitItem(goalId, "System advanced", {
+        modified_by: "system",
+        last_edited_at: "2026-04-20T00:00:00Z", // advanced past journal
+      }),
+    ];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Pulled: 0");
   });
 
   it("commit wins tiebreak when both sides edited and commit timestamp is newer", async () => {
@@ -354,6 +450,38 @@ describe("northstar_sync — delete propagation", () => {
     expect(journalGet(goalId)).toBeNull();
   });
 
+  it("local-only with COMMIT_ID and no journal row skips without DELETE", async () => {
+    // A file with COMMIT_ID that isn't in the journal and isn't on COMMIT is
+    // the "v1 limitation" case — we don't POST to recreate it, but we must
+    // NEVER delete it either. The skipped path surfaces in the return string.
+    const goalId = "ffff1111-ffff-1111-ffff-111111111111";
+    const filePath = "NorthStar/goals/orphan-local.md";
+    upsertFile(
+      filePath,
+      "Orphan local",
+      `# Orphan local\nCOMMIT_ID: ${goalId}\nStatus: in_progress\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+    );
+    // Seed an unrelated journal row so we're not in bootstrap mode.
+    seedJournalRow(
+      "00000000-0000-0000-0000-000000000099",
+      "goal",
+      "NorthStar/goals/other.md",
+      "2026-04-01T00:00:00Z",
+    );
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Skipped: 1");
+    expect(result).toContain(filePath);
+
+    const deleteCalls = mockCalls.filter((c) => c.method === "DELETE");
+    expect(deleteCalls).toHaveLength(0);
+    // Local file survives untouched.
+    expect(getFile(filePath)).not.toBeNull();
+  });
+
   it("drops journal row when both sides are gone", async () => {
     const goalId = "88888888-8888-8888-8888-888888888888";
     seedJournalRow(
@@ -408,6 +536,16 @@ describe("northstar_sync — no-op stability", () => {
     expect(result).toContain("Pushed: 0");
     const patchCalls = mockCalls.filter((c) => c.method === "PATCH");
     expect(patchCalls).toHaveLength(0);
+  });
+
+  it("concurrent invocation is rejected by the reentrancy guard", async () => {
+    commitTables.goals = [
+      makeCommitItem("cccccccc-cccc-cccc-cccc-cccccccccccc", "Pending"),
+    ];
+    const p1 = northstarSyncTool.execute({});
+    const second = await northstarSyncTool.execute({});
+    expect(second).toContain("already in progress");
+    await p1; // let the first call finish and clear the guard
   });
 
   it("modified_by=system round-trip does not cause push/pull loop", async () => {
