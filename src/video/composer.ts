@@ -7,6 +7,10 @@ import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import type { VideoScript } from "./types.js";
 import { VIDEO_PROFILES } from "./types.js";
+import { formatFrameTime } from "./frame-clock.js";
+
+/** Frame rate for all S5d compositions. Stays at 24fps per profile lock-in. */
+const COMPOSER_FPS = 24;
 
 const FFMPEG_TIMEOUT_MS = 120_000; // 2 min per step
 
@@ -45,7 +49,7 @@ export function composeVideo(opts: {
         "-c:v",
         "libx264",
         "-t",
-        String(scene.duration),
+        formatFrameTime(scene.duration, COMPOSER_FPS),
         "-pix_fmt",
         "yuv420p",
         "-vf",
@@ -341,7 +345,7 @@ export function buildOverlayFilterGraph(
       `[${inputIdx}:v]scale=${overlayWidth}:-1,format=rgba,colorchannelmixer=aa=${opacity}[img${i}]`,
     );
     filterParts.push(
-      `[${currentLabel}][img${i}]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:enable='between(t,${start.toFixed(2)},${end.toFixed(2)})'[${outLabel}]`,
+      `[${currentLabel}][img${i}]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:enable='between(t,${formatFrameTime(start, COMPOSER_FPS)},${formatFrameTime(end, COMPOSER_FPS)})'[${outLabel}]`,
     );
     currentLabel = outLabel;
     timeOffset = end;

@@ -1,16 +1,27 @@
 /**
- * Video production tools — S5d.
- * 6 tools: video_create, video_status, video_script, video_tts, video_image, video_list_profiles.
+ * Video production tools — S5d + v7.4 S1 + v7.4 S2a.
+ * Core: video_create, video_status, video_script, video_tts, video_image, video_list_profiles, video_list_voices, video_background_download.
+ * v7.4 S1: video_transition_preview, video_compose_manifest, video_job_cancel, video_job_cleanup.
  */
 
 import { randomUUID } from "crypto";
-import { mkdirSync } from "fs";
+import { execFileSync } from "child_process";
+import { mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
 import type { VideoJobRow } from "../../video/types.js";
 import { VIDEO_PROFILES } from "../../video/types.js";
+import {
+  resolveTransition,
+  TRANSITION_NAMES,
+  type TransitionName,
+} from "../../video/transitions.js";
+import {
+  validateManifest,
+  type VideoCompositionManifest,
+} from "../../video/composition-protocol.js";
 
 const MAX_CONCURRENT_JOBS = 2;
 
@@ -769,5 +780,504 @@ Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same n
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4 S1 — video_transition_preview
+// ---------------------------------------------------------------------------
+
+export const videoTransitionPreviewTool: Tool = {
+  name: "video_transition_preview",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_transition_preview",
+      description: `Render a 2-second sample MP4 demonstrating a named transition between two solid-color test cards.
+
+USE WHEN:
+- User wants to see what a specific transition looks like
+- Comparing transitions before committing to one in a storyboard
+
+Available transitions: fade, wipeleft, wiperight, circleopen, circlecrop, pixelize, dissolve, radial (8 native ffmpeg xfade);
+plus domain-warp, ridged-burn, gravitational-lens, chromatic-radial-split, sdf-iris, rgb-displacement (6 GL-only, fall back to dissolve until v7.4.4).
+
+Returns the path to a small MP4 under /tmp/video-previews/.`,
+      parameters: {
+        type: "object",
+        properties: {
+          transition: {
+            type: "string",
+            enum: [...TRANSITION_NAMES],
+            description: "Transition name",
+          },
+          duration: {
+            type: "number",
+            description:
+              "Transition duration in seconds (default 1.0, range 0.2–3.0)",
+          },
+        },
+        required: ["transition"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const transition = args.transition as TransitionName;
+    if (!transition) return JSON.stringify({ error: "transition is required" });
+    const rawDur = Number(args.duration ?? 1.0);
+    const duration = Math.max(
+      0.2,
+      Math.min(3.0, Number.isFinite(rawDur) ? rawDur : 1.0),
+    );
+
+    let outPath: string | null = null;
+    try {
+      const spec = resolveTransition(transition, duration, 1.0);
+      const outDir = join("/tmp", "video-previews");
+      mkdirSync(outDir, { recursive: true });
+      outPath = join(outDir, `transition-${transition}-${Date.now()}.mp4`);
+
+      // Build filter: two 2-second colour cards crossfaded with the resolved xfade.
+      const filter = `color=c=red:s=320x180:r=24:d=2[a];color=c=blue:s=320x180:r=24:d=2[b];[a][b]${spec.filterExpr},format=yuv420p[v]`;
+      execFileSync(
+        "ffmpeg",
+        [
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=red:s=320x180:r=24:d=2",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=blue:s=320x180:r=24:d=2",
+          "-filter_complex",
+          filter,
+          "-map",
+          "[v]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast",
+          "-pix_fmt",
+          "yuv420p",
+          outPath,
+        ],
+        { timeout: 30_000, stdio: "pipe" },
+      );
+
+      return JSON.stringify({
+        path: outPath,
+        transition,
+        xfadeName: spec.xfadeName,
+        native: spec.native,
+        duration_seconds: duration,
+      });
+    } catch (err) {
+      // Clean up partial/orphan MP4 on timeout or ffmpeg error — prevents
+      // /tmp/video-previews/ bloat across repeated failures.
+      if (outPath) {
+        try {
+          rmSync(outPath, { force: true });
+        } catch {
+          /* non-fatal */
+        }
+      }
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4 S1 — video_compose_manifest
+// ---------------------------------------------------------------------------
+
+const MAX_MANIFEST_JSON_BYTES = 256 * 1024; // 256 KB
+
+export const videoComposeManifestTool: Tool = {
+  name: "video_compose_manifest",
+  requiresConfirmation: true,
+  riskTier: "medium",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_compose_manifest",
+      description: `Compose a video from a structured VideoCompositionManifest (engine-agnostic). Prefer this over video_create when you already have a structured scene list.
+
+USE WHEN:
+- Caller already has a VideoCompositionManifest (pre-authored or emitted by a storyboard pipeline)
+- User wants fine control over scene count, durations, transitions, brand profile
+
+Requires confirmation (cost-bearing). Returns a job_id to track with video_status.`,
+      parameters: {
+        type: "object",
+        properties: {
+          manifest: {
+            type: "object",
+            description:
+              "A full VideoCompositionManifest object (version, title, template, fps, scenes[], language). Must be ≤256KB JSON-serialized.",
+          },
+        },
+        required: ["manifest"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const manifest = args.manifest as VideoCompositionManifest | undefined;
+    if (!manifest || typeof manifest !== "object") {
+      return JSON.stringify({ error: "manifest is required" });
+    }
+
+    // Cheap pre-check before stringify (M2 — avoid CPU on hostile scene arrays)
+    if (
+      Array.isArray((manifest as { scenes?: unknown }).scenes) &&
+      (manifest as { scenes: unknown[] }).scenes.length > 150
+    ) {
+      return JSON.stringify({
+        error: "manifest scene count exceeds hard cap of 150",
+      });
+    }
+
+    let manifestJson: string;
+    try {
+      manifestJson = JSON.stringify(manifest);
+    } catch {
+      return JSON.stringify({ error: "manifest is not JSON-serializable" });
+    }
+    if (Buffer.byteLength(manifestJson, "utf8") > MAX_MANIFEST_JSON_BYTES) {
+      return JSON.stringify({
+        error: `manifest exceeds ${MAX_MANIFEST_JSON_BYTES} bytes cap`,
+      });
+    }
+
+    try {
+      validateManifest(manifest);
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Concurrency gate — reuse same MAX_CONCURRENT_JOBS as video_create
+    const activeCount = (
+      getDatabase()
+        .prepare(
+          "SELECT COUNT(*) as cnt FROM video_jobs WHERE status IN ('scripting','generating_assets','composing')",
+        )
+        .get() as { cnt: number }
+    ).cnt;
+    if (activeCount >= MAX_CONCURRENT_JOBS) {
+      return JSON.stringify({
+        error: `Too many active video jobs (${activeCount}/${MAX_CONCURRENT_JOBS}). Wait for current jobs to finish.`,
+      });
+    }
+
+    const jobId = randomUUID().slice(0, 8);
+    const totalDuration = manifest.scenes.reduce(
+      (acc, s) => acc + s.durationSec,
+      0,
+    );
+    const db = getDatabase();
+    const expiresAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+
+    writeWithRetry(() =>
+      db
+        .prepare(
+          `INSERT INTO video_jobs (job_id, topic, duration_seconds, template, manifest_json, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          jobId,
+          manifest.title,
+          Math.round(totalDuration),
+          manifest.template,
+          manifestJson,
+          expiresAt,
+        ),
+    );
+
+    // Fire-and-forget pipeline from manifest — reuses runPipeline via a
+    // manifest-aware adapter (see runManifestPipeline below).
+    runManifestPipeline(jobId, manifest).catch((err) => {
+      console.error(`[video] Manifest pipeline failed for ${jobId}:`, err);
+      updateJob(jobId, {
+        status: "failed",
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    return JSON.stringify({
+      jobId,
+      status: "pending",
+      title: manifest.title,
+      scene_count: manifest.scenes.length,
+      total_duration_seconds: Math.round(totalDuration),
+      message: `Manifest job ${jobId} started. Use video_status to check progress.`,
+    });
+  },
+};
+
+async function runManifestPipeline(
+  jobId: string,
+  manifest: VideoCompositionManifest,
+): Promise<void> {
+  const workDir = join("/tmp", "video-jobs", jobId);
+  mkdirSync(workDir, { recursive: true });
+
+  // Step 1: Convert manifest scenes into a VideoScript shape (reuse slideshow path)
+  updateJob(jobId, { status: "scripting" });
+  const script = {
+    title: manifest.title,
+    scenes: manifest.scenes.map((s) => ({
+      text: s.text,
+      duration: s.durationSec,
+      imageQuery: s.imageQuery ?? manifest.title,
+      transition: "fade" as const,
+    })),
+    totalDuration: manifest.scenes.reduce((acc, s) => acc + s.durationSec, 0),
+    language: manifest.language,
+  };
+  updateJob(jobId, { script_json: JSON.stringify(script) });
+
+  // Step 2: Generate assets
+  updateJob(jobId, { status: "generating_assets" });
+  const { fetchImage } = await import("../../video/images.js");
+  const { generateSubtitles } = await import("../../video/subtitles.js");
+
+  const subtitleFile = join(workDir, "subtitles.srt");
+
+  await Promise.all(
+    manifest.scenes.map((scene, i) =>
+      scene.imagePath
+        ? Promise.resolve(scene.imagePath)
+        : fetchImage(
+            scene.imageQuery ?? manifest.title,
+            join(workDir, `scene-${String(i).padStart(3, "0")}.jpg`),
+            manifest.template === "portrait" ? 1080 : 1920,
+            manifest.template === "portrait" ? 1920 : 1080,
+          ),
+    ),
+  );
+  const imageFiles = manifest.scenes.map(
+    (s, i) =>
+      s.imagePath ?? join(workDir, `scene-${String(i).padStart(3, "0")}.jpg`),
+  );
+
+  generateSubtitles(script, subtitleFile);
+
+  const { generateNarration } = await import("../../video/tts.js");
+  const audioFile = join(workDir, "narration.mp3");
+  const fullText = manifest.scenes.map((s) => s.text).join(". ");
+  const audioPath = await generateNarration(
+    fullText,
+    audioFile,
+    manifest.language,
+    manifest.voice,
+  );
+
+  updateJob(jobId, {
+    assets_json: JSON.stringify({
+      audio: audioPath,
+      images: imageFiles,
+      subtitles: subtitleFile,
+    }),
+  });
+
+  updateJob(jobId, { status: "composing" });
+  const { composeVideo } = await import("../../video/composer.js");
+  const outputFile = composeVideo({
+    jobId,
+    script,
+    imageFiles,
+    audioFile: audioPath,
+    subtitleFile,
+    template: manifest.template,
+  });
+
+  updateJob(jobId, {
+    status: "completed",
+    output_file: outputFile,
+    completed_at: new Date().toISOString(),
+  });
+
+  console.log(`[video] Manifest job ${jobId} completed: ${outputFile}`);
+}
+
+// ---------------------------------------------------------------------------
+// v7.4 S1 — video_job_cancel
+// ---------------------------------------------------------------------------
+
+export const videoJobCancelTool: Tool = {
+  name: "video_job_cancel",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_job_cancel",
+      description: `Mark a video job as cancelled. NOTE: currently only marks the DB row — does NOT yet kill the underlying ffmpeg child (v7.4 S1 limitation). Running ffmpeg processes will complete or time out at the 2-min ffmpeg-step cap. Pid-kill wiring lands in v7.4 S1.1 when the composer is migrated from execFileSync to spawn.
+
+USE WHEN:
+- User asks to stop a video render (note the caveat above)
+- A job is stuck in a non-terminal state (scripting/generating_assets/composing) and the operator wants the DB row marked cancelled
+
+No-op if the job is already completed/failed/cancelled. Returns {ok:false} if the job does not exist.`,
+      parameters: {
+        type: "object",
+        properties: {
+          job_id: {
+            type: "string",
+            description:
+              "The job ID returned by video_create or video_compose_manifest",
+          },
+        },
+        required: ["job_id"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const jobId = args.job_id as string;
+    if (!jobId) return JSON.stringify({ error: "job_id is required" });
+
+    const row = getJob(jobId) as
+      | (VideoJobRow & { ffmpeg_pid: number | null })
+      | undefined;
+    if (!row)
+      return JSON.stringify({ ok: false, error: `Job ${jobId} not found` });
+
+    const terminalStates = new Set(["completed", "failed", "cancelled"]);
+    if (terminalStates.has(row.status)) {
+      return JSON.stringify({
+        ok: true,
+        alreadyTerminal: true,
+        status: row.status,
+      });
+    }
+
+    // Attempt to kill ffmpeg pid if present (SIGTERM, non-fatal on failure)
+    let killed = false;
+    const pid = row.ffmpeg_pid;
+    if (typeof pid === "number" && pid > 0) {
+      try {
+        process.kill(pid, "SIGTERM");
+        killed = true;
+      } catch {
+        // process may have exited already — non-fatal
+      }
+    }
+
+    updateJob(jobId, {
+      status: "cancelled",
+      error_message: "Cancelled by operator",
+      completed_at: new Date().toISOString(),
+    });
+
+    return JSON.stringify({
+      ok: true,
+      jobId,
+      pid_killed: killed,
+      cancelled_at: new Date().toISOString(),
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4 S1 — video_job_cleanup
+// ---------------------------------------------------------------------------
+
+export const videoJobCleanupTool: Tool = {
+  name: "video_job_cleanup",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_job_cleanup",
+      description: `Remove expired/terminal video job working directories and DB rows. Ops hygiene — frees disk space.
+
+USE WHEN:
+- Operator wants to reclaim disk
+- Disk is tight and /tmp/video-jobs/ has many leftover directories
+
+Default: removes jobs that are completed/failed/cancelled AND older than 24h. Returns counts.`,
+      parameters: {
+        type: "object",
+        properties: {
+          older_than_hours: {
+            type: "number",
+            description:
+              "Only remove jobs older than this (default 24, min 1, max 720)",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const raw = Number(args.older_than_hours ?? 24);
+    if (!Number.isFinite(raw) || raw < 1 || raw > 720) {
+      return JSON.stringify({
+        error: "older_than_hours must be a finite number in [1, 720]",
+      });
+    }
+    const hours = Math.floor(raw);
+
+    const db = getDatabase();
+    const cutoff = new Date(Date.now() - hours * 3600_000).toISOString();
+
+    const candidates = db
+      .prepare(
+        `SELECT job_id FROM video_jobs
+         WHERE status IN ('completed','failed','cancelled')
+           AND (completed_at IS NULL OR completed_at < ?)`,
+      )
+      .all(cutoff) as Array<{ job_id: string }>;
+
+    let removedCount = 0;
+    let bytesFreed = 0;
+
+    // Defense-in-depth: reject job_ids that could escape /tmp/video-jobs/
+    // even though createJob currently always writes UUID slices.
+    const SAFE_JOB_ID = /^[a-f0-9-]{4,36}$/;
+
+    for (const { job_id } of candidates) {
+      if (!SAFE_JOB_ID.test(job_id)) continue;
+      const workDir = join("/tmp", "video-jobs", job_id);
+      if (existsSync(workDir)) {
+        try {
+          // Tally bytes (best-effort; skip if fails)
+          try {
+            const stat = execFileSync("du", ["-sb", workDir], {
+              encoding: "utf-8",
+              timeout: 5_000,
+            });
+            const match = stat.match(/^(\d+)/);
+            if (match) bytesFreed += parseInt(match[1], 10);
+          } catch {
+            /* non-fatal */
+          }
+          rmSync(workDir, { recursive: true, force: true });
+        } catch {
+          /* non-fatal */
+        }
+      }
+      try {
+        db.prepare("DELETE FROM video_jobs WHERE job_id = ?").run(job_id);
+        removedCount++;
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    return JSON.stringify({
+      older_than_hours: hours,
+      removed_count: removedCount,
+      bytes_freed: bytesFreed,
+    });
   },
 };

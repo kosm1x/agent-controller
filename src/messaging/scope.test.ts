@@ -22,6 +22,7 @@ import {
   ADS_TOOLS,
   CHART_TOOLS,
   TEACHING_TOOLS,
+  VIDEO_TOOLS,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -1901,5 +1902,142 @@ describe("teaching scope group (v7.11)", () => {
   it("'enseñálo' clitic-object form DOES activate teaching", () => {
     const tools = scope("Jarvis, enseñálo con un ejemplo real");
     expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+});
+
+describe("video scope group (v7.4 S1 tighten)", () => {
+  // Positive — EN
+  it("activates on 'hazme un video sobre X'", () => {
+    const tools = scope("hazme un video sobre inteligencia artificial");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'render a video for YouTube'", () => {
+    const tools = scope("Render a video for YouTube about our launch");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'storyboard for a 60s clip'", () => {
+    const tools = scope("Give me a storyboard for a 60s clip");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // Positive — ES, accented + unaccented + subjunctive
+  it("activates on accented 'vídeo' (ES)", () => {
+    const tools = scope("quiero un vídeo para TikTok");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("activates on unaccented 'video' (ES common form)", () => {
+    const tools = scope("renderiza el video con esta narración");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'transición de video' (ES) and 'composición de video'", () => {
+    const t1 = scope("muéstrame una transición de video tipo fade");
+    expect(hasAll(t1, VIDEO_TOOLS)).toBe(true);
+    const t2 = scope("prepara la composición de video para el cliente");
+    expect(hasAll(t2, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // False-positive negatives — dev chatter must NOT fire
+  it("'the video tag in HTML' does NOT fire (dev chatter)", () => {
+    const tools = scope("Explain how the video tag in HTML works");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  it("'render a React component' does NOT fire (bare render removed)", () => {
+    const tools = scope("render a React component with useState");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  it("'extract mp4 from the archive' does NOT fire", () => {
+    const tools = scope("extract mp4 from the zip file to disk");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  // Regression: existing S5d phrases still work
+  it("regression: 'screenshot' still activates video scope (screenshot_element lives here)", () => {
+    const tools = scope("tómame un screenshot de example.com");
+    expect(tools).toContain("screenshot_element");
+  });
+
+  it("regression: 'voz para video' (ES TTS) still activates", () => {
+    const tools = scope("genera la voz para el video del curso");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // Positive-boundary: word followed by punctuation, not just space
+  it("boundary: 'render el video.' with period still activates", () => {
+    const tools = scope("render el video.");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // Round-1 M4 — additional FP-negatives for over-broad tokens
+  it("'overlay CSS class' does NOT fire (bare overlay removed)", () => {
+    const tools = scope("Add an overlay CSS class to the modal");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  it("'take a screenshot of my IDE' fires (video scope owns screenshot)", () => {
+    // screenshot_element is the tool; this positive case confirms it still fires
+    const tools = scope("take a screenshot of my IDE for the bug report");
+    expect(tools).toContain("screenshot_element");
+  });
+
+  it("'Screenshot attribute in CSS' dev chatter does NOT fire", () => {
+    const tools = scope("Explain the Screenshot attribute in CSS-Paint-API");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  it("'the TikTok demographic report' does NOT fire video (bare platform)", () => {
+    const tools = scope("show me the TikTok demographic report for Q1");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  it("'YouTube channel performance' does NOT fire video (bare platform)", () => {
+    const tools = scope("YouTube channel performance for last month");
+    expect(hasNone(tools, ["video_compose_manifest", "video_job_cancel"])).toBe(
+      true,
+    );
+  });
+
+  // Regression for M4 fix: legitimate platform+video phrasing still fires
+  it("'TikTok video' fires (platform + video qualifier)", () => {
+    const tools = scope("preparame un TikTok video de 30 segundos");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("'overlay mode' (S5d mode name) fires", () => {
+    const tools = scope("render using overlay mode with ocean-waves");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // Round-2 W2 regression fix: 'reel' singular and 'reels de/para X'
+  it("'hacer un reel para Instagram' fires (Round-2 W2 ES reels fix)", () => {
+    const tools = scope("hacer un reel para Instagram");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("'reels de marca' fires (Round-2 W2 ES reels fix)", () => {
+    const tools = scope("prepara reels de marca para el cliente");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("'make a reel for my brand' fires (Round-2 W2 EN reels fix)", () => {
+    const tools = scope("make a reel for my brand launch");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
   });
 });

@@ -209,6 +209,10 @@ export const VIDEO_TOOLS = [
   "video_list_profiles",
   "video_list_voices",
   "video_background_download",
+  "video_transition_preview",
+  "video_compose_manifest",
+  "video_job_cancel",
+  "video_job_cleanup",
   "screenshot_element",
 ];
 
@@ -511,8 +515,13 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "intel",
   },
   {
+    // v7.4 S1 tighten: bare `video`/`render`/`mp4` caused FPs on dev chatter
+    // ("the video tag", "render a React component", "extract mp4 from pdf").
+    // Round-1 audit M4: `overlay`/`screenshot` bare words and bare platform
+    // names (TikTok/YouTube) were still over-broad — now require a co-occurring
+    // video/clip/take-a/de qualifier, or the domain-specific phrasing.
     pattern:
-      /\b(video|pel[ií]cula|clip|render|mp4|youtube|tiktok|reels|graba(r|ci[oó]n)?|hazme un video|overlay|fondo|background\s*video|narraci[oó]n|voz\s*(para|del)\s*video|screenshot|captura\s*(de\s*pantalla)?)\b/i,
+      /\b(?:v[ií]deos?(?!\s*(?:tag|element|elemento|html))|pel[ií]culas?|clips?|storyboard|guion\s+de\s+v[ií]deo|mp4(?!\s+(?:to|a|file|from|de\s+un|del))|webm|(?:you-?tube|tik-?tok|reels|shorts)\s+(?:v[ií]deo|clip|reel|short|contenido|content|strategy|estrategia|storyboard)|(?:reels?|shorts?)\s+(?:de|para|of|for)\s+(?:instagram|facebook|youtube|tiktok|marca|brand|campa[ñn]a)|(?:un|una|a|an|el|la|hacer|haz|make)\s+reels?\b|instagram\s+video|graba(?:r|ci[oó]n)?|hazme\s+un\s+v[ií]deo|overlay\s+(?:v[ií]deo|scene|escena|text|imagen|mode|mod[oa])|(?:con|with|usando|using|using\s+an|en\s+modo)\s+overlay|fondo\s+de\s+v[ií]deo|background\s+video|narraci[oó]n|voz\s+(?:para|del)\s+v[ií]deo|transici[oó]n\s+de\s+v[ií]deo|transitions?\s+preview|composici[oó]n\s+de\s+v[ií]deo|render\s+(?:el\s+|un\s+|la\s+)?v[ií]deo|v[ií]deo\s+render|(?:t[óo]mame\s+un\s+)?screenshot\s+(?:de|of|del|la|el|web|p[aá]gina|url|this)|take\s+a\s+screenshot|captura\s+(?:de\s+pantalla)?)\b/i,
     group: "video",
   },
   {

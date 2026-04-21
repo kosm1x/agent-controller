@@ -124,6 +124,10 @@ import {
   videoListProfilesTool,
   videoListVoicesTool,
   videoBackgroundDownloadTool,
+  videoTransitionPreviewTool,
+  videoComposeManifestTool,
+  videoJobCancelTool,
+  videoJobCleanupTool,
 } from "../builtin/video.js";
 import { screenshotElementTool } from "../builtin/screenshot.js";
 import {
@@ -268,6 +272,10 @@ const BUILTIN_TOOLS: Tool[] = [
   videoListProfilesTool,
   videoListVoicesTool,
   videoBackgroundDownloadTool,
+  videoTransitionPreviewTool,
+  videoComposeManifestTool,
+  videoJobCancelTool,
+  videoJobCleanupTool,
   screenshotElementTool,
   humanizeTextTool,
   dashboardGenerateTool,

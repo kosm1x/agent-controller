@@ -634,24 +634,32 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.4 — Video Production — **Planned**
+## v7.4 — Video Production
 
 > 2 sessions. Depends on v7.3 Phase 4 (feeds marketing content). References: `reference_open_higgsfield.md`, `reference_openmontage.md`, `reference_hyperframes.md`, `reference_redditvideomakerbbot.md`.
 
-### v7.4 S1 — Composition Engine (openmontage base + hyperframes Tier 1 patterns)
+### v7.4 S1 — Composition Engine (augments existing S5d ffmpeg pipeline) — **Done (session 97, 2026-04-21)**
 
-| Item                                                                                             | Source                     | Status      |
-| ------------------------------------------------------------------------------------------------ | -------------------------- | ----------- |
-| openmontage-based `video_*` tool set (clean-room TS: video_create/script/tts/image/compose etc.) | `reference_openmontage.md` | **Planned** |
-| **Seek-by-frame protocol** (HfProtocol as composition contract, engine-agnostic)                 | hyperframes #1             | **Planned** |
-| **Deterministic frame quantization** (~20 LOC, same input → identical MP4)                       | hyperframes #2             | **Planned** |
-| **Parallel worker coordinator** (~300 LOC, auto-sized by CPU/memory)                             | hyperframes #3             | **Planned** |
-| **Skill gate pattern** (SKILL.md + house-style.md + visual-styles.md + Visual Identity Gate)     | hyperframes #5             | **Planned** |
-| **14 WebGL shader transitions** (inlined GLSL, GSAP-driven — domain-warp, ridged-burn, etc.)     | hyperframes #7             | **Planned** |
-| Stretch: pre-extract video frames pipeline (ffprobe + CDP injection, ~400 LOC)                   | hyperframes #4             | **Stretch** |
-| Stretch: 40-block registry (Reddit-post, IG-follow, YT-lower-third, data-chart)                  | hyperframes #8             | **Stretch** |
-| Stretch: Docker determinism mode (pinned Chrome + fonts)                                         | hyperframes #9             | **Stretch** |
-| Stretch: audio-reactive sampling pattern (pre-extracted frequency bands)                         | hyperframes #10            | **Stretch** |
+> Shipped as augmentation of the existing `src/video/*` S5d module rather than a port of openmontage/hyperframes. S5d already shipped the `video_create/script/tts/image/compose` tool set under the `video` scope group (Phase β). S1 adds the hyperframes Tier-1 patterns that survive without a Chromium compositor: frame quantization, xfade-mapped transitions, manifest protocol, worker-pool (unwired — see S1.1). Impl plan: `docs/planning/phase-gamma/09-v7.4-impl-plan.md`.
+
+| Item                                                                                                                                                                            | Source                 | Status                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
+| S5d composer baseline (video_create / video_status / video_script / video_tts / video_image / video_list_profiles / video_list_voices / video_background_download)              | Phase β S5d            | **Done** (pre-v7.4)                                                                                 |
+| **Seek-by-frame protocol** (`VideoCompositionManifest` + `validateManifest`, engine-agnostic)                                                                                   | hyperframes #1         | **Done**                                                                                            |
+| **Deterministic frame quantization** (`src/video/frame-clock.ts`, wired into `composer.ts` at `-t` + `between(t,…)` sites)                                                      | hyperframes #2         | **Done**                                                                                            |
+| **Parallel worker coordinator** (`src/video/worker-pool.ts` — written, tested, CAP 4)                                                                                           | hyperframes #3         | **Partial** — module shipped, NOT wired into composer. See v7.4 S1.1.                               |
+| Skill gate pattern (SKILL.md + house-style.md + visual-styles.md)                                                                                                               | hyperframes #5         | **Deferred to S2a** — better expressed as cinema-prompts catalog (see v7.3 P4a pattern)             |
+| **14 transition library** — 8 native ffmpeg xfade (fade / wipeleft / wiperight / circleopen / circlecrop / pixelize / dissolve / radial)                                        | hyperframes #7 partial | **Done**                                                                                            |
+| 6 GL-only shader transitions (domain-warp / ridged-burn / gravitational-lens / chromatic-radial-split / sdf-iris / rgb-displacement) → fall back to dissolve                    | hyperframes #7         | **Deferred to v7.4.4** — trigger: operator requests a specific one                                  |
+| 4 new tools — `video_transition_preview`, `video_compose_manifest`, `video_job_cancel`, `video_job_cleanup`                                                                     | —                      | **Done**                                                                                            |
+| DB additive migration — `manifest_json` / `frame_hash` / `cost_cents` / `ffmpeg_pid` on `video_jobs`                                                                            | —                      | **Done**                                                                                            |
+| Scope regex tightening — bilingual EN+ES, negative lookaheads on `video`/`render`/`mp4`/`overlay`/`screenshot`/platforms, + Round-2 W2 singular-`reel` + `reels de/para X` arms | —                      | **Done**                                                                                            |
+| `ffmpeg_pid` pid-kill wiring in `video_job_cancel` (composer needs `execFileSync`→`spawn` refactor)                                                                             | —                      | **Deferred to v7.4 S1.1** — trigger: operator reports "cancelled" job kept running to 2-min timeout |
+| `runManifestPipeline` unit tests (currently covered only by live smoke)                                                                                                         | —                      | **Deferred** — trigger: ffmpeg live-fixture harness, OR regression observed                         |
+| Stretch: pre-extract video frames pipeline (ffprobe + CDP injection, ~400 LOC)                                                                                                  | hyperframes #4         | **Deferred to v7.4.3** — Chromium compositor reliability                                            |
+| Stretch: 40-block registry (Reddit-post, IG-follow, YT-lower-third, data-chart)                                                                                                 | hyperframes #8         | **Deferred to v7.4.3** — HTML/CSS blocks                                                            |
+| Stretch: Docker determinism mode (pinned Chrome + fonts)                                                                                                                        | hyperframes #9         | **Deferred** — trigger: two renders of same input diverge in hash                                   |
+| Stretch: audio-reactive sampling pattern (pre-extracted frequency bands)                                                                                                        | hyperframes #10        | **Doc-only** in v7.4 S2a cinema-prompts (visual-styles)                                             |
 
 ### v7.4 S2 — AI Generation + Storyboard + Lip-Sync
 
