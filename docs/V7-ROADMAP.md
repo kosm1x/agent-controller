@@ -18,13 +18,13 @@
 | Phase | Scope                                           | Versions                                                            | Status                                                                  | Sessions             |
 | ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
 | α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Gated**                                                               | 0.5 (Apr 20)         |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Done (Closed 2026-04-20 — avg_gap=0.029, Phase 3 declined)**          | 0.5 shipped          |
 | β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)** | ~11.5 seq / ~7–8 par |
 | β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (prediction-market alpha) → F8.1b (PolymarketPaperAdapter)    | **Planned** — queued after F9 per operator 2026-04-20                   | 2.5                  |
 | β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                             | 1                    |
 | γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-β-add**                                                 | ~14–15               |
 | δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                               | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Conditional**                                                         | 2                    |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Declined 2026-04-20** (see Phase 2 outcome)                           | 0                    |
 
 **Ordering invariants**
 
@@ -98,29 +98,30 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 ---
 
-## v7.8 Phase 2 — Autoreason Tournament Feasibility Decision — **Gated** (Phase α.2, fixed date 2026-04-20)
+## v7.8 Phase 2 — Autoreason Tournament Feasibility Decision — **Done (Closed)** — 2026-04-20
 
-> Scheduled nudge `eb3e4b14` fires 9 AM CDMX on 2026-04-20 via Telegram. Decision rules in `project_autoreason_phase2_decision.md`.
+> **Outcome**: `avg_gap = 0.029` over 7-day window (threshold 0.10) → close thread. No tournament, no Phase 3. Decision doc: `docs/planning/phase-gamma/06-v7.8-p2-decision.md`. `reflector_gap_log` telemetry stays on as re-evaluation trigger.
 
-| Item                                                                                                           | Source | Status      |
-| -------------------------------------------------------------------------------------------------------------- | ------ | ----------- |
-| Query `reflector_gap_log` over 7-day window — avg_gap, max_gap, wide_gap_count, llm_fallback_count             | —      | **Planned** |
-| Apply decision rules: `avg_gap < 0.10` → close; `wide_gap_count > 10%` → targeted pilot; `>25%` → global pilot | —      | **Planned** |
-| Verify k=2 stability rule actually fired (events `replan_deferred`); if zero, investigate before concluding    | —      | **Planned** |
-| Update memory + decide whether v7.8 Phase 3 proceeds                                                           | —      | **Planned** |
+| Item                                                                                                           | Source | Status                                                         |
+| -------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------- |
+| Query `reflector_gap_log` over 7-day window — avg_gap, max_gap, wide_gap_count, llm_fallback_count             | —      | **Done** (n=8, avg=0.029, wide=0, fallback=0)                  |
+| Apply decision rules: `avg_gap < 0.10` → close; `wide_gap_count > 10%` → targeted pilot; `>25%` → global pilot | —      | **Done** (primary rule fired → close)                          |
+| Verify k=2 stability rule actually fired (events `replan_deferred`); if zero, investigate before concluding    | —      | **Done** (0 events — all runs clean, no soft votes; not a bug) |
+| Update memory + decide whether v7.8 Phase 3 proceeds                                                           | —      | **Done** (project memory flipped to DECIDED; Phase 3 declined) |
+| Deactivate scheduled nudge `eb3e4b14`                                                                          | —      | **Done** (`active=0`)                                          |
 
 ---
 
-## v7.8 Phase 3 — Autoreason Targeted Tournament Pilot — **Conditional** (Phase ε)
+## v7.8 Phase 3 — Autoreason Targeted Tournament Pilot — **Declined** (2026-04-20)
 
-> Phase ε — only if 2026-04-20 data shows `wide_gap_count > 10%` on specific task classes. Not a global tournament — scoped to the classes with measurable gap. Executes independently of β critical path.
+> Declined: Phase 2 data unambiguously met the close-thread rule (`avg_gap = 0.029`, `wide_gap_count = 0`). Tournament mode would be 6× compute per reflection for no demonstrated quality gain on our traffic. See `docs/planning/phase-gamma/06-v7.8-p2-decision.md` for re-evaluation triggers.
 
-| Item                                                                                                       | Source          | Status          |
-| ---------------------------------------------------------------------------------------------------------- | --------------- | --------------- |
-| Identify task classes with widest gap (briefings, proposals, research syntheses)                           | Phase 2 data    | **Conditional** |
-| Build 3-candidate tournament (incumbent / adversarial revision / synthesis) for those classes only         | autoreason §2   | **Conditional** |
-| Fresh-agent judge panel (3 judges, Borda aggregation, incumbent-wins-ties)                                 | autoreason §2.1 | **Conditional** |
-| A/B compare tournament mode against current single-reflector path for 7 days, measure quality + cost delta | —               | **Conditional** |
+| Item                                                                                                       | Source          | Status       |
+| ---------------------------------------------------------------------------------------------------------- | --------------- | ------------ |
+| Identify task classes with widest gap (briefings, proposals, research syntheses)                           | Phase 2 data    | **Declined** |
+| Build 3-candidate tournament (incumbent / adversarial revision / synthesis) for those classes only         | autoreason §2   | **Declined** |
+| Fresh-agent judge panel (3 judges, Borda aggregation, incumbent-wins-ties)                                 | autoreason §2.1 | **Declined** |
+| A/B compare tournament mode against current single-reflector path for 7 days, measure quality + cost delta | —               | **Declined** |
 
 ---
 
