@@ -146,6 +146,9 @@ import { seoRobotsAuditTool } from "../builtin/seo-robots-audit.js";
 import { seoLlmsTxtGenerateTool } from "../builtin/seo-llms-txt-generate.js";
 import { seoTelemetryTool } from "../builtin/seo-telemetry.js";
 import { aiOverviewTrackTool } from "../builtin/ai-overview-track.js";
+import { adsAuditTool } from "../builtin/ads-audit.js";
+import { adsBrandDnaTool } from "../builtin/ads-brand-dna.js";
+import { adsCreativeGenTool } from "../builtin/ads-creative-gen.js";
 import { googleWorkspaceCliTool } from "../builtin/google-workspace-cli.js";
 import {
   marketQuoteTool,
@@ -290,6 +293,10 @@ const BUILTIN_TOOLS: Tool[] = [
   seoLlmsTxtGenerateTool,
   seoTelemetryTool,
   aiOverviewTrackTool,
+  // v7.3 Phase 4a — Digital Marketing Buyer. Deferred, scope 'ads'.
+  adsAuditTool,
+  adsBrandDnaTool,
+  adsCreativeGenTool,
   // F1 finance tools (v7.0 Phase β S1) — deferred, scope 'finance'
   marketQuoteTool,
   marketHistoryTool,

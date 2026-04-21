@@ -602,18 +602,35 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.3 Phase 4 — Digital Marketing Buyer (claude-ads + Meta/Google Ads) — **Planned**
+## v7.3 Phase 4 — Digital Marketing Buyer (claude-ads + Meta/Google Ads) — **Phase 4a Done** (2026-04-21)
 
-> 3 sessions. No F-series dependencies, independent. Reference: `reference_claude_ads.md`.
+> 3 sessions originally scoped — split into 3 credential-boundary-aware sub-sprints. Reference: `reference_claude_ads.md`.
 
-| Item                                                                            | Source     | Status      |
-| ------------------------------------------------------------------------------- | ---------- | ----------- |
-| Audit scoring framework (225 checks, 7 platforms) from claude-ads               | claude-ads | **Planned** |
-| Brand DNA + creative framework system                                           | claude-ads | **Planned** |
-| Meta Ads API client — campaign CRUD, audience targeting, creative upload        | Meta Graph | **Planned** |
-| Google Ads API client — campaign CRUD, keywords, bid strategies                 | Google Ads | **Planned** |
-| Bid management — budget allocation, dayparting, auto-pause                      | —          | **Planned** |
-| CRM attribution — ad click → lead → opportunity → close linkage via agentic-crm | CRM        | **Planned** |
+### v7.3 Phase 4a — Audit + Brand DNA + Creative Generation (done, 1 session)
+
+| Item                                                                                                                                                                                                                                                                                                                                                           | Source     | Status   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
+| `ads_audit` — weighted 7-platform check framework (v1 ~50 checks, severity 5.0×→0.5×, categories: targeting/budget/creative/technical/tracking); A-F grade with not-applicable-aware denominator; supersede-map drops exact-field-duplicate cross-platform checks on platforms with specific variants; WordStream/LinkedIn industry benchmarks cross-reference | claude-ads | **Done** |
+| `ads_brand_dna` — URL (stealth-fetch) or pasted-text → LLM-extracted brand brief (voice axes formality/boldness/playfulness, colors, typography, value props, audience, lexicon); scalar + list sanitization at storage boundary (prompt-injection laundering defense)                                                                                         | claude-ads | **Done** |
+| `ads_creative_gen` — brief_id or inline brief + framework (AIDA/PAS/BAB/FAB/4P/Star-Story-Solution) + platform + objective → N creative variants; single-pass template substitution (immune to placeholder laundering)                                                                                                                                         | claude-ads | **Done** |
+| 6 copywriting framework prompt templates + 47-row industry×platform benchmark table + `ads_audits`/`ads_brand_profiles`/`ads_creatives` tables + `ads` scope group (bilingual EN+ES)                                                                                                                                                                           | claude-ads | **Done** |
+
+### v7.3 Phase 4b — Meta + Google Ads API clients — **Credential-gated**
+
+> 1 session. Depends on operator provisioning: Facebook Business app (id/secret/system-user token) + Google OAuth2 client + Google Ads developer token. Shipping API clients before creds are in place produces dead code.
+
+| Item                                                                                  | Source     | Status      |
+| ------------------------------------------------------------------------------------- | ---------- | ----------- |
+| Meta Ads API client — campaign CRUD, audience targeting, creative upload (Graph v21+) | Meta Graph | **Planned** |
+| Google Ads API client — campaign CRUD, keywords, bid strategies                       | Google Ads | **Planned** |
+
+### v7.3 Phase 4c — Bid Automation + CRM Attribution — **Planned** (depends on P4b)
+
+| Item                                                                            | Source | Status      |
+| ------------------------------------------------------------------------------- | ------ | ----------- |
+| Bid management — budget allocation, dayparting, auto-pause                      | —      | **Planned** |
+| CRM attribution — ad click → lead → opportunity → close linkage via agentic-crm | CRM    | **Planned** |
+| Daily performance ritual — scheduled scan + weekly optimization report          | —      | **Planned** |
 
 ---
 

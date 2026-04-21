@@ -19,6 +19,7 @@ import {
   MISC_TOOLS,
   CRM_TOOLS_SCOPE,
   SEO_TOOLS,
+  ADS_TOOLS,
   CHART_TOOLS,
   TEACHING_TOOLS,
 } from "./scope.js";
@@ -1194,6 +1195,91 @@ describe("seo scope group (v7.3)", () => {
   it("does not activate on unrelated messages", () => {
     const tools = scope("Cómo está el clima hoy");
     expect(hasNone(tools, SEO_TOOLS)).toBe(true);
+  });
+});
+
+describe("ads scope group (v7.3 Phase 4a)", () => {
+  it("activates on platform-qualified ads (EN)", () => {
+    const tools = scope("Audit my Meta Ads account for the last month");
+    expect(hasAll(tools, ADS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'audita la cuenta de Google Ads' (ES)", () => {
+    const tools = scope("Audita la cuenta de Google Ads de este cliente");
+    expect(hasAll(tools, ADS_TOOLS)).toBe(true);
+  });
+
+  it("activates on ROAS / CPA metric mentions", () => {
+    const tools = scope("Mi ROAS está en 1.8, cómo mejoro el CPA?");
+    expect(hasAll(tools, ADS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'brand DNA' / 'identidad de marca'", () => {
+    const t1 = scope("Extract the brand DNA from livingjoyfully.art");
+    expect(hasAll(t1, ADS_TOOLS)).toBe(true);
+    const t2 = scope("Extrae la identidad de marca de este sitio");
+    expect(hasAll(t2, ADS_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'anuncios' (ES noun)", () => {
+    const tools = scope("Genera 5 anuncios para TikTok para mi marca");
+    expect(hasAll(tools, ADS_TOOLS)).toBe(true);
+  });
+
+  it("activates on framework acronyms (AIDA, BAB, FAB) with word boundaries", () => {
+    const t1 = scope("Usa el framework AIDA para este copy");
+    expect(hasAll(t1, ADS_TOOLS)).toBe(true);
+    const t2 = scope("Prueba FAB framework");
+    expect(hasAll(t2, ADS_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on English substrings of the framework acronyms (round-1 audit M1)", () => {
+    // bare "fab" / "aida" / "bab" as substrings of common words must NOT fire
+    const t1 = scope("I love fabric and fabulous outfits");
+    expect(hasNone(t1, ADS_TOOLS)).toBe(true);
+    const t2 = scope("The baby was crying and the babysitter was tired");
+    expect(hasNone(t2, ADS_TOOLS)).toBe(true);
+    const t3 = scope("She posted on aidalicious yesterday");
+    expect(hasNone(t3, ADS_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on 'roast/roasted/roasting' (round-2 audit C2 regression)", () => {
+    // Round-2 audit caught that `ROAS` had lost its trailing `\b`, firing
+    // on the common English word "roast". Guard against the same regression.
+    const t1 = scope("I love roast beef for dinner");
+    expect(hasNone(t1, ADS_TOOLS)).toBe(true);
+    const t2 = scope("Roasted chicken with peppers");
+    expect(hasNone(t2, ADS_TOOLS)).toBe(true);
+    const t3 = scope("We are roasting in this heat");
+    expect(hasNone(t3, ADS_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on 'brand voicemail' / 'brand profiler' (round-2 audit C2)", () => {
+    // `brand\s+(?:dna|voice|profile)` without trailing `\b` matched longer
+    // compounds. Guard.
+    const t1 = scope("The brand voicemail system was down");
+    expect(hasNone(t1, ADS_TOOLS)).toBe(true);
+    const t2 = scope("Try the brand profiler tool for a demo");
+    expect(hasNone(t2, ADS_TOOLS)).toBe(true);
+  });
+
+  it("still activates on framework acronyms with trailing punctuation (round-2 audit m1 positive-boundary)", () => {
+    // `FAB\b` must still fire when followed by `.` / `,` / `-` / newline /
+    // end-of-string, not just plain space.
+    expect(hasAll(scope("Use AIDA."), ADS_TOOLS)).toBe(true);
+    expect(hasAll(scope("Pick BAB,"), ADS_TOOLS)).toBe(true);
+    expect(hasAll(scope("Try FAB\nfor this"), ADS_TOOLS)).toBe(true);
+    expect(hasAll(scope("Which framework? AIDA"), ADS_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on 'add a field' / generic 'add' chatter", () => {
+    const tools = scope("add a field called created_at to the schema");
+    expect(hasNone(tools, ADS_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on unrelated messages", () => {
+    const tools = scope("Cómo está el clima hoy");
+    expect(hasNone(tools, ADS_TOOLS)).toBe(true);
   });
 });
 

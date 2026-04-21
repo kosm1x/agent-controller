@@ -823,3 +823,55 @@ CREATE TABLE IF NOT EXISTS learning_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_learning_sessions_plan
   ON learning_sessions(plan_id, started_at DESC);
+
+-- ===========================================================================
+-- v7.3 Phase 4a — Digital Marketing Buyer
+-- ===========================================================================
+-- Three tables feed the ads_* tool set: weighted-check audit history, extracted
+-- brand profiles keyed by domain, and generated creative variants optionally
+-- linked back to a brand profile. All additive, no CHECK constraints on text
+-- enums (kept soft so v7.3 P4b API clients can extend platform vocabulary).
+
+CREATE TABLE IF NOT EXISTS ads_audits (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_name  TEXT NOT NULL,
+  platform      TEXT NOT NULL,
+  score         INTEGER,
+  grade         TEXT,
+  raw_weighted  REAL,
+  max_weighted  REAL,
+  findings      TEXT,                                   -- JSON: { summary, priorities[], passes_of_note[] }
+  snapshot      TEXT,                                   -- JSON: raw account snapshot (for diffing)
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ads_audits_account
+  ON ads_audits(account_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ads_audits_platform
+  ON ads_audits(platform, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ads_brand_profiles (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain               TEXT NOT NULL,
+  source_url           TEXT,
+  brand_name           TEXT,
+  profile              TEXT NOT NULL,                   -- JSON: voice/colors/typography/audience/lexicon
+  raw_source_preview   TEXT,
+  created_at           TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ads_brand_profiles_domain
+  ON ads_brand_profiles(domain, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ads_creatives (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  brand_name    TEXT NOT NULL,
+  framework     TEXT NOT NULL,
+  platform      TEXT NOT NULL,
+  objective     TEXT NOT NULL,
+  brief_id      INTEGER REFERENCES ads_brand_profiles(id) ON DELETE SET NULL,
+  variants      TEXT NOT NULL,                          -- JSON: array of variants
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ads_creatives_brand
+  ON ads_creatives(brand_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ads_creatives_brief
+  ON ads_creatives(brief_id) WHERE brief_id IS NOT NULL;

@@ -238,6 +238,13 @@ export const UTILITY_TOOLS = [
   "file_convert",
 ];
 
+/**
+ * v7.3 Phase 4a — Digital Marketing Buyer tools.
+ * Scope-gated on ads/campaign/creative/brand-DNA vocabulary (EN+ES).
+ * Reference: `reference_claude_ads.md`; adoption tracked in V7-ROADMAP.md.
+ */
+export const ADS_TOOLS = ["ads_audit", "ads_brand_dna", "ads_creative_gen"];
+
 /** SEO/GEO tools — scope-gated: only when SEO/rankings/schema/meta keywords detected. */
 export const SEO_TOOLS = [
   "seo_page_audit",
@@ -535,6 +542,40 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     pattern:
       /\b(seo|posicionamiento|palabras?\s+clave|keyword\s*research|meta\s*(?:tag|descri)|title\s+tag|schema\s*markup|schema\.org|json[-\s]?ld|rankings?|serp|pagespeed|core\s+web\s+vitals|lighthouse|sitemap|canonical|e-?e-?a-?t|content\s+brief|ai\s+overview|generative\s+engine|geo\s+(?:keywords?|signals?|depth)|rich\s+results?|structured\s+data|open\s+graph|og\s+tags?|twitter\s+card|llms\.txt|ai[-\s]?bots?|robots\.txt|readability|flesch|citation\s+density|stat(?:istic)?\s+density|search\s+console|gsc\b|impressions|clicks|ctr\b|panel\s+(?:ia|ai)|resumen\s+(?:ia|ai)|sge\b|aio\b)/i,
     group: "seo",
+  },
+  {
+    // v7.3 Phase 4a — Digital Marketing Buyer. Activates on ads vocabulary
+    // (EN + ES). Designed to coexist with `seo` scope: overlap (e.g. both
+    // fire on "CTR") is harmless — deferred tools load from both sets.
+    //
+    // Design notes:
+    // - Platform-qualified `ads` (meta/google/... ads) is the strongest anchor.
+    //   Bare `ads?\b` fires only with an ads-specific noun ("ads account",
+    //   "ads creative") so dev chatter ("add a field", "ads up") doesn't leak.
+    // - ROAS / CPA / CPM are scored as word-bounded tokens. `/i` lowercases
+    //   them but word boundaries protect "roas" from matching "across".
+    // - `PAS` is intentionally excluded from the regex — 3-letter caps collide
+    //   with French / unrelated acronyms. AIDA / BAB / FAB have negligible
+    //   collision risk; the LLM classifier picks up PAS via framework-name
+    //   context anyway.
+    // - ES: `anuncios?` (noun) is the primary anchor; `campa[nñ]a` alone
+    //   would match "campaña electoral" so it's only matched with a
+    //   publicitary qualifier.
+    //
+    // Round-1 audit M1 fix: framework acronyms AIDA/BAB/FAB need TRAILING
+    // `\b` inside the alternation. The outer `\b(?:...)` only anchors the
+    // START of the whole group; a branch like `AIDA` with `/i` would match
+    // inside "aidalicious" / "fabric" / "baby". Each acronym now carries
+    // its own trailing word boundary.
+    //
+    // Round-2 audit C2 fix: SAME class as M1 applied to ROAS, brand noun
+    // phrases, and `advertising`. `ROAS` without `\b` matches inside
+    // `roast`/`roasted`/`roasting` (more common than the AIDA/BAB/FAB
+    // collisions). Every capitalized-English-word branch here now carries
+    // its own trailing `\b`.
+    pattern:
+      /\b(?:(?:meta|google|facebook|instagram|linkedin|tiktok|youtube|microsoft|bing|apple\s+search)\s+ads?\b|ads?\s+(?:account|campaign|creative|spend|audit|buyer|manager|platform|strategy|performance|agency|inventory|mix)\b|advertising\b|ROAS\b|CPA\b|CPM\b|brand\s+(?:dna|voice|profile)\b|AIDA\b|BAB\b|FAB\b|Star[-\s]Story[-\s]Solution|ads_(?:audit|brand_dna|creative_gen)|anuncios?\b|publicidad\b|publicitari[ao]s?\b|creatividad(?:es)?\b|identidad\s+de\s+marca|perfil\s+de\s+marca|voz\s+de\s+marca|campa[nñ]a\s+publicitaria|campa[nñ]as?\s+de\s+(?:anuncios?|marketing|publicidad|google|meta|facebook|instagram|tiktok|linkedin)|audita(?:r)?\s+(?:(?:mi|la|esa|esta)\s+)?(?:campa[nñ]a|cuenta\s+(?:de\s+)?anuncios?|publicidad|anuncios?))/i,
+    group: "ads",
   },
   {
     // v7.0 F1 finance — $SYMBOL pattern (e.g. "$SPY", "$AAPL cotiza?")
@@ -937,6 +978,7 @@ export function scopeToolsForMessage(
     activeGroups.add("social");
     activeGroups.add("utility");
     activeGroups.add("seo");
+    activeGroups.add("ads");
   }
 
   if (
@@ -1006,6 +1048,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("seo")) {
     tools.push(...SEO_TOOLS);
+  }
+  if (activeGroups.has("ads")) {
+    tools.push(...ADS_TOOLS);
   }
   if (activeGroups.has("finance")) {
     tools.push(...FINANCE_TOOLS);

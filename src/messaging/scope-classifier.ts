@@ -32,6 +32,7 @@ const VALID_GROUPS = new Set([
   "specialty",
   "research",
   "seo",
+  "ads",
   "chart",
   "teaching",
 ]);
@@ -57,6 +58,7 @@ GROUPS (return only the ones that apply):
 - specialty: charts, RSS, images, text humanization, dashboards, KPI, batch processing, research tools
 - research: deep analysis, study guides, podcasts, PDF analysis, document research
 - seo: SEO audits, keyword research, meta tags, schema markup (JSON-LD), rankings, SERP, PageSpeed, Core Web Vitals, content briefs, E-E-A-T, AI overviews / generative engine optimization (GEO), Open Graph, Twitter cards
+- ads: paid-media / digital-marketing-buyer tasks. "audita la cuenta de Meta Ads", "audit my Google Ads", "genera 5 variantes de copy para TikTok", "extrae la identidad de marca de este sitio", "brand DNA", "qué ROAS tengo", "CPA está alto", "AIDA / PAS / BAB / FAB copy frameworks", "creatividades", "campaña publicitaria". ONLY fires on paid ads — organic social publishing is 'social', SEO is 'seo'.
 - chart: financial chart rendering + vision pattern recognition. "gráfico de SPY", "renderiza un chart de AAPL con SMA50", "¿qué patrón ves en el chart?", "head and shoulders", "triángulo ascendente", "bull flag", "canal de tendencia", "candlestick". NOT generic bar/line charts (that is chart_generate in specialty). NOT diagrams (diagram_generate, v7.12) or infographics (infographic_generate, v7.14)
 - teaching: pedagogical sequences — learning plans, adaptive quizzes, spaced-repetition review, Socratic explain-back. "teach me React hooks", "enséñame kubernetes", "explícame bond duration desde cero", "quiero aprender Go", "quiz me on SOLID principles", "review today", "what's due to review", "explain back". NOT a one-off explanation ("¿qué es X?" stays as a normal reply). NOT code review ("review the PR") and NOT ML model training ("teach the model").
 
