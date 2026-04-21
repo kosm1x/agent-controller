@@ -663,24 +663,54 @@ GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
         );
       }
 
-      // Rebuild INDEX.md from current COMMIT state (purely informational).
+      // Rebuild INDEX.md from POST-sync local state — what's on disk right
+      // now, not the pre-sync commitData snapshot. Before this, INDEX.md was
+      // built from `commitData[table]` captured at the start of the run, so
+      // any records this sync had just deleted on COMMIT still appeared in
+      // the INDEX. User-visible symptom: "sync ignored my deletes" when in
+      // fact the DELETEs fired correctly but INDEX showed stale ghosts.
       const indexLines = ["# NorthStar — Hierarchy\n"];
+      let totalListed = 0;
       for (const kind of KINDS) {
-        const items = commitData[KIND_TO_TABLE[kind]];
-        const basePath = KIND_TO_PATH[kind];
-        indexLines.push(
-          `## ${KIND_TO_TABLE[kind].charAt(0).toUpperCase() + KIND_TO_TABLE[kind].slice(1)} (${items.length})`,
+        const locals = enumerateLocal(kind);
+        const commitById = new Map(
+          commitData[KIND_TO_TABLE[kind]].map((c) => [c.id, c]),
         );
-        for (const item of items) {
-          const p = buildLocalPath(basePath, item.id, item.title);
+        // Sort by commit creation order if available, else by path.
+        const sorted = Array.from(locals.values()).sort((a, b) => {
+          const ca = commitById.get(a.commitId);
+          const cb = commitById.get(b.commitId);
+          if (ca && cb) return (ca.title ?? "").localeCompare(cb.title ?? "");
+          return a.path.localeCompare(b.path);
+        });
+        indexLines.push(
+          `## ${KIND_TO_TABLE[kind].charAt(0).toUpperCase() + KIND_TO_TABLE[kind].slice(1)} (${sorted.length})`,
+        );
+        for (const entry of sorted) {
+          const commit = commitById.get(entry.commitId);
+          // Prefer commitData for title/status (authoritative when present);
+          // fall back to the file's `# Heading` + `Status:` line when the
+          // local file has a COMMIT_ID that no longer exists on COMMIT (e.g.
+          // after an app-side delete that hasn't propagated yet — the file
+          // is still on disk but commitData won't have it).
+          const title =
+            commit?.title ?? extractTitle(entry.content) ?? "(untitled)";
+          const status =
+            commit?.status ?? extractField(entry.content, "Status") ?? "";
+          const priority = commit?.priority
+            ? ` (${commit.priority})`
+            : extractField(entry.content, "Priority")
+              ? ` (${extractField(entry.content, "Priority")})`
+              : "";
           indexLines.push(
-            `- [${item.title}](${p}) — ${item.status}${item.priority ? ` (${item.priority})` : ""}`,
+            `- [${title}](${entry.path})${status ? ` — ${status}` : ""}${priority}`,
           );
+          totalListed++;
         }
         indexLines.push("");
       }
       indexLines.push(
-        `---\nLast sync: ${new Date().toISOString()}\nMode: ${bootstrap ? "bootstrap (no deletes)" : "LWW (deletes propagated)"}\nSource: db.mycommit.net (user fede@eurekamd.net)`,
+        `---\nLast sync: ${new Date().toISOString()}\nMode: ${bootstrap ? "bootstrap (no deletes)" : "LWW (deletes propagated)"}\nLocal records: ${totalListed}\nSource of truth: local NorthStar files (post-sync). Run northstar_sync to reconcile with db.mycommit.net.`,
       );
 
       upsertFile(

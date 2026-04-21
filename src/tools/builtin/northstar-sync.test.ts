@@ -583,6 +583,52 @@ describe("northstar_sync — delete propagation", () => {
   });
 });
 
+describe("northstar_sync — INDEX.md reflects post-sync local state", () => {
+  it("INDEX lists only surviving local files after delete propagation (no ghost records)", async () => {
+    // Seed state where local had already-deleted files (journal still has
+    // their rows, commit still has the records). This mirrors the production
+    // bug: sync propagates DELETEs to COMMIT, but INDEX was previously built
+    // from pre-delete commitData and still listed the deleted records.
+    const keepId = "aa000001-0000-0000-0000-000000000001";
+    const deletedId = "aa000002-0000-0000-0000-000000000002";
+    const keepPath = `NorthStar/goals/keep--${keepId.slice(0, 8)}.md`;
+    const deletedPath = `NorthStar/goals/deleted--${deletedId.slice(0, 8)}.md`;
+
+    // Local: keep-goal exists, deleted-goal is gone. Journal rows exist for both.
+    upsertFile(
+      keepPath,
+      "Keep me",
+      `# Keep me\nCOMMIT_ID: ${keepId}\nStatus: in_progress\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(keepId, "goal", keepPath, "2026-04-01T00:00:00Z");
+    seedJournalRow(deletedId, "goal", deletedPath, "2026-04-01T00:00:00Z");
+
+    // Commit still has BOTH (sync will propagate the local delete to commit).
+    commitTables.goals = [
+      makeCommitItem(keepId, "Keep me"),
+      makeCommitItem(deletedId, "Deleted should not appear in INDEX"),
+    ];
+
+    await northstarSyncTool.execute({});
+
+    const index = getFile("NorthStar/INDEX.md");
+    expect(index).not.toBeNull();
+    const md = index!.content;
+    expect(md).toContain("Keep me");
+    expect(md).not.toContain("Deleted should not appear in INDEX");
+    // The Goals heading reports the LOCAL count (1), not the pre-sync
+    // commit count (2).
+    expect(md).toMatch(/## Goals \(1\)/);
+    expect(md).toContain("Local records: 1");
+  });
+});
+
 describe("northstar_sync — no-op stability", () => {
   it("second sync after a pull does not re-pull the same record", async () => {
     // Simulates: journal row has last_commit_edited_at matching current commit.last_edited_at.
