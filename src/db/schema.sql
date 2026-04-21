@@ -765,3 +765,61 @@ CREATE TABLE IF NOT EXISTS chart_patterns (
 );
 CREATE INDEX IF NOT EXISTS idx_chart_patterns_symbol_detected
   ON chart_patterns(symbol, detected_at DESC);
+
+-- v7.11 teaching module — learning plans, units, learner model, sessions
+CREATE TABLE IF NOT EXISTS learning_plans (
+  plan_id      TEXT PRIMARY KEY,
+  topic        TEXT NOT NULL,
+  created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+  status       TEXT NOT NULL CHECK(status IN ('active','paused','completed','archived'))
+                              DEFAULT 'active',
+  current_unit INTEGER NOT NULL DEFAULT 0,
+  notes        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_learning_plans_status
+  ON learning_plans(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_plan_units (
+  plan_id                TEXT NOT NULL REFERENCES learning_plans(plan_id) ON DELETE CASCADE,
+  unit_index             INTEGER NOT NULL,
+  title                  TEXT NOT NULL,
+  summary                TEXT NOT NULL,
+  predicted_difficulties TEXT,
+  prerequisites          TEXT,
+  status                 TEXT NOT NULL CHECK(status IN ('locked','ready','in_progress','mastered','skipped'))
+                                      DEFAULT 'locked',
+  mastery_score          REAL NOT NULL DEFAULT 0 CHECK(mastery_score >= 0 AND mastery_score <= 1),
+  PRIMARY KEY (plan_id, unit_index)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_plan_units_status
+  ON learning_plan_units(plan_id, status, unit_index);
+
+CREATE TABLE IF NOT EXISTS learner_model (
+  concept          TEXT PRIMARY KEY,
+  first_seen       INTEGER NOT NULL DEFAULT (unixepoch()),
+  last_seen        INTEGER NOT NULL DEFAULT (unixepoch()),
+  confidence       REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+  mastery_score    REAL NOT NULL DEFAULT 0 CHECK(mastery_score >= 0 AND mastery_score <= 1),
+  evidence_quotes  TEXT,
+  ef               REAL NOT NULL DEFAULT 2.5 CHECK(ef >= 1.3),
+  interval_days    INTEGER NOT NULL DEFAULT 0,
+  repetitions      INTEGER NOT NULL DEFAULT 0,
+  review_due_date  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_learner_model_due
+  ON learner_model(review_due_date) WHERE review_due_date IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS learning_sessions (
+  session_id      TEXT PRIMARY KEY,
+  plan_id         TEXT NOT NULL REFERENCES learning_plans(plan_id) ON DELETE CASCADE,
+  unit_index      INTEGER NOT NULL,
+  kind            TEXT NOT NULL CHECK(kind IN ('teach','quiz','explain_back','review')),
+  started_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+  ended_at        INTEGER,
+  mastery_delta   REAL,
+  transcript_ref  TEXT,
+  summary         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_learning_sessions_plan
+  ON learning_sessions(plan_id, started_at DESC);

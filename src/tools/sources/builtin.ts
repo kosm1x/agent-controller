@@ -193,6 +193,7 @@ import { diagramGenerateTool } from "../builtin/diagram-generate.js";
 import { infographicGenerateTool } from "../builtin/infographic-generate.js";
 import { marketChartRenderTool } from "../builtin/market-chart-render.js";
 import { marketChartPatternsTool } from "../builtin/market-chart-patterns.js";
+import { TEACHING_TOOL_OBJECTS } from "../builtin/teaching-tools.js";
 import type { Tool } from "../types.js";
 
 const BUILTIN_TOOLS: Tool[] = [
@@ -329,6 +330,8 @@ const BUILTIN_TOOLS: Tool[] = [
   infographicGenerateTool,
   marketChartRenderTool,
   marketChartPatternsTool,
+  // v7.11 Jarvis Teaching Module — 6 tools, deferred, scope 'teaching'
+  ...TEACHING_TOOL_OBJECTS,
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured

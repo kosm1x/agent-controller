@@ -20,6 +20,7 @@ import {
   CRM_TOOLS_SCOPE,
   SEO_TOOLS,
   CHART_TOOLS,
+  TEACHING_TOOLS,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -1549,5 +1550,173 @@ describe("chart scope group (v7.1)", () => {
       DEFAULT_SCOPE_PATTERNS,
     );
     expect(groups.has("specialty")).toBe(true);
+  });
+});
+
+describe("teaching scope group (v7.11)", () => {
+  it("activates on 'teach me X' (EN)", () => {
+    const tools = scope("teach me React hooks from scratch");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'enséñame X' (ES)", () => {
+    const tools = scope("enséñame kubernetes");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'enseñame' (no accent, common keyboard variant)", () => {
+    const tools = scope("enseñame Rust");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'quiero aprender X'", () => {
+    const tools = scope("quiero aprender sobre redes neuronales");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'I want to learn X'", () => {
+    const tools = scope("I want to learn Kubernetes");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'quiz me on X'", () => {
+    const tools = scope("quiz me on SOLID principles");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'tómame un quiz sobre X'", () => {
+    const tools = scope("tómame un quiz sobre Go concurrency");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'what's due today' / 'what's due this week'", () => {
+    expect(hasAll(scope("what's due today?"), TEACHING_TOOLS)).toBe(true);
+    expect(
+      hasAll(scope("what's due this week for review"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("activates on 'repasar mis conceptos'", () => {
+    expect(hasAll(scope("quiero repasar mis conceptos"), TEACHING_TOOLS)).toBe(
+      true,
+    );
+  });
+
+  it("activates on 'explain back' / 'explícame de vuelta'", () => {
+    expect(hasAll(scope("let me explain back"), TEACHING_TOOLS)).toBe(true);
+    expect(
+      hasAll(scope("explícame de vuelta los closures"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("activates on 'explícame X desde cero'", () => {
+    const tools = scope("explícame bond duration desde cero");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  // --- Negative guards ---
+
+  it("'teach the model to classify' does NOT activate teaching (no 'me')", () => {
+    const tools = scope("we need to teach the model to classify these");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'review the PR' does NOT activate teaching (code-review, no 'today')", () => {
+    const tools = scope("please review the PR before merging");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'plan the sprint' does NOT activate teaching (no 'aprendizaje')", () => {
+    const tools = scope("let's plan the sprint together");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("bare 'explica esto' does NOT activate teaching (needs desde cero / paso a paso)", () => {
+    const tools = scope("explica esto por favor");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  // Round-1 audit over-fire fixes
+  it("'explícame este bug paso a paso' does NOT activate teaching (dev chatter)", () => {
+    const tools = scope("explícame este bug paso a paso");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'explícame este endpoint paso a paso' does NOT activate teaching", () => {
+    const tools = scope("explícame este endpoint paso a paso por favor");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  // Round-2 audit fix M1: expanded dev-chatter blocklist
+  it("'explícame este controller paso a paso' does NOT activate teaching", () => {
+    expect(
+      hasNone(scope("explícame este controller paso a paso"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("'explícame esta query paso a paso' does NOT activate teaching", () => {
+    expect(
+      hasNone(scope("explícame esta query paso a paso"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("'explícame este pipeline paso a paso' does NOT activate teaching", () => {
+    expect(
+      hasNone(scope("explícame este pipeline paso a paso"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("'explícame esta migración paso a paso' does NOT activate teaching", () => {
+    expect(
+      hasNone(scope("explícame esta migración paso a paso"), TEACHING_TOOLS),
+    ).toBe(true);
+  });
+
+  it("'what's due for the CRM task' does NOT activate teaching (task backlog, no review anchor)", () => {
+    const tools = scope("what's due for the CRM task this morning");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'do I need to review the deploy script' does NOT activate teaching (code review)", () => {
+    const tools = scope("Do I need to review the deploy script before Friday?");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'we need a learning plan for Q2' does NOT activate teaching (business plan)", () => {
+    const tools = scope("we need a learning plan for Q2 OKRs");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'revisa hoy las tareas' does NOT activate teaching (generic review today → task scope)", () => {
+    const tools = scope("revisa hoy las tareas pendientes");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'hablemos de maestría en código' does NOT activate teaching", () => {
+    // Note: typed with `e` instead of `é` to match a variant spelling. The
+    // tightened regex drops the bare `mastería` arm entirely.
+    const tools = scope("hablemos de maestria en código");
+    expect(hasNone(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  // Positive variants recovered after tightening
+  it("'mi learning plan' DOES activate teaching (anchored by mi)", () => {
+    const tools = scope("qué unidades tengo en mi learning plan?");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'mastery report' DOES activate teaching", () => {
+    const tools = scope("dame mi mastery report");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'what concepts do I need to review' DOES activate teaching", () => {
+    const tools = scope("what concepts do I need to review today?");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
+  });
+
+  it("'enseñálo' clitic-object form DOES activate teaching", () => {
+    const tools = scope("Jarvis, enseñálo con un ejemplo real");
+    expect(hasAll(tools, TEACHING_TOOLS)).toBe(true);
   });
 });

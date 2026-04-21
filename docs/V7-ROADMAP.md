@@ -734,7 +734,7 @@ Jarvis can now read `.epub/.mobi/.odt/.rtf/.pages/HEIC/AVIF` and extract video f
 
 ---
 
-## v7.11 — Jarvis Teaching Module ("teach me anything") — **Planned**
+## v7.11 — Jarvis Teaching Module ("teach me anything") — **Done**
 
 > 1.5-2 sessions. No F-step dependencies — slottable in Phase γ. Primary reference: `reference_deeptutor.md`. User intent: "I want Jarvis to teach me anything."
 >
@@ -1087,7 +1087,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.3 P4 | Digital marketing buyer (claude-ads)          | 3        | None          | **Planned**                 |
 | v7.3 P5 | GEO depth (llms.txt + Princeton)              | 1        | None          | **Planned**                 |
 | v7.10   | Universal file conversion (calibre/LO/pandoc) | 1        | None          | **Done** — session 85       |
-| v7.11   | Jarvis teaching module                        | 2        | None          | **Planned**                 |
+| v7.11   | Jarvis teaching module                        | 2        | None          | **Done** — session 89       |
 | v7.12   | Diagram generation (graphviz + svg_html)      | 1        | None          | **Done (MVP)** — session 86 |
 | v7.14   | Infographic generation (AntV)                 | 1        | None          | **Done** — session 87       |
 | v7.3 P2 | SEO telemetry (PageSpeed + GSC)               | 1        | v7.6 ✅       | **Planned**                 |
@@ -1097,7 +1097,7 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 | v7.4.3  | HTML-as-composition DSL (hyperframes #6)      | 1        | v7.4          | **Planned**                 |
 | v7.5    | Skill evolution (GEPA + SkillClaw)            | 2        | F9 ✅ + sweep | **Planned**                 |
 
-**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **4/13 done; 9 remaining.**
+**γ subtotal:** ~19 sessions (~14–15 with parallelizable independents). **6/13 done; 7 remaining.**
 
 ### v7.2.1 — v7.2 follow-ups (queued, not yet scheduled)
 
@@ -1124,12 +1124,12 @@ AUTOREASON (Tier C continued — phase δ, conditional)
 
 | Bucket                                 | Count  | Sessions              |
 | -------------------------------------- | ------ | --------------------- |
-| Shipped (α + β + β-addendum + γ S1-S4) | **23** | ~25                   |
+| Shipped (α + β + β-addendum + γ S1-S6) | **25** | ~27                   |
 | Gated / conditional (δ + ε)            | 2      | 4.5                   |
 | β-opt (optional)                       | 1      | 1                     |
-| γ remaining                            | 9      | ~14.5                 |
-| **Total committed**                    | **35** | **~45 seq / ~36 par** |
-| **Remaining to close v7**              | **12** | **~20 seq / ~17 par** |
+| γ remaining                            | 7      | ~12.5                 |
+| **Total committed**                    | **35** | **~43 seq / ~34 par** |
+| **Remaining to close v7**              | **10** | **~18 seq / ~15 par** |
 
 ---
 

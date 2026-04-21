@@ -342,6 +342,14 @@ export const WRITE_TOOLS = new Set([
   // patterns writes a row to chart_patterns (and may internally render first).
   "market_chart_render",
   "market_chart_patterns",
+  // v7.11 teaching — state-mutating tools that insert into learning_plans,
+  // learning_plan_units, learner_model, learning_sessions. learner_model_status
+  // is read-only and NOT listed here.
+  "learning_plan_create",
+  "learning_plan_advance",
+  "learning_plan_quiz",
+  "learning_plan_explain_back",
+  "learning_plan_summarize",
 ]);
 
 /**

@@ -29,7 +29,8 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 7. If any goals have no active objectives or tasks, flag the gap.
 8. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
 9. Call intel_query with hours=12 to get overnight signal intelligence from the depot. Call intel_alert_history with hours=12 to check for any FLASH or PRIORITY alerts. Include a "📡 Señales del Depot" section with the top deltas and any active alerts.
-10. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
+10. Call learner_model_status with filter="due" to check concepts that are due for spaced-repetition review today. If the count is > 0, include a "📚 Repaso de hoy" section listing up to 5 concepts with a one-line nudge: "Responde 'quiz me on X' o 'explícame X de vuelta' para repasar." If count is 0, OMIT the section entirely (do not write "nothing due").
+11. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 
@@ -70,6 +71,7 @@ Racha actual: X días consecutivos.`,
       "project_list",
       "intel_query",
       "intel_alert_history",
+      "learner_model_status",
     ],
     requiredTools: ["jarvis_file_read", "gmail_send"],
   };

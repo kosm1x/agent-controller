@@ -313,6 +313,20 @@ export const DIAGRAM_TOOLS = ["diagram_generate"];
 export const CHART_TOOLS = ["market_chart_render", "market_chart_patterns"];
 
 /**
+ * v7.11 teaching module — learning plans, adaptive quizzes, explain-back,
+ * spaced-repetition learner model. Scope-gated on teach-me / quiz-me /
+ * review-today vocabulary (EN + ES).
+ */
+export const TEACHING_TOOLS = [
+  "learning_plan_create",
+  "learning_plan_advance",
+  "learning_plan_quiz",
+  "learning_plan_explain_back",
+  "learning_plan_summarize",
+  "learner_model_status",
+];
+
+/**
  * v7.2 graphify-code knowledge-graph tools (MCP-sourced, namespaced with `__`).
  * Scope-gated on graph/knowledge-graph vocabulary. The server (graphify-code)
  * loads a prebuilt AST graph of src/ at boot; these tools are read-only
@@ -676,6 +690,24 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "chart",
   },
   {
+    // v7.11 teaching module — direct learn/teach triggers. "me" anchor avoids
+    // "teach the model to X" or "review the PR" false positives. ES forms
+    // cover enséñame / enseñame (both accented variants), explícame + "desde
+    // cero"/"paso a paso" (qualifier keeps it scoped to pedagogical intent).
+    pattern:
+      /\b(teach\s+me|ens[eé][nñ][aá]?[mln][aeo](?:lo|la|los|las|melo|mela|noslos)?|expl[ií]came\s+(?!(?:este|esta|el|la|ese|esa|un|una)\s+(?:bug|error|c[oó]digo|code|endpoint|funci[oó]n|function|problema|issue|pr\b|commit|controller|container|pod|deploy|deployment|pipeline|workflow|script|build|servicio|service|stack|dockerfile|makefile|repo|branch|tag|release|merge|migraci[oó]n|migration|query|endpoint|api|test|suite|rollout|release)\b)(?:\S+\s+){0,6}?(?:desde\s+cero|paso\s+a\s+paso)|quiero\s+aprender|want\s+to\s+learn|walk\s+me\s+through|tutor\s+me\s+on)\b/i,
+    group: "teaching",
+  },
+  {
+    // v7.11 teaching — session-level verbs: quiz me, review today, explain
+    // back. All arms require a learning anchor (today, this week, repasar,
+    // spaced-repetition nouns) to avoid dev-chat false positives ("review
+    // the PR", "plan the sprint", "what's due for the task").
+    pattern:
+      /\b(quiz\s+me|qu[ií]zz?\s*me|t[oó]mame\s+(?:un\s+)?quiz|qu[ií]z[aá]me|what'?s\s+due\s+(?:today|this\s+week|for\s+review|to\s+review)|(?:what\s+)?(?:concepts?|topics?|conceptos?|temas?)\s+(?:do\s+I|tengo\s+que|debo)\s+(?:need\s+to\s+)?(?:review|repasar)|explain\s+back|expl[ií]came\s+de\s+vuelta|mi\s+(?:learning\s+plan|plan\s+de\s+aprendizaje|learner\s+model)|my\s+(?:learning\s+plan|learner\s+model)|(?:concepts?|conceptos?)\s+due\s+for\s+review|mastery\s+(?:report|status|score)|repasar\s+(?:mis\s+)?(?:conceptos|temas))\b/i,
+    group: "teaching",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -951,6 +983,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("chart")) {
     tools.push(...CHART_TOOLS);
+  }
+  if (activeGroups.has("teaching")) {
+    tools.push(...TEACHING_TOOLS);
   }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
