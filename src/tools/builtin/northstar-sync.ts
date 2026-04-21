@@ -500,6 +500,7 @@ function populateCommitIdInFile(
   title: string,
   oldContent: string,
   newCommitId: string,
+  kind?: Kind,
 ): void {
   let newContent: string;
   if (/^COMMIT_ID:/m.test(oldContent)) {
@@ -521,17 +522,12 @@ function populateCommitIdInFile(
       newContent = `COMMIT_ID: ${newCommitId}\n${oldContent}`;
     }
   }
-  upsertFile(
-    path,
-    title,
-    newContent,
-    ["northstar"],
-    "reference",
-    30,
-    null,
-    [],
-    { skipUserEdit: true },
-  );
+  // Consistent tags with the pull-path's upsertFile calls: ["northstar", kind].
+  // Without the kind tag, self-healed files would drift from their peers.
+  const tags = kind ? ["northstar", kind] : ["northstar"];
+  upsertFile(path, title, newContent, tags, "reference", 30, null, [], {
+    skipUserEdit: true,
+  });
 }
 
 function enumerateLocal(kind: Kind): Map<string, LocalEntry> {
@@ -566,6 +562,7 @@ interface SyncReport {
   skipped: number;
   skippedPaths: string[];
   destructive: string[];
+  selfHealed: string[]; // Paths repaired from a prior crashed run.
 }
 
 async function syncKind(
@@ -878,6 +875,7 @@ children so goal + vision in one sync works).`,
         skipped: 0,
         skippedPaths: [],
         destructive: [],
+        selfHealed: [],
       };
 
       // Phase 1: push-new-to-COMMIT. Local files with no COMMIT_ID (user
@@ -921,10 +919,12 @@ children so goal + vision in one sync works).`,
                 entry.title,
                 entry.content,
                 existingJournal.commit_id,
+                kind,
               );
-              // File is now normal; phase 2 handles LWW from here. Count as
-              // unchanged (the record was already on COMMIT, just unlinked).
-              report.unchanged++;
+              // File is now normal — phase 2's syncKind both-present branch
+              // will count it as unchanged. Track separately so the return
+              // string can surface the recovery event to the operator.
+              report.selfHealed.push(entry.path);
               continue;
             }
             // (b): journal points at a ghost record — drop it so we can retry.
@@ -1115,7 +1115,11 @@ children so goal + vision in one sync works).`,
       const transitionNote = bootstrap
         ? " Bootstrap complete — record-level deletion detection enabled starting next sync."
         : "";
-      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Created remote: ${report.createdRemote}, Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${skippedNote}${transitionNote}`;
+      const selfHealNote =
+        report.selfHealed.length > 0
+          ? ` Self-healed ${report.selfHealed.length} file(s) from a prior crashed run: ${report.selfHealed.slice(0, 3).join(", ")}${report.selfHealed.length > 3 ? ` (+${report.selfHealed.length - 3} more)` : ""}.`
+          : "";
+      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Created remote: ${report.createdRemote}, Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${selfHealNote}${skippedNote}${transitionNote}`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,

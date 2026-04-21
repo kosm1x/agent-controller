@@ -1004,9 +1004,15 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
         /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
     );
     expect(deleteCalls).toHaveLength(0);
-    // Local file now has the correct COMMIT_ID populated.
+    // Local file now has the correct COMMIT_ID populated AND preserves all
+    // pre-existing content (heading / status / parent ref).
     const repaired = getFile(stalePath);
     expect(repaired!.content).toContain(`COMMIT_ID: ${goalId}`);
+    expect(repaired!.content).toContain("# Stale retry");
+    expect(repaired!.content).toContain("Status: in_progress");
+    expect(repaired!.content).toContain(`Vision: ${visionId}`);
+    // Tags should include the kind so self-healed files don't drift.
+    expect(JSON.parse(repaired!.tags as unknown as string)).toContain("goal");
   });
 
   it("drops orphan journal row and retries when prior POST never persisted remotely", async () => {
@@ -1037,6 +1043,10 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     const postBody = postCall?.body as Record<string, unknown>;
     // The new UUID must differ from the orphan one (orphan was dropped + retried).
     expect(postBody.id).not.toBe(orphanId);
+    // AND the orphan journal row must actually be gone from the DB.
+    expect(journalGet(orphanId)).toBeNull();
+    // The new record's journal row should exist.
+    expect(journalGet(postBody.id as string)).not.toBeNull();
   });
 
   it("rolls back the seeded journal row when POST fails", async () => {
