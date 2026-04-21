@@ -32,3 +32,4 @@
 - [f81a-pm-alpha-audit](f81a-pm-alpha-audit.md) — F8.1a PM Alpha β-addendum Round 1: PASS WITH WARNINGS. 8 warnings (whale-row cap 20, undefined liquidity/resolution bypass filters, multi-outcome tilt mis-fires, hardcoded -04:00 offset, no closed-market filter) (2026-04-20)
 - [f81a-pm-alpha-round2](f81a-pm-alpha-round2.md) — F8.1a PM Alpha Round 2: PASS WITH WARNINGS. All 8 W fixed. New W9 whale multi-outcome symmetric to W4, W11 dead union, W12 UTC slice, W13 no tests for 4/8 fixes (2026-04-20)
 - [f81b-pm-paper-audit](f81b-pm-paper-audit.md) — F8.1b PM paper adapter Round 1: PASS WITH WARNINGS. Dust filter blocks full exits, no stale-abort gate vs F8, scope asymmetric, missing cash buffer (2026-04-20)
+- [v73-p4a-round2-audit](v73-p4a-round2-audit.md) — v7.3 P4a round 2: FAIL. C1 scalar-sanitization bypass (brand_name/descriptor skip sanitize), C2 ROAS boundary regression (matches "roast"), M4 user/tool/prompt over-filter, M5 zero supersede-map tests (2026-04-21)
