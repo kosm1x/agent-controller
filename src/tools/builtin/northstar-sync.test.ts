@@ -584,6 +584,46 @@ describe("northstar_sync — delete propagation", () => {
 });
 
 describe("northstar_sync — INDEX.md reflects post-sync local state", () => {
+  it("INDEX falls back to file-content title/status when commitData is missing the record", async () => {
+    // Local has a COMMIT_ID for a record COMMIT no longer knows about (e.g.
+    // the app deleted it but this sync run didn't pick it up for whatever
+    // reason). The fallback path at northstar-sync.ts should read `# Heading`
+    // / `Status:` / `Priority:` from the local file content. Without the
+    // fallback, INDEX would show "(untitled)".
+    const orphanId = "bb000003-0000-0000-0000-000000000003";
+    const orphanPath = `NorthStar/objectives/orphan--${orphanId.slice(0, 8)}.md`;
+    upsertFile(
+      orphanPath,
+      "Orphan",
+      `# Orphan from local\nCOMMIT_ID: ${orphanId}\nStatus: on_hold\nPriority: medium\n`,
+      ["northstar", "objective"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    // Seed journal in non-bootstrap mode via unrelated row.
+    seedJournalRow(
+      "99999999-9999-9999-9999-999999999999",
+      "vision",
+      "NorthStar/visions/other.md",
+      "2026-04-01T00:00:00Z",
+    );
+    // commitData has NO objective matching orphanId → must use file fallback.
+    commitTables.objectives = [];
+
+    await northstarSyncTool.execute({});
+
+    const index = getFile("NorthStar/INDEX.md");
+    expect(index).not.toBeNull();
+    const md = index!.content;
+    // Title from `# Heading`, status from `Status:`, priority from `Priority:`.
+    expect(md).toContain("Orphan from local");
+    expect(md).toContain("— on_hold");
+    expect(md).toContain("(medium)");
+  });
+
   it("INDEX lists only surviving local files after delete propagation (no ghost records)", async () => {
     // Seed state where local had already-deleted files (journal still has
     // their rows, commit still has the records). This mirrors the production

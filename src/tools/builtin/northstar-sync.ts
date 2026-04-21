@@ -676,34 +676,40 @@ GOTCHA: 0 pulled + 0 pushed + 0 deleted means everything's in sync — normal.`,
         const commitById = new Map(
           commitData[KIND_TO_TABLE[kind]].map((c) => [c.id, c]),
         );
-        // Sort by commit creation order if available, else by path.
-        const sorted = Array.from(locals.values()).sort((a, b) => {
-          const ca = commitById.get(a.commitId);
-          const cb = commitById.get(b.commitId);
-          if (ca && cb) return (ca.title ?? "").localeCompare(cb.title ?? "");
-          return a.path.localeCompare(b.path);
-        });
+        // Single sort key per entry — mixed-mode (commit-backed + local-only)
+        // needs a consistent ordering, not a branch on commit presence that
+        // violates transitivity.
+        const sortKey = (entry: LocalEntry): string => {
+          const commit = commitById.get(entry.commitId);
+          return (
+            commit?.title ??
+            extractTitle(entry.content) ??
+            entry.path
+          ).toLowerCase();
+        };
+        const sorted = Array.from(locals.values()).sort((a, b) =>
+          sortKey(a).localeCompare(sortKey(b)),
+        );
         indexLines.push(
           `## ${KIND_TO_TABLE[kind].charAt(0).toUpperCase() + KIND_TO_TABLE[kind].slice(1)} (${sorted.length})`,
         );
         for (const entry of sorted) {
           const commit = commitById.get(entry.commitId);
           // Prefer commitData for title/status (authoritative when present);
-          // fall back to the file's `# Heading` + `Status:` line when the
-          // local file has a COMMIT_ID that no longer exists on COMMIT (e.g.
-          // after an app-side delete that hasn't propagated yet — the file
-          // is still on disk but commitData won't have it).
+          // fall back to the file's `# Heading` / `Status:` / `Priority:`
+          // line when the local file has a COMMIT_ID that no longer exists
+          // on COMMIT (e.g. after an app-side delete that hasn't propagated
+          // yet). Empty-string commit values (not null/undefined) fall
+          // through to the file content by design — an empty remote field
+          // has no display value.
           const title =
             commit?.title ?? extractTitle(entry.content) ?? "(untitled)";
           const status =
             commit?.status ?? extractField(entry.content, "Status") ?? "";
-          const priority = commit?.priority
-            ? ` (${commit.priority})`
-            : extractField(entry.content, "Priority")
-              ? ` (${extractField(entry.content, "Priority")})`
-              : "";
+          const prio =
+            commit?.priority || extractField(entry.content, "Priority") || "";
           indexLines.push(
-            `- [${title}](${entry.path})${status ? ` — ${status}` : ""}${priority}`,
+            `- [${title}](${entry.path})${status ? ` — ${status}` : ""}${prio ? ` (${prio})` : ""}`,
           );
           totalListed++;
         }
