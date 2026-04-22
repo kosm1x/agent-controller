@@ -325,6 +325,53 @@ export function getDatabase(): Database.Database {
 }
 
 /**
+ * Dim-4 R3 fix: reconcile tasks orphaned by a non-graceful shutdown.
+ *
+ * Graceful SIGTERM/SIGINT already marks running/pending/queued as failed
+ * (see src/index.ts shutdown handler). SIGKILL / OOM / hard reboot skips
+ * that path entirely — rows stay stuck forever. reactions/manager catches
+ * 'running' tasks after 15 minutes, but 'pending'/'queued' rows never had
+ * started_at set and slip past that check.
+ *
+ * Returns the list of reconciled task IDs so the caller can emit
+ * `task.failed` events once the event bus + reaction manager + messaging
+ * router are ready. Idempotent — safe to call on every startup. The error
+ * message preserves the original status string so forensic review can
+ * distinguish mid-run deaths from queued-when-killed cases.
+ *
+ * Dim-4 round-2 C-RES-6 fix: previously this returned only a count, which
+ * meant orphaned interactive user tasks were silently flipped to failed
+ * with no retry, no reaction, and no user-visible notification. Returning
+ * the IDs lets the caller fire `task.failed` through the event bus so the
+ * normal reaction-engine / user-notification pipeline runs.
+ */
+export function reconcileOrphanedTasks(
+  db: Database.Database = getDatabase(),
+): string[] {
+  // Read-then-update, not UPDATE-returning because better-sqlite3's RETURNING
+  // support is inconsistent across versions. Single transaction keeps the
+  // id-list and the status-flip atomic so a concurrent write can't sneak a
+  // row in between.
+  const reconciled = db.transaction((): string[] => {
+    const rows = db
+      .prepare(
+        `SELECT task_id FROM tasks WHERE status IN ('running','pending','queued')`,
+      )
+      .all() as Array<{ task_id: string }>;
+    if (rows.length === 0) return [];
+    db.prepare(
+      `UPDATE tasks SET status = 'failed',
+         error = 'Orphaned across non-graceful restart — task was ' || status || ' when service died',
+         completed_at = datetime('now'),
+         updated_at = datetime('now')
+       WHERE status IN ('running','pending','queued')`,
+    ).run();
+    return rows.map((r) => r.task_id);
+  })();
+  return reconciled;
+}
+
+/**
  * Close the database connection with a final WAL checkpoint.
  */
 export function closeDatabase(): void {

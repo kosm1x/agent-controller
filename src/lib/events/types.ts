@@ -28,7 +28,8 @@ export type EventCategory =
   | "audit"
   | "security"
   | "fleet"
-  | "reaction";
+  | "reaction"
+  | "schedule";
 
 // ---------------------------------------------------------------------------
 // Event Types per Category
@@ -103,6 +104,18 @@ export type ReactionEventType =
   | "reaction.suppressed"
   | "reaction.escalated";
 
+/**
+ * Scheduled-ritual lifecycle events.
+ *
+ * Dim-4 R5 fix: static rituals (morning-briefing, market-*, nightly-close, etc.)
+ * previously logged failures to console only, violating the full-system-audit
+ * success criterion: "Scheduled task failures produce an events row with
+ * category=schedule + type=failed". Any failure on the ritual submission path
+ * now emits schedule.run_failed so /health, log queries, and reaction rules
+ * can catch systemic ritual outages.
+ */
+export type ScheduleEventType = "schedule.run_failed";
+
 /** Union of all event types. */
 export type EventType =
   | TaskEventType
@@ -113,7 +126,8 @@ export type EventType =
   | AuditEventType
   | SecurityEventType
   | FleetEventType
-  | ReactionEventType;
+  | ReactionEventType
+  | ScheduleEventType;
 
 // ---------------------------------------------------------------------------
 // Event Payloads
@@ -353,6 +367,16 @@ export interface EventPayloadMap {
   "reaction.completed": ReactionPayload;
   "reaction.suppressed": ReactionPayload;
   "reaction.escalated": ReactionPayload;
+  "schedule.run_failed": ScheduleRunFailedPayload;
+}
+
+/** Payload for schedule.run_failed — ritual submission / execution failure. */
+export interface ScheduleRunFailedPayload {
+  ritual_id: string;
+  error: string;
+  /** Phase where the failure occurred: 'submit' (task couldn't be queued) or
+   *  'execute' (cron-dispatched work threw in its own body). */
+  phase: "submit" | "execute";
 }
 
 // ---------------------------------------------------------------------------

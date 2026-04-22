@@ -14,6 +14,7 @@ import {
   query,
 } from "@anthropic-ai/claude-agent-sdk";
 import { sanitizeToolResult } from "./guards.js";
+import { circuitRegistry } from "../lib/circuit-breaker.js";
 import type {
   Options as SdkOptions,
   SDKResultSuccess,
@@ -229,6 +230,18 @@ export async function queryClaudeSdk(opts: {
    *  `prompt` will silently lose them — the SDK takes only a string there. */
   images?: ClaudeSdkImage[];
 }): Promise<ClaudeSdkResult> {
+  // Dim-4 R2 fix: claude-sdk path was unguarded since the 2026-04-22 Sonnet
+  // primary flip. The shared circuitRegistry (adapter.ts:770) only protected
+  // the openai path, so N consecutive Sonnet 500s each burned the full
+  // SDK_TIMEOUT_MS before failing over. Register on key "claude-sdk" so
+  // one failure family trips the breaker for fast-runner + PER alike.
+  const breaker = circuitRegistry.get("claude-sdk");
+  if (!breaker.allowRequest()) {
+    throw new Error(
+      "[claude-sdk] Circuit breaker OPEN — refusing call until cooldown elapses",
+    );
+  }
+
   const mcpServer = buildMcpServer(opts.toolNames);
 
   const allowedTools = opts.toolNames.map((n) => `mcp__jarvis__${n}`);
@@ -291,6 +304,14 @@ export async function queryClaudeSdk(opts: {
   };
 
   let resultText = "";
+  /**
+   * Tri-state tracking for circuit-breaker classification.
+   * 'success' = SDK returned a usable result (including partial-with-content).
+   * 'failure' = SDK failed with zero content produced (timeout, dead provider,
+   *             auth error, empty error subtype).
+   * null = not yet decided; set to 'failure' at end if no success signal fired.
+   */
+  let providerOutcome: "success" | "failure" | null = null;
   /** Accumulated text from streaming assistant messages. Used as fallback
    *  when the query aborts (timeout/signal) before a `type: "result"` success
    *  arrives — prevents data loss on long multi-tool runs. */
@@ -353,6 +374,7 @@ export async function queryClaudeSdk(opts: {
         }
       } else if (message.type === "result") {
         if (message.subtype === "success") {
+          providerOutcome = "success";
           const success = message as SDKResultSuccess;
           // success.result captures only the FINAL assistant turn's text.
           // When the final turn is tool-use-heavy (or a minimal closer), any
@@ -429,10 +451,18 @@ export async function queryClaudeSdk(opts: {
           durationMs =
             (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
           if (streamingText) {
+            // Partial content counts as a working provider — the turn/budget
+            // limit is an SDK-internal guard, not a provider outage. Avoids
+            // tripping the breaker on legitimate long-running queries that
+            // ran out of maxTurns while the model was still responsive.
+            providerOutcome = "success";
             resultText =
               `${marker} Partial response below — turn/budget limit hit before completion.\n\n${streamingText}\n\n` +
               `STATUS: DONE_WITH_CONCERNS — SDK reported ${error.subtype}; content above is partial and the task did not formally complete.`;
           } else {
+            // Zero streamed text + non-success terminal = provider-side
+            // failure (auth, quota, or outage masquerading as error_during_execution).
+            providerOutcome = "failure";
             resultText =
               `${marker} No content produced before the limit was hit.\n\n` +
               `STATUS: BLOCKED — SDK reported ${error.subtype} with zero streamed output.`;
@@ -447,8 +477,11 @@ export async function queryClaudeSdk(opts: {
     // chars to DONE_WITH_CONCERNS so the partial delivery reaches the user.
     if (!resultText) {
       if (streamingText) {
+        // Partial content pre-abort = provider was working until we killed it.
+        providerOutcome ??= "success";
         resultText = streamingText;
       } else {
+        providerOutcome = "failure";
         const errMsg = err instanceof Error ? err.message : String(err);
         resultText = `Error: query aborted — ${errMsg}`;
       }
@@ -456,6 +489,24 @@ export async function queryClaudeSdk(opts: {
   }
 
   clearTimeout(timeoutTimer);
+
+  // Timeout with zero content is always a failure signal regardless of
+  // what the for-await loop classified it as — the provider couldn't
+  // answer within 15 minutes.
+  if (timedOut && !streamingText) {
+    providerOutcome = "failure";
+  }
+
+  // Dim-4 round-2 M-RES-4 fix: default null → failure. The prior inversion
+  // treated "no terminal signal ever emitted" (SDK subprocess died mid-stream,
+  // abort without streamingText, etc.) as success, under-reporting outages to
+  // the breaker. An explicit success signal is the only thing that counts as
+  // success — everything else conservatively trips the failure counter.
+  if (providerOutcome === "success") {
+    breaker.recordSuccess();
+  } else {
+    breaker.recordFailure();
+  }
 
   // If the loop ended without a "result" success message but streaming text
   // exists (e.g. abort signaled externally), fall back to streamed text.

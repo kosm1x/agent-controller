@@ -8,7 +8,12 @@ import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { getConfig } from "./config.js";
-import { initDatabase, getDatabase, closeDatabase } from "./db/index.js";
+import {
+  initDatabase,
+  getDatabase,
+  closeDatabase,
+  reconcileOrphanedTasks,
+} from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { createApp } from "./api/index.js";
 import {
@@ -80,9 +85,58 @@ async function main(): Promise<void> {
   const db = initDatabase(config.dbPath);
   log.info({ path: config.dbPath }, "database initialized");
 
+  // Dim-4 R3 fix: reconcile orphaned tasks from prior non-graceful shutdown.
+  // Graceful SIGTERM/SIGINT already marks running/pending/queued → failed
+  // (shutdown handler below). SIGKILL / OOM / hard-reboot skips the handler,
+  // leaving tasks stuck forever. reactions/manager catches 'running' tasks
+  // after 15 minutes via stuck-task polling, but 'pending'/'queued' rows
+  // never had started_at set and slip past that check entirely.
+  //
+  // Round-2 C-RES-6 fix: reconcile returns the list of orphaned task IDs
+  // so we can emit `task.failed` events AFTER initEventBus below, giving
+  // the normal reaction-engine + user-notification pipelines a chance to
+  // run. Prior round-1 fix silently flipped rows with no downstream signal.
+  let orphanedTaskIds: string[] = [];
+  try {
+    orphanedTaskIds = reconcileOrphanedTasks(db);
+    if (orphanedTaskIds.length > 0) {
+      log.warn(
+        { count: orphanedTaskIds.length },
+        "reconciled orphaned tasks from prior non-graceful shutdown",
+      );
+    }
+  } catch (err) {
+    log.warn({ err }, "startup task reconcile failed (non-fatal)");
+  }
+
   // Initialize event bus
   initEventBus(db);
   log.info("event bus initialized");
+
+  // Round-2 C-RES-6 fix: fire `task.failed` events for the rows reconcile
+  // just flipped. Must happen after initEventBus above but before reaction
+  // manager starts (line ~172) — the reaction manager subscribes on start()
+  // and immediately drains any unread events, so ordering matters.
+  if (orphanedTaskIds.length > 0) {
+    const { getEventBus } = await import("./lib/event-bus.js");
+    const bus = getEventBus();
+    for (const taskId of orphanedTaskIds) {
+      try {
+        bus.emitEvent("task.failed", {
+          task_id: taskId,
+          agent_id: "startup-reconcile",
+          error: "Orphaned across non-graceful restart",
+          recoverable: true,
+          attempts: 1,
+        });
+      } catch (err) {
+        log.warn(
+          { err, taskId },
+          "failed to emit orphaned-task event (non-fatal)",
+        );
+      }
+    }
+  }
 
   // Migrate user_facts (category=projects) into projects table if needed
   try {

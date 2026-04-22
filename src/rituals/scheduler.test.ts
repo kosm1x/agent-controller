@@ -41,6 +41,14 @@ vi.mock("../config.js", () => ({
   }),
 }));
 
+// Event bus mock — test that ritual failures emit schedule.run_failed events
+// (Dim-4 R5 fix). Without this mock getEventBus() throws because initEventBus
+// is never called in tests; the stub captures emission calls for assertion.
+const mockEmitEvent = vi.fn();
+vi.mock("../lib/event-bus.js", () => ({
+  getEventBus: () => ({ emitEvent: mockEmitEvent }),
+}));
+
 import {
   selectStaleContainersForPrune,
   startRitualScheduler,
@@ -151,6 +159,46 @@ describe("idempotency", () => {
 
     expect(mockSubmitTask).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("ritual failure events (Dim-4 R5 fix)", () => {
+  it("emits schedule.run_failed when submitTask throws", async () => {
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+    mockSubmitTask.mockRejectedValueOnce(new Error("dispatcher dead"));
+
+    startRitualScheduler();
+
+    const callback = mockSchedule.mock.calls[0][1] as () => Promise<void>;
+    await callback();
+
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        phase: "submit",
+        error: expect.stringContaining("dispatcher dead"),
+        ritual_id: expect.any(String),
+      }),
+    );
+  });
+
+  it("does not emit schedule.run_failed on successful ritual submission", async () => {
+    mockGet.mockReturnValue(undefined);
+    mockSubmitTask.mockResolvedValueOnce({
+      taskId: "t1",
+      agentType: "fast",
+      classification: { score: 0.9, reason: "ok", explicit: true },
+    });
+
+    startRitualScheduler();
+
+    const callback = mockSchedule.mock.calls[0][1] as () => Promise<void>;
+    await callback();
+
+    expect(mockEmitEvent).not.toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.anything(),
+    );
   });
 });
 

@@ -12,7 +12,7 @@
 | 1   | Efficiency   | `2026-04-22-efficiency.md`   | **closed** | no           |
 | 2   | Speed        | `2026-04-22-speed.md`        | **closed** | no           |
 | 3   | Security     | `2026-04-22-security.md`     | **closed** | **yes**      |
-| 4   | Resilience   | `YYYY-MM-DD-resilience.md`   | pending    | **yes**      |
+| 4   | Resilience   | `2026-04-22-resilience.md`   | **closed** | **yes**      |
 | 5   | Tool scoping | `YYYY-MM-DD-tool-scoping.md` | pending    | no           |
 
 ## Convention

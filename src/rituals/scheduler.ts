@@ -11,6 +11,7 @@ import { getDatabase } from "../db/index.js";
 import { scheduleCanary, stopCanary } from "./canary.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
+import { getEventBus } from "../lib/event-bus.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
 import { createNightlyClose } from "./nightly.js";
@@ -27,6 +28,45 @@ import { isNyseTradingDay } from "../finance/market-calendar.js";
 import { getConfig } from "../config.js";
 
 const scheduledJobs: ScheduledTask[] = [];
+
+/**
+ * Dim-4 R5 fix: record a ritual failure as a persistent event.
+ *
+ * Static rituals (morning-briefing, market-*, nightly-close, kb-backup,
+ * memory-consolidation, diff-digest, stale-artifact-prune) previously logged
+ * failures to console only — full-system-audit success criterion requires an
+ * events row with category=schedule + type=failed so health queries,
+ * monitoring, and reaction rules can catch systemic ritual outages.
+ *
+ * Always best-effort: if the bus isn't initialized yet (e.g. during boot
+ * before initEventBus ran), we swallow the throw rather than mask the real
+ * failure. console.error still fires at the caller for tail-the-log diagnosis.
+ */
+function recordRitualFailure(
+  ritualId: string,
+  err: unknown,
+  phase: "submit" | "execute",
+): void {
+  const message = err instanceof Error ? err.message : String(err);
+  try {
+    getEventBus().emitEvent("schedule.run_failed", {
+      ritual_id: ritualId,
+      error: message.slice(0, 1000),
+      phase,
+    });
+  } catch (busErr) {
+    // Dim-4 round-2 C-RES-5/M-RES-6 fix: the prior bare `catch {}` silently
+    // swallowed EVERY throw — event-bus-not-initialized AND any programming
+    // bug in the emit path (type mismatch after payload shape change,
+    // SQLITE_MISUSE on a closed DB during shutdown, etc.). That turned the
+    // enforcement gate into theater. Narrow swallow: still non-fatal, but
+    // passthrough to console so the break is observable in journalctl.
+    const busMsg = busErr instanceof Error ? busErr.message : String(busErr);
+    console.error(
+      `[rituals] recordRitualFailure: event bus unavailable (${busMsg}) — original error: ${message}`,
+    );
+  }
+}
 
 function todayLabel(timezone: string = RITUALS_TIMEZONE): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
@@ -125,6 +165,7 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
     }
   } catch (err) {
     console.error(`[rituals] ${ritual.id}: failed to submit —`, err);
+    recordRitualFailure(ritual.id, err, "submit");
   }
 }
 
@@ -265,6 +306,7 @@ function scheduleAutonomousImprovement(): void {
         }
       } catch (err) {
         console.error("[rituals] autonomous-improvement failed:", err);
+        recordRitualFailure("autonomous-improvement", err, "execute");
       }
     },
     { timezone: RITUALS_TIMEZONE },
@@ -289,6 +331,7 @@ function scheduleKbBackup(): void {
         );
       } catch (err) {
         console.error("[rituals] kb-backup failed:", err);
+        recordRitualFailure("kb-backup", err, "execute");
       }
     },
     { timezone: RITUALS_TIMEZONE },
@@ -390,6 +433,7 @@ function scheduleStaleArtifactPrune(): void {
         const message = err instanceof Error ? err.message : String(err);
         if (!DOCKER_UNAVAILABLE_RE.test(message)) {
           console.error("[rituals] stale-artifact-prune list failed:", message);
+          recordRitualFailure("stale-artifact-prune", err, "execute");
         }
         return;
       }
@@ -450,6 +494,7 @@ function scheduleMemoryConsolidation(): void {
         );
       } catch (err) {
         console.error("[rituals] memory-consolidation failed:", err);
+        recordRitualFailure("memory-consolidation", err, "execute");
       }
     },
     { timezone: RITUALS_TIMEZONE },
@@ -474,6 +519,7 @@ function scheduleDiffDigest(): void {
         );
       } catch (err) {
         console.error("[rituals] diff-digest failed:", err);
+        recordRitualFailure("diff-digest", err, "execute");
       }
     },
     { timezone: RITUALS_TIMEZONE },

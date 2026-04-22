@@ -762,3 +762,116 @@ describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
     expect(asst.tool_calls).toBeUndefined();
   });
 });
+
+describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
+  // Import the shared registry inside the describe so each spec gets a
+  // known-clean slate. The registry is a process-wide singleton — without
+  // reset the 3-failure threshold persists across tests and causes false
+  // positives when the shared breaker bleeds state between spec files.
+  it("trips OPEN after CB_FAILURE_THRESHOLD failures and refuses subsequent calls until cooldown", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    const { CB_FAILURE_THRESHOLD } = await import("../config/constants.js");
+    circuitRegistry.reset();
+
+    // Each failure = error subtype with zero streamed text, which
+    // providerOutcome='failure' already classifies correctly.
+    const failure: MockMessage[] = [
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        errors: ["provider 500"],
+      },
+    ];
+
+    // CB_FAILURE_THRESHOLD (default 5) consecutive failures trip the breaker.
+    for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+      mockMessages.value = failure;
+      await queryClaudeSdk({
+        prompt: "ping",
+        systemPrompt: "sys",
+        toolNames: [],
+      });
+    }
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("OPEN");
+
+    // Fourth call must be refused before touching the SDK at all.
+    lastQueryArgs.value = null;
+    await expect(
+      queryClaudeSdk({
+        prompt: "refused",
+        systemPrompt: "sys",
+        toolNames: [],
+      }),
+    ).rejects.toThrow(/Circuit breaker OPEN/);
+    // The SDK query() must not have been invoked — the breaker short-circuited.
+    expect(lastQueryArgs.value).toBeNull();
+
+    circuitRegistry.reset();
+  });
+
+  it("does NOT count partial content with error subtype as a failure", async () => {
+    // error_max_turns with streamed content = provider was working until
+    // SDK-internal limit. Must not trip the breaker on legitimate long runs.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+
+    for (let i = 0; i < 5; i++) {
+      mockMessages.value = [
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Working on it..." }],
+          },
+        },
+        {
+          type: "result",
+          subtype: "error_max_turns",
+          errors: ["turn limit"],
+        },
+      ];
+      await queryClaudeSdk({
+        prompt: "long task",
+        systemPrompt: "sys",
+        toolNames: [],
+      });
+    }
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("CLOSED");
+
+    circuitRegistry.reset();
+  });
+
+  it("records success on normal completion and resets failure count", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hello" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Hello world\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    await queryClaudeSdk({
+      prompt: "hi",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("CLOSED");
+    expect(breaker.getStatus().failures).toBe(0);
+
+    circuitRegistry.reset();
+  });
+});

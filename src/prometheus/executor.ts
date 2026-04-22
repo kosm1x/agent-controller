@@ -12,6 +12,7 @@ import {
   queryClaudeSdkAsInfer,
   queryClaudeSdkAsInferWithTools,
 } from "../inference/claude-sdk.js";
+import { CB_COOLDOWN_MS } from "../config/constants.js";
 import { getConfig } from "../config.js";
 import { toolRegistry } from "../tools/registry.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -51,7 +52,16 @@ const TRANSIENT_PATTERNS = [
   "connection reset",
   "connection refused",
   "eagain",
+  // Dim-4 round-2 C-RES-4 fix: when the claude-sdk breaker is HALF_OPEN,
+  // exactly one concurrent caller wins the probe slot and the others throw
+  // "Circuit breaker OPEN". Prometheus fan-out (executeGraph Promise.allSettled)
+  // hits this pattern on every post-outage recovery. Treat it as transient so
+  // the losing goals retry instead of escalating to permanent failure.
+  "circuit breaker",
 ];
+
+/** Error fragment marking a breaker OPEN rejection — matched for backoff sizing. */
+const BREAKER_OPEN_TOKEN = "circuit breaker open";
 
 // ---------------------------------------------------------------------------
 // Error classification
@@ -481,9 +491,19 @@ export async function executeGoal(
       const strategy = classifyError(errorMsg, attempt, MAX_RETRIES);
 
       if (strategy === ErrorStrategy.RETRY) {
-        const delay = Math.min(2 ** (attempt + 1) * 1000, 30_000);
+        // Dim-4 round-2 C-RES-4 fix: when the breaker is OPEN and this throw
+        // is from allowRequest()===false, the provider literally can't be
+        // reached for another CB_COOLDOWN_MS. Exponential backoff tops out at
+        // ~8s, so three retries inside the cooldown window just re-hit OPEN.
+        // Jitter the cooldown by 0-5s to stagger fan-out probes after recovery.
+        const isBreakerOpen = errorMsg
+          .toLowerCase()
+          .includes(BREAKER_OPEN_TOKEN);
+        const delay = isBreakerOpen
+          ? CB_COOLDOWN_MS + Math.floor(Math.random() * 5000)
+          : Math.min(2 ** (attempt + 1) * 1000, 30_000);
         console.warn(
-          `[executor] Goal ${goal.id} retry ${attempt + 1}/${MAX_RETRIES}: ${errorMsg}`,
+          `[executor] Goal ${goal.id} retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms: ${errorMsg}`,
         );
         await new Promise((r) => setTimeout(r, delay));
         continue;

@@ -167,6 +167,34 @@ describe("executeGoal", () => {
     expect(result.error).toContain("timeout");
     expect(result.toolFailures).toBe(1);
   });
+
+  it("Dim-4 round-2 C-RES-4: classifies Circuit breaker OPEN as transient and retries", async () => {
+    // Breaker OPEN throw used to fall through TRANSIENT_PATTERNS and escalate
+    // immediately. Now the "circuit breaker" pattern + cooldown-sized backoff
+    // means fan-out goals recover instead of permanently failing during a
+    // single incident window.
+    mockInferWithTools
+      .mockRejectedValueOnce(
+        new Error(
+          "[claude-sdk] Circuit breaker OPEN — refusing call until cooldown elapses",
+        ),
+      )
+      .mockResolvedValueOnce({
+        content: "Succeeded after breaker recovered",
+        messages: [
+          { role: "assistant", content: "Succeeded after breaker recovered" },
+        ],
+        toolRepairs: [],
+        totalUsage: { prompt_tokens: 20, completion_tokens: 10 },
+      });
+
+    const result = await executeGoal(makeGoal(), "");
+    expect(result.ok).toBe(true);
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+  }, // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
+  // + up to 5s jitter. Real delivery would sleep the full cooldown; this
+  // test tolerates that because the mock resolves on the second call.
+  45_000);
 });
 
 describe("executeGraph", () => {
