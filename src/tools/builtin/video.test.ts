@@ -37,6 +37,7 @@ import {
   videoJobCancelTool,
   videoJobCleanupTool,
   videoTransitionPreviewTool,
+  videoBrandApplyTool,
 } from "./video.js";
 
 describe("video tools", () => {
@@ -328,6 +329,70 @@ describe("video tools", () => {
       const parsed = JSON.parse(result);
       expect(parsed.removed_count).toBe(0);
       expect(parsed.older_than_hours).toBe(24);
+    });
+  });
+
+  describe("video_brand_apply (v7.4 S2a)", () => {
+    it("rejects non-positive-integer brand_id", async () => {
+      let result = await videoBrandApplyTool.execute({ brand_id: 0 });
+      expect(result).toMatch(/must be a positive integer/);
+      result = await videoBrandApplyTool.execute({ brand_id: -1 });
+      expect(result).toMatch(/must be a positive integer/);
+      result = await videoBrandApplyTool.execute({ brand_id: 1.5 });
+      expect(result).toMatch(/must be a positive integer/);
+    });
+
+    it("returns error when brand_id not found", async () => {
+      mockDb.prepare.mockReturnValue({
+        get: vi.fn().mockReturnValue(undefined),
+        run: vi.fn(),
+        all: vi.fn(),
+      });
+      const result = await videoBrandApplyTool.execute({ brand_id: 99 });
+      expect(result).toMatch(/brand_id 99 not found/);
+    });
+
+    it("returns brand summary for a valid brand_id", async () => {
+      mockDb.prepare.mockReturnValue({
+        get: vi.fn().mockReturnValue({
+          id: 42,
+          domain: "acme.test",
+          brand_name: "Acme",
+          profile: JSON.stringify({
+            tagline: "Rise above",
+            voice: { descriptor: "confident" },
+            keywords_lexicon: ["rise", "above"],
+            avoid_lexicon: ["cheap"],
+          }),
+          created_at: "2026-04-21",
+        }),
+        run: vi.fn(),
+        all: vi.fn(),
+      });
+      const result = await videoBrandApplyTool.execute({ brand_id: 42 });
+      const parsed = JSON.parse(result);
+      expect(parsed.brand_id).toBe(42);
+      expect(parsed.brand_name).toBe("Acme");
+      expect(parsed.summary.tagline).toBe("Rise above");
+      expect(parsed.summary.keywords_lexicon).toEqual(["rise", "above"]);
+    });
+
+    it("handles corrupt profile JSON gracefully (returns undefined fields)", async () => {
+      mockDb.prepare.mockReturnValue({
+        get: vi.fn().mockReturnValue({
+          id: 7,
+          domain: "broken.test",
+          brand_name: "Broken",
+          profile: "not valid json",
+          created_at: "2026-04-21",
+        }),
+        run: vi.fn(),
+        all: vi.fn(),
+      });
+      const result = await videoBrandApplyTool.execute({ brand_id: 7 });
+      const parsed = JSON.parse(result);
+      expect(parsed.brand_id).toBe(7);
+      expect(parsed.summary.tagline).toBeUndefined();
     });
   });
 });

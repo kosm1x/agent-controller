@@ -213,6 +213,8 @@ export const VIDEO_TOOLS = [
   "video_compose_manifest",
   "video_job_cancel",
   "video_job_cleanup",
+  "video_storyboard",
+  "video_brand_apply",
   "screenshot_element",
 ];
 

@@ -128,6 +128,8 @@ import {
   videoComposeManifestTool,
   videoJobCancelTool,
   videoJobCleanupTool,
+  videoStoryboardTool,
+  videoBrandApplyTool,
 } from "../builtin/video.js";
 import { screenshotElementTool } from "../builtin/screenshot.js";
 import {
@@ -276,6 +278,8 @@ const BUILTIN_TOOLS: Tool[] = [
   videoComposeManifestTool,
   videoJobCancelTool,
   videoJobCleanupTool,
+  videoStoryboardTool,
+  videoBrandApplyTool,
   screenshotElementTool,
   humanizeTextTool,
   dashboardGenerateTool,

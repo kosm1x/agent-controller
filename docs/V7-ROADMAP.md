@@ -661,14 +661,25 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 | Stretch: Docker determinism mode (pinned Chrome + fonts)                                                                                                                        | hyperframes #9         | **Deferred** — trigger: two renders of same input diverge in hash                                   |
 | Stretch: audio-reactive sampling pattern (pre-extracted frequency bands)                                                                                                        | hyperframes #10        | **Doc-only** in v7.4 S2a cinema-prompts (visual-styles)                                             |
 
-### v7.4 S2 — AI Generation + Storyboard + Lip-Sync
+### v7.4 S2a — Storyboard Pipeline + Brand-DNA Bridge (code-only) — **Done (session 97, 2026-04-22)**
 
-| Item                                                         | Source          | Status      |
-| ------------------------------------------------------------ | --------------- | ----------- |
-| AI asset generation pipeline (higgsfield 200+ model catalog) | open-higgsfield | **Planned** |
-| Storyboard pipeline — script → scene list → asset requests   | —               | **Planned** |
-| Lip sync for talking-head generation                         | open-higgsfield | **Planned** |
-| Cinema prompts library                                       | open-higgsfield | **Planned** |
+| Item                                                                                                                            | Source | Status                                   |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------- |
+| Storyboard pipeline — brief → LLM → `VideoCompositionManifest` (scene list + narration + image queries + transitions)           | —      | **Done** (`src/video/storyboard.ts`)     |
+| Cinema prompts library — 20 camera modifiers + 15 lighting styles + 10 mood archetypes (static catalog, shape = P4a ads-refs)   | —      | **Done** (`src/video/cinema-prompts.ts`) |
+| Brand-DNA bridge — load v7.3 P4a `ads_brand_profiles` row by id, merge voice + lexicon into storyboard prompt                   | —      | **Done**                                 |
+| 2 new tools — `video_storyboard`, `video_brand_apply`                                                                           | —      | **Done**                                 |
+| URL / active-content sanitization on brief (prompt injection defense: http/https/ftp/file/data:/javascript:/mailto:)            | —      | **Done**                                 |
+| LLM output hardening — JSON block extraction (raw/fenced/embedded), defensive scene re-indexing, `validateManifest` enforcement | —      | **Done**                                 |
+
+### v7.4 S2b — AI Generation + Lip-Sync (credential-gated) — **Planned**
+
+| Item                                                                        | Source          | Status      | Trigger                                  |
+| --------------------------------------------------------------------------- | --------------- | ----------- | ---------------------------------------- |
+| AI asset generation pipeline (higgsfield/Muapi — Kling clips + Flux stills) | open-higgsfield | **Planned** | operator provisions API key              |
+| fal.ai FLUX adapter — upgrade images from pexels stock to AI-generated      | open-higgsfield | **Planned** | operator provisions `FAL_API_KEY`        |
+| ElevenLabs premium TTS adapter — upgrade from edge-tts                      | open-higgsfield | **Planned** | operator provisions `ELEVENLABS_API_KEY` |
+| Lip sync for talking-head generation                                        | open-higgsfield | **Planned** | operator provisions wav2lip or Muapi key |
 
 ---
 

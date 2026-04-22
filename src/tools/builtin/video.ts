@@ -2,6 +2,7 @@
  * Video production tools — S5d + v7.4 S1 + v7.4 S2a.
  * Core: video_create, video_status, video_script, video_tts, video_image, video_list_profiles, video_list_voices, video_background_download.
  * v7.4 S1: video_transition_preview, video_compose_manifest, video_job_cancel, video_job_cleanup.
+ * v7.4 S2a: video_storyboard, video_brand_apply.
  */
 
 import { randomUUID } from "crypto";
@@ -1278,6 +1279,194 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
       older_than_hours: hours,
       removed_count: removedCount,
       bytes_freed: bytesFreed,
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4 S2a — video_storyboard (LLM-driven manifest generator)
+// ---------------------------------------------------------------------------
+
+export const videoStoryboardTool: Tool = {
+  name: "video_storyboard",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_storyboard",
+      description: `Generate a structured VideoCompositionManifest from a brief + duration. Uses the LLM to author scene-by-scene narration, image queries, and transitions. Does NOT render — operator reviews the manifest then pipes into video_compose_manifest for actual MP4 production.
+
+USE WHEN:
+- User wants a video but hasn't authored the manifest themselves
+- Quickly draft 3-8 scenes from a topic/brief
+
+Optional brand_id pulls a profile from ads_brand_profiles (v7.3 P4a) — brand voice, keywords lexicon, colors — and merges into the prompt.
+
+URLs in the brief are redacted before hitting the LLM (prompt-injection defense). Output is validated via validateManifest.`,
+      parameters: {
+        type: "object",
+        properties: {
+          brief: {
+            type: "string",
+            description:
+              "Plain-language description of what the video should be about. Max 4000 chars. URLs will be redacted.",
+          },
+          duration: {
+            type: "number",
+            description: "Total duration in seconds. Range 15-120.",
+          },
+          template: {
+            type: "string",
+            enum: ["landscape", "portrait", "square"],
+            description: "Aspect ratio template. Default: landscape.",
+          },
+          language: {
+            type: "string",
+            description: "BCP-47 language tag for narration. Default: es.",
+          },
+          fps: {
+            type: "number",
+            enum: [24, 30, 60],
+            description: "Frame rate. Default: 30.",
+          },
+          style: {
+            type: "string",
+            enum: [
+              "aspirational",
+              "gritty",
+              "playful",
+              "luxurious",
+              "minimalist",
+            ],
+            description:
+              "Overall mood archetype. Optional — LLM picks from brief otherwise.",
+          },
+          brand_id: {
+            type: "number",
+            description:
+              "Optional ads_brand_profiles.id — enriches the prompt with brand voice + lexicon.",
+          },
+        },
+        required: ["brief", "duration"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const brief = typeof args.brief === "string" ? args.brief : "";
+    if (!brief) return JSON.stringify({ error: "brief is required" });
+    const duration = Number(args.duration);
+
+    try {
+      const { generateStoryboard } = await import("../../video/storyboard.js");
+      const manifest = await generateStoryboard({
+        brief,
+        duration,
+        template: args.template as
+          | "landscape"
+          | "portrait"
+          | "square"
+          | undefined,
+        language: typeof args.language === "string" ? args.language : undefined,
+        fps: args.fps as 24 | 30 | 60 | undefined,
+        style: args.style as
+          | "aspirational"
+          | "gritty"
+          | "playful"
+          | "luxurious"
+          | "minimalist"
+          | undefined,
+        brand_id: typeof args.brand_id === "number" ? args.brand_id : undefined,
+      });
+      return JSON.stringify({
+        manifest,
+        scene_count: manifest.scenes.length,
+        message:
+          "Storyboard ready. Pipe into video_compose_manifest to render.",
+      });
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4 S2a — video_brand_apply (load brand profile summary for storyboard)
+// ---------------------------------------------------------------------------
+
+export const videoBrandApplyTool: Tool = {
+  name: "video_brand_apply",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_brand_apply",
+      description: `Load a brand profile from ads_brand_profiles (v7.3 P4a) and return a summary the operator can feed into video_storyboard as brand_id. Convenience tool — it does not itself generate a storyboard.
+
+USE WHEN:
+- Operator wants to confirm a brand_id is valid before running video_storyboard
+- Inspecting what brand voice / lexicon will be injected into the prompt`,
+      parameters: {
+        type: "object",
+        properties: {
+          brand_id: {
+            type: "number",
+            description: "ads_brand_profiles.id (positive integer)",
+          },
+        },
+        required: ["brand_id"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const brandId = Number(args.brand_id);
+    if (!Number.isInteger(brandId) || brandId < 1) {
+      return JSON.stringify({ error: "brand_id must be a positive integer" });
+    }
+    const db = getDatabase();
+    const row = db
+      .prepare(
+        "SELECT id, domain, brand_name, profile, created_at FROM ads_brand_profiles WHERE id = ?",
+      )
+      .get(brandId) as
+      | {
+          id: number;
+          domain: string;
+          brand_name: string | null;
+          profile: string;
+          created_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return JSON.stringify({
+        error: `brand_id ${brandId} not found in ads_brand_profiles`,
+      });
+    }
+
+    let parsedProfile: Record<string, unknown> = {};
+    try {
+      parsedProfile = JSON.parse(row.profile) as Record<string, unknown>;
+    } catch {
+      /* non-fatal */
+    }
+
+    return JSON.stringify({
+      brand_id: row.id,
+      domain: row.domain,
+      brand_name: row.brand_name,
+      created_at: row.created_at,
+      summary: {
+        tagline: parsedProfile.tagline,
+        voice: parsedProfile.voice,
+        keywords_lexicon: parsedProfile.keywords_lexicon,
+        avoid_lexicon: parsedProfile.avoid_lexicon,
+      },
+      message:
+        "Pass this brand_id to video_storyboard(..., brand_id: N) to enrich the prompt.",
     });
   },
 };
