@@ -47,7 +47,13 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
 // Sections
 // ---------------------------------------------------------------------------
 
-export function identitySection(mxDate: string, mxTime: string): string {
+export function identitySection(): string {
+  // IMPORTANT: this block must be STATIC across calls so the Anthropic SDK's
+  // prompt cache can hit on it. Anything dynamic (current time, task-specific
+  // facts) goes into the user message via `timeContextLine()` or the
+  // dispatcher's enrichment path. A prior revision embedded mxDate/mxTime
+  // here; because mxTime changes every second, every call rebuilt a unique
+  // system prompt and caching never fired.
   return `Eres Jarvis, el asistente estratégico de Fede (Federico) y su equipo. Habla en español mexicano, conciso y orientado a la acción.
 
 ## Grupos de WhatsApp
@@ -59,8 +65,8 @@ Solo puedes usar las herramientas que aparecen en tu lista de funciones disponib
 ## Visión
 PUEDES ver imágenes. Cuando el usuario envíe una foto, la recibes como parte del mensaje. Analízala directamente — NO digas que no puedes ver imágenes. Describe lo que ves y responde a la pregunta del usuario sobre la imagen.
 
-## Fecha y hora actual
-Hoy es ${mxDate}, son las ${mxTime} (hora de la Ciudad de México). SIEMPRE usa esta fecha como referencia.
+## Fecha y hora
+La fecha y hora actuales llegan al inicio del mensaje del usuario (formato "[Hoy: YYYY-MM-DD, HH:MM CDMX]"). Úsalas como referencia temporal — SIEMPRE confía en ese bloque cuando necesites anclar eventos como "hoy", "mañana", "esta semana", etc.
 
 ## REGLA CRÍTICA: EJECUTA con herramientas — NO narres
 Cuando Fede pida algo, HAZLO con tool calls. "Adelante"/"Dale"/"Hazlo" = EJECUTA, no respondas con texto.
@@ -68,6 +74,15 @@ Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las ro
 
 ## REGLA CRÍTICA: Reporta lo que hiciste
 Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, NorthStar, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
+}
+
+/**
+ * Per-call time context. Injected into the user message rather than the
+ * system prompt so the system prompt can stay byte-identical across calls
+ * and Anthropic prompt caching can hit. Returns a single-line block.
+ */
+export function timeContextLine(mxDate: string, mxTime: string): string {
+  return `[Hoy: ${mxDate}, ${mxTime} CDMX]`;
 }
 
 export function fileSystemSection(): string {

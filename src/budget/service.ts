@@ -16,6 +16,13 @@ export interface CostRecord {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /**
+   * Optional provider-reported cost. When present, used verbatim instead of
+   * computing from the local pricing table. Set by the claude-sdk path so
+   * Max-auth ($0) is recorded faithfully and generic API rates don't get
+   * applied. Undefined on the openai path (pricing table compute).
+   */
+  costUsdOverride?: number;
 }
 
 export interface BudgetStatus {
@@ -41,11 +48,9 @@ export interface ThreeWindowStatus {
 /** Record cost for a completed run. */
 export function recordCost(record: CostRecord): void {
   const db = getDatabase();
-  const costUsd = calculateCost(
-    record.model,
-    record.promptTokens,
-    record.completionTokens,
-  );
+  const costUsd =
+    record.costUsdOverride ??
+    calculateCost(record.model, record.promptTokens, record.completionTokens);
 
   db.prepare(
     `INSERT INTO cost_ledger

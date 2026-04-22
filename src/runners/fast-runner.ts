@@ -1010,6 +1010,18 @@ export const fastRunner: Runner = {
           };
         }
 
+        // Scope telemetry — record tool execution on the SDK path. The
+        // openai-path does this ~100 lines below (after inferWithTools),
+        // but the SDK branch returns early so a separate record call is
+        // required. Without this, scope_telemetry.tools_called is always
+        // "[]" for Sonnet-routed tasks, and deferred-tool activation
+        // yield metrics (audit probe E3) are unmeasurable.
+        try {
+          recordToolExecution(input.taskId, sdkResult.toolCalls, []);
+        } catch {
+          // Non-fatal — telemetry never blocks execution
+        }
+
         return {
           success:
             parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
@@ -1023,6 +1035,10 @@ export const fastRunner: Runner = {
           tokenUsage: {
             promptTokens: sdkResult.usage.promptTokens,
             completionTokens: sdkResult.usage.completionTokens,
+            cacheReadTokens: sdkResult.usage.cacheReadTokens,
+            cacheCreationTokens: sdkResult.usage.cacheCreationTokens,
+            actualModel: sdkResult.model,
+            actualCostUsd: sdkResult.costUsd,
           },
           durationMs: sdkResult.durationMs || Date.now() - start,
         };

@@ -189,6 +189,65 @@ describe("queryClaudeSdk error_max_turns handling", () => {
     });
   });
 
+  it("sums input_tokens + cache_creation + cache_read into promptTokens", async () => {
+    // Regression guard for the efficiency-audit instrumentation fix. Before
+    // the fix, only `input_tokens` was captured, which (with SDK prompt
+    // caching active) was ~8 avg while the real prompt was in the thousands.
+    // The Anthropic Messages API spec states the total prompt size is the
+    // sum of input_tokens, cache_creation_input_tokens, and cache_read_input_tokens.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: {
+          input_tokens: 200,
+          output_tokens: 300,
+          cache_creation_input_tokens: 500,
+          cache_read_input_tokens: 4800,
+        },
+        modelUsage: { "claude-sonnet-4-6": {} },
+        total_cost_usd: 0.025,
+        duration_ms: 1500,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "hi",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.usage.promptTokens).toBe(200 + 500 + 4800);
+    expect(result.usage.completionTokens).toBe(300);
+    expect(result.usage.cacheReadTokens).toBe(4800);
+    expect(result.usage.cacheCreationTokens).toBe(500);
+    expect(result.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("falls back to SONNET_MODEL_ID when SDK reports no modelUsage", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "hi",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.usage.cacheReadTokens).toBe(0);
+    expect(result.usage.cacheCreationTokens).toBe(0);
+  });
+
   it("uses plain string prompt when no images are provided", async () => {
     mockMessages.value = [
       {

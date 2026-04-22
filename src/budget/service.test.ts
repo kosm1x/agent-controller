@@ -2,7 +2,7 @@
  * Budget service tests.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockRun = vi.fn();
 const mockGet = vi.fn();
@@ -40,7 +40,9 @@ import {
 } from "./service.js";
 
 describe("budget service", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({
@@ -72,6 +74,54 @@ describe("budget service", () => {
         10_000,
         2_000,
         expect.closeTo(0.012, 6),
+      );
+    });
+
+    it("uses costUsdOverride verbatim when provided (claude-sdk Max-auth path)", () => {
+      // Regression guard for efficiency audit fix: under claude-sdk provider
+      // with Max subscription auth, the SDK reports total_cost_usd=0 (truth).
+      // Using the local pricing table would overstate spend by applying a
+      // generic API rate card. The override must bypass calculateCost().
+      recordCost({
+        runId: "run-2",
+        taskId: "task-2",
+        agentType: "fast",
+        model: "claude-sonnet-4-6",
+        promptTokens: 50_000,
+        completionTokens: 3_000,
+        costUsdOverride: 0,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        "run-2",
+        "task-2",
+        "fast",
+        "claude-sonnet-4-6",
+        50_000,
+        3_000,
+        0,
+      );
+    });
+
+    it("prefers costUsdOverride even when non-zero (metered API fallback)", () => {
+      recordCost({
+        runId: "run-3",
+        taskId: "task-3",
+        agentType: "heavy",
+        model: "claude-sonnet-4-6",
+        promptTokens: 10_000,
+        completionTokens: 2_000,
+        costUsdOverride: 0.087,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        "run-3",
+        "task-3",
+        "heavy",
+        "claude-sonnet-4-6",
+        10_000,
+        2_000,
+        0.087,
       );
     });
   });

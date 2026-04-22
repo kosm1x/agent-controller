@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectToolFlags,
   identitySection,
+  timeContextLine,
   fileSystemSection,
   capabilitiesSection,
   wordpressSection,
@@ -75,11 +76,25 @@ describe("detectToolFlags", () => {
 // ---------------------------------------------------------------------------
 
 describe("conditional prompt sections", () => {
-  it("identitySection includes date and time", () => {
-    const s = identitySection("2026-03-31", "14:30");
-    expect(s).toContain("2026-03-31");
-    expect(s).toContain("14:30");
-    expect(s).toContain("Jarvis");
+  it("identitySection is static (no date/time) so the prompt cache can hit", () => {
+    // Efficiency audit fix: date/time are injected into the user message
+    // via timeContextLine(), not into the system prompt. Embedding mxTime
+    // in the system prompt broke Anthropic prompt caching — every second
+    // the prefix changed and every call missed the cache.
+    const s1 = identitySection();
+    const s2 = identitySection();
+    expect(s1).toBe(s2); // byte-identical
+    expect(s1).toContain("Jarvis");
+    expect(s1).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no dates
+    expect(s1).not.toMatch(/\d{2}:\d{2}/); // no times
+  });
+
+  it("timeContextLine emits the date + time in a compact single-line form", () => {
+    const line = timeContextLine("2026-04-22", "14:30");
+    expect(line).toContain("2026-04-22");
+    expect(line).toContain("14:30");
+    expect(line).toContain("CDMX");
+    expect(line.split("\n").length).toBe(1); // exactly one line
   });
 
   it("fileSystemSection mentions NorthStar and jarvis files", () => {

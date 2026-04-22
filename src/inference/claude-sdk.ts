@@ -133,12 +133,42 @@ export function buildMcpServer(toolNames: string[]) {
 // Query interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical Sonnet model ID for cost_ledger attribution.
+ *
+ * The Claude Agent SDK auths via ~/.claude/.credentials.json and defaults to
+ * claude-sonnet-4-6. The config's INFERENCE_PRIMARY_MODEL env var is unused
+ * under provider='claude-sdk' (often stale qwen-era string), so every call
+ * site that needs to record a model name for SDK-routed calls must use this
+ * constant instead of cfg.inferencePrimaryModel.
+ */
+export const SONNET_MODEL_ID = "claude-sonnet-4-6";
+
 export interface ClaudeSdkResult {
   text: string;
   /** Bare tool names called during the run (mcp__jarvis__ prefix stripped). */
   toolCalls: string[];
   numTurns: number;
-  usage: { promptTokens: number; completionTokens: number };
+  /**
+   * Token usage from the SDK's terminal `result` message.
+   *
+   * `promptTokens` is the SUM of `input_tokens` + `cache_creation_input_tokens`
+   * + `cache_read_input_tokens` (per Anthropic Messages API spec: "Total input
+   * tokens in a request is the summation of" those three). Recording only the
+   * raw `input_tokens` field under-counts by the cache-hit portion — which is
+   * 90%+ of the prompt when SDK prompt caching is active.
+   *
+   * `cacheReadTokens` and `cacheCreationTokens` are surfaced separately so
+   * cache hit ratio can be derived: cacheReadTokens / promptTokens.
+   */
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  };
+  /** Actual model ID reported by the SDK (e.g. "claude-sonnet-4-6"). */
+  model: string;
   costUsd: number;
   durationMs: number;
 }
@@ -261,9 +291,15 @@ export async function queryClaudeSdk(opts: {
   const toolCallNames: string[] = [];
   let numTurns = 0;
   let assistantTurns = 0;
-  let usage = { promptTokens: 0, completionTokens: 0 };
+  let usage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+  };
   let costUsd = 0;
   let durationMs = 0;
+  let actualModel: string = SONNET_MODEL_ID;
 
   // When images are present, switch to streaming-input mode so the user
   // message can carry Anthropic-format image blocks alongside the text.
@@ -325,12 +361,29 @@ export async function queryClaudeSdk(opts: {
               ? streamingText
               : resolvedResult;
           numTurns = success.num_turns;
+          // Anthropic Messages API: "Total input tokens in a request is the
+          // summation of `input_tokens`, `cache_creation_input_tokens`, and
+          // `cache_read_input_tokens`." Recording only `input_tokens` misses
+          // the cache-hit bulk (often 90%+ with SDK prompt caching active),
+          // which made cost_ledger.prompt_tokens show ~8 avg on Sonnet path
+          // vs. a true prompt size in the tens of thousands.
+          const inputTokens = success.usage?.input_tokens ?? 0;
+          const cacheCreation = success.usage?.cache_creation_input_tokens ?? 0;
+          const cacheRead = success.usage?.cache_read_input_tokens ?? 0;
           usage = {
-            promptTokens: success.usage?.input_tokens ?? 0,
+            promptTokens: inputTokens + cacheCreation + cacheRead,
             completionTokens: success.usage?.output_tokens ?? 0,
+            cacheReadTokens: cacheRead,
+            cacheCreationTokens: cacheCreation,
           };
           costUsd = success.total_cost_usd ?? 0;
           durationMs = success.duration_ms ?? 0;
+          // modelUsage keys are the exact model IDs the SDK invoked. First
+          // key is the primary model; keep as a readable attribution string.
+          const modelKeys = Object.keys(success.modelUsage ?? {});
+          if (modelKeys.length > 0) {
+            actualModel = modelKeys[0];
+          }
         } else {
           // SDK reported a non-success terminal result (error_max_turns,
           // error_max_budget_usd, error_max_structured_output_retries,
@@ -344,13 +397,24 @@ export async function queryClaudeSdk(opts: {
           numTurns =
             (error as unknown as { num_turns?: number }).num_turns ??
             assistantTurns;
+          const errUsage = (
+            error as unknown as {
+              usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_creation_input_tokens?: number;
+                cache_read_input_tokens?: number;
+              };
+            }
+          ).usage;
+          const errInput = errUsage?.input_tokens ?? 0;
+          const errCacheCreation = errUsage?.cache_creation_input_tokens ?? 0;
+          const errCacheRead = errUsage?.cache_read_input_tokens ?? 0;
           usage = {
-            promptTokens:
-              (error as unknown as { usage?: { input_tokens?: number } }).usage
-                ?.input_tokens ?? 0,
-            completionTokens:
-              (error as unknown as { usage?: { output_tokens?: number } }).usage
-                ?.output_tokens ?? 0,
+            promptTokens: errInput + errCacheCreation + errCacheRead,
+            completionTokens: errUsage?.output_tokens ?? 0,
+            cacheReadTokens: errCacheRead,
+            cacheCreationTokens: errCacheCreation,
           };
           costUsd =
             (error as unknown as { total_cost_usd?: number }).total_cost_usd ??
@@ -398,10 +462,13 @@ export async function queryClaudeSdk(opts: {
     resultText = `[timeout after ${SDK_TIMEOUT_MS / 1000}s — partial response below]\n\n${resultText}\n\nSTATUS: DONE_WITH_CONCERNS — query hit the ${SDK_TIMEOUT_MS / 1000}s hard timeout, response is incomplete`;
   }
 
+  const cacheHitRatio =
+    usage.promptTokens > 0 ? usage.cacheReadTokens / usage.promptTokens : 0;
   console.log(
     `[claude-sdk] Completed: ${numTurns || assistantTurns} turns, ${toolCallNames.length} tool calls, ` +
       `$${costUsd.toFixed(4)}, ${durationMs}ms, ` +
-      `tokens=${usage.promptTokens + usage.completionTokens}` +
+      `tokens=${usage.promptTokens + usage.completionTokens} ` +
+      `(cache ${(cacheHitRatio * 100).toFixed(0)}%: ${usage.cacheReadTokens} read, ${usage.cacheCreationTokens} created)` +
       (timedOut ? " [TIMED OUT]" : ""),
   );
 
@@ -410,6 +477,7 @@ export async function queryClaudeSdk(opts: {
     toolCalls: toolCallNames,
     numTurns: numTurns || assistantTurns,
     usage,
+    model: actualModel,
     costUsd,
     durationMs,
   };

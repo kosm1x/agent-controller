@@ -37,6 +37,17 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "deepseek-v3": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-v3.2": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-r1": { promptCostPer1k: 0.004, completionCostPer1k: 0.016 },
+  // Claude Sonnet (Anthropic) — auth'd via ~/.claude/.credentials.json under
+  // Max subscription. The SDK reports `total_cost_usd: 0` in that mode, and
+  // recordCost prefers the reported value via costUsdOverride. This entry
+  // is the fallback used only if costUsdOverride is absent; set to $0 so we
+  // don't double-book phantom API spend against the Max subscription. If a
+  // user ever routes Sonnet through metered API, override via
+  // BUDGET_PRICING_JSON with the real per-M rates.
+  "claude-sonnet-4-6": { promptCostPer1k: 0, completionCostPer1k: 0 },
+  "claude-sonnet-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
+  "claude-opus-4-7": { promptCostPer1k: 0, completionCostPer1k: 0 },
+  "claude-haiku-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
 };
 
 /** Fallback for unknown models. */

@@ -63,12 +63,44 @@ export class DataLayer {
     string,
     { ts: number; points: MacroPoint[] }
   >();
+  /**
+   * Counters for cache-efficiency observability (E4 audit).
+   *
+   * Every cache lookup increments exactly one counter. Counters are
+   * process-lifetime totals (reset on restart). Expose via `stats()` so the
+   * /health endpoint can compute hit ratio = (l1Hits + l2Hits) / total.
+   */
+  private readonly cacheStats = {
+    l1Hits: 0,
+    l2Hits: 0,
+    l2Stale: 0,
+    fetches: 0,
+    inflightDedups: 0,
+  };
 
   constructor(
     private readonly av: AlphaVantageAdapter | null,
     private readonly polygon: PolygonAdapter | null,
     private readonly fred: FredAdapter | null,
   ) {}
+
+  /** Snapshot of cache counters for observability (E4 audit). */
+  stats(): {
+    l1Hits: number;
+    l2Hits: number;
+    l2Stale: number;
+    fetches: number;
+    inflightDedups: number;
+    hitRatio: number;
+  } {
+    const total =
+      this.cacheStats.l1Hits + this.cacheStats.l2Hits + this.cacheStats.fetches;
+    const hits = this.cacheStats.l1Hits + this.cacheStats.l2Hits;
+    return {
+      ...this.cacheStats,
+      hitRatio: total > 0 ? hits / total : 0,
+    };
+  }
 
   static fromConfig(): DataLayer {
     // Each adapter is optional — if the key isn't set, that provider is absent.
@@ -105,6 +137,7 @@ export class DataLayer {
     const key = `daily:${symbol}:${opts.lookback}`;
     const cached = this.l1Lookup(key, DAILY_TTL_MS);
     if (cached) {
+      this.cacheStats.l1Hits++;
       return { bars: cached, provider: cached[0]?.provider ?? "alpha_vantage" };
     }
 
@@ -114,18 +147,22 @@ export class DataLayer {
       const newest = dbRows[dbRows.length - 1];
       const age = Date.now() - Date.parse(newest.timestamp);
       if (age < DAILY_TTL_MS) {
+        this.cacheStats.l2Hits++;
         this.l1Set(key, dbRows);
         return { bars: dbRows, provider: newest.provider };
       }
+      this.cacheStats.l2Stale++;
     }
 
     // In-flight dedup
     const existing = this.inflight.get(key);
     if (existing) {
+      this.cacheStats.inflightDedups++;
       const bars = await existing;
       return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
     }
 
+    this.cacheStats.fetches++;
     const fetchPromise = this.fetchDailyDispatch(symbol, opts.lookback, dbRows);
     this.inflight.set(key, fetchPromise);
     try {

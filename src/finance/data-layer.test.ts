@@ -92,6 +92,47 @@ describe("DataLayer", () => {
     expect((av.fetchDaily as any).mock.calls.length).toBe(1);
   });
 
+  it("stats() counters track L1/L2/fetch breakdown for hit-ratio observability", async () => {
+    // E4 audit instrumentation: cache efficiency must be measurable.
+    // First call: fetch (miss). Second call: L1 hit. Third: simulated L1 expiry -> L2 hit.
+    const fresh = new Date().toISOString();
+    const bars = [makeBar({ timestamp: fresh })];
+    const av = makeAvStub(bars);
+    const layer = new DataLayer(av, null, null);
+
+    await layer.getDaily("SPY", { lookback: 1 }); // fetch
+    await layer.getDaily("SPY", { lookback: 1 }); // L1 hit
+    // New instance picks up the fresh DB row (L2 hit without going to AV).
+    const av2 = makeAvStub([]);
+    const layer2 = new DataLayer(av2, null, null);
+    await layer2.getDaily("SPY", { lookback: 1 }); // L2 hit
+
+    expect(layer.stats()).toEqual(
+      expect.objectContaining({
+        l1Hits: 1,
+        l2Hits: 0,
+        fetches: 1,
+      }),
+    );
+    expect(layer2.stats()).toEqual(
+      expect.objectContaining({
+        l1Hits: 0,
+        l2Hits: 1,
+        fetches: 0,
+      }),
+    );
+    // Combined ratio 2 hits / 3 accesses = 0.666...
+    const combinedHits = layer.stats().l1Hits + layer2.stats().l2Hits;
+    const combinedTotal =
+      layer.stats().l1Hits +
+      layer.stats().l2Hits +
+      layer.stats().fetches +
+      layer2.stats().l1Hits +
+      layer2.stats().l2Hits +
+      layer2.stats().fetches;
+    expect(combinedHits / combinedTotal).toBeCloseTo(2 / 3, 3);
+  });
+
   it("falls back to L2 DB when L1 cleared but DB is fresh", async () => {
     const fresh = new Date().toISOString();
     const bars = [makeBar({ timestamp: fresh })];

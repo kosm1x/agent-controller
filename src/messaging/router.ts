@@ -82,6 +82,7 @@ import { nowMexDate, nowMexTime } from "../lib/timezone.js";
 import {
   detectToolFlags,
   identitySection,
+  timeContextLine,
   fileSystemSection,
   capabilitiesSection,
   personalDataSection,
@@ -154,9 +155,13 @@ REGLAS (no negociables):
  * tools actually in scope. Prevents the LLM from attempting to use tools
  * it cannot call (e.g., browser__goto when browser tools aren't scoped).
  */
+/**
+ * Build the static (byte-identical across calls) portion of the Jarvis system
+ * prompt. The current date/time is deliberately NOT included here — it goes
+ * into the user message via `timeContextLine()` so the SDK's prompt cache
+ * hits on the system prompt. See `identitySection` comment for history.
+ */
 function buildJarvisSystemPrompt(
-  mxDate: string,
-  mxTime: string,
   tools: string[],
   userFactsBlock: string,
   enrichmentBlock: string,
@@ -171,7 +176,7 @@ function buildJarvisSystemPrompt(
   const p4: string[] = []; // First to truncate
 
   // P1: Identity + safety
-  p1.push(identitySection(mxDate, mxTime));
+  p1.push(identitySection());
   p1.push(confirmationSection(flags));
   p1.push(toolFirstSection(flags));
   p1.push(mechanicalVerificationSection());
@@ -982,8 +987,6 @@ export class MessageRouter {
         const mxDate = nowMexDate();
         const mxTime = nowMexTime();
         const systemPrompt = buildJarvisSystemPrompt(
-          mxDate,
-          mxTime,
           scopedTools,
           "",
           enrichment.contextBlock,
@@ -993,11 +996,15 @@ export class MessageRouter {
         // - No conversationHistory passed (parent context NOT leaked)
         // - Scoped tools only (no parent tool leakage beyond scope)
         // - 60-min hard timeout on pendingReplies (existing)
+        // Time context goes into the task body (which the non-chat fast-runner
+        // branch emits as a user message), so the system prompt above stays
+        // byte-stable for cache hits.
         const result = await submitTask({
           title: `🤖 Agente: ${taskText.slice(0, 50)}`,
           description:
             systemPrompt +
-            `\n\nTarea del agente (background):\n${taskText}\n\n` +
+            `\n\n${timeContextLine(mxDate, mxTime)}\n` +
+            `\nTarea del agente (background):\n${taskText}\n\n` +
             BACKGROUND_AGENT_BOILERPLATE,
           agentType: "auto",
           tools: scopedTools,
@@ -1506,10 +1513,11 @@ export class MessageRouter {
     const mxDate = nowMexDate();
     const mxTime = nowMexTime();
 
-    // Build system prompt with conditional sections based on scoped tools
+    // Build system prompt with conditional sections based on scoped tools.
+    // The system prompt stays byte-stable across calls (no timestamps) so the
+    // Anthropic SDK's prompt cache can hit. Time context is injected into the
+    // user message below via `timeContextLine()`.
     const systemPrompt = buildJarvisSystemPrompt(
-      mxDate,
-      mxTime,
       tools,
       userFactsBlock,
       enrichment.contextBlock,
@@ -1551,12 +1559,26 @@ export class MessageRouter {
     // Create abort controller for task cancellation (v6.2 S2)
     const taskAbort = new AbortController();
 
+    // Clone history so the downstream task sees the time context prepended to
+    // the CURRENT user message only, without mutating the thread-buffer turn
+    // that other consumers (scope classifier, feedback tracker) already saw.
+    // Prepending to the system prompt would bust the prompt cache every call.
+    const historyForRunner: ConversationTurn[] = conversationHistory.map(
+      (turn, i) =>
+        i === conversationHistory.length - 1 && turn.role === "user"
+          ? {
+              ...turn,
+              content: `${timeContextLine(mxDate, mxTime)}\n\n${turn.content}`,
+            }
+          : turn,
+    );
+
     const result = await submitTask({
       title: `Chat: ${titleText}`,
       description: taskDescription,
       agentType: "auto",
       tools,
-      conversationHistory,
+      conversationHistory: historyForRunner,
       tags: [
         "messaging",
         msg.channel,

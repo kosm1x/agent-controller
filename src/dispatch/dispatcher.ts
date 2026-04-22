@@ -19,6 +19,7 @@ import {
 import { taskStarted, taskCompleted } from "../observability/prometheus.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
+import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 
 const log = createLogger("dispatch");
 
@@ -474,7 +475,10 @@ async function dispatchWithSlot(
     // Record cost in ledger (if budget feature is available and we have token data)
     if (result.tokenUsage) {
       try {
-        const model = getModelFromTask(taskId);
+        // Prefer the model ID the inference layer actually invoked over the
+        // config-derived label — under claude-sdk, cfg.inferencePrimaryModel
+        // is an unused/stale string and would mislabel every row.
+        const model = result.tokenUsage.actualModel ?? getModelFromTask(taskId);
         recordCost({
           runId,
           taskId,
@@ -482,6 +486,13 @@ async function dispatchWithSlot(
           model,
           promptTokens: result.tokenUsage.promptTokens,
           completionTokens: result.tokenUsage.completionTokens,
+          // Prefer provider-reported cost. The Anthropic SDK reports $0 under
+          // Max auth (accurate) where calculateCost() would overstate using a
+          // generic API rate card. Falls back to the pricing-table compute
+          // when actualCostUsd is undefined (openai path, older callers).
+          ...(result.tokenUsage.actualCostUsd !== undefined && {
+            costUsdOverride: result.tokenUsage.actualCostUsd,
+          }),
         });
       } catch {
         // Cost recording should never block task completion
@@ -543,10 +554,25 @@ function getModelTierFromTask(taskId: string): string | undefined {
   }
 }
 
-/** Extract the inference model name used for a task (for cost tracking). */
+/**
+ * Extract the inference model name used for a task (for cost tracking).
+ *
+ * Called only as a fallback — callers prefer `result.tokenUsage.actualModel`
+ * when the inference layer reports one. This function handles older paths
+ * that don't thread actualModel through.
+ *
+ * Under `inferencePrimaryProvider='claude-sdk'`, `cfg.inferencePrimaryModel`
+ * is typically empty string or a stale qwen-era value (the SDK auths via
+ * ~/.claude/.credentials.json and picks its own model). Labeling every SDK
+ * row with that stale string mislabels Sonnet traffic as qwen. Returning the
+ * canonical Sonnet ID keeps `cost_ledger.model` attribution coherent.
+ */
 function getModelFromTask(taskId: string): string {
-  const tier = getModelTierFromTask(taskId);
   const cfg = getConfig();
+  if (cfg.inferencePrimaryProvider === "claude-sdk") {
+    return SONNET_MODEL_ID;
+  }
+  const tier = getModelTierFromTask(taskId);
   if (tier === "capable" || tier === "standard")
     return cfg.inferencePrimaryModel;
   if (tier === "flash" && cfg.inferenceFallbackModel)

@@ -55,10 +55,31 @@ export interface RunnerOutput {
   output?: unknown;
   /** Error message if failed. */
   error?: string;
-  /** Token usage for this run. */
+  /**
+   * Token usage for this run.
+   *
+   * `promptTokens` is the TOTAL input count (raw input + cache-creation +
+   * cache-read under the claude-sdk path). `cacheReadTokens` and
+   * `cacheCreationTokens` break out the cache portions so cache hit ratio
+   * can be derived downstream. The openai-path leaves cache fields at 0.
+   *
+   * `actualModel` is the exact model ID the inference layer actually
+   * invoked (e.g. "claude-sonnet-4-6"). When set, the dispatcher prefers
+   * it over the config-derived label so cost_ledger attribution is correct
+   * even when `cfg.inferencePrimaryModel` is stale from a prior provider.
+   *
+   * `actualCostUsd` is the cost reported directly by the provider (e.g.
+   * Anthropic SDK's `total_cost_usd`). Preferred over `calculateCost()`
+   * when present since Max-auth subscriptions report $0 faithfully while
+   * local pricing tables would overstate.
+   */
   tokenUsage?: {
     promptTokens: number;
     completionTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    actualModel?: string;
+    actualCostUsd?: number;
   };
   /** Execution duration in milliseconds. */
   durationMs: number;

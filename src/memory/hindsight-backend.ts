@@ -82,6 +82,11 @@ export class HindsightMemoryBackend implements MemoryService {
       return this.sqliteFallback.recall(query, options);
     }
 
+    // Per-call timing for E5 audit. Baseline recorded `memory_search` at
+    // 5388ms avg with no idea whether it was Hindsight API latency, SQLite
+    // fallback, or the 5000ms client-level timeout being hit. Log the path
+    // + duration so the distribution becomes visible.
+    const start = Date.now();
     try {
       await this.ensureBank(options.bank);
       const response = await this.client.recall(options.bank, {
@@ -90,13 +95,26 @@ export class HindsightMemoryBackend implements MemoryService {
         tags: options.tags,
       });
       this.recordSuccess();
+      const ms = Date.now() - start;
+      console.log(
+        `[memory] recall(hindsight) bank=${options.bank} results=${response.results.length} ${ms}ms`,
+      );
       return response.results.map((r) => ({
         content: r.text,
       }));
     } catch (err) {
       this.recordFailure(err);
+      const ms = Date.now() - start;
+      console.log(
+        `[memory] recall(hindsight) FAILED after ${ms}ms — falling back to SQLite`,
+      );
       // Fall back to SQLite on failure
-      return this.sqliteFallback.recall(query, options);
+      const fbStart = Date.now();
+      const out = await this.sqliteFallback.recall(query, options);
+      console.log(
+        `[memory] recall(sqlite-fallback) results=${out.length} ${Date.now() - fbStart}ms`,
+      );
+      return out;
     }
   }
 

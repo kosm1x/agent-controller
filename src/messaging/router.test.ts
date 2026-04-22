@@ -208,7 +208,14 @@ describe("MessageRouter", () => {
       expect(call.conversationHistory).toBeDefined();
       const lastTurn =
         call.conversationHistory[call.conversationHistory.length - 1];
-      expect(lastTurn).toEqual({ role: "user", content: "Hola" });
+      // Efficiency audit: a time-context preamble is prepended to the final
+      // user turn so the system prompt stays static and Anthropic prompt
+      // caching can hit. The original user text is preserved after the
+      // preamble line.
+      expect(lastTurn.role).toBe("user");
+      expect(lastTurn.content).toMatch(/^\[Hoy: /);
+      expect(lastTurn.content).toContain("CDMX]");
+      expect(lastTurn.content).toContain("Hola");
     });
   });
 
