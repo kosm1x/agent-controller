@@ -1,8 +1,9 @@
 /**
- * Video production tools — S5d + v7.4 S1 + v7.4 S2a.
+ * Video production tools — S5d + v7.4 S1 + v7.4 S2a + v7.4.3.
  * Core: video_create, video_status, video_script, video_tts, video_image, video_list_profiles, video_list_voices, video_background_download.
  * v7.4 S1: video_transition_preview, video_compose_manifest, video_job_cancel, video_job_cleanup.
  * v7.4 S2a: video_storyboard, video_brand_apply.
+ * v7.4.3: video_html_compose.
  */
 
 import { randomUUID } from "crypto";
@@ -1467,6 +1468,224 @@ USE WHEN:
       },
       message:
         "Pass this brand_id to video_storyboard(..., brand_id: N) to enrich the prompt.",
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// v7.4.3 — video_html_compose (HTML-as-Composition DSL)
+// ---------------------------------------------------------------------------
+
+import { HTML_MOTION_IDS } from "../../video/html-motion.js";
+import { validateViewport } from "../../video/html-renderer.js";
+
+const HTML_COMPOSE_DEFAULT_FPS = 24 as const;
+const HTML_COMPOSE_DEFAULT_WIDTH = 1920;
+const HTML_COMPOSE_DEFAULT_HEIGHT = 1080;
+const HTML_COMPOSE_MAX_DURATION_SEC = 120;
+
+/**
+ * Build the motion-vocabulary section of the tool description from the
+ * canonical `html-motion` catalog so the tool description cannot drift from
+ * what the catalog actually exposes. W3 audit fix: the catalog is now read
+ * by the tool in production code, not just tests.
+ */
+function motionVocabSection(): string {
+  const ids = HTML_MOTION_IDS.join(", ");
+  return `Motion vocabulary (CSS-only, GSAP not bundled in v7.4.3 MVP):\n  ${ids}`;
+}
+
+export const videoHtmlComposeTool: Tool = {
+  name: "video_html_compose",
+  requiresConfirmation: true,
+  riskTier: "medium",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "video_html_compose",
+      description: `Compose a video from an HTML file authored with the composition DSL (data-start / data-duration / data-track-index / data-layer attributes, plus optional window.__hf.duration()/seek() contract). Per-frame renders via headless Chromium (snap binary) then muxes PNG sequence into an MP4.
+
+COST: approximately 140ms per frame on this VPS. 10s @ 24fps ≈ 35s wall-clock, 30s @ 24fps ≈ 100s. Use video_status to poll.
+
+USE WHEN:
+- User asks to "render this HTML as a video" / "convert html to mp4" / "hacer un video desde html"
+- Caller has a pre-authored composition HTML file under /root/tmp-video-html/
+
+HTML file MUST live under /root/tmp-video-html/ and have .html extension. Network loads are blocked at the route handler — inline all assets as data: URIs. Service Workers are blocked.
+
+${motionVocabSection()}
+
+Example HTML: <style>@keyframes fade-in { from {opacity:0} to {opacity:1} } .fade-in { animation: fade-in 0.5s forwards }</style><h1 class="fade-in" data-start="0" data-duration="2">Hello</h1>
+
+Requires confirmation (cost-bearing). Returns a job_id to track with video_status.`,
+      parameters: {
+        type: "object",
+        properties: {
+          html_path: {
+            type: "string",
+            description:
+              "Absolute path to the HTML composition file. Must be under /root/tmp-video-html/ and end with .html.",
+          },
+          fps: {
+            type: "number",
+            enum: [24, 30, 60],
+            description: "Frame rate. Default 24.",
+          },
+          width: {
+            type: "number",
+            description:
+              "Viewport width in pixels. Default 1920. Range 320-1920.",
+          },
+          height: {
+            type: "number",
+            description:
+              "Viewport height in pixels. Default 1080. Range 320-1920.",
+          },
+          max_duration_sec: {
+            type: "number",
+            description:
+              "Optional per-job duration cap (seconds). Defaults to 120. Clamps the composition if longer.",
+          },
+        },
+        required: ["html_path"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const htmlPath = args.html_path;
+    if (typeof htmlPath !== "string" || htmlPath.length === 0) {
+      return JSON.stringify({ error: "html_path is required" });
+    }
+
+    const fps =
+      (args.fps as 24 | 30 | 60 | undefined) ?? HTML_COMPOSE_DEFAULT_FPS;
+    if (![24, 30, 60].includes(fps as number)) {
+      return JSON.stringify({ error: "fps must be one of 24, 30, 60" });
+    }
+    const width =
+      (args.width as number | undefined) ?? HTML_COMPOSE_DEFAULT_WIDTH;
+    const height =
+      (args.height as number | undefined) ?? HTML_COMPOSE_DEFAULT_HEIGHT;
+    // W7 fix: validate viewport at tool boundary BEFORE any DB side-effect.
+    try {
+      validateViewport(width, height);
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const maxDurationSec = Math.min(
+      HTML_COMPOSE_MAX_DURATION_SEC,
+      (args.max_duration_sec as number | undefined) ??
+        HTML_COMPOSE_MAX_DURATION_SEC,
+    );
+    if (!Number.isFinite(maxDurationSec) || maxDurationSec <= 0) {
+      return JSON.stringify({
+        error: "max_duration_sec must be a positive number",
+      });
+    }
+
+    // W8 fix: parse (which validates path allowlist + existence) BEFORE the
+    // DB concurrency round-trip. Bad paths don't cost a DB query.
+    const { parseHtmlComposition } = await import("../../video/html-parser.js");
+    let composition;
+    try {
+      composition = parseHtmlComposition(htmlPath, { maxDurationSec });
+    } catch (err) {
+      return JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Concurrency gate — shared with video_compose_manifest.
+    const activeCount = (
+      getDatabase()
+        .prepare(
+          "SELECT COUNT(*) as cnt FROM video_jobs WHERE status IN ('scripting','generating_assets','composing')",
+        )
+        .get() as { cnt: number }
+    ).cnt;
+    if (activeCount >= MAX_CONCURRENT_JOBS) {
+      return JSON.stringify({
+        error: `Too many active video jobs (${activeCount}/${MAX_CONCURRENT_JOBS}). Wait for current jobs to finish.`,
+      });
+    }
+
+    const jobId = randomUUID().slice(0, 8);
+    const db = getDatabase();
+    const expiresAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const manifestJson = JSON.stringify({
+      kind: "html",
+      htmlPath: composition.htmlPath,
+      fps,
+      width,
+      height,
+      totalDurationSec: composition.totalDurationSec,
+      elementCount: composition.elements.length,
+      hasSeekFn: composition.hasSeekFn,
+    });
+
+    writeWithRetry(() =>
+      db
+        .prepare(
+          `INSERT INTO video_jobs (job_id, topic, duration_seconds, template, manifest_json, expires_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'composing')`,
+        )
+        .run(
+          jobId,
+          `html: ${composition.htmlPath}`,
+          Math.ceil(composition.totalDurationSec),
+          // S2 fix: preserve the square template category for symmetric viewports.
+          width === height
+            ? "square"
+            : width > height
+              ? "landscape"
+              : "portrait",
+          manifestJson,
+          expiresAt,
+        ),
+    );
+
+    // Fire-and-forget render. Errors surface via DB row.
+    (async () => {
+      try {
+        const { renderHtmlComposition } =
+          await import("../../video/html-renderer.js");
+        const result = await renderHtmlComposition(composition, jobId, {
+          fps,
+          width,
+          height,
+        });
+        updateJob(jobId, {
+          status: "completed",
+          output_file: result.outputPath,
+          completed_at: new Date().toISOString(),
+        });
+        console.log(
+          `[video] HTML job ${jobId} completed: ${result.outputPath} (${result.frameCount} frames, ${result.elapsedMs}ms)`,
+        );
+      } catch (err) {
+        console.error(`[video] HTML job ${jobId} failed:`, err);
+        updateJob(jobId, {
+          status: "failed",
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+
+    return JSON.stringify({
+      jobId,
+      status: "composing",
+      html_path: composition.htmlPath,
+      total_duration_seconds: Number(composition.totalDurationSec.toFixed(3)),
+      element_count: composition.elements.length,
+      has_seek_fn: composition.hasSeekFn,
+      fps,
+      width,
+      height,
+      message: `HTML composition job ${jobId} started. Use video_status to track.`,
     });
   },
 };

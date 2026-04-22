@@ -38,6 +38,7 @@ import {
   videoJobCleanupTool,
   videoTransitionPreviewTool,
   videoBrandApplyTool,
+  videoHtmlComposeTool,
 } from "./video.js";
 
 describe("video tools", () => {
@@ -175,6 +176,106 @@ describe("video tools", () => {
       const result = await videoComposeManifestTool.execute({ manifest });
       const parsed = JSON.parse(result);
       expect(parsed.error).toMatch(/scene count exceeds hard cap/);
+    });
+  });
+
+  describe("video_html_compose (v7.4.3)", () => {
+    // Arg-validation order (post-R1 W7/W8 fix):
+    //   1. html_path type-check  →  no DB
+    //   2. fps enum check        →  no DB
+    //   3. validateViewport      →  no DB
+    //   4. max_duration_sec      →  no DB
+    //   5. parseHtmlComposition  →  no DB (linkedom, fs only)
+    //   6. concurrency gate      →  DB
+    //   7. INSERT row            →  DB (fire-and-forget render follows)
+    it("requires html_path", async () => {
+      const result = await videoHtmlComposeTool.execute({});
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/html_path is required/);
+    });
+
+    it("rejects invalid fps (before DB)", async () => {
+      const result = await videoHtmlComposeTool.execute({
+        html_path: "/root/tmp-video-html/ok.html",
+        fps: 15,
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/fps must be one of/);
+    });
+
+    it("rejects bad viewport at tool boundary (before DB — W7 fix)", async () => {
+      const result = await videoHtmlComposeTool.execute({
+        html_path: "/root/tmp-video-html/ok.html",
+        width: -1,
+        height: 0,
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/≥320|integers|≤1920/);
+    });
+
+    it("rejects max_duration_sec <= 0 (before DB)", async () => {
+      const result = await videoHtmlComposeTool.execute({
+        html_path: "/root/tmp-video-html/ok.html",
+        max_duration_sec: 0,
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/max_duration_sec/);
+    });
+
+    it("rejects path outside allowlist (before DB — W8 fix)", async () => {
+      const result = await videoHtmlComposeTool.execute({
+        html_path: "/etc/passwd",
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/must live under|\.html extension/);
+    });
+
+    it("rejects path with traversal (before DB — W8 fix)", async () => {
+      const result = await videoHtmlComposeTool.execute({
+        html_path: "/root/tmp-video-html/../etc/passwd.html",
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toMatch(/must not contain/);
+    });
+
+    it("blocks when concurrency limit reached", async () => {
+      // Need a real html file so parser passes, then DB cnt=2 trips the gate.
+      const fs = await import("fs");
+      const path = await import("path");
+      fs.mkdirSync("/root/tmp-video-html", { recursive: true });
+      const htmlPath = path.join("/root/tmp-video-html", `concurrency-test.html`);
+      fs.writeFileSync(
+        htmlPath,
+        `<html><body><div data-start="0" data-duration="1"></div></body></html>`,
+      );
+      try {
+        mockDb.prepare.mockReturnValueOnce({
+          get: vi.fn().mockReturnValue({ cnt: 2 }),
+          run: vi.fn(),
+          all: vi.fn(),
+        });
+        const result = await videoHtmlComposeTool.execute({
+          html_path: htmlPath,
+        });
+        const parsed = JSON.parse(result);
+        expect(parsed.error).toMatch(/Too many active/);
+      } finally {
+        fs.rmSync(htmlPath, { force: true });
+      }
+    });
+
+    it("exposes requiresConfirmation + deferred flags", () => {
+      expect(videoHtmlComposeTool.requiresConfirmation).toBe(true);
+      expect(videoHtmlComposeTool.deferred).toBe(true);
+      expect(videoHtmlComposeTool.riskTier).toBe("medium");
+    });
+
+    it("description cites motion catalog IDs (W3 wiring)", () => {
+      const desc = videoHtmlComposeTool.definition.function.description ?? "";
+      expect(desc).toContain("fade-in");
+      expect(desc).toContain("scale-zoom");
+      expect(desc).toContain("lower-third");
+      expect(desc).toContain("Motion vocabulary");
     });
   });
 

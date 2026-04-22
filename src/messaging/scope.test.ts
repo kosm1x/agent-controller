@@ -2040,4 +2040,76 @@ describe("video scope group (v7.4 S1 tighten)", () => {
     const tools = scope("make a reel for my brand launch");
     expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
   });
+
+  // v7.4.3 — HTML-as-Composition DSL arms
+  it("v7.4.3: 'compose a video from html' fires", () => {
+    const tools = scope("compose a video from html for the demo");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("v7.4.3: 'render this html as mp4' fires", () => {
+    const tools = scope("render this html as mp4 please");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("v7.4.3: 'html to mp4' short form fires", () => {
+    const tools = scope("html to mp4 with 30fps");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("v7.4.3: ES 'video desde html' fires", () => {
+    const tools = scope("hazme un video desde el html adjunto");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("v7.4.3: ES 'compon un video desde html' fires", () => {
+    const tools = scope("compone un video desde el html de la landing");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  it("v7.4.3: direct tool reference 'video_html_compose' fires", () => {
+    const tools = scope("usa video_html_compose con mi archivo");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
+
+  // v7.4.3 FP-negatives — HTML dev-chatter must NOT fire video scope
+  it("v7.4.3 FP: 'write html for a landing page' does NOT fire", () => {
+    const tools = scope("write html for a landing page with CSS");
+    expect(
+      hasNone(tools, ["video_html_compose", "video_compose_manifest"]),
+    ).toBe(true);
+  });
+
+  it("v7.4.3 FP: 'html email template' does NOT fire", () => {
+    const tools = scope("create an html email template for newsletter");
+    expect(
+      hasNone(tools, ["video_html_compose", "video_compose_manifest"]),
+    ).toBe(true);
+  });
+
+  it("v7.4.3 FP: 'parse html document' does NOT fire", () => {
+    const tools = scope("parse the html document with cheerio");
+    expect(
+      hasNone(tools, ["video_html_compose", "video_compose_manifest"]),
+    ).toBe(true);
+  });
+
+  it("v7.4.3 FP: 'render html to react' does NOT fire", () => {
+    const tools = scope("render html to react components dynamically");
+    expect(
+      hasNone(tools, ["video_html_compose", "video_compose_manifest"]),
+    ).toBe(true);
+  });
+
+  it("v7.4.3 FP R1 W5: 'html composition engine design' does NOT fire", () => {
+    const tools = scope("discussing the html composition architecture");
+    expect(
+      hasNone(tools, ["video_html_compose", "video_compose_manifest"]),
+    ).toBe(true);
+  });
+
+  it("v7.4.3 R1 W5: 'html composition video job' still fires", () => {
+    const tools = scope("start an html-composition video job for the demo");
+    expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
+  });
 });

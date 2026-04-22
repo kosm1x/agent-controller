@@ -215,6 +215,7 @@ export const VIDEO_TOOLS = [
   "video_job_cleanup",
   "video_storyboard",
   "video_brand_apply",
+  "video_html_compose",
   "screenshot_element",
 ];
 
@@ -522,8 +523,11 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // Round-1 audit M4: `overlay`/`screenshot` bare words and bare platform
     // names (TikTok/YouTube) were still over-broad — now require a co-occurring
     // video/clip/take-a/de qualifier, or the domain-specific phrasing.
+    // v7.4.3 additions: html-composition DSL arms — require `html` to co-occur
+    // with compose/mp4/video in anchored phrases to avoid dev-chatter FPs
+    // ("html template", "html email", "html for a landing page").
     pattern:
-      /\b(?:v[ií]deos?(?!\s*(?:tag|element|elemento|html))|pel[ií]culas?|clips?|storyboard|guion\s+de\s+v[ií]deo|mp4(?!\s+(?:to|a|file|from|de\s+un|del))|webm|(?:you-?tube|tik-?tok|reels|shorts)\s+(?:v[ií]deo|clip|reel|short|contenido|content|strategy|estrategia|storyboard)|(?:reels?|shorts?)\s+(?:de|para|of|for)\s+(?:instagram|facebook|youtube|tiktok|marca|brand|campa[ñn]a)|(?:un|una|a|an|el|la|hacer|haz|make)\s+reels?\b|instagram\s+video|graba(?:r|ci[oó]n)?|hazme\s+un\s+v[ií]deo|overlay\s+(?:v[ií]deo|scene|escena|text|imagen|mode|mod[oa])|(?:con|with|usando|using|using\s+an|en\s+modo)\s+overlay|fondo\s+de\s+v[ií]deo|background\s+video|narraci[oó]n|voz\s+(?:para|del)\s+v[ií]deo|transici[oó]n\s+de\s+v[ií]deo|transitions?\s+preview|composici[oó]n\s+de\s+v[ií]deo|render\s+(?:el\s+|un\s+|la\s+)?v[ií]deo|v[ií]deo\s+render|(?:t[óo]mame\s+un\s+)?screenshot\s+(?:de|of|del|la|el|web|p[aá]gina|url|this)|take\s+a\s+screenshot|captura\s+(?:de\s+pantalla)?)\b/i,
+      /\b(?:v[ií]deos?(?!\s*(?:tag|element|elemento|html))|pel[ií]culas?|clips?|storyboard|guion\s+de\s+v[ií]deo|mp4(?!\s+(?:to|a|file|from|de\s+un|del))|webm|(?:you-?tube|tik-?tok|reels|shorts)\s+(?:v[ií]deo|clip|reel|short|contenido|content|strategy|estrategia|storyboard)|(?:reels?|shorts?)\s+(?:de|para|of|for)\s+(?:instagram|facebook|youtube|tiktok|marca|brand|campa[ñn]a)|(?:un|una|a|an|el|la|hacer|haz|make)\s+reels?\b|instagram\s+video|graba(?:r|ci[oó]n)?|hazme\s+un\s+v[ií]deo|overlay\s+(?:v[ií]deo|scene|escena|text|imagen|mode|mod[oa])|(?:con|with|usando|using|using\s+an|en\s+modo)\s+overlay|fondo\s+de\s+v[ií]deo|background\s+video|narraci[oó]n|voz\s+(?:para|del)\s+v[ií]deo|transici[oó]n\s+de\s+v[ií]deo|transitions?\s+preview|composici[oó]n\s+de\s+v[ií]deo|render\s+(?:el\s+|un\s+|la\s+)?v[ií]deo|v[ií]deo\s+render|html\s+(?:a|to|como|as)\s+(?:mp4|v[ií]deo|video)|compos[ae]r?\s+(?:un\s+|una\s+|el\s+|la\s+|a\s+|an\s+|the\s+)?(?:v[ií]deo|video|mp4)\s+(?:from|desde)\s+(?:un\s+|el\s+|la\s+|the\s+|an?\s+)?html|(?:v[ií]deo|video)\s+desde\s+(?:el\s+|un\s+|the\s+|a\s+)?html|render\s+(?:this\s+|that\s+|the\s+|el\s+|la\s+|este\s+|esta\s+)?html\s+(?:as\s+|como\s+)?(?:mp4|v[ií]deo|video)|html[-_\s]composition\s+(?:mp4|file|job|render|v[ií]deo(?!\s*(?:tag|element|elemento)))|video_html_compose|(?:t[óo]mame\s+un\s+)?screenshot\s+(?:de|of|del|la|el|web|p[aá]gina|url|this)|take\s+a\s+screenshot|captura\s+(?:de\s+pantalla)?)\b/i,
     group: "video",
   },
   {
