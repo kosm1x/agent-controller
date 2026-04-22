@@ -16,6 +16,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type { Tool } from "../types.js";
 import { extractPdfToMarkdown, extractPdfFromUrl } from "../../lib/pdf.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validatePathSafety } from "./immutable-core.js";
 
 const INLINE_THRESHOLD = 10_000; // chars — return full content if under this
 const PREVIEW_CHARS = 2_000; // chars of preview for long PDFs
@@ -141,12 +143,22 @@ TIPS:
       let content: string;
 
       if (isUrl) {
+        // Sec1 round-2 fix: validate outbound URL (SSRF guard)
+        const urlError = validateOutboundUrl(source);
+        if (urlError) {
+          return JSON.stringify({ error: `Blocked source URL: ${urlError}` });
+        }
         content = await extractPdfFromUrl(source, {
           pages,
           maxChars: EXTRACT_MAX_CHARS,
           timeoutMs: 30_000,
         });
       } else {
+        // Sec2 round-2 fix: validate local path (read-denylist guard)
+        const safety = validatePathSafety(source, "read");
+        if (!safety.safe) {
+          return JSON.stringify({ error: `Read blocked: ${safety.reason}` });
+        }
         if (!existsSync(source)) {
           return JSON.stringify({ error: `File not found: ${source}` });
         }

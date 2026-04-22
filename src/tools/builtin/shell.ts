@@ -69,6 +69,41 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     reason:
       "git operations blocked in shell_exec — use git_commit/git_push tools",
   },
+  // Sec7 round-2 fix: block reads of credential-bearing files via shell
+  // reader commands (cat/head/tail/less/more/xxd/od/strings/awk/sed/grep/nl/
+  // file/base64/md5sum/sha256sum). Without this, an LLM could bypass the
+  // file_read READ_BLOCKED_PATHS denylist by running
+  // `shell_exec("cat /root/.claude/.credentials.json")`.
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.claude\/\.credentials\.json\b/,
+    reason: "read of credentials.json blocked",
+  },
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.ssh\//,
+    reason: "read of /root/.ssh/ blocked",
+  },
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.(gnupg|aws|docker|kube|config\/gh)\b/,
+    reason: "read of secret dotfile directory blocked",
+  },
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/etc\/(shadow|gshadow|sudoers|ssh)\b/,
+    reason: "read of system secret blocked",
+  },
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/proc\/self\/(environ|mem)\b/,
+    reason: "read of /proc/self/environ or mem blocked",
+  },
+  {
+    pattern:
+      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/(\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/,
+    reason: "read of dotfile credential blocked",
+  },
 ];
 
 /** Safe path prefixes for write operations.

@@ -328,8 +328,33 @@ describe("validatePathSafety", () => {
       expect(result.reason).toContain(".gnupg/");
     });
 
-    it("allows reading from dangerous directories", () => {
+    it("blocks reading from secret directories (Sec2 round-1 fix)", () => {
+      // Reads of /root/.ssh/ are now blocked even in read mode — the
+      // pre-audit behavior (reads permissive) was the vulnerability.
       const result = validatePathSafety("/root/.ssh/authorized_keys", "read");
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain(".ssh");
+    });
+
+    it("blocks reading credentials.json by basename (Sec2 round-1 fix)", () => {
+      const result = validatePathSafety(
+        "/root/.claude/.credentials.json",
+        "read",
+      );
+      expect(result.safe).toBe(false);
+    });
+
+    it("blocks reading id_rsa regardless of directory (Sec2 round-1 fix)", () => {
+      const result = validatePathSafety("/tmp/scratch/id_rsa", "read");
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain("id_rsa");
+    });
+
+    it("does not block /root/.ssh-backup/ via prefix bug (poka-yoke)", () => {
+      // /root/.ssh is a prefix of /root/.ssh-backup; the trailing slash on
+      // the blocklist entry prevents the false-positive that would
+      // accidentally block a legitimate sibling directory.
+      const result = validatePathSafety("/root/.ssh-backup/notes.txt", "read");
       expect(result.safe).toBe(true);
     });
   });

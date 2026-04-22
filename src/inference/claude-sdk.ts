@@ -13,6 +13,7 @@ import {
   createSdkMcpServer,
   query,
 } from "@anthropic-ai/claude-agent-sdk";
+import { sanitizeToolResult } from "./guards.js";
 import type {
   Options as SdkOptions,
   SDKResultSuccess,
@@ -96,7 +97,13 @@ function wrapTool(t: Tool) {
           t.name,
           args as Record<string, unknown>,
         );
-        return { content: [{ type: "text", text: result }] };
+        // Sec10 round-1 fix: parity with OpenAI adapter path (adapter.ts:1679).
+        // SDK tool results were reaching Sonnet unsanitized — role markers
+        // (`SYSTEM:`, `[INST]`, `<system>`) were not being defanged, so
+        // prompt-injection via tool output bypassed guards on claude-sdk path.
+        // See docs/audit/2026-04-22-security.md C-INJ-1.
+        const sanitized = sanitizeToolResult(t.name, result);
+        return { content: [{ type: "text", text: sanitized }] };
       } catch (err) {
         return {
           content: [

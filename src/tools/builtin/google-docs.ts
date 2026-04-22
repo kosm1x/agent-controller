@@ -4,6 +4,7 @@
 
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
+import { validatePathSafety } from "./immutable-core.js";
 
 // ---------------------------------------------------------------------------
 // gsheets_read
@@ -489,6 +490,15 @@ AFTER WRITING: Report the document title and what was appended.`,
     let text: string;
 
     if (contentFile) {
+      // Sec2 round-2 fix: content_file was an LLM-controlled absolute path →
+      // readFileSync → uploaded to Google Docs. Secret-exfil vector. Route
+      // through the read denylist.
+      const safety = validatePathSafety(contentFile, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          error: `content_file blocked: ${safety.reason}`,
+        });
+      }
       try {
         const { readFileSync } = await import("node:fs");
         text = readFileSync(contentFile, "utf-8");
@@ -598,6 +608,15 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
     let text: string;
 
     if (contentFile) {
+      // Sec2 round-2 fix: content_file was an LLM-controlled absolute path →
+      // readFileSync → uploaded to Google Docs. Secret-exfil vector. Route
+      // through the read denylist.
+      const safety = validatePathSafety(contentFile, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          error: `content_file blocked: ${safety.reason}`,
+        });
+      }
       try {
         const { readFileSync } = await import("node:fs");
         text = readFileSync(contentFile, "utf-8");

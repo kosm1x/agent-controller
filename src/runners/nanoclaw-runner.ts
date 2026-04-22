@@ -52,8 +52,12 @@ export const nanoclawRunner: Runner = {
         envVars.HOME = "/root";
       }
 
+      // Sec3 round-1 fix: mission-control source is mounted read-only.
+      // nanoclaw-worker.ts only reads compiled `dist/` + `package.json` —
+      // any writes from the container would bypass file_write / shell_exec
+      // host-side guards + immutable-core. DB writes go to /tmp/mc.db.
       const volumes = [
-        "/root/claude/mission-control:/root/claude/mission-control:rw",
+        "/root/claude/mission-control:/root/claude/mission-control:ro",
         "/root/.config/gh:/root/.config/gh:ro",
       ];
       if (isClaudeSdk) {

@@ -8,6 +8,7 @@ import { join } from "path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { apiKeyAuth } from "./auth.js";
+import { apiRateLimit } from "./rate-limit.js";
 import { health } from "./routes/health.js";
 import dashboardRoute from "./routes/dashboard.js";
 import { tasks } from "./routes/tasks.js";
@@ -42,6 +43,9 @@ export function createApp(): Hono {
   if (process.env.A2A_AGENT_NAME) {
     app.get("/.well-known/agent.json", (c) => c.json(buildAgentCard()));
     const a2aApi = new Hono();
+    // Sec9 round-2 W3 fix: A2A is a full JSON-RPC tool-invocation surface;
+    // it needs the same defense-in-depth rate-limit as /api/*.
+    a2aApi.use("/*", apiRateLimit({ windowMs: 60_000, maxPerWindow: 300 }));
     a2aApi.use("/*", apiKeyAuth);
     a2aApi.route("/", a2a);
     app.route("/a2a", a2aApi);
@@ -75,8 +79,11 @@ export function createApp(): Hono {
     );
   }
 
-  // All /api/* routes require API key
+  // All /api/* routes require API key + IP-keyed rate limit (Sec9).
+  // 300 req/min per IP gives the dashboard's 5s polling headroom for 3
+  // concurrent tabs while still capping an attacker who captures the key.
   const api = new Hono();
+  api.use("/*", apiRateLimit({ windowMs: 60_000, maxPerWindow: 300 }));
   api.use("/*", apiKeyAuth);
 
   api.route("/tasks", tasks);

@@ -8,6 +8,7 @@
  */
 
 import { resolve } from "path";
+import { realpathSync } from "fs";
 
 const MC_ROOT = "/root/claude/mission-control/";
 
@@ -94,6 +95,56 @@ const DANGEROUS_FILE_PREFIXES = [".env"]; // .env, .env.local, .env.production, 
 const DANGEROUS_DIRECTORIES = [".git/", ".ssh/", ".gnupg/"];
 
 /**
+ * Read-blocked paths (full or prefix match) — hard stop on the *read* path.
+ *
+ * Sec2 round-1 fix (docs/audit/2026-04-22-security.md): file_read was
+ * previously unguarded; even if callers used validatePathSafety(..., "read"),
+ * sensitive files fell through because DANGEROUS_FILES and DANGEROUS_DIRECTORIES
+ * were only checked for write/delete. An LLM could read `.credentials.json`,
+ * `/etc/shadow`, Supabase secrets, etc.
+ *
+ * Entries are checked against the resolved absolute path; prefix match with a
+ * trailing `/` where directory semantics apply (poka-yoke: plain `/root/.ssh`
+ * would match `/root/.ssh-backup`, so use `/root/.ssh/`).
+ */
+const READ_BLOCKED_PATHS = [
+  // Auth/secrets under the operator's home dir
+  "/root/.claude/.credentials.json",
+  "/root/.config/gh/",
+  "/root/.ssh/",
+  "/root/.gnupg/",
+  "/root/.aws/",
+  "/root/.npmrc",
+  "/root/.netrc",
+  "/root/.gitconfig",
+  "/root/.git-credentials",
+  // Linux system secrets
+  "/etc/shadow",
+  "/etc/gshadow",
+  "/etc/sudoers",
+  "/etc/sudoers.d/",
+  "/etc/ssh/",
+  "/proc/self/environ",
+  "/proc/self/mem",
+  // Project-local secret surfaces
+  "/root/claude/mission-control/.env",
+  "/root/claude/mission-control/data/",
+  // Co-located infra secrets on this VPS
+  "/opt/supabase/docker/.env",
+  "/opt/supabase/volumes/api/kong.yml",
+];
+
+/** Filenames that should never be read by tool path regardless of directory. */
+const READ_BLOCKED_BASENAMES = new Set([
+  ".credentials.json",
+  "id_rsa",
+  "id_ed25519",
+  "id_ecdsa",
+  "id_dsa",
+  ".pgpass",
+]);
+
+/**
  * Validate a file path for safety before write/delete operations.
  * 6-check pipeline from Claude Code's validatePath():
  *
@@ -178,6 +229,57 @@ export function validatePathSafety(
       safe: false,
       reason: `'${matched}' is a protected directory — manual edit required`,
     };
+  }
+
+  // 7. Read-path secret denylist — Sec2 round-1 + round-2 fix
+  // Block reads of credential-bearing files regardless of whether the caller
+  // passed "read", "write", or "delete". This is defense-in-depth for tools
+  // whose sole purpose is to read files.
+  //
+  // Round 2: also realpath-resolve to catch symlink escapes
+  // (e.g. `/tmp/a -> /root/.claude/.credentials.json`). We check the
+  // denylist BOTH against the path-resolve (handles ../) AND against the
+  // realpath (handles symlinks). realpathSync throws ENOENT for paths
+  // that don't exist yet — that's fine for read-mode (we only care when
+  // the file exists), and for write/delete we only enforce the denylist
+  // on post-resolve string match since writes to a new symlink can't
+  // follow one.
+  const candidates = [resolve(path)];
+  if (operation === "read") {
+    try {
+      const real = realpathSync(candidates[0]!);
+      if (real !== candidates[0]) candidates.push(real);
+    } catch {
+      // File doesn't exist yet or lstat failed; only resolve-check applies.
+    }
+  }
+
+  for (const probe of candidates) {
+    for (const blocked of READ_BLOCKED_PATHS) {
+      // Exact-file blocklist: probe === blocked OR probe starts with blocked+"/"
+      // (prefix semantics only for entries ending in "/"). Avoids the
+      // /root/.ssh-evil matching /root/.ssh class of bug (poka-yoke test).
+      if (blocked.endsWith("/")) {
+        if (probe.startsWith(blocked)) {
+          return {
+            safe: false,
+            reason: `'${blocked}' is a read-blocked secret directory`,
+          };
+        }
+      } else if (probe === blocked) {
+        return {
+          safe: false,
+          reason: `'${blocked}' is a read-blocked secret file`,
+        };
+      }
+    }
+    const probeBase = probe.split("/").pop() ?? "";
+    if (READ_BLOCKED_BASENAMES.has(probeBase)) {
+      return {
+        safe: false,
+        reason: `'${probeBase}' is a read-blocked sensitive filename`,
+      };
+    }
   }
 
   return { safe: true };

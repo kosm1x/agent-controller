@@ -184,7 +184,30 @@ function actionPr(title: string, body: string): string {
   }
 
   // Stage, commit, push — filter sensitive files
-  const SENSITIVE = [".env", "credentials", "secret", ".key", ".pem", "token"];
+  // Sec8 round-1 fix: widened filter covers private-key filenames (id_rsa,
+  // id_ed25519), auth dotfiles (.npmrc, .netrc, .gitconfig, .git-credentials,
+  // .pgpass), cloud-credential convention files (.aws/credentials is already
+  // caught by "credentials"), and PEM/PKCS key extensions.
+  const SENSITIVE = [
+    ".env",
+    "credentials",
+    "secret",
+    ".key",
+    ".pem",
+    ".p12",
+    ".pfx",
+    ".crt",
+    "token",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+    ".npmrc",
+    ".netrc",
+    ".pgpass",
+    ".gitconfig",
+    ".git-credentials",
+  ];
   try {
     // Get changed files, exclude sensitive ones
     const changed = run(["status", "--porcelain"])

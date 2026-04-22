@@ -13,6 +13,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import type { Tool } from "../types.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validatePathSafety } from "./immutable-core.js";
 import { getUserFacts } from "../../db/user-facts.js";
 import {
   ensureGeminiFilesTable,
@@ -260,6 +262,15 @@ EDGE CASES:
 
     // Download URL to /tmp if needed
     if (source.startsWith("http://") || source.startsWith("https://")) {
+      // Sec1 round-1 fix: validate outbound URL before fetch. Previously
+      // `fetch(source, ...)` allowed SSRF to localhost/169.254.169.254/etc.
+      const urlError = validateOutboundUrl(source);
+      if (urlError) {
+        return JSON.stringify({
+          success: false,
+          error: `Blocked source URL: ${urlError}`,
+        });
+      }
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
@@ -286,6 +297,16 @@ EDGE CASES:
         });
       }
     } else {
+      // Sec2 round-2 fix: local `source` was an exfil vector — LLM could
+      // pass `/root/.claude/.credentials.json` and the tool would upload it
+      // to Gemini. Route through the read-path denylist.
+      const safety = validatePathSafety(source, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          success: false,
+          error: `Local source blocked: ${safety.reason}`,
+        });
+      }
       filePath = source;
       if (!displayName) displayName = basename(source);
     }

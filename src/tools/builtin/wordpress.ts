@@ -12,8 +12,10 @@
  */
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Tool } from "../types.js";
+import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validatePathSafety } from "./immutable-core.js";
 
 const TIMEOUT_MS = 30_000;
 const WP_TEMP_DIR = "/tmp/wp_content";
@@ -540,6 +542,16 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
     // Resolve content: prefer content_file over inline content
     let newContent = args.content as string | undefined;
     if (contentFile) {
+      // Sec2 round-2 fix: content_file secret-exfil vector — same class as
+      // google-docs / google-drive. Route through the read denylist before
+      // reading.
+      const safety = validatePathSafety(contentFile, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          success: false,
+          error: `content_file blocked: ${safety.reason}`,
+        });
+      }
       if (!existsSync(contentFile)) {
         return JSON.stringify({
           success: false,
@@ -804,20 +816,49 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
       const filePath = imageUrl.startsWith("file://")
         ? imageUrl.slice(7)
         : imageUrl;
-      if (!existsSync(filePath)) {
+
+      // Sec1/Sec2 round-1 fix: local-file path was exfil-capable — LLM could
+      // set image_url="/root/.claude/.credentials.json" or "/etc/passwd" and
+      // this tool would readFileSync() then upload the contents to WordPress.
+      // Constrain local reads to /tmp/wp_content/ (where gemini_image lands
+      // its outputs) and run through the read-path denylist as defense-in-depth.
+      const canonical = resolve(filePath);
+      const allowedLocal = `${WP_TEMP_DIR}/`;
+      if (!canonical.startsWith(allowedLocal) && canonical !== WP_TEMP_DIR) {
         return JSON.stringify({
           success: false,
-          error: `Local file not found: ${filePath}`,
+          error: `Local image_url must be under ${WP_TEMP_DIR}/; got: ${canonical}`,
         });
       }
-      imageBuffer = readFileSync(filePath) as Buffer;
+      const safety = validatePathSafety(canonical, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          success: false,
+          error: `Local image_url blocked: ${safety.reason}`,
+        });
+      }
+      if (!existsSync(canonical)) {
+        return JSON.stringify({
+          success: false,
+          error: `Local file not found: ${canonical}`,
+        });
+      }
+      imageBuffer = readFileSync(canonical) as Buffer;
       contentType = filename.endsWith(".png")
         ? "image/png"
         : filename.endsWith(".webp")
           ? "image/webp"
           : "image/jpeg";
     } else {
-      // Download from URL
+      // Download from URL — Sec1 round-1 fix: validate URL against SSRF
+      // allowlist before fetch (no http://169.254.169.254/, localhost, etc.)
+      const urlError = validateOutboundUrl(imageUrl);
+      if (urlError) {
+        return JSON.stringify({
+          success: false,
+          error: `Blocked image_url: ${urlError}`,
+        });
+      }
       const controller = new AbortController();
       const dlTimeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
       try {

@@ -4,6 +4,7 @@
 
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
+import { validatePathSafety } from "./immutable-core.js";
 
 /** Root folders that gdrive_delete refuses to trash. Case-insensitive. */
 const PROTECTED_FOLDER_NAMES = new Set([
@@ -516,6 +517,13 @@ IMPORTANT: Always use parent_folder_id when creating new files to place them in 
     // Resolve content
     let content: string;
     if (contentFile) {
+      // Sec2 round-2 fix: content_file secret-exfil vector — see google-docs.ts.
+      const safety = validatePathSafety(contentFile, "read");
+      if (!safety.safe) {
+        return JSON.stringify({
+          error: `content_file blocked: ${safety.reason}`,
+        });
+      }
       try {
         const { readFileSync } = await import("node:fs");
         content = readFileSync(contentFile, "utf-8");

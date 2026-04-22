@@ -152,6 +152,14 @@ export const fileReadTool: Tool = {
       return JSON.stringify({ error: "path is required" });
     }
 
+    // Sec2 round-1 fix: file_read had zero path validation. LLM could read
+    // /root/.claude/.credentials.json, /etc/shadow, Supabase .env, etc.
+    // validatePathSafety now applies a read-path denylist; see immutable-core.
+    const safety = validatePathSafety(path, "read");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `Read blocked: ${safety.reason}` });
+    }
+
     try {
       let content: string;
       if (extname(path).toLowerCase() === ".docx") {
