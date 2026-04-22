@@ -1,6 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { selectParent } from "./parent-selection.js";
-import type { TuneVariant } from "./types.js";
+import type { TuneVariant, TuneVariantWithChildren } from "./types.js";
+
+function makeVariantWithChildren(
+  overrides: Partial<TuneVariantWithChildren> & { variant_id: string },
+): TuneVariantWithChildren {
+  return {
+    parent_id: null,
+    run_id: "test-run",
+    generation: 0,
+    config_json: "{}",
+    composite_score: 50,
+    subscores_json: null,
+    valid: true,
+    activated_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+    child_count: 0,
+    ...overrides,
+  };
+}
 
 function makeVariant(
   overrides: Partial<TuneVariant> & { variant_id: string },
@@ -100,6 +118,42 @@ describe("selectParent", () => {
 
       // High should be selected ~9x more often than low
       expect(counts.high).toBeGreaterThan(counts.low * 3);
+    });
+  });
+
+  describe("score_child_prop", () => {
+    it("falls back to score_prop when child_count is absent", () => {
+      const variants = [
+        makeVariant({ variant_id: "a", composite_score: 10 }),
+        makeVariant({ variant_id: "b", composite_score: 90 }),
+      ];
+      for (let i = 0; i < 20; i++) {
+        expect(selectParent("score_child_prop", variants)).not.toBeNull();
+      }
+    });
+
+    it("favors less-explored high-scorers", () => {
+      const variants = [
+        makeVariantWithChildren({
+          variant_id: "explored",
+          composite_score: 90,
+          child_count: 9,
+        }), // effective weight 9
+        makeVariantWithChildren({
+          variant_id: "fresh",
+          composite_score: 45,
+          child_count: 0,
+        }), // effective weight 45
+      ];
+
+      const counts: Record<string, number> = { explored: 0, fresh: 0 };
+      for (let i = 0; i < 1000; i++) {
+        const v = selectParent("score_child_prop", variants)!;
+        counts[v.variant_id]++;
+      }
+
+      // Fresh should win ~5x more often than explored despite lower raw score
+      expect(counts.fresh).toBeGreaterThan(counts.explored * 2);
     });
   });
 });

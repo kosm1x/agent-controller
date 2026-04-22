@@ -123,6 +123,12 @@ export interface Experiment {
   baseline_score: number | null;
   mutated_score: number | null;
   status: ExperimentStatus;
+  /** SQLite `datetime('now')` string; populated by the DB on INSERT. */
+  created_at?: string;
+  /** v7.5: SkillClaw-style failure source on non-pass. Null on pass. */
+  failure_source?: FailureSource | null;
+  /** v7.5: GEPA-style confidence avg (per-case score stddev proxy, 0-1). */
+  confidence_avg?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,4 +189,29 @@ export interface TuneVariant {
   created_at: string;
 }
 
-export type ParentSelectionStrategy = "best" | "latest" | "score_prop";
+export type ParentSelectionStrategy =
+  | "best"
+  | "latest"
+  | "score_prop"
+  | "score_child_prop";
+
+// ---------------------------------------------------------------------------
+// v7.5 additions — failure classification + confidence signals
+// ---------------------------------------------------------------------------
+
+/**
+ * Failure-source classification for regressed/errored experiments.
+ * Adopted from SkillClaw (arXiv:2604.08377) — distinguishes whether the
+ * mutation itself was bad (skill), the agent misused a good mutation (agent),
+ * or infra failed (env).
+ */
+export type FailureSource = "skill" | "agent" | "env";
+
+/**
+ * Variant with child count — needed for `score_child_prop` parent selection
+ * (HyperAgents pattern: probability ∝ score / (1 + child_count) to prefer
+ * under-explored branches).
+ */
+export interface TuneVariantWithChildren extends TuneVariant {
+  child_count: number;
+}

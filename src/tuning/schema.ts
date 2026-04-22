@@ -12,8 +12,10 @@ import type {
   TestCaseExpected,
   Experiment,
   ExperimentStatus,
+  FailureSource,
   TuneRun,
   TuneVariant,
+  TuneVariantWithChildren,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +119,28 @@ export function ensureTuningTables(): void {
     CREATE INDEX IF NOT EXISTS idx_mined_cases_category
       ON mined_test_cases(category);
   `);
+
+  // v7.5 additive columns — safe to re-run; wrapped in try/catch because
+  // better-sqlite3 throws on duplicate ADD COLUMN and there's no IF NOT EXISTS.
+  addColumnIfMissing("tune_experiments", "failure_source", "TEXT");
+  addColumnIfMissing("tune_experiments", "confidence_avg", "REAL");
+}
+
+/**
+ * Idempotent ALTER TABLE ADD COLUMN — SQLite lacks IF NOT EXISTS on ADD COLUMN,
+ * so probe the schema first. Safe to call repeatedly.
+ */
+function addColumnIfMissing(
+  table: string,
+  column: string,
+  typeDecl: string,
+): void {
+  const db = getDatabase();
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeDecl}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -204,8 +228,9 @@ export function insertExperiment(exp: Experiment): void {
   db.prepare(
     `INSERT INTO tune_experiments
        (experiment_id, run_id, surface, target, mutation_type,
-        original_value, mutated_value, hypothesis, baseline_score, mutated_score, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        original_value, mutated_value, hypothesis, baseline_score, mutated_score,
+        status, failure_source, confidence_avg)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     exp.experiment_id,
     exp.run_id,
@@ -218,7 +243,45 @@ export function insertExperiment(exp: Experiment): void {
     exp.baseline_score,
     exp.mutated_score,
     exp.status,
+    exp.failure_source ?? null,
+    exp.confidence_avg ?? null,
   );
+}
+
+/**
+ * Update failure-source classification after post-hoc analysis.
+ * Null on success; one of `skill`|`agent`|`env` on regression.
+ */
+export function updateExperimentFailureSource(
+  experimentId: string,
+  failureSource: FailureSource | null,
+): void {
+  const db = getDatabase();
+  db.prepare(
+    `UPDATE tune_experiments SET failure_source = ? WHERE experiment_id = ?`,
+  ).run(failureSource, experimentId);
+}
+
+/**
+ * Get the most recent regressed/rejected experiment for a (surface, target).
+ * Used by the cooldown gate. Filters in SQL so `error` experiments (env
+ * failures, not mutation failures) never trigger a cooldown — retrying
+ * after a timeout should be allowed.
+ */
+export function getLastExperimentForTarget(
+  surface: string,
+  target: string,
+): Experiment | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT * FROM tune_experiments
+       WHERE surface = ? AND target = ?
+         AND status IN ('regressed', 'rejected')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(surface, target) as Experiment | undefined;
+  return row ?? null;
 }
 
 export function updateExperimentResult(
@@ -399,6 +462,30 @@ export function getValidVariants(limit = 50): TuneVariant[] {
        ORDER BY composite_score DESC LIMIT ?`,
     )
     .all(limit) as Array<Omit<TuneVariant, "valid"> & { valid: number }>;
+  return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
+}
+
+/**
+ * Valid variants joined with their child count — used by `score_child_prop`
+ * parent selection (HyperAgents). Children are counted via `parent_id` edges.
+ */
+export function getValidVariantsWithChildren(
+  limit = 50,
+): TuneVariantWithChildren[] {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT v.*, (
+         SELECT COUNT(*) FROM tune_variants c
+         WHERE c.parent_id = v.variant_id AND c.valid = 1
+       ) AS child_count
+       FROM tune_variants v
+       WHERE v.valid = 1
+       ORDER BY v.composite_score DESC LIMIT ?`,
+    )
+    .all(limit) as Array<
+    Omit<TuneVariantWithChildren, "valid"> & { valid: number }
+  >;
   return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
 }
 

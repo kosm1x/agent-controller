@@ -5,15 +5,22 @@
  * from when the overnight tuning loop starts a new run.
  */
 
-import type { TuneVariant, ParentSelectionStrategy } from "./types.js";
+import type {
+  TuneVariant,
+  TuneVariantWithChildren,
+  ParentSelectionStrategy,
+} from "./types.js";
 
 /**
  * Select a parent variant using the given strategy.
  * Returns null if no valid variants exist (run starts from scratch).
+ *
+ * For `score_child_prop`, pass `TuneVariantWithChildren[]` (from
+ * `getValidVariantsWithChildren`). All other strategies accept either.
  */
 export function selectParent(
   strategy: ParentSelectionStrategy,
-  variants: TuneVariant[],
+  variants: TuneVariant[] | TuneVariantWithChildren[],
 ): TuneVariant | null {
   if (variants.length === 0) return null;
 
@@ -24,6 +31,8 @@ export function selectParent(
       return selectLatest(variants);
     case "score_prop":
       return selectScoreProportional(variants);
+    case "score_child_prop":
+      return selectScoreChildProportional(variants);
   }
 }
 
@@ -62,4 +71,41 @@ function selectScoreProportional(variants: TuneVariant[]): TuneVariant {
 
   // Shouldn't reach here, but return last as fallback
   return variants[variants.length - 1];
+}
+
+/**
+ * HyperAgents `score_child_prop` — probability proportional to
+ * `composite_score / (1 + child_count)`. Higher-scoring but less-explored
+ * branches are preferred; prevents exploitation of the single best lineage.
+ *
+ * Falls back to `selectScoreProportional` when variants lack `child_count`
+ * (e.g. test fixtures that use the plain `TuneVariant` shape).
+ */
+function selectScoreChildProportional(
+  variants: TuneVariant[] | TuneVariantWithChildren[],
+): TuneVariant {
+  const hasChildCounts = variants.every(
+    (v) => typeof (v as TuneVariantWithChildren).child_count === "number",
+  );
+  if (!hasChildCounts) {
+    return selectScoreProportional(variants);
+  }
+  const withChildren = variants as TuneVariantWithChildren[];
+
+  const weights = withChildren.map(
+    (v) => v.composite_score / (1 + v.child_count),
+  );
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+  if (totalWeight <= 0) {
+    return withChildren[Math.floor(Math.random() * withChildren.length)];
+  }
+
+  const target = Math.random() * totalWeight;
+  let cumulative = 0;
+  for (let i = 0; i < withChildren.length; i++) {
+    cumulative += weights[i];
+    if (cumulative >= target) return withChildren[i];
+  }
+  return withChildren[withChildren.length - 1];
 }

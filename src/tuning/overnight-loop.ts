@@ -21,7 +21,7 @@ import {
   insertVariant,
   getExperimentsByRun,
   getRecentExperiments,
-  getValidVariants,
+  getValidVariantsWithChildren,
 } from "./schema.js";
 import { runEvaluation, type InferFunction } from "./eval-runner.js";
 import {
@@ -38,6 +38,11 @@ import { selectParent } from "./parent-selection.js";
 import { serializeSandbox, deserializeSandbox } from "./variant-store.js";
 import { getDatabase } from "../db/index.js";
 import { EXPERIMENT_TIMEOUT_MS } from "../config/constants.js";
+import { runGates, loadGateConfigFromEnv } from "./gates.js";
+import { classifyFailureSource } from "./failure-classifier.js";
+import { computeConfidenceProxy } from "./confidence.js";
+import { runSelfReview } from "./self-review.js";
+import { mineTrajectory } from "./trajectory-miner.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -67,7 +72,13 @@ const DEFAULT_CONFIG: TuningConfig = {
   minDeltaToKeep: 0.5,
   stalledAfterN: 5,
   surfaces: ["tool_description", "scope_rule"],
-  parentSelection: "best",
+  parentSelection:
+    (process.env.TUNING_PARENT_SELECTION as
+      | "best"
+      | "latest"
+      | "score_prop"
+      | "score_child_prop"
+      | undefined) ?? "score_child_prop",
   stagedGate: true,
 };
 
@@ -327,7 +338,10 @@ export async function runOvernightTuning(
   insertRun(run);
 
   // --- Step 0: Load parent variant from archive ---
-  const parentVariant = selectParent(cfg.parentSelection, getValidVariants(50));
+  const parentVariant = selectParent(
+    cfg.parentSelection,
+    getValidVariantsWithChildren(50),
+  );
   const parentId = parentVariant?.variant_id ?? null;
   const generation = (parentVariant?.generation ?? -1) + 1;
 
@@ -421,14 +435,17 @@ export async function runOvernightTuning(
     // Identify affected cases for targeted re-eval
     const affectedCaseIds = identifyAffectedCases(mutation, baseline.perCase);
 
-    // v6.4 A1: Anti-overfitting + simplicity gate
-    const rejection = validateMutation(
+    // v7.5 D: 5-gate monotonic validator (constitution/size/worthiness/safety/cooldown)
+    const gateResult = runGates(
       mutation,
       affectedCaseIds.length,
       originalValue,
+      loadGateConfigFromEnv(),
     );
-    if (rejection) {
-      console.log(`[tuning] ✗ REJECTED: ${rejection}`);
+    if (!gateResult.passed) {
+      console.log(
+        `[tuning] ✗ GATE-${gateResult.failedGate?.toUpperCase()}: ${gateResult.reason}`,
+      );
       const expId = `${runId}-exp-${i}`;
       insertExperiment({
         experiment_id: expId,
@@ -442,11 +459,44 @@ export async function runOvernightTuning(
         baseline_score: bestScore,
         mutated_score: bestScore,
         status: "rejected",
+        failure_source: classifyFailureSource({
+          status: "rejected",
+          mutation,
+        }),
       });
       experimentsRun++;
       consecutiveRegressions++;
       continue;
     }
+
+    // v7.5 F: inline self-review (opt-in via TUNING_SELF_REVIEW=true)
+    const review = await runSelfReview(mutation, originalValue);
+    if (!review.passed) {
+      console.log(`[tuning] ✗ SELF-REVIEW: ${review.reason}`);
+      cost.recordMetaAgent(review.tokensUsed);
+      const expId = `${runId}-exp-${i}`;
+      insertExperiment({
+        experiment_id: expId,
+        run_id: runId,
+        surface: mutation.surface,
+        target: mutation.target,
+        mutation_type: "rejected",
+        hypothesis: mutation.hypothesis,
+        original_value: originalValue,
+        mutated_value: mutation.mutated_value,
+        baseline_score: bestScore,
+        mutated_score: bestScore,
+        status: "rejected",
+        failure_source: classifyFailureSource({
+          status: "rejected",
+          mutation,
+        }),
+      });
+      experimentsRun++;
+      consecutiveRegressions++;
+      continue;
+    }
+    if (review.tokensUsed > 0) cost.recordMetaAgent(review.tokensUsed);
 
     // Apply mutation to sandbox
     const sandbox = applySandbox(bestSandbox, mutation);
@@ -477,6 +527,7 @@ export async function runOvernightTuning(
             `[tuning] ✗ STAGED GATE: cheap eval ${cheapMerged.compositeScore.toFixed(1)} < ${(bestScore - 1.0).toFixed(1)} — skipping expensive eval`,
           );
           const expId = `${runId}-exp-${i}`;
+          const stagedConfidence = computeConfidenceProxy(cheapCases);
           insertExperiment({
             experiment_id: expId,
             run_id: runId,
@@ -489,6 +540,12 @@ export async function runOvernightTuning(
             baseline_score: bestScore,
             mutated_score: cheapMerged.compositeScore,
             status: "regressed",
+            failure_source: classifyFailureSource({
+              status: "regressed",
+              mutation,
+              perCase: cheapCases,
+            }),
+            confidence_avg: stagedConfidence,
           });
           experimentsRun++;
           consecutiveRegressions++;
@@ -534,6 +591,11 @@ export async function runOvernightTuning(
         baseline_score: bestScore,
         mutated_score: null,
         status: "error",
+        failure_source: classifyFailureSource({
+          status: "error",
+          mutation,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        }),
       });
       experimentsRun++;
       consecutiveRegressions++;
@@ -562,6 +624,7 @@ export async function runOvernightTuning(
         ? "passed"
         : "regressed";
 
+    const confidence = computeConfidenceProxy(targeted.perCase);
     insertExperiment({
       experiment_id: expId,
       run_id: runId,
@@ -574,6 +637,15 @@ export async function runOvernightTuning(
       baseline_score: bestScore,
       mutated_score: newScore,
       status,
+      failure_source:
+        status === "passed"
+          ? null
+          : classifyFailureSource({
+              status,
+              mutation,
+              perCase: targeted.perCase,
+            }),
+      confidence_avg: confidence,
     });
 
     experimentsRun++;
@@ -635,6 +707,20 @@ export async function runOvernightTuning(
     console.log(
       `[tuning] Persisted variant ${variantId} (gen ${generation}, score ${bestScore.toFixed(1)})`,
     );
+
+    // v7.5 E: trajectory miner — opt-in stable-failure promotion to mined_test_cases
+    try {
+      const mineResult = mineTrajectory({ runId });
+      if (mineResult.candidateCount > 0) {
+        console.log(
+          `[tuning] trajectory mine: ${mineResult.promotedCount}/${mineResult.candidateCount} candidate(s) promoted`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[tuning] trajectory miner error (non-fatal): ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   // --- Step 3: Generate report ---
