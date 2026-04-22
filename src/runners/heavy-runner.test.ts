@@ -250,11 +250,18 @@ describe("heavyRunner container mode", () => {
           INFERENCE_PRIMARY_URL: "http://localhost:4000",
           INFERENCE_PRIMARY_KEY: "sk-test",
           INFERENCE_PRIMARY_MODEL: "gpt-4",
+          INFERENCE_PRIMARY_PROVIDER: "openai",
           MC_API_KEY: "test-key",
           MC_DB_PATH: "/tmp/mc.db",
         }),
         timeoutMs: 900_000,
       }),
+    );
+    // Under openai provider, HOME env + credentials mount must NOT be added.
+    const openaiCall = mockSpawnContainer.mock.calls[0][0];
+    expect(openaiCall.envVars).not.toHaveProperty("HOME");
+    expect(openaiCall.volumes ?? []).not.toContain(
+      "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
     );
     expect(mockOrchestrate).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
@@ -267,6 +274,53 @@ describe("heavyRunner container mode", () => {
       promptTokens: 200,
       completionTokens: 100,
     });
+  });
+
+  it("should mount credentials + HOME + provider env when provider is claude-sdk", async () => {
+    mockGetConfig.mockReturnValue({
+      ...makeConfig(true),
+      inferencePrimaryProvider: "claude-sdk",
+    } as ReturnType<typeof getConfig>);
+
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({
+        success: true,
+        content: "ok",
+        score: 0.9,
+        learnings: [],
+        tokenUsage: { promptTokens: 10, completionTokens: 5 },
+        goalGraph: { goals: {} },
+        trace: [],
+        durationMs: 100,
+      }),
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-sdk",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    await heavyRunner.execute({
+      taskId: "task-sdk",
+      runId: "run-sdk",
+      title: "Container under SDK",
+      description: "Should mount credentials",
+    });
+
+    expect(mockSpawnContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVars: expect.objectContaining({
+          INFERENCE_PRIMARY_PROVIDER: "claude-sdk",
+          HOME: "/root",
+        }),
+        volumes: [
+          "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+        ],
+      }),
+    );
   });
 
   it("should return error on container failure", async () => {

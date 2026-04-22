@@ -82,18 +82,29 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
   let handle: ContainerHandle | undefined;
 
   try {
+    const isClaudeSdk = config.inferencePrimaryProvider === "claude-sdk";
+    const envVars: Record<string, string> = {
+      INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
+      INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
+      INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
+      INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
+      MC_API_KEY: config.apiKey,
+      MC_DB_PATH: "/tmp/mc.db",
+    };
+    if (isClaudeSdk) {
+      // Claude Agent SDK reads ~/.claude/.credentials.json via os.homedir() → HOME.
+      envVars.HOME = "/root";
+    }
+
     handle = spawnContainer({
       image: config.heavyRunnerImage,
       name: generateContainerName(`heavy-${input.taskId.slice(0, 8)}`),
       command: ["node", "dist/runners/heavy-worker.js"],
       input: stdinPayload,
-      envVars: {
-        INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
-        INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
-        INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
-        MC_API_KEY: config.apiKey,
-        MC_DB_PATH: "/tmp/mc.db",
-      },
+      envVars,
+      volumes: isClaudeSdk
+        ? ["/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro"]
+        : undefined,
       timeoutMs: config.heavyRunnerTimeoutMs,
     });
 

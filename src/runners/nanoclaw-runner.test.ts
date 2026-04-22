@@ -95,6 +95,7 @@ describe("nanoclawRunner", () => {
           INFERENCE_PRIMARY_URL: "http://localhost:4000",
           INFERENCE_PRIMARY_KEY: "sk-test",
           INFERENCE_PRIMARY_MODEL: "qwen-test",
+          INFERENCE_PRIMARY_PROVIDER: "openai",
           MC_API_KEY: "test-key",
           MC_DB_PATH: "/tmp/mc.db",
         }),
@@ -102,6 +103,54 @@ describe("nanoclawRunner", () => {
           "/root/claude/mission-control:/root/claude/mission-control:rw",
           "/root/.config/gh:/root/.config/gh:ro",
         ],
+      }),
+    );
+
+    // Under openai provider, HOME env + credentials mount must NOT be added.
+    const openaiCall = mockSpawnContainer.mock.calls[0][0];
+    expect(openaiCall.envVars).not.toHaveProperty("HOME");
+    expect(openaiCall.volumes).not.toContain(
+      "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+    );
+  });
+
+  it("mounts credentials + HOME + provider env when provider is claude-sdk", async () => {
+    mockGetConfig.mockReturnValue({
+      ...makeConfig(),
+      inferencePrimaryProvider: "claude-sdk",
+    } as ReturnType<typeof getConfig>);
+
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({ success: true, content: "Fixed" }),
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-123",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    await nanoclawRunner.execute({
+      taskId: "task-sdk",
+      runId: "run-sdk",
+      title: "Test",
+      description: "Desc",
+      tools: [],
+    });
+
+    expect(mockSpawnContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVars: expect.objectContaining({
+          INFERENCE_PRIMARY_PROVIDER: "claude-sdk",
+          HOME: "/root",
+        }),
+        volumes: expect.arrayContaining([
+          "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+          "/root/claude/mission-control:/root/claude/mission-control:rw",
+          "/root/.config/gh:/root/.config/gh:ro",
+        ]),
       }),
     );
   });

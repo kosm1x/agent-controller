@@ -38,23 +38,38 @@ export const nanoclawRunner: Runner = {
         tools: input.tools,
       };
 
+      const isClaudeSdk = config.inferencePrimaryProvider === "claude-sdk";
+      const envVars: Record<string, string> = {
+        INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
+        INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
+        INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
+        INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
+        MC_API_KEY: config.apiKey,
+        MC_DB_PATH: "/tmp/mc.db",
+      };
+      if (isClaudeSdk) {
+        // Claude Agent SDK reads ~/.claude/.credentials.json via os.homedir() → HOME.
+        envVars.HOME = "/root";
+      }
+
+      const volumes = [
+        "/root/claude/mission-control:/root/claude/mission-control:rw",
+        "/root/.config/gh:/root/.config/gh:ro",
+      ];
+      if (isClaudeSdk) {
+        volumes.push(
+          "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+        );
+      }
+
       // Spawn container with worker entrypoint, credentials, and repo mount
       handle = spawnContainer({
         image: config.heavyRunnerImage, // mission-control:latest (has compiled dist/)
         name: generateContainerName(`nanoclaw-${input.taskId.slice(0, 8)}`),
         command: ["node", "dist/runners/nanoclaw-worker.js"],
         input: containerInput,
-        envVars: {
-          INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
-          INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
-          INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
-          MC_API_KEY: config.apiKey,
-          MC_DB_PATH: "/tmp/mc.db",
-        },
-        volumes: [
-          "/root/claude/mission-control:/root/claude/mission-control:rw",
-          "/root/.config/gh:/root/.config/gh:ro",
-        ],
+        envVars,
+        volumes,
         timeoutMs: CONTAINER_TIMEOUT_MS,
       });
 

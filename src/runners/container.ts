@@ -102,6 +102,7 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
       "/root/claude/",
       "/tmp/",
       "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)
+      "/root/.claude/.credentials.json", // Claude Agent SDK auth (read-only, Sonnet runner path)
     ];
     for (const vol of opts.volumes) {
       const hostPath = vol.split(":")[0];
