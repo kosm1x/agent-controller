@@ -27,6 +27,10 @@
 - New feature verticals (F10, v7.5.1, v7.6 deferrals — all wait)
 - Upstream-repo pattern adoption (sweep still fires weekly but findings queue for post-window)
 
+**Jarvis autonomous builds — separation policy** (added session 101, 2026-04-22)
+
+Anything Jarvis codes or builds autonomously during the freeze stays in its own repo. **MCP bridges are allowed** as the integration path — if Jarvis needs to consume a new capability, expose it as an MCP server in the external repo and wire it via the existing MCP bridge. Do NOT add new `src/tools/builtin/*.ts`, `src/intel/adapters/*.ts`, scope-regex entries, or `READ_ONLY_TOOLS` additions to mission-control core. Trigger precedent: `xpoz-intelligence-pipeline-manager` Phase 5 (2026-04-22) hit the freeze when "integrate with Jarvis" produced 9 staged core-side changes; those were discarded and the integration is being redone via MCP.
+
 ---
 
 ## P0 — must close this window
