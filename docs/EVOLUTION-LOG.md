@@ -860,3 +860,25 @@ Three friction clusters detected: (1) **Auto-save gap** — draft sections lost 
 ### Research notes
 
 Day ~35 of the longitudinal record. A notable day for the co-evolution paper: Cuatro Flor crossed a tangible milestone (domain acquired, first full narrative essay drafted), marking the moment when a 20-year personal intellectual project moved from latent to materially active with Jarvis as writing partner. The auto-save SOP created today is a direct behavioral correction emerging from user friction — a clean example of the human-agent feedback loop producing durable system change within a single session.
+
+## 2026-04-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 0 completed (1 task active: Unit Economics for Xolo Rides — not_started) |
+| Total tasks | 5 NorthStar records (2 visions, 1 goal, 1 objective, 1 task) |
+| Conversations today | 71 (telegram: 71) |
+| Streak days | Active — high-volume day (71 messages) |
+
+### Interactions summary
+The day was split across three parallel threads. The most voluminous was the **LivingJoyfully internal-links project**: Fede was running batch operations to insert internal links across articles (Lote 1 and Lote 2), with Jarvis repeatedly hitting deferred-tool friction around `wp_read_post` and `wp_publish` not being available in active context. The second thread was a **Cuatro Flor writing session**, continuing from April 19 — Jarvis produced the "¿Por qué ahora?" section (v4) and the full narrative essay progressed meaningfully. The third thread was early **Xolo Rides business model work**: a task was created to model unit economics per ride across four cities (GDL, MTY, PUE, CDMX), with the goal and objective structure now scaffolded in NorthStar.
+
+### What Jarvis learned
+The deferred-tool architecture created a recurring failure mode today: WP tools (`wp_read_post`, `wp_publish`) were unavailable in sessions that needed them, causing multi-turn degradation where Jarvis attempted workarounds (curl via shell_exec, searching for credentials, re-reading code) before acknowledging the block. The pattern suggests that WP-scoped work reliably requires an explicit scope activation trigger at session start. Separately, the `max_turns` limit was hit at least twice during Lote 2 execution, cutting off mid-task — this is a known architectural constraint but caused visible user friction today.
+
+### Friction points
+Two dominant friction clusters: (1) **Deferred WP tools** — `wp_read_post` and `wp_publish` not available in active context across multiple attempts; Jarvis burned multiple turns attempting workarounds instead of surfacing the block earlier and cleanly. (2) **`error_max_turns` hits** — at least two sessions hit the 20-turn ceiling mid-task (articles 456 and Lote 2 batch), producing truncated partial responses. Users received `[error_max_turns]` markers, which is a poor experience for batch operations.
+
+### Research notes
+Day ~37 of the longitudinal record. Today's 71-message volume is the highest single-day count recorded so far, suggesting Fede is increasingly using Jarvis as the primary execution layer for multi-step content projects. Three concurrent workstreams (WP links, Cuatro Flor writing, Xolo Rides modeling) running in parallel within the same day is a qualitative shift — the agent is functioning less as a question-answering tool and more as a persistent project co-executor. The deferred-tool friction is an architectural friction point worth surfacing in the co-evolution paper as a case where the optimization (token savings) conflicts with the user experience (seamless tool availability).
