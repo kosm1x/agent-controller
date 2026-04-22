@@ -15,16 +15,16 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                                  | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Done (Closed 2026-04-20 — avg_gap=0.029, Phase 3 declined)**          | 0.5 shipped          |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)** | ~11.5 seq / ~7–8 par |
-| β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (alpha) → F8.1b (adapter) → F8.1c (daily cadence)             | **Done** (3/3 shipped 2026-04-20 / 04-21)                               | 3.5                  |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                             | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **Deferred post-β-add**                                                 | ~14–15               |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                               | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Declined 2026-04-20** (see Phase 2 outcome)                           | 0                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                                                            | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                                          | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Done (Closed 2026-04-20 — avg_gap=0.029, Phase 3 declined)**                                    | 0.5 shipped          |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)**                           | ~11.5 seq / ~7–8 par |
+| β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (alpha) → F8.1b (adapter) → F8.1c (daily cadence)             | **Done** (3/3 shipped 2026-04-20 / 04-21)                                                         | 3.5                  |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                                                       | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **13/13 original scope Done** (v7.5 remaining from extended scope — blocker on 4h upstream sweep) | ~14–15 shipped       |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                                                         | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Declined 2026-04-20** (see Phase 2 outcome)                                                     | 0                    |
 
 **Ordering invariants**
 
@@ -683,20 +683,28 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.4.3 — HTML-as-Composition DSL (hyperframes item #6) — **Planned**
+## v7.4.3 — HTML-as-Composition DSL (hyperframes item #6) — **Done** (session 98, 2026-04-22)
 
-> 1 session, ~8-12h. Follow-up to v7.4 S1+S2. LLM-native composition format: single `index.html` file with `data-start` / `data-duration` / `data-track-index` / `data-layer` attributes, GSAP timeline, CSS styling. Agents already speak HTML — makes composition an end-to-end LLM-writable artifact.
+> Phase γ 13/13 (closes γ on original scope). Commit `5b34477`. Impl plan: `docs/planning/phase-gamma/10-v7.4.3-impl-plan.md`.
+>
+> Ships the LLM-native composition format: single HTML file with `data-start`/`data-duration`/`data-track-index`/`data-layer` attributes plus optional `window.__hf.duration()`/`seek()` contract → renders to MP4 via Playwright (snap Chromium binary) + ffmpeg. **Stage 0 reality check**: Playwright's bundled `chrome-headless-shell` crashes on first screenshot (same failure class as v7.1/v7.12 Chromium crashes); `executablePath: '/snap/bin/chromium'` survives at ~140ms/frame. Snap AppArmor blocks `/tmp/` reads AND writes so allowlist is `/root/tmp-video-html/`. Design Q resolved: HTML DSL is **additive** — there is no Remotion JSX path in mission-control, so no coexistence decision needed.
 
-> Warrants its own session because it's a different composition paradigm than Remotion JSX (the v7.4 S1 default). Competing paradigms shouldn't both live in v7.4 simultaneously.
-
-| Item                                                                                  | Source         | Status      |
-| ------------------------------------------------------------------------------------- | -------------- | ----------- |
-| Port `packages/core/src/parsers/htmlParser.ts` — data-attribute → timeline extraction | hyperframes #6 | **Planned** |
-| `video_html_compose` tool — accepts HTML composition file, produces MP4               | —              | **Planned** |
-| BeginFrame CDP capture path (faster + more deterministic than page.screenshot)        | hyperframes    | **Planned** |
-| Pre-extract + inject video pipeline for `<video>` elements in composition             | hyperframes #4 | **Planned** |
-| Integration with skill gate (Visual Identity Gate applied to HTML path too)           | —              | **Planned** |
-| Scope decision: HTML DSL coexists with Remotion JSX or replaces it?                   | Design Q       | **Open**    |
+| Item                                                                                                                                                                                                                               | Source         | Status                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------- | ---- | --- | ------ | -------------------------------------------------------------------------------------- | --- | -------- |
+| `src/video/html-parser.ts` — linkedom SSR path+timeline extractor with realpath symlink-escape, null-byte, metachar, extension guards                                                                                              | hyperframes #6 | **Done**                                                                                          |
+| `video_html_compose` tool — accepts HTML composition file, produces MP4 (fps enum 24/30/60, viewport cap 1920×1920, 120s duration cap, 300s wall-clock cap)                                                                        | —              | **Done**                                                                                          |
+| `src/video/html-renderer.ts` — Playwright + snap Chromium per-frame + ffmpeg concat + serviceWorkers=block + route handler pinning single file:// URL + data: URIs                                                                 | hyperframes    | **Done** — page.screenshot path, not BeginFrame CDP                                               |
+| `src/video/html-motion.ts` — 16-pattern static CSS motion catalog (fade/slide/scale/rotate/blur/typewriter/pulse/shake/counter/split-reveal/parallax-drift/lower-third), injected into tool description via `motionVocabSection()` | —              | **Done** (cinema-prompts pattern from v7.4 S2a)                                                   |
+| Scope regex arms — bilingual EN+ES: `html to/a/como/as mp4                                                                                                                                                                         | video          | vídeo`, `compos[ae]r video from                                                                   | desde html`, `render <article> html as mp4 | video`, `video desde html`, `html-composition (mp4 | file | job | render | vídeo)`, `video_html_compose` token. 4 FP-negatives + 2 scope-tighten regression tests | —   | **Done** |
+| Design Q — HTML DSL coexists with Remotion JSX or replaces it?                                                                                                                                                                     | Design Q       | **Resolved** — additive; no Remotion path exists in-tree                                          |
+| BeginFrame CDP capture path                                                                                                                                                                                                        | hyperframes    | **Deferred v7.4.3.1** — trigger: page.screenshot too slow (>300ms/frame) or visible sync jitter   |
+| GSAP bundle (+1 dep or static asset)                                                                                                                                                                                               | hyperframes    | **Deferred v7.4.3.2** — trigger: operator requests motion library beyond CSS animations           |
+| Pre-extract + inject video pipeline for `<video>` elements                                                                                                                                                                         | hyperframes #4 | **Deferred v7.4.3.3** — trigger: operator authors a composition with `<video>` source             |
+| 40-block HTML registry                                                                                                                                                                                                             | hyperframes #8 | **Deferred v7.4.3.4** — trigger: operator requests reusable block template                        |
+| Audio overlay (TTS + music in HTML path)                                                                                                                                                                                           | —              | **Deferred v7.4.3.5** — trigger: operator needs voiced HTML composition                           |
+| Skill gate markdown (SKILL.md + house-style.md + visual-styles.md)                                                                                                                                                                 | —              | **Deferred v7.4.3.6** — trigger: v7.5 Skill Evolution Engine ships with sufficient infrastructure |
+| Multi-track / layer compositing (enforce `data-track-index`, `data-layer`)                                                                                                                                                         | —              | **Deferred v7.4.3.7** — trigger: operator requests multi-track output                             |
+| Stale-`composing` reaper on boot (inherited from v7.4 S1)                                                                                                                                                                          | R1 W4          | **Deferred** — trigger: operator reports concurrency gate blocked with no active render           |
 
 ---
 
