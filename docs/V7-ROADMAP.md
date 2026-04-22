@@ -15,16 +15,16 @@
 
 ## Execution Phases (sequential)
 
-| Phase | Scope                                           | Versions                                                            | Status                                                                                            | Sessions             |
-| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
-| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                                          | 5 shipped            |
-| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Done (Closed 2026-04-20 — avg_gap=0.029, Phase 3 declined)**                                    | 0.5 shipped          |
-| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)**                           | ~11.5 seq / ~7–8 par |
-| β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (alpha) → F8.1b (adapter) → F8.1c (daily cadence)             | **Done** (3/3 shipped 2026-04-20 / 04-21)                                                         | 3.5                  |
-| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                                                       | 1                    |
-| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **13/13 original scope Done** (v7.5 remaining from extended scope — blocker on 4h upstream sweep) | ~14–15 shipped       |
-| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                                                         | 2.5                  |
-| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Declined 2026-04-20** (see Phase 2 outcome)                                                     | 0                    |
+| Phase | Scope                                           | Versions                                                            | Status                                                                  | Sessions             |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
+| α     | Infrastructure unblockers                       | v7.3 P1, v7.6, v7.7, v7.8 P1, v7.9                                  | **Done**                                                                | 5 shipped            |
+| α.2   | Autoreason tournament decision (fixed date)     | v7.8 P2                                                             | **Done (Closed 2026-04-20 — avg_gap=0.029, Phase 3 declined)**          | 0.5 shipped          |
+| β     | Financial Stack critical path (**v7.0 thesis**) | F1 → F2/F4/F5 → F3 → F6/F6.5 → v7.13 → F7 → F7.5 → F8 → F9          | **Done (12/12 original scope — F1-F6.5 + v7.13 + F7 + F7.5 + F8 + F9)** | ~11.5 seq / ~7–8 par |
+| β-add | Polymarket coverage (post-F9, pre-γ)            | F8.1a (alpha) → F8.1b (adapter) → F8.1c (daily cadence)             | **Done** (3/3 shipped 2026-04-20 / 04-21)                               | 3.5                  |
+| β-opt | Real-time crypto (parallel, optional)           | F10                                                                 | **Planned**                                                             | 1                    |
+| γ     | Feature verticals (layered, no β interleave)    | v7.1, v7.2, v7.3 P2/P3/P4/P5, v7.4/v7.4.3, v7.5, v7.10–v7.12, v7.14 | **13/13 original scope + v7.5 extended scope Done** (2026-04-22)        | ~15 shipped          |
+| δ     | Live trading (requires 30+ days paper record)   | F11                                                                 | **Gated**                                                               | 2.5                  |
+| ε     | Autoreason post-decision (conditional)          | v7.8 P3                                                             | **Declined 2026-04-20** (see Phase 2 outcome)                           | 0                    |
 
 **Ordering invariants**
 
@@ -708,28 +708,45 @@ Shipped session 83. Impl plan: `docs/planning/phase-beta/24-f8.1b-impl-plan.md`.
 
 ---
 
-## v7.5 — Skill Evolution Engine (GEPA + SkillClaw) — **Planned**
+## v7.5 — Skill Evolution Engine (GEPA + SkillClaw) — **Done**
 
-> 2 sessions. Depends on F9 (needs production trace data). References: `reference_gepa.md`, `reference_skillclaw.md`, `feedback_phantom_evolution_engine.md`.
+> Session 99 (2026-04-22). Phase γ extended scope closes. Impl plan: `docs/planning/phase-gamma/11-v7.5-impl-plan.md`. Sweep report: `memory/v75_upstream_sweep_report.md`. References: `reference_gepa.md`, `reference_skillclaw.md`, `feedback_phantom_evolution_engine.md`.
 >
-> **MANDATORY PRE-PLAN TASK (NO SKIP):** Before any v7.5 implementation starts, run the full upstream sweep per `memory/feedback_v75_upstream_sweep_directive.md`. Budget: ~4 hours as its own half-day session. Scope: 48+ `reference_*.md` files with 10 core skill-evolution references read in depth (GEPA, SkillClaw, Hyperagents, Hermes, ACE, Memoria, claude-mem, mempalace, Superpowers, context-engineering). The sweep findings shape v7.5 scope — without it the skill-evolution engine is built against stale reference material from months earlier. Launch with parallel `Agent subagent_type=Explore` calls for the 10 core repos. Do NOT start coding v7.5 until every reference file has a "last reviewed" date within the current week AND Tier 1 findings are folded into the scope table below.
+> **Sweep finding that reshaped the plan**: `src/tuning/` already ships ~50% of the original v7.5 scope (reflective mutation, staged eval, parent selection, regression detection, variant archive, cost tracker, activation). v7.5 shipped as a **6-item surgical extension** on top of the existing module — not a from-scratch build. All additions flag-gated so existing Tue/Thu/Sat 1 AM cron is byte-identical when flags are off.
 
-| Item                                                                                                                                                                                                                               | Source                                     | Status      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------- |
-| **Pre-plan: bulk upstream sweep (48 refs, ~4h)**                                                                                                                                                                                   | `feedback_v75_upstream_sweep_directive.md` | **Blocker** |
-| Reflective mutation from execution traces — extract corrections, propose minimal config deltas                                                                                                                                     | GEPA + Phantom evolution                   | **Planned** |
-| ASI (Ablation Signal Intensity) diagnostics — which parts of the prompt are load-bearing                                                                                                                                           | GEPA                                       | **Planned** |
-| Pareto domain specialization — separate skill variants per task class                                                                                                                                                              | GEPA                                       | **Planned** |
-| Failure source classification (skill / agent / env) — SkillClaw pattern                                                                                                                                                            | SkillClaw                                  | **Planned** |
-| Session trajectory structuring — logged corrections promoted to golden suite                                                                                                                                                       | SkillClaw + Phantom                        | **Planned** |
-| Conservative editing principles — append-first, minimal replace, no remove of safety keywords                                                                                                                                      | Phantom constitution                       | **Planned** |
-| Monotonic validation — 5-gate taxonomy (constitution/regression/size/drift/safety) with fail-closed safety                                                                                                                         | Phantom evolution                          | **Planned** |
-| Triple-judge minority veto for safety-critical gates                                                                                                                                                                               | Phantom judges                             | **Planned** |
-| Daily cost cap + heuristic fallback when budget exhausted                                                                                                                                                                          | Phantom engine                             | **Planned** |
-| Upgrade overnight tuning loop to use the evolution engine                                                                                                                                                                          | V7 spec                                    | **Planned** |
-| Two-layer memory separation — tag `kb_entries` with `layer` (`prior_knowledge` / `task_experience`); different retrieval per layer (cognition query uses sampled task node analyses, not raw user prompt)                          | ASI-Evolve (arxiv 2603.29640)              | **Planned** |
-| Dedicated Analyzer module — separate from mutator. Engineer emits rich output → Analyzer distills into structured `{decision, reasoning, actionable_insights[]}` → Researcher next round consumes distilled report, not raw traces | ASI-Evolve                                 | **Planned** |
-| MAP-Elites island sampling — quality-diversity alternative to UCB1/Thompson. Behavioral cells (tool-call pattern × response structure) preserve distinct variants; prevents mode collapse                                          | ASI-Evolve                                 | **Planned** |
+### Shipped additions
+
+| Item                                                                                                                                                                                                                | Source                                     | Status   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | -------- |
+| **Pre-plan: bulk upstream sweep (10 core refs, ~4 min wall-clock via parallel agents)**                                                                                                                             | `feedback_v75_upstream_sweep_directive.md` | **Done** |
+| Failure source classification (skill / agent / env) — SkillClaw pattern — `src/tuning/failure-classifier.ts`                                                                                                        | SkillClaw                                  | **Done** |
+| Session trajectory structuring — stable-failing cases (≥3 experiments) promoted to `mined_test_cases` — `src/tuning/trajectory-miner.ts`, flag `TUNING_TRAJECTORY_MINE`                                             | SkillClaw + Phantom                        | **Done** |
+| 5-gate monotonic validator (constitution / regex_sanity / size / worthiness / safety / cooldown) — `src/tuning/gates.ts`                                                                                            | Phantom + Memoria                          | **Done** |
+| Conservative editing — `safety` gate preserves designated safety keywords; empty list by default, env `TUNING_SAFETY_KEYWORDS` populates                                                                            | Phantom constitution                       | **Done** |
+| Cooldown gate — 24h per-(surface,target) lockout after regression; env `TUNING_COOLDOWN_HOURS`; SQL-filtered to terminal statuses (env errors never trigger)                                                        | Memoria cooldowns                          | **Done** |
+| Confidence signals in experiment metadata — stddev proxy on per-case scores (logprob-aware adapter when qwen API stabilizes) — `src/tuning/confidence.ts`                                                           | GEPA v0.1.1 ConfidenceAdapter              | **Done** |
+| HyperAgents `score_child_prop` parent selection — probability ∝ `score / (1 + child_count)`; new default via env `TUNING_PARENT_SELECTION`                                                                          | HyperAgents                                | **Done** |
+| Inline self-review gate — 4-item checklist (placeholder scan, type consistency, scope alignment, ambiguity); replaces subagent-dispatch loops; ~50x faster — `src/tuning/self-review.ts`, flag `TUNING_SELF_REVIEW` | Superpowers v5.0.6                         | **Done** |
+| Schema migrations — additive `failure_source TEXT` + `confidence_avg REAL` on `tune_experiments` via idempotent `addColumnIfMissing`                                                                                | impl                                       | **Done** |
+| Daily cost cap + heuristic fallback — already shipped via existing `CostTracker`                                                                                                                                    | Phantom engine                             | **Done** |
+| Overnight tuning loop wiring — `runGates` replaces `validateMutation`, self-review → failure classifier → confidence proxy → trajectory miner pipeline                                                              | V7 spec                                    | **Done** |
+
+### Deferred with triggers
+
+| Item                                                                                                | Trigger                                                          |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| MAP-Elites island sampling — quality-diversity alternative                                          | **v7.5.1** if variant archive shows mode collapse (top-5 same)   |
+| Dedicated Analyzer module separate from mutator — engineer emits rich trace, analyzer distills      | **v7.5.1** if reflector-gap telemetry regresses                  |
+| Two-layer memory separation — tag `kb_entries` with `layer` (`prior_knowledge` / `task_experience`) | **v7.6** — blocked on kb_entries.layer schema add                |
+| Triple-judge minority veto for safety-critical gates                                                | **v7.5.1** if false-positive promotion rate >5%                  |
+| ASI (Ablation Signal Intensity) diagnostics                                                         | **v7.5.1** if per-clause hot-spot attribution needed             |
+| Pareto domain specialization (per-category skill variants)                                          | **v7.5.1** if domain-score variance > cross-domain delta         |
+| Full logprob confidence (not stddev proxy)                                                          | When Opus/Sonnet logprob API lands in primary provider           |
+| GEPA `reflection_lm_kwargs` passthrough                                                             | **v7.5.1** if qwen reflection quality plateau                    |
+| Hermes v0.10.0 compression smart-collapse + anti-thrash gate                                        | Separate sprint — touches `src/prometheus/context-compressor.ts` |
+| ACE 3-agent Generator→Reflector→Curator loop                                                        | **v7.6** — requires mutator/analyzer split                       |
+| claude-mem v12.2.2 subagent labeling schema adoption                                                | **v7.6** — coupled with kb_entries.layer                         |
+| context-engineering latent-briefing KV cache compaction                                             | **v7.6** — requires Prometheus runtime hook                      |
 
 ---
 
