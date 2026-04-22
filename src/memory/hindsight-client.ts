@@ -12,6 +12,14 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 5000;
+/**
+ * Per-method timeout for recall — user-facing path must fail fast.
+ * Hindsight's agentic recall empirically takes ~9s under load (2026-04-22
+ * measurement), which is 100% timeout fire at DEFAULT_TIMEOUT_MS. Shortening
+ * lets us fail to SQLite fallback (~300ms) sooner. See
+ * `docs/audit/2026-04-22-speed.md` S7.
+ */
+const RECALL_TIMEOUT_MS = 1500;
 
 // ---------------------------------------------------------------------------
 // Types (matching Hindsight API v2 schemas)
@@ -141,6 +149,7 @@ export class HindsightClient {
       "POST",
       `/v1/default/banks/${bankId}/memories/recall`,
       { query: req.query, budget: req.budget, tags: req.tags },
+      RECALL_TIMEOUT_MS,
     );
   }
 

@@ -6,7 +6,9 @@
  * - Lazy bank creation with tailored missions/dispositions
  * - Async retain (non-blocking writes)
  * - Budget-aware recall/reflect
- * - 3-second timeout on recall (falls back to [])
+ * - 1.5s recall timeout + SQLite fallback (Hindsight agentic recall ~9s
+ *   under load burned 5s/call before this audit; see
+ *   docs/audit/2026-04-22-speed.md S7)
  */
 
 import { HindsightClient } from "./hindsight-client.js";

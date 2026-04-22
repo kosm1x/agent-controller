@@ -10,7 +10,7 @@
 | #   | Dimension    | Report                       | Status     | Double-audit |
 | --- | ------------ | ---------------------------- | ---------- | ------------ |
 | 1   | Efficiency   | `2026-04-22-efficiency.md`   | **closed** | no           |
-| 2   | Speed        | `YYYY-MM-DD-speed.md`        | pending    | no           |
+| 2   | Speed        | `2026-04-22-speed.md`        | **closed** | no           |
 | 3   | Security     | `YYYY-MM-DD-security.md`     | pending    | **yes**      |
 | 4   | Resilience   | `YYYY-MM-DD-resilience.md`   | pending    | **yes**      |
 | 5   | Tool scoping | `YYYY-MM-DD-tool-scoping.md` | pending    | no           |

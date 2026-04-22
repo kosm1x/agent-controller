@@ -95,6 +95,28 @@ describe("HindsightClient", () => {
       expect(body.query).toBe("what happened");
       expect(body.budget).toBe("low");
     });
+
+    it("aborts recall after RECALL_TIMEOUT_MS (1500ms) instead of default 5000ms", async () => {
+      vi.useFakeTimers();
+      let abortedSignal: AbortSignal | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url, init?: { signal?: AbortSignal }) => {
+          abortedSignal = init?.signal;
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
+          });
+        }),
+      );
+
+      const p = client.recall("test-bank", { query: "q", budget: "low" });
+      vi.advanceTimersByTime(1500);
+      await expect(p).rejects.toThrow("aborted");
+      expect(abortedSignal?.aborted).toBe(true);
+      vi.useRealTimers();
+    });
   });
 
   describe("reflect", () => {
