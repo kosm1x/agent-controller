@@ -20,11 +20,24 @@ source "$ENV_FILE"
 
 CONSENT_URL="https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code&scope=https%3A//www.googleapis.com/auth/gmail.send%20https%3A//www.googleapis.com/auth/gmail.readonly%20https%3A//www.googleapis.com/auth/drive%20https%3A//www.googleapis.com/auth/calendar%20https%3A//www.googleapis.com/auth/spreadsheets%20https%3A//www.googleapis.com/auth/documents%20https%3A//www.googleapis.com/auth/presentations%20https%3A//www.googleapis.com/auth/tasks&access_type=offline&prompt=consent"
 
-if [[ $# -eq 0 ]]; then
-  cat <<EOF
-Step 1 — open this URL in your browser, approve all scopes, copy the auth code:
+URL_FILE="/tmp/google-consent-url.txt"
 
+if [[ $# -eq 0 ]]; then
+  # Write to a file so the URL survives terminal wrap / clipboard truncation.
+  printf '%s\n' "$CONSENT_URL" > "$URL_FILE"
+
+  cat <<EOF
+Step 1 — open the consent URL in your browser, approve all scopes, copy the auth code.
+
+URL (also saved to ${URL_FILE}):
+
+>>>URL_START>>>
 ${CONSENT_URL}
+<<<URL_END<<<
+
+If it came through truncated, retrieve it with:
+  cat ${URL_FILE}
+  wc -c ${URL_FILE}   # expect ~597 chars
 
 Step 2 — run:
 
