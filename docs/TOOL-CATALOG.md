@@ -12,11 +12,11 @@
 | Dimension                       | Value                                                                                                                                                                                        |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runners                         | 5 types: fast, nanoclaw, heavy (Prometheus), swarm, a2a                                                                                                                                      |
-| Total tools available to Jarvis | ~246 (227 builtin + 8 jarvis\_\* MCP (read-only, env-gated) + 62 external MCP + 20 Google + 1 gws dispatch)                                                                                  |
-| Tools gated by deferral         | 167 (saves ~52% prompt tokens)                                                                                                                                                               |
+| Total tools available to Jarvis | **246** — per live service log (2026-04-23). Breakdown by source: builtin 154 + mcp 65 + google 21 + memory 4 + skills 2                                                                     |
+| Tools gated by deferral         | 177 (147 builtin + 30 MCP) — saves ~52% prompt tokens                                                                                                                                        |
 | Scope groups                    | 22 (see `DEFAULT_SCOPE_PATTERNS` in `src/messaging/scope.ts`)                                                                                                                                |
 | Core deps                       | 15 + 2 messaging                                                                                                                                                                             |
-| Tests                           | 3733                                                                                                                                                                                         |
+| Tests                           | 3733 (239 test files)                                                                                                                                                                        |
 | External services (non-LLM)     | Hindsight, Supabase, Prometheus (observability), Caddy (proxy), Grafana, LightPanda, Playwright MCP, MCP: context7, sequential-thinking, graphify-code, Gmail, Google Calendar, Google Drive |
 | LLM providers                   | Claude Agent SDK (primary, `INFERENCE_PRIMARY_PROVIDER=claude-sdk`), OpenAI-compatible fallback (qwen, kimi via rotation)                                                                    |
 
@@ -351,6 +351,6 @@ From `src/messaging/scope.ts:DEFAULT_SCOPE_PATTERNS`:
 
 `google`, `wordpress`, `northstar_read`, `northstar_write`, `northstar_journal`, `intel`, `markets`, `portfolio`, `alpha`, `coding`, `research`, `browser`, `schedule`, `crm`, `seo`, `ads`, `video`, `specialty`, `chart`, `graph`, `social`, `writing`, `meta`, `utility`, `destructive`, `jarvis_write`
 
-Each has a regex triggering on user message; matching groups load their associated tools into the prompt. ~52% token savings vs loading all ~246 tools every turn.
+Each has a regex triggering on user message; matching groups load their associated tools into the prompt. ~52% token savings vs loading all 246 tools every turn.
 
 The semantic classifier (`v6.4 CL1.1` — `src/messaging/scope-classifier.ts`) is the primary matcher; the regex patterns are fallback for classifier timeouts. NFC normalization is enforced at both entry points (Dim-5 C-SCP-1 fix).
