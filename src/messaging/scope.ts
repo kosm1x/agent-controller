@@ -6,6 +6,7 @@
  */
 
 import type { ScopePattern } from "../tuning/types.js";
+import { normalizeForMatching } from "./normalize.js";
 
 // ---------------------------------------------------------------------------
 // Tool groups — organized for dynamic scoping
@@ -828,6 +829,15 @@ export function scopeToolsForMessage(
   /** Pre-classified groups from semantic classifier (v6.4 CL1.1). Bypasses regex. */
   preClassifiedGroups?: Set<string>,
 ): string[] {
+  // Defense-in-depth NFC normalization: every scope regex containing accented
+  // character classes (art[ií]culo, c[aá]mbia, etc.) requires NFC input to match
+  // decomposed Unicode from mobile clients. Idempotent — if caller already
+  // normalized (router.ts main flow), this is a no-op. Guards direct callers
+  // like router.ts background-agent path (taskText) where normalization was
+  // missed. See feedback_nfd_unicode_scope_regex.md.
+  currentMessage = normalizeForMatching(currentMessage);
+  recentUserMessages = recentUserMessages.map((m) => normalizeForMatching(m));
+
   // v6.4 CL1.1: If semantic classifier provided groups, use them directly.
   // This bypasses the regex matching entirely — the LLM already understood intent.
   // Regex is only used when the classifier is unavailable (timeout, parse failure).
@@ -1122,6 +1132,10 @@ export function detectActiveGroups(
   recentUserMessages: string[],
   patterns: ScopePattern[],
 ): Set<string> {
+  // Defense-in-depth NFC normalization (see scopeToolsForMessage). Idempotent.
+  currentMessage = normalizeForMatching(currentMessage);
+  recentUserMessages = recentUserMessages.map((m) => normalizeForMatching(m));
+
   // Mirror scopeToolsForMessage's inheritance logic:
   // Inherit from prior messages only when current has scope signals,
   // is a short non-conversational follow-up, or contains referential phrases.

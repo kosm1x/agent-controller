@@ -17,8 +17,25 @@ export const httpTool: Tool = {
     type: "function",
     function: {
       name: "http_fetch",
-      description:
-        "Make an HTTP request to a URL and return the response. Supports GET, POST, PUT, DELETE.",
+      description: `Make an HTTP request to a public URL and return the response (status + headers + truncated body).
+
+WHEN TO USE:
+- Calling a JSON API without a dedicated tool (small internal service, webhook test, an ad-hoc REST endpoint)
+- POSTing to a form or webhook the user supplies
+- Fetching a raw file that is NOT an HTML page (PDF → pdf_read, HTML → web_read instead)
+
+WHEN NOT TO USE:
+- Fetching a web page for reading → use web_read (handles extraction, charsets, redirects properly)
+- Search → use web_search / exa_search
+- Google Workspace APIs → use the gdocs/gsheets/gdrive/gmail/gcal tools (they handle OAuth)
+- GitHub → use gh_* tools (auth + rate limits)
+- WordPress → use wp_* tools (auth, media handling)
+
+BOUNDARIES:
+- Body is truncated to 20,000 chars. For larger payloads use a stream-aware tool.
+- Timeout is 15s. Slow endpoints will fail — don't retry in a loop.
+- SSRF-protected: private IPs (10.x, 192.168.x, 169.254.x), localhost, metadata endpoints all rejected.
+- Supports GET, POST, PUT, DELETE, PATCH.`,
       parameters: {
         type: "object",
         properties: {

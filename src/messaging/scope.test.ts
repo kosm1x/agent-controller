@@ -2113,3 +2113,44 @@ describe("video scope group (v7.4 S1 tighten)", () => {
     expect(hasAll(tools, VIDEO_TOOLS)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Dim-5 C-SCP-1 regression — NFD decomposed input activates scope patterns
+// containing accented character classes (art[ií]culo, c[aá]mbia, etc.).
+// Mobile clients (Telegram/WhatsApp) sometimes deliver decomposed Unicode.
+// scopeToolsForMessage + detectActiveGroups normalize internally now.
+// ---------------------------------------------------------------------------
+
+describe("Dim-5 C-SCP-1: NFD input normalization", () => {
+  // "artículo" in NFD = "art" + "i" + U+0301 (combining acute) + "culo"
+  const NFD_ARTICULO = "art" + "í" + "culo";
+
+  it("NFD input produces the same scope tools as NFC input", () => {
+    const nfd = scope(`edita el ${NFD_ARTICULO} 546`);
+    const nfc = scope("edita el artículo 546");
+    expect(nfd.sort()).toEqual(nfc.sort());
+  });
+
+  it("detectActiveGroups activates wordpress on NFD 'artículo'", () => {
+    const groups = detectActiveGroups(
+      `actualiza el ${NFD_ARTICULO}`,
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    expect(groups.has("wordpress")).toBe(true);
+  });
+
+  it("NFD in recentUserMessages is normalized on the inheritance path", () => {
+    const nfd = detectActiveGroups(
+      "Sube eso",
+      [`el ${NFD_ARTICULO} nuevo`],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    const nfc = detectActiveGroups(
+      "Sube eso",
+      ["el artículo nuevo"],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    expect([...nfd].sort()).toEqual([...nfc].sort());
+  });
+});

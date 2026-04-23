@@ -44,6 +44,16 @@ AFTER QUERYING: Report which sources returned data and the time window covered. 
             type: "string",
             description:
               "Filter by source: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news. Omit for all sources.",
+            enum: [
+              "usgs",
+              "nws",
+              "gdelt",
+              "frankfurter",
+              "cisa_kev",
+              "coingecko",
+              "treasury",
+              "google_news",
+            ],
           },
           hours: {
             type: "number",

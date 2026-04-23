@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-22 (Session 101 — Audit Dims 1/2/3/4)
+> Last updated: 2026-04-23 (Session 101 — Audit Dims 1/2/3/4/5 ALL CLOSED)
 
 ## Overview
 
@@ -14,7 +14,7 @@ Unified AI agent orchestrator. Routes tasks by complexity to the right runner ty
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source files  | 376                                                                                                                                                                                                                                                                                                 |
 | Test files    | 214                                                                                                                                                                                                                                                                                                 |
-| Tests passing | 3730                                                                                                                                                                                                                                                                                                |
+| Tests passing | 3733                                                                                                                                                                                                                                                                                                |
 | Type errors   | 0                                                                                                                                                                                                                                                                                                   |
 | Total tools   | 227 builtin + 8 jarvis\_\* MCP (read-only, env-gated) + 62 external MCP + 20 Google + 1 gws dispatch. 167 deferred — 52% prompt token reduction                                                                                                                                                     |
 | Dependencies  | 15 core + 2 messaging (hono, @hono/node-server, better-sqlite3, @modelcontextprotocol/sdk, node-cron, @opendataloader/pdf, pino, zod, prom-client, mammoth, @playwright/mcp, @anthropic-ai/claude-agent-sdk, fingerprint-injector, @antv/infographic, playwright + @whiskeysockets/baileys, grammy) |
