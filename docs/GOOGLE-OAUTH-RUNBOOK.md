@@ -2,6 +2,8 @@
 
 When Google tools fail with `invalid_grant` (refresh token expired/revoked), follow these steps.
 
+> **Faster path**: `./scripts/reissue-google-token.sh` automates steps 2–4. Run with no args to print the consent URL, then re-run with the auth code as the first arg.
+
 ## 1. Paste this URL in your browser
 
 Replace `<CLIENT_ID>` with the value from `.env` (`GOOGLE_CLIENT_ID`).
