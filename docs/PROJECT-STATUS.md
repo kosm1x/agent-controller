@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-23 (Session 101 — Audit Dims 1/2/3/4/5 ALL CLOSED)
+> Last updated: 2026-04-23 (Session 102 — Evaluation doc E1-E10 shipped; Google OAuth refresh-token reissued via Web client + Playground; OOB flow retired)
 
 ## Overview
 

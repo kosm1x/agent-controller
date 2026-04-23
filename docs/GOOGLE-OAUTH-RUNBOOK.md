@@ -16,6 +16,8 @@ https://developers.google.com/oauthplayground
 
 Save. Changes can take a few minutes to propagate.
 
+> **If you can't find "Authorized redirect URIs" on the client edit page**: the client is a Desktop / iOS / Android / TV type, not a Web application. Those types don't have redirect URIs and historically used the now-dead OOB flow. Create a **new** OAuth 2.0 Client ID of type **Web application**, add the Playground redirect URI to it, and update `.env` with the new `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`. You can delete the old Desktop client afterwards. This is what happened during the 2026-04-23 reissue.
+
 ## 2. Get a refresh token from the Playground
 
 Open https://developers.google.com/oauthplayground.
@@ -55,6 +57,10 @@ curl -s -X POST "https://oauth2.googleapis.com/token" \
 
 ## Notes
 
-- All 19+ Google Workspace tools (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) share the same token.
+- All 21 Google Workspace tools (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) share the same token.
 - Refresh tokens expire when: revoked manually, unused for 6 months, password changed, OAuth app in "Testing" status (7-day cap), or Google security policy triggers revocation.
-- If the OAuth consent screen says your app is in "Testing" status, consider publishing it in Google Cloud Console → OAuth consent screen → PUBLISH APP. Testing-mode refresh tokens die every 7 days regardless of use.
+- The 7-day cap applies only to **Testing** status, not to unverified "In production" apps. Production-unverified apps still show the "Google hasn't verified this app" warning (click **Advanced** → continue) but issue durable refresh tokens.
+- Publish status is managed at **Google Auth Platform → Audience** in the newer Google Cloud Console layout (old path: OAuth consent screen → PUBLISH APP).
+- Two common pitfalls when running the sed commands from the VPS panel terminal:
+  1. **Placeholder brackets**: `<NEW_REFRESH_TOKEN>` is a placeholder — if you leave the `<` and `>` in, bash treats them as redirection operators and `.env` gets corrupted.
+  2. **`${VAR-default}` gotcha**: pasting a `GOCSPX-`-prefixed secret inside `${...}` makes bash parse it as parameter-expansion-with-default, silently stripping the `GOCSPX-` prefix. Use a direct `NEW_SECRET='GOCSPX-...'` assignment on a separate line, then reference `${NEW_SECRET}` in the sed.
