@@ -2,10 +2,12 @@
 # Reissue Google OAuth refresh token for mission-control.
 #
 # Usage:
-#   ./scripts/reissue-google-token.sh              # print consent URL (step 1)
-#   ./scripts/reissue-google-token.sh <auth_code>  # exchange code, update .env, restart, verify
+#   ./scripts/reissue-google-token.sh                   # print Playground instructions + scopes
+#   ./scripts/reissue-google-token.sh <refresh_token>   # write to .env, restart, verify
 #
-# Fires when Google tools log `invalid_grant` / "Token has been expired or revoked".
+# Google killed the OOB redirect (urn:ietf:wg:oauth:2.0:oob) in 2022 and is
+# actively enforcing. This script uses the OAuth Playground flow instead:
+# you get the refresh token directly from the Playground UI and pass it in.
 # See docs/GOOGLE-OAUTH-RUNBOOK.md for the manual equivalent.
 
 set -euo pipefail
@@ -18,59 +20,56 @@ source "$ENV_FILE"
 : "${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID missing from $ENV_FILE}"
 : "${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET missing from $ENV_FILE}"
 
-CONSENT_URL="https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code&scope=https%3A//www.googleapis.com/auth/gmail.send%20https%3A//www.googleapis.com/auth/gmail.readonly%20https%3A//www.googleapis.com/auth/drive%20https%3A//www.googleapis.com/auth/calendar%20https%3A//www.googleapis.com/auth/spreadsheets%20https%3A//www.googleapis.com/auth/documents%20https%3A//www.googleapis.com/auth/presentations%20https%3A//www.googleapis.com/auth/tasks&access_type=offline&prompt=consent"
-
-URL_FILE="/tmp/google-consent-url.txt"
+SCOPES_FILE="/tmp/google-oauth-scopes.txt"
+SCOPES="https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks"
 
 if [[ $# -eq 0 ]]; then
-  # Write to a file so the URL survives terminal wrap / clipboard truncation.
-  printf '%s\n' "$CONSENT_URL" > "$URL_FILE"
+  printf '%s\n' "$SCOPES" > "$SCOPES_FILE"
 
   cat <<EOF
-Step 1 — open the consent URL in your browser, approve all scopes, copy the auth code.
+Reissue via OAuth Playground (OOB is blocked by Google as of 2022).
 
-URL (also saved to ${URL_FILE}):
+Step 1 — ensure the Playground redirect URI is authorized.
+  https://console.cloud.google.com/apis/credentials
+  Edit client: ${GOOGLE_CLIENT_ID}
+  Add under "Authorized redirect URIs":
+    https://developers.google.com/oauthplayground
 
->>>URL_START>>>
-${CONSENT_URL}
-<<<URL_END<<<
+Step 2 — get a refresh token via Playground.
+  https://developers.google.com/oauthplayground
 
-If it came through truncated, retrieve it with:
-  cat ${URL_FILE}
-  wc -c ${URL_FILE}   # expect ~597 chars
+  a) Gear icon (top right) → check "Use your own OAuth credentials".
+     Paste CLIENT_ID and CLIENT_SECRET from ${ENV_FILE}. Close panel.
+  b) Left column → scroll to "Input your own scopes" → paste (space-separated):
 
-Step 2 — run:
+>>>SCOPES_START>>>
+${SCOPES}
+<<<SCOPES_END<<<
 
-  $0 <paste_auth_code_here>
+     (also saved to ${SCOPES_FILE} — cat if truncated)
 
-If the OOB flow is rejected (Google has been deprecating it), fall back to
-https://developers.google.com/oauthplayground with "Use your own OAuth
-credentials" enabled.
+  c) Click "Authorize APIs" → approve in browser.
+  d) Click "Exchange authorization code for tokens".
+  e) Copy the 'refresh_token' value from the response panel.
+
+Step 3 — feed it back:
+  $0 <refresh_token>
 EOF
   exit 0
 fi
 
-AUTH_CODE="$1"
+NEW_REFRESH_TOKEN="$1"
 
-echo "[1/4] Exchanging authorization code for refresh token..."
-RESPONSE="$(curl -sf -X POST "https://oauth2.googleapis.com/token" \
-  -d "code=${AUTH_CODE}" \
-  -d "client_id=${GOOGLE_CLIENT_ID}" \
-  -d "client_secret=${GOOGLE_CLIENT_SECRET}" \
-  -d "redirect_uri=urn:ietf:wg:oauth:2.0:oob" \
-  -d "grant_type=authorization_code")"
-
-NEW_REFRESH_TOKEN="$(printf '%s' "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))")"
-
-if [[ -z "$NEW_REFRESH_TOKEN" ]]; then
-  echo "FAILED: no refresh_token in response:" >&2
-  echo "$RESPONSE" >&2
+# Sanity: Google refresh tokens start with '1//' and are ~100+ chars.
+if [[ ! "$NEW_REFRESH_TOKEN" =~ ^1// ]] || [[ ${#NEW_REFRESH_TOKEN} -lt 40 ]]; then
+  echo "That does not look like a Google refresh token (expected to start with '1//' and be 100+ chars)." >&2
+  echo "If you accidentally pasted an access token (starts with 'ya29.'), go back to Playground and copy the 'refresh_token' field." >&2
   exit 1
 fi
 
 echo "Got refresh_token (${NEW_REFRESH_TOKEN:0:12}...)"
 
-echo "[2/4] Updating ${ENV_FILE} (backup first)..."
+echo "[1/3] Updating ${ENV_FILE} (backup first)..."
 cp "$ENV_FILE" "${ENV_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
 if grep -q '^GOOGLE_REFRESH_TOKEN=' "$ENV_FILE"; then
   sed -i "s|^GOOGLE_REFRESH_TOKEN=.*|GOOGLE_REFRESH_TOKEN=${NEW_REFRESH_TOKEN}|" "$ENV_FILE"
@@ -78,12 +77,12 @@ else
   printf '\nGOOGLE_REFRESH_TOKEN=%s\n' "$NEW_REFRESH_TOKEN" >> "$ENV_FILE"
 fi
 
-echo "[3/4] Restarting mission-control..."
+echo "[2/3] Restarting mission-control..."
 systemctl restart mission-control
 sleep 2
 systemctl is-active mission-control >/dev/null || { echo "service failed to come back active" >&2; systemctl status mission-control --no-pager | tail -20 >&2; exit 1; }
 
-echo "[4/4] Verifying new refresh token against Google..."
+echo "[3/3] Verifying new refresh token against Google..."
 # Re-source to pick up the just-written token
 # shellcheck source=/dev/null
 source "$ENV_FILE"
