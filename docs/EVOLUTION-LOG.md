@@ -882,3 +882,25 @@ Two dominant friction clusters: (1) **Deferred WP tools** — `wp_read_post` and
 
 ### Research notes
 Day ~37 of the longitudinal record. Today's 71-message volume is the highest single-day count recorded so far, suggesting Fede is increasingly using Jarvis as the primary execution layer for multi-step content projects. Three concurrent workstreams (WP links, Cuatro Flor writing, Xolo Rides modeling) running in parallel within the same day is a qualitative shift — the agent is functioning less as a question-answering tool and more as a persistent project co-executor. The deferred-tool friction is an architectural friction point worth surfacing in the co-evolution paper as a case where the optimization (token savings) conflicts with the user experience (seamless tool availability).
+
+## 2026-04-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 1 active (Modelar los Unit Economics por viaje — in_progress) |
+| Total tasks | 5 NorthStar records (2 visions, 1 goal, 1 objective, 1 task) |
+| Conversations today | 43 (telegram: 43) |
+| Streak days | Active — moderate volume day (43 messages) |
+
+### Interactions summary
+The day opened with a personal, introspective thread: Fede shared his history with the **Naqshbandiyya Sufi school**, his teacher Ángel Mario, and Idries Shah's books (*Mulá Nasrudin*, *Aprender a aprender*) — context that was stored in his permanent profile. A major architectural milestone was declared: **Session 100 introduces a feature freeze** on agent-controller development, shifting focus to a 5-axis audit (security, efficiency, speed, tool access, resilience). The afternoon was dominated by two productive work threads: a deep **Honduras television market research** session (producing a 16,700-character Google Doc with an advertiser Q&A for TV Azteca Honduras), and a complete rebuild of the **Reddit/Xpoz Intelligence Pipeline** from scratch — 5 phases built end-to-end, culminating in an MCP server that exposes the pipeline to Jarvis without modifying the core. The pipeline was deliberately architected as a standalone MCP after Fede remembered the feature freeze mid-build — an elegant scope-respecting pivot.
+
+### What Jarvis learned
+A rigorous **SOP for code generation** was created today based on an honest self-evaluation: architecture rated B+, turn estimation C (off by 4x), error recovery A-. This SOP now auto-injects before every development task, carrying the evaluation history as a live record. The key lesson encoded: underestimating turns is a systematic failure, not a one-off — planning must account for the full surface of edge cases, not just the happy path. Additionally, the feature freeze boundary was respected in real time: when the MCP integration would have required modifying mission-control core, Fede redirected to a standalone MCP server — demonstrating that architectural constraints are now shaping execution decisions in the moment, not just during planning.
+
+### Friction points
+The turn estimation error (off by 4x during the pipeline build) was significant enough to prompt an explicit evaluation and a permanent corrective SOP. The Reddit Scraper Tool was found to be obsolete — its original purpose had been superseded — requiring a full redefinition of scope before productive work could begin. No API errors or tool availability issues were reported.
+
+### Research notes
+Day ~38 of the longitudinal record. Today marks a notable transition point for the co-evolution paper: Fede explicitly declared a **feature freeze at session 100**, signaling a shift from expansion mode to consolidation mode. The decision to route the new pipeline as a standalone MCP (rather than core integration) to honor the freeze is the first documented case of an architectural constraint governing a real-time execution pivot — a hallmark of an agent-user relationship that has internalized operating principles deeply enough to enforce them during, not after, the build.

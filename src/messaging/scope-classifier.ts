@@ -35,6 +35,7 @@ const VALID_GROUPS = new Set([
   "ads",
   "chart",
   "teaching",
+  "xpoz",
 ]);
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
@@ -61,6 +62,7 @@ GROUPS (return only the ones that apply):
 - ads: paid-media / digital-marketing-buyer tasks. "audita la cuenta de Meta Ads", "audit my Google Ads", "genera 5 variantes de copy para TikTok", "extrae la identidad de marca de este sitio", "brand DNA", "qué ROAS tengo", "CPA está alto", "AIDA / PAS / BAB / FAB copy frameworks", "creatividades", "campaña publicitaria". ONLY fires on paid ads — organic social publishing is 'social', SEO is 'seo'.
 - chart: financial chart rendering + vision pattern recognition. "gráfico de SPY", "renderiza un chart de AAPL con SMA50", "¿qué patrón ves en el chart?", "head and shoulders", "triángulo ascendente", "bull flag", "canal de tendencia", "candlestick". NOT generic bar/line charts (that is chart_generate in specialty). NOT diagrams (diagram_generate, v7.12) or infographics (infographic_generate, v7.14)
 - teaching: pedagogical sequences — learning plans, adaptive quizzes, spaced-repetition review, Socratic explain-back. "teach me React hooks", "enséñame kubernetes", "explícame bond duration desde cero", "quiero aprender Go", "quiz me on SOLID principles", "review today", "what's due to review", "explain back". NOT a one-off explanation ("¿qué es X?" stays as a normal reply). NOT code review ("review the PR") and NOT ML model training ("teach the model").
+- xpoz: Xpoz Reddit Intelligence Pipeline tasks — running the pipeline on a seed to cluster Reddit discussion into topics, reading the last digest, or pulling run history. "Lanza Xpoz pipeline", "corre el xpoz con la semilla X", "dame el digest de xpoz", "historial de Xpoz", "xpoz pipeline manager", "run the reddit scraper on r/wallstreetbets", "top Reddit signals", "última corrida de Xpoz". Brand anchor is 'xpoz' (case-insensitive). Also fires on 'reddit' + intel-verb compounds (reddit scraper/signals/pipeline/digest/topics/monitor) and bare 'subreddit(s)' or 'r/<slug>' mentions. NOT any 'pipeline' by itself (ML/CI/data pipelines are 'coding'). Tools: xpoz_trigger_run, xpoz_get_topics, xpoz_get_digest, xpoz_get_history.
 
 RULES:
 - Return ONLY groups needed. Empty array [] for greetings/small talk.

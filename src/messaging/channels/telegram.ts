@@ -167,7 +167,21 @@ export class TelegramAdapter implements ChannelAdapter {
   // Audit W2 round 1: suppresses the "giving up" log when stop() closed the
   // bot on purpose. Set in stop(), checked at restartPolling() entry.
   private shuttingDown = false;
+  // When true, the most recent polling failure was a 409 Conflict (external
+  // rival getUpdates, see stabilization plan P0-1). Suppress the 3-line noise
+  // pair for this specific class — a single terse line is logged at the
+  // failure site instead. Cleared on any non-409 outcome.
+  private lastFailureWas409 = false;
   private static readonly MAX_RESTART_ATTEMPTS = 5;
+
+  /** True iff the error is a Telegram 409 Conflict from a competing getUpdates. */
+  private static is409Conflict(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return (
+      msg.includes("409: Conflict") &&
+      msg.includes("terminated by other getUpdates")
+    );
+  }
 
   /** Expose bot instance for streaming controller. */
   getBot(): Bot | null {
@@ -205,9 +219,14 @@ export class TelegramAdapter implements ChannelAdapter {
     this.pollingActive = false;
     this.restartScheduled = true;
     const delay = Math.min(5000 * this.restartAttempts, 30_000);
-    console.warn(
-      `[telegram] Restarting polling in ${delay}ms (attempt ${this.restartAttempts}/${TelegramAdapter.MAX_RESTART_ATTEMPTS})`,
-    );
+    // 409 path: terse single-line notice was already logged at the failure
+    // site. Skip the "Restarting… / Restarted successfully" pair to avoid
+    // 3× log noise per cycle for this known class.
+    if (!this.lastFailureWas409) {
+      console.warn(
+        `[telegram] Restarting polling in ${delay}ms (attempt ${this.restartAttempts}/${TelegramAdapter.MAX_RESTART_ATTEMPTS})`,
+      );
+    }
     setTimeout(async () => {
       this.restartScheduled = false;
       if (!this.bot) return; // Shutdown happened during delay — abort restart
@@ -220,16 +239,27 @@ export class TelegramAdapter implements ChannelAdapter {
           .start({
             drop_pending_updates: true,
             onStart: () => {
-              console.log("[telegram] Polling restarted successfully");
+              if (!this.lastFailureWas409) {
+                console.log("[telegram] Polling restarted successfully");
+              }
               this.pollingActive = true;
               this.restartAttempts = 0; // Reset on success
+              this.lastFailureWas409 = false;
             },
           })
           .catch((err) => {
-            console.error(
-              "[telegram] Polling loop died after restart:",
-              err instanceof Error ? err.message : err,
-            );
+            const conflict = TelegramAdapter.is409Conflict(err);
+            this.lastFailureWas409 = conflict;
+            if (conflict) {
+              console.log(
+                `[telegram] 409 conflict — external getUpdates rival, auto-recovering (every ~3min until token rotated; see stabilization plan P0-1)`,
+              );
+            } else {
+              console.error(
+                "[telegram] Polling loop died after restart:",
+                err instanceof Error ? err.message : err,
+              );
+            }
             this.pollingActive = false;
             this.restartPolling();
           });
@@ -282,10 +312,18 @@ export class TelegramAdapter implements ChannelAdapter {
         },
       })
       .catch((err) => {
-        console.error(
-          "[telegram] Polling loop died:",
-          err instanceof Error ? err.message : err,
-        );
+        const conflict = TelegramAdapter.is409Conflict(err);
+        this.lastFailureWas409 = conflict;
+        if (conflict) {
+          console.log(
+            `[telegram] 409 conflict — external getUpdates rival, auto-recovering (every ~3min until token rotated; see stabilization plan P0-1)`,
+          );
+        } else {
+          console.error(
+            "[telegram] Polling loop died:",
+            err instanceof Error ? err.message : err,
+          );
+        }
         this.pollingActive = false;
         this.restartPolling();
       });

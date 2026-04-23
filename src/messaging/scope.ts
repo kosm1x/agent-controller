@@ -364,6 +364,21 @@ export const GRAPH_TOOLS = [
   "graphify-code__shortest_path",
 ];
 
+/**
+ * Xpoz Reddit Intelligence Pipeline tools (MCP-sourced, namespaced with `__`).
+ * Scope-gated on xpoz brand vocabulary + reddit-intel co-anchors. The server
+ * (xpoz) runs as an HTTP pipeline on :8086 wrapped in an MCP stdio bridge;
+ * trigger_run posts a new ingestion, get_* tools read prior runs.
+ * Pre-dates the 2026-04-22 stabilization freeze (shipped as reddit scraper);
+ * inclusion here is a freeze-compliant MCP bridge, not an autonomous-build add.
+ */
+export const XPOZ_TOOLS = [
+  "xpoz__xpoz_trigger_run",
+  "xpoz__xpoz_get_topics",
+  "xpoz__xpoz_get_digest",
+  "xpoz__xpoz_get_history",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------
@@ -746,6 +761,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "graph",
   },
   {
+    // Xpoz Reddit Intelligence Pipeline. Primary anchor is the brand token
+    // `xpoz` (uniquely user-owned, zero English collisions). Secondary anchors:
+    // namespaced tool shortcuts (`xpoz__...`), reddit-intel compounds, bare
+    // `subreddit(s)`, and r/slug mentions. Bilingual-safe — Spanish phrasing
+    // `Lanza Xpoz`, `corre el xpoz` still hit via the brand token.
+    pattern:
+      /\b(xpoz|xpoz__[a-z_]+|reddit\s+(?:intel(?:ligence)?|scraper|signal|pipeline|feed|digest|topics?|monitor)|subreddits?|r\/[A-Za-z0-9_]{2,21})\b/i,
+    group: "xpoz",
+  },
+  {
     // v7.1 chart rendering + vision pattern recognition. Bilingual EN/ES.
     // Fires on:
     //  - Tool-name shortcuts: market_chart_render, market_chart_patterns
@@ -1103,6 +1128,9 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("graph")) {
     tools.push(...GRAPH_TOOLS);
+  }
+  if (activeGroups.has("xpoz")) {
+    tools.push(...XPOZ_TOOLS);
   }
   if (activeGroups.has("diagram")) {
     tools.push(...DIAGRAM_TOOLS);

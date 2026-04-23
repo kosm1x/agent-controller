@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-04-23 (Session 102 — Evaluation doc E1-E10 shipped; Google OAuth refresh-token reissued via Web client + Playground; OOB flow retired)
+> Last updated: 2026-04-23 (Session 103 — xpoz MCP wired into scope routing + semantic classifier; Jarvis identity hardened against Claude-self-ID drift; Telegram 409 flap root-caused + bot token rotated + log noise silenced 3×)
 
 ## Overview
 

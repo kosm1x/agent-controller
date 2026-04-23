@@ -121,5 +121,9 @@
       "graph_stats",
       "shortest_path"
     ]
+  },
+  "xpoz": {
+    "command": "node",
+    "args": ["/root/claude/projects/xpoz-pipeline/dist/mcp-server.js"]
   }
 }

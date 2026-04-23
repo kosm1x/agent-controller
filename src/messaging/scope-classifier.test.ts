@@ -53,4 +53,11 @@ describe("parseScopeGroups", () => {
     expect(result).not.toBeNull();
     expect(result!.has("coding")).toBe(true);
   });
+
+  it("accepts xpoz as a valid group", () => {
+    const result = parseScopeGroups('["xpoz"]');
+    expect(result).not.toBeNull();
+    expect(result!.has("xpoz")).toBe(true);
+    expect(result!.size).toBe(1);
+  });
 });
