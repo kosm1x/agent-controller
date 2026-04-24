@@ -319,6 +319,24 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 | 2026-03-16 | `8efb6b0` | SQLite conversation memory, classifier fix, ack, full CRUD, delete_item |
 | 2026-03-16 | `61b3ee7` | Hindsight API v2 alignment |
 
+## Retention Policy
+
+**Current stance (decided 2026-04-24)**: preserve ALL telemetry rows persistently. No auto-deletion from `mc.db`. Every row is historical evidence of what the system did.
+
+**Decision point**: when `data/mc.db` reaches **500 MB**, revisit. Current size is ~209 MB with a growth rate of ~6 MB/day from `tasks` + `runs` (each row stores full LLM traces, goal graphs, prompts, tool-call chains — avg 40 KB/row). Projected arrival at 500 MB: mid-2026-06 at current rate.
+
+**What was removed**: the previous `scripts/retention.sh` (30-day row prune across 7 tables) disappeared on 2026-04-04 and was never in git. Its cron line was removed on 2026-04-24 to stop silent daily failures. **No replacement — that is intentional.**
+
+**Watchdog enforcement** (`scripts/watchdog.sh` Check 7, every 5 min): alerts via Telegram once per 24h when the 500 MB threshold is crossed. The watchdog is version-controlled — it cannot silently disappear the way `retention.sh` did.
+
+**When the alert fires, the operator decides**:
+1. Row-prune vs blob-prune on `tasks`/`runs` (keep metadata, zero the large JSON columns)
+2. Retention windows per table class (fast-churning telemetry vs operational history vs financial)
+3. Sacred tables (must never prune): `conversations`, `conversation_embeddings`, `conversations_fts*`, `jarvis_files`, `user_facts`, `knowledge_*`, `skills`, `learnings`, `learning_*`, `scheduled_tasks`, `agents`
+4. Uncertain (need explicit call): trading tables (`signals*`, `market_*`, `paper_*`, `backtest_*`, `sentiment_*`, `whale_trades`, `chart_patterns`, `trade_theses`, `prediction_markets`), `ads_*`, `seo_*`, `tune_*`
+
+**Do not write a retention script until the above decisions are made.** Deleting data silently was the prior failure mode; writing a script now, before policy is defined, would re-create that risk.
+
 ## Known Issues
 
 - SQLite CHECK constraints can't be altered in-place — schema changes require `rm ./data/mc.db`

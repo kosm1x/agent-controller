@@ -104,6 +104,25 @@ if ! docker image inspect nanoclaw-agent:latest >/dev/null 2>&1 \
   fi
 fi
 
+# --- Check 7: MC DB size (alert-only, NO auto-retention) ---
+# Policy (decided 2026-04-24): preserve ALL telemetry for traceability.
+# 500 MB is the agreed decision point — when crossed, alert loudly so the
+# operator can define a retention policy manually. NEVER auto-delete.
+MC_DB=/root/claude/mission-control/data/mc.db
+if [ -f "$MC_DB" ]; then
+  MC_DB_MB=$(du -m "$MC_DB" | cut -f1)
+  if [ "$MC_DB_MB" -ge 500 ]; then
+    # Cooldown: only alert once per 24h (state file in /var/lib)
+    STATE=/var/lib/mc-watchdog-db-alert
+    NOW=$(date +%s)
+    LAST=$(cat "$STATE" 2>/dev/null || echo 0)
+    if [ $((NOW - LAST)) -gt 86400 ]; then
+      alert "mc.db at ${MC_DB_MB} MB — retention decision point reached. Manual policy required (see docs/PROJECT-STATUS.md §retention). No auto-deletion."
+      echo "$NOW" > "$STATE"
+    fi
+  fi
+fi
+
 # --- Summary ---
 if [ ${#ACTIONS[@]} -eq 0 ]; then
   echo "$LOG_PREFIX OK: all checks passed"
