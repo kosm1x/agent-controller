@@ -60,23 +60,91 @@ function currentBranch(): string {
   }
 }
 
+/**
+ * Pure hash over the inputs that describe a working tree's state.
+ * `git diff` does NOT include untracked-file content, so we hash untracked
+ * files separately — otherwise an untracked file edited in-place would be
+ * invisible to the cache key. Exported for unit testing.
+ */
+export function computeDirtyHash(inputs: {
+  porcelain: string;
+  diffUnstaged: string;
+  diffStaged: string;
+  untracked: Array<{ path: string; bytes: Buffer }>;
+}): string {
+  const hasher = createHash("sha256");
+  hasher.update(inputs.porcelain);
+  hasher.update("\0");
+  hasher.update(inputs.diffUnstaged);
+  hasher.update("\0");
+  hasher.update(inputs.diffStaged);
+  hasher.update("\0");
+  // Sort by path so directory-listing order doesn't perturb the hash.
+  const sorted = [...inputs.untracked].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
+  for (const { path, bytes } of sorted) {
+    hasher.update(path);
+    hasher.update("\0");
+    hasher.update(bytes);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex").slice(0, 16);
+}
+
+function readUntrackedContents(): Array<{ path: string; bytes: Buffer }> {
+  const list = run(["ls-files", "--others", "--exclude-standard"])
+    .split("\n")
+    .filter(Boolean);
+  const out: Array<{ path: string; bytes: Buffer }> = [];
+  for (const path of list) {
+    try {
+      out.push({ path, bytes: readFileSync(join(MC_DIR, path)) });
+    } catch {
+      // File may have vanished between `ls-files` and read — include the
+      // path with empty bytes so absence is still part of the signature.
+      out.push({ path, bytes: Buffer.alloc(0) });
+    }
+  }
+  return out;
+}
+
 function computeWorkingTreeState(): Omit<WorkingTreeState, "now_ms"> | null {
   try {
     const branch = currentBranch();
     const head_sha = run(["rev-parse", "HEAD"]);
-    // Include both staged and unstaged diffs + status so any change
-    // (new file, edit, stage toggle) invalidates the cache.
     const porcelain = run(["status", "--porcelain"]);
     const diffUnstaged = run(["diff"]);
     const diffStaged = run(["diff", "--staged"]);
-    const dirty_hash = createHash("sha256")
-      .update(`${porcelain}\n${diffUnstaged}\n${diffStaged}`)
-      .digest("hex")
-      .slice(0, 16);
+    const untracked = readUntrackedContents();
+    const dirty_hash = computeDirtyHash({
+      porcelain,
+      diffUnstaged,
+      diffStaged,
+      untracked,
+    });
     return { branch, head_sha, dirty_hash };
   } catch {
     return null;
   }
+}
+
+/**
+ * Pure check: did the working tree change between two snapshots taken
+ * around the test run? If so, tests ran on code different from what
+ * ended up on disk and the result must not be trusted. Null snapshots
+ * mean we couldn't measure — treat as mutated, the safe default.
+ * Exported for unit testing.
+ */
+export function detectRunMutation(
+  pre: Omit<WorkingTreeState, "now_ms"> | null,
+  post: Omit<WorkingTreeState, "now_ms"> | null,
+): boolean {
+  if (!pre || !post) return true;
+  if (pre.branch !== post.branch) return true;
+  if (pre.head_sha !== post.head_sha) return true;
+  if (pre.dirty_hash !== post.dirty_hash) return true;
+  return false;
 }
 
 function readTestCache(): TestCacheEntry | null {
@@ -184,6 +252,12 @@ function actionTest(): string {
     tests: "pending",
   };
 
+  // Snapshot the working tree BEFORE tests run so we can detect any
+  // concurrent mutation (another turn's file_write, a background process,
+  // etc.) and refuse to cache a result bound to code that's no longer
+  // on disk.
+  const preState = computeWorkingTreeState();
+
   // Typecheck
   try {
     execFileSync("npx", ["tsc", "--noEmit"], {
@@ -242,18 +316,31 @@ function actionTest(): string {
     }
   }
 
+  // Re-snapshot AFTER tests ran. If the working tree changed during the
+  // suite, `tests: PASS` describes code that is no longer on disk — we
+  // must not cache a green result for a state that wasn't actually tested.
+  const postState = computeWorkingTreeState();
+  const mutatedDuringRun = detectRunMutation(preState, postState);
+  if (mutatedDuringRun && results.tests.startsWith("PASS")) {
+    results.tests =
+      "STALE: working tree changed during test run — tested code differs from current disk state. Re-run action=test.";
+  }
+
   const ready_for_pr =
-    results.typecheck === "PASS" && results.tests.startsWith("PASS");
+    !mutatedDuringRun &&
+    results.typecheck === "PASS" &&
+    results.tests.startsWith("PASS");
 
   // Cache the result so action=pr can skip re-running the suite if nothing
   // has changed. Both pass and fail are cached; only passing entries are
-  // honored by getFreshPassingCache.
-  const wt = computeWorkingTreeState();
-  if (wt) {
+  // honored by getFreshPassingCache. Key the cache on `preState` — the
+  // state the tests actually ran on — so cache lookup at action=pr time
+  // matches only if the tree is still what was tested.
+  if (preState) {
     writeTestCache({
-      branch: wt.branch,
-      head_sha: wt.head_sha,
-      dirty_hash: wt.dirty_hash,
+      branch: preState.branch,
+      head_sha: preState.head_sha,
+      dirty_hash: preState.dirty_hash,
       tested_at_ms: Date.now(),
       typecheck: results.typecheck,
       tests: results.tests,
