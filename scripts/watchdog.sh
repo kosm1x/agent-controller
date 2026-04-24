@@ -129,7 +129,7 @@ fi
 # dies. Alert when latest dump is stale (>36h) or suspiciously small (<1 MB).
 SB_DIR=/opt/supabase/backups
 if [ -d "$SB_DIR" ]; then
-  SB_LATEST=$(ls -t "$SB_DIR"/*.sql.gz 2>/dev/null | head -1)
+  SB_LATEST=$(find "$SB_DIR" -maxdepth 1 -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -z "$SB_LATEST" ]; then
     STATE=/var/lib/mc-watchdog-sb-alert
     NOW=$(date +%s); LAST=$(cat "$STATE" 2>/dev/null || echo 0)

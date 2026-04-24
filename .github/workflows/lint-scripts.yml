@@ -1,0 +1,45 @@
+name: lint-scripts
+
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/**/*.sh", ".github/workflows/lint-scripts.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["scripts/**/*.sh", ".github/workflows/lint-scripts.yml"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n syntax check
+        run: |
+          set -e
+          fail=0
+          for f in scripts/**/*.sh scripts/*.sh; do
+            [ -f "$f" ] || continue
+            if bash -n "$f"; then
+              echo "PASS: $f"
+            else
+              echo "FAIL: $f"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: shellcheck
+        run: |
+          set -e
+          fail=0
+          for f in scripts/**/*.sh scripts/*.sh; do
+            [ -f "$f" ] || continue
+            if shellcheck -x -e SC1091 --severity=error "$f"; then
+              echo "shellcheck PASS: $f"
+            else
+              echo "shellcheck FAIL: $f"
+              fail=1
+            fi
+          done
+          exit $fail
