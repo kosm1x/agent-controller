@@ -66,6 +66,31 @@ export function createPlanWithUnits(input: CreatePlanInput): string {
   return plan_id;
 }
 
+/**
+ * Return the most-recently-updated active learning plan, or null if none
+ * exists. Used as a fallback when the agent doesn't have an explicit plan_id
+ * in context (e.g. "continúa mis lecciones" after a session restart).
+ */
+export function getActivePlan(): LearningPlanRow | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT * FROM learning_plans WHERE status = 'active'
+       ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get() as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    plan_id: row.plan_id as string,
+    topic: row.topic as string,
+    created_at: row.created_at as number,
+    updated_at: row.updated_at as number,
+    status: row.status as PlanStatus,
+    current_unit: row.current_unit as number,
+    notes: (row.notes as string | null) ?? null,
+  };
+}
+
 export function getPlan(plan_id: string): LearningPlanRow | null {
   const db = getDatabase();
   const row = db

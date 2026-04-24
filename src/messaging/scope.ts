@@ -345,6 +345,7 @@ export const TEACHING_TOOLS = [
   "learning_plan_quiz",
   "learning_plan_explain_back",
   "learning_plan_summarize",
+  "learning_plan_status",
   "learner_model_status",
 ];
 

@@ -78,6 +78,9 @@ const READ_ONLY_TOOLS = new Set([
   "prediction_markets",
   "whale_trades",
   "sentiment_snapshot",
+  // v7.11 teaching — read-only status tools
+  "learning_plan_status",
+  "learner_model_status",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
