@@ -83,6 +83,27 @@ if [ "$DISK_PCT" -gt 90 ]; then
   alert "Disk at ${DISK_PCT}%, ran cleanup. Now ${NEW_DISK}%"
 fi
 
+# --- Check 6: CRM container prerequisites (network + images) ---
+# CRM's /health stays green even when these are missing — failures only surface
+# when a message arrives and docker run spawns an agent. Check proactively.
+if ! docker network inspect crm-net >/dev/null 2>&1; then
+  if docker network create crm-net >/dev/null 2>&1; then
+    alert "crm-net docker network was missing, recreated"
+  else
+    alert "crm-net docker network missing, recreation FAILED"
+  fi
+fi
+
+if ! docker image inspect nanoclaw-agent:latest >/dev/null 2>&1 \
+   || ! docker image inspect agentic-crm-agent:latest >/dev/null 2>&1; then
+  if (cd /root/claude/crm-azteca && ./crm/container/build.sh) >/tmp/crm-rebuild.log 2>&1; then
+    systemctl restart agentic-crm 2>/dev/null || true
+    alert "CRM agent image(s) missing, rebuilt + service restarted"
+  else
+    alert "CRM agent image(s) missing, rebuild FAILED — see /tmp/crm-rebuild.log"
+  fi
+fi
+
 # --- Summary ---
 if [ ${#ACTIONS[@]} -eq 0 ]; then
   echo "$LOG_PREFIX OK: all checks passed"
