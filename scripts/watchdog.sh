@@ -36,6 +36,25 @@ alert() {
   fi
 }
 
+# Helper: alert once per 24h per state file
+maybe_alert() {
+  local state_file="$1"
+  local msg="$2"
+  local now last
+  now=$(date +%s)
+  last=$(cat "$state_file" 2>/dev/null || echo 0)
+  if [ $((now - last)) -gt 86400 ]; then
+    alert "$msg"
+    echo "$now" > "$state_file"
+  fi
+}
+
+# Helper: scrape a single numeric value from local Prometheus
+prom_query() {
+  curl -sf --max-time 3 "localhost:9090/api/v1/query?query=$1" 2>/dev/null \
+    | jq -r '.data.result[0].value[1] // empty' 2>/dev/null
+}
+
 # --- Check 1: Services alive ---
 for svc in mission-control agentic-crm; do
   if ! systemctl is-active --quiet "$svc"; then
@@ -157,6 +176,40 @@ if [ -d "$SB_DIR" ]; then
   fi
 else
   alert "/opt/supabase/backups directory missing — Supabase backup path broken"
+fi
+
+# --- Check 9: MC observability thresholds (Prometheus-scraped) ---
+# Replaces Grafana alerting (stopped) for signals not already covered by earlier checks:
+# cost anomaly, provider latency breach, heap pressure. 24h cooldown per sub-alert.
+HOURLY_SPEND=$(prom_query "mc_budget_hourly_spend_usd")
+HOURLY_LIMIT=$(prom_query "mc_budget_hourly_limit_usd")
+HEAP_USED=$(prom_query "mc_nodejs_heap_size_used_bytes")
+P95=$(prom_query "max(mc_provider_latency_p95_ms)")
+
+# 9a. Hourly spend > 80% of hourly limit
+if [ -n "$HOURLY_SPEND" ] && [ -n "$HOURLY_LIMIT" ]; then
+  if awk -v s="$HOURLY_SPEND" -v l="$HOURLY_LIMIT" 'BEGIN{exit !(l>0 && s/l > 0.8)}'; then
+    maybe_alert /var/lib/mc-watchdog-hourly-alert \
+      "MC hourly spend at \$${HOURLY_SPEND} of \$${HOURLY_LIMIT} limit (>80%) — cost anomaly"
+  fi
+fi
+
+# 9b. Heap used > 500 MB (absolute, not ratio — Node total grows dynamically)
+if [ -n "$HEAP_USED" ]; then
+  HEAP_MB=$(awk -v b="$HEAP_USED" 'BEGIN{print int(b/1048576)}')
+  if [ "$HEAP_MB" -gt 500 ]; then
+    maybe_alert /var/lib/mc-watchdog-heap-alert \
+      "MC Node.js heap at ${HEAP_MB} MB (threshold 500 MB) — possible leak, investigate"
+  fi
+fi
+
+# 9c. Provider p95 latency > 30s
+if [ -n "$P95" ]; then
+  P95_INT=$(awk -v p="$P95" 'BEGIN{print int(p)}')
+  if [ "$P95_INT" -gt 30000 ]; then
+    maybe_alert /var/lib/mc-watchdog-latency-alert \
+      "MC provider p95 latency ${P95_INT}ms (threshold 30000ms) — inference degraded"
+  fi
 fi
 
 # --- Summary ---
