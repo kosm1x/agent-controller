@@ -6,6 +6,9 @@
  */
 
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 import type { Tool } from "../types.js";
 
 const MC_DIR = "/root/claude/mission-control";
@@ -17,6 +20,29 @@ const TIMEOUT_MS = 300_000;
 // Git ops (status/add/commit/push) can take longer than 10s on a loaded box.
 // `push` in particular hits the network and does pre-commit hooks.
 const GIT_TIMEOUT_MS = 60_000;
+
+// action=test caches its result so action=pr can skip re-running the full
+// suite when nothing has changed since. Tests take 136s+ and that alone can
+// exceed the caller's per-query budget.
+const TEST_CACHE_FILE = join(MC_DIR, ".git", "jarvis-test-cache.json");
+export const TEST_CACHE_TTL_MS = 15 * 60 * 1000;
+
+export interface TestCacheEntry {
+  branch: string;
+  head_sha: string;
+  dirty_hash: string;
+  tested_at_ms: number;
+  typecheck: string;
+  tests: string;
+  ready_for_pr: boolean;
+}
+
+export interface WorkingTreeState {
+  branch: string;
+  head_sha: string;
+  dirty_hash: string;
+  now_ms: number;
+}
 
 function run(args: string[], opts?: { timeout?: number }): string {
   return execFileSync("git", args, {
@@ -32,6 +58,65 @@ function currentBranch(): string {
   } catch {
     return "HEAD";
   }
+}
+
+function computeWorkingTreeState(): Omit<WorkingTreeState, "now_ms"> | null {
+  try {
+    const branch = currentBranch();
+    const head_sha = run(["rev-parse", "HEAD"]);
+    // Include both staged and unstaged diffs + status so any change
+    // (new file, edit, stage toggle) invalidates the cache.
+    const porcelain = run(["status", "--porcelain"]);
+    const diffUnstaged = run(["diff"]);
+    const diffStaged = run(["diff", "--staged"]);
+    const dirty_hash = createHash("sha256")
+      .update(`${porcelain}\n${diffUnstaged}\n${diffStaged}`)
+      .digest("hex")
+      .slice(0, 16);
+    return { branch, head_sha, dirty_hash };
+  } catch {
+    return null;
+  }
+}
+
+function readTestCache(): TestCacheEntry | null {
+  try {
+    return JSON.parse(readFileSync(TEST_CACHE_FILE, "utf-8")) as TestCacheEntry;
+  } catch {
+    return null;
+  }
+}
+
+function writeTestCache(entry: TestCacheEntry): void {
+  try {
+    writeFileSync(TEST_CACHE_FILE, JSON.stringify(entry, null, 2));
+  } catch {
+    // Best-effort cache write; never fail the action because of cache IO.
+  }
+}
+
+/**
+ * Pure check: is this cache entry still trustworthy for the current state?
+ * Exported for unit testing — real callers go through getFreshPassingCache.
+ */
+export function isCacheFresh(
+  cache: TestCacheEntry | null,
+  state: WorkingTreeState,
+): boolean {
+  if (!cache) return false;
+  if (!cache.ready_for_pr) return false;
+  if (cache.branch !== state.branch) return false;
+  if (state.now_ms - cache.tested_at_ms > TEST_CACHE_TTL_MS) return false;
+  if (cache.head_sha !== state.head_sha) return false;
+  if (cache.dirty_hash !== state.dirty_hash) return false;
+  return true;
+}
+
+function getFreshPassingCache(branch: string): TestCacheEntry | null {
+  const wt = computeWorkingTreeState();
+  if (!wt || wt.branch !== branch) return null;
+  const cache = readTestCache();
+  return isCacheFresh(cache, { ...wt, now_ms: Date.now() }) ? cache : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,12 +242,26 @@ function actionTest(): string {
     }
   }
 
-  return JSON.stringify({
-    branch,
-    ...results,
-    ready_for_pr:
-      results.typecheck === "PASS" && results.tests.startsWith("PASS"),
-  });
+  const ready_for_pr =
+    results.typecheck === "PASS" && results.tests.startsWith("PASS");
+
+  // Cache the result so action=pr can skip re-running the suite if nothing
+  // has changed. Both pass and fail are cached; only passing entries are
+  // honored by getFreshPassingCache.
+  const wt = computeWorkingTreeState();
+  if (wt) {
+    writeTestCache({
+      branch: wt.branch,
+      head_sha: wt.head_sha,
+      dirty_hash: wt.dirty_hash,
+      tested_at_ms: Date.now(),
+      typecheck: results.typecheck,
+      tests: results.tests,
+      ready_for_pr,
+    });
+  }
+
+  return JSON.stringify({ branch, ...results, ready_for_pr });
 }
 
 function actionPr(title: string, body: string): string {
@@ -173,8 +272,21 @@ function actionPr(title: string, body: string): string {
     });
   }
 
-  // Run tests first — gate PR on green
-  const testResult = JSON.parse(actionTest());
+  // Trust a fresh green action=test cache if branch + HEAD + working tree
+  // all match, so action=pr doesn't burn 136s of the caller's budget on a
+  // suite that was just run. Cache-miss path runs tests inline as before.
+  const cached = getFreshPassingCache(branch);
+  const testResult: {
+    typecheck: string;
+    tests: string;
+    ready_for_pr: boolean;
+  } = cached
+    ? {
+        typecheck: cached.typecheck,
+        tests: `${cached.tests} (cached ${Math.round((Date.now() - cached.tested_at_ms) / 1000)}s ago)`,
+        ready_for_pr: true,
+      }
+    : JSON.parse(actionTest());
   if (!testResult.ready_for_pr) {
     return JSON.stringify({
       error: "Tests must pass before opening a PR.",
@@ -236,46 +348,67 @@ function actionPr(title: string, body: string): string {
     });
   }
 
-  // Create PR via gh CLI
-  try {
-    const prBody = `${body}\n\n---\n🤖 Jarvis-authored PR\nBranch: \`${branch}\`\nTests: ${testResult.tests}`;
-    const prUrl = execFileSync(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--base",
-        "main",
-        "--head",
-        branch,
-        "--title",
-        title,
-        "--body",
-        prBody,
-        "--label",
-        "jarvis-authored",
-      ],
-      {
-        cwd: MC_DIR,
-        timeout: GIT_TIMEOUT_MS,
-        encoding: "utf-8",
-      },
-    ).trim();
+  // Create PR via gh CLI. Try with --label first; if the label doesn't
+  // exist yet, retry without it so a missing repo label never blocks a
+  // code-ready PR. (Run `gh label create jarvis-authored` once per repo.)
+  const prBody = `${body}\n\n---\n🤖 Jarvis-authored PR\nBranch: \`${branch}\`\nTests: ${testResult.tests}`;
+  const baseArgs = [
+    "pr",
+    "create",
+    "--base",
+    "main",
+    "--head",
+    branch,
+    "--title",
+    title,
+    "--body",
+    prBody,
+  ];
+  const createPr = (args: string[]): string =>
+    execFileSync("gh", args, {
+      cwd: MC_DIR,
+      timeout: GIT_TIMEOUT_MS,
+      encoding: "utf-8",
+    }).trim();
 
-    return JSON.stringify({
-      success: true,
-      pr_url: prUrl,
-      branch,
-      tests: testResult.tests,
-    });
+  let prUrl: string;
+  let labelApplied = true;
+  try {
+    prUrl = createPr([...baseArgs, "--label", "jarvis-authored"]);
   } catch (err) {
-    // PR creation failed but code is pushed — report the branch
-    return JSON.stringify({
-      error: `PR creation failed (code is pushed to ${branch}): ${err instanceof Error ? err.message : err}`,
-      branch,
-      pushed: true,
-    });
+    const msg = err instanceof Error ? err.message : String(err);
+    const labelMissing = /not found|could not add label/i.test(msg);
+    if (!labelMissing) {
+      return JSON.stringify({
+        error: `PR creation failed (code is pushed to ${branch}): ${msg}`,
+        branch,
+        pushed: true,
+      });
+    }
+    try {
+      prUrl = createPr(baseArgs);
+      labelApplied = false;
+    } catch (err2) {
+      return JSON.stringify({
+        error: `PR creation failed (code is pushed to ${branch}): ${err2 instanceof Error ? err2.message : err2}`,
+        branch,
+        pushed: true,
+      });
+    }
   }
+
+  return JSON.stringify({
+    success: true,
+    pr_url: prUrl,
+    branch,
+    tests: testResult.tests,
+    ...(labelApplied
+      ? {}
+      : {
+          label_warning:
+            "jarvis-authored label not found in repo; PR opened without label. Run: gh label create jarvis-authored",
+        }),
+  });
 }
 
 function actionStatus(): string {
@@ -321,9 +454,12 @@ USE WHEN:
 WORKFLOW:
 1. jarvis_dev action="branch" type="feat" slug="oilprice-adapter" → creates jarvis/feat/oilprice-adapter
 2. Use file_edit/file_write on /root/claude/mission-control/src/... to make changes
-3. jarvis_dev action="test" → runs typecheck + full test suite
+3. jarvis_dev action="test" → runs typecheck + full test suite (~136s)
 4. jarvis_dev action="pr" title="feat: add OilPrice adapter" body="..." → commits, pushes, opens PR
 5. User reviews and merges the PR
+
+PERFORMANCE TIP:
+action="pr" trusts a recent green action="test" result if branch + HEAD + working tree still match (15-min TTL). Run action="test" in its own turn first so action="pr" can skip the suite and fit within the per-query budget.
 
 SAFETY:
 - You can ONLY work on jarvis/* branches, NEVER on main
