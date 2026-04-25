@@ -927,3 +927,27 @@ Two dominant clusters: (1) **Hardcoded keywords** — default seed presets embed
 
 ### Research notes
 Day 40+ of the longitudinal record. Today's 131-message count is the new all-time high, surpassing April 21's previous record of 71. The algebra tutoring session is the first documented instance of Fede using Jarvis for personal skill-building (non-work, non-project context), suggesting the relationship is expanding into a third usage mode alongside task-executor and writing-partner. The xpoz pipeline transitioned from "active build" to "daily operational tool" within 48 hours of its initial construction — a notably fast adoption cycle. For the co-evolution paper: the opening of a personal branding project late in the day hints at a fourth workstream and continued scope expansion of the human-agent collaboration surface.
+
+---
+
+## 2026-04-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 0 completed (1 in_progress: Modelar Unit Economics por viaje) |
+| Total tasks | 1 active task / 1 objective / 1 goal / 2 visions |
+| Conversations today | 89 (telegram: 89) |
+| Streak days | NorthStar last synced 2026-04-23 — streak data not in snapshot |
+
+### Interactions summary
+Today was dominated by two parallel workstreams: a deep technical session with Piotr (stock scanner agent) building Phases 3–4 of a live market radar system (AWO/AC signal detection, range filters, SQLite migration, S2 pure/degraded signal classification, 78-ticker universe expansion), and a full intelligence pipeline session running 10+ topic runs across aiagents, NVDA, Tesla, Starlink, CRM, Bitcoin, Elon Musk, Claude Code, and Bryan Johnson. Fede also engaged with a broadcasting analysis for TV Azteca and a Claude Code market panorama. The Xpoz pipeline was refactored from hardcoded longevity subreddits to dynamic topic routing via CLI args. Telegram was the exclusive channel for all 89 interactions.
+
+### What Jarvis learned
+A significant friction pattern re-emerged: Jarvis (as Piotr) attempted to write daily narratives from memory rather than reading the full log first — producing incomplete summaries that omitted events (video de cerveza, CRM queries, Algebra lesson failure). Fede corrected this explicitly three times before compliance. This is a recurring failure mode: the agent has high confidence in its in-session memory but systematically underestimates what it missed or forgot from earlier in a long session. The NorthStar sync bug (LWW logic not propagating edits where `modified_by !== "user"`) was also diagnosed today, flagging a gap between perceived and actual task state.
+
+### Friction points
+Three instances of Jarvis narrating the day from incomplete memory instead of reading the log file — required explicit correction each time. The day log (55KB+) repeatedly hit truncation limits across all available read tools, blocking full-coverage retrieval. The `SIGNAL_LOOKBACK_WEEKS = 8` constant silently contradicted the 20W discard rule — a design debt that went unnoticed until a systematic audit.
+
+### Research notes
+Day 44+ of co-evolution. The session exhibits a mature pattern: Fede operates as a high-velocity task director across multiple simultaneous projects (scanner, pipeline, TV Azteca analysis, algebra), while Jarvis handles execution in dedicated agent roles (Piotr for trading, anonymous for pipeline). The recurring narrative-from-memory failure is worth flagging as a known failure mode for long-session agents — agents need to be designed to distrust their own recollection of early-session events and prefer tool-grounded retrieval. No new co-evolution milestones crossed today, but the 89-conversation volume at exclusively Telegram confirms the channel has reached habitual daily use.

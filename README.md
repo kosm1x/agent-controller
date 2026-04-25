@@ -102,7 +102,7 @@ POST /api/tasks           POST /a2a (JSON-RPC)
 
 Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 35 rounds (coding) / 10 default. Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
 
-246 tools across builtin (154), MCP (65), Google (21), memory (4), skills (2). Tool deferral: 147 builtin + 30 MCP tools send name+description only — full schema on demand (52% prompt token reduction).
+252 tools across builtin (155), MCP (70), Google (21), memory (4), skills (2). Tool deferral: ~177 tools send name+description only — full schema on demand (52% prompt token reduction).
 
 ### NanoClaw runner
 
@@ -398,8 +398,8 @@ See `docs/V7-ROADMAP.md` for the active roadmap and `docs/PROJECT-STATUS.md` for
 
 Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
 
-- **246 tools** across 5 source plugins (builtin 154, MCP 65, Google 21, memory 4, skills 2)
-- **Tool deferral** — 147 builtin + 30 MCP tools deferred (name+desc only, full schema on first call). 52% prompt token reduction
+- **252 tools** across 5 source plugins (builtin 155, MCP 70, Google 21, memory 4, skills 2)
+- **Tool deferral** — ~177 tools deferred (name+desc only, full schema on first call). 52% prompt token reduction
 - **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
 - **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)
 - **Video production** — 9 tools: script → per-scene TTS → overlay composition → FFmpeg → MP4 (324 voices, background library, HiDPI screenshots)
