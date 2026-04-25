@@ -51,7 +51,15 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     reason: "rm with absolute path",
   },
   {
-    pattern: />\s*\/(etc|boot|usr|proc|sys|dev)\//,
+    // Block redirects into system directories. /dev/{null,stderr,stdout}
+    // are common discard sinks (e.g. `2>/dev/null`) and are NOT real
+    // writes — they discard. Allow only those three; everything else
+    // under /dev/ stays blocked (e.g. /dev/sda would be catastrophic).
+    // The discard exemption requires a hard terminator (whitespace, end of
+    // string, pipe/semicolon/&) so adversarial suffixes like `/dev/null.bak`
+    // or `/dev/null/foo` still hit the deny path with a clear reason.
+    pattern:
+      />\s*\/(?:etc|boot|usr|proc|sys)\/|>\s*\/dev\/(?!(?:null|stderr|stdout)(?:\s|[|;&]|$))/,
     reason: "redirect to system directory",
   },
   {
@@ -113,10 +121,21 @@ const ALLOW_WRITE_PREFIXES = [
   "/root/claude/jarvis-kb/",
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
+  "/root/claude/williams-entry-radar/", // Jarvis's autonomous radar build
   "/root/claude/mission-control/", // allowed only on jarvis/* branches — checked dynamically
   "/tmp/",
   "/workspace/",
 ];
+
+/** Standard /dev/null sinks used as discard targets in shell idioms.
+ *  These match WRITE_INDICATORS' shape (`>` redirect to absolute path) but
+ *  are not actual writes — they discard. Exempting them here prevents
+ *  false-positive blocks on `2>/dev/null`, `&>/dev/null`, `>/dev/null`. */
+const WRITE_INDICATOR_EXEMPT = new Set([
+  "/dev/null",
+  "/dev/stderr",
+  "/dev/stdout",
+]);
 
 function isMissionControlWriteAllowed(): boolean {
   try {
@@ -208,6 +227,10 @@ export function validateShellCommand(command: string): {
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(command)) !== null) {
     const targetPath = match[1];
+    // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
+    // `>` redirect shape but are not real writes — exempt them so common
+    // idioms like `2>/dev/null` don't false-positive.
+    if (WRITE_INDICATOR_EXEMPT.has(targetPath)) continue;
     // SG3: Immutable core — blocked even on jarvis/* branches
     if (isImmutableCorePath(targetPath).immutable) {
       return {

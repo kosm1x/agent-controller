@@ -267,4 +267,87 @@ describe("validateShellCommand", () => {
       expect(r2.allowed).toBe(false);
     });
   });
+
+  describe("/dev/null discard sinks", () => {
+    // Pre-fix the WRITE_INDICATORS regex matched `2>/dev/null` and treated
+    // /dev/null as a write target outside ALLOW_WRITE_PREFIXES, blocking
+    // every command that silenced stderr — one of the most common idioms.
+    it("allows 2>/dev/null stderr discard", () => {
+      const r = validateShellCommand("cat .env 2>/dev/null");
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows >/dev/null stdout discard", () => {
+      const r = validateShellCommand("npm install >/dev/null");
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows &>/dev/null both-stream discard", () => {
+      const r = validateShellCommand("some-command &>/dev/null");
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows chained discard idiom", () => {
+      const r = validateShellCommand(
+        'cat .env 2>/dev/null || ls *.env || echo "no env"',
+      );
+      expect(r.allowed).toBe(true);
+    });
+
+    it("still blocks writes to other system paths", () => {
+      const r = validateShellCommand("echo bad > /etc/hostname");
+      expect(r.allowed).toBe(false);
+    });
+
+    it("still blocks /dev/sda writes", () => {
+      const r = validateShellCommand("echo bad > /dev/sda");
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("redirect to system directory");
+    });
+
+    // Adversarial path-suffix variants: pre-fix the `\b` after `null` let
+    // these slip past DENY_PATTERN. Now they hit the deny path with the
+    // expected reason, not a generic "outside allowed paths" fallback.
+    it("blocks /dev/null.bak suffix variant at deny stage", () => {
+      const r = validateShellCommand("echo data > /dev/null.bak");
+      expect(r.allowed).toBe(false);
+    });
+
+    it("blocks /dev/null/foo path-traversal variant at deny stage", () => {
+      const r = validateShellCommand("echo data > /dev/null/foo");
+      expect(r.allowed).toBe(false);
+    });
+
+    it("blocks /dev/nullsomething concatenated variant", () => {
+      const r = validateShellCommand("echo data > /dev/nullsomething");
+      expect(r.allowed).toBe(false);
+    });
+  });
+
+  describe("williams-entry-radar write access", () => {
+    // The radar repo is Jarvis's autonomous build. He needs write access
+    // for tooling/scripts the operator authorizes (see CLAUDE.md in the
+    // repo). Pre-fix /root/claude/williams-entry-radar/ was not in
+    // ALLOW_WRITE_PREFIXES — heredoc-based file writes were rejected.
+    it("allows writes inside the radar repo", () => {
+      const r = validateShellCommand(
+        "echo data > /root/claude/williams-entry-radar/results/scan.csv",
+      );
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows tee writes inside the radar repo", () => {
+      const r = validateShellCommand(
+        "tee /root/claude/williams-entry-radar/data/log.txt",
+      );
+      expect(r.allowed).toBe(true);
+    });
+
+    it("still blocks writes to siblings outside allowed prefixes", () => {
+      const r = validateShellCommand(
+        "echo bad > /root/claude/some-other-repo/file.txt",
+      );
+      expect(r.allowed).toBe(false);
+    });
+  });
 });
