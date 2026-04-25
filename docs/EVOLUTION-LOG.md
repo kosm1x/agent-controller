@@ -904,3 +904,26 @@ The turn estimation error (off by 4x during the pipeline build) was significant 
 
 ### Research notes
 Day ~38 of the longitudinal record. Today marks a notable transition point for the co-evolution paper: Fede explicitly declared a **feature freeze at session 100**, signaling a shift from expansion mode to consolidation mode. The decision to route the new pipeline as a standalone MCP (rather than core integration) to honor the freeze is the first documented case of an architectural constraint governing a real-time execution pivot — a hallmark of an agent-user relationship that has internalized operating principles deeply enough to enforce them during, not after, the build.
+
+
+## 2026-04-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 93 completed |
+| Total tasks | 5 NorthStar records (2 visions, 1 goal, 1 objective, 1 task — all in_progress) |
+| Conversations today | 131 (telegram: 131) |
+| Streak days | Active — highest single-day volume recorded (131 messages) |
+
+### Interactions summary
+The day was dominated by two interlocking threads. The first and most voluminous was the **xpoz-intelligence-pipeline-manager**: Fede continued yesterday's build by fixing hardcoded keywords (making the pipeline fully dynamic — seed supplied at runtime), adding Twitter as a live source via Xpoz, and running multiple live pipeline queries throughout the day (seeds: Bitcoin, red light therapy, NVDA, CRM, AI Agents, México, SpaceX, good stocks to invest). The second thread, opening late in the evening, was a **personal branding project** — Fede shared a personal image and opened the branding project workspace. Mid-day included a **Claude Code competitive analysis** (situational panorama vs. the market, resulting in a Google Doc) and a spontaneous **algebra tutoring session** where Fede learned basic algebra from scratch and took a quiz — the first documented instance of Jarvis being used for personal skill-building.
+
+### What Jarvis learned
+The hardcoded-keyword issue in xpoz-pipeline was a recurring design anti-pattern: Jarvis embedded default seed presets in `config.ts` "for convenience," and Fede had to issue multiple explicit correction turns before full removal was confirmed. The correct design — zero defaults, operator supplies seed at runtime — was stated clearly but took several iterations to land. On tool reliability: Xpoz pipeline status was checked or verified at least three times across the day (tasks 2903, 2906, 2990), suggesting either intermittent uptime or a gap in Jarvis's ability to proactively surface pipeline state without being asked. Twitter integration was handled correctly in Fase B: opt-in only, not mixed into default runs — a clean architectural boundary that Fede validated mid-build.
+
+### Friction points
+Two dominant clusters: (1) **Hardcoded keywords** — default seed presets embedded in `config.ts` despite the user's explicit preference for fully dynamic, runtime-supplied seeds. Required multiple correction turns before the codebase was clean. (2) **Topic persistence gaps** — tasks labeled "Tópicos?" and "Por qué no se guardó?" (IDs 2984, 2986, 2992, 2999) indicate that pipeline run results were not reliably stored or surfaced on demand; the user had to re-request outputs multiple times across the day. No `error_max_turns` events observed — a mild improvement over April 21–22.
+
+### Research notes
+Day 40+ of the longitudinal record. Today's 131-message count is the new all-time high, surpassing April 21's previous record of 71. The algebra tutoring session is the first documented instance of Fede using Jarvis for personal skill-building (non-work, non-project context), suggesting the relationship is expanding into a third usage mode alongside task-executor and writing-partner. The xpoz pipeline transitioned from "active build" to "daily operational tool" within 48 hours of its initial construction — a notably fast adoption cycle. For the co-evolution paper: the opening of a personal branding project late in the day hints at a fourth workstream and continued scope expansion of the human-agent collaboration surface.

@@ -10,6 +10,7 @@ import { infer } from "../../inference/adapter.js";
 import {
   createPlanWithUnits,
   findOpenSession,
+  getActivePlan,
   getConcept,
   getPlan,
   getSession,
@@ -39,6 +40,23 @@ import {
   resolveUnit,
   targetDifficulty,
 } from "../../teaching/state-machine.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a plan_id from the argument (explicit) or fall back to the most
+ * recently-updated active plan in the DB.
+ * Returns null when neither is available — callers must handle that case.
+ */
+function resolvePlanId(args: Record<string, unknown>): string | null {
+  if (typeof args.plan_id === "string" && args.plan_id.trim().length > 0) {
+    return args.plan_id.trim();
+  }
+  const active = getActivePlan();
+  return active ? active.plan_id : null;
+}
 
 // ---------------------------------------------------------------------------
 // learning_plan_create
@@ -183,7 +201,7 @@ export const learningPlanAdvanceTool: Tool = {
         properties: {
           plan_id: {
             type: "string",
-            description: "Plan UUID returned by learning_plan_create",
+            description: "Plan UUID returned by learning_plan_create. Optional — if omitted, uses the most recently active plan.",
           },
           force: {
             type: "boolean",
@@ -191,13 +209,13 @@ export const learningPlanAdvanceTool: Tool = {
               "Bypass current-unit mastery threshold (prereqs still enforced)",
           },
         },
-        required: ["plan_id"],
+        required: [],
       },
     },
   },
   async execute(args): Promise<string> {
-    const plan_id = typeof args.plan_id === "string" ? args.plan_id : "";
-    if (!plan_id) return JSON.stringify({ error: "plan_id required" });
+    const plan_id = resolvePlanId(args);
+    if (!plan_id) return JSON.stringify({ error: "plan_id required — no active plan found" });
     const force = args.force === true;
     const result = advance(plan_id, force);
     return JSON.stringify(result, null, 2);
@@ -232,13 +250,13 @@ export const learningPlanQuizTool: Tool = {
             description: "Number of questions (1-5, default 3)",
           },
         },
-        required: ["plan_id"],
+        required: [],
       },
     },
   },
   async execute(args): Promise<string> {
-    const plan_id = typeof args.plan_id === "string" ? args.plan_id : "";
-    if (!plan_id) return JSON.stringify({ error: "plan_id required" });
+    const plan_id = resolvePlanId(args);
+    if (!plan_id) return JSON.stringify({ error: "plan_id required — no active plan found" });
     const unit_index =
       typeof args.unit_index === "number" && Number.isFinite(args.unit_index)
         ? Math.max(0, Math.trunc(args.unit_index))
@@ -343,13 +361,13 @@ Two modes:
               "The learner's explanation. Omit to request one; supply to grade.",
           },
         },
-        required: ["plan_id"],
+        required: [],
       },
     },
   },
   async execute(args): Promise<string> {
-    const plan_id = typeof args.plan_id === "string" ? args.plan_id : "";
-    if (!plan_id) return JSON.stringify({ error: "plan_id required" });
+    const plan_id = resolvePlanId(args);
+    if (!plan_id) return JSON.stringify({ error: "plan_id required — no active plan found" });
     const unit_index =
       typeof args.unit_index === "number" && Number.isFinite(args.unit_index)
         ? Math.max(0, Math.trunc(args.unit_index))
@@ -500,8 +518,8 @@ export const learningPlanSummarizeTool: Tool = {
     },
   },
   async execute(args): Promise<string> {
-    const plan_id = typeof args.plan_id === "string" ? args.plan_id : "";
-    if (!plan_id) return JSON.stringify({ error: "plan_id required" });
+    const plan_id = resolvePlanId(args);
+    if (!plan_id) return JSON.stringify({ error: "plan_id required — no active plan found" });
     const transcriptRaw =
       typeof args.transcript === "string" ? args.transcript.trim() : "";
     if (!transcriptRaw) return JSON.stringify({ error: "transcript required" });
@@ -604,6 +622,91 @@ export const learningPlanSummarizeTool: Tool = {
           concept: u.concept,
           mastery: u.mastery_score,
           next_review_epoch: u.review_due_date,
+        })),
+      },
+      null,
+      2,
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
+// learning_plan_status  (read-only — "where am I in my plan?")
+// ---------------------------------------------------------------------------
+
+export const learningPlanStatusTool: Tool = {
+  name: "learning_plan_status",
+  deferred: true,
+  riskTier: "low",
+  triggerPhrases: [
+    "dónde me quedé",
+    "where was I",
+    "continúa mis lecciones",
+    "continue my lessons",
+    "resume lessons",
+    "retoma mis lecciones",
+  ],
+  definition: {
+    type: "function",
+    function: {
+      name: "learning_plan_status",
+      description: `Read-only snapshot of a learning plan: topic, current unit, unit statuses, and mastery scores.
+
+USE WHEN:
+- User says "continúa mis lecciones", "where was I", "dónde me quedé", "resume my lessons".
+- You need to know which unit to resume without asking the user.
+- You lost plan_id context between sessions.
+
+DO NOT USE for actual teaching (use learning_plan_quiz / learning_plan_explain_back).
+
+plan_id is OPTIONAL — omit it to get the most recently active plan automatically.`,
+      parameters: {
+        type: "object",
+        properties: {
+          plan_id: {
+            type: "string",
+            description:
+              "Plan UUID. Optional — if omitted, uses the most recently active plan.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  async execute(args): Promise<string> {
+    const plan_id = resolvePlanId(args);
+    if (!plan_id)
+      return JSON.stringify({
+        error: "no_active_plan",
+        message: "No active learning plan found. Use learning_plan_create to start one.",
+      });
+
+    const plan = getPlan(plan_id);
+    if (!plan)
+      return JSON.stringify({ error: "plan_not_found", plan_id });
+
+    const units = listUnits(plan_id);
+    const currentUnit = units.find((u) => u.unit_index === plan.current_unit);
+
+    return JSON.stringify(
+      {
+        plan_id,
+        topic: plan.topic,
+        status: plan.status,
+        current_unit: plan.current_unit,
+        current_unit_title: currentUnit?.title ?? null,
+        current_unit_status: currentUnit?.status ?? null,
+        current_unit_mastery: currentUnit
+          ? Number(currentUnit.mastery_score.toFixed(2))
+          : null,
+        resume_instruction: currentUnit
+          ? `Resume with learning_plan_quiz or learning_plan_explain_back on unit ${plan.current_unit} ("${currentUnit.title}"). plan_id: ${plan_id}`
+          : "All units complete.",
+        units: units.map((u) => ({
+          index: u.unit_index,
+          title: u.title,
+          status: u.status,
+          mastery: Number(u.mastery_score.toFixed(2)),
         })),
       },
       null,
@@ -717,8 +820,9 @@ export const TEACHING_TOOL_OBJECTS: readonly Tool[] = [
   learningPlanQuizTool,
   learningPlanExplainBackTool,
   learningPlanSummarizeTool,
+  learningPlanStatusTool,
   learnerModelStatusTool,
 ] as const;
 
 // Internal helpers re-exported for test use
-export { getPlan, listUnits, getSession, getConcept };
+export { getPlan, listUnits, getSession, getConcept, getActivePlan };
