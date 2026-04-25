@@ -4,7 +4,7 @@
  * Aligned with Hindsight API v2 (2026-03).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HindsightMemoryBackend } from "./hindsight-backend.js";
 
 // Mock the client module
@@ -40,8 +40,16 @@ function getMockClient() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Tests exercise the Hindsight code path; production default is `false`
+  // (see hindsight-backend.ts isRecallPathEnabled — Hindsight's 22s reranker
+  // makes the recall path pure tax until upstream is fixed).
+  process.env.HINDSIGHT_RECALL_ENABLED = "true";
   backend = new HindsightMemoryBackend("http://localhost:8888", "key");
   mockClient = getMockClient();
+});
+
+afterEach(() => {
+  delete process.env.HINDSIGHT_RECALL_ENABLED;
 });
 
 describe("HindsightMemoryBackend", () => {

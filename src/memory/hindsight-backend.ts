@@ -29,6 +29,23 @@ import type {
 const CIRCUIT_FAILURE_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 60_000;
 
+// ---------------------------------------------------------------------------
+// Recall path toggle (2026-04-25)
+// ---------------------------------------------------------------------------
+// Hindsight's agentic recall does cross-encoder reranking over the full
+// candidate pool — measured 22.2s of the 22.4s end-to-end on a 244-candidate
+// query. With the 1.5s client timeout, 100% of recall calls fail-fast to
+// SQLite. The Hindsight call is pure 1.5s tax per turn with no upside since
+// SQLite hybrid (FTS5 + embed in sqlite-backend.ts) is the path actually
+// answering prompts.
+//
+// HINDSIGHT_RECALL_ENABLED defaults to "false". Set to "true" once Hindsight's
+// reranker latency is fixed upstream. Retain/reflect/bank ops are unaffected
+// — only the user-facing recall path bypasses Hindsight.
+function isRecallPathEnabled(): boolean {
+  return process.env.HINDSIGHT_RECALL_ENABLED === "true";
+}
+
 interface CircuitState {
   failures: number;
   lastFailure: number;
@@ -76,6 +93,13 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
+    if (!isRecallPathEnabled()) {
+      // HINDSIGHT_RECALL_ENABLED=false: skip the Hindsight probe entirely.
+      // SQLite hybrid (FTS5 + embed) is the actual answering path and runs
+      // separately upstream of this call too. This branch removes the 1.5s/
+      // call dead-wait that was firing on every turn.
+      return this.sqliteFallback.recall(query, options);
+    }
     if (this.isCircuitOpen()) {
       // Hindsight down — fall back to SQLite keyword recall
       console.log(
