@@ -26,6 +26,26 @@ import {
   pmPaperHistoryTool,
 } from "./pm-paper-trading.js";
 
+/**
+ * Fresh-now ISO timestamp. Previously this file hardcoded
+ * `'2026-04-20T00:00:00Z'` for both `prediction_markets.fetched_at`
+ * and `pm_signal_weights.run_timestamp`. The rebalance path's
+ * staleness gate (PolymarketPaperAdapter.quoteStaleMs, 5-day default
+ * for weekly cadence) compares `fetched_at` against `Date.now()`. As
+ * calendar time advanced past the 2026-04-20 anchor + 5 days, the
+ * fixture aged into STALE_ABORT territory and every test that
+ * depended on a successful rebalance started failing. Using
+ * `new Date()` keeps the fixture always-fresh; tests that need stale
+ * semantics (e.g. the "surfaces STALE_ABORT" case at line ~118) set
+ * an explicitly-old timestamp in-test.
+ *
+ * Also future-resolves `resolution_date` so it never passes into the
+ * past and gets filtered by a future resolution-date filter.
+ */
+const FRESH_NOW = () => new Date().toISOString();
+const FUTURE_RESOLUTION = () =>
+  new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
 /** Seed a market + pm_alpha run with one active weight on YES side. */
 function seedPmAlphaWithMarket(opts: {
   marketId: string;
@@ -40,8 +60,14 @@ function seedPmAlphaWithMarket(opts: {
     `INSERT OR REPLACE INTO prediction_markets
       (source, market_id, slug, question, outcome_tokens, liquidity_usd,
        is_neg_risk, fetched_at)
-     VALUES ('polymarket', ?, ?, ?, ?, 50000, 0, '2026-04-20T00:00:00Z')`,
-  ).run(opts.marketId, opts.marketId, `test ${opts.marketId}`, outcomes);
+     VALUES ('polymarket', ?, ?, ?, ?, 50000, 0, ?)`,
+  ).run(
+    opts.marketId,
+    opts.marketId,
+    `test ${opts.marketId}`,
+    outcomes,
+    FRESH_NOW(),
+  );
 
   // Active weight row
   db.prepare(
@@ -49,10 +75,10 @@ function seedPmAlphaWithMarket(opts: {
       (run_id, run_timestamp, market_id, slug, outcome, token_id,
        market_price, p_estimate, edge, whale_flow_usd, sentiment_tilt,
        kelly_raw, weight, liquidity_usd, resolution_date, excluded)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, 50000, '2026-06-01', 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, 50000, ?, 0)`,
   ).run(
     "run-1",
-    "2026-04-20T00:00:00Z",
+    FRESH_NOW(),
     opts.marketId,
     opts.marketId,
     "Yes",
@@ -62,6 +88,7 @@ function seedPmAlphaWithMarket(opts: {
     0.02,
     opts.weight,
     opts.weight,
+    FUTURE_RESOLUTION(),
   );
 }
 
@@ -82,7 +109,7 @@ describe("pmPaperRebalanceTool", () => {
         (run_id, run_timestamp, market_id, outcome, market_price, p_estimate,
          edge, sentiment_tilt, kelly_raw, weight, excluded, exclude_reason)
        VALUES (?, ?, ?, ?, 0.4, 0.4, 0, 0, 0, 0, 1, 'low_liquidity')`,
-    ).run("r", "2026-04-20T00:00:00Z", "0xexcl", "Yes");
+    ).run("r", FRESH_NOW(), "0xexcl", "Yes");
     const out = (await pmPaperRebalanceTool.execute({})) as string;
     expect(out).toMatch(/no active weights/);
   });

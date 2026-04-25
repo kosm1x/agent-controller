@@ -24,7 +24,16 @@ tasks.post("/", async (c) => {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { title, description, priority, agent_type, tags, tools, input } = body;
+  const {
+    title,
+    description,
+    priority,
+    agent_type,
+    tags,
+    tools,
+    input,
+    conversationHistory,
+  } = body;
 
   if (!title || typeof title !== "string") {
     return c.json({ error: "title is required (string)" }, 400);
@@ -41,6 +50,14 @@ tasks.post("/", async (c) => {
     tags,
     tools,
     input,
+    // Passing conversationHistory from the body routes this task through the
+    // chat branch in fast-runner, which triggers KB injection (always-read +
+    // enforce + conditional files + project README auto-injection). Without
+    // it, the non-chat branch runs a generic system prompt with no KB — so
+    // any integration test that needs to exercise project-specific context
+    // must supply this field, even with a single-turn [{role:"user", ...}]
+    // array.
+    conversationHistory,
   });
 
   return c.json(

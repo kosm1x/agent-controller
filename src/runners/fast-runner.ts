@@ -53,6 +53,7 @@ const PROJECT_SLUGS = [
   "presencia-digital-eurekamd",
   "reddit-scraper-tool",
   "vlmp",
+  "williams-radar",
 ];
 
 /** Match project names in message text (slug or natural name). */
@@ -68,6 +69,10 @@ function detectProjectInMessage(text: string): string | null {
   if (/\bcrm\b/i.test(text)) return "crm-azteca";
   if (/\bvlmp\b/i.test(text)) return "vlmp";
   if (/\bpipesong\b/i.test(text)) return "pipesong";
+  // "Williams" alone always refers to the Williams Entry Radar in this
+  // workspace. We don't alias bare "radar" — "PipeSong Tech Radar" and
+  // other project-specific radars would collide.
+  if (/\bwilliams\b/i.test(text)) return "williams-radar";
   return null;
 }
 
@@ -128,19 +133,23 @@ function buildKnowledgeBaseSection(
 
     // Project README auto-injection: when the user mentions a project by name,
     // inject that project's README.md so the LLM has full context without
-    // needing a tool call first.
+    // needing a tool call first. This bypasses KB_CHAR_BUDGET because an
+    // explicit project mention is a strong signal — if code-generation-sop.md
+    // (31K always-read) has already consumed the budget, silently skipping
+    // the project README leaves Jarvis blind to exactly the context the user
+    // is asking about. That caused the 2026-04-25 Williams Radar confusion.
     if (messageText) {
       const projectSlug = detectProjectInMessage(messageText);
       if (projectSlug) {
         try {
           const readme = getFile(`projects/${projectSlug}/README.md`);
-          if (readme && totalChars + readme.content.length < KB_CHAR_BUDGET) {
+          if (readme) {
             sections.push(
               `### Project Context: ${readme.title}\n${readme.content}`,
             );
             totalChars += readme.content.length;
             console.log(
-              `[fast-runner] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
+              `[fast-runner] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars, totalChars now ${totalChars})`,
             );
           }
         } catch {
