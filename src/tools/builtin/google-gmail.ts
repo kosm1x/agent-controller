@@ -57,7 +57,7 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
           body: {
             type: "string",
             description:
-              "Email body (plain text). Keep it professional and concise.",
+              "Email body. Plain text only — any HTML tags will be stripped. Use \\n for paragraphs and dashes (-) for lists.",
           },
           cc: {
             type: "string",
@@ -80,17 +80,26 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
       );
       to = "fede@eurekamd.net";
     }
-    const body = args.body as string;
+    const rawBody = args.body as string;
     const cc = args.cc as string | undefined;
 
+    const body = rawBody
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/\r\n|\r/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
     try {
-      // Encode subject per RFC 2047 if it contains non-ASCII characters
       const needsEncoding = /[^\x20-\x7E]/.test(subject);
       const encodedSubject = needsEncoding
         ? `=?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`
         : subject;
 
-      // Build RFC 2822 email
       const headers = [
         "MIME-Version: 1.0",
         `To: ${to}`,
