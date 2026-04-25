@@ -18,6 +18,8 @@ import {
   pgReinforce,
   isPgvectorEnabled,
   contentHash,
+  coerceKbQualifier,
+  type KbQualifier,
 } from "./pgvector.js";
 
 /**
@@ -45,6 +47,12 @@ export function syncToPgvector(
       // the existing entry AND still create the new entry (without
       // regenerating the embedding — reuse the existing one's embedding).
       // C2 audit fix: no longer skips the new path entirely.
+      // Coerce once at the boundary so both the upsert and the salience
+      // map see the same canonical value (audit W3 — pre-fix the two
+      // calls received un-coerced raw input which could desync if
+      // either default ever changed).
+      const canonicalQualifier = coerceKbQualifier(qualifier);
+
       const existing = await pgFindByHash(hash);
       if (existing && existing.path !== path) {
         await pgReinforce(existing.path);
@@ -57,11 +65,11 @@ export function syncToPgvector(
           title,
           content,
           content_hash: hash,
-          qualifier,
+          qualifier: canonicalQualifier,
           condition: condition ?? undefined,
           tags,
           priority,
-          salience: qualifierToSalience(qualifier),
+          salience: qualifierToSalience(canonicalQualifier),
         });
         return;
       }
@@ -76,11 +84,11 @@ export function syncToPgvector(
         content,
         content_hash: hash,
         embedding: embedding ?? undefined,
-        qualifier,
+        qualifier: canonicalQualifier,
         condition: condition ?? undefined,
         tags,
         priority,
-        salience: qualifierToSalience(qualifier),
+        salience: qualifierToSalience(canonicalQualifier),
       });
     } catch (err) {
       console.warn(
@@ -103,8 +111,12 @@ export function syncDeleteToPgvector(path: string): void {
 /**
  * Map qualifier to salience weight for retention scoring.
  * Higher salience = decays slower.
+ *
+ * Typed as `KbQualifier` so the TypeScript exhaustiveness check (the
+ * `_exhaustive` line below) fails to compile if a new qualifier is added
+ * to `KB_QUALIFIERS` without updating the salience map.
  */
-export function qualifierToSalience(qualifier: string): number {
+export function qualifierToSalience(qualifier: KbQualifier): number {
   switch (qualifier) {
     case "enforce":
       return 0.95;
@@ -114,8 +126,13 @@ export function qualifierToSalience(qualifier: string): number {
       return 0.7;
     case "workspace":
       return 0.3;
+    case "pdf":
+      return 0.6; // PDF chunks: above workspace, below reference defaults
     case "reference":
-    default:
       return 0.5;
+    default: {
+      const _exhaustive: never = qualifier;
+      return _exhaustive;
+    }
   }
 }

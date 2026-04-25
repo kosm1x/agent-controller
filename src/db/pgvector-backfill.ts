@@ -9,7 +9,7 @@
 
 import { getDatabase } from "./index.js";
 import { generateEmbeddings } from "../inference/embeddings.js";
-import { pgBatchUpsert, contentHash } from "./pgvector.js";
+import { pgBatchUpsert, contentHash, coerceKbQualifier } from "./pgvector.js";
 import type { KbEntry } from "./pgvector.js";
 import { qualifierToSalience } from "./pgvector-sync.js";
 
@@ -96,11 +96,11 @@ export async function backfillToPgvector(): Promise<{
           embeddings[idx] && embeddings[idx].length > 0
             ? embeddings[idx]
             : undefined,
-        qualifier: row.qualifier,
+        qualifier: coerceKbQualifier(row.qualifier),
         condition: row.condition ?? undefined,
         tags,
         priority: row.priority,
-        salience: qualifierToSalience(row.qualifier),
+        salience: qualifierToSalience(coerceKbQualifier(row.qualifier)),
       };
     });
 

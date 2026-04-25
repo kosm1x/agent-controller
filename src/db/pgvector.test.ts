@@ -4,6 +4,10 @@ import {
   isPgvectorEnabled,
   pgCascadeStale,
   validateKbEntry,
+  coerceKbType,
+  coerceKbQualifier,
+  KB_ENTRY_TYPES,
+  KB_QUALIFIERS,
 } from "./pgvector.js";
 
 // Mock fetch globally for all pgvector tests
@@ -288,7 +292,7 @@ describe("pgCascadeStale", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateKbEntry", () => {
-  const validEntry = {
+  const validEntry: import("./pgvector.js").KbEntry = {
     path: "test/entry.md",
     title: "Test Entry",
     content: "This is a valid KB entry with enough content to pass the gate.",
@@ -373,10 +377,12 @@ describe("validateKbEntry", () => {
     expect(result).toContain("confidence too low");
   });
 
-  it("allows observations with low confidence", () => {
+  it("allows non-fact types with low confidence", () => {
+    // Confidence gate only fires on type='fact'. Other types (workflow,
+    // pattern, etc.) bypass the threshold by design.
     const result = validateKbEntry({
       ...validEntry,
-      type: "observation",
+      type: "workflow",
       confidence: 0.2,
     });
     expect(result).toBeNull();
@@ -600,5 +606,103 @@ describe("validateKbEntry", () => {
         }),
       ).toContain("noise pattern");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Allow-list contract — TS unions + boundary coercion (audit W6)
+// ---------------------------------------------------------------------------
+
+describe("KB_ENTRY_TYPES / KB_QUALIFIERS contract", () => {
+  it("KB_ENTRY_TYPES includes the values used by typed call sites", () => {
+    // These literals appear in typed pgUpsert calls. If any are removed
+    // from the array, those call sites must also be updated — this test
+    // pins the contract.
+    expect(KB_ENTRY_TYPES).toContain("fact");
+    expect(KB_ENTRY_TYPES).toContain("correction"); // src/intelligence/correction-loop.ts
+    expect(KB_ENTRY_TYPES).toContain("ingested"); // src/kb/pdf-structured-ingest.ts
+    expect(KB_ENTRY_TYPES).toContain("pattern");
+  });
+
+  it("KB_QUALIFIERS includes the values used by typed call sites", () => {
+    expect(KB_QUALIFIERS).toContain("reference");
+    expect(KB_QUALIFIERS).toContain("conditional"); // correction-loop
+    expect(KB_QUALIFIERS).toContain("pdf"); // pdf-structured-ingest
+    expect(KB_QUALIFIERS).toContain("workspace");
+  });
+});
+
+describe("coerceKbType", () => {
+  // Note: console.warn spy isolates from the warning emission so test
+  // output stays clean. The warning behavior itself is verified in the
+  // "warns on unknown" test.
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  afterEach(() => {
+    warnSpy?.mockRestore();
+  });
+
+  it("returns the input when it is a valid KbEntryType", () => {
+    expect(coerceKbType("fact")).toBe("fact");
+    expect(coerceKbType("correction")).toBe("correction");
+    expect(coerceKbType("ingested")).toBe("ingested");
+  });
+
+  it("defaults to 'fact' for unknown values", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(coerceKbType("garbage")).toBe("fact");
+    expect(coerceKbType("observation")).toBe("fact"); // legacy literal
+  });
+
+  it("defaults to 'fact' silently for null/undefined/empty", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(coerceKbType(null)).toBe("fact");
+    expect(coerceKbType(undefined)).toBe("fact");
+    expect(coerceKbType("")).toBe("fact");
+    expect(warnSpy).not.toHaveBeenCalled(); // empty is not drift, just absence
+  });
+
+  it("warns on unknown non-empty value so drift surfaces in journalctl", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    coerceKbType("future_type");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"future_type"'),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("KB_ENTRY_TYPES"),
+    );
+  });
+});
+
+describe("coerceKbQualifier", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  afterEach(() => {
+    warnSpy?.mockRestore();
+  });
+
+  it("returns the input when it is a valid KbQualifier", () => {
+    expect(coerceKbQualifier("reference")).toBe("reference");
+    expect(coerceKbQualifier("conditional")).toBe("conditional");
+    expect(coerceKbQualifier("pdf")).toBe("pdf");
+  });
+
+  it("defaults to 'reference' for unknown values", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(coerceKbQualifier("garbage")).toBe("reference");
+  });
+
+  it("defaults to 'reference' silently for null/undefined/empty", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(coerceKbQualifier(null)).toBe("reference");
+    expect(coerceKbQualifier(undefined)).toBe("reference");
+    expect(coerceKbQualifier("")).toBe("reference");
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("warns on unknown non-empty value", () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    coerceKbQualifier("future_qualifier");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"future_qualifier"'),
+    );
   });
 });

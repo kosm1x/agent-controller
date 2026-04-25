@@ -15,6 +15,10 @@ import { ingestPdf } from "../../kb/pdf-structured-ingest.js";
 import {
   isPgvectorEnabled,
   pgBatchUpsert,
+  coerceKbType,
+  coerceKbQualifier,
+  KB_ENTRY_TYPES,
+  KB_QUALIFIERS,
   type KbEntry,
 } from "../../db/pgvector.js";
 import { embed } from "../../memory/embeddings.js";
@@ -191,8 +195,14 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
                 section_path: { type: "array", items: { type: "string" } },
                 chunk_position: { type: "number" },
                 tags: { type: "array", items: { type: "string" } },
-                type: { type: "string" },
-                qualifier: { type: "string" },
+                type: {
+                  type: "string",
+                  enum: KB_ENTRY_TYPES as unknown as string[],
+                },
+                qualifier: {
+                  type: "string",
+                  enum: KB_QUALIFIERS as unknown as string[],
+                },
               },
               required: ["path", "title", "content"],
             },
@@ -210,6 +220,15 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
     }
     if (!isPgvectorEnabled()) {
       return "kb_batch_insert: pgvector is not configured.";
+    }
+
+    // Coerce type/qualifier on each entry — the JSON schema declares enums,
+    // but a non-conforming LLM emission would otherwise propagate to the DB
+    // CHECK constraint as a 400. Coerce defends against schema drift across
+    // the LLM-driven boundary (audit W1).
+    for (const entry of entries) {
+      entry.type = coerceKbType(entry.type);
+      entry.qualifier = coerceKbQualifier(entry.qualifier);
     }
 
     // Embed each entry (sequential — bounded by Gemini rate limits)

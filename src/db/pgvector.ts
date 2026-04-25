@@ -29,6 +29,81 @@ export function contentHash(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Allow-lists — TS-enforced mirror of the Postgres CHECK constraints on
+// `kb_entries.type` and `kb_entries.qualifier`. The canonical schema lives
+// at `schema/kb_entries.sql`; these arrays are the code-side reflection.
+//
+// **Update protocol**: when adding a new value, you MUST:
+//   1. Append it to the relevant `as const` array below.
+//   2. Write `scripts/migrate-kb-entries-<value>.sql` (additive DO block —
+//      see existing migrations for the pattern).
+//   3. Apply live: `docker exec -i supabase-db psql -U postgres -d postgres < scripts/migrate-...sql`.
+//   4. Re-snapshot: `docker exec supabase-db pg_dump -U postgres -d postgres --schema-only -t kb_entries > schema/kb_entries.sql` (strip preamble).
+//   5. Commit code + migration + schema together.
+//
+// TypeScript will refuse to compile a `pgUpsert({ type: "..." })` literal
+// that isn't in the array. Drift between code and DB is then bounded to
+// the gap between steps 1 and 3 in the update protocol — i.e. a single
+// commit window, not unbounded weeks.
+// ---------------------------------------------------------------------------
+
+export const KB_ENTRY_TYPES = [
+  "pattern",
+  "preference",
+  "architecture",
+  "bug",
+  "workflow",
+  "fact",
+  "correction",
+  "ingested",
+] as const;
+export type KbEntryType = (typeof KB_ENTRY_TYPES)[number];
+
+export const KB_QUALIFIERS = [
+  "always-read",
+  "enforce",
+  "conditional",
+  "reference",
+  "workspace",
+  "pdf",
+] as const;
+export type KbQualifier = (typeof KB_QUALIFIERS)[number];
+
+/** Coerce an arbitrary string to a known KbEntryType, defaulting to "fact"
+ *  when the input is missing or unknown. Use at boundaries where the input
+ *  comes from external systems (SQLite columns, user tool input) rather
+ *  than typed call sites. Logs a warning when defaulting on a non-empty
+ *  unknown value so future drift surfaces in journalctl. */
+export function coerceKbType(value: string | null | undefined): KbEntryType {
+  if (value && (KB_ENTRY_TYPES as readonly string[]).includes(value)) {
+    return value as KbEntryType;
+  }
+  if (value) {
+    console.warn(
+      `[pgvector] coerced unknown kb_entries.type "${value}" → "fact" — add it to KB_ENTRY_TYPES + ship a migration if intentional`,
+    );
+  }
+  return "fact";
+}
+
+/** Coerce an arbitrary string to a known KbQualifier, defaulting to
+ *  "reference" when missing or unknown. Boundary helper — see coerceKbType.
+ *  Logs a warning on unknown non-empty input. */
+export function coerceKbQualifier(
+  value: string | null | undefined,
+): KbQualifier {
+  if (value && (KB_QUALIFIERS as readonly string[]).includes(value)) {
+    return value as KbQualifier;
+  }
+  if (value) {
+    console.warn(
+      `[pgvector] coerced unknown kb_entries.qualifier "${value}" → "reference" — add it to KB_QUALIFIERS + ship a migration if intentional`,
+    );
+  }
+  return "reference";
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -39,8 +114,8 @@ export interface KbEntry {
   content: string;
   content_hash?: string;
   embedding?: number[];
-  type?: string;
-  qualifier?: string;
+  type?: KbEntryType;
+  qualifier?: KbQualifier;
   condition?: string;
   tags?: string[];
   priority?: number;
