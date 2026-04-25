@@ -265,6 +265,151 @@ describe("validateShellCommand", () => {
 
       const r2 = validateShellCommand("cat <(rm -rf /)");
       expect(r2.allowed).toBe(false);
+
+      const r3 = validateShellCommand("cmd1 | tee >(grep error)");
+      expect(r3.allowed).toBe(false);
+      expect(r3.reason).toContain("process substitution");
+    });
+
+    it("allows JS arrow with paren body — not bash process-sub", () => {
+      // `=>(` is JavaScript arrow returning an object literal. Bash
+      // process-substitution always has a separator before the `<`/`>`,
+      // so we anchor the rule on that to avoid this false-positive.
+      const r1 = validateShellCommand('node -e "[1,2].map(x=>({n:x}))"');
+      expect(r1.allowed).toBe(true);
+    });
+
+    it("allows TS generic instantiation Map<T>()", () => {
+      // TypeScript `new Map<string,boolean>()` produces `>(` immediately
+      // after a generic type parameter. Same anchor rule keeps this allowed.
+      const r1 = validateShellCommand(
+        'node -e "const m = new Map<string,boolean>()"',
+      );
+      expect(r1.allowed).toBe(true);
+    });
+  });
+
+  describe("quoted heredoc body bypass", () => {
+    // Bash treats `<<'EOF'` and `<<"EOF"` heredoc bodies as literal text — no
+    // var expansion, no command substitution. Validating them as shell syntax
+    // false-positives on every JS/TS/JSON/Python file Jarvis writes via
+    // `cat > path << 'EOF' ... EOF`. Strip the body before validation.
+    it("allows JS template literals in single-quoted heredoc body", () => {
+      const cmd = `cat > /tmp/foo.ts << 'EOF'
+const url = \`https://api.example.com/q?id=\${id}\`;
+console.log(\`done: \${count}\`);
+EOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows TS generics + arrow + backticks together in heredoc body", () => {
+      const cmd = `cat > /tmp/foo.ts << 'SCRIPT'
+const m = new Map<string,number>();
+const fn = (x: number) => ({ doubled: x * 2 });
+const msg = \`x=\${fn(3).doubled}\`;
+SCRIPT`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
+    });
+
+    it("allows double-quoted heredoc delimiter too", () => {
+      const cmd = `cat > /tmp/foo.json << "EOF"
+{"key": \`backtick\`, "arrow": "=>("}
+EOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
+    });
+
+    it("still blocks process-sub OUTSIDE the heredoc", () => {
+      const cmd = `cat <(echo hi) > /tmp/foo.ts << 'EOF'
+safe body content
+EOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("process substitution");
+    });
+
+    it("still blocks backticks OUTSIDE the heredoc", () => {
+      const cmd = "echo `whoami` > /tmp/foo.ts";
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("backtick");
+    });
+
+    it("still validates the redirect target path for quoted heredocs", () => {
+      // The first-line redirect must still be checked — strip removes the
+      // body but preserves `cat > /etc/hostname` for path validation.
+      const cmd = `cat > /etc/hostname << 'EOF'
+malicious
+EOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+    });
+
+    it("does NOT strip unquoted heredocs (vars/cmds expand there)", () => {
+      // `<< EOF` (no quotes) DOES expand $vars and $(cmds), so we must keep
+      // scanning the body for command substitution.
+      const cmd = `cat > /tmp/foo.txt << EOF
+\${HOME} is your home
+$(whoami) is the user
+EOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("command substitution");
+    });
+
+    // Audit Critical: quote-context blind strip lets `$(...)` hide inside
+    // a double-quoted string that LOOKS like a heredoc to a regex but
+    // is actually literal text from bash's perspective. Inside `"…"`,
+    // bash does NOT recognize `<<'X'` as a heredoc, but DOES expand
+    // `$(...)` and backticks. Strip must skip when inside an open `"…"`.
+    it("does NOT strip a fake heredoc inside a double-quoted string (PoC)", () => {
+      const cmd = `echo "see <<'EOF'
+$(whoami)
+EOF
+done"`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("command substitution");
+    });
+
+    it("does NOT strip a fake heredoc with backtick-sub inside double quotes", () => {
+      const cmd = `echo "fake <<'X'
+\`whoami\`
+X"`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain("backtick");
+    });
+
+    // Audit Major 1: <<- permits tab-indented closer.
+    it("strips <<- variant with tab-indented closer", () => {
+      const body = `\tconst foo = \`hello\`;`;
+      const cmd = `cat > /tmp/foo.ts <<-'EOF'\n${body}\n\tEOF`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
+    });
+
+    // Audit Major 2: delimiters with hyphen / digits / dots allowed by bash.
+    it("strips heredoc with hyphenated delimiter", () => {
+      const cmd = `cat > /tmp/foo.ts << 'EOF-1'
+const x = \`backtick\`;
+EOF-1`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
+    });
+
+    // Audit Minor 2: multiple heredocs in one command.
+    it("strips multiple heredocs in a single command", () => {
+      const cmd = `cat > /tmp/a.ts << 'A'
+const x = \`a\`;
+A
+cat > /tmp/b.ts << 'B'
+const y = \`b\`;
+B`;
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(true);
     });
   });
 

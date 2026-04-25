@@ -165,6 +165,73 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
 const WRITE_INDICATORS =
   /(?:>\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/[^\s]+)/g;
 
+/** Count unescaped `"` chars in `s` (for quote-context detection).
+ *  Skips over the contents of single-quoted strings — bash single quotes do
+ *  not interpolate, so a `"` inside `'…'` does not change quote state. */
+function countOpenDoubleQuotes(s: string): number {
+  let dq = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const prev = i > 0 ? s[i - 1] : "";
+    if (c === "'" && prev !== "\\") {
+      // Skip to matching closing single quote (no nesting / escaping in '...')
+      const close = s.indexOf("'", i + 1);
+      if (close === -1) break;
+      i = close;
+      continue;
+    }
+    if (c === '"' && prev !== "\\") dq++;
+  }
+  return dq;
+}
+
+/** Strip body of quoted heredocs (`<<'EOF'` / `<<"EOF"`) before validation.
+ *  Bash treats quoted-delimiter heredoc bodies as literal text — no variable
+ *  expansion, no command substitution — so the body is opaque data piped to
+ *  the receiving process. Scanning it for shell metacharacters produces false
+ *  positives on every JS/TS/JSON/Python file Jarvis writes via `cat > path
+ *  << 'EOF' ... EOF`. The first-line redirect stays intact so WRITE_INDICATORS
+ *  still catches the target path. Unquoted heredocs (`<< EOF`) DO expand vars
+ *  and command-subs, so we deliberately do not strip those.
+ *
+ *  Quote-context guard (audit Critical): `<<'X'…X` *inside* a double-quoted
+ *  string is NOT a heredoc to bash — it's literal text. `$(...)` and `` ` ``
+ *  inside that same double-quoted string DO expand. Stripping there would
+ *  hide an active substitution from the validator while bash still executes
+ *  it. We count unescaped `"` before each candidate match: odd count means
+ *  we're inside an open `"…"` string and must NOT strip.
+ *
+ *  `<<-` variant (Major fix): permits a tab-indented closer (`\n\t*EOF`).
+ *  Plain `<<` requires the closer at column 0 (`\nEOF`).
+ *
+ *  Delimiter charset (Major fix): bash allows hyphens, digits, dots, etc.
+ *  in the delimiter — match `[^'"\s]+` instead of `\w+`.
+ */
+function stripQuotedHeredocs(command: string): string {
+  // Two passes: <<- first (tab-indented closer permitted), then plain <<.
+  // The non-greedy body match in pass 1 is bounded by the FIRST `\n\t*\1`
+  // sequence; pass 2 only matches `<<` (excluding `<<-` already handled).
+  const replaceWithQuoteGuard = (input: string, re: RegExp): string =>
+    input.replace(re, (match: string, _delim: string, offset: number) => {
+      const before = input.slice(0, offset);
+      if (countOpenDoubleQuotes(before) % 2 === 1) {
+        // Inside open "…" — bash sees this as text, not a heredoc.
+        return match;
+      }
+      return "<<HEREDOC_STRIPPED";
+    });
+
+  let out = replaceWithQuoteGuard(
+    command,
+    /<<-\s*['"]([^'"\s]+)['"][\s\S]*?\n\t*\1(?=\s|$)/g,
+  );
+  out = replaceWithQuoteGuard(
+    out,
+    /<<(?!-)\s*['"]([^'"\s]+)['"][\s\S]*?\n\1(?=\s|$)/g,
+  );
+  return out;
+}
+
 /**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
@@ -173,24 +240,33 @@ export function validateShellCommand(command: string): {
   allowed: boolean;
   reason?: string;
 } {
+  // Strip quoted-heredoc bodies — they are literal data, not shell syntax,
+  // so scanning them for `>(`, backticks, etc. produces false positives.
+  const sanitized = stripQuotedHeredocs(command);
+
   // Block command substitution — can hide any command inside otherwise-safe ones
-  if (/\$\((?!\()/.test(command)) {
+  if (/\$\((?!\()/.test(sanitized)) {
     // $( but not $(( — allow arithmetic expansion $((expr))
     return { allowed: false, reason: "command substitution $(...) is blocked" };
   }
-  // Block process substitution <() and >() — same class as $()
-  if (/[<>]\(/.test(command)) {
+  // Block process substitution <() and >() — same class as $().
+  // Require a separator (start, whitespace, pipe, semi, ampersand) before
+  // the `<`/`>` so we don't false-positive on JS arrow `=>(` or TS generics
+  // like `new Map<T>()`. Bash process-sub is always preceded by a separator
+  // (`cmd <(...)`, `cmd >(tee)`); the `cat<(...)` no-space form is rare and
+  // not worth blocking JS/TS scripts inside `node -e`/heredocs to catch.
+  if (/(?:^|[\s|;&])[<>]\(/.test(sanitized)) {
     return {
       allowed: false,
       reason: "process substitution <() or >() is blocked",
     };
   }
-  if (/`/.test(command)) {
+  if (/`/.test(sanitized)) {
     return { allowed: false, reason: "backtick substitution is blocked" };
   }
   if (
     /\$\{[^}]*\b(cat|rm|curl|wget|nc|python|node|bash|sh|eval|exec)\b/.test(
-      command,
+      sanitized,
     )
   ) {
     return {
@@ -200,7 +276,7 @@ export function validateShellCommand(command: string): {
   }
 
   // Split on shell separators to check each segment
-  const segments = command.split(/\s*(?:\||\|\||&&|;)\s*/);
+  const segments = sanitized.split(/\s*(?:\||\|\||&&|;)\s*/);
 
   for (const segment of segments) {
     const trimmed = segment.trim();
@@ -215,17 +291,21 @@ export function validateShellCommand(command: string): {
     }
   }
 
-  // Check full command against deny patterns
+  // Check full command against deny patterns (against sanitized form so
+  // heredoc body content doesn't trip a credential-reader pattern by
+  // appearing inside, e.g., a JSON literal being piped to a file)
   for (const { pattern, reason } of DENY_PATTERNS) {
-    if (pattern.test(command)) {
+    if (pattern.test(sanitized)) {
       return { allowed: false, reason };
     }
   }
 
-  // Check write paths — if command writes to absolute paths, verify they're safe
+  // Check write paths — if command writes to absolute paths, verify they're safe.
+  // Use `sanitized` so the only `>` redirect we see is the heredoc opener's
+  // redirect, not arrow functions or template-literal characters in the body.
   let match: RegExpExecArray | null;
   WRITE_INDICATORS.lastIndex = 0;
-  while ((match = WRITE_INDICATORS.exec(command)) !== null) {
+  while ((match = WRITE_INDICATORS.exec(sanitized)) !== null) {
     const targetPath = match[1];
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
     // `>` redirect shape but are not real writes — exempt them so common

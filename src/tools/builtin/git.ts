@@ -16,6 +16,7 @@ const MC_DIR = "/root/claude/mission-control/";
 const ALLOWED_CWD_PREFIXES = [
   "/root/claude/cuatro-flor/",
   "/root/claude/projects/",
+  "/root/claude/williams-entry-radar/",
   "/tmp/",
   MC_DIR, // allowed only on jarvis/* branches — checked at runtime
 ];
