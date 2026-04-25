@@ -388,8 +388,23 @@ export const XPOZ_TOOLS = [
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|proyectos?|projects?|northstar|north\s*star|sync\w*\s+(?:\S+\s+)*(?:commit|mycommit|db\.mycommit)|db\.mycommit|sincroniza(?:r|ci[oó]n)?(?:\s+\S+){0,3}\s+(?:commit|northstar|mycommit))/i,
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|northstar|north\s*star|sync\w*\s+(?:\S+\s+)*(?:commit|mycommit|db\.mycommit)|db\.mycommit|sincroniza(?:r|ci[oó]n)?(?:\s+\S+){0,3}\s+(?:commit|northstar|mycommit))/i,
     group: "northstar_read",
+  },
+  // Projects scope — entities distinct from NorthStar goals. Lifecycle ops
+  // (reactivate/archive/pause/complete/activate), status changes, and
+  // credential/URL/config updates. Two patterns handle verb-noun and
+  // noun-verb orders. Verb alternations use exact forms with `\b` to avoid
+  // matching adverbs like "activamente"/"completamente"/"infografía".
+  {
+    pattern:
+      /\b(?:reactiva|reactivar|activa|activar|archiva|archivar|pausa|pausar|completa|completar|actualiza|actualizar|updates?|updated|updating|creas?|crear|nuev[oa]s?|status|estado|credentials?|credenciales?|info|detalles|muestra|mu[eé]stra(?:me|lo|la|nos)?|show|describe|describir|descr[ií]beme)\b(?:\s+\S+){0,5}\s*\b(?:proyectos?|projects?)\b/i,
+    group: "projects",
+  },
+  {
+    pattern:
+      /\b(?:proyectos?|projects?)\b(?:\s+\S+){0,8}\s*\b(?:reactiva|reactivar|activa|activar|archiva|archivar|pausa|pausar|completa|completar|actualiza|actualizar|updates?|updated|updating|status|estado|credentials?|credenciales?)\b/i,
+    group: "projects",
   },
   // northstar_write — split into small patterns to avoid catastrophic regex backtracking.
   // Multiple entries with the same group are OR'd (any match activates the group).
@@ -1030,6 +1045,7 @@ export function scopeToolsForMessage(
     activeGroups.add("utility");
     activeGroups.add("seo");
     activeGroups.add("ads");
+    activeGroups.add("projects");
   }
 
   if (
@@ -1085,6 +1101,12 @@ export function scopeToolsForMessage(
   if (activeGroups.has("coding")) {
     tools.push(...CODING_TOOLS);
     // Projects need write access in coding context
+    tools.push("project_get", "project_update");
+  }
+  if (activeGroups.has("projects")) {
+    // Project entity operations — distinct from NorthStar goal mutations.
+    // project_list is in MISC_TOOLS (always available); only get/update need
+    // explicit scope activation since they are deferred.
     tools.push("project_get", "project_update");
   }
   if (activeGroups.has("crm") && options.hasCrm) {

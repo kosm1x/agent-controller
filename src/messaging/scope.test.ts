@@ -66,6 +66,76 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
+  it("projects scope loads project_get/project_update on reactivate verb", () => {
+    const tools = scope("Reactiva el proyecto williams-entry-radar");
+    expect(tools).toContain("project_update");
+    expect(tools).toContain("project_get");
+  });
+
+  it("projects scope loads project tools on archive verb", () => {
+    const tools = scope("archiva el proyecto vlmp");
+    expect(tools).toContain("project_update");
+  });
+
+  it("projects scope loads project tools on status update phrasing", () => {
+    const tools = scope("actualiza proyecto x status active");
+    expect(tools).toContain("project_update");
+  });
+
+  it("projects scope loads project tools on credentials update", () => {
+    const tools = scope("guarda las credenciales del proyecto crm-azteca");
+    expect(tools).toContain("project_update");
+  });
+
+  it("pure project ops do NOT activate NorthStar write tools", () => {
+    // Use 'archiva' (isolating verb) — 'reactiva' incidentally matches the
+    // existing coding regex's bare 'react' alternative, which would also pull
+    // JARVIS_WRITE_TOOLS via the coding gate. That's a separate pre-existing
+    // behavior; here we only verify that the projects scope by itself does
+    // not leak NorthStar write tools.
+    const tools = scope("archiva el proyecto vlmp");
+    expect(tools).toContain("project_update");
+    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).not.toContain("jarvis_file_update");
+    expect(tools).not.toContain("jarvis_file_delete");
+  });
+
+  it("NorthStar mentions without project verbs do NOT activate project tools", () => {
+    const tools = scope("Qué tareas tengo pendientes?");
+    expect(tools).not.toContain("project_update");
+    expect(tools).not.toContain("project_get");
+  });
+
+  it("projects scope does NOT over-fire on adverbs that share verb prefixes", () => {
+    // "activamente"/"completamente"/"infografía" must not trigger projects.
+    // Word boundary on the verb alternation prevents adverbial false positives.
+    expect(scope("trabajamos activamente en este proyecto")).not.toContain(
+      "project_update",
+    );
+    expect(scope("revisé completamente el proyecto")).not.toContain(
+      "project_update",
+    );
+    expect(scope("genera una infografía sobre proyectos")).not.toContain(
+      "project_update",
+    );
+  });
+
+  it("projects scope handles accent-tolerant read verbs", () => {
+    expect(scope("muéstrame el proyecto vlmp")).toContain("project_get");
+    expect(scope("descríbeme el proyecto vlmp")).toContain("project_get");
+  });
+
+  it("projects regex patterns are bounded against catastrophic backtracking", () => {
+    // Both new patterns use {0,5} and {0,8} bounded slop. A pathological
+    // input should still complete in linear time.
+    const long = "a".repeat(2000) + " proyecto " + "b".repeat(2000);
+    const start = Date.now();
+    for (const p of DEFAULT_SCOPE_PATTERNS) {
+      p.pattern.test(long);
+    }
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+
   it("Lightpanda core tools always available, extras scope-gated", () => {
     const tools = scope("Hola, buenos días");
     // Core Lightpanda: goto + markdown always available
