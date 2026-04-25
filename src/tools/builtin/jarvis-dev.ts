@@ -6,6 +6,9 @@
  */
 
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 import type { Tool } from "../types.js";
 
 const MC_DIR = "/root/claude/mission-control";
@@ -17,6 +20,29 @@ const TIMEOUT_MS = 300_000;
 // Git ops (status/add/commit/push) can take longer than 10s on a loaded box.
 // `push` in particular hits the network and does pre-commit hooks.
 const GIT_TIMEOUT_MS = 60_000;
+
+// action=test caches its result so action=pr can skip re-running the full
+// suite when nothing has changed since. Tests take 136s+ and that alone can
+// exceed the caller's per-query budget.
+const TEST_CACHE_FILE = join(MC_DIR, ".git", "jarvis-test-cache.json");
+export const TEST_CACHE_TTL_MS = 15 * 60 * 1000;
+
+export interface TestCacheEntry {
+  branch: string;
+  head_sha: string;
+  dirty_hash: string;
+  tested_at_ms: number;
+  typecheck: string;
+  tests: string;
+  ready_for_pr: boolean;
+}
+
+export interface WorkingTreeState {
+  branch: string;
+  head_sha: string;
+  dirty_hash: string;
+  now_ms: number;
+}
 
 function run(args: string[], opts?: { timeout?: number }): string {
   return execFileSync("git", args, {
@@ -32,6 +58,133 @@ function currentBranch(): string {
   } catch {
     return "HEAD";
   }
+}
+
+/**
+ * Pure hash over the inputs that describe a working tree's state.
+ * `git diff` does NOT include untracked-file content, so we hash untracked
+ * files separately — otherwise an untracked file edited in-place would be
+ * invisible to the cache key. Exported for unit testing.
+ */
+export function computeDirtyHash(inputs: {
+  porcelain: string;
+  diffUnstaged: string;
+  diffStaged: string;
+  untracked: Array<{ path: string; bytes: Buffer }>;
+}): string {
+  const hasher = createHash("sha256");
+  hasher.update(inputs.porcelain);
+  hasher.update("\0");
+  hasher.update(inputs.diffUnstaged);
+  hasher.update("\0");
+  hasher.update(inputs.diffStaged);
+  hasher.update("\0");
+  // Sort by path so directory-listing order doesn't perturb the hash.
+  const sorted = [...inputs.untracked].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
+  for (const { path, bytes } of sorted) {
+    hasher.update(path);
+    hasher.update("\0");
+    hasher.update(bytes);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex").slice(0, 16);
+}
+
+function readUntrackedContents(): Array<{ path: string; bytes: Buffer }> {
+  const list = run(["ls-files", "--others", "--exclude-standard"])
+    .split("\n")
+    .filter(Boolean);
+  const out: Array<{ path: string; bytes: Buffer }> = [];
+  for (const path of list) {
+    try {
+      out.push({ path, bytes: readFileSync(join(MC_DIR, path)) });
+    } catch {
+      // File may have vanished between `ls-files` and read — include the
+      // path with empty bytes so absence is still part of the signature.
+      out.push({ path, bytes: Buffer.alloc(0) });
+    }
+  }
+  return out;
+}
+
+function computeWorkingTreeState(): Omit<WorkingTreeState, "now_ms"> | null {
+  try {
+    const branch = currentBranch();
+    const head_sha = run(["rev-parse", "HEAD"]);
+    const porcelain = run(["status", "--porcelain"]);
+    const diffUnstaged = run(["diff"]);
+    const diffStaged = run(["diff", "--staged"]);
+    const untracked = readUntrackedContents();
+    const dirty_hash = computeDirtyHash({
+      porcelain,
+      diffUnstaged,
+      diffStaged,
+      untracked,
+    });
+    return { branch, head_sha, dirty_hash };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure check: did the working tree change between two snapshots taken
+ * around the test run? If so, tests ran on code different from what
+ * ended up on disk and the result must not be trusted. Null snapshots
+ * mean we couldn't measure — treat as mutated, the safe default.
+ * Exported for unit testing.
+ */
+export function detectRunMutation(
+  pre: Omit<WorkingTreeState, "now_ms"> | null,
+  post: Omit<WorkingTreeState, "now_ms"> | null,
+): boolean {
+  if (!pre || !post) return true;
+  if (pre.branch !== post.branch) return true;
+  if (pre.head_sha !== post.head_sha) return true;
+  if (pre.dirty_hash !== post.dirty_hash) return true;
+  return false;
+}
+
+function readTestCache(): TestCacheEntry | null {
+  try {
+    return JSON.parse(readFileSync(TEST_CACHE_FILE, "utf-8")) as TestCacheEntry;
+  } catch {
+    return null;
+  }
+}
+
+function writeTestCache(entry: TestCacheEntry): void {
+  try {
+    writeFileSync(TEST_CACHE_FILE, JSON.stringify(entry, null, 2));
+  } catch {
+    // Best-effort cache write; never fail the action because of cache IO.
+  }
+}
+
+/**
+ * Pure check: is this cache entry still trustworthy for the current state?
+ * Exported for unit testing — real callers go through getFreshPassingCache.
+ */
+export function isCacheFresh(
+  cache: TestCacheEntry | null,
+  state: WorkingTreeState,
+): boolean {
+  if (!cache) return false;
+  if (!cache.ready_for_pr) return false;
+  if (cache.branch !== state.branch) return false;
+  if (state.now_ms - cache.tested_at_ms > TEST_CACHE_TTL_MS) return false;
+  if (cache.head_sha !== state.head_sha) return false;
+  if (cache.dirty_hash !== state.dirty_hash) return false;
+  return true;
+}
+
+function getFreshPassingCache(branch: string): TestCacheEntry | null {
+  const wt = computeWorkingTreeState();
+  if (!wt || wt.branch !== branch) return null;
+  const cache = readTestCache();
+  return isCacheFresh(cache, { ...wt, now_ms: Date.now() }) ? cache : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +252,12 @@ function actionTest(): string {
     tests: "pending",
   };
 
+  // Snapshot the working tree BEFORE tests run so we can detect any
+  // concurrent mutation (another turn's file_write, a background process,
+  // etc.) and refuse to cache a result bound to code that's no longer
+  // on disk.
+  const preState = computeWorkingTreeState();
+
   // Typecheck
   try {
     execFileSync("npx", ["tsc", "--noEmit"], {
@@ -157,12 +316,39 @@ function actionTest(): string {
     }
   }
 
-  return JSON.stringify({
-    branch,
-    ...results,
-    ready_for_pr:
-      results.typecheck === "PASS" && results.tests.startsWith("PASS"),
-  });
+  // Re-snapshot AFTER tests ran. If the working tree changed during the
+  // suite, `tests: PASS` describes code that is no longer on disk — we
+  // must not cache a green result for a state that wasn't actually tested.
+  const postState = computeWorkingTreeState();
+  const mutatedDuringRun = detectRunMutation(preState, postState);
+  if (mutatedDuringRun && results.tests.startsWith("PASS")) {
+    results.tests =
+      "STALE: working tree changed during test run — tested code differs from current disk state. Re-run action=test.";
+  }
+
+  const ready_for_pr =
+    !mutatedDuringRun &&
+    results.typecheck === "PASS" &&
+    results.tests.startsWith("PASS");
+
+  // Cache the result so action=pr can skip re-running the suite if nothing
+  // has changed. Both pass and fail are cached; only passing entries are
+  // honored by getFreshPassingCache. Key the cache on `preState` — the
+  // state the tests actually ran on — so cache lookup at action=pr time
+  // matches only if the tree is still what was tested.
+  if (preState) {
+    writeTestCache({
+      branch: preState.branch,
+      head_sha: preState.head_sha,
+      dirty_hash: preState.dirty_hash,
+      tested_at_ms: Date.now(),
+      typecheck: results.typecheck,
+      tests: results.tests,
+      ready_for_pr,
+    });
+  }
+
+  return JSON.stringify({ branch, ...results, ready_for_pr });
 }
 
 function actionPr(title: string, body: string): string {
@@ -173,8 +359,21 @@ function actionPr(title: string, body: string): string {
     });
   }
 
-  // Run tests first — gate PR on green
-  const testResult = JSON.parse(actionTest());
+  // Trust a fresh green action=test cache if branch + HEAD + working tree
+  // all match, so action=pr doesn't burn 136s of the caller's budget on a
+  // suite that was just run. Cache-miss path runs tests inline as before.
+  const cached = getFreshPassingCache(branch);
+  const testResult: {
+    typecheck: string;
+    tests: string;
+    ready_for_pr: boolean;
+  } = cached
+    ? {
+        typecheck: cached.typecheck,
+        tests: `${cached.tests} (cached ${Math.round((Date.now() - cached.tested_at_ms) / 1000)}s ago)`,
+        ready_for_pr: true,
+      }
+    : JSON.parse(actionTest());
   if (!testResult.ready_for_pr) {
     return JSON.stringify({
       error: "Tests must pass before opening a PR.",
@@ -236,46 +435,67 @@ function actionPr(title: string, body: string): string {
     });
   }
 
-  // Create PR via gh CLI
-  try {
-    const prBody = `${body}\n\n---\n🤖 Jarvis-authored PR\nBranch: \`${branch}\`\nTests: ${testResult.tests}`;
-    const prUrl = execFileSync(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--base",
-        "main",
-        "--head",
-        branch,
-        "--title",
-        title,
-        "--body",
-        prBody,
-        "--label",
-        "jarvis-authored",
-      ],
-      {
-        cwd: MC_DIR,
-        timeout: GIT_TIMEOUT_MS,
-        encoding: "utf-8",
-      },
-    ).trim();
+  // Create PR via gh CLI. Try with --label first; if the label doesn't
+  // exist yet, retry without it so a missing repo label never blocks a
+  // code-ready PR. (Run `gh label create jarvis-authored` once per repo.)
+  const prBody = `${body}\n\n---\n🤖 Jarvis-authored PR\nBranch: \`${branch}\`\nTests: ${testResult.tests}`;
+  const baseArgs = [
+    "pr",
+    "create",
+    "--base",
+    "main",
+    "--head",
+    branch,
+    "--title",
+    title,
+    "--body",
+    prBody,
+  ];
+  const createPr = (args: string[]): string =>
+    execFileSync("gh", args, {
+      cwd: MC_DIR,
+      timeout: GIT_TIMEOUT_MS,
+      encoding: "utf-8",
+    }).trim();
 
-    return JSON.stringify({
-      success: true,
-      pr_url: prUrl,
-      branch,
-      tests: testResult.tests,
-    });
+  let prUrl: string;
+  let labelApplied = true;
+  try {
+    prUrl = createPr([...baseArgs, "--label", "jarvis-authored"]);
   } catch (err) {
-    // PR creation failed but code is pushed — report the branch
-    return JSON.stringify({
-      error: `PR creation failed (code is pushed to ${branch}): ${err instanceof Error ? err.message : err}`,
-      branch,
-      pushed: true,
-    });
+    const msg = err instanceof Error ? err.message : String(err);
+    const labelMissing = /not found|could not add label/i.test(msg);
+    if (!labelMissing) {
+      return JSON.stringify({
+        error: `PR creation failed (code is pushed to ${branch}): ${msg}`,
+        branch,
+        pushed: true,
+      });
+    }
+    try {
+      prUrl = createPr(baseArgs);
+      labelApplied = false;
+    } catch (err2) {
+      return JSON.stringify({
+        error: `PR creation failed (code is pushed to ${branch}): ${err2 instanceof Error ? err2.message : err2}`,
+        branch,
+        pushed: true,
+      });
+    }
   }
+
+  return JSON.stringify({
+    success: true,
+    pr_url: prUrl,
+    branch,
+    tests: testResult.tests,
+    ...(labelApplied
+      ? {}
+      : {
+          label_warning:
+            "jarvis-authored label not found in repo; PR opened without label. Run: gh label create jarvis-authored",
+        }),
+  });
 }
 
 function actionStatus(): string {
@@ -321,9 +541,12 @@ USE WHEN:
 WORKFLOW:
 1. jarvis_dev action="branch" type="feat" slug="oilprice-adapter" → creates jarvis/feat/oilprice-adapter
 2. Use file_edit/file_write on /root/claude/mission-control/src/... to make changes
-3. jarvis_dev action="test" → runs typecheck + full test suite
+3. jarvis_dev action="test" → runs typecheck + full test suite (~136s)
 4. jarvis_dev action="pr" title="feat: add OilPrice adapter" body="..." → commits, pushes, opens PR
 5. User reviews and merges the PR
+
+PERFORMANCE TIP:
+action="pr" trusts a recent green action="test" result if branch + HEAD + working tree still match (15-min TTL). Run action="test" in its own turn first so action="pr" can skip the suite and fit within the per-query budget.
 
 SAFETY:
 - You can ONLY work on jarvis/* branches, NEVER on main
