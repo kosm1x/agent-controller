@@ -21,6 +21,7 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "qwen-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "qwen3-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "qwen3.5-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
+  "qwen3.6-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "qwen-turbo": { promptCostPer1k: 0.0003, completionCostPer1k: 0.0006 },
   "qwen-max": { promptCostPer1k: 0.002, completionCostPer1k: 0.006 },
   // Qwen coder series
