@@ -158,6 +158,34 @@ describe("buildKnowledgeBaseSection", () => {
     expect(buildKnowledgeBaseSection([], false)).toBe(null);
   });
 
+  it("never includes reference-qualifier files (e.g. code-evaluations journal)", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals: string[]) => {
+      const all = [
+        {
+          path: "knowledge/procedures/code-generation-sop.md",
+          title: "SOP",
+          content: "evergreen",
+          qualifier: "conditional",
+          condition: "coding",
+          priority: 50,
+        },
+        {
+          path: "knowledge/journal/code-evaluations.md",
+          title: "Journal",
+          content: "27 KB of project evaluations",
+          qualifier: "reference",
+          condition: null,
+          priority: 50,
+        },
+      ];
+      return all.filter((f) => quals.includes(f.qualifier));
+    });
+    const result = buildKnowledgeBaseSection(["shell_exec"], false);
+    expect(result).toContain("SOP");
+    expect(result).not.toContain("27 KB of project evaluations");
+    expect(result).not.toContain("Journal");
+  });
+
   it("auto-injects project README when message mentions a known slug", () => {
     vi.mocked(getFilesByQualifier).mockReturnValue([
       {
