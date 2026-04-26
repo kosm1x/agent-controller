@@ -47,21 +47,8 @@
 
 ### P1 — verify recent fixes hold under real traffic
 
-**[P1-A] 24h cost re-measure** — _data-gathering, no code_
-
-- Question: does $0.41 → $0.25 per-task hold across a full mixed-traffic day?
-- How: query `cost_ledger` filtered to post-deploy timestamp (Session 109 deploy completed ~22:00 MX 2026-04-26). Print N + window + per-PID breakdown. Honor the protocol from `feedback_metrics_extrapolation.md` — sample list before AVG, drop first N tasks after each mc restart, write the math for any extrapolation.
-- If holds: fold into next benchmark + close as a stabilization win.
-- If not: find the confounder (probably either prompt-cache warmup behavior or a scope-distribution skew in the n=5 sample).
-- **Hard rule**: do not headline a savings number tomorrow without N≥30 and the sample window printed inline. No more n=1-as-trend.
-
-**[P1-B] Hindsight recall re-eval** — _15 min probe_
-
-- Disabled by default since 2026-04-25 (`HINDSIGHT_RECALL_ENABLED=false`). The CE reranker was 22.2s on 244 candidates against a 1.5s client cap.
-- Probe: hit the recall endpoint manually with a known-warm query, time it.
-  - If <1s: re-enable, watch for one full day, re-evaluate.
-  - If still 22s+: leave disabled, file a ticket on the upstream service, move on.
-- Don't re-enable speculatively. Disabled is the correct state until measured otherwise.
+- ~~[P1-A] 24h cost re-measure~~ — **DONE 2026-04-26.** Real delta: $0.2142 → $0.2035 per task (n=55 vs n=6, −5%). Original "$0.41 → $0.25 (−39%)" headline was wrong on every dimension — extrapolated from n=5 without checking cache structure. Aggregate cache-read ratio dropped 83% → 59% post-deploy: KB-prefix variability ate most of the prompt-shrink savings. **Follow-up next session**: re-measure with N≥30 post-deploy across full mixed-traffic day. Architectural lesson captured in `feedback_cache_prefix_variability.md` and folded into V8-VISION §3-S1.
+- ~~[P1-B] Hindsight recall re-eval~~ — **DONE 2026-04-26.** Probed 4 times across 2 banks: mc-jarvis 16.6-18.1s (essentially unchanged from 22.2s baseline), mc-operational 3.4s. Both still over the 1.5s client cap. Decision: leave disabled. Operator action: file upstream ticket with `vectorize-io/hindsight` on CE rerank latency. `HINDSIGHT_RECALL_ENABLED` stays `false`.
 
 ### P2 — known small cleanups
 
