@@ -20,6 +20,7 @@ import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
+import { buildKnowledgeBaseSection } from "../messaging/kb-injection.js";
 import {
   extractProvenance,
   classifySources,
@@ -191,21 +192,35 @@ async function recallLearnings(
   }
 }
 
-async function buildGoalPrompt(goal: Goal, context: string): Promise<string> {
+async function buildGoalPrompt(
+  goal: Goal,
+  context: string,
+  toolNames: string[],
+): Promise<string> {
   const criteria =
     goal.completionCriteria.length > 0
       ? goal.completionCriteria.map((c, i) => `  ${i + 1}. ${c}`).join("\n")
       : "  (no specific criteria — use best judgment)";
 
-  // Inject prior learnings if available
   const learnings = await recallLearnings(goal.description, 10);
   const learningsSection =
     learnings.length > 0
       ? `## Prior learnings\n${learnings.map((l, i) => `  ${i + 1}. ${l}`).join("\n")}\n\n`
       : "";
 
+  // Pull always-read + enforce + scope-conditional KB the same way fast-runner
+  // does — heavy/swarm tasks were operating without `enforce` directives like
+  // repo-authorization.md until the kb-injection module was extracted.
+  const kbSection = buildKnowledgeBaseSection(
+    toolNames,
+    false,
+    goal.description,
+    "executor",
+  );
+
   return (
     `You are executing a single goal as part of a larger plan. Use the available tools to achieve the goal.\n\n` +
+    (kbSection ? `${kbSection}\n\n` : "") +
     `## Goal\n${goal.description}\n\n` +
     `## Completion Criteria\n${criteria}\n\n` +
     (context ? `## Context from completed goals\n${context}\n\n` : "") +
@@ -283,7 +298,11 @@ export async function executeGoal(
     }
 
     try {
-      const systemPrompt = await buildGoalPrompt(goal, context);
+      const systemPrompt = await buildGoalPrompt(
+        goal,
+        context,
+        toolNames ?? [],
+      );
       const messages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Execute this goal: ${goal.description}` },

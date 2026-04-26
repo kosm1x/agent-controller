@@ -20,6 +20,12 @@ vi.mock("../config.js", () => ({
   getConfig: () => ({ inferencePrimaryProvider: "openai" }),
 }));
 
+// Mock jarvis_files DB so the kb-injection helper has deterministic input
+vi.mock("../db/jarvis-fs.js", () => ({
+  getFilesByQualifier: vi.fn(() => []),
+  getFile: vi.fn(() => null),
+}));
+
 // Mock tool registry
 vi.mock("../tools/registry.js", () => ({
   toolRegistry: {
@@ -191,10 +197,37 @@ describe("executeGoal", () => {
     const result = await executeGoal(makeGoal(), "");
     expect(result.ok).toBe(true);
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
-  }, // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
-  // + up to 5s jitter. Real delivery would sleep the full cooldown; this
-  // test tolerates that because the mock resolves on the second call.
+  }, // test tolerates that because the mock resolves on the second call. // + up to 5s jitter. Real delivery would sleep the full cooldown; this // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
   45_000);
+
+  it("injects [JARVIS KNOWLEDGE BASE] into system prompt when enforce file present", async () => {
+    const { getFilesByQualifier } = await import("../db/jarvis-fs.js");
+    vi.mocked(getFilesByQualifier).mockReturnValueOnce([
+      {
+        path: "directives/repo-authorization.md",
+        title: "Repo Authorization",
+        content: "Only EurekaMD repos.",
+        qualifier: "enforce",
+        condition: null,
+        priority: 0,
+      },
+    ]);
+    let capturedSystem = "";
+    mockInferWithTools.mockImplementationOnce(async (messages) => {
+      capturedSystem = (messages[0]?.content as string) ?? "";
+      return {
+        content: "ok",
+        messages: [{ role: "assistant", content: "ok" }],
+        toolRepairs: [],
+        totalUsage: { prompt_tokens: 50, completion_tokens: 10 },
+      };
+    });
+
+    await executeGoal(makeGoal(), "", ["shell_exec"]);
+    expect(capturedSystem).toContain("[JARVIS KNOWLEDGE BASE]");
+    expect(capturedSystem).toContain("MANDATORY: Repo Authorization");
+    expect(capturedSystem).toContain("Only EurekaMD repos.");
+  });
 });
 
 describe("executeGraph", () => {

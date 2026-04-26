@@ -20,52 +20,14 @@ import {
 } from "../intelligence/scope-telemetry.js";
 import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
-import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
 import {
-  CRM_TOOLS_SCOPE,
-  GOOGLE_TOOLS,
-  WORDPRESS_TOOLS,
-  CODING_TOOLS,
-  BROWSER_TOOLS,
-  SCHEDULE_TOOLS,
-  RESEARCH_TOOLS,
-  TEACHING_TOOLS,
-} from "../messaging/scope.js";
+  buildKnowledgeBaseSection,
+  conditionMatches,
+} from "../messaging/kb-injection.js";
 import { getConfig } from "../config.js";
 
-/**
- * Maps a `condition=` keyword on a jarvis_file row to the scope-tool group
- * that gates injection. Imported from `messaging/scope.ts` to stay in sync
- * with the source-of-truth scope definitions; do NOT re-derive tool lists
- * via string prefixes here (e.g. `t.startsWith("learning_plan_")` would
- * miss `learner_model_status`).
- */
-const CONDITION_TOOL_GROUPS: ReadonlyArray<{
-  keyword: string;
-  tools: readonly string[];
-}> = [
-  { keyword: "crm", tools: CRM_TOOLS_SCOPE },
-  { keyword: "northstar", tools: ["northstar_sync"] },
-  { keyword: "google", tools: GOOGLE_TOOLS },
-  { keyword: "wordpress", tools: WORDPRESS_TOOLS },
-  { keyword: "coding", tools: CODING_TOOLS },
-  { keyword: "browser", tools: BROWSER_TOOLS },
-  { keyword: "schedule", tools: SCHEDULE_TOOLS },
-  { keyword: "reporting", tools: ["web_search", "exa_search", "gmail_send"] },
-  { keyword: "research", tools: RESEARCH_TOOLS },
-  { keyword: "teaching", tools: TEACHING_TOOLS },
-];
-
-export function conditionMatches(
-  condition: string,
-  scopedTools: readonly string[],
-): boolean {
-  const condLower = condition.toLowerCase();
-  return CONDITION_TOOL_GROUPS.some(
-    ({ keyword, tools }) =>
-      condLower.includes(keyword) && tools.some((t) => scopedTools.includes(t)),
-  );
-}
+// Re-export for back-compat with existing imports (e.g. tests).
+export { conditionMatches };
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -80,126 +42,6 @@ STATUS: DONE
 STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
 STATUS: BLOCKED — [what is preventing completion]`;
-
-/**
- * Build the knowledge base injection section from jarvis_files.
- * Fetches always-read + enforce files, plus conditional files matching scope.
- */
-/** Known project slugs for README auto-injection. */
-const PROJECT_SLUGS = [
-  "agent-controller",
-  "braid-jarvis",
-  "cmll-gira-estrellas",
-  "cuatro-flor",
-  "livingjoyfully",
-  "obsidian-brain",
-  "pipesong",
-  "presencia-digital-eurekamd",
-  "reddit-scraper-tool",
-  "vlmp",
-  "williams-radar",
-];
-
-/** Match project names in message text (slug or natural name). */
-function detectProjectInMessage(text: string): string | null {
-  const lower = text.toLowerCase();
-  for (const slug of PROJECT_SLUGS) {
-    // Match slug directly or as separate words (e.g. "cuatro flor", "living joyfully")
-    if (lower.includes(slug) || lower.includes(slug.replace(/-/g, " "))) {
-      return slug;
-    }
-  }
-  // Common aliases
-  if (/\bcrm\b/i.test(text)) return "crm-azteca";
-  if (/\bvlmp\b/i.test(text)) return "vlmp";
-  if (/\bpipesong\b/i.test(text)) return "pipesong";
-  // "Williams" alone always refers to the Williams Entry Radar in this
-  // workspace. We don't alias bare "radar" — "PipeSong Tech Radar" and
-  // other project-specific radars would collide.
-  if (/\bwilliams\b/i.test(text)) return "williams-radar";
-  return null;
-}
-
-function buildKnowledgeBaseSection(
-  scopedTools: string[],
-  enforceOnly = false,
-  messageText?: string,
-): string | null {
-  try {
-    const files = enforceOnly
-      ? getFilesByQualifier("enforce")
-      : getFilesByQualifier("always-read", "enforce", "conditional");
-    if (files.length === 0) return null;
-
-    const sections: string[] = [];
-    let totalChars = 0;
-    const KB_CHAR_BUDGET = 8000; // ~2000 tokens — protects prompt budget
-
-    for (const f of files) {
-      if (
-        f.qualifier === "conditional" &&
-        f.condition &&
-        !conditionMatches(f.condition, scopedTools)
-      ) {
-        continue;
-      }
-
-      const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
-      const section = `### ${prefix}${f.title}\n${f.content}`;
-
-      // Hard budget cap — enforce + always-read guaranteed, others fill remaining
-      if (
-        f.qualifier !== "enforce" &&
-        f.qualifier !== "always-read" &&
-        totalChars + section.length > KB_CHAR_BUDGET
-      ) {
-        continue;
-      }
-      sections.push(section);
-      totalChars += section.length;
-    }
-
-    // Project README auto-injection: when the user mentions a project by name,
-    // inject that project's README.md so the LLM has full context without
-    // needing a tool call first. This bypasses KB_CHAR_BUDGET because an
-    // explicit project mention is a strong signal — if code-generation-sop.md
-    // (31K always-read) has already consumed the budget, silently skipping
-    // the project README leaves Jarvis blind to exactly the context the user
-    // is asking about. That caused the 2026-04-25 Williams Radar confusion.
-    if (messageText) {
-      const projectSlug = detectProjectInMessage(messageText);
-      if (projectSlug) {
-        try {
-          const readme = getFile(`projects/${projectSlug}/README.md`);
-          if (readme) {
-            sections.push(
-              `### Project Context: ${readme.title}\n${readme.content}`,
-            );
-            totalChars += readme.content.length;
-            console.log(
-              `[fast-runner] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars, totalChars now ${totalChars})`,
-            );
-          }
-        } catch {
-          // Project README not found — non-fatal
-        }
-      }
-    }
-
-    if (sections.length === 0) return null;
-
-    if (totalChars > 6000) {
-      console.warn(
-        `[fast-runner] KB injection at ${totalChars} chars — enforce+always-read files may be too large`,
-      );
-    }
-
-    return `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
-  } catch {
-    // DB not ready or table missing — non-fatal
-    return null;
-  }
-}
 
 /**
  * Verification nudge appended to multi-step task results (≥3 tool calls with
@@ -817,6 +659,7 @@ export const fastRunner: Runner = {
         scopedTools,
         isReadOnlyTask,
         lastUserMsg,
+        "fast-runner",
       );
       if (kb) {
         messages.push({ role: "system", content: kb });

@@ -14,6 +14,7 @@ import { GoalStatus, parseLLMJson } from "./types.js";
 import type { TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
+import { buildKnowledgeBaseSection } from "../messaging/kb-injection.js";
 
 // v7.9 Prometheus Sonnet port: route LLM calls through the Claude Agent SDK
 // when the primary provider is claude-sdk. Matches the fast-runner branch in
@@ -146,8 +147,16 @@ export async function plan(
     // Non-fatal — plan without map context
   }
 
+  // Inject enforce-only KB so plan-time prompts respect MANDATORY directives
+  // (e.g. directives/repo-authorization.md). Skip always-read/conditional —
+  // the planner only needs hard policy, not the per-task SOP.
+  const enforceKb = buildKnowledgeBaseSection([], true, undefined, "planner");
+  const systemPrompt = enforceKb
+    ? `${enforceKb}\n\n${PLAN_SYSTEM}`
+    : PLAN_SYSTEM;
+
   const messages: ChatMessage[] = [
-    { role: "system", content: PLAN_SYSTEM },
+    { role: "system", content: systemPrompt },
     {
       role: "user",
       content: `## Task\n${taskDescription}${mapBlock}${learningsBlock}\n\nDecompose this task into a goal graph. Respond with JSON only.`,
@@ -175,8 +184,13 @@ export async function replan(
   graph: GoalGraph,
   reason: string,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
+  const enforceKb = buildKnowledgeBaseSection([], true, undefined, "planner");
+  const systemPrompt = enforceKb
+    ? `${enforceKb}\n\n${REPLAN_SYSTEM}`
+    : REPLAN_SYSTEM;
+
   const messages: ChatMessage[] = [
-    { role: "system", content: REPLAN_SYSTEM },
+    { role: "system", content: systemPrompt },
     {
       role: "user",
       content:
