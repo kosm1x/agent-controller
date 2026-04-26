@@ -3,8 +3,64 @@ import {
   detectsHallucinatedExecution,
   hasUserConfirmedDeletion,
   classifyToolError,
+  conditionMatches,
   WRITE_TOOLS,
 } from "./fast-runner.js";
+
+describe("conditionMatches (KB injection conditional matcher)", () => {
+  it("matches coding when shell_exec is scoped", () => {
+    expect(conditionMatches("coding", ["shell_exec", "file_read"])).toBe(true);
+  });
+
+  it("does NOT match coding without any CODING_TOOLS in scope", () => {
+    expect(conditionMatches("coding", ["gmail_send", "northstar_sync"])).toBe(
+      false,
+    );
+  });
+
+  it("matches teaching for both learning_plan_* and learner_model_status", () => {
+    expect(conditionMatches("teaching", ["learning_plan_quiz"])).toBe(true);
+    expect(conditionMatches("teaching", ["learner_model_status"])).toBe(true);
+  });
+
+  it("matches multi-keyword conditions on any keyword", () => {
+    expect(conditionMatches("reporting, schedule, crm", ["crm_query"])).toBe(
+      true,
+    );
+    expect(
+      conditionMatches("reporting, schedule, crm", ["schedule_task"]),
+    ).toBe(true);
+    expect(conditionMatches("reporting, schedule, crm", ["web_search"])).toBe(
+      true,
+    );
+  });
+
+  it("does NOT match when no keyword maps to any scoped tool", () => {
+    expect(conditionMatches("coding", ["gmail_search"])).toBe(false);
+    expect(conditionMatches("teaching", ["shell_exec"])).toBe(false);
+    expect(conditionMatches("crm", [])).toBe(false);
+  });
+
+  it("matches google for any GOOGLE_TOOLS member, not just gmail_send", () => {
+    expect(conditionMatches("google", ["gdrive_list"])).toBe(true);
+    expect(conditionMatches("google", ["calendar_list"])).toBe(true);
+  });
+
+  it("schedule no longer matches via always-on list_schedules sentinel", () => {
+    expect(conditionMatches("schedule", ["list_schedules"])).toBe(false);
+    expect(conditionMatches("schedule", ["schedule_task"])).toBe(true);
+    expect(conditionMatches("schedule", ["delete_schedule"])).toBe(true);
+  });
+
+  it("is case-insensitive on the condition string", () => {
+    expect(conditionMatches("CODING", ["shell_exec"])).toBe(true);
+    expect(conditionMatches("Teaching", ["learning_plan_quiz"])).toBe(true);
+  });
+
+  it("returns false on empty condition", () => {
+    expect(conditionMatches("", ["shell_exec"])).toBe(false);
+  });
+});
 
 describe("detectsHallucinatedExecution", () => {
   // --- Layer 1: Full hallucination (zero tools) ---

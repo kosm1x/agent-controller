@@ -21,7 +21,51 @@ import {
 import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+import {
+  CRM_TOOLS_SCOPE,
+  GOOGLE_TOOLS,
+  WORDPRESS_TOOLS,
+  CODING_TOOLS,
+  BROWSER_TOOLS,
+  SCHEDULE_TOOLS,
+  RESEARCH_TOOLS,
+  TEACHING_TOOLS,
+} from "../messaging/scope.js";
 import { getConfig } from "../config.js";
+
+/**
+ * Maps a `condition=` keyword on a jarvis_file row to the scope-tool group
+ * that gates injection. Imported from `messaging/scope.ts` to stay in sync
+ * with the source-of-truth scope definitions; do NOT re-derive tool lists
+ * via string prefixes here (e.g. `t.startsWith("learning_plan_")` would
+ * miss `learner_model_status`).
+ */
+const CONDITION_TOOL_GROUPS: ReadonlyArray<{
+  keyword: string;
+  tools: readonly string[];
+}> = [
+  { keyword: "crm", tools: CRM_TOOLS_SCOPE },
+  { keyword: "northstar", tools: ["northstar_sync"] },
+  { keyword: "google", tools: GOOGLE_TOOLS },
+  { keyword: "wordpress", tools: WORDPRESS_TOOLS },
+  { keyword: "coding", tools: CODING_TOOLS },
+  { keyword: "browser", tools: BROWSER_TOOLS },
+  { keyword: "schedule", tools: SCHEDULE_TOOLS },
+  { keyword: "reporting", tools: ["web_search", "exa_search", "gmail_send"] },
+  { keyword: "research", tools: RESEARCH_TOOLS },
+  { keyword: "teaching", tools: TEACHING_TOOLS },
+];
+
+export function conditionMatches(
+  condition: string,
+  scopedTools: readonly string[],
+): boolean {
+  const condLower = condition.toLowerCase();
+  return CONDITION_TOOL_GROUPS.some(
+    ({ keyword, tools }) =>
+      condLower.includes(keyword) && tools.some((t) => scopedTools.includes(t)),
+  );
+}
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
@@ -92,30 +136,12 @@ function buildKnowledgeBaseSection(
     const KB_CHAR_BUDGET = 8000; // ~2000 tokens — protects prompt budget
 
     for (const f of files) {
-      // Skip conditional files whose condition doesn't match scope
-      if (f.qualifier === "conditional" && f.condition) {
-        const condLower = f.condition.toLowerCase();
-        const matches =
-          (condLower.includes("crm") && scopedTools.includes("crm_query")) ||
-          (condLower.includes("northstar") &&
-            scopedTools.includes("northstar_sync")) ||
-          (condLower.includes("google") &&
-            scopedTools.includes("gmail_send")) ||
-          (condLower.includes("wordpress") &&
-            scopedTools.includes("wp_publish")) ||
-          (condLower.includes("coding") &&
-            scopedTools.includes("shell_exec")) ||
-          (condLower.includes("browser") &&
-            scopedTools.some((t) => t.startsWith("playwright__"))) ||
-          (condLower.includes("schedule") &&
-            scopedTools.includes("list_schedules")) ||
-          (condLower.includes("reporting") &&
-            scopedTools.some((t) =>
-              ["web_search", "exa_search", "gmail_send"].includes(t),
-            )) ||
-          (condLower.includes("teaching") &&
-            scopedTools.some((t) => t.startsWith("learning_plan_")));
-        if (!matches) continue;
+      if (
+        f.qualifier === "conditional" &&
+        f.condition &&
+        !conditionMatches(f.condition, scopedTools)
+      ) {
+        continue;
       }
 
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
