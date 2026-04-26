@@ -670,6 +670,17 @@ export async function queryClaudeSdkAsInfer(
       prompt_tokens: result.usage.promptTokens,
       completion_tokens: result.usage.completionTokens,
       total_tokens: result.usage.promptTokens + result.usage.completionTokens,
+      // v8 S4 phase 2: emit cache fields only when nonzero so the shim's
+      // shape matches the openai path's (which omits these entirely).
+      // Downstream consumers that test `!== undefined` then mean "this
+      // call had cache info" rather than "this call ran on a cache-aware
+      // provider" — the latter is no longer derivable from the value of 0.
+      ...(result.usage.cacheReadTokens > 0 && {
+        cache_read_tokens: result.usage.cacheReadTokens,
+      }),
+      ...(result.usage.cacheCreationTokens > 0 && {
+        cache_creation_tokens: result.usage.cacheCreationTokens,
+      }),
     },
     provider: "claude-sdk",
     latency_ms: result.durationMs || Date.now() - start,
@@ -704,7 +715,12 @@ export async function queryClaudeSdkAsInferWithTools(
 ): Promise<{
   content: string;
   messages: ChatMessage[];
-  totalUsage: { prompt_tokens: number; completion_tokens: number };
+  totalUsage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+  };
   toolRepairs: Array<{ original: string; repaired: string }>;
   exitReason: string;
   roundsCompleted: number;
@@ -777,6 +793,13 @@ export async function queryClaudeSdkAsInferWithTools(
     totalUsage: {
       prompt_tokens: result.usage.promptTokens,
       completion_tokens: result.usage.completionTokens,
+      // v8 S4 phase 2: emit only when nonzero (matches openai-path shape).
+      ...(result.usage.cacheReadTokens > 0 && {
+        cache_read_tokens: result.usage.cacheReadTokens,
+      }),
+      ...(result.usage.cacheCreationTokens > 0 && {
+        cache_creation_tokens: result.usage.cacheCreationTokens,
+      }),
     },
     toolRepairs: [],
     exitReason,

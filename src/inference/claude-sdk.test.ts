@@ -460,6 +460,39 @@ describe("queryClaudeSdkAsInfer (openai-path compatibility)", () => {
     const opts = lastQueryArgs.value?.options as { systemPrompt: string };
     expect(opts.systemPrompt.length).toBeGreaterThan(0);
   });
+
+  it("forwards cache_read_tokens and cache_creation_tokens from SDK usage (v8 S4 phase 2)", async () => {
+    // Without this forward, Prometheus modules calling through this shim
+    // (planner, reflector, provenance, executor self-assess) lose cache
+    // breakdown — heavy/swarm cost_ledger rows then log cache cols as 0
+    // even when the underlying SDK call had cache data.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 200,
+          cache_read_input_tokens: 8000,
+          cache_creation_input_tokens: 500,
+        },
+      },
+    ];
+
+    const response = await queryClaudeSdkAsInfer([
+      { role: "user", content: "test" },
+    ]);
+
+    // SDK builds promptTokens as input + cache_creation + cache_read = full
+    // billable input. The shim must surface cache fields separately so the
+    // ratio cache_read / prompt_tokens is derivable downstream.
+    expect(response.usage.prompt_tokens).toBe(9500);
+    expect(response.usage.completion_tokens).toBe(200);
+    expect(response.usage.cache_read_tokens).toBe(8000);
+    expect(response.usage.cache_creation_tokens).toBe(500);
+  });
 });
 
 describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
@@ -576,6 +609,38 @@ describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
 
     expect(result.exitReason).toBe("max_rounds");
     expect(result.content).toContain("STATUS: BLOCKED");
+  });
+
+  it("forwards cache_read_tokens and cache_creation_tokens from SDK usage (v8 S4 phase 2)", async () => {
+    // Heavy-runner / Prometheus executor accumulators read from
+    // result.totalUsage.cache_read_tokens. Without this forward, every
+    // heavy/swarm goal-execution row in cost_ledger logs cache=0.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: {
+          input_tokens: 2000,
+          output_tokens: 300,
+          cache_read_input_tokens: 15000,
+          cache_creation_input_tokens: 1200,
+        },
+      },
+    ];
+
+    const executor = async () => "mock";
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "go" }],
+      [fakeTool],
+      executor,
+    );
+
+    expect(result.totalUsage.prompt_tokens).toBe(18200);
+    expect(result.totalUsage.completion_tokens).toBe(300);
+    expect(result.totalUsage.cache_read_tokens).toBe(15000);
+    expect(result.totalUsage.cache_creation_tokens).toBe(1200);
   });
 
   // ---------------------------------------------------------------------

@@ -52,6 +52,14 @@ export interface Goal {
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
+  /**
+   * v8 S4 phase 2: Anthropic prompt-cache breakdown. Optional so existing
+   * literal initializers (`{ promptTokens: 0, completionTokens: 0 }`)
+   * remain valid; producers populate when the underlying SDK call returned
+   * cache info. Sums use `?? 0` to propagate defensively.
+   */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 export interface GoalResult {

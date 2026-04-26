@@ -102,6 +102,13 @@ export interface InferenceResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /**
+     * v8 S4 phase 2: Anthropic prompt-cache breakdown. Populated by the
+     * claude-sdk shim (`queryClaudeSdkAsInfer`); undefined on the OpenAI
+     * HTTP path (qwen/llama have no equivalent cache primitive).
+     */
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
   };
   provider: string;
   latency_ms: number;
@@ -1192,7 +1199,17 @@ export async function inferWithTools(
 ): Promise<{
   content: string;
   messages: ChatMessage[];
-  totalUsage: { prompt_tokens: number; completion_tokens: number };
+  totalUsage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    /**
+     * v8 S4 phase 2: cache fields are populated by the claude-sdk shim
+     * (`queryClaudeSdkAsInferWithTools`); the OpenAI path leaves these
+     * undefined since qwen/llama have no equivalent prompt cache.
+     */
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+  };
   toolRepairs: Array<{ original: string; repaired: string }>;
   exitReason: string;
   roundsCompleted: number;

@@ -55,6 +55,12 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       tokenUsage: {
         promptTokens: result.tokenUsage.promptTokens,
         completionTokens: result.tokenUsage.completionTokens,
+        ...(result.tokenUsage.cacheReadTokens !== undefined && {
+          cacheReadTokens: result.tokenUsage.cacheReadTokens,
+        }),
+        ...(result.tokenUsage.cacheCreationTokens !== undefined && {
+          cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
+        }),
       },
       durationMs: Date.now() - start,
       goalGraph: result.goalGraph,
@@ -125,7 +131,12 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       score?: number;
       learnings?: string[];
       toolCalls?: string[];
-      tokenUsage?: { promptTokens: number; completionTokens: number };
+      tokenUsage?: {
+        promptTokens: number;
+        completionTokens: number;
+        cacheReadTokens?: number;
+        cacheCreationTokens?: number;
+      };
       goalGraph?: unknown;
       trace?: unknown[];
       error?: string;

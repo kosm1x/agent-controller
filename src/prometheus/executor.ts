@@ -18,7 +18,7 @@ import { toolRegistry } from "../tools/registry.js";
 import { GoalGraph } from "./goal-graph.js";
 import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
-import type { Goal, GoalResult, ExecutionResult } from "./types.js";
+import type { Goal, GoalResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { buildKnowledgeBaseSection } from "../messaging/kb-injection.js";
 import {
@@ -113,7 +113,7 @@ interface SelfAssessment {
 
 interface SelfAssessResult {
   assessment: SelfAssessment | null;
-  usage: { promptTokens: number; completionTokens: number };
+  usage: TokenUsage;
 }
 
 /**
@@ -145,9 +145,15 @@ export async function selfAssess(
     const response = useSdkPath()
       ? await queryClaudeSdkAsInfer(selfAssessMessages)
       : await infer({ messages: selfAssessMessages, temperature: 0.1 });
-    const usage = {
+    const usage: TokenUsage = {
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
+      ...(response.usage.cache_read_tokens !== undefined && {
+        cacheReadTokens: response.usage.cache_read_tokens,
+      }),
+      ...(response.usage.cache_creation_tokens !== undefined && {
+        cacheCreationTokens: response.usage.cache_creation_tokens,
+      }),
     };
     const raw = parseLLMJson<Partial<SelfAssessment>>(response.content ?? "");
     // Shape guard: ensure required fields have safe defaults
@@ -382,6 +388,10 @@ export async function executeGoal(
       let selfAssessRounds = 0;
       let totalPrompt = result.totalUsage.prompt_tokens;
       let totalCompletion = result.totalUsage.completion_tokens;
+      // v8 S4 phase 2: cache breakdown accumulator. Producers nullish-coalesce
+      // since the openai path returns undefined for cache fields.
+      let totalCacheRead = result.totalUsage.cache_read_tokens ?? 0;
+      let totalCacheCreation = result.totalUsage.cache_creation_tokens ?? 0;
 
       for (let round = 0; round < MAX_SELF_ASSESS; round++) {
         const { assessment, usage: assessUsage } = await selfAssess(
@@ -390,6 +400,8 @@ export async function executeGoal(
         );
         totalPrompt += assessUsage.promptTokens;
         totalCompletion += assessUsage.completionTokens;
+        totalCacheRead += assessUsage.cacheReadTokens ?? 0;
+        totalCacheCreation += assessUsage.cacheCreationTokens ?? 0;
         // null = no criteria to check, met = passed
         if (!assessment || assessment.met) break;
 
@@ -439,6 +451,8 @@ export async function executeGoal(
         currentMessages = retryResult.messages;
         totalPrompt += retryResult.totalUsage.prompt_tokens;
         totalCompletion += retryResult.totalUsage.completion_tokens;
+        totalCacheRead += retryResult.totalUsage.cache_read_tokens ?? 0;
+        totalCacheCreation += retryResult.totalUsage.cache_creation_tokens ?? 0;
         allRepairs.push(...retryResult.toolRepairs);
 
         // Collect additional tool calls from retry
@@ -480,6 +494,8 @@ export async function executeGoal(
             provenanceSummary = condensed.summary;
             totalPrompt += condensed.usage.promptTokens;
             totalCompletion += condensed.usage.completionTokens;
+            totalCacheRead += condensed.usage.cacheReadTokens ?? 0;
+            totalCacheCreation += condensed.usage.cacheCreationTokens ?? 0;
           }
         }
       } catch (err) {
@@ -503,6 +519,10 @@ export async function executeGoal(
         tokenUsage: {
           promptTokens: totalPrompt,
           completionTokens: totalCompletion,
+          ...(totalCacheRead > 0 && { cacheReadTokens: totalCacheRead }),
+          ...(totalCacheCreation > 0 && {
+            cacheCreationTokens: totalCacheCreation,
+          }),
         },
       };
     } catch (err) {
@@ -578,6 +598,8 @@ export async function executeGraph(
   > = [];
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheCreationTokens = 0;
   const maxIterations = graph.size * 4 + 1;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -630,6 +652,9 @@ export async function executeGraph(
       totalToolFailures += goalResult.toolFailures;
       totalPromptTokens += goalResult.tokenUsage.promptTokens;
       totalCompletionTokens += goalResult.tokenUsage.completionTokens;
+      totalCacheReadTokens += goalResult.tokenUsage.cacheReadTokens ?? 0;
+      totalCacheCreationTokens +=
+        goalResult.tokenUsage.cacheCreationTokens ?? 0;
       if (goalResult.toolRepairs)
         allToolRepairs.push(...goalResult.toolRepairs);
       if (goalResult.provenanceRecords) {
@@ -658,6 +683,12 @@ export async function executeGraph(
     tokenUsage: {
       promptTokens: totalPromptTokens,
       completionTokens: totalCompletionTokens,
+      ...(totalCacheReadTokens > 0 && {
+        cacheReadTokens: totalCacheReadTokens,
+      }),
+      ...(totalCacheCreationTokens > 0 && {
+        cacheCreationTokens: totalCacheCreationTokens,
+      }),
     },
     toolRepairs: allToolRepairs,
     provenanceRecords:

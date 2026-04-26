@@ -109,7 +109,12 @@ export const nanoclawRunner: Runner = {
         score?: number;
         learnings?: string[];
         toolCalls?: string[];
-        tokenUsage?: { promptTokens: number; completionTokens: number };
+        tokenUsage?: {
+          promptTokens: number;
+          completionTokens: number;
+          cacheReadTokens?: number;
+          cacheCreationTokens?: number;
+        };
         goalGraph?: unknown;
         trace?: unknown[];
         error?: string;

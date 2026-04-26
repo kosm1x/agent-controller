@@ -20,7 +20,12 @@ export interface PrometheusSnapshot {
   executionState: {
     budgetConsumed: number;
     replanCount: number;
-    tokenUsage: { promptTokens: number; completionTokens: number };
+    tokenUsage: {
+      promptTokens: number;
+      completionTokens: number;
+      cacheReadTokens?: number;
+      cacheCreationTokens?: number;
+    };
     traceEvents: Array<Record<string, unknown>>;
   };
   taskDescription: string;

@@ -78,13 +78,13 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Test**: `SELECT DISTINCT model FROM cost_ledger WHERE created_at >= datetime('now','-1 day')` returns ≥3 distinct models on a normal day.
 
-**Status (2026-04-26)** — _Phase 1 of 2 shipped_:
+**Status (2026-04-26)** — _Phase 1 + Phase 2 shipped_:
 
 - ✅ Schema additive migration: `cache_read_tokens` + `cache_creation_tokens` columns live (default 0 backfill).
 - ✅ Writer (`recordCost`) and dispatcher wire-through forward cache fields end-to-end on the **fast-runner claude-sdk path** (`fast-runner.ts:918` → `dispatcher.ts:499` → `service.ts:64`).
-- ⚠️ **Known gap**: heavy-runner (Prometheus PER) and nanoclaw-runner narrow `RunnerResult.tokenUsage` at the IPC parse boundary (`heavy-runner.ts:128`, `nanoclaw-runner.ts:112`) and Prometheus `TokenUsage` itself (`prometheus/types.ts:52-55`) only carries `{promptTokens, completionTokens}`. These paths log cache columns as 0 even when the underlying claude-sdk call had cache data.
-- 🟡 **Phase 2 (deferred)**: widen Prometheus `TokenUsage` shape, plumb cache fields through planner/reflector/orchestrator aggregation, widen IPC parse types in heavy/nanoclaw runners. Also: widen the `infer()` adapter response shape so non-fast-runner callers get cache info from claude-sdk through the OpenAI-compat shim. Approx 30-50 min of contained work.
-- 🟡 **Phase 2 follow-up**: dispatcher integration test asserting `recordCost` mock receives cache fields (W3 from audit — deferred since the writer is unit-tested at 5 cases and the spread-conditional pattern matches the well-tested `costUsdOverride` precedent).
+- ✅ **Phase 2 (2026-04-26)**: cache breakdown extended end-to-end through Prometheus internals so heavy-runner + nanoclaw-runner cost_ledger rows now persist cache fields when the underlying SDK call had cache data. Type widenings: `InferenceResponse.usage` + `inferWithTools().totalUsage` (adapter.ts), `TokenUsage` (prometheus/types.ts), snapshot tokenUsage (snapshot.ts), heavy/nanoclaw IPC parse types. Producers forward via spread+conditional: planner.ts (plan + replan), reflector.ts, provenance.ts, executor.ts (selfAssess + per-goal + per-execution accumulators), orchestrator.ts (snapshot read + plan + execution + replan + reflect aggregations + final assembly), resume.ts. Heavy-runner narrowing site at `heavy-runner.ts:55-63` forwards cache from `result.tokenUsage`. SDK shim emits cache fields conditionally (omit when zero) so its shape matches the openai path's. 2 new claude-sdk.test.ts tests assert shim forwarding (215 inference tests pass).
+- ⚠️ **Phase 2 deliberately skipped**: swarm-runner.ts hardcodes `{promptTokens:0, completionTokens:0}` regardless of children — that's "doesn't track at all" not "narrows the type", separate concern.
+- 🟡 **Audit-deferred**: dispatcher integration test asserting `recordCost` mock receives cache fields; prometheus executor regression test for omit-vs-zero contract. Both deferred since shim+writer boundary unit tests + cost_ledger live verification cover the path mechanically.
 
 ### S5 — Skills-as-stored-procedures
 
@@ -235,19 +235,19 @@ These are the failure modes most likely to derail v8. Each has a session-history
 
 ## §10 — One-page summary
 
-| Layer                                             | Item                            | Status                          |
-| ------------------------------------------------- | ------------------------------- | ------------------------------- |
-| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | Not started                     |
-|                                                   | S2 self-audit before reporting  | Discipline exists, not enforced |
-|                                                   | S3 out-of-band drift detector   | Not started                     |
-|                                                   | S4 `cost_ledger` v2             | Not started (P0-2 partial)      |
-|                                                   | S5 skills-as-stored-procedures  | Shim exists, expansion pending  |
-| **Capabilities**                                  | V8.1 Proactive Context Engine   | Pre-plan                        |
-|                                                   | V8.2 Strategic Initiative Layer | Pre-plan                        |
-|                                                   | V8.3 Autonomous Execution Gates | Pre-plan                        |
-| **Activation**                                    | Bilateral-maturity gate         | Stage B today                   |
-| **Horizon**                                       | V9 validation period            | Activated by v8 maturity        |
-|                                                   | Beta 1.0                        | Activated by v9 evidence        |
+| Layer                                             | Item                            | Status                                                                                                                             |
+| ------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | Not started                                                                                                                        |
+|                                                   | S2 self-audit before reporting  | Discipline exists, not enforced                                                                                                    |
+|                                                   | S3 out-of-band drift detector   | Not started                                                                                                                        |
+|                                                   | S4 `cost_ledger` v2             | **Phases 1+2 shipped 2026-04-26** — cache breakdown end-to-end on fast/heavy/nanoclaw paths. Swarm zero-track is separate concern. |
+|                                                   | S5 skills-as-stored-procedures  | Shim exists, expansion pending                                                                                                     |
+| **Capabilities**                                  | V8.1 Proactive Context Engine   | Pre-plan                                                                                                                           |
+|                                                   | V8.2 Strategic Initiative Layer | Pre-plan                                                                                                                           |
+|                                                   | V8.3 Autonomous Execution Gates | Pre-plan                                                                                                                           |
+| **Activation**                                    | Bilateral-maturity gate         | Stage B today                                                                                                                      |
+| **Horizon**                                       | V9 validation period            | Activated by v8 maturity                                                                                                           |
+|                                                   | Beta 1.0                        | Activated by v9 evidence                                                                                                           |
 
 **Next session, post-freeze**: write engineering specs for S1, S2, S3 (the cheapest of the five). S4 and S5 are larger; defer until S1-S3 are shipping.
 

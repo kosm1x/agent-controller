@@ -48,6 +48,8 @@ export async function orchestrate(
     let replanCount = 0;
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalCacheReadTokens = 0;
+    let totalCacheCreationTokens = 0;
     // Autoreason Phase 1: k=2 stability rule for soft replan signals.
     // Counter increments on each consecutive soft vote from checkReplan; the
     // replan only fires when the counter reaches 2. Any iteration with no
@@ -76,6 +78,10 @@ export async function orchestrate(
       }
       replanCount = snapshot.executionState.replanCount;
       totalPromptTokens = snapshot.executionState.tokenUsage.promptTokens;
+      totalCacheReadTokens =
+        snapshot.executionState.tokenUsage.cacheReadTokens ?? 0;
+      totalCacheCreationTokens =
+        snapshot.executionState.tokenUsage.cacheCreationTokens ?? 0;
       totalCompletionTokens =
         snapshot.executionState.tokenUsage.completionTokens;
       for (let i = 0; i < snapshot.executionState.budgetConsumed; i++) {
@@ -113,6 +119,8 @@ export async function orchestrate(
         graph = g;
         totalPromptTokens += planUsage.promptTokens;
         totalCompletionTokens += planUsage.completionTokens;
+        totalCacheReadTokens += planUsage.cacheReadTokens ?? 0;
+        totalCacheCreationTokens += planUsage.cacheCreationTokens ?? 0;
       } catch (err) {
         traceRecord(trace, "phase_error", {
           phase: Phase.PLAN,
@@ -171,6 +179,9 @@ export async function orchestrate(
       trace.totalToolFailures += newExecResults.totalToolFailures;
       totalPromptTokens += executionResults.tokenUsage.promptTokens;
       totalCompletionTokens += executionResults.tokenUsage.completionTokens;
+      totalCacheReadTokens += executionResults.tokenUsage.cacheReadTokens ?? 0;
+      totalCacheCreationTokens +=
+        executionResults.tokenUsage.cacheCreationTokens ?? 0;
 
       // Record tool repairs to scope telemetry (non-fatal)
       if (executionResults.toolRepairs.length > 0) {
@@ -299,6 +310,8 @@ export async function orchestrate(
           graph = rg;
           totalPromptTokens += replanUsage.promptTokens;
           totalCompletionTokens += replanUsage.completionTokens;
+          totalCacheReadTokens += replanUsage.cacheReadTokens ?? 0;
+          totalCacheCreationTokens += replanUsage.cacheCreationTokens ?? 0;
         } catch (err) {
           console.warn(
             `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
@@ -328,6 +341,12 @@ export async function orchestrate(
             tokenUsage: {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
+              ...(totalCacheReadTokens > 0 && {
+                cacheReadTokens: totalCacheReadTokens,
+              }),
+              ...(totalCacheCreationTokens > 0 && {
+                cacheCreationTokens: totalCacheCreationTokens,
+              }),
             },
             traceEvents: trace.events,
           },
@@ -360,6 +379,8 @@ export async function orchestrate(
     );
     totalPromptTokens += reflectUsage.promptTokens;
     totalCompletionTokens += reflectUsage.completionTokens;
+    totalCacheReadTokens += reflectUsage.cacheReadTokens ?? 0;
+    totalCacheCreationTokens += reflectUsage.cacheCreationTokens ?? 0;
 
     traceRecord(trace, "phase_end", {
       phase: Phase.REFLECT,
@@ -425,6 +446,12 @@ export async function orchestrate(
       tokenUsage: {
         promptTokens: totalPromptTokens,
         completionTokens: totalCompletionTokens,
+        ...(totalCacheReadTokens > 0 && {
+          cacheReadTokens: totalCacheReadTokens,
+        }),
+        ...(totalCacheCreationTokens > 0 && {
+          cacheCreationTokens: totalCacheCreationTokens,
+        }),
       },
       iterationsUsed: budget.consumed,
     };

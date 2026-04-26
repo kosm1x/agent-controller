@@ -130,12 +130,23 @@ export async function resumeFromGoal(
     ],
     traceId: randomUUID(),
     durationMs: Date.now() - start,
-    tokenUsage: {
-      promptTokens:
-        execResult.tokenUsage.promptTokens + reflectUsage.promptTokens,
-      completionTokens:
-        execResult.tokenUsage.completionTokens + reflectUsage.completionTokens,
-    },
+    tokenUsage: (() => {
+      const cacheRead =
+        (execResult.tokenUsage.cacheReadTokens ?? 0) +
+        (reflectUsage.cacheReadTokens ?? 0);
+      const cacheCreation =
+        (execResult.tokenUsage.cacheCreationTokens ?? 0) +
+        (reflectUsage.cacheCreationTokens ?? 0);
+      return {
+        promptTokens:
+          execResult.tokenUsage.promptTokens + reflectUsage.promptTokens,
+        completionTokens:
+          execResult.tokenUsage.completionTokens +
+          reflectUsage.completionTokens,
+        ...(cacheRead > 0 && { cacheReadTokens: cacheRead }),
+        ...(cacheCreation > 0 && { cacheCreationTokens: cacheCreation }),
+      };
+    })(),
     iterationsUsed: budget.consumed,
   };
 }

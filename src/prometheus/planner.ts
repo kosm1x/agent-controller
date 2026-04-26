@@ -172,6 +172,12 @@ export async function plan(
     usage: {
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
+      ...(response.usage.cache_read_tokens !== undefined && {
+        cacheReadTokens: response.usage.cache_read_tokens,
+      }),
+      ...(response.usage.cache_creation_tokens !== undefined && {
+        cacheCreationTokens: response.usage.cache_creation_tokens,
+      }),
     },
   };
 }
@@ -208,6 +214,12 @@ export async function replan(
     usage: {
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
+      ...(response.usage.cache_read_tokens !== undefined && {
+        cacheReadTokens: response.usage.cache_read_tokens,
+      }),
+      ...(response.usage.cache_creation_tokens !== undefined && {
+        cacheCreationTokens: response.usage.cache_creation_tokens,
+      }),
     },
   };
 }
