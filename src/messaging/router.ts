@@ -101,6 +101,7 @@ import {
   scopeToolsForMessage as scopeToolsPure,
   detectActiveGroups,
   DEFAULT_SCOPE_PATTERNS,
+  CONVERSATIONAL_PATTERN,
   CORE_TOOLS,
   SCHEDULE_TOOLS,
   GOOGLE_TOOLS,
@@ -287,10 +288,58 @@ function buildJarvisSystemPrompt(
  *
  * Typical reduction: 49 → 15-25 tools = ~5-8K fewer tokens.
  */
+/**
+ * Three-way decision for which scope groups to activate. Source of bug class
+ * `feedback_classifier_empty_vs_null.md`: prior code collapsed `null` and
+ * `empty Set` into the same regex-fallback branch, but they mean different
+ * things. The classifier explicitly returns `[]` (→ empty Set) for short
+ * follow-ups like "dale", "procede", "continúa" per its own rules; that's a
+ * signal to inherit prior scope, not to fall back to regex which can pick
+ * the wrong group from prior-turn FPs.
+ *
+ *   semantic non-empty → use semantic ("semantic")
+ *   semantic empty + conversational message → regex_empty (don't inherit
+ *     scope onto a topic-closer like "gracias" — qa-audit W2)
+ *   semantic empty + prior scope present → inherit prior ("inherited")
+ *   semantic empty + no prior → regex_empty
+ *   semantic null/undefined → regex fallback ("regex")
+ */
+export type ScopeSource = "semantic" | "inherited" | "regex" | "regex_empty";
+
+export function decideActiveGroups(
+  semanticGroups: Set<string> | null | undefined,
+  priorScope: Set<string> | undefined,
+  regexFallback: () => Set<string>,
+  currentMessage?: string,
+): { groups: Set<string>; source: ScopeSource } {
+  if (semanticGroups && semanticGroups.size > 0) {
+    return { groups: semanticGroups, source: "semantic" };
+  }
+  const semanticEmpty =
+    semanticGroups !== null &&
+    semanticGroups !== undefined &&
+    semanticGroups.size === 0;
+  // Conversational filter: short greetings/acks should not inherit prior
+  // scope. Mirrors the protection scope.ts:scopeToolsForMessage already
+  // applies to its own regex-inheritance branch (CONVERSATIONAL_PATTERN).
+  const isConversational =
+    !!currentMessage &&
+    currentMessage.trim().length < 80 &&
+    CONVERSATIONAL_PATTERN.test(currentMessage.trim());
+  if (semanticEmpty && priorScope && priorScope.size > 0 && !isConversational) {
+    return { groups: new Set(priorScope), source: "inherited" };
+  }
+  return {
+    groups: regexFallback(),
+    source: semanticEmpty ? "regex_empty" : "regex",
+  };
+}
+
 function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],
   semanticGroups?: Set<string> | null,
+  priorScope?: Set<string>,
 ): { tools: string[]; activeGroups: string[] } {
   // Scope from recent user messages. Previously slice(-2) to avoid scope
   // accumulation on hallucinated assistant content, but user messages are
@@ -324,23 +373,39 @@ function scopeToolsForMessage(
   // v6.4 CL1.1: Use semantic classifier groups if available, regex as fallback.
   // The LLM understands intent ("abre mi northstar", "manda un correo") without
   // needing exact keyword patterns. Regex stays as safety net for timeouts.
-  let activeGroups: Set<string>;
-  if (semanticGroups && semanticGroups.size > 0) {
-    activeGroups = semanticGroups;
+  // v8 2026-04-26: three-way decision delegated to decideActiveGroups so the
+  // empty-vs-null distinction (was previously collapsed) is unit-testable.
+  const decision = decideActiveGroups(
+    semanticGroups,
+    priorScope,
+    () =>
+      detectActiveGroups(
+        currentMessage,
+        recentUserMessages,
+        DEFAULT_SCOPE_PATTERNS,
+      ),
+    currentMessage,
+  );
+  const activeGroups = decision.groups;
+  if (decision.source === "semantic") {
     console.log(
       `[router] Scope groups (semantic): ${[...activeGroups].join(", ")}`,
     );
-  } else {
-    activeGroups = detectActiveGroups(
-      currentMessage,
-      recentUserMessages,
-      DEFAULT_SCOPE_PATTERNS,
+  } else if (decision.source === "inherited") {
+    console.log(
+      `[router] Scope groups (inherited from prior turn): ${[...activeGroups].join(", ")}`,
     );
-    if (activeGroups.size > 0) {
-      console.log(
-        `[router] Scope groups (regex fallback): ${[...activeGroups].join(", ")}`,
-      );
-    }
+  } else if (
+    (decision.source === "regex" || decision.source === "regex_empty") &&
+    activeGroups.size > 0
+  ) {
+    const tag =
+      decision.source === "regex_empty"
+        ? "regex (post-empty)"
+        : "regex fallback";
+    console.log(
+      `[router] Scope groups (${tag}): ${[...activeGroups].join(", ")}`,
+    );
   }
 
   const tools = scopeToolsPure(
@@ -1527,10 +1592,12 @@ export class MessageRouter {
 
     // Dynamic tool scoping — uses semantic groups if available, regex fallback.
     // Pass normalizedText so regex fallback benefits from typo corrections.
+    // Pass prior scope so empty-classifier follow-ups inherit (v8 2026-04-26).
     const { tools, activeGroups } = scopeToolsForMessage(
       normalizedText,
       conversationHistory,
       semanticGroups,
+      previousScopeGroups.get(tk),
     );
 
     // Implicit feedback: compare current scope groups with previous message's.

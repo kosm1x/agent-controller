@@ -111,6 +111,47 @@ describe("scope pattern matching", () => {
     );
   });
 
+  it("google scope does NOT over-fire on 'present' substrings (presentación, presentar)", () => {
+    // The google regex had a bare `|present|` alt without closing `\b`, so it
+    // matched any prefix — `presentación`, `presentar`, `presente` — pulling
+    // GOOGLE_TOOLS into ordinary speech. Closed with `\b` and the bare alt
+    // dropped 2026-04-26 (vlcms-continuation incident). Same bug class as the
+    // `react\b` fix above.
+    expect(scope("presentación de la propuesta para el cliente")).not.toContain(
+      "gmail_send",
+    );
+    expect(scope("vamos a presentar el plan al equipo")).not.toContain(
+      "gmail_send",
+    );
+    expect(scope("el presente informe explica los cambios")).not.toContain(
+      "gmail_send",
+    );
+    // Sanity: explicit google mentions still activate.
+    expect(scope("envía un correo a Juan con el reporte")).toContain(
+      "gmail_send",
+    );
+    expect(scope("abre mi gmail y busca el último mensaje")).toContain(
+      "gmail_send",
+    );
+    // Sanity: Spanish "calendario" still triggers google (the `\b` close
+    // would have broken bare `calendar` matching `calendario`; the alt was
+    // expanded to `calendars?|calendarios?` to keep both forms working).
+    expect(scope("revisa mi calendario para mañana")).toContain("gmail_send");
+  });
+
+  // Residual-leak documentation: closing `\b` only fixes prefix-match bugs.
+  // The google regex still has bare exact-word alts (`agenda`, `drive`,
+  // `document[oa]?s?`, `hojas?`, `slides?`) that match generic Spanish/English
+  // words outside any Google context. These are deferred to a separate
+  // post-freeze ticket because narrowing them requires either dropping alts
+  // (loses Spanish "agenda" → calendar inheritance some users rely on) or
+  // requiring co-occurring `google\s*` context (semantically a new alt
+  // structure, not freeze-aligned tightening). Tracked in
+  // feedback_unbounded_alternation_fp.md as the wider sweep.
+  it.todo(
+    "google scope should not over-fire on bare 'agenda' / 'drive' / 'documento' (post-freeze tightening)",
+  );
+
   it("NorthStar mentions without project verbs do NOT activate project tools", () => {
     const tools = scope("Qué tareas tengo pendientes?");
     expect(tools).not.toContain("project_update");

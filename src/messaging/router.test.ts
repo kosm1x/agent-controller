@@ -402,4 +402,112 @@ describe("MessageRouter", () => {
       expect(result).toContain(CACHE_BREAK_MARKER);
     });
   });
+
+  // v8 2026-04-26 — three-way scope decision (semantic / inherited / regex).
+  // Source: vlcms-continuation incident where "Continúa" follow-ups landed in
+  // `google` scope (regex FP) instead of inheriting prior `coding`. Bug class:
+  // empty-Set from semantic classifier was collapsed with null/undefined.
+  describe("decideActiveGroups", () => {
+    it("uses semantic groups when classifier returned non-empty", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const semantic = new Set(["coding"]);
+      const prior = new Set(["google"]);
+      const fallback = vi.fn(() => new Set(["wordpress"]));
+      const result = decideActiveGroups(semantic, prior, fallback);
+      expect(result.source).toBe("semantic");
+      expect([...result.groups]).toEqual(["coding"]);
+      expect(fallback).not.toHaveBeenCalled();
+    });
+
+    it("inherits prior scope when classifier returned explicit empty Set", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      // The "Continúa" case: classifier returns [] per its short-follow-up rule
+      const semantic = new Set<string>();
+      const prior = new Set(["coding"]);
+      const fallback = vi.fn(() => new Set(["google"])); // wrong-scope FP, must NOT fire
+      const result = decideActiveGroups(semantic, prior, fallback);
+      expect(result.source).toBe("inherited");
+      expect([...result.groups]).toEqual(["coding"]);
+      expect(fallback).not.toHaveBeenCalled();
+      // Defensive: returned set is a copy (mutating it must not affect caller's prior)
+      result.groups.add("destructive");
+      expect([...prior]).toEqual(["coding"]);
+    });
+
+    it("falls back to regex when classifier returned null (failure/timeout)", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const prior = new Set(["coding"]);
+      const fallback = vi.fn(() => new Set(["google"]));
+      const result = decideActiveGroups(null, prior, fallback);
+      expect(result.source).toBe("regex");
+      expect([...result.groups]).toEqual(["google"]);
+      expect(fallback).toHaveBeenCalledOnce();
+    });
+
+    it("falls back to regex when classifier returned empty AND no prior (cold start)", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const semantic = new Set<string>();
+      const fallback = vi.fn(() => new Set(["google"]));
+      const result = decideActiveGroups(semantic, undefined, fallback);
+      // Distinct source ("regex_empty") preserves the diagnostic signal that the
+      // classifier was reachable and explicit, vs an outright failure.
+      expect(result.source).toBe("regex_empty");
+      expect([...result.groups]).toEqual(["google"]);
+      expect(fallback).toHaveBeenCalledOnce();
+    });
+
+    it("falls back to regex when classifier returned empty AND prior is empty Set", async () => {
+      // Edge: prior exists but is itself empty (e.g., prior turn was a greeting
+      // that resolved to no scope). Don't inherit nothing — re-derive via regex.
+      const { decideActiveGroups } = await import("./router.js");
+      const semantic = new Set<string>();
+      const prior = new Set<string>();
+      const fallback = vi.fn(() => new Set(["northstar_read"]));
+      const result = decideActiveGroups(semantic, prior, fallback);
+      expect(result.source).toBe("regex_empty");
+      expect([...result.groups]).toEqual(["northstar_read"]);
+    });
+
+    it("treats undefined classifier result as null (not empty)", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const fallback = vi.fn(() => new Set(["coding"]));
+      const result = decideActiveGroups(
+        undefined,
+        new Set(["google"]),
+        fallback,
+      );
+      // undefined is "didn't classify" → regex fallback (NOT inheritance);
+      // inheritance only fires on the explicit-empty signal.
+      expect(result.source).toBe("regex");
+      expect(fallback).toHaveBeenCalledOnce();
+    });
+
+    it("does NOT inherit on conversational topic-closers (gracias, ok, listo)", async () => {
+      // qa-audit W2: prior turn was coding, current message is a pure
+      // greeting/ack. Inheriting coding scope would load CODING_TOOLS for a
+      // reply that should stay core-only. CONVERSATIONAL_PATTERN protects.
+      const { decideActiveGroups } = await import("./router.js");
+      const fallback = vi.fn(() => new Set<string>());
+      for (const greeting of ["gracias", "ok", "listo", "perfecto"]) {
+        const result = decideActiveGroups(
+          new Set<string>(),
+          new Set(["coding"]),
+          fallback,
+          greeting,
+        );
+        expect(result.source).toBe("regex_empty");
+        expect([...result.groups]).toEqual([]);
+      }
+      // Sanity: a non-conversational short follow-up DOES inherit.
+      const fallback2 = vi.fn(() => new Set(["google"]));
+      const result = decideActiveGroups(
+        new Set<string>(),
+        new Set(["coding"]),
+        fallback2,
+        "Continúa",
+      );
+      expect(result.source).toBe("inherited");
+      expect([...result.groups]).toEqual(["coding"]);
+    });
+  });
 });

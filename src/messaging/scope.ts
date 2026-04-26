@@ -384,6 +384,16 @@ export const XPOZ_TOOLS = [
 // Default scope patterns
 // ---------------------------------------------------------------------------
 
+/**
+ * Pure-greeting/acknowledgment messages that should NOT inherit scope from
+ * prior turns. Topic closers, not follow-ups. Used by both the regex-fallback
+ * inheritance branch (scopeToolsForMessage) and the router's empty-classifier
+ * inheritance branch (decideActiveGroups). Hoisted to file scope 2026-04-26
+ * so both call sites apply the same filter (was previously inline-only).
+ */
+export const CONVERSATIONAL_PATTERN =
+  /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;
+
 /** Keyword patterns that activate tool groups. Scans current + recent messages. */
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
@@ -494,8 +504,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "destructive", // Intent detection only — destructive tools (file_delete, etc.) live in their domain groups (CODING, GOOGLE)
   },
   {
+    // Closing `\b` (added 2026-04-26) prevents bare alts like `present` from
+    // matching word prefixes ("presentación", "presentar"). Same fix shape as
+    // the `react\b` close on the coding regex shipped earlier today. The deeper
+    // class of FP — generic exact-word matches on `agenda`, `drive`,
+    // `document[oa]?s?`, `hojas?`, `slides?` — is captured as a separate
+    // post-freeze item; closing `\b` alone does not address them.
     pattern:
-      /\b(emails?|correos?|mails?|gmail|calendar|agenda|eventos?|citas?|reuni[oó]n|drive|g?docs?|g?sheets?|document[oa]?s?|hojas?|slides?|present|google|spreadsheet|google\s*chat|google\s*tasks?|google\s*forms?|google\s*meet|google\s*keep|google\s*people|google\s*classroom|apps\s*script|workspace\s*events?|google\s*admin|admin\s*reports?|contactos?\s*google)/i,
+      /\b(emails?|correos?|mails?|gmail|calendars?|calendarios?|agenda|eventos?|citas?|reuni[oó]n|drive|g?docs?|g?sheets?|document[oa]?s?|hojas?|slides?|google|spreadsheet|google\s*chat|google\s*tasks?|google\s*forms?|google\s*meet|google\s*keep|google\s*people|google\s*classroom|apps\s*script|workspace\s*events?|google\s*admin|admin\s*reports?|contactos?\s*google)\b/i,
     group: "google",
   },
   {
@@ -985,9 +1001,7 @@ export function scopeToolsForMessage(
     // Short conversational messages (greetings, thanks, acknowledgments) should
     // NOT inherit — they're topic closers, not follow-ups. Only inherit if the
     // short message contains an actionable word or referential phrase.
-    const CONVERSATIONAL =
-      /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;
-    const isConversational = isShort && CONVERSATIONAL.test(trimmed);
+    const isConversational = isShort && CONVERSATIONAL_PATTERN.test(trimmed);
     const isShortFollowUp = isShort && !isConversational;
     const shouldInherit =
       recentUserMessages.length > 0 &&
