@@ -112,7 +112,9 @@ function buildKnowledgeBaseSection(
           (condLower.includes("reporting") &&
             scopedTools.some((t) =>
               ["web_search", "exa_search", "gmail_send"].includes(t),
-            ));
+            )) ||
+          (condLower.includes("teaching") &&
+            scopedTools.some((t) => t.startsWith("learning_plan_")));
         if (!matches) continue;
       }
 
