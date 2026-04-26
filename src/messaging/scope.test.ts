@@ -88,16 +88,27 @@ describe("scope pattern matching", () => {
   });
 
   it("pure project ops do NOT activate NorthStar write tools", () => {
-    // Use 'archiva' (isolating verb) — 'reactiva' incidentally matches the
-    // existing coding regex's bare 'react' alternative, which would also pull
-    // JARVIS_WRITE_TOOLS via the coding gate. That's a separate pre-existing
-    // behavior; here we only verify that the projects scope by itself does
-    // not leak NorthStar write tools.
     const tools = scope("archiva el proyecto vlmp");
     expect(tools).toContain("project_update");
     expect(tools).not.toContain("jarvis_file_write");
     expect(tools).not.toContain("jarvis_file_update");
     expect(tools).not.toContain("jarvis_file_delete");
+  });
+
+  it("coding scope does NOT over-fire on bare 'react' substrings (reactiva, reactor, reaction)", () => {
+    // Coding regex's `react` alternation lacked a closing `\b`, so it matched
+    // any prefix — `reactivar`, `reactor`, `reaction`, `reactividad` — pulling
+    // CODING_TOOLS into project-management and unrelated chatter. Tightened to
+    // `react\b` 2026-04-26.
+    expect(scope("Reactiva el proyecto vlmp")).not.toContain("shell_exec");
+    expect(scope("el reactor sufrió una falla")).not.toContain("shell_exec");
+    expect(scope("la reacción del público fue mixta")).not.toContain(
+      "shell_exec",
+    );
+    // Sanity: legit React mentions still activate coding scope.
+    expect(scope("escribe un componente React para el dashboard")).toContain(
+      "shell_exec",
+    );
   });
 
   it("NorthStar mentions without project verbs do NOT activate project tools", () => {

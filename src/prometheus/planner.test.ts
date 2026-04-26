@@ -21,13 +21,22 @@ vi.mock("../db/knowledge-maps.js", () => ({
   getNodes: vi.fn(() => []),
 }));
 
+// kb-injection reads from jarvis_files via getFilesByQualifier — mock to make
+// the planner KB-injection regression deterministic.
+vi.mock("../db/jarvis-fs.js", () => ({
+  getFilesByQualifier: vi.fn(),
+  getFile: vi.fn(),
+}));
+
 import { plan, replan } from "./planner.js";
 import { infer } from "../inference/adapter.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
+import { getFilesByQualifier } from "../db/jarvis-fs.js";
 
 const mockInfer = vi.mocked(infer);
 const mockSearchMaps = vi.mocked(searchMaps);
 const mockGetNodes = vi.mocked(getNodes);
+const mockGetFilesByQualifier = vi.mocked(getFilesByQualifier);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -293,5 +302,117 @@ describe("replan", () => {
     expect(newGraph.size).toBe(2);
     expect(newGraph.getGoal("g-1").status).toBe(GoalStatus.COMPLETED);
     expect(newGraph.getGoal("g-2").status).toBe(GoalStatus.PENDING);
+  });
+});
+
+describe("planner KB injection (regression — half-fix trap)", () => {
+  // Earlier today's fix landed enforce-only KB in plan() first, then audit
+  // caught replan() missing the same wiring. Both call sites now run through
+  // buildKnowledgeBaseSection(..., enforceOnly=true). This test captures the
+  // system prompt of each and asserts the [JARVIS KNOWLEDGE BASE] marker plus
+  // the MANDATORY: prefix appear — guards against the next half-fix.
+  const ENFORCE_FILE = {
+    path: "directives/repo-authorization.md",
+    title: "Repo Authorization",
+    content: "Only commit to authorized EurekaMD-net repositories.",
+    qualifier: "enforce",
+    condition: null,
+    priority: 0,
+  };
+
+  const SIMPLE_GRAPH_RESPONSE = {
+    content: JSON.stringify({
+      goals: [
+        {
+          id: "g-1",
+          description: "Goal",
+          completion_criteria: [],
+          parent_id: null,
+          depends_on: [],
+        },
+      ],
+    }),
+    tool_calls: undefined,
+    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    provider: "test",
+    latency_ms: 10,
+  };
+
+  // Find by role rather than positional indexing — protects the assertion
+  // shape against future preamble/context messages being prepended.
+  const findSystem = (call: number) =>
+    mockInfer.mock.calls[call]?.[0]?.messages?.find((m) => m.role === "system");
+
+  it("plan() injects enforce-only KB into the system prompt", async () => {
+    mockGetFilesByQualifier.mockReturnValue([ENFORCE_FILE]);
+    mockInfer.mockResolvedValueOnce(SIMPLE_GRAPH_RESPONSE);
+
+    await plan("Test task");
+
+    expect(mockGetFilesByQualifier).toHaveBeenCalledWith("enforce");
+    const system = findSystem(0);
+    expect(system).toBeDefined();
+    expect(system?.content).toContain("[JARVIS KNOWLEDGE BASE]");
+    expect(system?.content).toContain("MANDATORY: Repo Authorization");
+    expect(system?.content).toContain(
+      "Only commit to authorized EurekaMD-net repositories.",
+    );
+  });
+
+  it("replan() injects enforce-only KB into the system prompt", async () => {
+    mockGetFilesByQualifier.mockReturnValue([ENFORCE_FILE]);
+    mockInfer
+      .mockResolvedValueOnce(SIMPLE_GRAPH_RESPONSE)
+      .mockResolvedValueOnce(SIMPLE_GRAPH_RESPONSE);
+
+    const { graph } = await plan("Initial task");
+    await replan("Initial task", graph, "Need revision");
+
+    expect(mockGetFilesByQualifier).toHaveBeenCalledWith("enforce");
+    const replanSystem = findSystem(1);
+    expect(replanSystem).toBeDefined();
+    expect(replanSystem?.content).toContain("[JARVIS KNOWLEDGE BASE]");
+    expect(replanSystem?.content).toContain("MANDATORY: Repo Authorization");
+  });
+
+  it("plan() omits always-read/conditional KB even when those rows exist (planner only needs enforce)", async () => {
+    // Differentiating mock: if the planner ever widens its qualifier set, the
+    // extra always-read/conditional rows would surface in the system prompt
+    // and the negative assertions below would fail. Returning extras only on
+    // the wider call signature catches the regression even if the stub
+    // accidentally returns everything.
+    mockGetFilesByQualifier.mockImplementation((...quals: string[]) => {
+      if (quals.length === 1 && quals[0] === "enforce") {
+        return [ENFORCE_FILE];
+      }
+      return [
+        ENFORCE_FILE,
+        {
+          path: "always.md",
+          title: "Always",
+          content: "ALWAYS_BLOCK_MARKER",
+          qualifier: "always-read",
+          condition: null,
+          priority: 0,
+        },
+        {
+          path: "code.md",
+          title: "Code SOP",
+          content: "CONDITIONAL_BLOCK_MARKER",
+          qualifier: "conditional",
+          condition: "coding",
+          priority: 0,
+        },
+      ];
+    });
+    mockInfer.mockResolvedValueOnce(SIMPLE_GRAPH_RESPONSE);
+
+    await plan("Test task");
+
+    expect(mockGetFilesByQualifier).toHaveBeenCalledWith("enforce");
+    const system = findSystem(0);
+    expect(system?.content).toContain("MANDATORY: Repo Authorization");
+    expect(system?.content).not.toContain("ALWAYS_BLOCK_MARKER");
+    expect(system?.content).not.toContain("CONDITIONAL_BLOCK_MARKER");
   });
 });

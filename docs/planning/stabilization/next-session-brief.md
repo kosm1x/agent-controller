@@ -63,21 +63,28 @@
   - If still 22s+: leave disabled, file a ticket on the upstream service, move on.
 - Don't re-enable speculatively. Disabled is the correct state until measured otherwise.
 
-### P2 — known small cleanups (pick if time)
+### P2 — known small cleanups
 
-**[P2-A] Replan KB regression test** — _20 min_
+**All three shipped end-of-session 2026-04-26 (post-P1 verification turn).** See commit detail below.
 
-- Lesson from `feedback_kb_injection_extraction.md`: enforce-only KB landed in `plan()` first, missed `replan()` (caught by audit, fixed, but no test guards it).
-- Add: a test that captures the system prompt of both `plan()` and `replan()` and asserts the `[JARVIS KNOWLEDGE BASE]` marker plus a known-enforce title appears.
-- File: `src/prometheus/planner.test.ts` (extend existing), or new test if missing.
+- ~~[P2-A] Replan KB regression test~~ — **DONE** (`planner.test.ts` +3 cases, asserts `[JARVIS KNOWLEDGE BASE]` + `MANDATORY:` marker in both `plan()` and `replan()` system prompts; differentiating mock catches qualifier-set widening regressions)
+- ~~[P2-B] Symmetric matcher coverage~~ — **DONE** (`kb-injection.test.ts` +10-row `it.each` iterates every tool in every scope group; catches future silent-miss class)
+- ~~[P2-C] `react\b` tightening in coding scope~~ — **DONE** (`scope.ts:508`; `Reactivar`/`reactor`/`reacción` no longer fire coding scope; regression test in `scope.test.ts`)
 
-**[P2-B] `learner_model_status` matcher coverage test** — _10 min_
+### P2-followup — wider coding-regex `\b` sweep (deferred, not freeze-blocking)
 
-- Audit caught one miss. Already fixed via the table-driven rewrite (`439cfcc`), but the regression test that asserts `conditionMatches("teaching", ["learner_model_status"]) === true` is in `src/messaging/kb-injection.test.ts:25-28`. Verify it covers all teaching-scope tools symmetrically (every tool in `TEACHING_TOOLS` should match the `teaching` keyword). One iterating test.
+Audit during P2-C found the same prefix-match defect class on ~12 other bare alternations in the coding regex (`scope.ts:508`). High-impact realistic Spanish FPs (each pulls `shell_exec`/`file_edit` on benign chatter):
 
-**[P2-C] `react\b` regex tightening in coding-scope** — _cosmetic, deferable_
+| Bare alt                                    | FP example                                              | Correct intent |
+| ------------------------------------------- | ------------------------------------------------------- | -------------- |
+| `programa(r\|ción)?`                        | "el programa de TV", "el programa de fidelidad"         | non-coding     |
+| `rutina`                                    | "mi rutina diaria", "rutina del gimnasio"               | non-coding     |
+| `funci[oó]n`                                | "la función de teatro", "la función del corazón"        | non-coding     |
+| `estructura`                                | "la estructura organizacional"                          | non-coding     |
+| `directori`, `carpetas?`, `servidores?`     | physical org references                                 | non-coding     |
+| `commit`, `code`, `repositori`, `archivos?` | English "commitment"/"committee", ES "archivos físicos" | non-coding     |
 
-- Flagged during earlier audit as prompt bloat. Not urgent. Pick only if P0/P1 finish fast.
+Cleanest fix: append `\b` to the closing `)/i` of the outer group (mirrors the browser regex pattern at `scope.ts:503`). Sweep the multi-word alternations (`agrega\s+...`, `node\.?js`) to verify they don't break. Likely a 1-line change + 4 regression tests. Not picked up this session because it exceeds the "surgical" freeze-bundle scope. Promote to P2 next session.
 
 ### P3 — calendar
 
@@ -95,15 +102,16 @@
 
 ## Health snapshot at session close
 
-| Item                     | State                                                                |
-| ------------------------ | -------------------------------------------------------------------- |
-| Service                  | `mission-control` active, no recent errors                           |
-| Tests                    | 3817 passing, 0 type errors                                          |
-| Disk                     | 26 GB free / 96 GB                                                   |
-| Branch state             | `main` clean; all session work pushed to `origin/main`               |
-| Hindsight recall         | DISABLED (env-flag); retain/reflect/consolidation paths active       |
-| Stabilization audit      | All 5/5 dimensions CLOSED (session 101 baseline)                     |
-| Open carry-forward count | 3 (P0-A, P1-A, P1-B) + 3 small cleanups (P2-A/B/C) + 1 calendar (P3) |
+| Item                     | State                                                                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Service                  | `mission-control` active, no recent errors                                                                                                                                                                                                                   |
+| Tests                    | 3832 passing, 0 type errors                                                                                                                                                                                                                                  |
+| Disk                     | 26 GB free / 96 GB                                                                                                                                                                                                                                           |
+| Branch state             | `main` clean; all session work pushed to `origin/main`                                                                                                                                                                                                       |
+| Hindsight recall         | DISABLED — probed 2026-04-26: mc-jarvis 16-18s (unchanged from baseline). Leave disabled, file upstream                                                                                                                                                      |
+| Stabilization audit      | All 5/5 dimensions CLOSED (session 101 baseline)                                                                                                                                                                                                             |
+| 24h cost re-measure      | Real delta $0.2142 → $0.2035 (−5%) on n=55 vs n=6 — original "$0.41 → $0.25 (−39%)" headline was wrong. Cache hit ratio dropped 83% → 59% post-deploy (KB-prefix variability ate most of the prompt-shrink savings). Re-measure with N≥30 post-deploy needed |
+| Open carry-forward count | 1 (P0-A AV key) + 1 (P2-followup wider regex sweep) + 1 calendar (P3 day-30 re-benchmark)                                                                                                                                                                    |
 
 ---
 

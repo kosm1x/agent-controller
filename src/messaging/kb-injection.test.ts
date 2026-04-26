@@ -4,6 +4,16 @@ import {
   detectProjectInMessage,
   buildKnowledgeBaseSection,
 } from "./kb-injection.js";
+import {
+  CODING_TOOLS,
+  TEACHING_TOOLS,
+  CRM_TOOLS_SCOPE,
+  GOOGLE_TOOLS,
+  WORDPRESS_TOOLS,
+  BROWSER_TOOLS,
+  SCHEDULE_TOOLS,
+  RESEARCH_TOOLS,
+} from "./scope.js";
 
 vi.mock("../db/jarvis-fs.js", () => ({
   getFilesByQualifier: vi.fn(),
@@ -64,6 +74,34 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
   it("returns false on empty condition", () => {
     expect(conditionMatches("", ["shell_exec"])).toBe(false);
   });
+
+  // Symmetric coverage — every tool in a scope group must match its keyword.
+  // Earlier audit caught `learner_model_status` silently missing from the
+  // `teaching` keyword via a stale `startsWith("learning_plan_")` rule. This
+  // table-driven test makes the next silent-miss class regress at PR time.
+  it.each([
+    ["coding", CODING_TOOLS],
+    ["teaching", TEACHING_TOOLS],
+    ["crm", CRM_TOOLS_SCOPE],
+    ["google", GOOGLE_TOOLS],
+    ["wordpress", WORDPRESS_TOOLS],
+    ["browser", BROWSER_TOOLS],
+    ["schedule", SCHEDULE_TOOLS],
+    ["research", RESEARCH_TOOLS],
+    ["northstar", ["northstar_sync"] as const],
+    ["reporting", ["web_search", "exa_search", "gmail_send"] as const],
+  ] as const)(
+    "every %s tool maps to its keyword via conditionMatches",
+    (keyword, tools) => {
+      expect(tools.length).toBeGreaterThan(0);
+      for (const tool of tools) {
+        expect(
+          conditionMatches(keyword, [tool]),
+          `${keyword} keyword should match scoped-tool [${tool}]`,
+        ).toBe(true);
+      }
+    },
+  );
 });
 
 describe("detectProjectInMessage", () => {
