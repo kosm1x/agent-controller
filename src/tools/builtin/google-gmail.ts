@@ -80,16 +80,33 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
       );
       to = "fede@eurekamd.net";
     }
-    const rawBody = args.body as string;
+    const rawBody = args.body;
+    if (typeof rawBody !== "string" || rawBody.trim().length === 0) {
+      return JSON.stringify({ error: "body must be a non-empty string" });
+    }
     const cc = args.cc as string | undefined;
 
+    // Decode entities first so encoded tags become real tags and get stripped.
+    // &amp; runs last to avoid double-decoding (&amp;lt; → &lt;, not <).
+    // Then strip script/style with content, comments, then any remaining tags.
+    // Tag pattern requires a letter after `<` so `5 < 10` and `Map<K,V>` survive.
     const body = rawBody
-      .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/gi, " ")
-      .replace(/&amp;/gi, "&")
+      .replace(/&(?:apos|#39);/gi, "'")
+      .replace(/&quot;/gi, '"')
       .replace(/&lt;/gi, "<")
       .replace(/&gt;/gi, ">")
-      .replace(/&quot;/gi, '"')
+      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, n) =>
+        String.fromCodePoint(parseInt(n, 16)),
+      )
+      .replace(/&amp;/gi, "&")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+      .replace(
+        /<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[a-zA-Z][\w-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*\s*\/?>/g,
+        "",
+      )
       .replace(/\r\n|\r/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();

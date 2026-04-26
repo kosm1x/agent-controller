@@ -24,7 +24,7 @@ export function createMarketMorningScan(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call market_calendar with today's date. If trading=false, your FINAL OUTPUT (which is broadcast automatically) must be exactly: "Mercados cerrados hoy (<reason>). Nos vemos <next_trading>." Then stop — do not call any other tools.
+1. Call market_calendar with today's date. If trading=false, your FINAL OUTPUT (which is broadcast automatically) must be exactly: "Mercados cerrados hoy ([reason]). Nos vemos [next_trading]." Substitute the bracketed tokens with the values you got from market_calendar. Then stop — do not call any other tools.
 
 2. Call alert_budget_status (ritual_id=market-morning-scan). If exhausted=true, your FINAL OUTPUT must be exactly: "⚠️ Budget de alertas agotado hoy. Ritual degradado." Then stop.
 
