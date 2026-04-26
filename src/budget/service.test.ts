@@ -66,6 +66,7 @@ describe("budget service", () => {
         expect.stringContaining("INSERT INTO cost_ledger"),
       );
       // Cost: (10000/1000)*0.0008 + (2000/1000)*0.002 = 0.008 + 0.004 = 0.012
+      // Cache fields default to 0 when unset (openai/qwen path).
       expect(mockRun).toHaveBeenCalledWith(
         "run-1",
         "task-1",
@@ -74,6 +75,8 @@ describe("budget service", () => {
         10_000,
         2_000,
         expect.closeTo(0.012, 6),
+        0,
+        0,
       );
     });
 
@@ -100,6 +103,8 @@ describe("budget service", () => {
         50_000,
         3_000,
         0,
+        0,
+        0,
       );
     });
 
@@ -122,6 +127,70 @@ describe("budget service", () => {
         10_000,
         2_000,
         0.087,
+        0,
+        0,
+      );
+    });
+
+    it("persists cache breakdown when provided (v8 S4 — claude-sdk path)", () => {
+      // claude-sdk path forwards cacheReadTokens + cacheCreationTokens so
+      // cache-hit ratio can be derived as cache_read_tokens / prompt_tokens.
+      // Without persistence, the prompt_tokens column conflates raw input,
+      // cache-creation, and cache-read into one number — making the cache
+      // structure invisible at query time.
+      recordCost({
+        runId: "run-4",
+        taskId: "task-4",
+        agentType: "fast",
+        model: "claude-sonnet-4-6",
+        promptTokens: 50_000,
+        completionTokens: 3_000,
+        costUsdOverride: 0,
+        cacheReadTokens: 41_500,
+        cacheCreationTokens: 2_400,
+      });
+
+      expect(mockDb.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("cache_read_tokens"),
+      );
+      expect(mockRun).toHaveBeenCalledWith(
+        "run-4",
+        "task-4",
+        "fast",
+        "claude-sonnet-4-6",
+        50_000,
+        3_000,
+        0,
+        41_500,
+        2_400,
+      );
+    });
+
+    it("defaults cache columns to 0 when only one cache field is set", () => {
+      // Defensive: nullish coalescing per-field, not per-pair, so a partially
+      // populated record still inserts cleanly.
+      recordCost({
+        runId: "run-5",
+        taskId: "task-5",
+        agentType: "fast",
+        model: "claude-sonnet-4-6",
+        promptTokens: 10_000,
+        completionTokens: 1_000,
+        costUsdOverride: 0,
+        cacheReadTokens: 8_000,
+        // cacheCreationTokens omitted
+      });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        "run-5",
+        "task-5",
+        "fast",
+        "claude-sonnet-4-6",
+        10_000,
+        1_000,
+        0,
+        8_000,
+        0,
       );
     });
   });

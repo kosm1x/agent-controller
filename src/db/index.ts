@@ -70,6 +70,21 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_cost_ledger_task ON cost_ledger(task_id)",
   );
 
+  // v8 S4: cache breakdown for cache-hit ratio observability
+  const ledgerCols = _db
+    .prepare("PRAGMA table_info(cost_ledger)")
+    .all() as Array<{ name: string }>;
+  if (!ledgerCols.some((c) => c.name === "cache_read_tokens")) {
+    _db.exec(
+      "ALTER TABLE cost_ledger ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+  if (!ledgerCols.some((c) => c.name === "cache_creation_tokens")) {
+    _db.exec(
+      "ALTER TABLE cost_ledger ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
   // v4.0 S1: composite indexes for query performance
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC)",

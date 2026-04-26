@@ -78,6 +78,14 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Test**: `SELECT DISTINCT model FROM cost_ledger WHERE created_at >= datetime('now','-1 day')` returns ≥3 distinct models on a normal day.
 
+**Status (2026-04-26)** — _Phase 1 of 2 shipped_:
+
+- ✅ Schema additive migration: `cache_read_tokens` + `cache_creation_tokens` columns live (default 0 backfill).
+- ✅ Writer (`recordCost`) and dispatcher wire-through forward cache fields end-to-end on the **fast-runner claude-sdk path** (`fast-runner.ts:918` → `dispatcher.ts:499` → `service.ts:64`).
+- ⚠️ **Known gap**: heavy-runner (Prometheus PER) and nanoclaw-runner narrow `RunnerResult.tokenUsage` at the IPC parse boundary (`heavy-runner.ts:128`, `nanoclaw-runner.ts:112`) and Prometheus `TokenUsage` itself (`prometheus/types.ts:52-55`) only carries `{promptTokens, completionTokens}`. These paths log cache columns as 0 even when the underlying claude-sdk call had cache data.
+- 🟡 **Phase 2 (deferred)**: widen Prometheus `TokenUsage` shape, plumb cache fields through planner/reflector/orchestrator aggregation, widen IPC parse types in heavy/nanoclaw runners. Also: widen the `infer()` adapter response shape so non-fast-runner callers get cache info from claude-sdk through the OpenAI-compat shim. Approx 30-50 min of contained work.
+- 🟡 **Phase 2 follow-up**: dispatcher integration test asserting `recordCost` mock receives cache fields (W3 from audit — deferred since the writer is unit-tested at 5 cases and the spread-conditional pattern matches the well-tested `costUsdOverride` precedent).
+
 ### S5 — Skills-as-stored-procedures
 
 **Why it's load-bearing**: current `skills` source is a thin shim with `skill_save`/`skill_list` and 2 entries. v8.2's "propose work" cannot scale on ad-hoc tools — the operator should not need to remember whether a capability is a builtin tool, a slash command, an MCP tool, a ritual, or a skill. Anthropic's Skills paradigm makes capabilities first-class, versioned, testable, and discoverable.

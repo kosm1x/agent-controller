@@ -23,6 +23,19 @@ export interface CostRecord {
    * applied. Undefined on the openai path (pricing table compute).
    */
   costUsdOverride?: number;
+  /**
+   * Cache-read tokens — input tokens served from Anthropic's prompt cache
+   * (~10% rate). Persisted so cache-hit ratio (`cache_read_tokens /
+   * prompt_tokens`) can be queried per model/window. Undefined on the
+   * openai path; defaults to 0 in the ledger.
+   */
+  cacheReadTokens?: number;
+  /**
+   * Cache-creation tokens — input tokens billed at ~125% to populate the
+   * prompt cache. High `cache_creation_tokens / prompt_tokens` indicates
+   * a churning prefix (cache structure problem, not a hit-rate problem).
+   */
+  cacheCreationTokens?: number;
 }
 
 export interface BudgetStatus {
@@ -54,8 +67,8 @@ export function recordCost(record: CostRecord): void {
 
   db.prepare(
     `INSERT INTO cost_ledger
-       (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     record.runId,
     record.taskId,
@@ -64,6 +77,8 @@ export function recordCost(record: CostRecord): void {
     record.promptTokens,
     record.completionTokens,
     costUsd,
+    record.cacheReadTokens ?? 0,
+    record.cacheCreationTokens ?? 0,
   );
 }
 

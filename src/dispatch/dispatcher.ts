@@ -493,6 +493,15 @@ async function dispatchWithSlot(
           ...(result.tokenUsage.actualCostUsd !== undefined && {
             costUsdOverride: result.tokenUsage.actualCostUsd,
           }),
+          // v8 S4: persist cache breakdown for cache-hit ratio observability.
+          // claude-sdk path sets these; openai/qwen path leaves undefined and
+          // the ledger defaults to 0.
+          ...(result.tokenUsage.cacheReadTokens !== undefined && {
+            cacheReadTokens: result.tokenUsage.cacheReadTokens,
+          }),
+          ...(result.tokenUsage.cacheCreationTokens !== undefined && {
+            cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
+          }),
         });
       } catch {
         // Cost recording should never block task completion
