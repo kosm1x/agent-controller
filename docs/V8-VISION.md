@@ -54,6 +54,18 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Test**: aggregate cache-read ratio ≥80% on a full mixed-traffic day at v8 prompt sizes.
 
+**Status (2026-04-26)** — _Shipped_:
+
+- ✅ `buildJarvisSystemPrompt` returns `{stable, variable}` instead of one concatenated string. Stable = P1+P2 (identity, safety, capabilities, personalData, correctionMemory). Variable = P3+P4 (scope-conditional sections + userFacts + enrichment).
+- ✅ New `buildKnowledgeBaseSections(scopedTools, messageText, logTag)` exposes split KB: stable = enforce + always-read, variable = conditional + project README.
+- ✅ Router callers concatenate as `stable + CACHE_BREAK_MARKER + variable + extras`. Per-call extras (patternBlock, checkpointBlock, time context, agent boilerplate) attach to the variable half.
+- ✅ Fast-runner chat branch splits `input.description` on the marker and emits messages in cache-friendly order: stable persona + STATUS_SUFFIX → essentials → stable KB → variable persona → variable KB → precedent → deferredCatalog. Read-only path keeps legacy enforce-only KB call (already stable).
+- ✅ Heavy/nanoclaw/swarm runners strip the marker (treat description as a single blob — no regression vs pre-S1).
+- ✅ A2A runner + A2A mapper strip the marker before sending to remote peers (audit C1, C2 fix).
+- ✅ Dispatcher persistence strips the marker before INSERT into `tasks.description`, `runs.input`, and event emissions (audit W1 fix). DB stays clean; runners still receive the marker via in-memory submission.
+- ✅ 7 new unit tests (4 for `buildKnowledgeBaseSections`, 3 for `stripCacheMarker`).
+- 🟡 **Validation pending**: post-deploy organic traffic needs ~24h to accrue N≥30 fast-runner tasks. Pre-S1 baseline (post-S4) was 81% average across n=5. Test bar is ≥80% on a full mixed-traffic day at v8 prompt sizes — measurement runs against `cost_ledger.cache_read_tokens / cost_ledger.prompt_tokens` over the post-2026-04-26 20:23 window.
+
 ### S2 — Self-audit before reporting
 
 **Why it's load-bearing**: 2026-04-26 session featured the operator asking "Audited?" four separate times. Every time, fresh re-query found discrepancies (the n=1 cache-hit headline, the wrong $0.41 baseline, etc.). The discipline lives in `feedback_metrics_extrapolation.md` but is not enforced. v8.2 proposing work means producing reports the operator _doesn't_ have to audit by hand.
@@ -237,7 +249,7 @@ These are the failure modes most likely to derail v8. Each has a session-history
 
 | Layer                                             | Item                            | Status                                                                                                                             |
 | ------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | Not started                                                                                                                        |
+| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | **Shipped 2026-04-26** — split persona + KB into stable/variable, marker-based emission via fast-runner. Validation pending N≥30   |
 |                                                   | S2 self-audit before reporting  | Discipline exists, not enforced                                                                                                    |
 |                                                   | S3 out-of-band drift detector   | Not started                                                                                                                        |
 |                                                   | S4 `cost_ledger` v2             | **Phases 1+2 shipped 2026-04-26** — cache breakdown end-to-end on fast/heavy/nanoclaw paths. Swarm zero-track is separate concern. |

@@ -8,6 +8,7 @@
 
 import { randomUUID } from "crypto";
 import { getDatabase } from "../db/index.js";
+import { stripCacheMarker } from "../messaging/router.js";
 import type { TaskSubmission, TaskRow } from "../dispatch/dispatcher.js";
 import type {
   A2ATask,
@@ -75,9 +76,14 @@ export function mcTaskToA2ATask(task: TaskRow, runs?: RunRow[]): A2ATask {
   // Build history from input + output
   const history: A2AMessage[] = [];
 
-  // User message from task input
+  // User message from task input.
+  // v8 S1: strip cache-break marker — A2A clients shouldn't see internal
+  // mc cache-optimization markers in task descriptions.
   const userParts: A2APart[] = [
-    { type: "text", text: `${task.title}\n\n${task.description}` },
+    {
+      type: "text",
+      text: `${task.title}\n\n${stripCacheMarker(task.description)}`,
+    },
   ];
   if (task.input) {
     try {

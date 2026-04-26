@@ -12,6 +12,7 @@
 import { getConfig } from "../config.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
+import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import {
   spawnContainer,
@@ -32,8 +33,10 @@ export const nanoclawRunner: Runner = {
 
     try {
       // Build container input — include tools so the worker knows what to register
+      // v8 S1: strip cache-break marker (nanoclaw uses description as a single
+      // prompt blob; only fast-runner chat splits for cache-friendly emission).
       const containerInput = {
-        prompt: `${input.title}\n\n${input.description}`,
+        prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
         taskId: input.taskId,
         tools: input.tools,
       };

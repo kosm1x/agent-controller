@@ -3,6 +3,7 @@ import {
   conditionMatches,
   detectProjectInMessage,
   buildKnowledgeBaseSection,
+  buildKnowledgeBaseSections,
 } from "./kb-injection.js";
 import {
   CODING_TOOLS,
@@ -251,5 +252,131 @@ describe("buildKnowledgeBaseSection", () => {
     const result = buildKnowledgeBaseSection([], false, "tell me about vlmp");
     expect(result).toContain("Project Context: VLMP");
     expect(result).toContain("Very Light Media Player");
+  });
+});
+
+describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () => {
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFile).mockReset();
+  });
+
+  it("returns enforce + always-read in stable, conditional in variable", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) => {
+      const all = [
+        {
+          path: "enforce.md",
+          title: "Enforce",
+          content: "MUST",
+          qualifier: "enforce",
+          condition: null,
+          priority: 100,
+        },
+        {
+          path: "always.md",
+          title: "Always",
+          content: "ALW",
+          qualifier: "always-read",
+          condition: null,
+          priority: 50,
+        },
+        {
+          path: "coding-sop.md",
+          title: "Coding SOP",
+          content: "SOP body",
+          qualifier: "conditional",
+          condition: "coding",
+          priority: 50,
+        },
+      ];
+      return all.filter((f) => quals.includes(f.qualifier));
+    });
+
+    const { stable, variable } = buildKnowledgeBaseSections(["shell_exec"]);
+
+    expect(stable).toContain("MANDATORY: Enforce");
+    expect(stable).toContain("ALW");
+    expect(stable).not.toContain("SOP body");
+    expect(variable).toContain("Coding SOP");
+    expect(variable).toContain("SOP body");
+    expect(variable).not.toContain("MANDATORY:");
+  });
+
+  it("variable=null when no conditional matches and no project README", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) => {
+      if (quals.includes("conditional")) {
+        return [
+          {
+            path: "teaching.md",
+            title: "Teaching",
+            content: "T",
+            qualifier: "conditional",
+            condition: "teaching",
+            priority: 50,
+          },
+        ];
+      }
+      return [
+        {
+          path: "enforce.md",
+          title: "Enforce",
+          content: "MUST",
+          qualifier: "enforce",
+          condition: null,
+          priority: 100,
+        },
+      ];
+    });
+
+    // shell_exec doesn't match teaching condition
+    const { stable, variable } = buildKnowledgeBaseSections(["shell_exec"]);
+    expect(stable).toBeTruthy();
+    expect(variable).toBeNull();
+  });
+
+  it("project README goes into variable layer (per-message signal)", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) => {
+      if (quals.includes("conditional")) return [];
+      return [
+        {
+          path: "enforce.md",
+          title: "Enforce",
+          content: "MUST",
+          qualifier: "enforce",
+          condition: null,
+          priority: 100,
+        },
+      ];
+    });
+    vi.mocked(getFile).mockReturnValue({
+      id: "r",
+      path: "projects/vlmp/README.md",
+      title: "VLMP",
+      content: "Very Light Media Player",
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      created_at: "",
+      updated_at: "",
+      user_edit_time: null,
+    });
+
+    const { stable, variable } = buildKnowledgeBaseSections(
+      [],
+      "tell me about vlmp",
+    );
+    expect(stable).toContain("MANDATORY: Enforce");
+    expect(stable).not.toContain("Very Light Media Player");
+    expect(variable).toContain("Project Context: VLMP");
+  });
+
+  it("returns {stable: null, variable: null} when no rows match", () => {
+    vi.mocked(getFilesByQualifier).mockReturnValue([]);
+    expect(buildKnowledgeBaseSections([])).toEqual({
+      stable: null,
+      variable: null,
+    });
   });
 });

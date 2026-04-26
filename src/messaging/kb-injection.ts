@@ -181,3 +181,89 @@ export function buildKnowledgeBaseSection(
     return null;
   }
 }
+
+/**
+ * v8 S1: Split KB into a stable layer (cache-friendly prefix) and a
+ * variable layer (per-task / per-scope). Stable = `enforce` + `always-read`
+ * sections — same across all tasks. Variable = `conditional` rows that match
+ * the active scope + project README (if user mentioned a project slug).
+ *
+ * Cache rationale: Anthropic's prompt cache keys on the longest stable prefix.
+ * When variable conditional content sits at the top of the prompt, every task
+ * with a different scope busts the cache. Routing stable content into one
+ * system message and variable content into a later message lets the cache hit
+ * on the stable layer. See feedback_cache_prefix_variability.md for why this
+ * matters: a 68% prompt-token shrink netted only 5% cost savings because the
+ * cache-read ratio dropped 83%→59% on the 2026-04-26 KB-injection refactor.
+ *
+ * Returns `{ stable, variable }`. Either may be null if no rows match.
+ *
+ * @param scopedTools  Tools currently in scope (used to gate conditional files)
+ * @param messageText  Optional user message — if it mentions a known project
+ *                     slug, that project's README is appended to `variable`.
+ * @param logTag       Optional log prefix (default `"runner"`).
+ */
+export function buildKnowledgeBaseSections(
+  scopedTools: string[],
+  messageText?: string,
+  logTag = "runner",
+): { stable: string | null; variable: string | null } {
+  try {
+    const stableFiles = getFilesByQualifier("enforce", "always-read");
+    const variableFiles = getFilesByQualifier("conditional");
+
+    const stableSections: string[] = [];
+    for (const f of stableFiles) {
+      const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
+      stableSections.push(`### ${prefix}${f.title}\n${f.content}`);
+    }
+
+    const variableSections: string[] = [];
+    let variableChars = 0;
+    const KB_CHAR_BUDGET = 8000;
+    for (const f of variableFiles) {
+      if (f.condition && !conditionMatches(f.condition, scopedTools)) {
+        continue;
+      }
+      const section = `### ${f.title}\n${f.content}`;
+      if (variableChars + section.length > KB_CHAR_BUDGET) continue;
+      variableSections.push(section);
+      variableChars += section.length;
+    }
+
+    // Project README belongs in variable — explicit project mention is a
+    // per-message signal. Bypasses budget for the same reason as before.
+    if (messageText) {
+      const projectSlug = detectProjectInMessage(messageText);
+      if (projectSlug) {
+        try {
+          const readme = getFile(`projects/${projectSlug}/README.md`);
+          if (readme) {
+            variableSections.push(
+              `### Project Context: ${readme.title}\n${readme.content}`,
+            );
+            variableChars += readme.content.length;
+            console.log(
+              `[${logTag}] Project README injected into variable layer: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
+            );
+          }
+        } catch {
+          // non-fatal
+        }
+      }
+    }
+
+    const stable =
+      stableSections.length > 0
+        ? `[JARVIS KNOWLEDGE BASE]\n\n${stableSections.join("\n\n---\n\n")}`
+        : null;
+    const variable =
+      variableSections.length > 0
+        ? `[JARVIS KNOWLEDGE BASE — task-specific]\n\n${variableSections.join("\n\n---\n\n")}`
+        : null;
+
+    return { stable, variable };
+  } catch {
+    return { stable: null, variable: null };
+  }
+}

@@ -9,6 +9,7 @@
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { A2ARpcClient, agentCardCache } from "../a2a/client.js";
 import { A2A_TERMINAL_STATES } from "../a2a/types.js";
+import { stripCacheMarker } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 
 const POLL_INITIAL_MS = 1_000;
@@ -49,12 +50,14 @@ export const a2aRunner: Runner = {
 
       // Create RPC client and send message
       const client = new A2ARpcClient(targetUrl, targetKey);
+      // v8 S1: strip cache-break marker before sending to remote A2A peer.
+      // Marker is an mc-internal optimization; remote agents shouldn't see it.
       const message = {
         role: "user" as const,
         parts: [
           {
             type: "text" as const,
-            text: `${input.title}\n\n${input.description}`,
+            text: `${input.title}\n\n${stripCacheMarker(input.description)}`,
           },
         ],
       };

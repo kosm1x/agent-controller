@@ -373,4 +373,33 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages).toHaveLength(0);
     });
   });
+
+  // v8 S1 — cache-break marker handling
+  describe("stripCacheMarker", () => {
+    it("replaces marker with single newline when present", async () => {
+      const { stripCacheMarker, CACHE_BREAK_MARKER } =
+        await import("./router.js");
+      const input = `STABLE${CACHE_BREAK_MARKER}VARIABLE`;
+      expect(stripCacheMarker(input)).toBe("STABLE\nVARIABLE");
+    });
+
+    it("returns input unchanged when marker absent (fast path)", async () => {
+      const { stripCacheMarker } = await import("./router.js");
+      const input = "no marker here";
+      // Same reference when no marker (no allocation)
+      expect(stripCacheMarker(input)).toBe(input);
+    });
+
+    it("strips only the first occurrence (defensive)", async () => {
+      const { stripCacheMarker, CACHE_BREAK_MARKER } =
+        await import("./router.js");
+      const input = `A${CACHE_BREAK_MARKER}B${CACHE_BREAK_MARKER}C`;
+      // String.replace with literal arg replaces first match only.
+      // Second marker survives — guards against malformed inputs without
+      // silently coalescing them into one giant blob.
+      const result = stripCacheMarker(input);
+      expect(result).toContain("A\nB");
+      expect(result).toContain(CACHE_BREAK_MARKER);
+    });
+  });
 });

@@ -17,6 +17,7 @@ import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
 import type { Goal, ExecutionResult, GoalResult } from "../prometheus/types.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
+import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -237,7 +238,9 @@ export const swarmRunner: Runner = {
 
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
-    const taskDescription = `${input.title}\n\n${input.description}`;
+    // v8 S1: strip cache-break marker — swarm uses description as a single
+    // blob fed to plan() and as text for sub-task descriptions.
+    const taskDescription = `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`;
 
     // --- DEPTH GUARD ---
     // Prevent recursive swarm spawning beyond MAX_SWARM_DEPTH levels.

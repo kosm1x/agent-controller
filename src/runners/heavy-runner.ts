@@ -8,6 +8,7 @@
 import { registerRunner } from "../dispatch/dispatcher.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
+import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { getConfig } from "../config.js";
 import {
   spawnContainer,
@@ -36,9 +37,13 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       /* snapshot loading is best-effort */
     }
 
+    // v8 S1: heavy-runner uses description as a single blob prompt to
+    // orchestrate(); strip the cache-break marker so it doesn't appear as
+    // visible text. fast-runner's chat branch is the only path that benefits
+    // from splitting; heavy/nanoclaw/swarm treat description as one piece.
     const result = await orchestrate(
       input.taskId,
-      `${input.title}\n\n${input.description}`,
+      `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
       undefined,
       input.tools,
       snapshot,
@@ -80,7 +85,8 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
   const config = getConfig();
 
   const stdinPayload = {
-    prompt: `${input.title}\n\n${input.description}`,
+    // v8 S1: strip cache-break marker (see in-process branch above for context).
+    prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
     taskId: input.taskId,
     tools: input.tools,
   };

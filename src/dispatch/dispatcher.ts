@@ -19,6 +19,7 @@ import {
 import { taskStarted, taskCompleted } from "../observability/prometheus.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
+import { stripCacheMarker } from "../messaging/router.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 
 const log = createLogger("dispatch");
@@ -193,10 +194,19 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   const db = getDatabase();
   const taskId = randomUUID();
 
+  // v8 S1: strip cache-break marker for persistence + classifier + events.
+  // The marker is preserved on `submission.description` for the in-memory
+  // RunnerInput path (line ~360) so the fast-runner chat branch still splits
+  // on it. DB / dashboards / mc-ctl / classifier / event listeners see clean
+  // text. Retries fetched from DB will lack the marker — they fall back
+  // gracefully (whole description treated as stable, no cache benefit on
+  // retry, no functional break).
+  const cleanDescription = stripCacheMarker(submission.description);
+
   // Classify
   const classification = classify({
     title: submission.title,
-    description: submission.description,
+    description: cleanDescription,
     tags: submission.tags,
     priority: submission.priority,
     agentType: submission.agentType,
@@ -213,7 +223,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     parentTaskId: submission.parentTaskId ?? null,
     spawnType: submission.spawnType ?? "root",
     title: submission.title,
-    description: submission.description,
+    description: cleanDescription,
     priority: submission.priority ?? "medium",
     agentType: classification.agentType,
     classification: JSON.stringify(classification),
@@ -228,7 +238,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     getEventBus().emitEvent("task.created", {
       task_id: taskId,
       title: submission.title,
-      description: submission.description,
+      description: cleanDescription,
       priority: submission.priority ?? "medium",
       tags: submission.tags ?? [],
       created_by: "api",
@@ -336,9 +346,11 @@ async function dispatchWithSlot(
     runId,
     taskId,
     agentType,
+    // v8 S1: persisted input shape stays clean (no marker text). RunnerInput
+    // below preserves marker for the runner's split-on-marker logic.
     input: JSON.stringify({
       title: submission.title,
-      description: submission.description,
+      description: stripCacheMarker(submission.description),
     }),
   });
 

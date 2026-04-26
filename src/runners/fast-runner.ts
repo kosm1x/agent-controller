@@ -22,8 +22,10 @@ import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import {
   buildKnowledgeBaseSection,
+  buildKnowledgeBaseSections,
   conditionMatches,
 } from "../messaging/kb-injection.js";
+import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { getConfig } from "../config.js";
 
 // Re-export for back-compat with existing imports (e.g. tests).
@@ -629,40 +631,81 @@ export const fastRunner: Runner = {
       // Chat task: description IS the system prompt (Jarvis persona + context).
       // conversationHistory includes prior turns + current user message as the
       // last entry, so we inject them all as proper message turns.
+      //
+      // v8 S1: split description on CACHE_BREAK_MARKER (router emits
+      // `stable + MARKER + variable + extras`) and emit cache-friendly:
+      //   1. STABLE: stable persona + STATUS_SUFFIX
+      //   2. STABLE: essentials
+      //   3. STABLE: enforce + always-read KB rows
+      //   4. VARIABLE: variable persona + per-call extras
+      //   5. VARIABLE: conditional KB rows + project README
+      //   6. precedent (per-conversation)
+      //   7. deferredCatalog (per-scope)
+      // The stable prefix (1-3) is the longest cacheable shared content
+      // across tasks — Anthropic's prefix cache hits on those tokens.
+      // Without this split, position 1 carried scope-conditional persona
+      // sections at the top, busting cache on every scope change.
+      const markerIdx = input.description.indexOf(CACHE_BREAK_MARKER);
+      const stableDescPart =
+        markerIdx >= 0
+          ? input.description.slice(0, markerIdx)
+          : input.description;
+      const variableDescPart =
+        markerIdx >= 0
+          ? input.description.slice(markerIdx + CACHE_BREAK_MARKER.length)
+          : "";
+
+      // 1. STABLE: persona + STATUS_SUFFIX (STATUS_SUFFIX is invariant).
       messages.push({
         role: "system",
-        content: input.description + STATUS_SUFFIX,
+        content: stableDescPart + STATUS_SUFFIX,
       });
 
-      // v6.5 M2: Essential facts layer — compact identity/context block (~150-200 tokens)
-      // Injected before KB so Claude always has core user context even if KB is omitted.
+      // 2. STABLE: v6.5 M2 Essential facts — compact identity/context (~150-200 tokens).
       const { getEssentialFacts } = await import("../memory/essentials.js");
       const essentials = getEssentialFacts("mc-jarvis");
       if (essentials) {
         messages.push({ role: "system", content: essentials });
       }
 
-      // Inject Jarvis knowledge base files (always-read, enforce, conditional).
-      // omitKB pattern (OpenClaude): read-only subagents skip KB to save tokens.
-      // If ALL scoped tools are read-only, the task is pure research/observation —
-      // KB sections (NorthStar visions, directives, conditional files) add ~500-1000
-      // tokens of context that won't be acted on. Enforce files are ALWAYS included
-      // since they contain safety-critical rules even for read-only operations.
+      // omitKB pattern (OpenClaude): read-only subagents skip KB to save
+      // tokens. If ALL scoped tools are read-only, the task is pure
+      // research/observation — KB sections add tokens that won't be acted on.
+      // Enforce files are ALWAYS included since they contain safety-critical
+      // rules even for read-only operations.
       const scopedTools = input.tools ?? [];
       const isReadOnlyTask =
         scopedTools.length > 0 && scopedTools.every((t) => isReadOnlyTool(t));
-      // Extract current user message for project README detection
       const lastUserMsg = input.conversationHistory
         ?.filter((t) => t.role === "user")
         .pop()?.content;
-      const kb = buildKnowledgeBaseSection(
-        scopedTools,
-        isReadOnlyTask,
-        lastUserMsg,
-        "fast-runner",
-      );
-      if (kb) {
-        messages.push({ role: "system", content: kb });
+
+      if (isReadOnlyTask) {
+        // Read-only: only enforce KB (kept as a single combined section via
+        // the legacy enforce-only path; preserves prior behavior).
+        const kb = buildKnowledgeBaseSection(
+          scopedTools,
+          true,
+          lastUserMsg,
+          "fast-runner",
+        );
+        if (kb) messages.push({ role: "system", content: kb });
+      } else {
+        // 3. STABLE: enforce + always-read KB rows.
+        const { stable: stableKB, variable: variableKB } =
+          buildKnowledgeBaseSections(scopedTools, lastUserMsg, "fast-runner");
+        if (stableKB) {
+          messages.push({ role: "system", content: stableKB });
+        }
+        // 4. VARIABLE: variable persona + per-call extras (pattern, checkpoint,
+        // userFacts, enrichment) come right after the cache boundary.
+        if (variableDescPart) {
+          messages.push({ role: "system", content: variableDescPart });
+        }
+        // 5. VARIABLE: conditional KB rows + project README.
+        if (variableKB) {
+          messages.push({ role: "system", content: variableKB });
+        }
       }
 
       // v6.4 CL1.2: Precedent resolution — inject recent entities so the LLM
@@ -704,9 +747,12 @@ export const fastRunner: Runner = {
       if (deferredCatalog) {
         messages.push({ role: "system", content: deferredCatalog });
       }
+      // v8 S1: strip cache-break marker — non-chat path treats description as
+      // a single blob since the user message doesn't benefit from system-msg
+      // splitting (the persona is GENERIC_SYSTEM_PROMPT, not buildJarvisSystemPrompt).
       messages.push({
         role: "user",
-        content: `Task: ${input.title}\n\n${input.description}`,
+        content: `Task: ${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
       });
     }
 

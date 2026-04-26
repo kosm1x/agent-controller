@@ -156,16 +156,47 @@ REGLAS (no negociables):
  * it cannot call (e.g., browser__goto when browser tools aren't scoped).
  */
 /**
+ * v8 S1: Cache-break marker. Splits the system prompt into a stable prefix
+ * (P1 + P2 sections — same across all tasks for this user) and a variable
+ * suffix (P3 + P4 — scope-conditional + per-call data). Runners that want to
+ * exploit the prompt cache split on this marker and emit the halves as
+ * separate system messages, with stable content first. Runners that don't
+ * (heavy/nanoclaw/swarm) replace the marker with a single newline and treat
+ * description as one blob — no regression vs pre-S1 behavior.
+ *
+ * Format chosen to be unambiguous (HTML comment line) and unlikely to collide
+ * with real persona/KB content. Versioned so future changes can be detected.
+ */
+export const CACHE_BREAK_MARKER = "\n<!--CACHE_BREAK_v1-->\n";
+
+/**
+ * Strip the cache-break marker, replacing it with a single newline.
+ * Use at any boundary where `description` text is exposed to a consumer
+ * that doesn't honor the split (A2A peers, persistence, dashboard, classifier).
+ * The fast-runner chat branch is the only consumer that splits on the marker;
+ * everywhere else this helper makes the description look as if S1 didn't exist.
+ */
+export function stripCacheMarker(text: string): string {
+  return text.includes(CACHE_BREAK_MARKER)
+    ? text.replace(CACHE_BREAK_MARKER, "\n")
+    : text;
+}
+
+/**
  * Build the static (byte-identical across calls) portion of the Jarvis system
  * prompt. The current date/time is deliberately NOT included here — it goes
  * into the user message via `timeContextLine()` so the SDK's prompt cache
  * hits on the system prompt. See `identitySection` comment for history.
+ *
+ * v8 S1: Returns `{ stable, variable }` so runners can place the variable
+ * portion AFTER stable content (essentials, enforce-KB, always-read-KB) for
+ * cache stability. See `CACHE_BREAK_MARKER` and `feedback_cache_prefix_variability.md`.
  */
 function buildJarvisSystemPrompt(
   tools: string[],
   userFactsBlock: string,
   enrichmentBlock: string,
-): string {
+): { stable: string; variable: string } {
   const flags = detectToolFlags(tools);
 
   // CCP6: Priority-ordered sections. Higher priority = kept when over budget.
@@ -175,19 +206,22 @@ function buildJarvisSystemPrompt(
   const p3: string[] = [];
   const p4: string[] = []; // First to truncate
 
-  // P1: Identity + safety
+  // P1: Identity + safety (STABLE)
   p1.push(identitySection());
   p1.push(confirmationSection(flags));
   p1.push(toolFirstSection(flags));
   p1.push(mechanicalVerificationSection());
 
-  // P2: Core knowledge
+  // P2: Core knowledge (STABLE — same content per user across tasks)
+  // Note: fileSystemSection is gated on hasNorthStar but the gate decision is
+  // stable per scope-tool composition; it stays in the stable layer. Coding
+  // tasks without NorthStar tools won't see this either way.
   if (flags.hasNorthStar) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
   p2.push(personalDataSection());
   p2.push(correctionMemorySection());
 
-  // P3: Domain-specific
+  // P3: Domain-specific (VARIABLE — varies by tool scope)
   if (flags.hasBrowser) p3.push(verificationSection());
   if (flags.hasWordpress) p3.push(wordpressSection());
   if (tools.includes("memory_store")) p3.push(memoryPersistenceSection());
@@ -195,33 +229,55 @@ function buildJarvisSystemPrompt(
   if (flags.hasBrowser) p3.push(browserSection());
   if (flags.hasResearch) p3.push(researchSection());
 
-  // P4: Supplementary data (user facts, enrichment)
+  // P4: Supplementary data (VARIABLE — per-call user facts, enrichment)
   if (userFactsBlock) p4.push(userFactsBlock);
   if (enrichmentBlock) p4.push(enrichmentBlock);
 
-  // Assemble with budget check
+  // Assemble with budget check across both halves combined
   const budget = SYSTEM_PROMPT_TOKEN_BUDGET * 4; // Convert tokens to chars
-  let prompt = [...p1, ...p2, ...p3, ...p4].join("\n\n");
+  let stable = [...p1, ...p2].join("\n\n");
+  let variable = [...p3, ...p4].join("\n\n");
+  let combinedLength = stable.length + variable.length;
 
   // CCP6: Truncate from lowest priority tier first, then next tier up.
   // Drain P4 completely before touching P3, P3 before P2. Never touch P1.
-  if (prompt.length > budget) {
-    const tiers = [p4, p3, p2]; // drain order (P4 first)
-    for (const tier of tiers) {
-      while (tier.length > 0 && prompt.length > budget) {
-        tier.pop();
-        prompt = [...p1, ...p2, ...p3, ...p4].join("\n\n");
+  if (combinedLength > budget) {
+    const tiers: { arr: string[]; recompute: () => void }[] = [
+      {
+        arr: p4,
+        recompute: () => {
+          variable = [...p3, ...p4].join("\n\n");
+        },
+      },
+      {
+        arr: p3,
+        recompute: () => {
+          variable = [...p3, ...p4].join("\n\n");
+        },
+      },
+      {
+        arr: p2,
+        recompute: () => {
+          stable = [...p1, ...p2].join("\n\n");
+        },
+      },
+    ];
+    for (const { arr, recompute } of tiers) {
+      while (arr.length > 0 && combinedLength > budget) {
+        arr.pop();
+        recompute();
+        combinedLength = stable.length + variable.length;
       }
     }
     console.warn(
-      `[prompt] System prompt truncated: ${Math.round(prompt.length / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET})`,
+      `[prompt] System prompt truncated: ${Math.round(combinedLength / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET})`,
     );
   }
 
   console.log(
-    `[prompt] System prompt: ${Math.round(prompt.length / 4)} tokens, ${p1.length + p2.length + p3.length + p4.length} sections`,
+    `[prompt] System prompt: ${Math.round(combinedLength / 4)} tokens, ${p1.length + p2.length + p3.length + p4.length} sections (stable=${p1.length + p2.length}, variable=${p3.length + p4.length})`,
   );
-  return prompt;
+  return { stable, variable };
 }
 
 /**
@@ -986,11 +1042,8 @@ export class MessageRouter {
         const enrichment = await enrichContext(taskText, msg.channel);
         const mxDate = nowMexDate();
         const mxTime = nowMexTime();
-        const systemPrompt = buildJarvisSystemPrompt(
-          scopedTools,
-          "",
-          enrichment.contextBlock,
-        );
+        const { stable: stableSP, variable: variableSP } =
+          buildJarvisSystemPrompt(scopedTools, "", enrichment.contextBlock);
 
         // Worker isolation (OpenClaude InProcessBackend pattern):
         // - No conversationHistory passed (parent context NOT leaked)
@@ -999,10 +1052,17 @@ export class MessageRouter {
         // Time context goes into the task body (which the non-chat fast-runner
         // branch emits as a user message), so the system prompt above stays
         // byte-stable for cache hits.
+        // v8 S1: stable + CACHE_BREAK_MARKER + variable lets runners that
+        // honor the marker (fast-runner chat path) split for cache stability;
+        // others (heavy/nanoclaw/swarm) strip the marker and treat as a blob.
+        // Per-call extras (time context, agent boilerplate) attach to the
+        // VARIABLE half — they'd bust the cache anyway.
         const result = await submitTask({
           title: `🤖 Agente: ${taskText.slice(0, 50)}`,
           description:
-            systemPrompt +
+            stableSP +
+            CACHE_BREAK_MARKER +
+            variableSP +
             `\n\n${timeContextLine(mxDate, mxTime)}\n` +
             `\nTarea del agente (background):\n${taskText}\n\n` +
             BACKGROUND_AGENT_BOILERPLATE,
@@ -1517,28 +1577,26 @@ export class MessageRouter {
     // The system prompt stays byte-stable across calls (no timestamps) so the
     // Anthropic SDK's prompt cache can hit. Time context is injected into the
     // user message below via `timeContextLine()`.
-    const systemPrompt = buildJarvisSystemPrompt(
+    const { stable: stableSP, variable: variableSP } = buildJarvisSystemPrompt(
       tools,
       userFactsBlock,
       enrichment.contextBlock,
     );
 
-    // Execution pattern memory: inject relevant past lessons
+    // Execution pattern memory: inject relevant past lessons. Patterns vary
+    // by message + active scope — they belong in the VARIABLE half.
     const patternBlock = findRelevantPatterns(msg.text, [...activeGroups]);
-    const systemPromptWithPatterns = patternBlock
-      ? systemPrompt + "\n\n" + patternBlock
-      : systemPrompt;
 
-    // Task continuity: check for a recent checkpoint ONLY on continuation messages.
+    // Task continuity: check for a recent checkpoint ONLY on continuation
+    // messages. Checkpoint blocks are per-call by definition — VARIABLE half.
     const CONTINUATION_RE =
       /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
-    let taskDescription = systemPromptWithPatterns;
+    let checkpointBlock = "";
     if (CONTINUATION_RE.test(msg.text.trim())) {
       try {
         const cp = findRecentCheckpoint();
         if (cp) {
-          taskDescription =
-            systemPrompt +
+          checkpointBlock =
             `\n\n## CONTINUACIÓN DE TAREA ANTERIOR\n` +
             `La tarea anterior (${cp.taskId}) no terminó (${cp.exitReason}, round ${cp.roundsCompleted}/${cp.maxRounds}).\n` +
             `**Lo que ya se hizo:** ${cp.toolsCalled.join(", ") || "nada"}\n` +
@@ -1555,6 +1613,14 @@ export class MessageRouter {
         // Non-fatal — checkpoint system is best-effort
       }
     }
+
+    // v8 S1: assemble description with cache-break marker between stable
+    // and variable halves. Per-call additions (patternBlock, checkpointBlock)
+    // join the variable half — they'd bust the cache anyway.
+    const variableTail =
+      (patternBlock ? "\n\n" + patternBlock : "") + checkpointBlock;
+    const taskDescription =
+      stableSP + CACHE_BREAK_MARKER + variableSP + variableTail;
 
     // Create abort controller for task cancellation (v6.2 S2)
     const taskAbort = new AbortController();
