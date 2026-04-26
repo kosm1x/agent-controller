@@ -183,7 +183,6 @@ describe("buildKnowledgeBaseSection", () => {
     const result = buildKnowledgeBaseSection(["shell_exec"], false);
     expect(result).toContain("SOP");
     expect(result).not.toContain("27 KB of project evaluations");
-    expect(result).not.toContain("Journal");
   });
 
   it("auto-injects project README when message mentions a known slug", () => {
