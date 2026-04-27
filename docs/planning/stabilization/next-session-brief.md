@@ -1,15 +1,43 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-110
+> **Authored**: 2026-04-26 end-of-Session-111
 > **Window**: 2026-04-22 → 2026-05-22 (day 5 of 30 at next session start)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
 
 ---
 
+## Where Session 111 left things (unplanned mid-session)
+
+After Session 110's S1 deploy, three consecutive Telegram tasks (3332-3334) hit `error_max_turns` on operator's vlcms-continuation work. Operator invoked `/diagnose`. Root cause was a **pre-existing scope-classifier collapse**, not an S1 regression — but the failure pattern correlated with the deploy timing, so it surfaced now.
+
+**Diagnosis (4-phase)**:
+
+- Task 3332 (max=55, hit): legitimate task complexity for vlcms Phase-3 redo. Cache 98%, S1 working as designed. Lesson extracted: "Batch file edits to reduce turn count."
+- Tasks 3333, 3334 (max=20, hit): "Continúa" follow-ups routed to **wrong `google` scope** (46 tools) instead of inheriting `coding` (73 tools). Chain: semantic classifier returns explicit `[]` for short follow-ups per its own rules → router collapsed empty-Set with null/timeout → regex fallback → bare alts in google regex (`|present|`, `|drive|`, `|agenda|`, `|document[oa]?s?|`) matched generic words from prior conversation → wrong scope → tools missing → max_turns.
+
+**Fix shipped (commit `8835c40`, Option 2 from /diagnose, freeze-aligned)**:
+
+| File                         | Change                                                                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/messaging/router.ts`    | New exported `decideActiveGroups(semanticGroups, priorScope, regexFallback, currentMessage?)` with three-way decision (`semantic` / `inherited` / `regex_empty` / `regex`). Wrapper `scopeToolsForMessage` takes 4th `priorScope` arg |
+| `src/messaging/scope.ts:498` | Closes outer alternation with `\b` (same shape as `react\b` close shipped earlier). Drops bare `\|present\|` alt. Expands `calendar` → `calendars?\|calendarios?` so Spanish form survives `\b` close                                 |
+| `src/messaging/scope.ts`     | Hoists `CONVERSATIONAL_PATTERN` to file-scope export so router's inheritance branch can apply the same filter (qa-audit W2: prevents "gracias"/"ok" from inheriting prior coding scope onto topic-closers)                            |
+
+**qa-auditor round** (W1-W4):
+
+- W1 sticky-bad-scope (3 consecutive misclassified inheritances trap user) — **deferred**, documented in `feedback_classifier_empty_vs_null.md`. Operator can break out by typing a real-keyword message; cap inheritance depth on next inheritance change.
+- W2 conversational guard — **fixed in same commit**.
+- W3 test-improvement nit — **deferred** (cosmetic).
+- W4 log condition didn't fire on `regex_empty` source (observability regression I introduced in first pass) — **fixed in same commit**, tag renamed to `regex (post-empty)`.
+
+**Tests**: 3843 → 3851 + 1 todo (+8 / 1 documenting residual `agenda`/`drive`/`documento` bare-alt FPs deferred to post-freeze tightening).
+
+---
+
 ## Where Session 110 left things
 
-**Landed today** (4 commits on `main`, all pushed):
+**Landed earlier today** (4 commits on `main`, all pushed):
 
 | Commit    | Lane                       | Change                                                                                                                                                                                                                                       |
 | --------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -22,7 +50,8 @@
 
 - **Cache observability**: cache_read / cache_creation now persist in cost_ledger end-to-end across fast/heavy/nanoclaw paths. Pre-S1 baseline (post-S4, n=5 fast-runner): **81% cache-hit ratio average**.
 - **Cache structure**: stable persona + KB now form a fixed prefix; variable scope-conditional content shifted to position 4+ in the LLM message order. Validates the architectural lesson from `feedback_cache_prefix_variability.md`.
-- **Tests**: 3832 → 3843 (+11 across S4 + S1)
+- **Scope-classifier resilience**: empty-classifier-result on follow-ups now inherits prior scope instead of falling to regex FP. Should also sharpen the P1-S1 cache-hit measurement window by preventing scope churn during organic traffic.
+- **Tests**: 3832 → 3851 (+19 across S4, S1, and Session 111 fix)
 
 **Local hooks installed at `~/.claude/`** (effective at next-session boot):
 
@@ -51,19 +80,21 @@ Indexed in `reference_local_hooks.md`. Rollback: `mv ~/.claude/settings.json.bak
 
 - Pre-S1 baseline (post-S4, n=5 fast-runner): 81% cache-hit average
 - V8-VISION §3-S1 test bar: **≥80% aggregate cache-read ratio on a full mixed-traffic day**
+- Measurement window now starts post Session 111 deploy at **2026-04-26 23:47** (the `8835c40` scope-classifier fix restart) so scope-churn from the misclassified "Continúa" follow-ups doesn't pollute the data
 - Query when ready (~24h post-deploy):
   ```sql
   SELECT ROUND(100.0 * SUM(cache_read_tokens) / SUM(prompt_tokens), 1) AS cache_pct,
          COUNT(*) AS n,
          SUM(cost_usd) AS total_cost
   FROM cost_ledger
-  WHERE created_at > '2026-04-26 20:23:28' AND agent_type = 'fast';
+  WHERE created_at > '2026-04-26 23:47:02' AND agent_type = 'fast';
   ```
 - **Decision criteria**:
   - `cache_pct ≥ 87%` → S1 worked, restored cache structure as designed
   - `cache_pct 80-87%` → S1 partial win, document and consider follow-up
   - `cache_pct < 80%` → S1 didn't reach the cache layer expected; re-audit message-emission order, possibly add `cache_control` markers
 - Slice by date+hour to detect cold-start effects. Drop first ~5 post-restart tasks.
+- Bonus check (Session 111 verification): grep `journalctl -u mission-control` for `Scope groups (inherited from prior turn)` — should fire on real "Continúa"-style follow-ups in coding context. If never fires after 24h of organic use, suspect the inheritance branch isn't being reached.
 
 ### P2 — known small cleanups
 
@@ -80,7 +111,15 @@ Audit during P2-C found the same prefix-match defect class on ~12 other bare alt
 | `directori`, `carpetas?`, `servidores?`     | physical org references                                 | non-coding     |
 | `commit`, `code`, `repositori`, `archivos?` | English "commitment"/"committee", ES "archivos físicos" | non-coding     |
 
-Cleanest fix: append `\b` to the closing `)/i` of the outer group. Likely 1-line change + 4 regression tests.
+Cleanest fix: append `\b` to the closing `)/i` of the outer group. Likely 1-line change + 4 regression tests. Same shape as the google-regex `\b` close shipped in Session 111 — pair them naturally if you want continuity on the regex hygiene lane.
+
+**[P2-google-residual] Bare exact-word alts on google regex** — _new from Session 111, post-freeze_
+
+Closing `\b` in Session 111 only fixed prefix-match bugs (`presentación` etc.). Generic exact-word alts still leak: `agenda` → "agenda del día" / "mi agenda diaria"; `drive` → "drive de tracción"; `document[oa]?s?` → "documento técnico"; `hojas?` → "hojas del árbol"; `slides?` → bare English use. Captured as `it.todo` in `scope.test.ts`. Fix requires either dropping alts (loses Spanish "agenda" → calendar inference some users rely on) or restructuring to require `google\s*` co-occurrence — both are structural changes outside the freeze.
+
+**[P2-W1] Sticky-bad-scope inheritance cap** — _new from Session 111 qa-audit, design needed_
+
+If turn N gets misclassified to wrong scope (e.g., classifier returns `["wordpress"]` wrongly), turn N+1's "Continúa" inherits `wordpress` indefinitely. Pre-fix regex would at least re-derive each turn. Mitigation options: counter on `previousScopeGroups` dropping after 3 consecutive `[]`-from-classifier turns, or require the classifier to explicitly emit an inheritance-signal vs `[]`. Low operational priority (operator can break out by typing a real-keyword message) but worth fixing on the next inheritance change. See `feedback_classifier_empty_vs_null.md`.
 
 ### P3 — calendar
 
@@ -114,10 +153,10 @@ Jarvis was mid-task on very-light-cms Phase 3 (auth + admin layout) when his bra
 
 | Item                     | State                                                                                                                                                                 |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Service                  | `mission-control` active (PID via systemctl), all channels reconnected post-S1 deploy at 20:23                                                                        |
-| Tests                    | 3843 passing, 0 type errors                                                                                                                                           |
+| Service                  | `mission-control` active (PID via systemctl), all channels reconnected post Session 111 deploy at 23:47                                                               |
+| Tests                    | 3851 passing + 1 todo, 0 type errors                                                                                                                                  |
 | Disk                     | ~26 GB free / 96 GB                                                                                                                                                   |
-| Branch state             | `main` clean; all session work pushed to `origin/main` (4 commits)                                                                                                    |
+| Branch state             | `main` clean; all session work pushed to `origin/main` (5 commits across S110 + S111)                                                                                 |
 | Hindsight recall         | DISABLED — leave disabled, operator filing upstream                                                                                                                   |
 | Stabilization audit      | All 5/5 dimensions CLOSED                                                                                                                                             |
 | V8 substrate ladder      | S1 + S4 (Phase 1+2) shipped 2026-04-26. S2/S3/S5 pending. S1 validation needs N≥30 post-deploy data                                                                   |
