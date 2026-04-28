@@ -24,10 +24,20 @@ const DEFAULT_TIMEOUT_MS = 5000;
 // classic timeout-jitter signature). Hindsight successful calls clustered at
 // 895-1341ms, so a 3000ms ceiling captures the slow tail without inflating
 // the dead-tax. Override via HINDSIGHT_RECALL_TIMEOUT_MS env var if tuning needed.
-const RECALL_TIMEOUT_MS = parseInt(
-  process.env.HINDSIGHT_RECALL_TIMEOUT_MS ?? "3000",
-  10,
-);
+// NaN/zero/negative guard: parseInt("abc") → NaN; setTimeout(..., NaN) fires
+// immediately and would silently abort every recall. Fall back to default
+// instead so a typo'd env var degrades gracefully.
+const DEFAULT_RECALL_TIMEOUT_MS = 3000;
+const RECALL_TIMEOUT_MS = (() => {
+  const parsed = parseInt(
+    process.env.HINDSIGHT_RECALL_TIMEOUT_MS ??
+      String(DEFAULT_RECALL_TIMEOUT_MS),
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_RECALL_TIMEOUT_MS;
+})();
 
 // ---------------------------------------------------------------------------
 // Types (matching Hindsight API v2 schemas)

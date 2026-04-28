@@ -238,6 +238,15 @@ cmd_cancel() {
   local id="$1"
   [ -n "$id" ] || die "Usage: mc-ctl cancel <task_id>"
 
+  # Validate id shape before SQL interpolation. Real task_ids are UUIDs
+  # (per schema: TEXT UNIQUE NOT NULL, populated via crypto.randomUUID).
+  # Allow lowercase hex + dashes + reasonable alphanumeric for legacy ids.
+  # This blocks SQL injection in the DB-fallback path below; the API path
+  # is parameterized inside Hono.
+  if [[ ! "$id" =~ ^[a-zA-Z0-9_-]{4,64}$ ]]; then
+    die "Invalid task_id format: '${id}' (expected alphanumeric+dash+underscore, 4-64 chars)"
+  fi
+
   # Fast path: API call with hard 4s timeout. Distinguish:
   #   200  → success
   #   404  → legitimate not-found (don't fall through)
