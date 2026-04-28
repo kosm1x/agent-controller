@@ -10,9 +10,10 @@
  */
 
 import { join } from "path";
-import { mkdirSync } from "fs";
+import { mkdirSync, readFileSync } from "fs";
 import type { Tool } from "../types.js";
 import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { describeImage } from "../../inference/vision.js";
 
 const SCREENSHOT_DIR = "/tmp/screenshots";
 
@@ -31,19 +32,26 @@ export const screenshotElementTool: Tool = {
     type: "function",
     function: {
       name: "screenshot_element",
-      description: `Capture a web page element as a HiDPI PNG screenshot.
+      description: `Capture a web page element as a HiDPI PNG screenshot, optionally with a vision description.
 
 USE WHEN:
 - Need a screenshot of a web page or specific element for content creation
 - Creating visual assets for overlay videos (video_create mode:"overlay")
 - Capturing social media posts, articles, or data visualizations
+- You need to SEE what an image at a URL looks like (set describe:true)
 
 Uses Playwright Chromium in headless mode with HiDPI rendering.
 Output: PNG file saved to /tmp/screenshots/.
 
 WORKFLOW for video content:
 1. screenshot_element url:"..." selector:".post" → PNG path
-2. video_create mode:"overlay" with the screenshot as an image asset`,
+2. video_create mode:"overlay" with the screenshot as an image asset
+
+WORKFLOW for "see this image":
+- screenshot_element url:"https://site.com/path/img.png" describe:true
+  → returns { path, description } so you can verify the rendered image
+- For raw image URLs, selector:"img" or "body" both work — the browser
+  renders the image and the screenshot captures it.`,
       parameters: {
         type: "object",
         properties: {
@@ -72,6 +80,16 @@ WORKFLOW for video content:
             description:
               "JavaScript to execute before capture (e.g. text replacement, DOM manipulation)",
           },
+          describe: {
+            type: "boolean",
+            description:
+              "If true, run the captured PNG through a vision-language model and include a description in the response. Use when you need to actually SEE what was captured (e.g., 'is the logo correct?', 'does this hero image render well?'). Adds a vision API call (~2-5s).",
+          },
+          describe_prompt: {
+            type: "string",
+            description:
+              "Optional prompt for the vision model when describe:true. Defaults to a detailed Spanish description. Use this to ask specific questions, e.g. 'List all the text visible in this image' or 'Is the layout broken?'",
+          },
         },
         required: ["url"],
       },
@@ -97,6 +115,8 @@ WORKFLOW for video content:
     const width = Math.min(1920, Math.max(320, Number(args.width) || 1080));
     const theme = args.theme as "dark" | "light" | undefined;
     const injectText = args.inject_text as string | undefined;
+    const describe = args.describe === true;
+    const describePrompt = args.describe_prompt as string | undefined;
     const dsf = calculateDSF(width);
 
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
@@ -169,14 +189,27 @@ WORKFLOW for video content:
 
         const box = await element.boundingBox();
 
-        return JSON.stringify({
+        const result: Record<string, unknown> = {
           path: outputPath,
           width: box ? Math.round(box.width * dsf) : width * dsf,
           height: box ? Math.round(box.height * dsf) : 0,
           dsf,
           selector,
           url,
-        });
+        };
+
+        if (describe) {
+          try {
+            const bytes = readFileSync(outputPath);
+            const dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
+            result.description = await describeImage(dataUrl, describePrompt);
+          } catch (err) {
+            result.description_error =
+              err instanceof Error ? err.message : String(err);
+          }
+        }
+
+        return JSON.stringify(result);
       } finally {
         await browser.close();
       }

@@ -48,14 +48,21 @@ export async function describeImage(
 ): Promise<string> {
   const config = getConfig();
   const visionModel = resolveVisionModel();
-  const url = `${config.inferencePrimaryUrl.replace(/\/+$/, "")}/chat/completions`;
-  console.log(`[vision] Using model: ${visionModel}`);
+  // Vision routing: optional dedicated provider via env, falls back to primary.
+  // Needed because some primary endpoints (e.g. DashScope coding-intl) only
+  // support text/code models and reject vision-language model names.
+  const baseUrl = (
+    process.env.INFERENCE_VISION_URL ?? config.inferencePrimaryUrl
+  ).replace(/\/+$/, "");
+  const apiKey = process.env.INFERENCE_VISION_KEY ?? config.inferencePrimaryKey;
+  const url = `${baseUrl}/chat/completions`;
+  console.log(`[vision] Using model: ${visionModel} @ ${baseUrl}`);
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.inferencePrimaryKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: visionModel,

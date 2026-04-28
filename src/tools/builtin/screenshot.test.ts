@@ -66,4 +66,24 @@ describe("screenshot_element tool definition", () => {
     const parsed = JSON.parse(result);
     expect(parsed.error).toMatch(/Blocked/);
   });
+
+  it("declares the describe and describe_prompt params for vision pass-through", async () => {
+    const { screenshotElementTool } = await import("./screenshot.js");
+    const params = screenshotElementTool.definition.function.parameters as {
+      properties: Record<string, { type: string; description?: string }>;
+    };
+    expect(params.properties.describe).toBeDefined();
+    expect(params.properties.describe.type).toBe("boolean");
+    expect(params.properties.describe_prompt).toBeDefined();
+    expect(params.properties.describe_prompt.type).toBe("string");
+  });
+
+  it("does not declare describe as required (opt-in only)", async () => {
+    const { screenshotElementTool } = await import("./screenshot.js");
+    const params = screenshotElementTool.definition.function.parameters as {
+      required: string[];
+    };
+    expect(params.required).not.toContain("describe");
+    expect(params.required).not.toContain("describe_prompt");
+  });
 });
