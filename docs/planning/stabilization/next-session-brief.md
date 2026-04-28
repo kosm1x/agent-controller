@@ -1,9 +1,32 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111
-> **Window**: 2026-04-22 → 2026-05-22 (day 5 of 30 at next session start)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-28 end-of-Session-113
+> **Window**: 2026-04-22 → 2026-05-22 (day 7 of 30 at session-113 close → day 8+ at next session start)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+
+---
+
+## Where Session 113 left things (2026-04-28 late)
+
+Three things shipped, one operational lesson, no rollbacks needed.
+
+**Shipped:**
+
+1. **Vision describe on `screenshot_element`** (mc commit `1c9a070`). Opt-in `describe:bool` + `describe_prompt:string`. Captured PNG → base64 → existing `describeImage()` adapter → `description` field in JSON response. Vision failures land in `description_error` and never fail the screenshot itself. Closes the gap where Jarvis could fetch an image URL via playwright/lightpanda but only ever saw a path string back. `src/inference/vision.ts` widened to read `INFERENCE_VISION_URL` + `INFERENCE_VISION_KEY` env overrides falling back to primary — needed because primary (DashScope coding-intl) rejects vision-language model names. Verified end-to-end via Groq Llama-4 Scout against the journal logo. Tests 3851 → 3854 (+3).
+2. **`vlcms-ctl` admin console** (vlcms commit `7c2b70b`) — sibling of mc-ctl/crm-ctl. `status`/`deploy`/`restart`/`reap`/`logs`/`tail`. Orphan detector filters by `/proc/$pid/cwd` so it doesn't false-positive on mc (also runs `node dist/index.js`) or Docker containers. Companion ops fix: `/etc/systemd/system/very-light-cms.service` flipped from `Restart=on-failure`/5s → `Restart=always`/2s + `TimeoutStopSec=10`. Plus 2 zombies cleaned (Apr24 wrong-entrypoint leftover + manual orphan).
+3. **WIP locked**: thewilliamsradar-journal `14314e3` (W17 editors-note removed → moved to home), very-light-cms `74876e1` (home sidebar + editors-note grid + 4× logo + entry-card refactor). All live + user-validated; committed to make next session start from a clean baseline.
+
+**One operator-side lesson:** task `c3e992e7` killed when `./scripts/deploy.sh` was issued in the same compound Bash invocation as the `running-tasks` SELECT. The check passed (count=0), then a real Telegram message landed in the gap, then the deploy fired regardless. Compound check+act = race condition. Always run the gate as its own tool call before the action.
+
+**Open P0 unchanged:** AV API key rotation, blocked on operator email to AV support. Same item as session 112 — only red gate on day-30 exit declaration.
+
+**Quick-take items the next session should pick up unless overridden:**
+
+- **P1 — N≥30 cache-hit ratio re-measure.** S1 (cache-aware prompts) has been in production since 2026-04-26. Likely enough organic traffic now to validate the ≥80% target from V8-VISION §3-S1 baseline. Pull from `cost_ledger` + `tasks` joining for fast-runner+chat path, exclude first 10 post-deploy tasks per `feedback_metrics_extrapolation.md`.
+- **P1 — 24h Hindsight recall stability check.** Recall has been live with cap=60 + 5s timeout since 2026-04-28 ~01:00 UTC. Pull from `/root/claude/ops/hindsight-monitor/audit.db` `recall_audit` table (latency_ms, source, n_results) for the past 24h: success rate, p50/p95 latency, fallback ratio. Compare against rehab playbook's stated targets (95%+ success, p95 ≤4.4s).
+- **P0 vision env wiring** if operator hasn't already pasted the 3 lines into `.env` — see Session 113 PROJECT-STATUS entry for exact values.
+- **vlcms-ctl battle test** — first time Jarvis hits a journal/vlcms task post-this-session, watch whether he discovers and uses the wrapper (it's in vlcms README and `infrastructure.md`). If he doesn't, may need a tool-description nudge or a CLAUDE.md addendum at the journal/vlcms layer.
 
 ---
 
