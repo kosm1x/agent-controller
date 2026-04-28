@@ -19,7 +19,15 @@ const DEFAULT_TIMEOUT_MS = 5000;
  * lets us fail to SQLite fallback (~300ms) sooner. See
  * `docs/audit/2026-04-22-speed.md` S7.
  */
-const RECALL_TIMEOUT_MS = 1500;
+// Bumped 2026-04-28 from 1500 → env-configurable, default 3000ms.
+// Production data: at 1500ms cap, 4/6 recall calls were timing out (1501-1527ms,
+// classic timeout-jitter signature). Hindsight successful calls clustered at
+// 895-1341ms, so a 3000ms ceiling captures the slow tail without inflating
+// the dead-tax. Override via HINDSIGHT_RECALL_TIMEOUT_MS env var if tuning needed.
+const RECALL_TIMEOUT_MS = parseInt(
+  process.env.HINDSIGHT_RECALL_TIMEOUT_MS ?? "3000",
+  10,
+);
 
 // ---------------------------------------------------------------------------
 // Types (matching Hindsight API v2 schemas)

@@ -5,7 +5,7 @@ set -euo pipefail
 PROJECT_DIR="/root/claude/mission-control"
 SERVICE_NAME="mission-control"
 DB_PATH="${PROJECT_DIR}/data/mc.db"
-API_URL="http://localhost:8080"
+API_URL="${API_URL:-http://localhost:8080}"
 HINDSIGHT_URL="http://localhost:8888"
 HINDSIGHT_CONTAINER="crm-hindsight"
 LOG_LINES=50
@@ -238,13 +238,71 @@ cmd_cancel() {
   local id="$1"
   [ -n "$id" ] || die "Usage: mc-ctl cancel <task_id>"
 
-  local result
-  if result=$(api POST "/api/tasks/${id}/cancel"); then
-    echo -e "${GREEN}Task ${id} cancelled.${NC}"
-    echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
-  else
-    die "Failed to cancel task ${id}. Is the API running?"
+  # Fast path: API call with hard 4s timeout. Distinguish:
+  #   200  → success
+  #   404  → legitimate not-found (don't fall through)
+  #   ""   → connection failure or wedged event loop → fall through to DB
+  #   other → unexpected, surface as error
+  local key body http_code
+  key=$(api_key)
+  # `|| true` is critical here: under `set -euo pipefail` a curl connect
+  # failure (exit 7) or timeout (exit 28) would otherwise abort the script
+  # before we can parse the http_code and decide whether to fall back to DB.
+  body=$(curl -s --max-time 4 -X POST \
+    -H "X-Api-Key: ${key}" -H "Content-Type: application/json" \
+    -w '\n__HTTP__%{http_code}__' \
+    "${API_URL}/api/tasks/${id}/cancel" 2>/dev/null || true)
+  http_code=$(echo "$body" | grep -oE '__HTTP__[0-9]+__' | grep -oE '[0-9]+')
+  body=$(echo "$body" | sed 's/__HTTP__[0-9]*__$//')
+
+  case "$http_code" in
+    200)
+      echo -e "${GREEN}Task ${id} cancelled (via API).${NC}"
+      echo "$body" | python3 -m json.tool 2>/dev/null || echo "$body"
+      return 0
+      ;;
+    404)
+      die "Task ${id} not found or already in terminal state."
+      ;;
+    "" | 000)
+      # No HTTP response (000) or no body parsed — connection refused or
+      # timed out. This is the wedged-event-loop case. Fall through to DB.
+      echo -e "${YELLOW}API unreachable (or timed out at 4s) — writing cancel directly to mc.db.${NC}"
+      ;;
+    *)
+      die "API returned unexpected HTTP ${http_code}: ${body}"
+      ;;
+  esac
+
+  # Fallback path (only reached when API is unreachable/timed-out).
+  # Any subprocess already running cannot be interrupted from JS;
+  # the runner sees the cancel only at its next loop iteration.
+  need_db
+
+  local current_status
+  current_status=$(sqlite3 "$DB_PATH" "SELECT status FROM tasks WHERE task_id = '${id}';" 2>/dev/null)
+  if [ -z "$current_status" ]; then
+    die "Task ${id} not found."
   fi
+  case "$current_status" in
+    completed | failed | cancelled)
+      echo -e "${YELLOW}Task ${id} already in terminal state: ${current_status} (no-op)${NC}"
+      return 0
+      ;;
+  esac
+
+  # Atomic-ish cancel: task + runs in one transaction. Subtasks would need
+  # recursive walk; for tonight, one level of cascade.
+  sqlite3 "$DB_PATH" <<EOF
+BEGIN;
+UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = '${id}';
+UPDATE runs SET status = 'cancelled', completed_at = datetime('now') WHERE task_id = '${id}' AND status = 'running';
+UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE parent_task_id = '${id}' AND status NOT IN ('completed','failed','cancelled');
+COMMIT;
+EOF
+  echo -e "${GREEN}Task ${id} cancelled (direct DB).${NC}"
+  echo -e "${YELLOW}Note: any subprocess already running (vitest, gh, etc.) will run to completion;${NC}"
+  echo -e "${YELLOW}      the runner sees the cancel at its next loop iteration.${NC}"
 }
 
 # ---------------------------------------------------------------------------

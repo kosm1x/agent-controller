@@ -96,7 +96,7 @@ describe("HindsightClient", () => {
       expect(body.budget).toBe("low");
     });
 
-    it("aborts recall after RECALL_TIMEOUT_MS (1500ms) instead of default 5000ms", async () => {
+    it("aborts recall after RECALL_TIMEOUT_MS (default 3000ms) via env-override", async () => {
       vi.useFakeTimers();
       let abortedSignal: AbortSignal | undefined;
       vi.stubGlobal(
@@ -112,7 +112,10 @@ describe("HindsightClient", () => {
       );
 
       const p = client.recall("test-bank", { query: "q", budget: "low" });
-      vi.advanceTimersByTime(1500);
+      // Default is 3000ms (was 1500ms pre-2026-04-28); advance past the cap.
+      // Module-level constant is parsed once at import time; in this test
+      // process the env override isn't set, so 3000ms is the live ceiling.
+      vi.advanceTimersByTime(3000);
       await expect(p).rejects.toThrow("aborted");
       expect(abortedSignal?.aborted).toBe(true);
       vi.useRealTimers();

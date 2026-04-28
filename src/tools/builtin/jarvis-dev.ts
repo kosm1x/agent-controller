@@ -353,7 +353,11 @@ function actionTest(): string {
 
 function actionPr(title: string, body: string): string {
   const branch = currentBranch();
+  console.log(`[jarvis_dev] action=pr branch=${branch} title="${title}"`);
   if (!JARVIS_BRANCH_RE.test(branch)) {
+    console.log(
+      `[jarvis_dev] action=pr REJECTED — not on jarvis/* branch (current: "${branch}")`,
+    );
     return JSON.stringify({
       error: `Not on a jarvis/* branch (current: "${branch}"). Create one first.`,
     });
@@ -374,7 +378,13 @@ function actionPr(title: string, body: string): string {
         ready_for_pr: true,
       }
     : JSON.parse(actionTest());
+  console.log(
+    `[jarvis_dev] action=pr tests: ${testResult.ready_for_pr ? "PASS" : "FAIL"} (${cached ? "cached" : "fresh run"})`,
+  );
   if (!testResult.ready_for_pr) {
+    console.log(
+      `[jarvis_dev] action=pr ABORTED — tests not ready_for_pr: typecheck=${testResult.typecheck} tests=${testResult.tests}`,
+    );
     return JSON.stringify({
       error: "Tests must pass before opening a PR.",
       typecheck: testResult.typecheck,
@@ -415,23 +425,35 @@ function actionPr(title: string, body: string): string {
       .map((l) => l.slice(3).trim())
       .filter((f) => !SENSITIVE.some((s) => f.toLowerCase().includes(s)));
     if (changed.length === 0) {
+      console.log(
+        `[jarvis_dev] action=pr ABORTED — nothing to commit on ${branch} (or only sensitive files)`,
+      );
       return JSON.stringify({
         error: "Nothing to commit (or only sensitive files changed).",
       });
     }
+    console.log(
+      `[jarvis_dev] action=pr staging ${changed.length} file(s): ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ` (+${changed.length - 5} more)` : ""}`,
+    );
     run(["add", ...changed]);
     run(["commit", "-m", title]);
+    console.log(`[jarvis_dev] action=pr committed on ${branch}`);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[jarvis_dev] action=pr COMMIT FAILED on ${branch}: ${msg}`);
     return JSON.stringify({
-      error: `Commit failed: ${err instanceof Error ? err.message : err}`,
+      error: `Commit failed: ${msg}`,
     });
   }
 
   try {
     run(["push", "-u", "origin", branch]);
+    console.log(`[jarvis_dev] action=pr pushed ${branch} to origin`);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[jarvis_dev] action=pr PUSH FAILED on ${branch}: ${msg}`);
     return JSON.stringify({
-      error: `Push failed: ${err instanceof Error ? err.message : err}`,
+      error: `Push failed: ${msg}`,
     });
   }
 
@@ -462,22 +484,32 @@ function actionPr(title: string, body: string): string {
   let labelApplied = true;
   try {
     prUrl = createPr([...baseArgs, "--label", "jarvis-authored"]);
+    console.log(`[jarvis_dev] action=pr opened with label: ${prUrl}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const labelMissing = /not found|could not add label/i.test(msg);
     if (!labelMissing) {
+      console.log(
+        `[jarvis_dev] action=pr GH-CREATE FAILED on ${branch}: ${msg}`,
+      );
       return JSON.stringify({
         error: `PR creation failed (code is pushed to ${branch}): ${msg}`,
         branch,
         pushed: true,
       });
     }
+    console.log(`[jarvis_dev] action=pr label missing, retrying without label`);
     try {
       prUrl = createPr(baseArgs);
       labelApplied = false;
+      console.log(`[jarvis_dev] action=pr opened without label: ${prUrl}`);
     } catch (err2) {
+      const msg2 = err2 instanceof Error ? err2.message : String(err2);
+      console.log(
+        `[jarvis_dev] action=pr GH-CREATE FAILED (no label retry) on ${branch}: ${msg2}`,
+      );
       return JSON.stringify({
-        error: `PR creation failed (code is pushed to ${branch}): ${err2 instanceof Error ? err2.message : err2}`,
+        error: `PR creation failed (code is pushed to ${branch}): ${msg2}`,
         branch,
         pushed: true,
       });
