@@ -7,6 +7,37 @@
 
 ---
 
+## 🔴 TOMORROW — FIRST ON THE AGENDA
+
+**Operator's explicit ask at end of Session 113:** Jarvis is having real trouble opening large files (e.g., the day-log). The pattern observed:
+
+- He calls a file read, gets truncated at ~2-3k (probably whatever the tool's default `limit` returns)
+- He proceeds as if he has the whole file → wrong conclusions
+- After 3–4 rounds of operator pushback, he eventually pivots to `grep` / `head` / `wc` and produces a real answer
+- This burns turn budget, eats user patience, and produces several rounds of confidently wrong output before recovering
+
+**Likely root cause** (to verify before fixing):
+
+1. `file_read` / `jarvis_file_read` returns the first N bytes/lines silently — no "TRUNCATED, use offset/limit" tail marker that signals the model to pivot.
+2. Tool description doesn't teach the size-check-first pattern (`wc -l` / `stat -c %s` → choose strategy by size).
+3. No size threshold in the tool that auto-suggests grep/head/tail when a file exceeds the budget.
+
+**Diagnostic steps before writing a fix:**
+
+1. Find the actual day-log path the operator referenced (likely `/root/claude/mission-control/data/` or an ops file). Check its size in lines + bytes.
+2. Read `src/tools/builtin/file.ts` (or `jarvis-files.ts` for the Jarvis-namespaced variant) — see how truncation works today, what the response contract looks like.
+3. Look at 2-3 recent multi-round task transcripts where this happened. Confirm the pattern: silent truncation → wrong inference → pushback → grep pivot.
+4. Decide the fix tier. Options ranked from smallest:
+   - **A.** Tool description hardening — teach size-check-first explicitly with examples. Cheapest, often enough.
+   - **B.** Add a `truncated: true` + `total_bytes` + `suggestion` field to the response when truncation happens. Mechanical signal beats prompt guidance.
+   - **C.** Auto-route in the tool: file > N bytes → return first chunk + a structured `outline` (line counts, section markers via grep) + offset hints. Heaviest, most reliable.
+
+**Operator constraint:** "First thing on the agenda. Tomorrow." Treat as the priority item ahead of the P1 measurement work below. The pattern has bitten the operator at least 3 times tonight on day-log reads, so the cost is concrete and ongoing.
+
+**Don't autofix without diagnosis.** Per `feedback_insights_fixes.md`: state hypothesis + verify root cause with one concrete check before editing. The "obvious" fix (raise the limit) is wrong if the real issue is no truncation marker — bigger reads still fail silently when the file outgrows the new ceiling.
+
+---
+
 ## Where Session 113 left things (2026-04-28 late)
 
 Three things shipped, one operational lesson, no rollbacks needed.
