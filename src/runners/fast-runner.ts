@@ -150,6 +150,7 @@ export const WRITE_TOOLS = new Set([
   "gdrive_delete",
   "gdrive_move",
   "gdrive_upload",
+  "gdrive_download",
   "calendar_create",
   "calendar_update",
   "gdocs_write",

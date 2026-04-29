@@ -26,6 +26,12 @@ export async function googleFetch<T>(
      * Use for Drive export endpoints that return plain text (e.g. text/plain exports).
      */
     rawText?: boolean;
+    /**
+     * When true, returns the raw response body as a Uint8Array.
+     * Use for binary downloads (Drive files.get?alt=media, files.export of
+     * binary formats like PDF/PPTX/DOCX). Mutually exclusive with rawText.
+     */
+    rawBytes?: boolean;
   },
 ): Promise<T> {
   const token = await getAccessToken();
@@ -64,6 +70,11 @@ export async function googleFetch<T>(
 
     if (options?.rawText) {
       return (await response.text()) as unknown as T;
+    }
+
+    if (options?.rawBytes) {
+      const buf = await response.arrayBuffer();
+      return new Uint8Array(buf) as unknown as T;
     }
 
     return (await response.json()) as T;

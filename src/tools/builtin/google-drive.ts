@@ -1,10 +1,151 @@
 /**
- * Google Drive tools — list, create, share, and delete files.
+ * Google Drive tools — list, create, share, delete, move, upload, download.
  */
 
+import { mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
 import { validatePathSafety } from "./immutable-core.js";
+
+/**
+ * Output-path whitelist for gdrive_download. Files may only be written under
+ * one of these prefixes. Prevents the tool from being abused as a generic
+ * filesystem-write primitive (e.g., overwriting service binaries or configs).
+ *
+ * `/root/claude/` is intentionally NOT a whitelist root — it overlaps the
+ * mission-control source tree, mc.db, and CLAUDE.md, and a misled LLM could
+ * overwrite shipped code or memory. Drops go to a dedicated inbox under it.
+ */
+const DOWNLOAD_WRITE_ROOTS = ["/tmp/jarvis-downloads/", "/root/claude/inbox/"];
+
+/**
+ * Canonicalize an output path and verify it stays inside the whitelist after
+ * resolving `..` traversal AND symlinks on the parent directory. Returns the
+ * resolved absolute path (safe to write to) or an error message.
+ *
+ * Defends against:
+ * - C1 path traversal: `/tmp/jarvis-downloads/../../etc/passwd` → resolves to
+ *   `/etc/passwd`, fails whitelist.
+ * - C2 symlink escape: `/tmp/jarvis-downloads/x` where `x → /etc/cron.d` → the
+ *   parent's realpath is `/etc/cron.d`, fails whitelist.
+ *
+ * Both checks must run AFTER `validatePathSafety` (which catches the prior
+ * layer of nasties: $expansion, glob, dangerous filenames, UNC).
+ */
+function resolveSafeOutputPath(
+  rawPath: string,
+): { safe: true; path: string } | { safe: false; reason: string } {
+  // Resolve `..` and normalize. resolve() makes the path absolute too.
+  const resolved = resolvePath(rawPath);
+
+  const inWhitelist = DOWNLOAD_WRITE_ROOTS.some((root) =>
+    resolved.startsWith(root),
+  );
+  if (!inWhitelist) {
+    return {
+      safe: false,
+      reason: `output_path must resolve to a path under: ${DOWNLOAD_WRITE_ROOTS.join(", ")} (got ${resolved})`,
+    };
+  }
+
+  // Symlink check: if the parent directory exists, ensure its realpath is
+  // still inside the whitelist. ENOENT is fine — the parent will be created
+  // fresh by mkdirSync, so no symlink exists yet.
+  const parent = dirname(resolved);
+  try {
+    const realParent = realpathSync(parent);
+    const realInWhitelist = DOWNLOAD_WRITE_ROOTS.some(
+      (root) =>
+        // Trim trailing slash for the equality case (parent === root).
+        realParent === root.slice(0, -1) || realParent.startsWith(root),
+    );
+    if (!realInWhitelist) {
+      return {
+        safe: false,
+        reason: `output_path parent symlinks outside the whitelist (resolved to ${realParent})`,
+      };
+    }
+  } catch (err) {
+    // ENOENT means parent doesn't exist yet — that's fine, mkdirSync creates
+    // it under whitelist roots we control. Any other error is suspicious.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      return {
+        safe: false,
+        reason: `output_path parent check failed: ${code ?? "unknown"}`,
+      };
+    }
+  }
+
+  return { safe: true, path: resolved };
+}
+
+/** Hard cap on download size — 50 MB. Drive will refuse exports above this anyway. */
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+
+/** Timeout for binary downloads — 60s (default googleFetch is 10s, too tight for PDFs). */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * Native Google Workspace MIME types that require export (not direct download).
+ * Each maps to its default export format. Caller can override via export_format.
+ */
+const NATIVE_EXPORT_DEFAULTS: Record<
+  string,
+  { mimeType: string; ext: string }
+> = {
+  "application/vnd.google-apps.document": {
+    mimeType: "application/pdf",
+    ext: "pdf",
+  },
+  "application/vnd.google-apps.presentation": {
+    mimeType: "application/pdf",
+    ext: "pdf",
+  },
+  "application/vnd.google-apps.spreadsheet": {
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: "xlsx",
+  },
+  "application/vnd.google-apps.drawing": {
+    mimeType: "image/png",
+    ext: "png",
+  },
+};
+
+/** Map of caller-friendly export_format aliases → real MIME types. */
+const EXPORT_FORMAT_ALIASES: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  txt: "text/plain",
+  html: "text/html",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+};
+
+/** Best-effort extension guess from MIME type. */
+function extFromMime(mime: string): string {
+  if (mime === "application/pdf") return "pdf";
+  if (mime.includes("wordprocessingml")) return "docx";
+  if (mime.includes("presentationml")) return "pptx";
+  if (mime.includes("spreadsheetml")) return "xlsx";
+  if (mime === "text/plain") return "txt";
+  if (mime === "text/html") return "html";
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/webp") return "webp";
+  if (mime === "application/zip") return "zip";
+  if (mime === "application/json") return "json";
+  if (mime === "text/csv") return "csv";
+  // Fall back: take chars after last "/", strip parameters, alphanumerics only
+  const after = mime.split("/").pop() ?? "bin";
+  return after.split(";")[0].replace(/[^a-z0-9]/gi, "") || "bin";
+}
 
 /** Root folders that gdrive_delete refuses to trash. Case-insensitive. */
 const PROTECTED_FOLDER_NAMES = new Set([
@@ -602,6 +743,191 @@ IMPORTANT: Always use parent_folder_id when creating new files to place them in 
     } catch (err) {
       return JSON.stringify({
         error: `Drive upload failed: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// gdrive_download
+// ---------------------------------------------------------------------------
+
+export const gdriveDownloadTool: Tool = {
+  name: "gdrive_download",
+  deferred: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "gdrive_download",
+      description: `Download a file from Google Drive to the local VPS filesystem.
+
+USE WHEN:
+- The user shares a Drive URL (drive.google.com/file/d/<ID>/...) for a PDF, image, or other binary
+- You need to read a Drive-hosted PDF — the flow is gdrive_download → pdf_read
+- You need to read a Drive-hosted Google Doc/Slide/Sheet as PDF (auto-exports for native types)
+
+DO NOT USE for:
+- Native Google Slides where you only need text — gslides_read is faster (no download, no export)
+- Plain-text Google Docs — gdocs_read returns text directly
+
+DRIVE URL → file_id EXTRACTION:
+- https://drive.google.com/file/d/<ID>/view  → file_id = <ID>
+- https://drive.google.com/open?id=<ID>       → file_id = <ID>
+- https://docs.google.com/document/d/<ID>/edit → file_id = <ID>
+
+WORKFLOW for Drive-hosted PDFs:
+1. Extract file_id from the URL the user shared (or call gdrive_list to find it)
+2. Call gdrive_download with file_id (output_path optional, defaults to /tmp/jarvis-downloads/<id>.<ext>)
+3. Call pdf_read on the returned path
+4. Or for vision: pass the path to gemini_upload / vision tools
+
+NATIVE GOOGLE FILES are auto-exported:
+- google-apps.document     → PDF (override with export_format: "docx" | "txt" | "html")
+- google-apps.presentation → PDF (override with export_format: "pptx")
+- google-apps.spreadsheet  → XLSX (override with export_format: "csv" | "pdf")
+- Other binary files (PDF, PNG, ZIP, etc.) download as-is — export_format is ignored.
+
+LIMITS:
+- 50 MB hard cap on file size (this tool's safety cap)
+- Native exports (Docs/Slides as PDF/DOCX/PPTX) are additionally capped by Drive at 10 MB. Sheets at 100 MB.
+- Output paths must resolve under /tmp/jarvis-downloads/ or /root/claude/inbox/. Path traversal (..) and symlink escape are blocked.
+
+Returns: { path, name, mimeType, sizeBytes, note? }`,
+      parameters: {
+        type: "object",
+        properties: {
+          file_id: {
+            type: "string",
+            description:
+              "Drive file ID. Extract from drive.google.com/file/d/<ID>/... URLs, or get from gdrive_list.",
+          },
+          output_path: {
+            type: "string",
+            description:
+              "Absolute path to write the file to. Must resolve under /tmp/jarvis-downloads/ or /root/claude/inbox/. Defaults to /tmp/jarvis-downloads/<file_id>.<ext>.",
+          },
+          export_format: {
+            type: "string",
+            enum: ["pdf", "docx", "pptx", "xlsx", "txt", "html", "csv", "png"],
+            description:
+              "For native Google Docs/Slides/Sheets only — choose export format. Ignored for binary files (PDF/PNG/ZIP). Default: pdf for docs/slides, xlsx for sheets.",
+          },
+        },
+        required: ["file_id"],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const fileId = args.file_id as string | undefined;
+    const userOutputPath = args.output_path as string | undefined;
+    const exportFormat = args.export_format as string | undefined;
+
+    if (!fileId) {
+      return JSON.stringify({ error: "file_id is required" });
+    }
+
+    try {
+      // 1. Fetch metadata to learn name + mimeType + size
+      const meta = await googleFetch<{
+        id: string;
+        name: string;
+        mimeType: string;
+        size?: string;
+      }>(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          fileId,
+        )}?fields=id,name,mimeType,size`,
+      );
+
+      const isNative = meta.mimeType.startsWith("application/vnd.google-apps.");
+
+      // 2. Decide path: native → export, binary → alt=media
+      let downloadUrl: string;
+      let resultMime: string;
+
+      if (isNative) {
+        const aliasMime = exportFormat
+          ? EXPORT_FORMAT_ALIASES[exportFormat.toLowerCase()]
+          : undefined;
+        const fallback = NATIVE_EXPORT_DEFAULTS[meta.mimeType];
+        const exportMime = aliasMime ?? fallback?.mimeType;
+        if (!exportMime) {
+          return JSON.stringify({
+            error: `Cannot export ${meta.mimeType} — no default export format and no export_format provided. Try export_format: "pdf" or "txt".`,
+          });
+        }
+        downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          fileId,
+        )}/export?mimeType=${encodeURIComponent(exportMime)}`;
+        resultMime = exportMime;
+      } else {
+        // Binary file — Drive size header tells us up front
+        if (meta.size && Number(meta.size) > MAX_DOWNLOAD_BYTES) {
+          return JSON.stringify({
+            error: `File too large: ${meta.size} bytes exceeds 50 MB cap`,
+          });
+        }
+        downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          fileId,
+        )}?alt=media`;
+        resultMime = meta.mimeType;
+      }
+
+      // 3. Resolve output path with whitelist + traversal + symlink defense
+      const ext = extFromMime(resultMime);
+      const requestedPath =
+        userOutputPath ?? `/tmp/jarvis-downloads/${fileId}.${ext}`;
+
+      const safety = validatePathSafety(requestedPath, "write");
+      if (!safety.safe) {
+        return JSON.stringify({
+          error: `output_path blocked: ${safety.reason}`,
+        });
+      }
+
+      const safeResolve = resolveSafeOutputPath(requestedPath);
+      if (!safeResolve.safe) {
+        return JSON.stringify({ error: safeResolve.reason });
+      }
+      const outputPath = safeResolve.path;
+
+      // 4. Fetch bytes
+      const bytes = await googleFetch<Uint8Array>(downloadUrl, {
+        rawBytes: true,
+        timeout: DOWNLOAD_TIMEOUT_MS,
+      });
+
+      if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
+        return JSON.stringify({
+          error: `Downloaded payload too large: ${bytes.byteLength} bytes exceeds 50 MB cap`,
+        });
+      }
+
+      // 5. Write to disk
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, bytes);
+
+      console.log(
+        `[gdrive_download] file_id=${fileId} → ${outputPath} (${bytes.byteLength} bytes, ${resultMime})`,
+      );
+
+      const result: Record<string, unknown> = {
+        path: outputPath,
+        name: meta.name,
+        mimeType: resultMime,
+        sizeBytes: bytes.byteLength,
+      };
+      // W3: surface signal that export_format was discarded for binary files
+      if (exportFormat && !isNative) {
+        result.note = `export_format='${exportFormat}' ignored — file is already binary (${meta.mimeType})`;
+      }
+      return JSON.stringify(result);
+    } catch (err) {
+      console.log(
+        `[gdrive_download] ERROR: ${err instanceof Error ? err.message : err}`,
+      );
+      return JSON.stringify({
+        error: `Drive download failed: ${err instanceof Error ? err.message : err}`,
       });
     }
   },
