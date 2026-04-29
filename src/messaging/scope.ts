@@ -474,8 +474,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "specialty",
   },
   {
+    // Document/deck/PDF analysis activation. Regex carries memory:
+    //  - `\.pdf\b` and `\.pptx?\b` need a non-word edge BEFORE the dot too;
+    //    use `(?:^|[\s"'`(])` so "the .pptx file" matches (qa W3, scope-regex memory).
+    //  - The describe/analiza arm intentionally does NOT include bare `imagen|image`
+    //    (qa W2) — "describe la imagen del logo" is image-generation chat, not
+    //    document analysis. Restricted to slide/diapositiva/presentaci anchors.
     pattern:
-      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF|presentaci[oó]n(?:es)?|slides?|deck)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|upload\s+(?:\S+\s+)?(?:document|presentation|slides?|deck)|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf|presentaci[oó]n(?:es)?|slides?|deck)|\.pdf\b|\.pptx?\b|(?:captura\w*|capture)\s+(?:cada\s+|each\s+|every\s+|all\s+|las\s+|todas?\s+las\s+)?(?:slides?|diapositivas?|p[aá]ginas?\s+del?\s+(?:PDF|deck|presentaci))|cada\s+(?:slide|diapositiva|p[aá]gina\s+del?\s+(?:PDF|deck))|(?:describe|descrip|analiza|analyze)\s+(?:la|the|cada|each|every|all)?\s*(?:imagen|image|slide|diapositiva|presentaci))/i,
+      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF|presentaci[oó]n(?:es)?|slides?|deck)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|upload\s+(?:\S+\s+)?(?:document|presentation|slides?|deck)|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf|presentaci[oó]n(?:es)?|slides?|deck)|(?:^|[\s"'`(])\.pdf\b|(?:^|[\s"'`(])\.pptx?\b|(?:captura\w*|capture)\s+(?:cada\s+|each\s+|every\s+|all\s+|las\s+|todas?\s+las\s+)?(?:slides?|diapositivas?|p[aá]ginas?\s+del?\s+(?:PDF|deck|presentaci))|cada\s+(?:slide|diapositiva|p[aá]gina\s+del?\s+(?:PDF|deck))|(?:describe|descrip|analiza|analyze)\s+(?:la|the|cada|each|every|all)?\s*(?:slide|diapositiva|presentaci))/i,
     group: "research",
   },
   {

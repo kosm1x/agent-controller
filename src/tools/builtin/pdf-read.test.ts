@@ -62,6 +62,24 @@ describe("pdf_read tool", () => {
     expect(mockExtractToMarkdown).toHaveBeenCalledOnce();
   });
 
+  it("flags image-only PDFs and points the LLM at gemini_upload (W6)", async () => {
+    // pdf_read returns "" when extractor finds no text (scanned/image-only deck).
+    // Without the hint, Jarvis dead-ends through screenshot/Playwright/thumbnails.
+    mockExtractToMarkdown.mockResolvedValueOnce("");
+
+    const result = JSON.parse(
+      await pdfReadTool.execute({ source: "/tmp/image-only.pdf" }),
+    );
+
+    expect(result.imageOnly).toBe(true);
+    expect(result.chars).toBe(0);
+    expect(result.content).toBe("");
+    expect(result.hint).toContain("gemini_upload");
+    expect(result.hint).toContain("gemini_research");
+    // Same source path is mentioned so Jarvis doesn't re-derive it
+    expect(result.source).toBe("/tmp/image-only.pdf");
+  });
+
   it("saves long PDFs to file and returns preview", async () => {
     const longContent = "# Introduction\n\n" + "paragraph text. ".repeat(1000);
     mockExtractFromUrl.mockResolvedValueOnce(longContent);

@@ -100,7 +100,7 @@ describe("gemini_upload", () => {
       headers: {
         get: (k: string) =>
           k.toLowerCase() === "x-goog-upload-url"
-            ? "https://upload.example.com/session/abc"
+            ? "https://upload.googleapis.com/session/abc"
             : null,
       },
       text: async () => "",
@@ -147,6 +147,71 @@ describe("gemini_upload", () => {
     expect(result.error).toContain("Forbidden");
   });
 
+  it("surfaces phase-2 text/plain errors instead of JSON-parse mask (W4 regression)", async () => {
+    // Phase 1 succeeds
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.example.googleapis.com/session/x"
+            : null,
+      },
+      text: async () => "",
+    });
+    // Phase 2 fails with text/plain (the bug that motivated this fix —
+    // pre-fix, .json() would throw "Unexpected token 'M'..." and the real
+    // error never reached the user)
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => "Metadata part is too large.",
+    });
+
+    const result = JSON.parse(
+      await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Metadata part is too large");
+    expect(result.error).not.toContain("Unexpected token");
+  });
+
+  it("rejects start-session response missing the upload-url header (W5)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null }, // proxy stripped or truncated response
+      text: async () => "",
+    });
+
+    const result = JSON.parse(
+      await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("no x-goog-upload-url");
+    expect(mockFetch).toHaveBeenCalledTimes(1); // never advanced to phase 2
+  });
+
+  it("refuses upload-url that isn't https://*.googleapis.com (W1 SSRF guard)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://attacker.example.com/exfil"
+            : null,
+      },
+      text: async () => "",
+    });
+
+    const result = JSON.parse(
+      await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Upload URL refused");
+    expect(result.error).toContain("googleapis.com");
+    expect(mockFetch).toHaveBeenCalledTimes(1); // never sent the bytes
+  });
+
   it("downloads URL before uploading", async () => {
     // Mock URL download
     mockFetch.mockResolvedValueOnce({
@@ -159,7 +224,7 @@ describe("gemini_upload", () => {
       headers: {
         get: (k: string) =>
           k.toLowerCase() === "x-goog-upload-url"
-            ? "https://upload.example.com/session/url"
+            ? "https://upload.googleapis.com/session/url"
             : null,
       },
       text: async () => "",

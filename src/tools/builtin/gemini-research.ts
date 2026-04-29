@@ -349,7 +349,6 @@ EDGE CASES:
         // Use .text() — Gemini returns text/plain for many error cases (e.g.
         // "Metadata part is too large"); .json() would mask the real message.
         const errText = await startResp.text();
-        clearTimeout(timer);
         return JSON.stringify({
           success: false,
           error: `Upload start failed (${startResp.status}): ${errText.slice(0, 300)}`,
@@ -358,11 +357,33 @@ EDGE CASES:
 
       const uploadUrl = startResp.headers.get("x-goog-upload-url");
       if (!uploadUrl) {
-        clearTimeout(timer);
         return JSON.stringify({
           success: false,
           error:
             "Upload start succeeded but no x-goog-upload-url header returned",
+        });
+      }
+
+      // Defense in depth: the upload URL is a header value from a
+      // remote response. Pin it to https + googleapis.com so a poisoned
+      // start-session response can't redirect file bytes to an attacker.
+      // (The TLS to generativelanguage.googleapis.com makes this low-likelihood,
+      // but the file may contain sensitive Drive content — Sec1 round-3.)
+      try {
+        const u = new URL(uploadUrl);
+        if (
+          u.protocol !== "https:" ||
+          !u.hostname.endsWith(".googleapis.com")
+        ) {
+          return JSON.stringify({
+            success: false,
+            error: `Upload URL refused (not https://*.googleapis.com): ${uploadUrl.slice(0, 120)}`,
+          });
+        }
+      } catch {
+        return JSON.stringify({
+          success: false,
+          error: `Upload URL invalid: ${uploadUrl.slice(0, 120)}`,
         });
       }
 
@@ -377,7 +398,6 @@ EDGE CASES:
         body: fileBuffer,
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
       // Read body once as text so we can surface non-JSON errors cleanly
       const rawText = await resp.text();
@@ -447,7 +467,6 @@ EDGE CASES:
               : `File processing failed (state: ${finalState}).`,
       });
     } catch (err) {
-      clearTimeout(timer);
       const msg = err instanceof Error ? err.message : String(err);
       return JSON.stringify({
         success: false,
@@ -455,6 +474,11 @@ EDGE CASES:
           ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
           : `Upload failed: ${msg}`,
       });
+    } finally {
+      // Clear the abort timer on every exit path — was previously scattered
+      // across each return + catch which left a leak window if any synchronous
+      // throw happened between the scattered clearTimeout calls. (qa S2)
+      clearTimeout(timer);
     }
   },
 };
