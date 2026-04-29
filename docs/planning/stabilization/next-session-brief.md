@@ -1,40 +1,64 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-28 end-of-Session-113
-> **Window**: 2026-04-22 → 2026-05-22 (day 7 of 30 at session-113 close → day 8+ at next session start)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-114
+> **Window**: 2026-04-22 → 2026-05-22 (day 8 of 30 at session-114 close)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
-> **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+> **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy. One operator-authorized exception this session (`gdrive_download`); rest hardening.
 
 ---
 
-## 🔴 TOMORROW — FIRST ON THE AGENDA
+## What Session 114 closed
 
-**Operator's explicit ask at end of Session 113:** Jarvis is having real trouble opening large files (e.g., the day-log). The pattern observed:
+**Resolved (was queued from Session 113 as the first agenda item):** Jarvis's silent truncation on large file reads is fixed. `jarvis_file_read` and `file_read` now return a structured envelope `{truncated: true, total_chars, total_lines, outline (line-numbered), preview, next_steps}` at the TOP of the JSON for files > 8 KB, plus a `lines='N-M'` parameter for self-chunking. Adapter eviction layer untouched (still safety-nets other tools). New `src/lib/file-slicing.ts` shared module. 50 new tests across 4 files. Live verified on the 106,914-char / 437-line `logs/day-logs/2026-04-04.md`. Memory `feedback_jarvis_large_file_truncation.md` marked RESOLVED. Commit `bbc9820`.
 
-- He calls a file read, gets truncated at ~2-3k (probably whatever the tool's default `limit` returns)
-- He proceeds as if he has the whole file → wrong conclusions
-- After 3–4 rounds of operator pushback, he eventually pivots to `grep` / `head` / `wc` and produces a real answer
-- This burns turn budget, eats user patience, and produces several rounds of confidently wrong output before recovering
+**Other Session 114 ships (chronological):**
 
-**Likely root cause** (to verify before fixing):
+- `gdrive_download` builtin tool (commit `0c1ace1`) — Drive PDF/binary read for Jarvis. **Freeze-policy exception, operator-authorized.** qa-auditor caught + fixed pre-merge: C1 path traversal (`../` escape), C2 symlink escape, S1 whitelist too wide, W3 silent ignore.
+- Image-only PDF chain wired end-to-end (commit `59dd4ce`): research scope regex broadened (`presentaci[oó]n`/`slides`/`deck`/`.pptx`), `pdf_read` returns `imageOnly: true` hint when chars=0, `gemini_upload` rewritten to documented resumable upload protocol (the multipart shape silently masked text/plain errors as JSON-parse exceptions).
+- qa-auditor round 2 on the deck-read fix (commit `db7f917`): SSRF guard on resumable upload URL host, regex tightening, test gaps for phase-2 text/plain + missing upload-url header + pdf_read imageOnly.
+- 9-row poisoned-conversations purge: yesterday's `status='completed'` task whose body narrated a failure ("Las herramientas de Drive están bloqueadas") was being recalled as a positive precedent. Memory captured at `feedback_completed_task_failure_narrative.md`.
+- `feedback_path_whitelist_traversal.md` — `outputPath.startsWith(root)` on raw string fails to catch `..` traversal AND parent-symlink escape; fix is `path.resolve()` + `fs.realpathSync(dirname)` BEFORE whitelist check.
+- Hindsight strategic options doc shipped to `docs/planning/hindsight-strategic-options.md` — 3 paths (HARDEN/DEMOTE/REPLACE), storage-architecture investigation, decision matrix, open questions. Discussion document, NOT a plan.
 
-1. `file_read` / `jarvis_file_read` returns the first N bytes/lines silently — no "TRUNCATED, use offset/limit" tail marker that signals the model to pivot.
-2. Tool description doesn't teach the size-check-first pattern (`wc -l` / `stat -c %s` → choose strategy by size).
-3. No size threshold in the tool that auto-suggests grep/head/tail when a file exceeds the budget.
+Tests 3854 → 3908 (+54 net across all session-114 commits).
 
-**Diagnostic steps before writing a fix:**
+---
 
-1. Find the actual day-log path the operator referenced (likely `/root/claude/mission-control/data/` or an ops file). Check its size in lines + bytes.
-2. Read `src/tools/builtin/file.ts` (or `jarvis-files.ts` for the Jarvis-namespaced variant) — see how truncation works today, what the response contract looks like.
-3. Look at 2-3 recent multi-round task transcripts where this happened. Confirm the pattern: silent truncation → wrong inference → pushback → grep pivot.
-4. Decide the fix tier. Options ranked from smallest:
-   - **A.** Tool description hardening — teach size-check-first explicitly with examples. Cheapest, often enough.
-   - **B.** Add a `truncated: true` + `total_bytes` + `suggestion` field to the response when truncation happens. Mechanical signal beats prompt guidance.
-   - **C.** Auto-route in the tool: file > N bytes → return first chunk + a structured `outline` (line counts, section markers via grep) + offset hints. Heaviest, most reliable.
+## 🟡 TOMORROW — TOP OF AGENDA
 
-**Operator constraint:** "First thing on the agenda. Tomorrow." Treat as the priority item ahead of the P1 measurement work below. The pattern has bitten the operator at least 3 times tonight on day-log reads, so the cost is concrete and ongoing.
+**Hindsight strategic decision is queued, NOT due tomorrow.** The discussion doc at `docs/planning/hindsight-strategic-options.md` covers HARDEN / DEMOTE / REPLACE plus the storage-architecture investigation the operator requested. **Do NOT make the change/demote/harden decision tomorrow.** The honest order from §8 of that doc is:
 
-**Don't autofix without diagnosis.** Per `feedback_insights_fixes.md`: state hypothesis + verify root cause with one concrete check before editing. The "obvious" fix (raise the limit) is wrong if the real issue is no truncation marker — bigger reads still fail silently when the file outgrows the new ceiling.
+1. **Add `was_used` audit instrumentation to recall** — single most important measurement gate. Today we measure recall _latency_ but never _utility_. Without this we can't tell if 32% timeout rate is hurting quality or just consuming budget. Aim: 2 weeks of data before the decision conversation. (Sub-piece of HARDEN; safe under freeze as instrumentation.)
+2. **Ship outcome-aware metadata tagging** at task-completion time — high leverage, lands cleanly in any of the three paths, freeze-aligned as hardening. Closes the poison-source class (Session 114's incident with the 2026-04-27 `completed_with_concerns` task whose body narrated a failure but got recalled as a positive precedent).
+3. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker" question. Needs the freeze to lift before it makes sense to run.
+4. **Then** decide change/demote/harden with data, not vibes.
+
+Steps 1+2 are the right Day 9-10 work — both are hardening, both inform the post-freeze conversation. Step 3 needs the freeze to lift before it makes sense to A/B.
+
+---
+
+## Open P0 (gating)
+
+- **AV API key rotation** — still blocked on operator email to AV support. Only red item gating the day-30 exit declaration.
+
+## Open P1 (carry-forward)
+
+- **Vision env vars from Session 113** still not pasted into `mc/.env`. Three lines:
+
+  ```
+  INFERENCE_VISION_URL=https://api.groq.com/openai/v1
+  INFERENCE_VISION_KEY=<value of INFERENCE_FALLBACK_KEY>
+  INFERENCE_VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+  ```
+
+  Then `systemctl restart mission-control` when traffic is quiet. Without this, `screenshot_element describe:true` falls back to a friendly error. Image-only PDFs still work via `gemini_research` (the deck-read chain shipped tonight handles them); this only affects the screenshot-describe flow specifically.
+
+- **Hindsight bank red** at session 114 close: mc-jarvis at 385 memories, no consolidation drop visible in 24h. May self-resolve if consolidator catches up. If mc-jarvis crosses 500 without a drop, manually trigger or investigate why qwen3-coder-plus consolidation passes are no-op'ing.
+
+## Open P2
+
+- Wider sweep of bare-alternation regex FPs in `src/messaging/scope.ts` (deferred from Session 109).
+- W2 setext heading support in `buildOutline` (low frequency in jarvis-kb, complex to get right — deferred from session-114 audit).
 
 ---
 
