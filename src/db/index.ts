@@ -85,6 +85,33 @@ export function initDatabase(dbPath: string): Database.Database {
     );
   }
 
+  // v8 S4 follow-up: recall utility audit (was_used instrumentation)
+  // Logs every recall call with snippets; matcher fills was_used/task_id at
+  // turn end so we can answer "is recall actually useful?" with data.
+  _db.exec(`CREATE TABLE IF NOT EXISTS recall_audit (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    bank              TEXT NOT NULL,
+    query             TEXT NOT NULL,
+    source            TEXT NOT NULL,
+    result_count      INTEGER NOT NULL DEFAULT 0,
+    result_snippets   TEXT NOT NULL DEFAULT '[]',
+    latency_ms        INTEGER,
+    was_used          INTEGER,
+    used_count        INTEGER,
+    task_id           TEXT,
+    checked_at        TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_recall_audit_created ON recall_audit(created_at DESC)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_recall_audit_unmatched ON recall_audit(was_used, created_at) WHERE was_used IS NULL",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_recall_audit_task ON recall_audit(task_id)",
+  );
+
   // v4.0 S1: composite indexes for query performance
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC)",

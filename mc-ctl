@@ -483,6 +483,74 @@ cmd_memory() {
 # Hindsight
 # ---------------------------------------------------------------------------
 
+cmd_recall_utility() {
+  need_db
+  local since_arg="${1:-24h}"
+  local since_clause
+
+  # Validate prefix is purely numeric BEFORE building any SQL clause —
+  # case patterns alone only match the suffix, so e.g. "1; DROP h" matches
+  # *h. Audit W1 (qa-auditor 2026-04-29) caught this injection vector.
+  local prefix="${since_arg%[hdm]}"
+  if [[ "$prefix" =~ ^[0-9]+$ ]]; then
+    case "$since_arg" in
+      *h) since_clause="datetime('now','-${prefix} hours')" ;;
+      *d) since_clause="datetime('now','-${prefix} days')" ;;
+      *m) since_clause="datetime('now','-${prefix} minutes')" ;;
+      *)  since_clause="datetime('now','-24 hours')" ;;
+    esac
+  else
+    echo -e "${YELLOW}Invalid since arg '${since_arg}', falling back to 24h${NC}"
+    since_clause="datetime('now','-24 hours')"
+    since_arg="24h"
+  fi
+
+  echo -e "${BOLD}=== Recall Utility (last ${since_arg}) ===${NC}"
+  echo ""
+
+  local total marked unmarked
+  total=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause};" 2>/dev/null || echo "0")
+  marked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NOT NULL;" 2>/dev/null || echo "0")
+  unmarked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NULL;" 2>/dev/null || echo "0")
+
+  echo -e "  Total recalls:    ${total}"
+  echo -e "  Matched (marked): ${marked}"
+  echo -e "  Pending (NULL):   ${unmarked}"
+  echo ""
+
+  if [ "${marked:-0}" -gt 0 ]; then
+    echo -e "${BOLD}Utility by source:${NC}"
+    sql_raw "SELECT source,
+                    COUNT(*) AS n,
+                    SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) AS used,
+                    ROUND(100.0 * SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_used,
+                    ROUND(AVG(latency_ms), 0) AS avg_ms
+             FROM recall_audit
+             WHERE created_at >= ${since_clause} AND was_used IS NOT NULL
+             GROUP BY source
+             ORDER BY n DESC;" 2>/dev/null \
+      | awk -F'|' 'BEGIN { printf "  %-18s %6s %6s %8s %8s\n", "source", "n", "used", "pct%", "avg_ms" }
+                   { printf "  %-18s %6s %6s %8s %8s\n", $1, $2, $3, $4, $5 }'
+    echo ""
+
+    echo -e "${BOLD}Utility by bank:${NC}"
+    sql_raw "SELECT bank,
+                    COUNT(*) AS n,
+                    SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) AS used,
+                    ROUND(100.0 * SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_used
+             FROM recall_audit
+             WHERE created_at >= ${since_clause} AND was_used IS NOT NULL
+             GROUP BY bank
+             ORDER BY n DESC;" 2>/dev/null \
+      | awk -F'|' 'BEGIN { printf "  %-18s %6s %6s %8s\n", "bank", "n", "used", "pct%" }
+                   { printf "  %-18s %6s %6s %8s\n", $1, $2, $3, $4 }'
+    echo ""
+  else
+    echo -e "  ${DIM}No matched rows yet — wait for turn-end matches to accumulate.${NC}"
+    echo ""
+  fi
+}
+
 cmd_hindsight_status() {
   echo -e "${BOLD}=== Hindsight Status ===${NC}"
   echo ""
@@ -728,6 +796,7 @@ usage() {
   echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
+  echo -e "  ${GREEN}recall-utility${NC} [Nh] Recall was_used % by source/bank (default 24h, accepts 1h/7d/30m)"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
   echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
@@ -1338,6 +1407,8 @@ case "$cmd" in
   hindsight-status)  cmd_hindsight_status ;;
   hindsight-restart) cmd_hindsight_restart ;;
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
+
+  recall-utility)    cmd_recall_utility "${1:-24h}" ;;
 
   budget)            cmd_budget ;;
 

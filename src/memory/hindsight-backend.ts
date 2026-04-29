@@ -13,6 +13,7 @@
 
 import { HindsightClient } from "./hindsight-client.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
+import { logRecall } from "./recall-utility.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -98,14 +99,32 @@ export class HindsightMemoryBackend implements MemoryService {
       // SQLite hybrid (FTS5 + embed) is the actual answering path and runs
       // separately upstream of this call too. This branch removes the 1.5s/
       // call dead-wait that was firing on every turn.
-      return this.sqliteFallback.recall(query, options);
+      const start = Date.now();
+      const out = await this.sqliteFallback.recall(query, options);
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "sqlite-only",
+        results: out,
+        latencyMs: Date.now() - start,
+      });
+      return out;
     }
     if (this.isCircuitOpen()) {
       // Hindsight down — fall back to SQLite keyword recall
       console.log(
         "[memory] Hindsight circuit open — recall falling back to SQLite",
       );
-      return this.sqliteFallback.recall(query, options);
+      const start = Date.now();
+      const out = await this.sqliteFallback.recall(query, options);
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "circuit-open",
+        results: out,
+        latencyMs: Date.now() - start,
+      });
+      return out;
     }
 
     // Per-call timing for E5 audit. Baseline recorded `memory_search` at
@@ -125,9 +144,17 @@ export class HindsightMemoryBackend implements MemoryService {
       console.log(
         `[memory] recall(hindsight) bank=${options.bank} results=${response.results.length} ${ms}ms`,
       );
-      return response.results.map((r) => ({
+      const out: MemoryItem[] = response.results.map((r) => ({
         content: r.text,
       }));
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "hindsight",
+        results: out,
+        latencyMs: ms,
+      });
+      return out;
     } catch (err) {
       this.recordFailure(err);
       const ms = Date.now() - start;
@@ -137,9 +164,17 @@ export class HindsightMemoryBackend implements MemoryService {
       // Fall back to SQLite on failure
       const fbStart = Date.now();
       const out = await this.sqliteFallback.recall(query, options);
+      const fbMs = Date.now() - fbStart;
       console.log(
-        `[memory] recall(sqlite-fallback) results=${out.length} ${Date.now() - fbStart}ms`,
+        `[memory] recall(sqlite-fallback) results=${out.length} ${fbMs}ms`,
       );
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "sqlite-fallback",
+        results: out,
+        latencyMs: ms + fbMs,
+      });
       return out;
     }
   }

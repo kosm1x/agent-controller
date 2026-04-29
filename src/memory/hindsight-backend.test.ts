@@ -22,6 +22,12 @@ vi.mock("./hindsight-client.js", () => {
   };
 });
 
+// Mock recall-utility so tests don't hit the DB; assertion-friendly spy.
+const logRecallSpy = vi.fn();
+vi.mock("./recall-utility.js", () => ({
+  logRecall: (...args: unknown[]) => logRecallSpy(...args),
+}));
+
 import { HindsightClient } from "./hindsight-client.js";
 
 let backend: HindsightMemoryBackend;
@@ -108,6 +114,26 @@ describe("HindsightMemoryBackend", () => {
         budget: "low",
         tags: undefined,
       });
+    });
+
+    it("logs a recall_audit row tagged source=hindsight on success", async () => {
+      logRecallSpy.mockClear();
+      await backend.recall("what happened", { bank: "mc-operational" });
+      expect(logRecallSpy).toHaveBeenCalledTimes(1);
+      const arg = logRecallSpy.mock.calls[0][0];
+      expect(arg.bank).toBe("mc-operational");
+      expect(arg.query).toBe("what happened");
+      expect(arg.source).toBe("hindsight");
+      expect(arg.results).toHaveLength(1);
+      expect(typeof arg.latencyMs).toBe("number");
+    });
+
+    it("logs source=sqlite-fallback when Hindsight throws", async () => {
+      mockClient.recall.mockRejectedValueOnce(new Error("transient"));
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-operational" });
+      expect(logRecallSpy).toHaveBeenCalledTimes(1);
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("sqlite-fallback");
     });
   });
 

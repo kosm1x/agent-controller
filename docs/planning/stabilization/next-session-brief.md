@@ -1,9 +1,17 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-114
-> **Window**: 2026-04-22 → 2026-05-22 (day 8 of 30 at session-114 close)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-115
+> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-115 close)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
-> **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy. One operator-authorized exception this session (`gdrive_download`); rest hardening.
+> **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+
+---
+
+## What Session 115 closed
+
+**Resolved (was the top P1 from session 114's brief):** Hindsight `was_used` audit instrumentation shipped — answers "is recall actually used?" so we can decide HARDEN/DEMOTE/REPLACE with data instead of vibes. New `recall_audit` table (additive migration, mc.db). `logRecall()` writes a row at every recall call (all 4 paths: sqlite-only, circuit-open, hindsight-success, hindsight-failure-fallback). `markRecallUtility()` runs at turn end (router auto-persist block, fire-and-forget dynamic import) — claims unmatched rows from last 60s, substring-matches snippets ≥50 chars against the assistant's response, writes `was_used + used_count + task_id + checked_at`. Aggregates via new `mc-ctl recall-utility [Nh|Nd|Nm]` (default 24h). qa-auditor PASS WITH WARNINGS, zero Criticals; W1 (mc-ctl `since_arg` shell injection), W3 (PII redaction), I3 (query whitespace normalize), W2 (snippet floor 30→50), W4 (concurrent-claim regression test), W6 (MAX_ROWS_PER_SWEEP doc) all fixed pre-merge. Tests 3908 → 3934 (+26). Zero new deps. Freeze-aligned hardening per V8-VISION §3-S4 follow-up. Commit (next).
+
+**Diagnosis correction (saved to memory):** manual `POST /consolidate` on mc-jarvis returned `items_count=0` in 85ms — Hindsight's vendor consolidation is **additive** (creates `type=observation` rows alongside source `type=world` rows, doesn't delete either). Auto-consolidation cadence does not exist in the vendor; every consolidation must be explicitly POSTed. Bank growth is by design. The 49% recall timeout rate is reranker scaling against the candidate pool, not a consolidation lag. Bank composition sample (20): 11 observations + 6 worlds + 3 experiences = ~half raw / half derived. The 4/28 03:03→0 monitoring drops were manual deletes from session 112 rehab, not consolidation. Captured at `feedback_hindsight_consolidation_additive.md`.
 
 ---
 
@@ -26,14 +34,14 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 ## 🟡 TOMORROW — TOP OF AGENDA
 
-**Hindsight strategic decision is queued, NOT due tomorrow.** The discussion doc at `docs/planning/hindsight-strategic-options.md` covers HARDEN / DEMOTE / REPLACE plus the storage-architecture investigation the operator requested. **Do NOT make the change/demote/harden decision tomorrow.** The honest order from §8 of that doc is:
+**Step 1 from yesterday's brief (was_used instrumentation) shipped tonight.** Updated honest order from `hindsight-strategic-options.md` §8:
 
-1. **Add `was_used` audit instrumentation to recall** — single most important measurement gate. Today we measure recall _latency_ but never _utility_. Without this we can't tell if 32% timeout rate is hurting quality or just consuming budget. Aim: 2 weeks of data before the decision conversation. (Sub-piece of HARDEN; safe under freeze as instrumentation.)
-2. **Ship outcome-aware metadata tagging** at task-completion time — high leverage, lands cleanly in any of the three paths, freeze-aligned as hardening. Closes the poison-source class (Session 114's incident with the 2026-04-27 `completed_with_concerns` task whose body narrated a failure but got recalled as a positive precedent).
-3. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker" question. Needs the freeze to lift before it makes sense to run.
+1. ~~Add `was_used` audit instrumentation~~ — **DONE Session 115.** Now collecting `pct_used` per source/bank in `recall_audit`. Aim for 2 weeks of data (≈2026-05-13) before the HARDEN/DEMOTE/REPLACE conversation. Check daily via `mc-ctl recall-utility 24h`.
+2. **Ship outcome-aware metadata tagging** at task-completion time — high leverage, lands cleanly in any of the three paths, freeze-aligned as hardening. Closes the poison-source class (Session 114's `completed_with_concerns` task with failure-narrative body got recalled as positive precedent). Best Day 10-11 work; ~1-2 hour ship comparable to tonight's.
+3. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker." Needs the freeze to lift first.
 4. **Then** decide change/demote/harden with data, not vibes.
 
-Steps 1+2 are the right Day 9-10 work — both are hardening, both inform the post-freeze conversation. Step 3 needs the freeze to lift before it makes sense to A/B.
+**Validation checkpoint for tonight's ship**: 24h after deploy, run `mc-ctl recall-utility 24h`. Sanity-check that some rows exist, that `was_used` distributes across 0/1 (not all 0 or all 1), and that the by-source breakdown exists. If all rows show was_used=0 the snippet floor may need tuning lower; if all show was_used=1 raise the floor or tighten the redact patterns. Calibration data, not a decision yet.
 
 ---
 

@@ -2074,6 +2074,28 @@ export class MessageRouter {
         // Non-fatal
       }
 
+      // Recall utility instrumentation: claim unmatched recall_audit rows from
+      // the last 60s and substring-match snippets against the assistant
+      // response. Answers "is recall actually used?" without coupling to the
+      // recall caller's context. Fire-and-forget; never blocks delivery.
+      try {
+        import("../memory/recall-utility.js")
+          .then(({ markRecallUtility }) => {
+            markRecallUtility({
+              taskId,
+              responseText: resultText,
+            });
+          })
+          .catch((err) => {
+            console.warn(
+              "[router] recall-utility match failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
+      } catch {
+        // Non-fatal — instrumentation must never break delivery
+      }
+
       // v6.2 M0.5: Background memory extraction (fire-and-forget)
       // Extracts 1-3 atomic facts from noteworthy exchanges via LLM,
       // stores in pgvector with embeddings for semantic enrichment.
