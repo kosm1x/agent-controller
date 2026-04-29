@@ -94,18 +94,31 @@ describe("gemini_upload", () => {
   });
 
   it("uploads a local file successfully", async () => {
+    // Phase 1: start session — returns x-goog-upload-url in headers
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        file: {
-          name: "files/abc123",
-          uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
-          mimeType: "application/pdf",
-          sizeBytes: 1024,
-          state: "ACTIVE",
-          expirationTime: "2026-04-01T00:00:00Z",
-        },
-      }),
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.example.com/session/abc"
+            : null,
+      },
+      text: async () => "",
+    });
+    // Phase 2: upload bytes — returns the file resource as JSON text
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          file: {
+            name: "files/abc123",
+            uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+            mimeType: "application/pdf",
+            sizeBytes: 1024,
+            state: "ACTIVE",
+            expirationTime: "2026-04-01T00:00:00Z",
+          },
+        }),
     });
 
     const result = JSON.parse(
@@ -118,10 +131,12 @@ describe("gemini_upload", () => {
   });
 
   it("handles upload HTTP error", async () => {
+    // Phase 1 fails with text/plain 403 (the real-world Gemini behaviour
+    // that previously masked itself as a JSON-parse exception)
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 403,
-      json: async () => ({ error: { message: "Forbidden", code: 403 } }),
+      text: async () => "Forbidden — quota exceeded",
     });
 
     const result = JSON.parse(
@@ -129,6 +144,7 @@ describe("gemini_upload", () => {
     );
     expect(result.success).toBe(false);
     expect(result.error).toContain("403");
+    expect(result.error).toContain("Forbidden");
   });
 
   it("downloads URL before uploading", async () => {
@@ -137,19 +153,31 @@ describe("gemini_upload", () => {
       ok: true,
       arrayBuffer: async () => new ArrayBuffer(100),
     });
-    // Mock Gemini upload
+    // Phase 1: start session
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        file: {
-          name: "files/url123",
-          uri: "https://generativelanguage.googleapis.com/v1beta/files/url123",
-          mimeType: "application/pdf",
-          sizeBytes: 100,
-          state: "ACTIVE",
-          expirationTime: "2026-04-01T00:00:00Z",
-        },
-      }),
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.example.com/session/url"
+            : null,
+      },
+      text: async () => "",
+    });
+    // Phase 2: upload bytes
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          file: {
+            name: "files/url123",
+            uri: "https://generativelanguage.googleapis.com/v1beta/files/url123",
+            mimeType: "application/pdf",
+            sizeBytes: 100,
+            state: "ACTIVE",
+            expirationTime: "2026-04-01T00:00:00Z",
+          },
+        }),
     });
 
     const result = JSON.parse(
@@ -158,7 +186,8 @@ describe("gemini_upload", () => {
       }),
     );
     expect(result.success).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // 1 download + 2 upload phases = 3 fetches
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it("handles URL download failure", async () => {

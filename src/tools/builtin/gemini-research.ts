@@ -324,47 +324,78 @@ EDGE CASES:
 
     const mimeType = detectMimeType(filePath);
 
-    // Build multipart/related upload
-    const boundary = `----gemini${Date.now()}${Math.random().toString(36).slice(2)}`;
-    const metadataJson = JSON.stringify({
-      file: { displayName },
-    });
-
-    const parts: Buffer[] = [];
-    parts.push(
-      Buffer.from(
-        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadataJson}\r\n`,
-      ),
-    );
-    parts.push(
-      Buffer.from(`--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
-    );
-    parts.push(fileBuffer);
-    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-    const body = Buffer.concat(parts);
-
+    // Resumable upload protocol — required by Gemini Files API for files >2 MB.
+    // Multipart fails with "Metadata part is too large" above that threshold.
+    // Two phases: (1) start session → upload URL, (2) PUT bytes to that URL.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
     try {
-      const resp = await fetch(`${UPLOAD_URL}?key=${apiKey}`, {
+      // Phase 1: start resumable upload session
+      const startResp = await fetch(`${UPLOAD_URL}?key=${apiKey}`, {
         method: "POST",
         headers: {
-          "Content-Type": `multipart/related; boundary=${boundary}`,
-          "Content-Length": String(body.length),
+          "X-Goog-Upload-Protocol": "resumable",
+          "X-Goog-Upload-Command": "start",
+          "X-Goog-Upload-Header-Content-Length": String(fileBuffer.length),
+          "X-Goog-Upload-Header-Content-Type": mimeType,
+          "Content-Type": "application/json",
         },
-        body,
+        body: JSON.stringify({ file: { display_name: displayName } }),
+        signal: controller.signal,
+      });
+
+      if (!startResp.ok) {
+        // Use .text() — Gemini returns text/plain for many error cases (e.g.
+        // "Metadata part is too large"); .json() would mask the real message.
+        const errText = await startResp.text();
+        clearTimeout(timer);
+        return JSON.stringify({
+          success: false,
+          error: `Upload start failed (${startResp.status}): ${errText.slice(0, 300)}`,
+        });
+      }
+
+      const uploadUrl = startResp.headers.get("x-goog-upload-url");
+      if (!uploadUrl) {
+        clearTimeout(timer);
+        return JSON.stringify({
+          success: false,
+          error:
+            "Upload start succeeded but no x-goog-upload-url header returned",
+        });
+      }
+
+      // Phase 2: upload bytes + finalize in one POST
+      const resp = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Length": String(fileBuffer.length),
+          "X-Goog-Upload-Offset": "0",
+          "X-Goog-Upload-Command": "upload, finalize",
+        },
+        body: fileBuffer,
         signal: controller.signal,
       });
       clearTimeout(timer);
 
-      const data = (await resp.json()) as Record<string, unknown>;
+      // Read body once as text so we can surface non-JSON errors cleanly
+      const rawText = await resp.text();
 
       if (!resp.ok) {
-        const error = data.error as Record<string, unknown> | undefined;
         return JSON.stringify({
           success: false,
-          error: `Upload error ${resp.status}: ${(error?.message as string) ?? JSON.stringify(data).slice(0, 300)}`,
+          error: `Upload error ${resp.status}: ${rawText.slice(0, 300)}`,
+        });
+      }
+
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(rawText) as Record<string, unknown>;
+      } catch {
+        return JSON.stringify({
+          success: false,
+          error: `Upload returned non-JSON: ${rawText.slice(0, 200)}`,
         });
       }
 

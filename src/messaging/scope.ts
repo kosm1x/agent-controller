@@ -475,7 +475,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF)|upload\s+(?:\S+\s+)?document|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf)|\.pdf\b)/i,
+      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF|presentaci[oó]n(?:es)?|slides?|deck)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|upload\s+(?:\S+\s+)?(?:document|presentation|slides?|deck)|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf|presentaci[oó]n(?:es)?|slides?|deck)|\.pdf\b|\.pptx?\b|(?:captura\w*|capture)\s+(?:cada\s+|each\s+|every\s+|all\s+|las\s+|todas?\s+las\s+)?(?:slides?|diapositivas?|p[aá]ginas?\s+del?\s+(?:PDF|deck|presentaci))|cada\s+(?:slide|diapositiva|p[aá]gina\s+del?\s+(?:PDF|deck))|(?:describe|descrip|analiza|analyze)\s+(?:la|the|cada|each|every|all)?\s*(?:imagen|image|slide|diapositiva|presentaci))/i,
     group: "research",
   },
   {

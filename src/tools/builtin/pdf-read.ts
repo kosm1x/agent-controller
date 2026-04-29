@@ -170,6 +170,21 @@ TIPS:
 
       const totalChars = content.length;
 
+      // Image-only PDF detected: 0 extractable chars. Teach the LLM the next
+      // step explicitly — this is the poka-yoke pattern from feedback_aci_*.
+      // Without this hint Jarvis runs the chain pdf_read → screenshot → vision
+      // → playwright → drive thumbnails and dead-ends on each (Session 114).
+      if (totalChars === 0) {
+        return JSON.stringify({
+          source,
+          content: "",
+          chars: 0,
+          truncated: false,
+          imageOnly: true,
+          hint: "PDF contains 0 extractable text characters — likely image-only or scan. For visual analysis: call gemini_upload with this same source path, then call gemini_research with your question. Gemini's vision API reads slide images, diagrams, and scanned text directly.",
+        });
+      }
+
       // Short PDF: return everything inline
       if (totalChars <= INLINE_THRESHOLD) {
         return JSON.stringify({
