@@ -7,6 +7,22 @@
 
 ---
 
+## End-of-day health snapshot (2026-04-29 22:00 UTC, post-Session-118)
+
+| Item                            | Reading                                                   | Status                              |
+| ------------------------------- | --------------------------------------------------------- | ----------------------------------- |
+| Service                         | active, PID 3867937, uptime 12min (restart for S3 deploy) | green                               |
+| Hindsight                       | container healthy, up 9min                                | green                               |
+| Bank size mc-jarvis             | 547 (morning) → 596 (+49 over 9h)                         | yellow (vendor-additive, by design) |
+| Disk                            | 73G / 96G (76%)                                           | green                               |
+| Drift detector                  | `mc-ctl drift` exit=0, all invariants hold                | green                               |
+| Outcome tag distribution (2h)   | 10 success / 2 concerns / 17 no-tag                       | green (matches expected ratio)      |
+| **mc-recall timeout rate (1h)** | **21/22 = 95%** — _worse_ than morning's 49%              | **🟠 watch**                        |
+
+**Watchpoint**: post-Session-118 deploys (3 service restarts in the 21:00 UTC hour) correlate with a timeout-rate spike from morning's 49% to last-hour 95%. Hourly trend across the day: 17:00 75%, 18:00 57%, 20:00 100% (n=2), 21:00 95% (n=22). The morning 49% measurement was lower than typical hourly readings; could be the more-stable interval rather than the spike. Either way the timeout rate is consistently high. Tomorrow: check if 21:00 normalizes once Hindsight's reranker warms up post-restart, and let was_used data accumulate to tell us if the timeouts hurt agent quality. **If timeout rate stays >75% sustained for 24h, escalate to Hindsight strategic decision early.**
+
+---
+
 ## What Sessions 117 + 118 closed (2026-04-29 evening)
 
 **Session 117 — recall-side outcome filter** (commit `c25a1ca`). Closes the read-side of Session 114's poison-source class. `RecallOptions.excludeOutcomes?: string[]` defaults to `["outcome:concerns", "outcome:failed"]`. `MemoryItem.tags?: string[]` carries vendor tags through. `applyOutcomeFilter()` runs after all 4 recall paths in hindsight-backend; SQLite backend threaded through 5 SELECT paths via new `parseTags()` helper. New `recall_audit.excluded_count` column (additive) restores the missing dimension for utility-rate audits. mc-ctl recall-utility extended with `dropped` column. qa-auditor PASS, zero Criticals; W1 fixed pre-commit; W2 deferred to post-deploy smoke (verify Hindsight echoes `outcome:*` tags on recall round-trip). Tests +22.
