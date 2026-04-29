@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { cancelTask } from "../../dispatch/dispatcher.js";
+import { checkDrift, summarizeDrift } from "../../observability/drift.js";
 
 export const admin = new Hono();
 
@@ -96,4 +97,20 @@ admin.post("/drive-reformat", async (c) => {
   const { reformatDriveFiles } = await import("../../db/drive-sync.js");
   const result = await reformatDriveFiles();
   return c.json(result);
+});
+
+/**
+ * GET /api/admin/drift
+ *
+ * V8 substrate S3 — out-of-band drift detector. Returns the running
+ * process env's deviation from declared invariants. Used by `mc-ctl drift`.
+ */
+admin.get("/drift", (c) => {
+  const drifts = checkDrift();
+  const summary = summarizeDrift(drifts);
+  return c.json({
+    summary,
+    drifts,
+    timestamp: new Date().toISOString(),
+  });
 });

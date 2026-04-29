@@ -1,9 +1,17 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-116
-> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-116 close)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-118
+> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-118 close)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+
+---
+
+## What Sessions 117 + 118 closed (2026-04-29 evening)
+
+**Session 117 — recall-side outcome filter** (commit `c25a1ca`). Closes the read-side of Session 114's poison-source class. `RecallOptions.excludeOutcomes?: string[]` defaults to `["outcome:concerns", "outcome:failed"]`. `MemoryItem.tags?: string[]` carries vendor tags through. `applyOutcomeFilter()` runs after all 4 recall paths in hindsight-backend; SQLite backend threaded through 5 SELECT paths via new `parseTags()` helper. New `recall_audit.excluded_count` column (additive) restores the missing dimension for utility-rate audits. mc-ctl recall-utility extended with `dropped` column. qa-auditor PASS, zero Criticals; W1 fixed pre-commit; W2 deferred to post-deploy smoke (verify Hindsight echoes `outcome:*` tags on recall round-trip). Tests +22.
+
+**Session 118 — V8 substrate S3 drift detector** (commit forthcoming). New `src/observability/drift.ts` + `GET /api/admin/drift` + `mc-ctl drift`. Catches silent drift between running env and declared invariants. DEFAULT_INVARIANTS encodes 6 baseline checks (INFERENCE_PRIMARY_PROVIDER, INFERENCE_PRIMARY_MODEL, HINDSIGHT_URL, HINDSIGHT_RECALL_ENABLED, HINDSIGHT_RECALL_TIMEOUT_MS, TZ). Tri-level exit codes (0/1/2) documented inline. qa-auditor: C1 fixed pre-commit (HINDSIGHT_RECALL_TIMEOUT_MS pattern→exact match, the very drift class it was designed to catch); W1/W2/W4/SV1 fixed; W3 (structured logging on drift) deferred. Tests +21. Substrate ladder now S1 + S3 + S4 done; S2 + S5 remain post-freeze.
 
 ---
 
@@ -40,20 +48,24 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 ## 🟡 TOMORROW — TOP OF AGENDA
 
-**Steps 1+2 of `hindsight-strategic-options.md` §8 are DONE (Sessions 115 + 116).** Updated honest order:
+**Steps 1, 2, 3 of `hindsight-strategic-options.md` §8 are DONE (Sessions 115/116/117). V8 substrate S3 also DONE (Session 118).** Remaining:
 
-1. ~~Add `was_used` audit instrumentation~~ — **DONE Session 115.** Now collecting `pct_used` per source/bank in `recall_audit`. Aim for 2 weeks of data (≈2026-05-13). Check daily via `mc-ctl recall-utility 24h`.
-2. ~~Ship outcome-aware metadata tagging~~ — **DONE Session 116.** New memories written by tasks now carry `outcome:*` tags. Recall-side filter is the natural follow-up.
-3. **Recall-side filter on `outcome:concerns` / `outcome:failed`** — small ship (~30-60 min), freeze-aligned. By default exclude non-success memories from recall results, with override option. Needs ~1 week of tag distribution data first to calibrate (e.g., should default also exclude `outcome:unknown`?). Best after a week of organic traffic accrues outcome-tagged memories.
-4. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker." Needs the freeze to lift first.
+1. ~~`was_used` recall instrumentation~~ — **DONE Session 115.**
+2. ~~Outcome-aware metadata tagging at write~~ — **DONE Session 116.**
+3. ~~Recall-side filter on `outcome:concerns` / `outcome:failed`~~ — **DONE Session 117.** Default exclusion in effect.
+4. **Cross-encoder vs cosine-only A/B for 2 weeks** — answers "do we need the reranker." Needs the freeze to lift first.
 5. **Then** decide change/demote/harden with data, not vibes.
 
-**Validation checkpoints**:
+**V8 substrate ladder**: S1 + S3 + S4 done. **S2 (self-audit before reporting)** and **S5 (skills-as-stored-procedures)** remain. S2 codifies the "Audited?" reflex into a tool/protocol so discipline isn't operator-dependent — depends on S4 (done) for `verified-against:` data sources. S5 is feature-territory; defer past freeze.
 
-- **Session 115 was_used (24h post-deploy = ~2026-04-30 21:00 UTC)**: `mc-ctl recall-utility 24h`. Sanity-check rows exist + `was_used` distributes across 0/1 + by-source breakdown populated. If all 0 lower snippet floor; if all 1 raise it or tighten redact patterns.
-- **Session 116 outcome-tag (24h post-deploy)**: `sqlite3 data/mc.db "SELECT trust_tier, tags FROM conversations WHERE created_at > datetime('now','-24 hours') AND tags LIKE '%outcome:%' LIMIT 20;"` — verify rows actually carry the tag and the distribution looks reasonable (most should be `outcome:success`). If all `outcome:unknown`, the dispatcher→router event-flow assumption is wrong and we need to investigate.
+**Validation checkpoints (24h after each ship — ~2026-04-30 21:00–22:00 UTC)**:
 
-**Best Day 10-11 work**: V8 substrate **S3 (out-of-band drift detector)** — independent of Hindsight work, freeze-aligned, ~half-day. Compares running config (env vars, scheduled crons, model selections) to declared config (.env, git). Catches silent drift like the qwen3.6 model swap that lives in `.env` but not in git. Or **P2 wider scope.ts regex sweep** (~30 min, deferred since Session 109).
+- **Session 115 was_used**: `mc-ctl recall-utility 24h`. Rows exist + `was_used` distributes across 0/1 + by-source breakdown populated. If all 0 lower snippet floor; if all 1 raise it or tighten redact patterns.
+- **Session 116 outcome-tag**: `sqlite3 data/mc.db "SELECT trust_tier, tags FROM conversations WHERE created_at > datetime('now','-24 hours') AND tags LIKE '%outcome:%' LIMIT 20;"` — verify rows actually carry the tag. If all `outcome:unknown`, the dispatcher→router event-flow assumption is wrong.
+- **Session 117 recall filter**: `mc-ctl recall-utility 24h` shows the new `dropped` column. Verify excluded_count > 0 on at least some rows (proves the filter is firing on real traffic). If always 0, either no concerns/failed memories accrued yet or Hindsight isn't echoing the tag back on recall (qa-auditor W2 — needs the live Hindsight curl smoke).
+- **Session 118 drift detector**: `mc-ctl drift` should return `exit=0` "No drift detected" — green state. If anything fires, investigate before assuming the invariants are wrong (the whole point is catching real drift).
+
+**Best Day 10-11 work**: V8 substrate **S2 (self-audit before reporting)** — closes the substrate ladder for the freeze. Or **P2 wider scope.ts regex sweep** (~30 min, deferred since Session 109). Or kick off the **2-week measurement window** for cross-encoder A/B by running the queries above and starting a daily log of the metrics.
 
 ---
 

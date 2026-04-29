@@ -552,6 +552,48 @@ cmd_recall_utility() {
   fi
 }
 
+cmd_drift() {
+  # Exit codes (qa-auditor W1, 2026-04-29):
+  #   0 = no drift (all invariants hold)
+  #   1 = drift detected, none critical (warning + info only)
+  #   2 = critical drift (cron-style alerters should treat as urgent)
+  # Usage in cron: `mc-ctl drift > /dev/null || alert` covers any drift;
+  # `mc-ctl drift > /dev/null; [ $? -ge 2 ] && alert` covers critical-only.
+  echo -e "${BOLD}=== Config Drift (V8 substrate S3) ===${NC}"
+  echo ""
+
+  local response
+  response=$(api GET /api/admin/drift 2>&1) || {
+    echo -e "${RED}Failed to query drift endpoint.${NC}"
+    echo "  $response"
+    return 1
+  }
+
+  local total critical warning info
+  total=$(echo "$response" | jq -r '.summary.total // 0')
+  critical=$(echo "$response" | jq -r '.summary.critical // 0')
+  warning=$(echo "$response" | jq -r '.summary.warning // 0')
+  info=$(echo "$response" | jq -r '.summary.info // 0')
+
+  if [ "${total:-0}" -eq 0 ]; then
+    echo -e "  ${GREEN}No drift detected.${NC} All declared invariants hold."
+    echo ""
+    return 0
+  fi
+
+  echo -e "  Drifts: ${total} (${RED}${critical} critical${NC}, ${YELLOW}${warning} warning${NC}, ${DIM}${info} info${NC})"
+  echo ""
+
+  echo "$response" | jq -r '.drifts[] |
+    "  [\(.severity | ascii_upcase)] \(.key)\n      desc:     \(.description)\n      expected: \(.expected)\n      actual:   \(.actual // "(unset)")\n      status:   \(.status)\n"'
+
+  # Exit non-zero on critical drift so cron-style pipelines can alert
+  if [ "${critical:-0}" -gt 0 ]; then
+    return 2
+  fi
+  return 1
+}
+
 cmd_hindsight_status() {
   echo -e "${BOLD}=== Hindsight Status ===${NC}"
   echo ""
@@ -798,6 +840,7 @@ usage() {
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
   echo -e "  ${GREEN}recall-utility${NC} [Nh] Recall was_used % by source/bank (default 24h, accepts 1h/7d/30m)"
+  echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
   echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
@@ -1410,6 +1453,7 @@ case "$cmd" in
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
 
   recall-utility)    cmd_recall_utility "${1:-24h}" ;;
+  drift)             cmd_drift ;;
 
   budget)            cmd_budget ;;
 
