@@ -14,6 +14,7 @@
 import { HindsightClient } from "./hindsight-client.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import { logRecall } from "./recall-utility.js";
+import { DEFAULT_EXCLUDE_OUTCOMES } from "./types.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -22,6 +23,25 @@ import type {
   RecallOptions,
   ReflectOptions,
 } from "./types.js";
+
+/**
+ * Filter MemoryItems whose tags include any of the excluded outcome tags.
+ * Returns {kept, excluded} so callers can log + log_recall the drop count.
+ */
+function applyOutcomeFilter(
+  items: MemoryItem[],
+  options: RecallOptions,
+): { kept: MemoryItem[]; excluded: number } {
+  const exclude = options.excludeOutcomes ?? DEFAULT_EXCLUDE_OUTCOMES;
+  if (exclude.length === 0) return { kept: items, excluded: 0 };
+  const excludeSet = new Set(exclude);
+  const kept = items.filter((item) => {
+    const tags = item.tags ?? [];
+    for (const t of tags) if (excludeSet.has(t)) return false;
+    return true;
+  });
+  return { kept, excluded: items.length - kept.length };
+}
 
 // ---------------------------------------------------------------------------
 // Circuit breaker
@@ -100,15 +120,22 @@ export class HindsightMemoryBackend implements MemoryService {
       // separately upstream of this call too. This branch removes the 1.5s/
       // call dead-wait that was firing on every turn.
       const start = Date.now();
-      const out = await this.sqliteFallback.recall(query, options);
+      const raw = await this.sqliteFallback.recall(query, options);
+      const { kept, excluded } = applyOutcomeFilter(raw, options);
       logRecall({
         bank: options.bank,
         query,
         source: "sqlite-only",
-        results: out,
+        results: kept,
         latencyMs: Date.now() - start,
+        excludedCount: excluded,
       });
-      return out;
+      if (excluded > 0) {
+        console.log(
+          `[memory] recall(sqlite-only) filtered ${excluded} outcome-tagged result(s)`,
+        );
+      }
+      return kept;
     }
     if (this.isCircuitOpen()) {
       // Hindsight down — fall back to SQLite keyword recall
@@ -116,15 +143,22 @@ export class HindsightMemoryBackend implements MemoryService {
         "[memory] Hindsight circuit open — recall falling back to SQLite",
       );
       const start = Date.now();
-      const out = await this.sqliteFallback.recall(query, options);
+      const raw = await this.sqliteFallback.recall(query, options);
+      const { kept, excluded } = applyOutcomeFilter(raw, options);
       logRecall({
         bank: options.bank,
         query,
         source: "circuit-open",
-        results: out,
+        results: kept,
         latencyMs: Date.now() - start,
+        excludedCount: excluded,
       });
-      return out;
+      if (excluded > 0) {
+        console.log(
+          `[memory] recall(circuit-open) filtered ${excluded} outcome-tagged result(s)`,
+        );
+      }
+      return kept;
     }
 
     // Per-call timing for E5 audit. Baseline recorded `memory_search` at
@@ -144,17 +178,25 @@ export class HindsightMemoryBackend implements MemoryService {
       console.log(
         `[memory] recall(hindsight) bank=${options.bank} results=${response.results.length} ${ms}ms`,
       );
-      const out: MemoryItem[] = response.results.map((r) => ({
+      const raw: MemoryItem[] = response.results.map((r) => ({
         content: r.text,
+        tags: r.tags ?? [],
       }));
+      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      if (excluded > 0) {
+        console.log(
+          `[memory] recall(hindsight) filtered ${excluded} outcome-tagged result(s)`,
+        );
+      }
       logRecall({
         bank: options.bank,
         query,
         source: "hindsight",
-        results: out,
+        results: kept,
         latencyMs: ms,
+        excludedCount: excluded,
       });
-      return out;
+      return kept;
     } catch (err) {
       this.recordFailure(err);
       const ms = Date.now() - start;
@@ -163,19 +205,26 @@ export class HindsightMemoryBackend implements MemoryService {
       );
       // Fall back to SQLite on failure
       const fbStart = Date.now();
-      const out = await this.sqliteFallback.recall(query, options);
+      const raw = await this.sqliteFallback.recall(query, options);
       const fbMs = Date.now() - fbStart;
       console.log(
-        `[memory] recall(sqlite-fallback) results=${out.length} ${fbMs}ms`,
+        `[memory] recall(sqlite-fallback) results=${raw.length} ${fbMs}ms`,
       );
+      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      if (excluded > 0) {
+        console.log(
+          `[memory] recall(sqlite-fallback) filtered ${excluded} outcome-tagged result(s)`,
+        );
+      }
       logRecall({
         bank: options.bank,
         query,
         source: "sqlite-fallback",
-        results: out,
+        results: kept,
         latencyMs: ms + fbMs,
+        excludedCount: excluded,
       });
-      return out;
+      return kept;
     }
   }
 

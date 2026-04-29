@@ -112,6 +112,18 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_recall_audit_task ON recall_audit(task_id)",
   );
 
+  // 2026-04-29 Session 117: recall-side outcome filter introduces post-recall
+  // drops. result_count = kept count (what the agent saw). excluded_count
+  // captures filter activity for utility-rate audits. Additive migration.
+  const recallAuditCols = _db
+    .prepare("PRAGMA table_info(recall_audit)")
+    .all() as Array<{ name: string }>;
+  if (!recallAuditCols.some((c) => c.name === "excluded_count")) {
+    _db.exec(
+      "ALTER TABLE recall_audit ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
   // v4.0 S1: composite indexes for query performance
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC)",

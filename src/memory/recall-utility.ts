@@ -84,8 +84,12 @@ interface LogRecallInput {
   query: string;
   /** Where the recall results came from. */
   source: "hindsight" | "sqlite-fallback" | "sqlite-only" | "circuit-open";
+  /** Results AFTER the outcome filter has run. result_count and snippets in
+   * the audit row reflect what the agent saw, not what the vendor returned. */
   results: MemoryItem[];
   latencyMs: number;
+  /** Count of vendor results dropped by the recall-side outcome filter. */
+  excludedCount?: number;
 }
 
 /**
@@ -161,8 +165,8 @@ export function logRecall(input: LogRecallInput): void {
       db
         .prepare(
           `INSERT INTO recall_audit
-             (bank, query, source, result_count, result_snippets, latency_ms)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.bank,
@@ -171,6 +175,7 @@ export function logRecall(input: LogRecallInput): void {
           input.results.length,
           JSON.stringify(allSnippets),
           input.latencyMs,
+          input.excludedCount ?? 0,
         ),
     );
   } catch (err) {

@@ -33,7 +33,28 @@ export interface RecallOptions {
   bank: MemoryBank;
   tags?: string[];
   maxResults?: number;
+  /**
+   * Outcome tags to exclude from results. Defaults to DEFAULT_EXCLUDE_OUTCOMES
+   * which drops `outcome:concerns` and `outcome:failed` — closes the Session
+   * 114 poison-source class. Pass `[]` to disable filtering.
+   */
+  excludeOutcomes?: string[];
 }
+
+/**
+ * Default outcome tags filtered out at recall time.
+ * - `outcome:concerns` was the literal Session 114 incident class
+ *   (a `completed_with_concerns` task whose body narrated a failure)
+ * - `outcome:failed` is unreachable via the current retain wiring (router's
+ *   handleTaskFailed doesn't retain) but documented for future-proofing
+ * - `outcome:unknown` is intentionally KEPT in default — most historical rows
+ *   pre-2026-04-29 lack the tag, and pre-task retains (positive feedback,
+ *   fast-path) have no taskId so will tag as unknown
+ */
+export const DEFAULT_EXCLUDE_OUTCOMES = [
+  "outcome:concerns",
+  "outcome:failed",
+] as const;
 
 /** Options for synthesizing memories. */
 export interface ReflectOptions {
@@ -47,6 +68,10 @@ export interface MemoryItem {
   relevance?: number;
   createdAt?: string;
   trustTier?: TrustTier;
+  /** Free-form tags carried from the originating retain call. May include
+   * channel ("telegram"), outcome ("outcome:success"), kind ("conversation"),
+   * etc. Used by recall-side filtering on outcome:* tags. */
+  tags?: string[];
 }
 
 /** Pluggable memory service interface. */

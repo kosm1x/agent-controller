@@ -135,6 +135,85 @@ describe("HindsightMemoryBackend", () => {
       expect(logRecallSpy).toHaveBeenCalledTimes(1);
       expect(logRecallSpy.mock.calls[0][0].source).toBe("sqlite-fallback");
     });
+
+    it("excludes outcome:concerns and outcome:failed by default", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          { id: "1", text: "good memory", tags: ["outcome:success"] },
+          { id: "2", text: "concerns memory", tags: ["outcome:concerns"] },
+          { id: "3", text: "failed memory", tags: ["outcome:failed"] },
+          { id: "4", text: "unknown memory", tags: ["outcome:unknown"] },
+          { id: "5", text: "untagged memory", tags: [] },
+        ],
+      });
+      const results = await backend.recall("q", { bank: "mc-operational" });
+      const contents = results.map((r) => r.content);
+      expect(contents).toContain("good memory");
+      expect(contents).toContain("unknown memory");
+      expect(contents).toContain("untagged memory");
+      expect(contents).not.toContain("concerns memory");
+      expect(contents).not.toContain("failed memory");
+      expect(results).toHaveLength(3);
+    });
+
+    it("respects explicit excludeOutcomes override", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          { id: "1", text: "success", tags: ["outcome:success"] },
+          { id: "2", text: "concerns", tags: ["outcome:concerns"] },
+          { id: "3", text: "failed", tags: ["outcome:failed"] },
+        ],
+      });
+      const results = await backend.recall("q", {
+        bank: "mc-operational",
+        excludeOutcomes: ["outcome:success"],
+      });
+      const contents = results.map((r) => r.content);
+      expect(contents).not.toContain("success");
+      expect(contents).toContain("concerns");
+      expect(contents).toContain("failed");
+    });
+
+    it("empty excludeOutcomes array disables filtering", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          { id: "1", text: "concerns", tags: ["outcome:concerns"] },
+          { id: "2", text: "failed", tags: ["outcome:failed"] },
+        ],
+      });
+      const results = await backend.recall("q", {
+        bank: "mc-operational",
+        excludeOutcomes: [],
+      });
+      expect(results).toHaveLength(2);
+    });
+
+    it("passes vendor tags through to MemoryItem", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          {
+            id: "1",
+            text: "tagged",
+            tags: ["telegram", "outcome:success", "conversation"],
+          },
+        ],
+      });
+      const results = await backend.recall("q", { bank: "mc-operational" });
+      expect(results[0].tags).toEqual([
+        "telegram",
+        "outcome:success",
+        "conversation",
+      ]);
+    });
+
+    it("treats missing vendor tags as empty array (no false-positive exclusion)", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [{ id: "1", text: "no tags field" }],
+      });
+      const results = await backend.recall("q", { bank: "mc-operational" });
+      expect(results).toHaveLength(1);
+      expect(results[0].tags).toEqual([]);
+    });
   });
 
   describe("reflect", () => {

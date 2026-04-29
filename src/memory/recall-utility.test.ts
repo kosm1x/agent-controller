@@ -14,6 +14,7 @@ interface AuditRow {
   result_count: number;
   result_snippets: string;
   latency_ms: number | null;
+  excluded_count: number;
   was_used: number | null;
   used_count: number | null;
   task_id: string | null;
@@ -30,14 +31,16 @@ const mockDb = {
     if (sql.startsWith("INSERT INTO recall_audit")) {
       return {
         run: (...args: unknown[]) => {
-          const [bank, query, source, count, snippets, latency] = args as [
-            string,
-            string,
-            string,
-            number,
-            string,
-            number | null,
-          ];
+          const [bank, query, source, count, snippets, latency, excluded] =
+            args as [
+              string,
+              string,
+              string,
+              number,
+              string,
+              number | null,
+              number | null | undefined,
+            ];
           store.rows.push({
             id: store.nextId++,
             created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
@@ -47,6 +50,7 @@ const mockDb = {
             result_count: count,
             result_snippets: snippets,
             latency_ms: latency,
+            excluded_count: excluded ?? 0,
             was_used: null,
             used_count: null,
             task_id: null,
@@ -248,6 +252,29 @@ describe("logRecall", () => {
     expect(store.rows[0].query.length).toBe(500);
   });
 
+  it("persists excludedCount when supplied (recall-side filter audit)", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "test",
+      source: "hindsight",
+      results: [{ content: "x".repeat(60) }],
+      latencyMs: 100,
+      excludedCount: 7,
+    });
+    expect(store.rows[0].excluded_count).toBe(7);
+  });
+
+  it("defaults excludedCount to 0 when omitted (back-compat)", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "test",
+      source: "hindsight",
+      results: [],
+      latencyMs: 100,
+    });
+    expect(store.rows[0].excluded_count).toBe(0);
+  });
+
   it("normalizes whitespace + redacts secrets in query (I3 + W3)", () => {
     logRecall({
       bank: "mc-jarvis",
@@ -430,6 +457,7 @@ describe("markRecallUtility", () => {
       result_count: 1,
       result_snippets: JSON.stringify(["short"]),
       latency_ms: 100,
+      excluded_count: 0,
       was_used: null,
       used_count: null,
       task_id: null,
@@ -511,6 +539,7 @@ describe("markRecallUtility", () => {
       result_count: 0,
       result_snippets: "not valid json",
       latency_ms: 100,
+      excluded_count: 0,
       was_used: null,
       used_count: null,
       task_id: null,

@@ -60,6 +60,7 @@ export interface HindsightRecallResponse {
     id: string;
     text: string;
     type?: string;
+    tags?: string[];
   }>;
 }
 

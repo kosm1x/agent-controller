@@ -189,14 +189,33 @@ export class SqliteMemoryBackend implements MemoryService {
         tagParams.push(...options.tags);
       }
 
+      // Helper: parse tags JSON column safely (defaults to [])
+      const parseTags = (raw: string | null | undefined): string[] => {
+        if (!raw) return [];
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed)
+            ? parsed.filter((t) => typeof t === "string")
+            : [];
+        } catch {
+          return [];
+        }
+      };
+
       // Helper: compute decay-weighted final score
       const applyDecay = (
-        row: { content: string; created_at: string; trust_tier: number },
+        row: {
+          content: string;
+          created_at: string;
+          trust_tier: number;
+          tags?: string | null;
+        },
         rawScore: number,
       ): {
         content: string;
         createdAt: string;
         trustTier: TrustTier;
+        tags: string[];
         _score: number;
       } => {
         const ageDays =
@@ -209,6 +228,7 @@ export class SqliteMemoryBackend implements MemoryService {
           content: row.content,
           createdAt: row.created_at,
           trustTier: tier,
+          tags: parseTags(row.tags),
           _score: rawScore + decayWeight,
         };
       };
@@ -218,6 +238,7 @@ export class SqliteMemoryBackend implements MemoryService {
         content: string;
         created_at: string;
         trust_tier: number;
+        tags?: string | null;
         score: number;
       };
       const ftsResults: ScoredRow[] = [];
@@ -226,7 +247,7 @@ export class SqliteMemoryBackend implements MemoryService {
         if (ftsQuery) {
           const ftsRows = db
             .prepare(
-              `SELECT c.content, c.created_at, c.trust_tier, f.rank AS score
+              `SELECT c.content, c.created_at, c.trust_tier, c.tags, f.rank AS score
                FROM conversations_fts f
                JOIN conversations c ON c.id = f.rowid
                WHERE conversations_fts MATCH ?
@@ -254,7 +275,7 @@ export class SqliteMemoryBackend implements MemoryService {
           // Load recent embeddings from DB (last 500 in bank)
           const rows = db
             .prepare(
-              `SELECT c.id, c.content, c.created_at, c.trust_tier, e.embedding
+              `SELECT c.id, c.content, c.created_at, c.trust_tier, c.tags, e.embedding
                FROM conversation_embeddings e
                JOIN conversations c ON c.id = e.conversation_id
                WHERE c.bank = ? ${tagClause}
@@ -266,6 +287,7 @@ export class SqliteMemoryBackend implements MemoryService {
             content: string;
             created_at: string;
             trust_tier: number;
+            tags: string | null;
             embedding: Buffer;
           }>;
 
@@ -278,6 +300,7 @@ export class SqliteMemoryBackend implements MemoryService {
                 content: row.content,
                 created_at: row.created_at,
                 trust_tier: row.trust_tier,
+                tags: row.tags,
                 score: sim,
               });
             }
@@ -298,7 +321,7 @@ export class SqliteMemoryBackend implements MemoryService {
             .join(" OR ");
           const likeParams = keywords.map((k) => `%${k}%`);
           const matchSql = `
-            SELECT content, created_at, trust_tier,
+            SELECT content, created_at, trust_tier, tags,
               (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS score
             FROM conversations
             WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
@@ -325,7 +348,7 @@ export class SqliteMemoryBackend implements MemoryService {
 
         // No matches at all — return recent
         const sql = `
-          SELECT content, created_at, trust_tier FROM conversations
+          SELECT content, created_at, trust_tier, tags FROM conversations
           WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
           ORDER BY created_at DESC
           LIMIT ?
@@ -336,6 +359,7 @@ export class SqliteMemoryBackend implements MemoryService {
           content: string;
           created_at: string;
           trust_tier: number;
+          tags: string | null;
         }>;
         return rows.map((r) => ({
           content: r.content,
@@ -343,6 +367,7 @@ export class SqliteMemoryBackend implements MemoryService {
           trustTier: ([1, 2, 3, 4].includes(r.trust_tier)
             ? r.trust_tier
             : 3) as TrustTier,
+          tags: parseTags(r.tags),
         }));
       }
 

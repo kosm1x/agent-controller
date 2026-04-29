@@ -524,13 +524,14 @@ cmd_recall_utility() {
                     COUNT(*) AS n,
                     SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) AS used,
                     ROUND(100.0 * SUM(CASE WHEN was_used = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_used,
+                    SUM(COALESCE(excluded_count, 0)) AS dropped,
                     ROUND(AVG(latency_ms), 0) AS avg_ms
              FROM recall_audit
              WHERE created_at >= ${since_clause} AND was_used IS NOT NULL
              GROUP BY source
              ORDER BY n DESC;" 2>/dev/null \
-      | awk -F'|' 'BEGIN { printf "  %-18s %6s %6s %8s %8s\n", "source", "n", "used", "pct%", "avg_ms" }
-                   { printf "  %-18s %6s %6s %8s %8s\n", $1, $2, $3, $4, $5 }'
+      | awk -F'|' 'BEGIN { printf "  %-18s %6s %6s %8s %8s %8s\n", "source", "n", "used", "pct%", "dropped", "avg_ms" }
+                   { printf "  %-18s %6s %6s %8s %8s %8s\n", $1, $2, $3, $4, $5, $6 }'
     echo ""
 
     echo -e "${BOLD}Utility by bank:${NC}"
