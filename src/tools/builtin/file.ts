@@ -11,7 +11,17 @@ import {
   validatePathSafety,
   isDangerousRemovalPath,
 } from "./immutable-core.js";
+import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
+import {
+  parseLineRanges,
+  extractLineRanges,
+  buildOutline,
+  countLines,
+  PREVIEW_CHARS,
+} from "../../lib/file-slicing.js";
 
+/** Hard cap on a single `file_read` payload — protects against pathological
+ *  slice requests (e.g. lines='1-100000' on a giant log). */
 const MAX_READ = 50_000; // chars
 
 // Jarvis write boundaries — can read anything, writes restricted to project dirs.
@@ -131,14 +141,35 @@ export const fileReadTool: Tool = {
     type: "function",
     function: {
       name: "file_read",
-      description:
-        "Read the contents of a file. Returns the file content as text. Supports plain text files and .docx (Word documents).",
+      description: `Read the contents of a file. Supports plain text files and .docx (Word documents).
+
+LARGE FILE BEHAVIOR (>${LARGE_FILE_THRESHOLD} chars):
+When the file is large AND you don't pass \`lines\`, this tool returns a structured envelope
+INSTEAD of the full content:
+  { truncated: true, total_chars, total_lines, outline: [...headings with line numbers...],
+    preview: <first ~${PREVIEW_CHARS} chars>, next_steps: [...] }
+The preview is the first ~${PREVIEW_CHARS} chars only — DO NOT infer the file's content from it.
+Read the outline (each heading is prefixed with its line number, e.g. "L42: # Section"),
+decide which sections matter, then call again with \`lines='42-90'\` for each one.
+
+WORKFLOW for large files:
+  1. file_read(path="/path/to/file.md")  → {truncated, outline, preview}
+  2. From the outline, pick sections of interest (line ranges)
+  3. file_read(path="...", lines="200-350")  → exact slice you need
+
+For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned as before;
+\`total_chars\` is included so you always know the file size.`,
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description: "Absolute or relative file path to read",
+          },
+          lines: {
+            type: "string",
+            description:
+              "Read only specific line ranges. Format: 'N-M' (single range, e.g. '1-200'), 'N' (single line, e.g. '42'), or comma-separated multiple ranges (e.g. '1-50,200-250'). Lines are 1-indexed and inclusive. Out-of-range ends are clamped to the file size. Maximum 2000 lines per call (response sets `line_capped: true` if hit — paginate by issuing follow-up calls with non-overlapping ranges). Use this on large files after reading the outline returned by an unscoped call.",
           },
         },
         required: ["path"],
@@ -151,6 +182,9 @@ export const fileReadTool: Tool = {
     if (!path) {
       return JSON.stringify({ error: "path is required" });
     }
+    // Coerce — LLM occasionally passes lines as a number; raw cast would mask
+    // that as a runtime TypeError on .trim() (qa W3).
+    const linesSpec = args.lines == null ? undefined : String(args.lines);
 
     // Sec2 round-1 fix: file_read had zero path validation. LLM could read
     // /root/.claude/.credentials.json, /etc/shadow, Supabase .env, etc.
@@ -167,12 +201,66 @@ export const fileReadTool: Tool = {
       } else {
         content = readFileSync(path, "utf-8");
       }
-      const trimmed =
-        content.length > MAX_READ
-          ? content.slice(0, MAX_READ) +
-            `\n... (truncated, ${content.length} total chars)`
-          : content;
-      return JSON.stringify({ path, content: trimmed, size: content.length });
+
+      const totalChars = content.length;
+      const totalLines = countLines(content);
+
+      // Branch A: caller asked for a specific slice → return that slice + meta
+      if (linesSpec !== undefined) {
+        let ranges;
+        try {
+          ranges = parseLineRanges(linesSpec);
+        } catch (err) {
+          return JSON.stringify({
+            error: `Invalid lines spec: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+        const { slice, sliceLines, clamped, lineCapped } = extractLineRanges(
+          content,
+          ranges,
+        );
+        // Hard cap on slice payload — protects against lines='1-1000000' DoS
+        const cappedSlice =
+          slice.length > MAX_READ ? slice.slice(0, MAX_READ) : slice;
+        return JSON.stringify({
+          path,
+          content: cappedSlice,
+          lines: linesSpec,
+          slice_lines: sliceLines,
+          total_chars: totalChars,
+          total_lines: totalLines,
+          ...(clamped && { clamped: true }),
+          ...(lineCapped && { line_capped: true }),
+          ...(slice.length > MAX_READ && { slice_capped: true }),
+        });
+      }
+
+      // Branch B: large file with no slice → structured envelope (top-level signal)
+      if (totalChars > LARGE_FILE_THRESHOLD) {
+        const outline = buildOutline(content);
+        return JSON.stringify({
+          path,
+          truncated: true,
+          total_chars: totalChars,
+          total_lines: totalLines,
+          outline,
+          preview: content.slice(0, PREVIEW_CHARS),
+          next_steps: [
+            `File is ${totalChars} chars / ${totalLines} lines — full content NOT returned.`,
+            `Pick a section from \`outline\` (each entry has its line number) and call again with lines='START-END' to read the slice.`,
+            `Example: file_read(path="${path}", lines="1-200")`,
+          ],
+        });
+      }
+
+      // Branch C: small file → full content + total_chars (existing shape + meta)
+      return JSON.stringify({
+        path,
+        content,
+        total_chars: totalChars,
+        total_lines: totalLines,
+        size: totalChars, // legacy field name kept for compatibility
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return JSON.stringify({ error: message });

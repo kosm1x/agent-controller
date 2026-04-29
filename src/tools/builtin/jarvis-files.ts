@@ -19,6 +19,14 @@ import {
   searchFiles,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
+import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
+import {
+  parseLineRanges,
+  extractLineRanges,
+  buildOutline,
+  countLines,
+  PREVIEW_CHARS,
+} from "../../lib/file-slicing.js";
 
 // ---------------------------------------------------------------------------
 // Tools
@@ -37,8 +45,25 @@ USE WHEN:
 - You need context about a project, client, or schedule
 - You want to check what you've stored about a topic
 
-RETURNS: File content + metadata (tags, qualifier, priority, related files).
-If searching by tags, returns all matching files with previews.
+LARGE FILE BEHAVIOR (>${LARGE_FILE_THRESHOLD} chars):
+When the file is large AND you don't pass \`lines\`, this tool returns a structured envelope
+INSTEAD of the full content:
+  { truncated: true, total_chars, total_lines, outline: [...headings with line numbers...],
+    preview: <first ~${PREVIEW_CHARS} chars>, next_steps: [...] }
+The preview is the first ~${PREVIEW_CHARS} chars only — DO NOT infer the file's content from it.
+Read the outline (each heading is prefixed with its line number, e.g. "L42: # Section"),
+decide which sections matter, then call again with \`lines='42-90'\` for each one.
+
+WORKFLOW for large files:
+  1. jarvis_file_read(path="logs/day-logs/2026-04-04.md")  → {truncated, outline, preview}
+  2. From the outline, pick sections of interest (line ranges)
+  3. jarvis_file_read(path="...", lines="200-350")  → exact slice you need
+
+For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned as before;
+\`total_chars\` is included so you always know the file size.
+
+RETURNS: File content + metadata (tags, qualifier, priority, related files), with
+\`total_chars\` always present. If searching by tags, returns all matching files with previews.
 
 AFTER READING: When reporting data from this file, cite the path. If the data is time-sensitive, note when it was last updated.`,
       parameters: {
@@ -48,6 +73,11 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
             type: "string",
             description:
               'Virtual file path (e.g. "directives/core.md", "projects/cuatro-flor/README.md"). Omit to search by tags.',
+          },
+          lines: {
+            type: "string",
+            description:
+              "Read only specific line ranges. Format: 'N-M' (single range, e.g. '1-200'), 'N' (single line, e.g. '42'), or comma-separated multiple ranges (e.g. '1-50,200-250'). Lines are 1-indexed and inclusive. Out-of-range ends are clamped to the file size. Maximum 2000 lines per call (response sets `line_capped: true` if hit — paginate by issuing follow-up calls with non-overlapping ranges). Use this on large files after reading the outline returned by an unscoped call.",
           },
           tags: {
             type: "array",
@@ -63,6 +93,9 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
   async execute(args: Record<string, unknown>): Promise<string> {
     const path = args.path as string | undefined;
     const tags = args.tags as string[] | undefined;
+    // Coerce — LLM occasionally passes lines as a number; raw cast would mask
+    // that as a runtime TypeError on .trim() (qa W3).
+    const linesSpec = args.lines == null ? undefined : String(args.lines);
 
     if (path) {
       const file = getFile(path);
@@ -84,10 +117,75 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
         /* ignore */
       }
 
+      const totalChars = file.content.length;
+      const totalLines = countLines(file.content);
+
+      // Branch A: caller asked for a specific slice → return that slice + meta
+      if (linesSpec !== undefined) {
+        let ranges;
+        try {
+          ranges = parseLineRanges(linesSpec);
+        } catch (err) {
+          return JSON.stringify({
+            error: `Invalid lines spec: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+        const { slice, sliceLines, clamped, lineCapped } = extractLineRanges(
+          file.content,
+          ranges,
+        );
+        return JSON.stringify({
+          path: file.path,
+          title: file.title,
+          content: slice,
+          lines: linesSpec,
+          slice_lines: sliceLines,
+          total_chars: totalChars,
+          total_lines: totalLines,
+          ...(clamped && { clamped: true }),
+          ...(lineCapped && { line_capped: true }),
+          tags: JSON.parse(file.tags),
+          qualifier: file.qualifier,
+          condition: file.condition,
+          priority: file.priority,
+          related,
+          updatedAt: toMexTime(file.updated_at),
+        });
+      }
+
+      // Branch B: large file with no slice asked → return structured envelope
+      // (truncated flag at the TOP of the JSON, outline with line numbers, small preview)
+      if (totalChars > LARGE_FILE_THRESHOLD) {
+        const outline = buildOutline(file.content);
+        return JSON.stringify({
+          path: file.path,
+          title: file.title,
+          truncated: true,
+          total_chars: totalChars,
+          total_lines: totalLines,
+          outline,
+          preview: file.content.slice(0, PREVIEW_CHARS),
+          next_steps: [
+            `File is ${totalChars} chars / ${totalLines} lines — full content NOT returned.`,
+            `Pick a section from \`outline\` (each entry has its line number) and call again with lines='START-END' to read the slice.`,
+            `Example: jarvis_file_read(path="${file.path}", lines="1-200")`,
+          ],
+          tags: JSON.parse(file.tags),
+          qualifier: file.qualifier,
+          condition: file.condition,
+          priority: file.priority,
+          related,
+          updatedAt: toMexTime(file.updated_at),
+        });
+      }
+
+      // Branch C: small file → full content + total_chars (existing shape + meta)
       return JSON.stringify({
         path: file.path,
         title: file.title,
         content: file.content,
+        total_chars: totalChars,
+        total_lines: totalLines,
         tags: JSON.parse(file.tags),
         qualifier: file.qualifier,
         condition: file.condition,

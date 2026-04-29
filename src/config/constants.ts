@@ -24,6 +24,14 @@ const float = (key: string, fallback: number): number => {
 export const MAX_TOOL_RESULT_CHARS = int("MAX_TOOL_RESULT_CHARS", 12_000);
 /** Max chars per tool result in wrap-up context — more aggressive. */
 export const WRAPUP_TOOL_RESULT_CHARS = int("WRAPUP_TOOL_RESULT_CHARS", 1_500);
+/**
+ * Threshold (in chars) above which file_read / jarvis_file_read return a
+ * structured truncated envelope (outline + preview + total_chars + next_steps)
+ * instead of full content. Set well under MAX_TOOL_RESULT_CHARS so the
+ * adapter eviction layer never fires for these tools — keeping the truncation
+ * signal at the TOP of the JSON response rather than buried in a trailer.
+ */
+export const LARGE_FILE_THRESHOLD = int("LARGE_FILE_THRESHOLD", 8_000);
 
 // --- Loop guards ---
 /** Identical tool call signature repeats before breaking. */
