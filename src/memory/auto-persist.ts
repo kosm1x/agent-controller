@@ -11,6 +11,7 @@
 import { getMemoryService } from "./index.js";
 import { upsertFile } from "../db/jarvis-fs.js";
 import { safeSlice } from "../lib/unicode-safe.js";
+import { getOutcomeTag } from "./outcome-tag.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -203,7 +204,7 @@ export async function autoPersistConversation(
 
   await getMemoryService().retain(summary, {
     bank: "mc-jarvis",
-    tags: [channel, "auto-persist", "noteworthy"],
+    tags: [channel, "auto-persist", "noteworthy", getOutcomeTag(taskId)],
     async: true,
     trustTier: 2,
     source: "auto-persist",

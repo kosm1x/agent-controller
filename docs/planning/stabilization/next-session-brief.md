@@ -1,9 +1,15 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-115
-> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-115 close)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-116
+> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-116 close)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+
+---
+
+## What Session 116 closed
+
+**Resolved (was Step 2 from yesterday's brief):** outcome-aware metadata tagging shipped — write-side complement to Session 115's `was_used`. Every memory written via `getMemoryService().retain()` from a task-context call site now carries `outcome:success | outcome:concerns | outcome:failed | outcome:unknown` derived from `tasks.status`. New `src/memory/outcome-tag.ts` (pure mapper + DB lookup with safe fallback). Wired into `auto-persist.ts` and `router.ts:1981` (post-task exchange). `router.ts:1464` (positive feedback) and `router.ts:1509` (fast-path) intentionally NOT wired — no task context. qa-auditor PASS WITH WARNINGS, zero Criticals; race-condition concern fully resolved by trace verification (dispatcher writes status synchronously, eventBus broadcasts inline, router handler reaches getOutcomeTag with status already committed). Documented coverage gap (W1): `handleTaskFailed`/`handleTaskCancelled` do NOT call retain, so `outcome:failed` rows will be near-zero in production — acceptable since Session 114 incident class was `outcome:concerns` (DOES land). W2 deferred (recall-side OR-vs-AND tag matching is a follow-up concern). Tests 3941 → 3960 (+19). Zero new deps. No schema change. Architecture mirrors Session 115's "data first, decide later" — recall-side filtering on the new tag is the natural Step 2-follow-up.
 
 ---
 
@@ -34,14 +40,20 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 ## 🟡 TOMORROW — TOP OF AGENDA
 
-**Step 1 from yesterday's brief (was_used instrumentation) shipped tonight.** Updated honest order from `hindsight-strategic-options.md` §8:
+**Steps 1+2 of `hindsight-strategic-options.md` §8 are DONE (Sessions 115 + 116).** Updated honest order:
 
-1. ~~Add `was_used` audit instrumentation~~ — **DONE Session 115.** Now collecting `pct_used` per source/bank in `recall_audit`. Aim for 2 weeks of data (≈2026-05-13) before the HARDEN/DEMOTE/REPLACE conversation. Check daily via `mc-ctl recall-utility 24h`.
-2. **Ship outcome-aware metadata tagging** at task-completion time — high leverage, lands cleanly in any of the three paths, freeze-aligned as hardening. Closes the poison-source class (Session 114's `completed_with_concerns` task with failure-narrative body got recalled as positive precedent). Best Day 10-11 work; ~1-2 hour ship comparable to tonight's.
-3. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker." Needs the freeze to lift first.
-4. **Then** decide change/demote/harden with data, not vibes.
+1. ~~Add `was_used` audit instrumentation~~ — **DONE Session 115.** Now collecting `pct_used` per source/bank in `recall_audit`. Aim for 2 weeks of data (≈2026-05-13). Check daily via `mc-ctl recall-utility 24h`.
+2. ~~Ship outcome-aware metadata tagging~~ — **DONE Session 116.** New memories written by tasks now carry `outcome:*` tags. Recall-side filter is the natural follow-up.
+3. **Recall-side filter on `outcome:concerns` / `outcome:failed`** — small ship (~30-60 min), freeze-aligned. By default exclude non-success memories from recall results, with override option. Needs ~1 week of tag distribution data first to calibrate (e.g., should default also exclude `outcome:unknown`?). Best after a week of organic traffic accrues outcome-tagged memories.
+4. **Run cross-encoder vs cosine-only A/B** for 2 weeks — answers "do we need the reranker." Needs the freeze to lift first.
+5. **Then** decide change/demote/harden with data, not vibes.
 
-**Validation checkpoint for tonight's ship**: 24h after deploy, run `mc-ctl recall-utility 24h`. Sanity-check that some rows exist, that `was_used` distributes across 0/1 (not all 0 or all 1), and that the by-source breakdown exists. If all rows show was_used=0 the snippet floor may need tuning lower; if all show was_used=1 raise the floor or tighten the redact patterns. Calibration data, not a decision yet.
+**Validation checkpoints**:
+
+- **Session 115 was_used (24h post-deploy = ~2026-04-30 21:00 UTC)**: `mc-ctl recall-utility 24h`. Sanity-check rows exist + `was_used` distributes across 0/1 + by-source breakdown populated. If all 0 lower snippet floor; if all 1 raise it or tighten redact patterns.
+- **Session 116 outcome-tag (24h post-deploy)**: `sqlite3 data/mc.db "SELECT trust_tier, tags FROM conversations WHERE created_at > datetime('now','-24 hours') AND tags LIKE '%outcome:%' LIMIT 20;"` — verify rows actually carry the tag and the distribution looks reasonable (most should be `outcome:success`). If all `outcome:unknown`, the dispatcher→router event-flow assumption is wrong and we need to investigate.
+
+**Best Day 10-11 work**: V8 substrate **S3 (out-of-band drift detector)** — independent of Hindsight work, freeze-aligned, ~half-day. Compares running config (env vars, scheduled crons, model selections) to declared config (.env, git). Catches silent drift like the qwen3.6 model swap that lives in `.env` but not in git. Or **P2 wider scope.ts regex sweep** (~30 min, deferred since Session 109).
 
 ---
 

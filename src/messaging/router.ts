@@ -121,6 +121,7 @@ import {
   linkFeedbackToScope,
 } from "../intelligence/scope-telemetry.js";
 import { autoPersistConversation } from "../memory/auto-persist.js";
+import { getOutcomeTag } from "../memory/outcome-tag.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -1981,7 +1982,7 @@ export class MessageRouter {
         getMemoryService()
           .retain(exchange, {
             bank: "mc-jarvis",
-            tags: [pending.channel, "conversation"],
+            tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
             async: true,
             trustTier: 2, // inferred — conversation exchange
             source: "router",
