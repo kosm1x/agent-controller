@@ -568,6 +568,110 @@ cmd_recall_utility() {
   fi
 }
 
+cmd_recall_compare() {
+  # Ship C (2026-04-30) — side-by-side replay of recent recall_audit
+  # queries against both Hindsight and SQLite for manual quality eval.
+  # Used to inform the 2026-05-13 HARDEN/DEMOTE/REPLACE decision.
+  #
+  # Usage: mc-ctl recall-compare [N] [SINCE]
+  #   N     = number of unique queries to replay (default 5, max 20)
+  #   SINCE = window for sourcing queries (default 24h, accepts Nh/Nd/Nm)
+  need_db
+  local n="${1:-5}"
+  local since_arg="${2:-24h}"
+
+  # Validate N is small positive integer
+  if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt 20 ]; then
+    echo -e "${YELLOW}Invalid N '${n}', falling back to 5${NC}"
+    n=5
+  fi
+
+  # Reuse the same prefix-validation pattern as cmd_recall_utility (W1)
+  local prefix="${since_arg%[hdm]}"
+  local since_clause
+  if [[ "$prefix" =~ ^[0-9]+$ ]]; then
+    case "$since_arg" in
+      *h) since_clause="datetime('now','-${prefix} hours')" ;;
+      *d) since_clause="datetime('now','-${prefix} days')" ;;
+      *m) since_clause="datetime('now','-${prefix} minutes')" ;;
+      *)  since_clause="datetime('now','-24 hours')" ;;
+    esac
+  else
+    echo -e "${YELLOW}Invalid since arg '${since_arg}', falling back to 24h${NC}"
+    since_clause="datetime('now','-24 hours')"
+    since_arg="24h"
+  fi
+
+  echo -e "${BOLD}=== Recall Compare — replay ${n} queries (last ${since_arg}) ===${NC}"
+  echo ""
+
+  # Pull N unique recent queries with their bank. ROWID-ordered so we get
+  # newest unique tuples first; reservoir-sampling would be overkill.
+  # Strip newlines + carriage returns from query text so the bash `read`
+  # loop below treats one DB row as one logical record (qa-auditor W2 —
+  # operator/Telegram-supplied recall queries can contain `\n`).
+  local rows
+  rows=$(sql_raw "SELECT bank || '|' ||
+                         replace(replace(query, char(10), ' '), char(13), ' ')
+                  FROM recall_audit
+                  WHERE created_at >= ${since_clause} AND length(query) > 0
+                  GROUP BY bank, query
+                  ORDER BY MAX(created_at) DESC
+                  LIMIT ${n};" 2>/dev/null)
+
+  if [ -z "$rows" ]; then
+    echo -e "  ${DIM}No recall_audit rows in window. Try a wider --since or wait for traffic.${NC}"
+    return 0
+  fi
+
+  local idx=0
+  while IFS='|' read -r bank query; do
+    [ -z "$query" ] && continue
+    idx=$((idx + 1))
+    echo -e "${BOLD}[${idx}/${n}] bank=${bank}${NC}"
+    echo -e "  query: ${CYAN}$(echo "$query" | head -c 200)${NC}"
+    echo ""
+
+    # POST to admin endpoint. jq builds the body so embedded quotes /
+    # special chars in the recall query don't break the curl command line.
+    local body
+    body=$(jq -n --arg q "$query" --arg b "$bank" '{query:$q, bank:$b, topN:3}')
+    local response
+    response=$(api POST /api/admin/recall-compare -d "$body" 2>&1) || {
+      echo -e "  ${RED}endpoint failed: ${response}${NC}"
+      echo ""
+      continue
+    }
+
+    # Format both sides side-by-side (sequential, terminal-friendly)
+    local hs_err sql_err hs_lat sql_lat hs_count sql_count
+    hs_err=$(echo "$response" | jq -r '.hindsight.error // empty')
+    sql_err=$(echo "$response" | jq -r '.sqlite.error // empty')
+    hs_lat=$(echo "$response" | jq -r '.hindsight.latencyMs // 0')
+    sql_lat=$(echo "$response" | jq -r '.sqlite.latencyMs // 0')
+    hs_count=$(echo "$response" | jq -r '.hindsight.totalCount // 0')
+    sql_count=$(echo "$response" | jq -r '.sqlite.totalCount // 0')
+
+    if [ -n "$hs_err" ]; then
+      echo -e "  ${BOLD}HINDSIGHT${NC} ${RED}error${NC} (${hs_lat}ms): ${hs_err}"
+    else
+      echo -e "  ${BOLD}HINDSIGHT${NC} (${hs_lat}ms, total=${hs_count}, top-3):"
+      echo "$response" | jq -r '.hindsight.results[] | "    • " + (.content | gsub("\n"; " ") | .[:160])'
+    fi
+    echo ""
+    if [ -n "$sql_err" ]; then
+      echo -e "  ${BOLD}SQLITE${NC}    ${RED}error${NC} (${sql_lat}ms): ${sql_err}"
+    else
+      echo -e "  ${BOLD}SQLITE${NC}    (${sql_lat}ms, total=${sql_count}, top-3):"
+      echo "$response" | jq -r '.sqlite.results[] | "    • " + (.content | gsub("\n"; " ") | .[:160])'
+    fi
+    echo ""
+    echo -e "  ${DIM}Verdict (note manually):  HINDSIGHT_BETTER  EQUAL  SQLITE_BETTER${NC}"
+    echo "  ────────────────────────────────────────────────────────────────"
+    echo ""
+  done <<< "$rows"
+}
+
 cmd_drift() {
   # Exit codes (qa-auditor W1, 2026-04-29):
   #   0 = no drift (all invariants hold)
@@ -856,6 +960,7 @@ usage() {
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
   echo -e "  ${GREEN}recall-utility${NC} [Nh] Recall was_used % by source/bank (default 24h, accepts 1h/7d/30m)"
+  echo -e "  ${GREEN}recall-compare${NC} [N] [SINCE]  Side-by-side replay vs SQLite (default 5 queries / 24h)"
   echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -1469,6 +1574,7 @@ case "$cmd" in
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
 
   recall-utility)    cmd_recall_utility "${1:-24h}" ;;
+  recall-compare)    cmd_recall_compare "$@" ;;
   drift)             cmd_drift ;;
 
   budget)            cmd_budget ;;

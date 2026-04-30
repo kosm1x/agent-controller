@@ -15,6 +15,15 @@ vi.mock("../../dispatch/dispatcher.js", () => ({
   cancelTask: mockAll.cancelTask,
 }));
 
+vi.mock("../../memory/recall-compare.js", () => ({
+  compareBackends: vi.fn().mockResolvedValue({
+    query: "mocked",
+    bank: "mc-jarvis",
+    hindsight: { results: [], latencyMs: 1, totalCount: 0 },
+    sqlite: { results: [], latencyMs: 1, totalCount: 0 },
+  }),
+}));
+
 import { admin } from "./admin.js";
 import { Hono } from "hono";
 
@@ -145,6 +154,85 @@ describe("admin routes", () => {
       const res = await app.request("/admin/autonomous-status");
       const body = await res.json();
       expect(body.autonomous_improvement_enabled).toBe(false);
+    });
+  });
+
+  describe("POST /admin/recall-compare (Ship C)", () => {
+    it("rejects empty query with 400", async () => {
+      const app = createTestApp();
+      const res = await app.request("/admin/recall-compare", {
+        method: "POST",
+        body: JSON.stringify({ query: "", bank: "mc-jarvis" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/query/i);
+    });
+
+    it("rejects unknown bank with 400", async () => {
+      const app = createTestApp();
+      const res = await app.request("/admin/recall-compare", {
+        method: "POST",
+        body: JSON.stringify({ query: "test", bank: "wrong" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/bank/i);
+    });
+
+    it("rejects malformed JSON body with 400", async () => {
+      const app = createTestApp();
+      const res = await app.request("/admin/recall-compare", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("clamps oversized topN to default 3 (and topN=0 too)", async () => {
+      const { compareBackends } =
+        await import("../../memory/recall-compare.js");
+      const app = createTestApp();
+      const res = await app.request("/admin/recall-compare", {
+        method: "POST",
+        body: JSON.stringify({
+          query: "x",
+          bank: "mc-jarvis",
+          topN: 999,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(200);
+      // Verify clamp: should be called with topN=3 (default), NOT topN=999
+      expect(compareBackends).toHaveBeenCalledWith(
+        "x",
+        "mc-jarvis",
+        expect.objectContaining({ topN: 3 }),
+      );
+    });
+
+    it("clamps oversized timeoutMs to default 8000", async () => {
+      const { compareBackends } =
+        await import("../../memory/recall-compare.js");
+      const app = createTestApp();
+      const res = await app.request("/admin/recall-compare", {
+        method: "POST",
+        body: JSON.stringify({
+          query: "x",
+          bank: "mc-jarvis",
+          timeoutMs: 999_999,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(200);
+      expect(compareBackends).toHaveBeenCalledWith(
+        "x",
+        "mc-jarvis",
+        expect.objectContaining({ timeoutMs: 8_000 }),
+      );
     });
   });
 });
