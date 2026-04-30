@@ -1,25 +1,34 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-29 end-of-Session-118
-> **Window**: 2026-04-22 → 2026-05-22 (day 9 of 30 at session-118 close)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-30 post-recall-hardening-trilogy
+> **Window**: 2026-04-22 → 2026-05-22 (day 10 of 30)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
 
 ---
 
-## End-of-day health snapshot (2026-04-29 22:00 UTC, post-Session-118)
+## End-of-day health snapshot (2026-04-30 00:32 UTC, post-trilogy deploy)
 
-| Item                            | Reading                                                   | Status                              |
-| ------------------------------- | --------------------------------------------------------- | ----------------------------------- |
-| Service                         | active, PID 3867937, uptime 12min (restart for S3 deploy) | green                               |
-| Hindsight                       | container healthy, up 9min                                | green                               |
-| Bank size mc-jarvis             | 547 (morning) → 596 (+49 over 9h)                         | yellow (vendor-additive, by design) |
-| Disk                            | 73G / 96G (76%)                                           | green                               |
-| Drift detector                  | `mc-ctl drift` exit=0, all invariants hold                | green                               |
-| Outcome tag distribution (2h)   | 10 success / 2 concerns / 17 no-tag                       | green (matches expected ratio)      |
-| **mc-recall timeout rate (1h)** | **21/22 = 95%** — _worse_ than morning's 49%              | **🟠 watch**                        |
+| Item                       | Reading                                                                                   | Status                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Service                    | active, PID 138425, uptime fresh post `./scripts/deploy.sh`                               | green                                           |
+| Hindsight                  | container healthy                                                                         | green                                           |
+| Drift detector             | `mc-ctl drift` exit=0, all invariants hold                                                | green                                           |
+| Schema migration           | recall_audit has match_type + overlap_score + excluded_count                              | green                                           |
+| **`recall-compare` smoke** | Hindsight 5005ms timeout, SQLite 413ms top-3 with relevant Williams Radar journal results | green (eval tool live + producing real signal)  |
+| **Trilogy commits**        | A `d8f32f0` + B `aab1b05` + C `926036e` all on origin/main                                | green                                           |
+| Tests                      | 4024 (4023 + 1 todo), 248 test files, 0 type errors                                       | green                                           |
+| Yesterday's 🟠 watchpoint  | DIAGNOSED: 3 distinct problems, all addressed by trilogy                                  | resolved (instrument fix re-baselines tomorrow) |
 
-**Watchpoint**: post-Session-118 deploys (3 service restarts in the 21:00 UTC hour) correlate with a timeout-rate spike from morning's 49% to last-hour 95%. Hourly trend across the day: 17:00 75%, 18:00 57%, 20:00 100% (n=2), 21:00 95% (n=22). The morning 49% measurement was lower than typical hourly readings; could be the more-stable interval rather than the spike. Either way the timeout rate is consistently high. Tomorrow: check if 21:00 normalizes once Hindsight's reranker warms up post-restart, and let was_used data accumulate to tell us if the timeouts hurt agent quality. **If timeout rate stays >75% sustained for 24h, escalate to Hindsight strategic decision early.**
+**Yesterday's watchpoint resolution** (`feedback_watchpoint_diagnose_before_decide.md`):
+
+The 95%-timeout / 0%-utility headline that yesterday's brief flagged as "if sustained 24h, escalate H/D/R early" was misleading on two of three axes. Today's audit (sample of 4 recall_audit rows joined with task output) found:
+
+- **Layer A — latency tax (real, operational)**: every sqlite-fallback row paid the full 5000ms Hindsight timeout. Root cause: `isCircuitOpen()` reset the failure counter on every cooldown expiry, so with low-traffic >60s gaps the breaker never accumulated. Fixed in Ship A.
+- **Layer B — instrument false-negative (real, instrument)**: 22/22 was_used=0 was substantially the verbatim ≥50-char substring matcher missing paraphrased responses. Audit rows 19/20 (Williams Radar Journal) show response IS using recall content under different wording. Fixed in Ship B (dual-signal verbatim + token-overlap).
+- **Layer C — Hindsight retrieval quality (real, but n=1)**: row 21 returned shell_exec methodology for an Alpha Vantage Friday cron query. One genuine bad-ranking case. Insufficient to conclude DEMOTE. Ship C builds the manual A/B surface to gather more before 2026-05-13.
+
+**Strategic implication**: had we acted on the watchpoint without diagnosis, we'd have escalated H/D/R on bad data. Saved by the discipline of "sample the underlying data before the strategic protocol fires."
 
 ---
 
@@ -64,24 +73,32 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 ## 🟡 TOMORROW — TOP OF AGENDA
 
-**Steps 1, 2, 3 of `hindsight-strategic-options.md` §8 are DONE (Sessions 115/116/117). V8 substrate S3 also DONE (Session 118).** Remaining:
+**Steps 1, 2, 3 of `hindsight-strategic-options.md` §8 are DONE. V8 substrate S3 + recall-trilogy hardening also DONE.** Remaining:
 
-1. ~~`was_used` recall instrumentation~~ — **DONE Session 115.**
-2. ~~Outcome-aware metadata tagging at write~~ — **DONE Session 116.**
-3. ~~Recall-side filter on `outcome:concerns` / `outcome:failed`~~ — **DONE Session 117.** Default exclusion in effect.
-4. **Cross-encoder vs cosine-only A/B for 2 weeks** — answers "do we need the reranker." Needs the freeze to lift first.
-5. **Then** decide change/demote/harden with data, not vibes.
+1. ~~`was_used` recall instrumentation~~ — DONE Session 115.
+2. ~~Outcome-aware metadata tagging at write~~ — DONE Session 116.
+3. ~~Recall-side filter on `outcome:concerns` / `outcome:failed`~~ — DONE Session 117.
+4. ~~Circuit-breaker latency-tax fix + dual-signal `was_used` + `recall-compare` eval tool~~ — **DONE 2026-04-30 trilogy.**
+5. **Manual A/B review of 30 query verdicts** — `mc-ctl recall-compare 30 14d`. Note HINDSIGHT_BETTER / EQUAL / SQLITE_BETTER for each. This is the actual H/D/R input. Run between now and 2026-05-13. Don't escalate H/D/R early on aggregate metrics until the verdicts are in.
+6. **Cross-encoder vs cosine-only A/B for 2 weeks** — answers "do we need the reranker." Needs the freeze to lift first.
+7. **Then** decide change/demote/harden with data, not vibes.
 
 **V8 substrate ladder**: S1 + S3 + S4 done. **S2 (self-audit before reporting)** and **S5 (skills-as-stored-procedures)** remain. S2 codifies the "Audited?" reflex into a tool/protocol so discipline isn't operator-dependent — depends on S4 (done) for `verified-against:` data sources. S5 is feature-territory; defer past freeze.
 
-**Validation checkpoints (24h after each ship — ~2026-04-30 21:00–22:00 UTC)**:
+**Validation checkpoints (24h after the trilogy — ~2026-05-01 00:30 UTC)**:
 
-- **Session 115 was_used**: `mc-ctl recall-utility 24h`. Rows exist + `was_used` distributes across 0/1 + by-source breakdown populated. If all 0 lower snippet floor; if all 1 raise it or tighten redact patterns.
-- **Session 116 outcome-tag**: `sqlite3 data/mc.db "SELECT trust_tier, tags FROM conversations WHERE created_at > datetime('now','-24 hours') AND tags LIKE '%outcome:%' LIMIT 20;"` — verify rows actually carry the tag. If all `outcome:unknown`, the dispatcher→router event-flow assumption is wrong.
-- **Session 117 recall filter**: `mc-ctl recall-utility 24h` shows the new `dropped` column. Verify excluded_count > 0 on at least some rows (proves the filter is firing on real traffic). If always 0, either no concerns/failed memories accrued yet or Hindsight isn't echoing the tag back on recall (qa-auditor W2 — needs the live Hindsight curl smoke).
-- **Session 118 drift detector**: `mc-ctl drift` should return `exit=0` "No drift detected" — green state. If anything fires, investigate before assuming the invariants are wrong (the whole point is catching real drift).
+- **Ship A circuit breaker**: tail journal for `[memory] Circuit breaker OPEN after 3 failures` and `Circuit breaker: half-open, retrying Hindsight`. Should see open-cycles 1× per cooldown window during degraded-Hindsight periods. Check that `recall_audit.source = 'circuit-open'` rows accumulate (proof the breaker is short-circuiting after the first 3 failures, eliminating the 5s/recall tax). If still 0 `circuit-open` rows after 24h with high timeout traffic, breaker logic regression — re-audit.
+- **Ship B dual-signal**: `mc-ctl recall-utility 24h` should show "Utility by match type" with `verbatim` + `token-overlap` + `none` rows beyond the legacy. If still 100% `none` or 100% `verbatim`, threshold tuning needed (W1 deferred — can drop MIN_OVERLAP_TOKENS back to 3 if too few token-overlap matches surface).
+- **Ship C recall-compare**: kick off a real 30-query review batch — `mc-ctl recall-compare 30 14d`. Expect ~150s elapsed (5s/query × 30 if Hindsight is slow). Note verdicts.
+- **Drift detector**: `mc-ctl drift` exit=0 stays the contract.
 
-**Best Day 10-11 work**: V8 substrate **S2 (self-audit before reporting)** — closes the substrate ladder for the freeze. Or **P2 wider scope.ts regex sweep** (~30 min, deferred since Session 109). Or kick off the **2-week measurement window** for cross-encoder A/B by running the queries above and starting a daily log of the metrics.
+**Best Day 11 work**: spend 20 min on the recall-compare review batch (it's the actual decision input), then V8 substrate **S2 (self-audit before reporting)** if there's energy. **P2 wider scope.ts regex sweep** (~30 min, deferred since Session 109) is a pickable side-quest.
+
+**Open watchpoints for next session**:
+
+- 🟠 24h timeout-rate trend post-circuit-breaker fix — does it materially drop now that the breaker actually opens?
+- 🟠 `match_type='token-overlap'` distribution — is the threshold of 4 catching paraphrased recalls without false-positives?
+- 🟠 Operator-side blocked: AV API key rotation (still pending), vision env vars paste (still pending).
 
 ---
 
