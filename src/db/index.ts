@@ -115,6 +115,9 @@ export function initDatabase(dbPath: string): Database.Database {
   // 2026-04-29 Session 117: recall-side outcome filter introduces post-recall
   // drops. result_count = kept count (what the agent saw). excluded_count
   // captures filter activity for utility-rate audits. Additive migration.
+  // 2026-04-30 Ship B: dual-signal was_used matching (verbatim OR token-
+  // overlap). match_type ∈ {verbatim, token-overlap, none}. overlap_score
+  // ∈ [0,1] = best overlap fraction across snippets (1.0 for verbatim).
   const recallAuditCols = _db
     .prepare("PRAGMA table_info(recall_audit)")
     .all() as Array<{ name: string }>;
@@ -122,6 +125,12 @@ export function initDatabase(dbPath: string): Database.Database {
     _db.exec(
       "ALTER TABLE recall_audit ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0",
     );
+  }
+  if (!recallAuditCols.some((c) => c.name === "match_type")) {
+    _db.exec("ALTER TABLE recall_audit ADD COLUMN match_type TEXT");
+  }
+  if (!recallAuditCols.some((c) => c.name === "overlap_score")) {
+    _db.exec("ALTER TABLE recall_audit ADD COLUMN overlap_score REAL");
   }
 
   // v4.0 S1: composite indexes for query performance

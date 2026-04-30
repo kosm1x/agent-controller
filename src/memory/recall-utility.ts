@@ -79,6 +79,233 @@ function sanitizeQuery(text: string, max = 500): string {
   return redactSecrets(text).replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// ---------------------------------------------------------------------------
+// Token overlap matcher (Ship B, 2026-04-30)
+// ---------------------------------------------------------------------------
+// Verbatim substring matching missed every paraphrased response (24h audit on
+// 2026-04-30 saw 0% utility while sampled rows showed responses clearly using
+// recalled content under different wording). Token overlap catches paraphrase
+// without inviting trivial matches: ≥4-char content tokens, accent-stripped,
+// stopword-filtered, ≥3 distinct overlapping tokens required for a match.
+
+/**
+ * Minimum distinct content tokens overlapping snippet ↔ response for a match.
+ *
+ * Set to 4 (qa-auditor W1, 2026-04-30): with snippets of 50-80 chars yielding
+ * ~10-12 candidate content tokens, an absolute count of 3 leaves little
+ * headroom over ambient agent vocabulary (`task`, `code`, `file`, `data`,
+ * `name`, `here`, etc. that aren't in STOPWORDS but recur across unrelated
+ * turns). 4 keeps the realistic paraphrase test's overlap=5 above threshold
+ * while suppressing 3-ambient-token coincidences.
+ */
+export const MIN_OVERLAP_TOKENS = 4;
+
+/** Minimum token character length to count as "content". */
+const TOKEN_MIN_CHARS = 4;
+
+/**
+ * High-frequency function/filler words ≥4 chars in EN + ES that would slip
+ * through the length filter. Tight by design — we'd rather miss a match
+ * than false-positive on boilerplate. Tuned against this session's audit
+ * rows (Williams Radar, identity, Hindsight queries).
+ */
+const STOPWORDS = new Set([
+  // EN
+  "this",
+  "that",
+  "with",
+  "from",
+  "have",
+  "they",
+  "them",
+  "into",
+  "just",
+  "like",
+  "very",
+  "well",
+  "were",
+  "what",
+  "when",
+  "your",
+  "been",
+  "than",
+  "then",
+  "more",
+  "most",
+  "such",
+  "some",
+  "only",
+  "over",
+  "much",
+  "many",
+  "make",
+  "made",
+  "said",
+  "same",
+  "also",
+  "even",
+  "each",
+  "want",
+  "used",
+  "does",
+  "doing",
+  "done",
+  "about",
+  "after",
+  "again",
+  "before",
+  "being",
+  "could",
+  "every",
+  "having",
+  "never",
+  "other",
+  "since",
+  "there",
+  "these",
+  "thing",
+  "those",
+  "where",
+  "which",
+  "while",
+  "would",
+  "should",
+  "must",
+  // ES
+  "esto",
+  "este",
+  "esta",
+  "estos",
+  "estas",
+  "para",
+  "pero",
+  "porque",
+  "como",
+  "cuando",
+  "donde",
+  "todo",
+  "toda",
+  "todos",
+  "todas",
+  "nada",
+  "mucho",
+  "muchos",
+  "muchas",
+  "poco",
+  "menos",
+  "ahora",
+  "antes",
+  "luego",
+  "puede",
+  "puedo",
+  "tiene",
+  "tienes",
+  "tienen",
+  "tener",
+  "hacer",
+  "hace",
+  "hacen",
+  "haces",
+  "sobre",
+  "entre",
+  "hasta",
+  "hacia",
+  "ante",
+  "tras",
+  "siempre",
+  "tambien",
+  "solo",
+  "tanto",
+  "sera",
+  "sido",
+  "siendo",
+  "estar",
+  "estoy",
+  "estamos",
+  "estan",
+  "estaba",
+  "estado",
+  "haber",
+  "haya",
+  "hayan",
+  "habia",
+  "aquel",
+  "esos",
+  "aquellos",
+  "ellos",
+  "ellas",
+  "nosotros",
+  "mismo",
+  "misma",
+  "mismos",
+  "otro",
+  "otra",
+  "otros",
+  "otras",
+  "cada",
+  "alguno",
+  "alguna",
+  "algunos",
+  "algunas",
+]);
+
+/**
+ * Lowercase + NFD-decompose + strip diacritics. So "publicación" and
+ * "publicacion" tokenize identically.
+ */
+function foldToAscii(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+/**
+ * Extract distinct content tokens from text. Returns lowercased, accent-
+ * stripped tokens of length ≥ TOKEN_MIN_CHARS, with stopwords removed.
+ * Exported for tests and for the recall-compare tool (Ship C).
+ *
+ * Tokenization splits on any non-alphanumeric character, so `_` and `-`
+ * become separators. This deliberately fragments compound identifiers
+ * (`mission-control` → `mission`,`control`; `task_id` → `task`,`id` (drop)).
+ * Reasoning: responses rarely echo identifiers byte-for-byte; they
+ * paraphrase to "the mission control service" — keeping the parts as
+ * separate tokens improves overlap recall on paraphrased text. Cost: an
+ * occasional double-count when both halves of a compound appear in the
+ * response (acceptable given the threshold of 4 absolute distinct tokens).
+ */
+export function extractContentTokens(text: string): Set<string> {
+  const folded = foldToAscii(text);
+  const tokens = new Set<string>();
+  for (const tok of folded.split(/[^a-z0-9]+/)) {
+    if (tok.length < TOKEN_MIN_CHARS) continue;
+    if (STOPWORDS.has(tok)) continue;
+    tokens.add(tok);
+  }
+  return tokens;
+}
+
+/**
+ * Token overlap between snippet and response. Returns:
+ *   { overlap: number of distinct snippet tokens that appear in response,
+ *     score: overlap / max(snippet token count, 1) ∈ [0,1] }
+ *
+ * Independent of order, length, casing, accents.
+ */
+export function tokenOverlap(
+  snippet: string,
+  response: string,
+): { overlap: number; score: number } {
+  const snippetTokens = extractContentTokens(snippet);
+  if (snippetTokens.size === 0) return { overlap: 0, score: 0 };
+  const responseTokens = extractContentTokens(response);
+  let overlap = 0;
+  for (const t of snippetTokens) {
+    if (responseTokens.has(t)) overlap++;
+  }
+  return { overlap, score: overlap / snippetTokens.size };
+}
+
 interface LogRecallInput {
   bank: string;
   query: string;
@@ -204,12 +431,22 @@ interface MarkUtilityResult {
 }
 
 /**
- * Claim unmatched recall_audit rows from the last MATCH_WINDOW_MS, substring-
- * match each row's snippets against responseText, and write was_used + task_id.
+ * Claim unmatched recall_audit rows from the last MATCH_WINDOW_MS, dual-
+ * signal match each row's snippets against responseText, and write
+ * was_used + task_id + match_type + overlap_score.
  *
- * Matching is case-insensitive substring. A row is `used` iff at least one
- * snippet appears verbatim in the response. used_count counts how many of
- * the row's snippets matched.
+ * Two signals (Ship B, 2026-04-30):
+ *   1. Verbatim substring (snippet appears in response, case-insensitive,
+ *      length ≥ SNIPPET_MIN_CHARS) → match_type='verbatim', score=1.0
+ *   2. Token overlap (≥ MIN_OVERLAP_TOKENS distinct content tokens in
+ *      common, length ≥4, stopwords stripped, accents folded) →
+ *      match_type='token-overlap', score = overlap / snippetTokenCount
+ *   3. Neither → match_type='none', score = best partial overlap (still
+ *      stored for diagnostics; useful when tuning the threshold)
+ *
+ * was_used = 1 IFF (1) OR (2). Row-level match_type is the strongest match
+ * across all snippets. used_count counts snippets that matched by either
+ * signal.
  */
 export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
   const { taskId, responseText, windowMs, nowMs } = input;
@@ -247,7 +484,8 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
   const responseLower = responseText.toLowerCase();
   const update = db.prepare(
     `UPDATE recall_audit
-     SET was_used = ?, used_count = ?, task_id = ?, checked_at = datetime('now')
+     SET was_used = ?, used_count = ?, task_id = ?, checked_at = datetime('now'),
+         match_type = ?, overlap_score = ?
      WHERE id = ? AND was_used IS NULL`,
   );
 
@@ -264,20 +502,45 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
     }
 
     let matchCount = 0;
+    let bestScore = 0;
+    let rowMatchType: "verbatim" | "token-overlap" | "none" = "none";
+
     for (const s of snippets) {
-      if (
-        typeof s === "string" &&
-        s.length >= SNIPPET_MIN_CHARS &&
-        responseLower.includes(s.toLowerCase())
-      ) {
+      if (typeof s !== "string" || s.length < SNIPPET_MIN_CHARS) continue;
+
+      // Signal 1: verbatim. Score is hardcoded 1.0 — this is the strongest
+      // signal we have, but it conflates "agent quoted the snippet
+      // verbatim" with "100% of recalled memory was used". Aggregates
+      // (mc-ctl AVG(overlap_score)) for the verbatim cohort are biased
+      // upward; the breakdown by match_type is the cleaner read for
+      // quality-vs-quantity questions (qa-auditor W4).
+      if (responseLower.includes(s.toLowerCase())) {
         matchCount++;
+        bestScore = 1.0;
+        rowMatchType = "verbatim";
+        continue;
+      }
+
+      // Signal 2: token overlap
+      const { overlap, score } = tokenOverlap(s, responseText);
+      if (score > bestScore) bestScore = score;
+      if (overlap >= MIN_OVERLAP_TOKENS) {
+        matchCount++;
+        if (rowMatchType === "none") rowMatchType = "token-overlap";
       }
     }
 
     const wasUsed = matchCount > 0 ? 1 : 0;
     try {
       const result = writeWithRetry(() =>
-        update.run(wasUsed, matchCount, taskId, row.id),
+        update.run(
+          wasUsed,
+          matchCount,
+          taskId,
+          rowMatchType,
+          bestScore,
+          row.id,
+        ),
       );
       if (result.changes > 0) {
         updated++;

@@ -19,6 +19,8 @@ interface AuditRow {
   used_count: number | null;
   task_id: string | null;
   checked_at: string | null;
+  match_type: string | null;
+  overlap_score: number | null;
 }
 
 const store = {
@@ -55,6 +57,8 @@ const mockDb = {
             used_count: null,
             task_id: null,
             checked_at: null,
+            match_type: null,
+            overlap_score: null,
           });
           return { changes: 1, lastInsertRowid: store.nextId - 1 };
         },
@@ -72,17 +76,15 @@ const mockDb = {
     if (sql.startsWith("UPDATE recall_audit")) {
       return {
         run: (...args: unknown[]) => {
-          const [wasUsed, usedCount, taskId, id] = args as [
-            number,
-            number,
-            string,
-            number,
-          ];
+          const [wasUsed, usedCount, taskId, matchType, overlapScore, id] =
+            args as [number, number, string, string, number, number];
           const row = store.rows.find((r) => r.id === id && r.was_used == null);
           if (!row) return { changes: 0 };
           row.was_used = wasUsed;
           row.used_count = usedCount;
           row.task_id = taskId;
+          row.match_type = matchType;
+          row.overlap_score = overlapScore;
           row.checked_at = new Date()
             .toISOString()
             .replace("T", " ")
@@ -102,10 +104,12 @@ vi.mock("../db/index.js", () => ({
 
 import {
   deriveSnippets,
+  extractContentTokens,
   logRecall,
   markRecallUtility,
   redactSecrets,
   SNIPPET_MAX_CHARS,
+  tokenOverlap,
 } from "./recall-utility.js";
 
 beforeEach(() => {
@@ -462,6 +466,8 @@ describe("markRecallUtility", () => {
       used_count: null,
       task_id: null,
       checked_at: null,
+      match_type: null,
+      overlap_score: null,
     });
 
     const result = markRecallUtility({
@@ -544,6 +550,8 @@ describe("markRecallUtility", () => {
       used_count: null,
       task_id: null,
       checked_at: null,
+      match_type: null,
+      overlap_score: null,
     });
 
     expect(() =>
@@ -554,5 +562,276 @@ describe("markRecallUtility", () => {
     ).not.toThrow();
 
     expect(store.rows[0].was_used).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ship B (2026-04-30): token-overlap matcher
+// ---------------------------------------------------------------------------
+
+describe("extractContentTokens", () => {
+  it("returns lowercased, length-≥4, stopword-stripped tokens", () => {
+    const tokens = extractContentTokens(
+      "The migration deadline is set for Friday next week",
+    );
+    // Content tokens (length ≥4, not in stopwords) should remain.
+    // 'next' and 'week' are length 4 and not in the curated stopword list,
+    // so they survive — "next" is borderline filler but rare enough to keep.
+    expect(tokens.has("migration")).toBe(true);
+    expect(tokens.has("deadline")).toBe(true);
+    expect(tokens.has("friday")).toBe(true);
+    expect(tokens.has("week")).toBe(true);
+    // Length<4 always filtered
+    expect(tokens.has("the")).toBe(false);
+    expect(tokens.has("is")).toBe(false);
+    expect(tokens.has("for")).toBe(false);
+    expect(tokens.has("set")).toBe(false);
+  });
+
+  it("strips diacritics so publicación matches publicacion", () => {
+    const a = extractContentTokens("La publicación es semanal");
+    const b = extractContentTokens("La publicacion es semanal");
+    expect(a.has("publicacion")).toBe(true);
+    expect(b.has("publicacion")).toBe(true);
+  });
+
+  it("filters Spanish stopwords (esto, este, esta, etc)", () => {
+    const tokens = extractContentTokens(
+      "Esto es como cuando muchos usuarios tienen ese mismo problema",
+    );
+    expect(tokens.has("esto")).toBe(false);
+    expect(tokens.has("como")).toBe(false);
+    expect(tokens.has("cuando")).toBe(false);
+    expect(tokens.has("muchos")).toBe(false);
+    expect(tokens.has("mismo")).toBe(false);
+    expect(tokens.has("usuarios")).toBe(true);
+    expect(tokens.has("problema")).toBe(true);
+  });
+
+  it("dedupes repeated tokens", () => {
+    const tokens = extractContentTokens(
+      "williams williams radar radar journal",
+    );
+    expect(tokens.size).toBe(3);
+    expect([...tokens].sort()).toEqual(["journal", "radar", "williams"]);
+  });
+
+  it("treats punctuation and whitespace as separators", () => {
+    const tokens = extractContentTokens(
+      "command: deploy.sh; restart;\twatch_logs",
+    );
+    expect(tokens.has("command")).toBe(true);
+    expect(tokens.has("deploy")).toBe(true);
+    expect(tokens.has("restart")).toBe(true);
+    expect(tokens.has("watch_logs")).toBe(false); // underscore IS a separator → "watch" + "logs"
+    expect(tokens.has("watch")).toBe(true);
+    expect(tokens.has("logs")).toBe(true);
+  });
+
+  it("returns empty set for short or empty input", () => {
+    expect(extractContentTokens("").size).toBe(0);
+    expect(extractContentTokens("hi").size).toBe(0);
+    expect(extractContentTokens("the and").size).toBe(0);
+  });
+});
+
+describe("tokenOverlap", () => {
+  it("returns full overlap (score=1) when snippet tokens all appear in response", () => {
+    const r = tokenOverlap(
+      "Williams Radar Journal — flujo de publicación",
+      "Sobre Williams Radar Journal: el flujo de publicación es semanal",
+    );
+    // tokens: williams, radar, journal, flujo, publicacion → 5 in snippet
+    expect(r.overlap).toBe(5);
+    expect(r.score).toBe(1);
+  });
+
+  it("returns 0 when no content tokens overlap", () => {
+    const r = tokenOverlap(
+      "rocket fuel hydrogen oxygen propellant",
+      "today is sunny and warm",
+    );
+    expect(r.overlap).toBe(0);
+    expect(r.score).toBe(0);
+  });
+
+  it("matches paraphrase that uses different short words but same content tokens", () => {
+    // Audit row 22 from this session: snippet says "Solo los viernes",
+    // response says "Cron programado: 0 18 * * 5 — Viernes 18:00 MX".
+    // Content tokens 'viernes' overlaps. Need ≥3 to count, so build a
+    // realistic scenario.
+    const snippet =
+      "Williams Radar Journal — regla de publicación: Solo los viernes después de cierre";
+    const response =
+      "Confirmed Williams Radar — cron programado los viernes con publicación al cierre";
+    const r = tokenOverlap(snippet, response);
+    // Content tokens in snippet: williams, radar, journal, regla, publicacion, viernes, despues, cierre
+    // Response has: williams, radar, viernes, publicacion, cierre, programado
+    // Overlap: williams, radar, publicacion, viernes, cierre → 5
+    expect(r.overlap).toBeGreaterThanOrEqual(4);
+  });
+
+  it("does NOT cross-match unrelated content with shared boilerplate", () => {
+    // Audit row 21: snippet about shell_exec methodology, response about
+    // Williams Radar. Should NOT match.
+    const snippet =
+      "El proceso de editar_archivo_y_ejecutar_shell incluye leer el archivo aplicar cambios";
+    const response =
+      "Williams Radar Journal cron está programado en mode viernes 18:00 hora MX";
+    const r = tokenOverlap(snippet, response);
+    expect(r.overlap).toBeLessThan(3);
+  });
+
+  it("handles empty snippet token set gracefully", () => {
+    const r = tokenOverlap("", "anything");
+    expect(r.overlap).toBe(0);
+    expect(r.score).toBe(0);
+  });
+});
+
+describe("markRecallUtility — dual signal (Ship B)", () => {
+  it("sets match_type='verbatim' and overlap_score=1.0 on verbatim hit", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "x",
+      source: "hindsight",
+      results: [
+        {
+          content:
+            "The user mentioned the migration deadline is set for friday next week",
+        },
+      ],
+      latencyMs: 100,
+    });
+    const result = markRecallUtility({
+      taskId: "task-vb",
+      responseText:
+        "Confirmed: The user mentioned the migration deadline is set for friday next week.",
+    });
+    expect(result.used).toBe(1);
+    expect(store.rows[0].match_type).toBe("verbatim");
+    expect(store.rows[0].overlap_score).toBe(1);
+  });
+
+  it("sets match_type='token-overlap' on paraphrased content (audit row 19/20 case)", () => {
+    // Real audit row 19 from 2026-04-30:
+    //   Snippet: "Williams Radar Journal — Flujo de publicación: CONTENT_DIR=/root/claude/thewilli..."
+    //   Response: "## Williams Radar Journal\n... thewilliamsradar-journal\n... publicación..."
+    // Verbatim misses (response is structured markdown), token overlap fires.
+    logRecall({
+      bank: "mc-jarvis",
+      query: "Háblame del Williams Radar Journal",
+      source: "sqlite-fallback",
+      results: [
+        {
+          content:
+            "Williams Radar Journal — Flujo de publicación: CONTENT_DIR=/root/claude/thewilliamsradar-journal/content frontmatter title date slug",
+        },
+      ],
+      latencyMs: 1155,
+    });
+    const result = markRecallUtility({
+      taskId: "task-overlap",
+      responseText:
+        "## Williams Radar Journal\n\n**URL**: thewilliamsradar.com  \n**Repo**: EurekaMD-net/thewilliamsradar-journal\n\n### Arquitectura técnica\n- **CMS** publicación semanal con frontmatter title date slug",
+    });
+    expect(result.used).toBe(1);
+    expect(store.rows[0].match_type).toBe("token-overlap");
+    expect(store.rows[0].overlap_score).toBeGreaterThan(0);
+    expect(store.rows[0].overlap_score).toBeLessThan(1);
+  });
+
+  it("sets match_type='none' on unrelated content (audit row 21 case)", () => {
+    // Real audit row 21: Hindsight returned shell_exec methodology in
+    // response to a Williams Radar polling question. Should NOT match.
+    logRecall({
+      bank: "mc-operational",
+      query: "Verifica que el viernes el polling de Alpha Vantage",
+      source: "hindsight",
+      results: [
+        {
+          content:
+            "El proceso de editar_archivo_y_ejecutar_shell incluye leer el archivo aplicar cambios revisar diff",
+        },
+      ],
+      latencyMs: 3974,
+    });
+    const result = markRecallUtility({
+      taskId: "task-none",
+      responseText:
+        "Williams Radar — Listo para W18. Cron programado los viernes 18:00 MX. PID 2425971 corriendo desde Apr 24.",
+    });
+    expect(result.used).toBe(0);
+    expect(store.rows[0].match_type).toBe("none");
+  });
+
+  it("prefers verbatim over token-overlap when both could apply", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "x",
+      source: "hindsight",
+      results: [
+        {
+          content:
+            "the migration deadline is set for friday next week per legal",
+        },
+      ],
+      latencyMs: 100,
+    });
+    const result = markRecallUtility({
+      taskId: "task-prefer",
+      // Response contains the snippet verbatim AND many tokens
+      responseText:
+        "the migration deadline is set for friday next week per legal — confirmed by counsel",
+    });
+    expect(result.used).toBe(1);
+    expect(store.rows[0].match_type).toBe("verbatim");
+    expect(store.rows[0].overlap_score).toBe(1);
+  });
+
+  it("threshold prevents trivial 1-2 token coincidences", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "x",
+      source: "hindsight",
+      results: [
+        {
+          content:
+            "The system implements observability through structured logging and metric collection",
+        },
+      ],
+      latencyMs: 100,
+    });
+    // Response shares only 'system' content token (everything else is filler/short)
+    const result = markRecallUtility({
+      taskId: "task-thr",
+      responseText: "the system is online",
+    });
+    expect(result.used).toBe(0);
+    expect(store.rows[0].match_type).toBe("none");
+  });
+
+  it("stores best partial overlap_score even when no match (diagnostics)", () => {
+    logRecall({
+      bank: "mc-jarvis",
+      query: "x",
+      source: "hindsight",
+      results: [
+        {
+          content:
+            "Williams Radar runs polling against Alpha Vantage and computes Friday signals",
+        },
+      ],
+      latencyMs: 100,
+    });
+    const result = markRecallUtility({
+      taskId: "task-diag",
+      // Two tokens overlap (williams, radar) — below threshold of 3 but >0
+      responseText: "Williams Radar status check",
+    });
+    expect(result.used).toBe(0);
+    expect(store.rows[0].match_type).toBe("none");
+    // overlap_score reflects the best partial overlap as diagnostics
+    expect(store.rows[0].overlap_score).toBeGreaterThan(0);
   });
 });

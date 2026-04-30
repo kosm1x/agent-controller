@@ -546,6 +546,22 @@ cmd_recall_utility() {
       | awk -F'|' 'BEGIN { printf "  %-18s %6s %6s %8s\n", "bank", "n", "used", "pct%" }
                    { printf "  %-18s %6s %6s %8s\n", $1, $2, $3, $4 }'
     echo ""
+
+    # Match-type breakdown — Ship B (2026-04-30): dual-signal matcher.
+    # match_type ∈ {verbatim, token-overlap, none}. Distinguishes "agent
+    # quoted recall verbatim" from "agent paraphrased recall content" from
+    # "no signal of use" — informs the strategic Hindsight decision.
+    echo -e "${BOLD}Utility by match type:${NC}"
+    sql_raw "SELECT COALESCE(match_type, '(legacy)') AS mt,
+                    COUNT(*) AS n,
+                    ROUND(AVG(overlap_score), 2) AS avg_score
+             FROM recall_audit
+             WHERE created_at >= ${since_clause} AND was_used IS NOT NULL
+             GROUP BY match_type
+             ORDER BY n DESC;" 2>/dev/null \
+      | awk -F'|' 'BEGIN { printf "  %-18s %6s %10s\n", "match_type", "n", "avg_score" }
+                   { printf "  %-18s %6s %10s\n", $1, $2, $3 }'
+    echo ""
   else
     echo -e "  ${DIM}No matched rows yet — wait for turn-end matches to accumulate.${NC}"
     echo ""
