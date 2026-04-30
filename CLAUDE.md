@@ -151,6 +151,14 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 3. Add classification case in `src/dispatch/classifier.ts`
 4. Add tests
 
+### Adding a new MCP server (`mcp-servers.json`)
+
+`src/mcp/manager.ts:137` passes `env: undefined` to `StdioClientTransport` whenever `McpServerConfig.env` is missing — the SDK interprets that as a clean minimal env (HOME/PATH/etc, ~5 vars), **not** parent inheritance. Any truthy `config.env` (including `{}`) flips to `{...process.env, ...config.env}` and the bridge child receives mc's full env.
+
+1. If the bridge needs ANY env var from mc (auth tokens, API keys, etc.), the entry MUST have an `env` key — use `"env": {}` as the minimal trigger when no per-server overrides are needed.
+2. Never put secret values directly in `mcp-servers.json` (the repo is public). Keep secrets in `.env`; they propagate via the inheritance trigger.
+3. Verify post-deploy by inspecting the bridge child's `/proc/<pid>/environ` — count should be 70+ vars (inheritance), not 5 (clean minimal). The xpoz bridge (Session 122) silently 401'd every `POST /run` for a week because it lacked this trigger; GET tools are auth-gate-free so the connection looked healthy.
+
 ### Prometheus (heavy runner) changes
 
 - PER loop: planner → executor → reflector → orchestrator coordinates
