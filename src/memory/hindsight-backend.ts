@@ -2,7 +2,10 @@
  * Hindsight memory backend — semantic memory via Hindsight REST API.
  *
  * Features:
- * - Circuit breaker: 3 failures → 60s cooldown → retry
+ * - Circuit breaker: 3 failures → 60s cooldown → half-open probe → re-open on
+ *   probe failure (failure count is sticky; only success resets it). Prevents
+ *   the low-traffic dysfunction where >cooldown gaps reset the counter and
+ *   every recall pays the timeout tax.
  * - Lazy bank creation with tailored missions/dispositions
  * - Async retain (non-blocking writes)
  * - Budget-aware recall/reflect
@@ -71,6 +74,11 @@ interface CircuitState {
   failures: number;
   lastFailure: number;
   open: boolean;
+  // True while a half-open probe is in-flight. Concurrent recalls in the
+  // same tick must NOT all be treated as probes — only the first one races
+  // through; siblings see this flag and short-circuit. Cleared by
+  // recordSuccess/recordFailure when the probe completes.
+  probeInFlight: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +92,7 @@ export class HindsightMemoryBackend implements MemoryService {
     failures: 0,
     lastFailure: 0,
     open: false,
+    probeInFlight: false,
   };
   private readonly initializedBanks = new Set<string>();
   private readonly sqliteFallback = new SqliteMemoryBackend();
@@ -259,13 +268,23 @@ export class HindsightMemoryBackend implements MemoryService {
   // -------------------------------------------------------------------------
 
   private isCircuitOpen(): boolean {
+    // While a half-open probe is in-flight, treat the circuit as open for
+    // siblings. Otherwise N concurrent recalls would all flip open=false
+    // and all pay the full Hindsight timeout — the very pathology this
+    // change was meant to kill.
+    if (this.circuit.probeInFlight) return true;
+
     if (!this.circuit.open) return false;
 
     const elapsed = Date.now() - this.circuit.lastFailure;
     if (elapsed >= CIRCUIT_COOLDOWN_MS) {
-      // Half-open: allow one attempt
+      // Half-open: allow one probe through. Do NOT reset failures here —
+      // only success (recordSuccess) clears the counter. This way, if the
+      // probe fails, recordFailure increments past the threshold and
+      // re-opens the breaker immediately instead of letting the next 2
+      // requests also pay the timeout tax.
       this.circuit.open = false;
-      this.circuit.failures = 0;
+      this.circuit.probeInFlight = true;
       console.log("[memory] Circuit breaker: half-open, retrying Hindsight");
       return false;
     }
@@ -273,6 +292,10 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   private recordSuccess(): void {
+    // Always clear probeInFlight first so siblings unblock even if the
+    // success path runs before the failures-reset branch (failures may
+    // already be 0 in the steady-state success case).
+    this.circuit.probeInFlight = false;
     if (this.circuit.failures > 0) {
       this.circuit.failures = 0;
       this.circuit.open = false;
@@ -280,6 +303,7 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   private recordFailure(err: unknown): void {
+    this.circuit.probeInFlight = false;
     this.circuit.failures++;
     this.circuit.lastFailure = Date.now();
 

@@ -276,6 +276,146 @@ describe("HindsightMemoryBackend", () => {
       // Only 3 calls to retain (the 4th was skipped)
       expect(mockClient.retain).toHaveBeenCalledTimes(3);
     });
+
+    it("re-opens immediately on half-open probe failure (sticky failures)", async () => {
+      // Regression: prior to 2026-04-30, isCircuitOpen() reset
+      // circuit.failures to 0 when cooldown expired, so each post-cooldown
+      // recall would re-pay the timeout tax up to threshold-1 times before
+      // the breaker re-opened. With sticky failures, ONE probe failure
+      // re-opens immediately.
+      vi.useFakeTimers();
+      try {
+        mockClient.recall.mockRejectedValue(new Error("down"));
+
+        // 3 failures → breaker opens
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(3);
+
+        // Advance past cooldown (60s + 1)
+        vi.advanceTimersByTime(60_001);
+
+        // Half-open probe: should call client once, fail, re-open
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(4);
+
+        // Subsequent recall WITHIN cooldown should short-circuit (no new
+        // client call). Old behavior would have allowed 2 more probes
+        // before tripping again.
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(4);
+
+        // W4 (audit gap fix): proves recordFailure refreshed lastFailure on
+        // the half-open failure. Advancing another full cooldown should
+        // permit a NEW probe; if lastFailure had been left stale, the
+        // second probe would have fired immediately at the first
+        // post-cooldown call rather than after this advance.
+        vi.advanceTimersByTime(60_001);
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(5);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("closes the breaker on successful half-open probe", async () => {
+      vi.useFakeTimers();
+      try {
+        mockClient.recall.mockRejectedValue(new Error("down"));
+
+        // Trip the breaker
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+
+        // Advance past cooldown
+        vi.advanceTimersByTime(60_001);
+
+        // Probe succeeds — breaker should fully close
+        mockClient.recall.mockResolvedValue({
+          results: [{ id: "m1", text: "ok", type: "world" }],
+        });
+        const probe = await backend.recall("q", { bank: "mc-operational" });
+        expect(probe).toHaveLength(1);
+
+        // Two more recalls should also pass through (no short-circuit)
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(6);
+
+        // W3 (audit gap fix): probe success must have RESET the failure
+        // counter, not merely flipped open=false. Two more failures
+        // should NOT trip the breaker (need 3 consecutive). If counter
+        // had stayed at 3, ONE failure here would re-open.
+        mockClient.recall.mockRejectedValue(new Error("down again"));
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(8);
+
+        // The third failure DOES trip it again (counter is 0+3=3)
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        // 9 calls: 6 + 2 mid-failures + 1 trip-call. The 2nd post-trip
+        // call short-circuits (breaker now open).
+        expect(mockClient.recall).toHaveBeenCalledTimes(9);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("serializes concurrent recalls during the half-open window", async () => {
+      // W2 (audit gap fix): without probeInFlight tracking, two recalls
+      // fired in the same tick after cooldown expiry both flip open=false
+      // and both pay the full Hindsight timeout. probeInFlight ensures
+      // only ONE goes through; siblings short-circuit.
+      vi.useFakeTimers();
+      try {
+        // Use a deferred mock so the probe stays in-flight while we fire
+        // a sibling recall.
+        let resolveProbe!: (v: unknown) => void;
+        const probePromise = new Promise<unknown>((r) => {
+          resolveProbe = r;
+        });
+
+        mockClient.recall.mockRejectedValue(new Error("down"));
+        // Trip the breaker
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        await backend.recall("q", { bank: "mc-operational" });
+        expect(mockClient.recall).toHaveBeenCalledTimes(3);
+
+        // Past cooldown
+        vi.advanceTimersByTime(60_001);
+
+        // Now arm the probe to hang
+        mockClient.recall.mockReturnValueOnce(
+          probePromise as unknown as ReturnType<typeof mockClient.recall>,
+        );
+
+        // Fire two recalls concurrently. First is the probe; second
+        // should see probeInFlight=true and short-circuit.
+        const firstP = backend.recall("q", { bank: "mc-operational" });
+        const secondP = backend.recall("q", { bank: "mc-operational" });
+
+        // Second should resolve quickly via SQLite fallback path even
+        // though probe is hanging. Total client calls so far: 3 (trip)
+        // + 1 (probe in-flight). Sibling MUST NOT add a 5th.
+        await secondP;
+        expect(mockClient.recall).toHaveBeenCalledTimes(4);
+
+        // Now resolve the probe (still as failure to keep it simple)
+        resolveProbe(undefined);
+        try {
+          await firstP;
+        } catch {
+          // ignore
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("lazy bank creation", () => {
