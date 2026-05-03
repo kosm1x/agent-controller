@@ -194,7 +194,7 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 - 🟠 24h timeout-rate trend post-circuit-breaker fix — does it materially drop now that the breaker actually opens?
 - 🟠 `match_type='token-overlap'` distribution — is the threshold of 4 catching paraphrased recalls without false-positives?
-- 🟠 Operator-side blocked: AV API key rotation (still pending), vision env vars paste (still pending).
+- 🟠 Operator-side blocked: AV API key rotation (still pending). _Vision env vars resolved — verified set in mc PID environ + 7d journal clean of any vision-call errors as of Session 124._
 
 ---
 
@@ -204,15 +204,7 @@ Tests 3854 → 3908 (+54 net across all session-114 commits).
 
 ## Open P1 (carry-forward)
 
-- **Vision env vars from Session 113** still not pasted into `mc/.env`. Three lines:
-
-  ```
-  INFERENCE_VISION_URL=https://api.groq.com/openai/v1
-  INFERENCE_VISION_KEY=<value of INFERENCE_FALLBACK_KEY>
-  INFERENCE_VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
-  ```
-
-  Then `systemctl restart mission-control` when traffic is quiet. Without this, `screenshot_element describe:true` falls back to a friendly error. Image-only PDFs still work via `gemini_research` (the deck-read chain shipped tonight handles them); this only affects the screenshot-describe flow specifically.
+- ~~Vision env vars from Session 113 still not pasted into `mc/.env`~~ — **RESOLVED**. Session 124 verified all three (`INFERENCE_VISION_URL`, `INFERENCE_VISION_KEY`, `INFERENCE_VISION_MODEL`) set in `/proc/$(systemctl show -p MainPID --value mission-control)/environ` AND zero vision-call errors / fallbacks in the last 7 days of `journalctl -u mission-control`. The `screenshot_element describe:true` flow is operational. (Operator must have pasted between Session 113 and 124.)
 
 - **Hindsight bank red** at session 114 close: mc-jarvis at 385 memories, no consolidation drop visible in 24h. May self-resolve if consolidator catches up. If mc-jarvis crosses 500 without a drop, manually trigger or investigate why qwen3-coder-plus consolidation passes are no-op'ing.
 
