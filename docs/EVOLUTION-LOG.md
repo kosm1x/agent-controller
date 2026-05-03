@@ -1020,3 +1020,69 @@ The `git_commit` ETIMEDOUT deadlock required escalation to the user — Jarvis c
 
 ### Research notes
 Day ~46 of the longitudinal record. Today's low-volume pattern is worth noting: the co-evolution paper should track whether quiet days cluster around weekends, travel, or post-heavy-session recovery. The security hardening work (SVG block, storage driver audit, media route guard) represents a maturation phase in the vlcms project — transitioning from feature construction to production hardening, a milestone that typically signals readiness for real-world traffic on thewilliamsradar.com.
+
+## 2026-04-29
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 2 completed (Diseñar prototipo de interfaz de usuario; Modelar los Unit Economics por viaje) |
+| Total tasks | 8 NorthStar records (2 visions, 1 goal, 2 objectives, 3 tasks — 2 completed, 1 in_progress) |
+| Conversations today | 56 (telegram: 56) |
+| Streak days | Active — NorthStar last synced 2026-04-25 |
+
+### Interactions summary
+A high-productivity day with several parallel workstreams. The dominant thread was **very-light-cms layout work** on thewilliamsradar.com: finalizing the W17 homepage layout (sidebar + home-main two-column structure), debugging a double H1 title display issue, and deploying the fix with a VLCMS restart. A second major thread involved **strategic analysis work for TV Azteca / Plan 2027**: Fede shared a dense HR Ratings 2025 PDF and Jarvis delivered a structured competitive analysis covering TV Azteca's share trajectory, genre winners/losers, and implications for the TagScreen.ai pitch. A third thread touched on **system-level optimization**: Fede is actively working on reducing Jarvis's context injection overhead to improve per-turn efficiency, and noted a 3-second improvement in recall speed.
+
+### What Jarvis learned
+The W17 title duplication issue reinforced the importance of understanding how the CMS templates compose — the home view and page view can both emit heading elements for the same content, requiring careful coordination of where H1 is placed. The TV Azteca PDF analysis demonstrated that Jarvis can synthesize dense, multi-table broadcast data into actionable strategic recommendations — the telenovela +65% and Box Azteca -17% signals were non-obvious without cross-referencing multiple tables. The `memory_reflect` tool returned no synthesis results again — the raw memory store is active, but the reflection synthesis layer continues to produce no output consistently across multiple days.
+
+### Friction points
+The `git_commit` tool timeout/deadlock pattern recurred (third logged instance), requiring Fede to manually commit on the `jarvis/feat/git-whitelist-williams-journal` branch — an unresolved systemic issue. The context injection optimization work (Fede tuning token headroom) is ongoing, suggesting Jarvis's per-turn prompt overhead is still a measurable friction point for session efficiency.
+
+### Research notes
+Day ~47 of the longitudinal record. The 56-message volume represents a moderate day — significantly above the prior day's 18 but below the 95-message peaks earlier this week. The context-injection tuning work Fede is doing is directly relevant to the co-evolution paper: the user is now actively shaping the agent's cognitive architecture (token budget, recall latency), not just directing its tasks — a sign of a mature, bidirectional collaboration where the human optimizes the agent as much as the agent assists the human.
+
+## 2026-04-30
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | Not resolvable — NorthStar snapshot unavailable (file not found) |
+| Total tasks | 8 NorthStar records (2 visions, 1 goal, 2 objectives, 3 tasks — 2 completed, 1 in_progress; carried from prior days) |
+| Conversations today | 56 (telegram: 56) |
+| Streak days | Active — NorthStar last synced 2026-04-25 |
+
+### Interactions summary
+Today's sessions were dominated by **entrepreneurship and business analysis** threads. Fede explored two parallel tracks for a low-risk micro-business with $5,000 MXN: a virtual/digital route (Spotify Family slots, Canva Teams slots, Microsoft 365 license resale) and a physical goods route (sneakers retro from Tepito, Hot Wheels Treasure Hunt, repaired smartphones). Jarvis delivered scored opportunity analyses for both tracks — top pick was sneakers (8/10, 40–146% net margin) followed by collectibles (7.5/10, 50–200% margin). A separate thread involved the **Xpoz pipeline**: Jarvis launched a longevity-seed crawl across six subreddits (longevity, Biohackers, longevityadvice, Supplements, nootropics, antiaging) with 16 keyword terms including nad+, rapamycin, autophagy, and fasting. Results were routed back via Telegram.
+
+### What Jarvis learned
+The business analysis session revealed a user preference for **concrete, scannable deliverables** — Jarvis produced structured scans (saved to `projects/negocios-auto-gestionados/`) with scored opportunities, margin calculations, and phased action plans, which Fede engaged with productively. A notable caveat added mid-session: the MercadoLibre 2026 fiscal retention (2.5% ISR + 11–17.5% commission = 14–20% cost-to-sell) was a non-obvious constraint that materially affected margin calculations — this kind of regulatory context is high-value to surface early. The `memory_reflect` tool returned no synthesis results again — consistent across all logged days; raw memory write is functioning but reflection synthesis remains inoperative.
+
+### Friction points
+None explicitly logged in today's session memories. The pivot from virtual to physical business mid-session (Fede initially requested virtual, then switched to physical) required Jarvis to regenerate the full analysis — a minor iteration cost, though not flagged as friction by the user. The NorthStar snapshot file was not found, so task-completion metrics could not be pulled mechanically.
+
+### Research notes
+Day ~48 of the longitudinal record. Today's business analysis thread is a new domain for this log — prior sessions have been code-heavy; this was a pure strategic/economic reasoning session. The Xpoz pipeline invocation (longevity seed) also signals an emerging pattern: Fede is beginning to use Jarvis as a market intelligence instrument, not just a coding assistant. This represents a broadening of the collaboration scope that the co-evolution paper should track as a potential phase transition from "code copilot" to "autonomous analyst."
+
+## 2026-05-01
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | Not resolvable — NorthStar snapshot shows 1 goal (in_progress), 0 objectives, 0 tasks at top level; last sync 2026-04-30T19:46Z |
+| Total tasks | 1 NorthStar record (1 goal: Stable — in_progress; task files exist in filesystem but not reflected in INDEX post-sync) |
+| Conversations today | 48 (telegram: 48) |
+| Streak days | Active — NorthStar last synced 2026-04-30 |
+
+### Interactions summary
+A richly varied day across four distinct workstreams. The dominant thread was **Substack publishing infrastructure**: Fede launched his Substack (fedemoctezuma.substack.com), published Post 1 "The Patient Investor," and worked through drafts of Post 2 ("The Unfair Advantage") and Post 3 ("The Generation That Chose"), with iterative voice editing toward a more humble, exploratory tone. A second major thread was **The Williams Radar Journal W18**: completing the W17 scorecard with live price data, generating the W18 draft, publishing to GitHub + CMS, and setting up a recurring Friday 6:30 PM CDMX publication schedule. A third thread was **Data Intelligence / Helvex**: strategic analysis of BI opportunities, sell-out data collection mechanics, distributor landscape mapping, and creation of the `crm-pulso-fixtures` GitHub repo under EurekaMD. A brief fourth thread involved cataloguing 29 live global data sources (ByteClave list) into the Intelligence Depot as conditional sources.
+
+### What Jarvis learned
+The Substack authentication flow via Playwright remains unreliable — reCAPTCHA blocks headless login, and magic-link tokens expire before Fede can copy them from mobile without consuming them. The correct path is cookie-based session handoff from desktop. A new editorial preference emerged clearly: Fede writes to explore and question, not to declare authority — drafts that position him as an expert required rewriting to first-person curiosity. On the Journal workflow, two operational learnings were committed to memory: the CMS requires an explicit SQLite INSERT (filesystem writes alone don't surface posts), and the ideal execution sequence is radar → prices → publish all within the same Friday session.
+
+### Friction points
+Substack login consumed significant time (~50 min, 07:42–10:12) across multiple failed attempts: reCAPTCHA block, expired magic-link tokens, and mobile UX making it impossible to copy links without consuming them. Ultimately, Jarvis could not achieve autonomous login — deferred to desktop session. A secondary friction: when the Williams Journal schedule fired immediately upon creation (Friday 6:30 PM coinciding with schedule creation time), Jarvis re-triggered a W18 publication attempt instead of just confirming the schedule was active — the user had to redirect to explanation-only mode.
+
+### Research notes
+Day ~49 of the longitudinal record. Today marks a clear phase transition: Fede is now using Jarvis as a **creative writing collaborator and publishing infrastructure layer**, not just a coding assistant. The Substack launch, the editorial voice calibration sessions, and the recurring publication schedule all point toward an emerging "media operations" use case alongside the established "engineering assistant" and "strategic analyst" roles. The co-evolution paper should note that the user is now building public-facing intellectual output *through* the agent — a qualitatively different relationship than task delegation.
