@@ -84,7 +84,14 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl task <id>           # Task detail + runs + subtasks
 ./mc-ctl logs 50             # journalctl last N lines
 ./mc-ctl db "SELECT ..."    # Raw SQLite query or interactive shell
+./mc-ctl audit-claim utility --window=24h --stratify-by=bank   # Self-audit before reporting (V8 S2)
 ```
+
+### Self-audit before reporting aggregate metrics
+
+Before quoting any aggregate metric (utility %, cache-hit ratio, latency, cost, success rate) in a session report, status update, or strategic recommendation, run `mc-ctl audit-claim` and incorporate any warnings. Borne from the 2026-05-03 trilogy incident: aggregate "22.2% utility delivered" headline averaged 88% on mc-operational with 7% on mc-jarvis — the operator's primary bank was in complete collapse, the headline read green. See `feedback_recall_aggregate_hides_bank_collapse.md`.
+
+Metrics: `utility | cache-hit | latency | cost`. Stratify by `bank`, `source`, `match_type`, `agent_type`, or `model` (metric-dependent). Exit codes: `0` verified, `1` warnings present (do NOT report as-is), `2` insufficient n, `3` error.
 
 ## Infrastructure
 

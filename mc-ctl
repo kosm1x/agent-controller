@@ -715,6 +715,93 @@ cmd_drift() {
   return 1
 }
 
+cmd_audit_claim() {
+  # V8 substrate S2 — self-audit before reporting.
+  # Stratify-and-cross-check a metric BEFORE quoting the headline. Born
+  # from the 2026-05-03 trilogy incident: aggregate "22.2% utility" hid
+  # a complete collapse on the operator's primary bank.
+  #
+  # Usage: mc-ctl audit-claim METRIC [--window=24h] [--stratify-by=COL] [--baseline=N] [--min-n=N]
+  #   METRIC      = utility | cache-hit | latency | cost
+  #   --window    = Nh|Nd|Nm (default 24h)
+  #   --stratify-by = bank|source|match_type|agent_type|model (metric-dependent)
+  #   --baseline  = numeric reference value to compare headline against
+  #   --min-n     = minimum sample size to accept verification (default 30)
+  #
+  # Exit codes:
+  #   0 = verified (no warnings, sample sufficient)
+  #   1 = warnings present (small-n, dominance, divergence, baseline)
+  #   2 = invalid input or fetch error (build/deploy required if module missing)
+  local metric="${1:-}"
+  shift 2>/dev/null || true
+
+  if [ -z "$metric" ]; then
+    echo -e "${RED}Error:${NC} metric required"
+    echo "  Usage: mc-ctl audit-claim METRIC [--window=24h] [--stratify-by=COL] [--baseline=N] [--min-n=N]"
+    echo "  Metrics: utility | cache-hit | latency | cost"
+    return 2
+  fi
+
+  local window="24h" stratify="" baseline="" min_n=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --window=*)        window="${1#*=}" ;;
+      --stratify-by=*)   stratify="${1#*=}" ;;
+      --baseline=*)      baseline="${1#*=}" ;;
+      --min-n=*)         min_n="${1#*=}" ;;
+      *)
+        echo -e "${RED}Unknown flag:${NC} $1"
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  # Validate metric (poka-yoke before shelling to node)
+  case "$metric" in
+    utility|cache-hit|latency|cost) ;;
+    *) echo -e "${RED}Unknown metric '${metric}'.${NC} Use: utility | cache-hit | latency | cost"; return 2 ;;
+  esac
+
+  # Build JSON request — jq handles quoting + null-elision.
+  local req
+  req=$(jq -n \
+    --arg metric "$metric" \
+    --arg window "$window" \
+    --arg stratify "$stratify" \
+    --arg baseline "$baseline" \
+    --arg min_n "$min_n" \
+    '{
+       metric: $metric,
+       window: $window,
+       stratifyBy: (if $stratify == "" then null else $stratify end),
+       baseline:   (if $baseline == "" then null else ($baseline | tonumber) end),
+       minN:       (if $min_n == "" then null else ($min_n | tonumber) end)
+     } | with_entries(select(.value != null))')
+
+  local cli_path="${PROJECT_DIR}/dist/audit/cli.js"
+  if [ ! -f "$cli_path" ]; then
+    echo -e "${RED}Error:${NC} ${cli_path} missing — run ./scripts/deploy.sh"
+    return 2
+  fi
+
+  echo -e "${BOLD}=== Self-Audit (V8 substrate S2) ===${NC}"
+  echo ""
+  # cli.js initializes the DB singleton against ${PROJECT_DIR}/data/mc.db
+  # (overridable via MC_DB_PATH) and exits with verdict-coded status.
+  MC_DB_PATH="${DB_PATH}" node "${cli_path}" "${req}"
+  local rc=$?
+  echo ""
+  case $rc in
+    0) echo -e "${GREEN}[VERIFIED]${NC} Headline is safe to report." ;;
+    1) echo -e "${YELLOW}[WARNINGS]${NC} Do NOT report headline as-is — address notes above." ;;
+    2) echo -e "${YELLOW}[INSUFFICIENT N]${NC} Sample too small for the requested minN." ;;
+    3) echo -e "${RED}[MODULE LOAD ERROR]${NC} See stderr above." ;;
+    *) echo -e "${RED}[UNKNOWN EXIT $rc]${NC}" ;;
+  esac
+  return $rc
+}
+
 cmd_hindsight_status() {
   echo -e "${BOLD}=== Hindsight Status ===${NC}"
   echo ""
@@ -963,6 +1050,8 @@ usage() {
   echo -e "  ${GREEN}recall-utility${NC} [Nh] Recall was_used % by source/bank (default 24h, accepts 1h/7d/30m)"
   echo -e "  ${GREEN}recall-compare${NC} [N] [SINCE]  Side-by-side replay vs SQLite (default 5 queries / 24h)"
   echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
+  echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
+  echo -e "                          metrics: utility | cache-hit | latency | cost"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
   echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
@@ -1577,6 +1666,7 @@ case "$cmd" in
   recall-utility)    cmd_recall_utility "${1:-24h}" ;;
   recall-compare)    cmd_recall_compare "$@" ;;
   drift)             cmd_drift ;;
+  audit-claim)       cmd_audit_claim "$@" ;;
 
   budget)            cmd_budget ;;
 
