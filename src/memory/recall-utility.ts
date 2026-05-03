@@ -310,7 +310,12 @@ interface LogRecallInput {
   bank: string;
   query: string;
   /** Where the recall results came from. */
-  source: "hindsight" | "sqlite-fallback" | "sqlite-only" | "circuit-open";
+  source:
+    | "hindsight"
+    | "sqlite-fallback"
+    | "sqlite-only"
+    | "circuit-open"
+    | "bank-disabled";
   /** Results AFTER the outcome filter has run. result_count and snippets in
    * the audit row reflect what the agent saw, not what the vendor returned. */
   results: MemoryItem[];

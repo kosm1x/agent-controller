@@ -70,6 +70,34 @@ function isRecallPathEnabled(): boolean {
   return process.env.HINDSIGHT_RECALL_ENABLED === "true";
 }
 
+// HINDSIGHT_RECALL_DISABLED_BANKS — CSV of bank IDs whose recall path skips
+// Hindsight regardless of the global flag (V8 substrate follow-up,
+// 2026-05-03). Surgical demote primitive for the per-bank H/D/R verdict
+// approach: HARDEN one bank while DEMOTING another. Born from the trilogy
+// validation showing mc-jarvis at 1,637 mems suffered reranker collapse
+// (4/15 success vs SQLite 30/30) while mc-operational at 69 mems was
+// fully recovered (15/15). The global enable flag couldn't capture the
+// per-bank verdict — this can.
+//
+// Evaluated on every recall (sub-microsecond), so operator changes take
+// effect on next request after `systemctl restart mission-control`.
+// Retain/reflect remain on Hindsight on disabled banks — the bank is not
+// abandoned, just exempted from the recall-time tax.
+function getDisabledBanks(): Set<string> {
+  const csv = process.env.HINDSIGHT_RECALL_DISABLED_BANKS;
+  if (!csv) return new Set();
+  return new Set(
+    csv
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  );
+}
+
+function isBankDisabled(bank: string): boolean {
+  return getDisabledBanks().has(bank);
+}
+
 interface CircuitState {
   failures: number;
   lastFailure: number;
@@ -123,6 +151,32 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
+    // Per-bank Hindsight disable (V8 substrate follow-up, 2026-05-03).
+    // Checked BEFORE the global flag so a HARDEN-mc-operational +
+    // DEMOTE-mc-jarvis verdict can run with HINDSIGHT_RECALL_ENABLED=true
+    // globally and HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis surgically.
+    // Logs source='bank-disabled' so the recall_audit + mc-ctl recall-utility
+    // surface attributes the routing decision (vs 'sqlite-only' which means
+    // the global flag is off).
+    if (isBankDisabled(options.bank)) {
+      const start = Date.now();
+      const raw = await this.sqliteFallback.recall(query, options);
+      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "bank-disabled",
+        results: kept,
+        latencyMs: Date.now() - start,
+        excludedCount: excluded,
+      });
+      if (excluded > 0) {
+        console.log(
+          `[memory] recall(bank-disabled) bank=${options.bank} filtered ${excluded} outcome-tagged result(s)`,
+        );
+      }
+      return kept;
+    }
     if (!isRecallPathEnabled()) {
       // HINDSIGHT_RECALL_ENABLED=false: skip the Hindsight probe entirely.
       // SQLite hybrid (FTS5 + embed) is the actual answering path and runs

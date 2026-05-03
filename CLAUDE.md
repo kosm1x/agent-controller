@@ -135,6 +135,13 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 - Additive schema changes (new tables/indexes) apply live: `sqlite3 ./data/mc.db < ddl.sql`
 - All DB access goes through `getDatabase()` singleton — no raw `sqlite3` CLI in tools
 
+### Hindsight recall routing
+
+- `HINDSIGHT_RECALL_ENABLED=true|false` — global recall path toggle. When false, all banks bypass Hindsight and answer from SQLite hybrid (FTS5 + embed). Retain/reflect unaffected.
+- `HINDSIGHT_RECALL_TIMEOUT_MS=N` — client-side recall cap. Tuned 5000→8000 on 2026-05-03 per rehab playbook.
+- `HINDSIGHT_RECALL_DISABLED_BANKS=csv` — surgical per-bank demote primitive (V8 substrate follow-up). Listed banks bypass Hindsight regardless of the global flag; logged as `source='bank-disabled'` in `recall_audit`. Use when one bank is hot (cap-saturated reranker) but others are healthy. Example: `HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis` keeps mc-operational on Hindsight while exempting mc-jarvis from the recall-time tax. Retain/reflect remain on Hindsight on disabled banks — the bank is not abandoned.
+- Recall source values populated to `recall_audit.source`: `hindsight | sqlite-fallback | sqlite-only | circuit-open | bank-disabled`. Filter / GROUP BY this column to attribute routing decisions.
+
 ## Patterns
 
 ### Adding a new tool

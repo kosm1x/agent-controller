@@ -216,6 +216,88 @@ describe("HindsightMemoryBackend", () => {
     });
   });
 
+  describe("recall — per-bank disable (HINDSIGHT_RECALL_DISABLED_BANKS)", () => {
+    afterEach(() => {
+      delete process.env.HINDSIGHT_RECALL_DISABLED_BANKS;
+    });
+
+    it("skips Hindsight and logs source=bank-disabled when bank is in CSV", async () => {
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "mc-jarvis";
+      logRecallSpy.mockClear();
+      const results = await backend.recall("q", { bank: "mc-jarvis" });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy).toHaveBeenCalledTimes(1);
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("bank-disabled");
+      expect(logRecallSpy.mock.calls[0][0].bank).toBe("mc-jarvis");
+      expect(typeof logRecallSpy.mock.calls[0][0].latencyMs).toBe("number");
+      // SQLite fallback returns whatever it returns; we only assert the
+      // routing decision didn't block results altogether.
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("still calls Hindsight for banks NOT in the disabled CSV", async () => {
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "mc-jarvis";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-operational" });
+      expect(mockClient.recall).toHaveBeenCalledWith(
+        "mc-operational",
+        expect.objectContaining({ query: "q" }),
+      );
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("hindsight");
+    });
+
+    it("supports multiple banks in CSV with whitespace tolerance", async () => {
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "  mc-jarvis , mc-system  ";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-jarvis" });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("bank-disabled");
+
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-system" });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("bank-disabled");
+
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-operational" });
+      expect(mockClient.recall).toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("hindsight");
+    });
+
+    it("empty CSV is treated as 'no banks disabled' (does not match empty bank id)", async () => {
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-operational" });
+      expect(mockClient.recall).toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("hindsight");
+    });
+
+    it("disable check beats global HINDSIGHT_RECALL_ENABLED — bank-disabled takes precedence over sqlite-only", async () => {
+      // HINDSIGHT_RECALL_ENABLED=false would normally tag source=sqlite-only.
+      // bank-disabled is a stronger semantic ("operator demoted this bank
+      // specifically") and must be reported as such for the audit trail.
+      process.env.HINDSIGHT_RECALL_ENABLED = "false";
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "mc-jarvis";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-jarvis" });
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("bank-disabled");
+    });
+
+    it("retain still calls Hindsight on a disabled bank (only recall is exempted)", async () => {
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "mc-jarvis";
+      await backend.retain("learned something", {
+        bank: "mc-jarvis",
+        tags: ["test"],
+      });
+      // The bank is not abandoned — vendor still receives the write so the
+      // bank stays current for the day operator flips disable off.
+      expect(mockClient.retain).toHaveBeenCalledWith(
+        "mc-jarvis",
+        expect.objectContaining({ content: "learned something" }),
+      );
+    });
+  });
+
   describe("reflect", () => {
     it("should return synthesized reflection", async () => {
       const result = await backend.reflect("patterns", {
