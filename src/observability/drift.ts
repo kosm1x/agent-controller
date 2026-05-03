@@ -93,13 +93,16 @@ export const DEFAULT_INVARIANTS: readonly Invariant[] = [
   {
     key: "HINDSIGHT_RECALL_TIMEOUT_MS",
     description:
-      "Recall client timeout (session 112: 5000ms was the post-rehab choice)",
+      "Recall client timeout (session 123 Path-1 tune: 5000→8000ms to reduce abort rate on the 1,637-mem mc-jarvis bank)",
     // qa-auditor C1 (2026-04-29): exact match — pattern was too permissive.
     // The whole point of this invariant is catching drift back to the
     // pre-rehab 1500ms or operator-typo'd 50000ms. If we want to tune this
     // intentionally, update the expected value here in source so the change
     // is git-tracked.
-    expected: "5000",
+    //
+    // 2026-05-03 Session 124 audit caught this — Path-1 tune raised actual
+    // to 8000 but the declared invariant still said 5000. Updated to match.
+    expected: "8000",
     severity: "warning",
   },
   // --- Locale / TZ ---

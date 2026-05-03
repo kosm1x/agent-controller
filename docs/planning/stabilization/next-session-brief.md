@@ -18,30 +18,38 @@ Two ships, both freeze-aligned:
 
 **Suite**: 4023 + 1 todo → **4073 + 1 todo** (+50 net). Pre-commit hook validated both.
 
-### Surprising finding the audit caught immediately
+### Audit-of-audit (the headline I almost shipped — wrong)
 
-7d post-tune utility on the new audit-claim:
+First pass of the new `mc-ctl audit-claim utility --window=24h --stratify-by=bank` looked like a H/D/R-inverting result: mc-jarvis 36% vs mc-operational 14%. **That framing was wrong.** The aggregate-utility metric was hiding the source-mix the same way the old aggregate hid the bank-split — a fractal of the same deception, one layer deeper.
 
+Bank × source for the same 24h window:
+
+| Bank           | Source          | n   | Used % | Reading                                                  |
+| -------------- | --------------- | --- | ------ | -------------------------------------------------------- |
+| mc-jarvis      | sqlite-fallback | 54  | 33%    | SQLite is doing the actual work                          |
+| mc-jarvis      | hindsight       | 4   | 75%    | n=4 noise — not enough to claim recovery                 |
+| mc-operational | hindsight       | 40  | 15%    | Hindsight responding but matcher rarely scores it useful |
+| mc-operational | sqlite-fallback | 14  | 14%    | Comparable to Hindsight on this bank                     |
+| mc-operational | circuit-open    | 5   | 0%     | Breaker firing intermittently                            |
+
+What this actually says:
+
+1. **mc-jarvis Hindsight is still 93% failing** (54 fallback / 58 hindsight-attempts). The 36% bank-aggregate utility comes almost entirely from the SQLite fallback path doing the work. → Original DEMOTE-mc-jarvis verdict **CONFIRMED with nuance** — Hindsight isn't earning its keep on this bank, just paying the timeout tax before SQLite answers.
+2. **mc-operational Hindsight is succeeding (74% of attempts) but the matcher rarely scores it useful (15%)**. May be Ship B over-strict on paraphrased responses, or recall-content really isn't informing answers much on this bank. Either way, comparable to its own SQLite fallback (14%) — Hindsight is roughly break-even here.
+3. The 5/13 H/D/R verdict trends toward **HARDEN mc-operational + DEMOTE mc-jarvis** unchanged from the working hypothesis. The audit-claim caught a different bug: **always also stratify by source**, not just bank.
+
+Lesson for the audit-claim tool: single-axis stratification can deceive when the second axis carries the explanatory variance. Multi-column stratify would help; for now, run twice (`--stratify-by=bank` then `--stratify-by=source`) and read both. Or query directly:
+
+```sql
+SELECT bank, source, COUNT(*) n,
+       SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) used,
+       ROUND(100.0 * SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) / COUNT(*), 1) pct
+FROM recall_audit
+WHERE created_at >= datetime('now','-24 hours') AND was_used IS NOT NULL
+GROUP BY bank, source ORDER BY bank, n DESC;
 ```
-n=294, headline=19.0%
-Stratification:
-  mc-jarvis        n=145   30.3%
-  mc-operational   n=145    8.3%
-WARNING: stratification-divergence
-```
 
-This is the **inverse** of yesterday's working H/D/R hypothesis (HARDEN mc-operational + DEMOTE mc-jarvis). Aggregate 19% would have hidden the inversion. **Do not act on this single window** — Path 1 tuning landed midnight 2026-05-03; the data so far is recovery transient. Wait for:
-
-1. The 24h `recall-checkpoint.timer` at 2026-05-04 01:00 UTC (already armed)
-2. The 48-72h `mc-ctl recall-compare 30 14d` re-run with fresh queries
-3. A second mc-ctl audit-claim 7d run after both checkpoints have landed
-
-If the inversion holds through both, the 5/13 H/D/R verdict becomes:
-
-- **mc-operational** → DEMOTE (set `HINDSIGHT_RECALL_DISABLED_BANKS=mc-operational` and stay on SQLite — primitive shipped this session)
-- **mc-jarvis** → HARDEN (Hindsight is now the better path on this bank)
-
-If the inversion is just transient (post-tune metric noise), keep the original hypothesis.
+**Wait-window guidance unchanged**: don't act before the 24h `recall-checkpoint.timer` (2026-05-04 01:00 UTC) + 48-72h `mc-ctl recall-compare 30 14d` re-run land. Single-window verdicts are not actionable.
 
 ### V8 substrate ladder
 

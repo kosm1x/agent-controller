@@ -258,7 +258,7 @@ describe("DEFAULT_INVARIANTS", () => {
     expect(byKey["INFERENCE_PRIMARY_MODEL"]?.expected).toBe("qwen3.6-plus");
     expect(byKey["HINDSIGHT_URL"]?.status).toBe("missing");
     expect(byKey["HINDSIGHT_RECALL_ENABLED"]?.expected).toBe("true");
-    expect(byKey["HINDSIGHT_RECALL_TIMEOUT_MS"]?.expected).toBe("5000");
+    expect(byKey["HINDSIGHT_RECALL_TIMEOUT_MS"]?.expected).toBe("8000");
     expect(byKey["HINDSIGHT_RECALL_TIMEOUT_MS"]?.actual).toBe("1500");
     expect(byKey["TZ"]?.expected).toBe("America/Mexico_City");
   });
@@ -269,7 +269,7 @@ describe("DEFAULT_INVARIANTS", () => {
       INFERENCE_PRIMARY_MODEL: "qwen3.6-plus",
       HINDSIGHT_URL: "http://localhost:8888",
       HINDSIGHT_RECALL_ENABLED: "true",
-      HINDSIGHT_RECALL_TIMEOUT_MS: "5000",
+      HINDSIGHT_RECALL_TIMEOUT_MS: "8000",
       TZ: "America/Mexico_City",
     });
     expect(clean).toEqual([]);
