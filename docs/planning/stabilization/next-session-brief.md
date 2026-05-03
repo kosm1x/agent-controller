@@ -1,9 +1,57 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-05-03 post-Hindsight-Path-1-tuning
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-05-03 post-Session-124 (V8 S2 + per-bank Hindsight routing)
 > **Window**: 2026-04-22 → 2026-05-22 (day 12 of 30)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+
+---
+
+## Session 124 close (2026-05-03 ~07:00 UTC)
+
+Two ships, both freeze-aligned:
+
+| Ship                             | Commit    | Tests | Surface                                                                                                                                                                                                                                                                              |
+| -------------------------------- | --------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **V8 substrate S2 — self-audit** | `095647b` | +44   | `src/audit/self-audit.ts` + `src/audit/cli.ts` + `mc-ctl audit-claim METRIC [--window=Nh] [--stratify-by=COL] [--baseline=N] [--min-n=N]`. Stratify-and-warn (small-n / dominance / divergence / baseline) BEFORE the headline. CLAUDE.md doctrine: invoke before reporting metrics. |
+| **Per-bank Hindsight disable**   | `267dba0` | +6    | `HINDSIGHT_RECALL_DISABLED_BANKS=csv` skips Hindsight for listed banks; logged as `recall_audit.source='bank-disabled'`. Retain/reflect untouched (bank stays current). Source enum widened in `recall-utility.ts`; all consumers swept.                                             |
+
+**Suite**: 4023 + 1 todo → **4073 + 1 todo** (+50 net). Pre-commit hook validated both.
+
+### Surprising finding the audit caught immediately
+
+7d post-tune utility on the new audit-claim:
+
+```
+n=294, headline=19.0%
+Stratification:
+  mc-jarvis        n=145   30.3%
+  mc-operational   n=145    8.3%
+WARNING: stratification-divergence
+```
+
+This is the **inverse** of yesterday's working H/D/R hypothesis (HARDEN mc-operational + DEMOTE mc-jarvis). Aggregate 19% would have hidden the inversion. **Do not act on this single window** — Path 1 tuning landed midnight 2026-05-03; the data so far is recovery transient. Wait for:
+
+1. The 24h `recall-checkpoint.timer` at 2026-05-04 01:00 UTC (already armed)
+2. The 48-72h `mc-ctl recall-compare 30 14d` re-run with fresh queries
+3. A second mc-ctl audit-claim 7d run after both checkpoints have landed
+
+If the inversion holds through both, the 5/13 H/D/R verdict becomes:
+
+- **mc-operational** → DEMOTE (set `HINDSIGHT_RECALL_DISABLED_BANKS=mc-operational` and stay on SQLite — primitive shipped this session)
+- **mc-jarvis** → HARDEN (Hindsight is now the better path on this bank)
+
+If the inversion is just transient (post-tune metric noise), keep the original hypothesis.
+
+### V8 substrate ladder
+
+- S1 cache-aware prompts ✓
+- **S2 self-audit before reporting ✓ (this session)**
+- S3 drift detector ✓
+- S4 cost_ledger v2 ✓
+- S5 skills-as-stored-procedures — deferred past freeze (feature, not hardening)
+
+Substrate work complete inside the freeze window.
 
 ---
 
@@ -39,11 +87,11 @@
 
 ## Tomorrow's queue (24h validation cadence)
 
-1. **24h post-tune recall_audit re-baseline**: `mc-ctl recall-utility 24h` after a real working day. Confirm: aggregate utility lifts vs the May 2 22.2% baseline; bank-stratified mc-operational utility lands ≥40% (it was 88% on Hindsight calls in the A/B, but production mix dilutes); mc-jarvis stays low — that's the H/D/R DEMOTE evidence ripening.
-2. **Verify circuit breaker fires under the new 8s cap**: `journalctl -u mission-control --since '24h ago' | grep "Circuit breaker OPEN"`. The breaker was tuned to 5s timeouts; check it still triggers correctly at the new 8s tax.
+1. **24h post-tune recall_audit re-baseline** — fires automatically Mon 2026-05-04 01:00 UTC via `recall-checkpoint.timer`. Output at `docs/audit/latest-recall-checkpoint.md`. **Now also run `mc-ctl audit-claim utility --window=24h --stratify-by=bank --baseline=0.222`** for the warning-aware verdict. If the 22pp inversion above persists, escalate the H/D/R working-hypothesis flip discussion.
+2. **Verify circuit breaker fires under the new 8s cap**: `journalctl -u mission-control --since '24h ago' | grep "Circuit breaker OPEN"`. Breaker was tuned to 5s timeouts; check it still triggers correctly at the new 8s tax.
 3. **Re-run `mc-ctl recall-compare 30 14d`** in 48-72h with fresh queries from new operator traffic, verify the post-tune ratios hold.
-4. **Operational tightening (per today's lesson)** — bring red-alert thresholds into mc-side logging: when recall happens against a bank with ≥200 memories under cap=60 (or proportional), log a structured warning at recall time. Today's collapse was silent because mc didn't know the bank size. Consider: extend `mc-ctl status` to print per-bank memory counts + alert level.
-5. **Decide whether to commit per-bank `HINDSIGHT_RECALL_ENABLED` routing** before 5/13. If we'll DEMOTE mc-jarvis based on the data, the routing primitive needs to land first. Estimated 30-min change in `hindsight-backend.ts` (read env, branch on bankId).
+4. ~~Operational tightening — bring red-alert thresholds into mc-side logging~~ — _superseded by the V8 S2 self-audit (Session 124)._ The audit-claim verdict is the new way to surface bank collapse at recall time. The "extend `mc-ctl status` with per-bank counts" idea remains pickable when it becomes operationally necessary, but it's no longer the only path to visibility.
+5. ~~Decide whether to commit per-bank `HINDSIGHT_RECALL_ENABLED` routing~~ — **DONE Session 124, commit `267dba0`.** `HINDSIGHT_RECALL_DISABLED_BANKS=csv` is the primitive. Operator action when a verdict crystallizes: `echo 'HINDSIGHT_RECALL_DISABLED_BANKS=mc-XXX' >> mc/.env && systemctl restart mission-control`. Verify via `mc-ctl recall-utility 1h` showing `bank-disabled` rows.
 
 ---
 
