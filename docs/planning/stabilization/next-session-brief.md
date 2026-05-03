@@ -1,13 +1,53 @@
 # Next Session Brief — Hardening Phase
 
-> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-04-30 post-recall-hardening-trilogy
-> **Window**: 2026-04-22 → 2026-05-22 (day 10 of 30)
+> **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-05-03 post-Hindsight-Path-1-tuning
+> **Window**: 2026-04-22 → 2026-05-22 (day 12 of 30)
 > **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
 > **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
 
 ---
 
-## End-of-day health snapshot (2026-04-30 00:32 UTC, post-trilogy deploy)
+## End-of-day health snapshot (2026-05-03 00:35 UTC, post-Path-1-tune)
+
+| Item                         | Reading                                                                           | Status                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Service                      | active, PID 1802665, uptime fresh post systemctl restart                          | green                                                     |
+| Hindsight container          | `crm-hindsight` healthy, cap=100, qwen3-coder-plus                                | green                                                     |
+| mc Hindsight client          | `HINDSIGHT_RECALL_TIMEOUT_MS=8000` verified in /proc/PID/environ                  | green                                                     |
+| **30-query A/B (post-tune)** | Hindsight 19/30 success (was 0/30 pre-tune); mc-operational 15/15, mc-jarvis 4/15 | yellow (mc-jarvis still degraded by design at 1,637 mems) |
+| SQLite avg latency           | 438ms (top-3 relevant in 30/30 cases)                                             | green (rock-solid fallback)                               |
+| mc-jarvis bank               | 1,637 memories, RED in hindsight-monitor since at least 2026-05-02                | yellow — cap re-tuned, root issue is bank size            |
+| Tests                        | 4024 (4023 + 1 todo), 248 test files, 0 type errors                               | green                                                     |
+| **H/D/R input collected?**   | Yes — 30-query A/B captured pre + post tuning, bank-stratified                    | green (data ready for 5/13 decision)                      |
+
+**Today's lesson (`feedback_recall_aggregate_hides_bank_collapse.md`)**: yesterday's "trilogy delivered 22.2% utility" headline was 88%-on-69mem-bank diluting 7%-on-1637mem-bank. The aggregate-vs-stratified gap masked a complete collapse on the operator's primary bank. Always bank-stratify recall metrics; tune cap to the LARGEST bank, not the aggregate.
+
+**Path 1 tuning applied** (rehab playbook formula, day 12 of 30 freeze, ops-only):
+
+- `crm-azteca/.env` — `HINDSIGHT_RERANKER_MAX_CANDIDATES` 60→100, container restarted
+- `mc/.env` — `HINDSIGHT_RECALL_TIMEOUT_MS` 5000→8000, mc restarted
+- `mc-ctl recall-compare` cap raised 20→50 so the H/D/R-decision A/B can run at the intended N=30 without silent truncation
+
+**Result**: mc-operational fully recovered (0/15 → 15/15). mc-jarvis partially recovered (0/15 → 4/15). The 1,637-mem bank's parallel_retrieval phase dominates the time budget, leaving inadequate room for reranking even at cap=100/8s timeout. Per playbook, even cap=200/12s would only push mc-jarvis success to ~50% — and 12s tax per miss is too long for chat.
+
+**Strategic shape for the 2026-05-13 H/D/R decision**: per-bank verdict, not single-stack.
+
+- **mc-operational** → HARDEN. Hindsight delivers, current tuning is correct, ship the operational improvements (e.g., bump red-alert thresholds into mc-side logging, not just out-of-tree audit DB).
+- **mc-jarvis** → DEMOTE. Set `HINDSIGHT_RECALL_ENABLED=false` on this bank specifically (mc supports per-bank routing). SQLite returned 30/30 semantically relevant top-3 in the A/B at 438ms — operationally superior on this bank.
+
+---
+
+## Tomorrow's queue (24h validation cadence)
+
+1. **24h post-tune recall_audit re-baseline**: `mc-ctl recall-utility 24h` after a real working day. Confirm: aggregate utility lifts vs the May 2 22.2% baseline; bank-stratified mc-operational utility lands ≥40% (it was 88% on Hindsight calls in the A/B, but production mix dilutes); mc-jarvis stays low — that's the H/D/R DEMOTE evidence ripening.
+2. **Verify circuit breaker fires under the new 8s cap**: `journalctl -u mission-control --since '24h ago' | grep "Circuit breaker OPEN"`. The breaker was tuned to 5s timeouts; check it still triggers correctly at the new 8s tax.
+3. **Re-run `mc-ctl recall-compare 30 14d`** in 48-72h with fresh queries from new operator traffic, verify the post-tune ratios hold.
+4. **Operational tightening (per today's lesson)** — bring red-alert thresholds into mc-side logging: when recall happens against a bank with ≥200 memories under cap=60 (or proportional), log a structured warning at recall time. Today's collapse was silent because mc didn't know the bank size. Consider: extend `mc-ctl status` to print per-bank memory counts + alert level.
+5. **Decide whether to commit per-bank `HINDSIGHT_RECALL_ENABLED` routing** before 5/13. If we'll DEMOTE mc-jarvis based on the data, the routing primitive needs to land first. Estimated 30-min change in `hindsight-backend.ts` (read env, branch on bankId).
+
+---
+
+## Original end-of-day health snapshot (2026-04-30 00:32 UTC, post-trilogy deploy)
 
 | Item                       | Reading                                                                                   | Status                                          |
 | -------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |

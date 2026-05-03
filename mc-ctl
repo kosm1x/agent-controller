@@ -574,14 +574,15 @@ cmd_recall_compare() {
   # Used to inform the 2026-05-13 HARDEN/DEMOTE/REPLACE decision.
   #
   # Usage: mc-ctl recall-compare [N] [SINCE]
-  #   N     = number of unique queries to replay (default 5, max 20)
+  #   N     = number of unique queries to replay (default 5, max 50)
   #   SINCE = window for sourcing queries (default 24h, accepts Nh/Nd/Nm)
   need_db
   local n="${1:-5}"
   local since_arg="${2:-24h}"
 
-  # Validate N is small positive integer
-  if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt 20 ]; then
+  # Validate N is small positive integer. Cap raised from 20 → 50 on 2026-05-03
+  # so the H/D/R-decision A/B (target 30) doesn't silently truncate.
+  if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt 50 ]; then
     echo -e "${YELLOW}Invalid N '${n}', falling back to 5${NC}"
     n=5
   fi
