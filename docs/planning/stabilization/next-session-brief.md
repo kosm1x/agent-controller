@@ -103,6 +103,48 @@ Substrate work complete inside the freeze window.
 
 ---
 
+## 🔴 2026-05-04 01:09 UTC — H/D/R PULLED FORWARD: mc-jarvis Hindsight DISABLED (interim)
+
+**Operator decision** (verbatim): _"Disable. We'll have to review our options with Hindsight sooner than expected."_
+
+**Action applied** (live, not pending):
+
+```
+echo "HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis" >> /root/claude/mission-control/.env
+systemctl restart mission-control
+```
+
+PID flipped 2383170 → 3870759. Env var confirmed in `/proc/<NEWPID>/environ`. Tool sources loaded (5 sources, 254 tools, 0 failed). Service active.
+
+### Trigger conditions at decision time
+
+- mc-jarvis bank: **1,589 memories** (was 1,164 at 19:54 — **+425 in 5h, accelerating to ~230/h growth rate during heavy operator chat**)
+- 8s-cap timeouts: 6 in last 35 min, all fallback-to-SQLite (latency tax ~5-8s per chat task)
+- 24h aggregate cache-hit: 47.6% (separate concern, separately filed)
+- Operator's chat session burning $4-5/hr; the timeout tax is contributing meaningfully
+
+### What this changes
+
+- **mc-jarvis bank** now bypasses Hindsight at recall time. Logged as `recall_audit.source='bank-disabled'`. Hybrid SQLite (FTS5+embed) handles all recall queries on this bank instead.
+- **mc-operational + mc-system stay on Hindsight** — they're within the cap=60 reranker sweet spot.
+- **Retain/reflect remain on Hindsight on mc-jarvis** — bank stays current. We can re-enable instantly by deleting the .env line + restart.
+
+### What was originally scheduled for 5/13 H/D/R review — now happening sooner
+
+The hypothesis (per `feedback_recall_aggregate_hides_bank_collapse.md` and Session 124 audit): mc-jarvis is past the cap=60 reranker capacity (~150 memories) and recall is silent attrition. The ~230/h growth rate during chat sessions makes the catch-up math impossible without (a) bigger reranker, (b) bank pruning, or (c) replace Hindsight for this bank entirely.
+
+**Now-actionable review items** for the next mc session:
+
+1. **Confirm the disable is healthy in production** — first chat task after restart should show `recall_audit.source='bank-disabled'` row. Run `sqlite3 mc.db "SELECT source, COUNT(*) FROM recall_audit WHERE bank='mc-jarvis' AND created_at > '2026-05-04 01:10' GROUP BY source"` after operator's next chat session.
+2. **Compare chat task latency before/after** — pre-disable, fast-runner tasks were taking ~3 min average (some of that was the 8s recall tax × multiple replans). Post-disable, expect chat tasks to drop ~5-15s in wall time.
+3. **Bank-pruning options** — mc-jarvis at 1,589 memories: how much is current vs decayed? Consolidation tools exist (per `feedback_hindsight_consolidation_additive.md`) but consolidation is ADDITIVE — doesn't shrink the bank, just adds higher-tier observations. Real shrinkage requires explicit DELETE policy.
+4. **The H/D/R framework** (HARDEN / DEMOTE / REPLACE) was framed for the 5/13 decision. With DEMOTE-mc-jarvis now in effect interim, the live decision narrows to: keep DEMOTE indefinitely vs REPLACE Hindsight as a service for the operator's primary bank vs HARDEN (which means bigger reranker / cheaper retrieval = months of rework).
+5. **mc-operational + mc-system** stay under observation. If they grow into the same regime (currently 41 + 10), repeat the audit and disable as needed.
+
+**Reversibility**: comment out the .env line + restart. Bank stays current via retain/reflect; flipping back is instant.
+
+---
+
 ## 2026-05-04 hardening discovery — jarvis-fs disk→DB drift
 
 **Surfaced** during operator-side work on a separate project (denue), while deploying a new `directives/long-running-tmux.md` directive. Verified: **`jarvis-fs.js` mirrors DB→disk via `mirrorToDisk()` but there is NO disk→DB import.** Operator edits to `/root/claude/jarvis-kb/**/*.md` files (via Obsidian / text editor) do not propagate to mc.db, so kb-injection serves stale content from the SQLite store.
