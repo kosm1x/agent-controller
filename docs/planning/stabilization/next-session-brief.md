@@ -103,6 +103,38 @@ Substrate work complete inside the freeze window.
 
 ---
 
+## 2026-05-04 hardening discovery — jarvis-fs disk→DB drift
+
+**Surfaced** during operator-side work on a separate project (denue), while deploying a new `directives/long-running-tmux.md` directive. Verified: **`jarvis-fs.js` mirrors DB→disk via `mirrorToDisk()` but there is NO disk→DB import.** Operator edits to `/root/claude/jarvis-kb/**/*.md` files (via Obsidian / text editor) do not propagate to mc.db, so kb-injection serves stale content from the SQLite store.
+
+**Drift found at discovery time** (2026-05-04 00:30 UTC):
+
+| File                               | Disk (operator)                                       | DB (Jarvis runtime)         | Symptom                                                                       |
+| ---------------------------------- | ----------------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------- |
+| `directives/context-management.md` | 1295 chars (today's Spanish rewrite)                  | 592 chars (April 3 English) | Operator's intended directive WAS NEVER live                                  |
+| `directives/core.md`               | 599 chars (truncated — likely Obsidian save accident) | 3684 chars (rich, current)  | Disk silently corrupted; DB protected because no DB write triggered overwrite |
+
+Other 4 directives in `directives/` happen to align (no recent disk edits since their last DB write).
+
+**Immediate action taken (operator-session, not Jarvis):**
+
+- `directives/context-management.md` synced disk → DB (operator's edit is canonical).
+- `directives/core.md` synced DB → disk (recover the 3084 chars the disk had lost).
+- New `directives/long-running-tmux.md` (qualifier=`enforce`) inserted directly via `python3 + sqlite3` since there is no operator-facing tool to upsert into `jarvis_files`. Disk + DB hashes match (`1acf465e`).
+
+**Hardening required (for the freeze charter — pick up next mc session):**
+
+1. **Disk → DB importer.** A `mc-ctl directives-sync` admin command (or a one-shot script under `scripts/`) that walks `/root/claude/jarvis-kb/`, finds files with mtime > corresponding `jarvis_files.user_edit_time`, and calls `upsertFile()` for each. Must be idempotent + emit a summary of what changed. Same goes for `knowledge/`, `projects/`, `NorthStar/`.
+2. **(Stretch) fs-watcher**: optional inotify-based daemon that auto-imports on file change. Lower-priority — the explicit CLI is enough for the operator's workflow if invoked after editing sessions.
+3. **Drift-detect endpoint**: `GET /api/admin/jarvis-fs-drift` that returns the same disk-vs-DB hash comparison I ran in the discovery script. Fast, idempotent. Surface in `mc-ctl status` as a yellow flag if any directive is out of sync.
+4. **Disk-write directionality docs**: add a comment in `jarvis-fs.js` explaining the one-way mirror, and a section in `mc/CLAUDE.md` clarifying the operator-side workflow ("disk edits don't auto-propagate; run `mc-ctl directives-sync` after editing").
+
+**Why this fits the freeze**: This is reliability/correctness, not a feature. The current state means the operator can edit a directive, see the file on disk, and falsely believe it's live — then watch Jarvis behave inconsistently with the directive he just "deployed." That's a stabilization-class bug.
+
+**Estimated cost**: ~3-4 hours for #1+#3+#4 in one bundled commit. #2 is a separate ~half-day if pursued.
+
+---
+
 ## Original end-of-day health snapshot (2026-04-30 00:32 UTC, post-trilogy deploy)
 
 | Item                       | Reading                                                                                   | Status                                          |
