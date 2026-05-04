@@ -357,6 +357,27 @@ Indexed in `reference_local_hooks.md`. Rollback: `mv ~/.claude/settings.json.bak
   - `cache_pct 80-87%` → S1 partial win, document and consider follow-up
   - `cache_pct < 80%` → S1 didn't reach the cache layer expected; re-audit message-emission order, possibly add `cache_control` markers
 - Slice by date+hour to detect cold-start effects. Drop first ~5 post-restart tasks.
+
+**🔔 PROMOTED 2026-05-04 00:37 UTC — N=111 long-since past threshold, audit-claim ready to run.**
+
+Operator-side measurement run during the 2026-05-03 denue session yielded:
+
+- **24h cache-hit ratio: 47.6%** (claude-sonnet-4-6, fast runner, n=111, $43.51 24h cost)
+- **1h cache-hit ratio: 83.5%** (during stable-prefix chat session) — proves the cache CAN reach the high band when prefix is stable
+- The 24h dip vs 1h spike confirms `feedback_cache_prefix_variability.md` is still in play — variable scope/KB injection in prompt prefix is breaking cache across tasks even after S1
+
+**Action queue, in order:**
+
+1. Run `mc-ctl audit-claim cache-hit --window=24h --stratify-by=agent_type` — does the dip concentrate in one runner, or is it uniform?
+2. If concentrated in `fast` runner: inspect the chat-path prompt builder for variable content above the first stable prefix marker.
+3. If uniform: the dip is in the always-on prefix (essentials, enforce-KB, always-read-KB) — re-audit message emission order per V8-VISION §3-S1.
+4. Re-measure with `--window=1h` slices for 6 consecutive hours — confirm the 1h=83% holds when prefix is naturally stable, vs whether the chat session was a cherry-pick.
+5. If the audit confirms variable-prefix culprit: add `cache_control` markers explicitly at the boundary between stable-and-variable content.
+
+**Estimated savings**: 47.6% → 70% cache-hit lifts ~$10-15/day off the burn (cache reads cost ~10% of fresh tokens at Sonnet pricing). Annualized: ~$3,500-5,500.
+
+Operator confirmed (2026-05-04 00:37 UTC): "Needs to be addressed." Promote ahead of pure-substrate items in next mc session.
+
 - Bonus check (Session 111 verification): grep `journalctl -u mission-control` for `Scope groups (inherited from prior turn)` — should fire on real "Continúa"-style follow-ups in coding context. If never fires after 24h of organic use, suspect the inheritance branch isn't being reached.
 
 ### P2 — known small cleanups
