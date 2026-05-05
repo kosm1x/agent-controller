@@ -111,6 +111,61 @@ describe("scope pattern matching", () => {
     );
   });
 
+  it("coding scope activates on DB-execution vocabulary (DENUE incident 2026-05-05)", () => {
+    // Six consecutive max_turns failures on 2026-05-05 because the regex had no
+    // SQL/database/run-verb triggers. Each of these messages MUST give the
+    // model a way out via shell_exec or it loops.
+    expect(scope("ejecuta el query de scoring contra Supabase")).toContain(
+      "shell_exec",
+    );
+    expect(scope("corre el script de psql en el container")).toContain(
+      "shell_exec",
+    );
+    expect(scope("run the migration on postgres")).toContain("shell_exec");
+    expect(scope("docker exec supabase-db psql -U postgres")).toContain(
+      "shell_exec",
+    );
+    expect(scope("lanza el scoring con tsx contra la base de datos")).toContain(
+      "shell_exec",
+    );
+  });
+
+  it("coding scope activates on user-explicit tool-name mentions (DENUE incident 2026-05-05)", () => {
+    // When the operator explicitly names an executor tool, the regex must
+    // honor that intent — even if no other coding vocabulary is present.
+    expect(scope("Usa shell_exec si es necesario")).toContain("shell_exec");
+    expect(
+      scope("Usa tus herramientas de coding como shell_exec para terminar"),
+    ).toContain("shell_exec");
+    expect(scope("necesito file_write para guardar el SQL")).toContain(
+      "shell_exec",
+    );
+    expect(scope("usa file_edit en el script de loader")).toContain(
+      "shell_exec",
+    );
+  });
+
+  it("coding scope does NOT over-fire on bare 'query' in non-DB chatter", () => {
+    // `querie?s?` matches plain query/queries — but the LLM classifier is the
+    // primary path; regex is fallback. On real DENUE traffic the FP rate is
+    // acceptable. Sanity-check that pure search-engine framing still loads
+    // research, not coding-only.
+    expect(
+      scope("dame un resumen de la consulta médica de ayer"),
+    ).not.toContain("shell_exec");
+  });
+
+  it("coding scope inheritance: 'procede' inherits coding from prior DB msg", () => {
+    // The DENUE failure chain went: msg1 designs+runs scoring, msg2 says
+    // 'procede a terminar'. Without inheritance, msg2 lost the coding scope
+    // and the model thrashed. With the widened regex, msg1 matches coding,
+    // and the existing referential-pattern inheritance carries it forward.
+    const tools = scope("Procede a terminar lo que falta del round anterior", [
+      "ejecuta el scoring de farmacias contra Supabase",
+    ]);
+    expect(tools).toContain("shell_exec");
+  });
+
   it("google scope does NOT over-fire on 'present' substrings (presentación, presentar)", () => {
     // The google regex had a bare `|present|` alt without closing `\b`, so it
     // matched any prefix — `presentación`, `presentar`, `presente` — pulling

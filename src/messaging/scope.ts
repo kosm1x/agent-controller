@@ -527,8 +527,22 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "browser",
   },
   {
+    // Bug fix 2026-05-05 (DENUE pharmacy-scoring incident): coding regex previously
+    // missed three classes of legitimate coding intent → 6 consecutive max_turns
+    // failures while the model thrashed looking for shell_exec:
+    //   1. DB-execution vocabulary — sql/psql/query/database/supabase/postgres/
+    //      docker exec/kubectl/tsx/npx — never present in original regex.
+    //   2. Literal user-explicit tool-name mentions — operator typed "shell_exec"
+    //      and "Usa tus herramientas de coding como shell_exec"; neither matched.
+    //      English "coding" was also missing (only c[oó]digo|code).
+    //   3. Run-verb + execution-noun — "ejecuta el query / corre el script /
+    //      run the migration / launch the scoring".
+    // The literal-tool-name arm is the safety net for fix B (user-explicit
+    // tool intent). Word boundaries on every literal prevent FPs on
+    // assistant-paraphrased content.
+    // See feedback_scope_regex_patterns.md (consolidated regex notes).
     pattern:
-      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita(r)?\s+(el\s+)?(archivo|código|script)|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git\b|github|commit|push(ea)?|npm\b|build\b|test\b|lint\b|bug\b|debug|typescript|javascript|python|react\b|node\.?js|funci[oó]n|rutina|programa(r|ción)?|repositori|repo\b|refactor|implementa|escrib[eiao]\w*\s+(?:\S+\s+){0,2}(?:c[oó]digo|script|rutina|funci[oó]n|programa|clase|m[oó]dulo)|jarvis_dev|mejora\s+tu|fix\s+your|arregla\s+tu|agrega\s+(?:un\s+)?(?:adapter|adaptador|tool|herramienta)|crea\s+(?:un\s+)?branch|abre\s+(?:un\s+)?pr)/i,
+      /\b(c[oó]digo|code|archivos?|files?|scripts?|deploy|edita(r)?\s+(el\s+)?(archivo|código|script)|grep|busca(r)?\s+en|estructura|directori|carpetas?|servers?|servidores?|git\b|github|commit|push(ea)?|npm\b|build\b|test\b|lint\b|bug\b|debug|typescript|javascript|python|react\b|node\.?js|funci[oó]n|rutina|programa(r|ción)?|repositori|repo\b|refactor|implementa|escrib[eiao]\w*\s+(?:\S+\s+){0,2}(?:c[oó]digo|script|rutina|funci[oó]n|programa|clase|m[oó]dulo)|jarvis_dev|mejora\s+tu|fix\s+your|arregla\s+tu|agrega\s+(?:un\s+)?(?:adapter|adaptador|tool|herramienta)|crea\s+(?:un\s+)?branch|abre\s+(?:un\s+)?pr|sql\b|psql\b|querie?s?\b|database\b|supabase\b|postgres\b|docker\s+exec\b|kubectl\b|tsx\b|npx\b|shell_exec\b|file_write\b|file_edit\b|file_delete\b|jarvis_test_run\b|jarvis_diagnose\b|coding\b(?=\s+(?:tool|scope|context|herramienta|mode))|herramientas?\s+de\s+coding\b|(?:ejecuta|corre|c[oó]rre|run|launch|lanza)\w*\s+(?:\S+\s+){0,3}(?:query|queries|consulta|consultas|script|scripts|sql|c[oó]digo|comando|migration|migrations?|stored\s+proc(?:edure)?)|scoring\b)/i,
     group: "coding",
   },
   {
