@@ -763,33 +763,111 @@ export const fastRunner: Runner = {
     // the failure mode is: model picks web_search over the live DENUE analyzer
     // and fabricates numbers from training data. Tier upgrade (capable) wasn't
     // enough — task 9ec29034 hit zero analyzer endpoints despite Opus tier.
-    // This injects a non-skippable guard system message that forces the
-    // analyzer endpoint as the first tool call. See:
-    //   - jarvis-kb/directives/denue-analyzer-granularities.md (full directive)
+    // This injects a non-skippable guard system message that forces a real
+    // data path as the first tool call. See:
+    //   - jarvis-kb/directives/denue-patterns.md (12 patterns, intent → path)
+    //   - jarvis-kb/directives/denue-analyzer-granularities.md (schema reference)
     //   - feedback_data_authoring_no_verification.md (anti-pattern catalog)
     if (hasHighStakesDataSignal(`${input.title}\n${input.description}`)) {
       messages.push({
         role: "system",
-        content: `⛔ HIGH-STAKES DATA PROMPT DETECTED.
+        content: `⛔ DENUE ANALYZER QUERY DETECTED.
 
-The user is asking a question that REQUIRES live data from the DENUE analyzer (https://uncharted.eurekamd.cloud/api/...). This pattern has produced 100% fabrication failures (tasks b59dbab6, 9ec29034) when the model used web_search instead.
+The DENUE Analyzer system holds BOTH commercial data (6.1M establecimientos, COFEPRIS) AND demographic data (censo_iter 290 cols, censo_ageb 64k AGEBs, censo_manzana 1.6M blocks, coneval_*, sinba_*, sesnsp_*, EDR mortalidad, ENIGH, ENOE, aeropuertos). Demographic / crime / mortality / tourism queries are ALL valid DENUE Analyzer queries — do NOT tell the operator "this needs INEGI data, not DENUE."
 
-HARD RULES:
-1. Your FIRST tool call MUST be \`http_fetch\` to one of these analyzer endpoints (header: X-Api-Key from env DENUE_API_KEY or DENUE_ANALYZER_API_KEY):
-   - /api/analytics/opportunity-by-ageb?cve_mun=NNNNN&target_scian=NNNNNN[,...]
-   - /api/analytics/opportunity-by-colonia?cve_mun=NNNNN&target_scian=NNNNNN[,...]
-   - /api/analytics/agebs-by-municipio?cve_mun=NNNNN
-   - /api/analytics/manzanas-by-ageb?cvegeo=NNNNNNNNNNNNN&order_by=pobtot|tvivpar|vph_inter
-   - /api/analytics/colonias-by-ageb?cvegeo=NNNNNNNNNNNNN
-   - /api/analytics/licensed-pharmacies-by-municipio?cve_mun=NNNNN  (COFEPRIS)
-   - /api/analytics/licensed-pharmacies-by-ageb?cvegeo=NNNNNNNNNNNNN
-   - /api/analytics/ageb-detail?cvegeo=NNNNNNNNNNNNN
-2. \`web_search\` and \`web_read\` are FORBIDDEN as the primary source for any number, ranking, or AGEB/manzana/colonia identification. Use only AFTER the API has been called and returned data.
-3. Do NOT invent cvegeo strings (must be 13 chars: 12 digits + 1 char). Do NOT invent population/density/farmacia counts. Every number in your output must trace to an HTTP response you received in this run.
-4. SCIAN for farmacias = 464111 (sin controlados) and 464112 (con controlados). NEVER 461110/461111/461112 (those are abarrotes, not pharmacies).
-5. If the API returns 0 rows or 4xx/5xx, REPORT that fact and ASK the operator for clarification — do not fall back to web_search.
+Fabrication failures (tasks b59dbab6, 9ec29034, ed3999e9) hit 100% when the model used web_search or got stuck exploring schema. ALWAYS pick a path below before making any tool call.
 
-Sanity-check: Benito Juárez CDMX = cve_mun=09014. Iztapalapa = 09007. Cuauhtémoc = 09015. The full granularity reference is at jarvis-kb/directives/denue-analyzer-granularities.md (use \`jarvis_file_read\` if you need it).`,
+═══ API PATH (most patterns — first tool = \`http_fetch\` to https://uncharted.eurekamd.cloud) ═══
+
+**API KEY** (REQUIRED for all /api/analytics/* and /api/establishment/* endpoints — \`/api/health\` is the only unauthenticated endpoint): the value lives in the analyzer's own \`.env\` file, NOT in mc's process env. Extract once with \`shell_exec\`:
+\`\`\`bash
+grep '^API_KEY=' /root/claude/projects/data-intelligence/denue-data-analysis/.env | cut -d= -f2-
+\`\`\`
+Then pass that literal value as header \`X-Api-Key: <value>\` on every subsequent \`http_fetch\` call. Don't grep again — store it in your reasoning.
+
+
+| Pattern                               | Endpoint                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| Site selection (dónde abrir)          | \`/api/analytics/opportunity-by-ageb?cve_mun=&target_scian=\` (chain)     |
+| Sub-AGEB drilldown (manzana, colonia) | \`/api/analytics/manzanas-by-ageb?cvegeo=&order_by=pobtot|tvivpar|vph_inter\` |
+|                                       | \`/api/analytics/colonias-by-ageb?cvegeo=\`                                |
+| Cross-layer intersection              | \`/api/analytics/opportunity-by-ageb?...&rezago_grado=Alto,Muy alto\` (response per row already includes \`casos_dm2_muni\`, \`casos_hta_muni\`, \`pct_sin_cobertura_salud\` — sort/filter client-side; for health verticals always use farmacia SCIAN \`464111,464112\`, do NOT encode "DM2" / "HTA" as a SCIAN code, those are conditions not industries) |
+| AGEB detail (rezago + sectores + 17 indicadores) | \`/api/analytics/ageb-detail?cvegeo=\`                          |
+| Public-data: crime                    | \`/api/analytics/risk-summary?entidad=NN\` (year-over-year totals)         |
+|                                       | \`/api/analytics/risk-trend?cve_mun=NNNNN\` (monthly series)               |
+| Public-data: mortality                | \`/api/analytics/mortality-summary?cve_mun=NNNNN\`                         |
+|                                       | \`/api/analytics/mortality-trend?cve_mun=NNNNN\`                           |
+| Coverage / health-check               | \`/api/health\`, \`/api/entidades\`, \`/api/summary/entidad/NN\`           |
+| Travel / tourism influx (aeropuertos) | \`/api/analytics/airports-by-municipio?cve_mun=\` (or no param = top)     |
+| License / regulatory (pharma COFEPRIS)| \`/api/analytics/licensed-pharmacies-by-municipio?cve_mun=\`              |
+|                                       | \`/api/analytics/licensed-pharmacies-by-ageb?cvegeo=\`                    |
+| Establishment detail by CLEE          | \`/api/establishment/:clee\`                                               |
+
+═══ SQL PATH (no API endpoint exists — first tool = \`shell_exec\` with \`docker exec supabase-db psql -U postgres -d postgres -c "<SQL>"\`) ═══
+
+**Pattern: Demographic ranking** ("top N munis por [demografía]", "más densidad de [grupo]", "% de [característica]"):
+Tabla \`censo_iter\` (290 cols, ALL \`text\` — cast \`::int\` o \`::numeric\`). Filter \`loc='0000'\` for muni-rollup.
+\`\`\`sql
+SELECT entidad, mun, nom_ent, nom_mun,
+       pobtot::int AS pob_total,
+       <metric>::int AS pob_metric,
+       ROUND(<metric>::numeric / NULLIF(pobtot::int, 0) * 100, 2) AS pct
+FROM censo_iter
+WHERE loc='0000' AND pobtot::int >= 10000
+ORDER BY pct DESC LIMIT N;
+\`\`\`
+Columnas comunes: \`pob65_mas\`, \`p_60ymas\`, \`pob85_mas\`, \`p_18a24\`, \`p_25a59\`, \`pobfem\`, \`pobmas\`, \`psinder\`, \`pder_imss\`, \`vph_inter\`, \`vph_autom\`, \`graproes\`.
+⛔ \`mun_polygons\` es geometría sólo — NO demografía. \`censo_municipios\` es vista 17-col — NO tiene \`pob65_mas\`.
+
+**\`establecimientos\` table — schema cheatsheet** (cast carefully; some fields are \`text\` even when numeric):
+- \`entidad\` (2-char state code, INDEXED) — use this for state-only filters: \`WHERE entidad='09'\`
+- \`area_geo\` (5-char concat = entidad+mun, INDEXED) — use this for muni-level filters: \`WHERE area_geo='09014'\` ← **NOTE: column is \`area_geo\` NOT \`cve_mun\`**
+- \`municipio\` (text — muni name in Spanish, NOT the code)
+- \`clase_actividad_id\` (6 chars, INDEXED) — full SCIAN
+- \`sector_actividad_id\` (2), \`subsector_actividad_id\` (3), \`rama_actividad_id\` (4), \`subrama_actividad_id\` (5)
+- \`razon_social\` (text, may be NULL for autónomos)
+- \`nombre\` (text, commercial name — noisy)
+
+**Pattern: Brand / razón social count** ("cuántas tiendas [MARCA]"):
+\`\`\`sql
+SELECT razon_social, COUNT(*) AS n
+FROM establecimientos
+WHERE razon_social ILIKE '%MARCA%' OR nombre ILIKE '%MARCA%'
+GROUP BY razon_social ORDER BY n DESC LIMIT 20;
+\`\`\`
+
+**Pattern: Vertical footprint count** ("cuántas farmacias en [MUNI/ESTADO]"):
+\`\`\`sql
+-- State-level (use entidad)
+SELECT COUNT(*) FROM establecimientos
+WHERE clase_actividad_id IN ('464111','464112') AND entidad='09';
+
+-- Muni-level (use area_geo, NOT cve_mun)
+SELECT COUNT(*) FROM establecimientos
+WHERE clase_actividad_id IN ('464111','464112') AND area_geo='09014';
+\`\`\`
+SCIAN dispatch by length: 2→\`sector_actividad_id\`, 3→\`subsector_actividad_id\`, 4→\`rama_actividad_id\`, 5→\`subrama_actividad_id\`, 6→\`clase_actividad_id\`.
+
+**Pattern: Competitive saturation** ("quién domina X en Y", "principales competidores"):
+\`\`\`sql
+SELECT razon_social, COUNT(*) AS sucursales,
+       ROUND(100.0*COUNT(*)/SUM(COUNT(*)) OVER (), 2) AS pct_share
+FROM establecimientos
+WHERE clase_actividad_id IN ('464111','464112') AND area_geo='14039'
+  AND razon_social IS NOT NULL
+GROUP BY razon_social ORDER BY sucursales DESC LIMIT 10;
+\`\`\`
+
+═══ HARD RULES ═══
+
+1. \`web_search\` / \`web_read\` are FORBIDDEN as the primary source for ANY number, ranking, identifier, or AGEB/manzana/colonia name. Use only AFTER API/SQL has returned data.
+2. Do NOT invent cvegeo strings (13 chars urban / 9 chars rural). Do NOT invent population, count, density, or any other figure. Every number must trace to a tool response from THIS run.
+3. SCIAN farmacias = \`464111\` (sin controlados) + \`464112\` (con controlados). NEVER \`461110/461111/461112\` (those are abarrotes).
+4. If the API/SQL returns 0 rows or 4xx/5xx, REPORT that fact and ASK the operator. Do NOT fall back to web_search.
+5. Don't waste turns exploring schema with \`\\d table\` — the tables/columns above are canonical. If you need something not listed, \`jarvis_file_read\` on \`directives/denue-patterns.md\` (12 patterns w/ full recetas) or \`directives/denue-analyzer-granularities.md\` (schema reference).
+6. **Trust the API/SQL result on first call.** If the API returns N rows (even if N < requested limit), that IS the answer — small result sets reflect reality (e.g., only 3 AGEBs with rezago=Alto in a muni). Do NOT cross-check the same question via the OTHER path. If the result truly looks wrong, ask the operator before chaining more queries.
+
+Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guadalajara=14039, Monterrey=19039, Cancún=23005, Tlaxcala entidad=29.`,
       });
     }
 

@@ -29,12 +29,15 @@ import { extractKeywords } from "./keywords.js";
  * of "must hit the API" prompts and costs prompt tokens for the guard.
  */
 export const HIGH_STAKES_DATA_PATTERNS_EXPORTED: readonly RegExp[] = [
+  /\bdenue\b/i, // any DENUE Analyzer mention activates routing guard
   /\bsite[- ]selection\b/i,
   /\bgreenfield\b/i,
   /\bscoring\b/i,
   /\bscorer\b/i,
   /\branking de\b/i, // ES: "ranking de farmacias"
   /\btop \d+/i,
+  /\bmás densidad de\b/i, // ES: "más densidad de [grupo]"
+  /\bmayor (densidad|porcentaje|proporción|concentración) de\b/i,
   /\bmejores (ubicaciones|locales)\b/i,
   /\boportunidades?\b/i,
   /\bdónde (abrir|poner)\b/i,
