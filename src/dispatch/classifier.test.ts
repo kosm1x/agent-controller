@@ -186,6 +186,44 @@ describe("classifier", () => {
     });
     expect(result.modelTier).toBe("standard");
   });
+
+  // 2026-05-06 regression — task b59dbab6 fired a 52-word ranking question,
+  // routed to flash, fabricated 1500 words of farmacia rankings without
+  // calling the DENUE API. New high-stakes-data tier-upgrade keywords cover
+  // the prompt patterns that should never be answered without DB access.
+  it("should tier up to capable for greenfield site-selection prompts (regression b59dbab6)", () => {
+    const result = classify({
+      title: "Top farmacias greenfield CDMX",
+      description:
+        "Dame el top 10 de AGEBs en CDMX para abrir una farmacia greenfield. Output narrativo, una decisión de site-selection.",
+    });
+    expect(result.modelTier).toBe("capable");
+    expect(result.reason).toContain("high-stakes data prompt");
+  });
+
+  it("should tier up to capable for ranking-de-X prompts in Spanish", () => {
+    const result = classify({
+      title: "Ranking municipios pharma",
+      description: "Dame el ranking de municipios para abrir farmacia",
+    });
+    expect(result.modelTier).toBe("capable");
+  });
+
+  it("should tier up to capable for 'qué AGEB / colonia' wh-questions", () => {
+    const result = classify({
+      title: "AGEB selection",
+      description: "Qué AGEB es la mejor para abrir un local en Iztapalapa",
+    });
+    expect(result.modelTier).toBe("capable");
+  });
+
+  it("should NOT tier up to capable for routine non-data tasks", () => {
+    const result = classify({
+      title: "Disk usage",
+      description: "Show disk usage of /var/log",
+    });
+    expect(result.modelTier).toBe("flash");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,32 @@ import {
 } from "../db/task-outcomes.js";
 import { extractKeywords } from "./keywords.js";
 
+/**
+ * Patterns that signal a high-stakes data prompt — i.e. one where the model
+ * MUST hit the live DENUE analyzer / DB rather than fabricate from training
+ * data + web search. Exported so fast-runner.ts can re-check the same signal
+ * and inject a guard system message at prompt-build time.
+ *
+ * Keep this list small and additive only — each pattern broadens the scope
+ * of "must hit the API" prompts and costs prompt tokens for the guard.
+ */
+export const HIGH_STAKES_DATA_PATTERNS_EXPORTED: readonly RegExp[] = [
+  /\bsite[- ]selection\b/i,
+  /\bgreenfield\b/i,
+  /\bscoring\b/i,
+  /\bscorer\b/i,
+  /\branking de\b/i, // ES: "ranking de farmacias"
+  /\btop \d+/i,
+  /\bmejores (ubicaciones|locales)\b/i,
+  /\boportunidades?\b/i,
+  /\bdónde (abrir|poner)\b/i,
+  /\bqué (ageb|municipio|colonia|manzana|bloque)\b/i,
+];
+
+export function hasHighStakesDataSignal(text: string): boolean {
+  return HIGH_STAKES_DATA_PATTERNS_EXPORTED.some((p) => p.test(text));
+}
+
 export type ModelTier = "flash" | "standard" | "capable";
 
 export interface ClassificationInput {
@@ -207,15 +233,33 @@ export function classify(input: ClassificationInput): ClassificationResult {
     /\bdesign/i,
     /\baudit/i,
   ];
+  // High-stakes data tasks where flash-tier fabrication has burned us before.
+  // 2026-05-06 task b59dbab6: a 52-word ranking question routed to flash and
+  // produced 1,500 words of fabricated farmacia rankings (zero DB queries).
+  // These prompts get tiered up to "capable" regardless of word count.
+  // Keep the array small — each entry costs prompt tokens at runtime.
+  // Exported for fast-runner.ts to inject a guard system message that forces
+  // analyzer endpoint usage before web_search (regression task 9ec29034:
+  // capable tier alone wasn't enough — better prose, same fabrication).
+  const HIGH_STAKES_DATA_PATTERNS = HIGH_STAKES_DATA_PATTERNS_EXPORTED;
   const hasArchSignal = ARCHITECTURE_PATTERNS.some((p) => p.test(text));
+  const hasHighStakesData = HIGH_STAKES_DATA_PATTERNS.some((p) => p.test(text));
 
   let modelTier: ModelTier;
-  if (hasArchSignal || agentType === "heavy" || agentType === "swarm") {
+  if (
+    hasArchSignal ||
+    hasHighStakesData ||
+    agentType === "heavy" ||
+    agentType === "swarm"
+  ) {
     modelTier = "capable";
   } else if (wordCount > 100 || score >= 3) {
     modelTier = "standard";
   } else {
     modelTier = "flash";
+  }
+  if (hasHighStakesData) {
+    reasons.push("high-stakes data prompt → tier=capable");
   }
 
   return {

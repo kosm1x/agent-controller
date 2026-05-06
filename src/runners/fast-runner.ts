@@ -10,6 +10,7 @@ import { inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
+import { hasHighStakesDataSignal } from "../dispatch/classifier.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
@@ -754,6 +755,41 @@ export const fastRunner: Runner = {
       messages.push({
         role: "user",
         content: `Task: ${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
+      });
+    }
+
+    // 2026-05-06 fabrication-prevention guard.
+    // For high-stakes data prompts (ranking, site-selection, greenfield, etc.)
+    // the failure mode is: model picks web_search over the live DENUE analyzer
+    // and fabricates numbers from training data. Tier upgrade (capable) wasn't
+    // enough — task 9ec29034 hit zero analyzer endpoints despite Opus tier.
+    // This injects a non-skippable guard system message that forces the
+    // analyzer endpoint as the first tool call. See:
+    //   - jarvis-kb/directives/denue-analyzer-granularities.md (full directive)
+    //   - feedback_data_authoring_no_verification.md (anti-pattern catalog)
+    if (hasHighStakesDataSignal(`${input.title}\n${input.description}`)) {
+      messages.push({
+        role: "system",
+        content: `⛔ HIGH-STAKES DATA PROMPT DETECTED.
+
+The user is asking a question that REQUIRES live data from the DENUE analyzer (https://uncharted.eurekamd.cloud/api/...). This pattern has produced 100% fabrication failures (tasks b59dbab6, 9ec29034) when the model used web_search instead.
+
+HARD RULES:
+1. Your FIRST tool call MUST be \`http_fetch\` to one of these analyzer endpoints (header: X-Api-Key from env DENUE_API_KEY or DENUE_ANALYZER_API_KEY):
+   - /api/analytics/opportunity-by-ageb?cve_mun=NNNNN&target_scian=NNNNNN[,...]
+   - /api/analytics/opportunity-by-colonia?cve_mun=NNNNN&target_scian=NNNNNN[,...]
+   - /api/analytics/agebs-by-municipio?cve_mun=NNNNN
+   - /api/analytics/manzanas-by-ageb?cvegeo=NNNNNNNNNNNNN&order_by=pobtot|tvivpar|vph_inter
+   - /api/analytics/colonias-by-ageb?cvegeo=NNNNNNNNNNNNN
+   - /api/analytics/licensed-pharmacies-by-municipio?cve_mun=NNNNN  (COFEPRIS)
+   - /api/analytics/licensed-pharmacies-by-ageb?cvegeo=NNNNNNNNNNNNN
+   - /api/analytics/ageb-detail?cvegeo=NNNNNNNNNNNNN
+2. \`web_search\` and \`web_read\` are FORBIDDEN as the primary source for any number, ranking, or AGEB/manzana/colonia identification. Use only AFTER the API has been called and returned data.
+3. Do NOT invent cvegeo strings (must be 13 chars: 12 digits + 1 char). Do NOT invent population/density/farmacia counts. Every number in your output must trace to an HTTP response you received in this run.
+4. SCIAN for farmacias = 464111 (sin controlados) and 464112 (con controlados). NEVER 461110/461111/461112 (those are abarrotes, not pharmacies).
+5. If the API returns 0 rows or 4xx/5xx, REPORT that fact and ASK the operator for clarification — do not fall back to web_search.
+
+Sanity-check: Benito Juárez CDMX = cve_mun=09014. Iztapalapa = 09007. Cuauhtémoc = 09015. The full granularity reference is at jarvis-kb/directives/denue-analyzer-granularities.md (use \`jarvis_file_read\` if you need it).`,
       });
     }
 
