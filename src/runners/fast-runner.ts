@@ -32,6 +32,23 @@ import { getConfig } from "../config.js";
 // Re-export for back-compat with existing imports (e.g. tests).
 export { conditionMatches };
 
+/**
+ * Pick which DENUE high-stakes guard message variant to inject. When neither
+ * `shell_exec` nor `http_fetch` are scoped, the long routing recipe is useless
+ * and Jarvis thrashes via browser/web_read alternatives that can't pass auth
+ * headers. The "advisory" variant tells him to ask the operator to reformulate
+ * with an explicit shell/coding signal instead of attempting a partial answer
+ * from training data. See feedback_jarvis_kb_directive_loading.md for the
+ * 2026-05-06 incident chain that drove this fix.
+ */
+export function highStakesGuardVariant(
+  tools: readonly string[] | undefined,
+): "advisory" | "full" {
+  const hasShell = !!tools?.includes("shell_exec");
+  const hasFetch = !!tools?.includes("http_fetch");
+  return !hasShell && !hasFetch ? "advisory" : "full";
+}
+
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
 Instructions:
@@ -769,9 +786,25 @@ export const fastRunner: Runner = {
     //   - jarvis-kb/directives/denue-analyzer-granularities.md (schema reference)
     //   - feedback_data_authoring_no_verification.md (anti-pattern catalog)
     if (hasHighStakesDataSignal(`${input.title}\n${input.description}`)) {
-      messages.push({
-        role: "system",
-        content: `⛔ DENUE ANALYZER QUERY DETECTED.
+      // Fix D (2026-05-06 follow-up): if scope didn't grant shell_exec OR
+      // http_fetch, the long routing recipe below is useless — Jarvis can't
+      // hit the API (no header support in browser/web_read) and can't run
+      // SQL. He spends 90s thrashing alternatives. Pick the advisory variant
+      // that tells him to ask the operator to reformulate immediately.
+      const variant = highStakesGuardVariant(input.tools);
+      if (variant === "advisory") {
+        messages.push({
+          role: "system",
+          content: `⛔ DENUE ANALYZER QUERY DETECTED — but neither \`shell_exec\` nor \`http_fetch\` are in your current tool scope. This is a scope-classifier miss; you cannot answer this from training data.
+
+DO NOT use \`web_search\`, \`web_read\`, \`browser__*\`, \`exa_search\`, or any other tool to approximate the answer. Those paths cannot pass auth headers and will fabricate numbers.
+
+INSTEAD: respond to the operator with one short sentence asking to reformulate with an explicit shell/coding signal — e.g., "Necesito acceso a shell_exec o http_fetch para correr este query del DENUE Analyzer. Reescribe el mensaje con 'corre el query', 'ejecuta el SQL', o 'usa shell_exec' para activar el scope correcto." Do NOT attempt a partial answer from prior turns.`,
+        });
+      } else {
+        messages.push({
+          role: "system",
+          content: `⛔ DENUE ANALYZER QUERY DETECTED.
 
 The DENUE Analyzer system holds BOTH commercial data (6.1M establecimientos, COFEPRIS) AND demographic data (censo_iter 290 cols, censo_ageb 64k AGEBs, censo_manzana 1.6M blocks, coneval_*, sinba_*, sesnsp_*, EDR mortalidad, ENIGH, ENOE, aeropuertos). Demographic / crime / mortality / tourism queries are ALL valid DENUE Analyzer queries — do NOT tell the operator "this needs INEGI data, not DENUE."
 
@@ -868,7 +901,8 @@ GROUP BY razon_social ORDER BY sucursales DESC LIMIT 10;
 6. **Trust the API/SQL result on first call.** If the API returns N rows (even if N < requested limit), that IS the answer — small result sets reflect reality (e.g., only 3 AGEBs with rezago=Alto in a muni). Do NOT cross-check the same question via the OTHER path. If the result truly looks wrong, ask the operator before chaining more queries.
 
 Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guadalajara=14039, Monterrey=19039, Cancún=23005, Tlaxcala entidad=29.`,
-      });
+        });
+      }
     }
 
     // Adaptive limits based on tool type:

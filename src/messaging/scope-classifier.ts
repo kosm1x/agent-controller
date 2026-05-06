@@ -73,10 +73,14 @@ RULES:
 - "livingjoyfully" without .art/.com → NOT wordpress (it's a project name).
 - VPS/server status questions need NO special group (vps_status is always available).
 - Short follow-ups ("dale", "procede", "sí") → return [].
+- Imperative SQL/data-query verbs are NOT short follow-ups even when brief — "verifica y corre un query en SQL", "corre el SQL contra DENUE", "ejecuta la consulta en supabase", "psql -c '...'", "cómo están distribuidas? corre el query" → ["coding"]. The presence of SQL/database/DENUE/scoring/shell_exec/file_write/file_edit/psql tokens overrides the short-follow-up rule.
+- "Cómo están distribuidas?" or "Dame la distribución" following a prior data-fetch turn → ["coding"] (data drilldown requires the same path as the original query).
 
 RESPOND with JSON array only. No explanation. Examples:
 ["northstar_read","google"]
 ["coding"]
+["coding"]   // for "verifica y corre un query en SQL para confirmar la distribución"
+["coding"]   // for "corre el SQL contra DENUE y dame el top 10"
 []`;
 
 /**

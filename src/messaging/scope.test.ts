@@ -166,6 +166,83 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("shell_exec");
   });
 
+  it("coding safety net fires when semantic classifier returned wrong groups (DENUE incident 2026-05-06)", () => {
+    // Failed task #3 path: LLM classifier returned a non-empty Set without
+    // `coding`, so the existing classifier-bypass branch took the wrong
+    // groups as final. The post-classifier safety net (mirrors google/seo/
+    // northstar pattern) re-scans the message and force-adds `coding` when
+    // strong DB/SQL/DENUE signals are present.
+    const semantic = new Set(["research"]);
+    const tools = scopeToolsForMessage(
+      "verifica y corre un query en SQL para confirmar la distribución de las tiendas",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).toContain("shell_exec");
+  });
+
+  it("coding safety net fires on bare DENUE mention even without coding verbs", () => {
+    // "dame el top 10 de farmacias del DENUE Analyzer" — operator's intent
+    // is a data query but no run-verb. Safety net catches the DENUE token.
+    const semantic = new Set(["research"]);
+    const tools = scopeToolsForMessage(
+      "dame el top 10 de farmacias del DENUE Analyzer",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).toContain("shell_exec");
+  });
+
+  it("coding safety net fires on explicit tool-name mentions even when classifier returned non-empty wrong group", () => {
+    const semantic = new Set(["browser"]);
+    const tools = scopeToolsForMessage(
+      "Usa shell_exec para esto",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).toContain("shell_exec");
+  });
+
+  it("coding safety net inherits via prior-message scan when current msg is conversational drilldown", () => {
+    // Real DENUE incident #2: prior turn = "Cuantas tiendas Llano de la Torre
+    // hay en DENUE?" (coding scope), follow-up = "Cómo están distribuidas?"
+    // (no domain signal). The semantic classifier returned [] for the follow-up
+    // and priorScope inheritance didn't fire (decideActiveGroups path). The
+    // safety net's prior-message scan now keeps coding scope on these
+    // drilldown follow-ups.
+    const semantic = new Set<string>();
+    const tools = scopeToolsForMessage(
+      "Cómo están distribuidas?",
+      ["Cuantas tiendas Llano de la Torre hay en DENUE?"],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).toContain("shell_exec");
+  });
+
+  it("coding safety net does NOT fire on conversational mentions of database/sql in unrelated context", () => {
+    // Generic chatter mentioning "base de datos" without imperative or DB-noun
+    // signals should not trigger coding. Our regex requires concrete DB nouns
+    // (sql/psql/queries/database/supabase/postgres/denue/scoring) — "base de
+    // datos" alone is excluded to avoid FP on Spanish narrative.
+    const semantic = new Set(["research"]);
+    const tools = scopeToolsForMessage(
+      "explícame qué es una base de datos relacional",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).not.toContain("shell_exec");
+  });
+
   it("google scope does NOT over-fire on 'present' substrings (presentación, presentar)", () => {
     // The google regex had a bare `|present|` alt without closing `\b`, so it
     // matched any prefix — `presentación`, `presentar`, `presente` — pulling

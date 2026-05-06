@@ -4,6 +4,7 @@ import {
   hasUserConfirmedDeletion,
   classifyToolError,
   WRITE_TOOLS,
+  highStakesGuardVariant,
 } from "./fast-runner.js";
 
 describe("detectsHallucinatedExecution", () => {
@@ -987,5 +988,39 @@ describe("classifyToolError", () => {
     expect(classifyToolError('{"error":"Something unexpected happened"}')).toBe(
       "transient",
     );
+  });
+});
+
+describe("highStakesGuardVariant (Fix D — DENUE no-tools advisory)", () => {
+  // 2026-05-06 incident: DENUE high-stakes guard fired but neither shell_exec
+  // nor http_fetch were in scope (classifier returned []). Jarvis spent 90s
+  // thrashing browser/web_read. Variant picker now returns "advisory" in this
+  // case so the guard message tells him to ask the operator to reformulate.
+  it("returns 'advisory' when neither shell_exec nor http_fetch are present", () => {
+    expect(highStakesGuardVariant(["web_search", "browser__goto"])).toBe(
+      "advisory",
+    );
+  });
+
+  it("returns 'advisory' when tools is undefined", () => {
+    expect(highStakesGuardVariant(undefined)).toBe("advisory");
+  });
+
+  it("returns 'advisory' when tools is empty array", () => {
+    expect(highStakesGuardVariant([])).toBe("advisory");
+  });
+
+  it("returns 'full' when shell_exec is present (SQL path available)", () => {
+    expect(highStakesGuardVariant(["shell_exec", "web_search"])).toBe("full");
+  });
+
+  it("returns 'full' when http_fetch is present (API path available)", () => {
+    expect(highStakesGuardVariant(["http_fetch", "browser__goto"])).toBe(
+      "full",
+    );
+  });
+
+  it("returns 'full' when both shell_exec and http_fetch are present", () => {
+    expect(highStakesGuardVariant(["shell_exec", "http_fetch"])).toBe("full");
   });
 });

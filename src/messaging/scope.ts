@@ -972,6 +972,42 @@ export function scopeToolsForMessage(
     ) {
       activeGroups.add("northstar_read");
     }
+    // Coding/SQL/DENUE safety net — semantic classifier silently under-classifies
+    // explicit data-query imperatives. 2026-05-06 incident: "verifica y corre un
+    // query en SQL para confirmar la distribución de las tiendas" returned `[]`
+    // from the LLM despite the prompt having a `coding` SQL example, and prior
+    // turn was empty so inheritance didn't recover it. Jarvis spent 90s thrashing
+    // browser/web_read with no way to pass auth headers. Mirror the
+    // google/seo/northstar injection pattern: re-scan the current message for
+    // strong coding signals and force-add the group, even when classifier
+    // returned a non-empty (but wrong) set or returned empty without recoverable
+    // priorScope. Pattern stays narrow — only DB/SQL/DENUE/explicit-tool nouns
+    // and "corre/ejecuta el query" verb phrases — to avoid false-positives on
+    // generic chatter.
+    {
+      // Concrete DB/tool nouns. Excludes the bare word `scoring` because SEO
+      // and ML conversations also use it ("GEO scoring", "agent self-scoring");
+      // run-verb + scoring co-occurrence is handled by the noun-phrase
+      // alternation below, not as a top-level token.
+      const codingNounRe =
+        /\b(sql|psql|querie?s?|database|supabase|postgres|denue|shell_exec|file_write|file_edit|docker\s+exec)\b/i;
+      const codingVerbRe =
+        /\b(?:ejecuta|corre|c[oó]rre|run|launch|lanza)\w*\s+(?:\S+\s+){0,3}(?:query|queries|consulta|consultas|script|scripts|sql|c[oó]digo|comando|migration|migrations?|stored\s+proc(?:edure)?|scoring)/i;
+      const codingHit = (s: string) =>
+        codingNounRe.test(s) || codingVerbRe.test(s);
+      // Topic carryover: a follow-up like "Cómo están distribuidas?" has no
+      // domain signal of its own, but the prior turn was a DENUE query — the
+      // operator is drilling down on the same topic. Scan prior user messages
+      // so this conversational follow-up keeps coding scope. The slice(-4)
+      // window in recentUserMessages already bounds accumulation risk.
+      if (
+        !activeGroups.has("coding") &&
+        (codingHit(currentMessage) ||
+          recentUserMessages.some((m) => codingHit(m)))
+      ) {
+        activeGroups.add("coding");
+      }
+    }
     // General scope inheritance safety net: always scan prior user messages
     // with the full pattern set and merge any matches into the classifier's
     // output. The classifier regularly under-classifies in two modes:
