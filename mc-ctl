@@ -160,9 +160,48 @@ cmd_stop() {
 }
 
 cmd_restart() {
+  # `systemctl restart` is async — MainPID can flip within seconds while the
+  # OLD pid keeps serving traffic for minutes (see feedback_mc_systemctl_restart_async).
+  # Verify newPid != oldPid AND old pid actually dead before declaring success.
+  local timeout=120
+  local old_pid new_pid old_dead elapsed=0
+
+  if [[ -f "$DB_PATH" ]]; then
+    local running
+    running=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM tasks WHERE status='running';" 2>/dev/null || echo "0")
+    if [[ "${running:-0}" -gt 0 ]]; then
+      echo -e "${YELLOW}WARN${NC}: $running task(s) currently running — restart will kill any in-flight work."
+    fi
+  fi
+
+  old_pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo "0")
+  echo "Old MainPID=$old_pid. Restarting..."
   systemctl restart "$SERVICE_NAME"
-  sleep 2
-  systemctl --no-pager status "$SERVICE_NAME" | head -15
+
+  new_pid="$old_pid"
+  while [[ $elapsed -lt $timeout ]]; do
+    sleep 2
+    elapsed=$((elapsed + 2))
+    new_pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo "0")
+    old_dead="yes"
+    if [[ "$old_pid" != "0" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      old_dead="no"
+    fi
+    if [[ "$new_pid" != "0" && "$new_pid" != "$old_pid" && "$old_dead" == "yes" ]]; then
+      break
+    fi
+    if (( elapsed % 10 == 0 )); then
+      echo "  ${elapsed}s — newPid=$new_pid oldDead=$old_dead"
+    fi
+  done
+
+  if [[ "$new_pid" == "0" || "$new_pid" == "$old_pid" ]] || { [[ "$old_pid" != "0" ]] && kill -0 "$old_pid" 2>/dev/null; }; then
+    echo -e "${RED}Restart did not complete cleanly within ${timeout}s.${NC} oldPid=$old_pid newPid=$new_pid"
+    return 1
+  fi
+
+  echo -e "${GREEN}Restart OK${NC} — newPid=$new_pid (was $old_pid), transition took ${elapsed}s"
+  systemctl --no-pager status "$SERVICE_NAME" | head -10
 }
 
 cmd_logs() {
