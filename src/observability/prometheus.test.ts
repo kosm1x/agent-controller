@@ -6,9 +6,17 @@
  * deterministic per-process. We reset the metric values between cases.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import client from "prom-client";
 import { recordRecallOutcomes, recordRetainOutcome } from "./prometheus.js";
+
+// W3-R2 audit fix (round-2 2026-05-07): protect the prom-client registry
+// from cross-test leakage. If a parallel test file imports prometheus.ts
+// after this one runs, the counters would carry over their accumulated
+// values. resetMetrics() zeros all counters owned by the registry.
+afterAll(() => {
+  client.register.resetMetrics();
+});
 
 function getCounterValue(name: string, labels: Record<string, string>): number {
   const metric = client.register.getSingleMetric(name);

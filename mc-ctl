@@ -663,6 +663,13 @@ cmd_outcome_distribution() {
   # multi-outcome retain (not produced today, but possible) doesn't
   # double-count. First outcome wins, matching the recall-side and
   # recordRetainOutcome semantics.
+  # Round-2 audit note: SQL priority is FIXED (success > concerns > failed
+  # > unknown); JS recordRetainOutcome priority is ARRAY-ORDER first match.
+  # These can diverge if a future producer ever emits multiple outcome:* tags
+  # on a single retain (`["outcome:concerns","outcome:success"]` →
+  # JS counts concerns, SQL counts success). Today's outcome-tag.ts emits
+  # exactly one tag per retain so no live divergence. If multi-outcome
+  # producers ever arrive, decide one priority and align both.
   sql_raw "
     SELECT
       bank,
