@@ -1,9 +1,11 @@
 # v7-Leftovers Queue — Outstanding Items from v7.5 and Earlier
 
+> **Status (2026-05-08)**: Tier-A backlog CLEARED. v7.5 formally closed via `docs/V7.5-CLOSURE.md` + tag `v7.5-closed`. This doc remains as a **post-closure watchlist** for residual Tier-B / Tier-C / Tier-D items. Each has an explicit re-open trigger; until those fire, no engineering effort is required.
+>
 > **Authored**: 2026-05-08
 > **Sibling doc**: `next-sessions-queue.md` (post-freeze stability work — separate track)
 > **Scope**: every v7-roadmap item with status `Planned` / `Gated` / `Partial` / `Deferred-with-trigger` from v7.0 through v7.5. v7.6+ items excluded (current track).
-> **Verification pass run 2026-05-08**: confirmed via `grep` that none of the actionable items have been silently shipped. v7.4 worker-pool exists but is unwired; tool annotations / RationalRewards / F7 session-69 ports have zero references in `src/`.
+> **Verification pass run 2026-05-08**: confirmed via `grep` that none of the actionable items had been silently shipped. v7.4 worker-pool wired in L1; tool annotations + RationalRewards + F7 session-69 ports shipped in L2-L6.
 
 ---
 
