@@ -583,11 +583,12 @@ function scheduleHindsightCostPull(): void {
         const { runHindsightCostPull } =
           await import("./hindsight-cost-pull.js");
         const summary = await runHindsightCostPull();
-        if (summary.recorded > 0 || summary.skipped > 0) {
-          console.log(
-            `[rituals] hindsight-cost-pull: bucket=${summary.bucket} series=${summary.series} recorded=${summary.recorded} skipped=${summary.skipped} cost=$${summary.cost_usd}`,
-          );
-        }
+        // Always log so operators can confirm the ritual is firing even when
+        // Hindsight has been idle (silent-failure resistance — see queue
+        // synthesis "instrument first, decide later" principle).
+        console.log(
+          `[rituals] hindsight-cost-pull: bucket=${summary.bucket} series=${summary.series} recorded=${summary.recorded} skipped=${summary.skipped} cost=$${summary.cost_usd}`,
+        );
       } catch (err) {
         console.error(
           `[rituals] hindsight-cost-pull failed: ${err instanceof Error ? err.message : err}`,
