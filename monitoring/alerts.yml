@@ -122,3 +122,46 @@ groups:
         annotations:
           summary: "MC has tasks running for more than 30 minutes"
           description: "Active tasks: {{ $value }}"
+
+  - name: hindsight
+    rules:
+      # Token-rate spike: 5min rate > 3x the 24h rate, sustained for 10 min.
+      # Catches retry storms (cf. 2026-05-06 qwen3p6-plus $12 burn).
+      - alert: HindsightTokenRateSpike
+        expr: |
+          sum(rate(hindsight_llm_tokens_input_tokens_total[5m]))
+          >
+          3 * sum(rate(hindsight_llm_tokens_input_tokens_total[24h]))
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hindsight input-token rate is 3x its 24h baseline"
+          description: '5-min rate: {{ $value | printf "%.0f" }} tok/s. Possible retry storm or runaway tenant.'
+
+      # Failure-rate alert: success=false rate > 10% over 10 min.
+      # Catches provider degradation, deprecated alias re-emergence, or
+      # circuit-breaker flapping inside Hindsight.
+      - alert: HindsightCircuitErrorRate
+        expr: |
+          sum(rate(hindsight_llm_calls_total{success="false"}[10m]))
+          /
+          sum(rate(hindsight_llm_calls_total[10m]))
+          > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hindsight LLM error rate above 10%"
+          description: 'Error ratio: {{ $value | printf "%.2f" }}. Check provider status + Hindsight logs.'
+
+      # Scrape target down: catches host.docker.internal:8888 unreachable
+      # (Hindsight container stopped, port reassigned, network bridge issue).
+      - alert: HindsightTargetDown
+        expr: up{job="crm-hindsight"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hindsight scrape target unreachable"
+          description: "mc-prometheus cannot reach Hindsight at host.docker.internal:8888 — cost telemetry blind."

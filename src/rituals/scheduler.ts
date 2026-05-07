@@ -200,6 +200,7 @@ export function startRitualScheduler(): void {
   scheduleDiffDigest();
   scheduleMemoryConsolidation();
   scheduleStaleArtifactPrune();
+  scheduleHindsightCostPull();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -561,6 +562,44 @@ function scheduleDiffDigest(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] diff-digest: scheduled (0 20 * * 0, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * Hindsight cost-pull — every 5 min, scrape Hindsight LLM token counters
+ * from mc-prometheus and write per-(scope, model) cost_ledger rows so
+ * Hindsight spend rolls into the 3-window budget. Set
+ * HINDSIGHT_COST_PULL_ENABLED=false to disable. See queue item #4.
+ */
+function scheduleHindsightCostPull(): void {
+  if (process.env.HINDSIGHT_COST_PULL_ENABLED === "false") {
+    console.log("[rituals] hindsight-cost-pull: disabled via env");
+    return;
+  }
+  const job = cron.schedule(
+    "*/5 * * * *",
+    async () => {
+      try {
+        const { runHindsightCostPull } =
+          await import("./hindsight-cost-pull.js");
+        const summary = await runHindsightCostPull();
+        if (summary.recorded > 0 || summary.skipped > 0) {
+          console.log(
+            `[rituals] hindsight-cost-pull: bucket=${summary.bucket} series=${summary.series} recorded=${summary.recorded} skipped=${summary.skipped} cost=$${summary.cost_usd}`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[rituals] hindsight-cost-pull failed: ${err instanceof Error ? err.message : err}`,
+        );
+        recordRitualFailure("hindsight-cost-pull", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] hindsight-cost-pull: scheduled (*/5 * * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 
