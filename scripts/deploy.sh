@@ -10,7 +10,7 @@ cd /root/claude/mission-control
 
 SERVICE="mission-control"
 DB="/root/claude/mission-control/data/mc.db"
-TIMEOUT_SECS=120  # ~max observed slow-shutdown tail; bump if needed
+TIMEOUT_SECS="${MC_DEPLOY_TIMEOUT_SECS:-300}"  # 2026-05-07 audit W7: bumped from 120s — original incident showed 4-min overlap. Override via env.
 
 echo "[deploy] Building..."
 npm run build

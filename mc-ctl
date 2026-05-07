@@ -163,7 +163,7 @@ cmd_restart() {
   # `systemctl restart` is async — MainPID can flip within seconds while the
   # OLD pid keeps serving traffic for minutes (see feedback_mc_systemctl_restart_async).
   # Verify newPid != oldPid AND old pid actually dead before declaring success.
-  local timeout=120
+  local timeout="${MC_DEPLOY_TIMEOUT_SECS:-300}"  # 2026-05-07 audit W7
   local old_pid new_pid old_dead elapsed=0
 
   if [[ -f "$DB_PATH" ]]; then

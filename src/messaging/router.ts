@@ -2244,7 +2244,9 @@ export class MessageRouter {
     // Part 2 of the same queue item.
     try {
       const errorText = (data.error ?? "Unknown error").slice(0, 500);
-      const exchange = `User: ${pending.originalText}\nJarvis: [Task failed] ${errorText}`;
+      // W8 audit fix: cap user text at 2000 to prevent oversized rows.
+      const userText = safeSlice(pending.originalText, 2000);
+      const exchange = `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
       getMemoryService()
         .retain(exchange, {
           bank: "mc-jarvis",
@@ -2286,7 +2288,8 @@ export class MessageRouter {
     // so a future similar query can be ranked against this negative precedent.
     try {
       const reason = (data.reason ?? "cancelled").slice(0, 500);
-      const exchange = `User: ${pending.originalText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
+      const userText = safeSlice(pending.originalText, 2000); // W8 audit fix
+      const exchange = `User: ${userText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
       getMemoryService()
         .retain(exchange, {
           bank: "mc-jarvis",

@@ -1,20 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Mock SQLite via the prepared-statement.run() return shape that
+// hindsight-cost-pull now relies on for INSERT OR IGNORE dedup
+// (`result.changes === 0` => skipped).
 const mocks = vi.hoisted(() => ({
-  exists: vi.fn().mockReturnValue(undefined),
-  recordCost: vi.fn(),
+  insertRun: vi.fn().mockReturnValue({ changes: 1, lastInsertRowid: 1 }),
 }));
 
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({
-      get: mocks.exists,
+      run: mocks.insertRun,
     }),
   }),
-}));
-
-vi.mock("../budget/service.js", () => ({
-  recordCost: mocks.recordCost,
 }));
 
 import { runHindsightCostPull } from "./hindsight-cost-pull.js";
@@ -37,7 +35,7 @@ function promResp(
 describe("hindsight-cost-pull", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.exists.mockReturnValue(undefined);
+    mocks.insertRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
   });
 
   afterEach(() => {
@@ -68,20 +66,23 @@ describe("hindsight-cost-pull", () => {
     expect(summary.series).toBe(1);
     expect(summary.recorded).toBe(1);
     expect(summary.skipped).toBe(0);
-    expect(mocks.recordCost).toHaveBeenCalledOnce();
-    const arg = mocks.recordCost.mock.calls[0][0];
-    expect(arg.agentType).toBe("hindsight");
-    expect(arg.model).toBe("accounts/fireworks/models/minimax-m2p7");
-    expect(arg.promptTokens).toBe(12_000);
-    expect(arg.completionTokens).toBe(4_000);
-    expect(arg.runId).toMatch(/^hindsight-verification-[0-9a-f]{8}-/);
+    expect(mocks.insertRun).toHaveBeenCalledOnce();
+    const args = mocks.insertRun.mock.calls[0];
+    // INSERT OR IGNORE binds: run_id, task_id, agent_type, model, prompt, completion, cost
+    const [runId, taskId, agentType, model, prompt, completion] = args;
+    expect(runId).toMatch(/^hindsight-verification-[0-9a-f]{8}-/);
+    expect(taskId).toBe(runId);
+    expect(agentType).toBe("hindsight");
+    expect(model).toBe("accounts/fireworks/models/minimax-m2p7");
+    expect(prompt).toBe(12_000);
+    expect(completion).toBe(4_000);
     // pricing.ts: minimax-m2p7 = $0.0003/1k in + $0.0012/1k out
     // 12k * 0.0003 + 4k * 0.0012 / 1k = 0.0036 + 0.0048 = 0.0084
     expect(summary.cost_usd).toBeCloseTo(0.0084, 4);
   });
 
-  it("skips series whose run_id already exists (idempotent)", async () => {
-    mocks.exists.mockReturnValue({ "1": 1 });
+  it("skips series whose run_id already exists (INSERT OR IGNORE returns changes=0)", async () => {
+    mocks.insertRun.mockReturnValue({ changes: 0, lastInsertRowid: 0 });
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -106,7 +107,7 @@ describe("hindsight-cost-pull", () => {
 
     expect(summary.recorded).toBe(0);
     expect(summary.skipped).toBe(1);
-    expect(mocks.recordCost).not.toHaveBeenCalled();
+    expect(summary.cost_usd).toBe(0);
   });
 
   it("ignores zero-token series", async () => {
@@ -126,7 +127,7 @@ describe("hindsight-cost-pull", () => {
 
     const summary = await runHindsightCostPull();
     expect(summary.series).toBe(0);
-    expect(mocks.recordCost).not.toHaveBeenCalled();
+    expect(mocks.insertRun).not.toHaveBeenCalled();
   });
 
   it("treats success=false series as billable cost", async () => {
@@ -148,8 +149,9 @@ describe("hindsight-cost-pull", () => {
 
     const summary = await runHindsightCostPull();
     expect(summary.recorded).toBe(1);
-    expect(mocks.recordCost.mock.calls[0][0].promptTokens).toBe(5000);
-    expect(mocks.recordCost.mock.calls[0][0].completionTokens).toBe(0);
+    const [, , , , prompt, completion] = mocks.insertRun.mock.calls[0];
+    expect(prompt).toBe(5000);
+    expect(completion).toBe(0);
   });
 
   it("throws when Prometheus returns error status", async () => {

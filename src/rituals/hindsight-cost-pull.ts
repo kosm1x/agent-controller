@@ -18,7 +18,6 @@
  */
 import { createHash } from "node:crypto";
 import { getDatabase } from "../db/index.js";
-import { recordCost } from "../budget/service.js";
 import { calculateCost } from "../budget/pricing.js";
 
 const DEFAULT_PROM_URL = "http://127.0.0.1:9090";
@@ -107,8 +106,14 @@ export async function runHindsightCostPull(): Promise<PullSummary> {
 
   const allKeys = new Set([...inputBy.keys(), ...outputBy.keys()]);
   const db = getDatabase();
-  const exists = db.prepare(
-    "SELECT 1 FROM cost_ledger WHERE run_id = ? LIMIT 1",
+  // C1 fix: direct INSERT OR IGNORE relies on partial UNIQUE INDEX
+  // idx_cost_ledger_hindsight_run_id (db/index.ts). Two concurrent
+  // ritual runs (e.g. during deploy overlap) cannot double-write the
+  // same bucket — second one's INSERT no-ops at SQLite level.
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO cost_ledger
+       (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   let recorded = 0;
@@ -125,22 +130,23 @@ export async function runHindsightCostPull(): Promise<PullSummary> {
     const scope = metric.scope ?? "unknown";
     const model = metric.model ?? "unknown";
     const runId = `hindsight-${scope}-${shortHash(key)}-${bucketIso}`;
+    const cost = calculateCost(model, promptTokens, completionTokens);
 
-    if (exists.get(runId)) {
-      skipped += 1;
-      continue;
-    }
-
-    recordCost({
+    const result = insert.run(
       runId,
-      taskId: runId,
-      agentType: "hindsight",
+      runId,
+      "hindsight",
       model,
       promptTokens,
       completionTokens,
-    });
-    recorded += 1;
-    costSum += calculateCost(model, promptTokens, completionTokens);
+      cost,
+    );
+    if (result.changes === 0) {
+      skipped += 1;
+    } else {
+      recorded += 1;
+      costSum += cost;
+    }
   }
 
   return {

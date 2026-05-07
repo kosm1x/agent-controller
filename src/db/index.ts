@@ -69,6 +69,13 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_cost_ledger_task ON cost_ledger(task_id)",
   );
+  // C1 fix (queue #7 audit): partial UNIQUE on run_id for hindsight rows so
+  // the cost-pull ritual can use INSERT OR IGNORE atomically. Scoping to
+  // agent_type='hindsight' avoids any conflict with existing dispatcher-
+  // written rows whose run_id uniqueness has not been historically enforced.
+  _db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_ledger_hindsight_run_id ON cost_ledger(run_id) WHERE agent_type = 'hindsight'",
+  );
 
   // v8 S4: cache breakdown for cache-hit ratio observability
   const ledgerCols = _db

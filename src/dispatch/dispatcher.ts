@@ -613,27 +613,36 @@ function updateTaskStatus(
 ): void {
   const db = getDatabase();
 
+  // C2 fix (queue #7 audit, 2026-05-07): once a task reaches a terminal
+  // status (cancelled / completed / failed) it should NEVER be flipped to
+  // a different terminal status by a runner that finishes after the user
+  // already cancelled. The `AND status NOT IN (...)` guards make terminal
+  // updates idempotent at the DB layer. Event emission still fires from
+  // the caller — the deeper "stop emitting after cancel" fix is queued
+  // separately (router.ts handlers should also fresh-read status).
   if (status === "running") {
     db.prepare(
-      `UPDATE tasks SET status = 'running', started_at = datetime('now'), updated_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = 'running', started_at = datetime('now'), updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(taskId);
   } else if (status === "completed") {
     db.prepare(
-      `UPDATE tasks SET status = 'completed', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = 'completed', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(output ? JSON.stringify(output) : null, taskId);
   } else if (status === "completed_with_concerns") {
     db.prepare(
-      `UPDATE tasks SET status = 'completed_with_concerns', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = 'completed_with_concerns', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(output ? JSON.stringify(output) : null, taskId);
   } else if (status === "needs_context" || status === "blocked") {
     db.prepare(
-      `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(status, error ?? null, taskId);
   } else if (status === "failed") {
     db.prepare(
-      `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(error ?? null, taskId);
   } else {
+    // Generic UPDATE (e.g. for non-terminal status transitions) — preserve
+    // existing semantics, no terminal guard needed.
     db.prepare(
       `UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE task_id = ?`,
     ).run(status, taskId);
