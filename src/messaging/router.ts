@@ -36,6 +36,7 @@ import type { Event } from "../lib/events/types.js";
 import type {
   TaskCompletedPayload,
   TaskFailedPayload,
+  TaskCancelledPayload,
 } from "../lib/events/types.js";
 import type {
   ChannelAdapter,
@@ -948,7 +949,14 @@ export class MessageRouter {
       },
     );
 
-    this.subscriptions.push(completedSub, failedSub);
+    const cancelledSub = bus.subscribe(
+      "task.cancelled",
+      (event: Event<"task.cancelled">) => {
+        this.handleTaskCancelled(event.data);
+      },
+    );
+
+    this.subscriptions.push(completedSub, failedSub, cancelledSub);
 
     // Notify user about tasks killed by service restart.
     // On shutdown, orphaned tasks get status='failed', error='Service shutdown'
@@ -2230,7 +2238,68 @@ export class MessageRouter {
     }
     this.sendToChannel(pending.channel, pending.to, failMsg);
 
+    // Outcome-aware retain (queue item #7 part 1, 2026-05-07): close the
+    // failed-task gap so outcome:failed rows actually populate in
+    // conversations. Recall-side bias against negative precedents lands in
+    // Part 2 of the same queue item.
+    try {
+      const errorText = (data.error ?? "Unknown error").slice(0, 500);
+      const exchange = `User: ${pending.originalText}\nJarvis: [Task failed] ${errorText}`;
+      getMemoryService()
+        .retain(exchange, {
+          bank: "mc-jarvis",
+          tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
+          async: true,
+          trustTier: 2,
+          source: "router",
+        })
+        .catch(() => {});
+    } catch {
+      // Non-fatal — instrumentation must never break the failure-notification path
+    }
+
     // Track failed outcome
+    trackTaskOutcome(taskId, 0, false, pending.channel);
+  }
+
+  private handleTaskCancelled(data: TaskCancelledPayload): void {
+    const taskId = data.task_id;
+
+    // Clean up ritual watches mirror handleTaskFailed — cancelled rituals
+    // shouldn't keep their watch alive.
+    this.ritualWatches.delete(taskId);
+
+    if (isProactiveTask(taskId)) {
+      handleProactiveFailure(taskId);
+    }
+
+    const pending = this.pendingReplies.get(taskId);
+    if (!pending) return;
+
+    clearTimeout(pending.interimTimer);
+    clearTimeout(pending.finalTimer);
+    clearTimeout(pending.abandonTimer);
+    this.pendingReplies.delete(taskId);
+
+    // Outcome-aware retain (queue item #7 part 1, 2026-05-07): cancelled tasks
+    // map to outcome:failed via statusToOutcomeTag. We retain the user prompt
+    // so a future similar query can be ranked against this negative precedent.
+    try {
+      const reason = (data.reason ?? "cancelled").slice(0, 500);
+      const exchange = `User: ${pending.originalText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
+      getMemoryService()
+        .retain(exchange, {
+          bank: "mc-jarvis",
+          tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
+          async: true,
+          trustTier: 2,
+          source: "router",
+        })
+        .catch(() => {});
+    } catch {
+      // Non-fatal
+    }
+
     trackTaskOutcome(taskId, 0, false, pending.channel);
   }
 

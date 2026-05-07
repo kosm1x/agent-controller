@@ -12,16 +12,12 @@
  * change is needed. Recall-side filtering on the tag is a follow-up that
  * benefits from a week of distribution data first.
  *
- * Coverage gap (qa-auditor W1, 2026-04-29):
- *   The two wired retain sites both fire from `handleTaskCompleted`, which
- *   runs on `task.completed` AND `task.completed_with_concerns` events. The
- *   router's separate `handleTaskFailed` / `handleTaskCancelled` handlers
- *   do NOT call retain, so in production the population of memory rows with
- *   `outcome:failed` will be near-zero even though the mapping covers it.
- *   That is acceptable for the Session 114 incident class (the poison-source
- *   was a `completed_with_concerns` task → `outcome:concerns` lands and
- *   carries the signal). If pure-failure memories become useful as negative
- *   precedents later, wire a retain inside `handleTaskFailed`. Deferred.
+ * Coverage gap closed 2026-05-07 (queue item #7 part 1):
+ *   `handleTaskFailed` and a new `handleTaskCancelled` in router.ts now both
+ *   call `retain()` with the same outcome-tagged tags array, so
+ *   `outcome:failed` rows populate in production. The recall-side bias that
+ *   uses these rows lands in Part 2 of the same queue item (drop or
+ *   down-rank `outcome:failed` recalls by default).
  */
 
 import { getDatabase } from "../db/index.js";

@@ -29,6 +29,29 @@ vi.mock("../lib/event-bus.js", () => ({
   }),
 }));
 
+// Outcome-aware retain coverage (queue item #7 part 1):
+// spy on memory.retain so failed/cancelled-task tests can verify the
+// outcome:failed retain call lands.
+const memoryRetainSpy = vi.fn().mockResolvedValue(undefined);
+vi.mock("../memory/index.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../memory/index.js")>(
+      "../memory/index.js",
+    );
+  return {
+    ...actual,
+    getMemoryService: () => ({
+      retain: memoryRetainSpy,
+      recall: vi.fn().mockResolvedValue({ memories: [] }),
+    }),
+  };
+});
+
+vi.mock("../memory/outcome-tag.js", () => ({
+  getOutcomeTag: vi.fn((_taskId: string) => "outcome:failed"),
+  statusToOutcomeTag: vi.fn(() => "outcome:failed"),
+}));
+
 import { MessageRouter } from "./router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
@@ -281,6 +304,70 @@ describe("MessageRouter", () => {
       // [0] = ack, [1] = failure notice
       expect(waAdapter.sentMessages).toHaveLength(2);
       expect(waAdapter.sentMessages[1].text).toContain("No pude completar eso");
+    });
+
+    it("should retain conversation with outcome:failed tag on task.failed", async () => {
+      memoryRetainSpy.mockClear();
+
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "what went wrong yesterday",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const failedHandler = findHandler("task.failed");
+      failedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          error: "DB connection lost",
+          recoverable: false,
+          attempts: 1,
+        },
+      });
+
+      expect(memoryRetainSpy).toHaveBeenCalledOnce();
+      const [exchange, opts] = memoryRetainSpy.mock.calls[0];
+      expect(exchange).toContain("User: what went wrong yesterday");
+      expect(exchange).toContain("[Task failed] DB connection lost");
+      expect(opts.bank).toBe("mc-jarvis");
+      expect(opts.tags).toContain("outcome:failed");
+      expect(opts.tags).toContain("whatsapp");
+      expect(opts.async).toBe(true);
+    });
+
+    it("should retain conversation with outcome:failed tag on task.cancelled", async () => {
+      memoryRetainSpy.mockClear();
+
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "run the long task",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const cancelledHandler = findHandler("task.cancelled");
+      expect(cancelledHandler).toBeDefined();
+
+      cancelledHandler!({
+        data: {
+          task_id: "test-task-123",
+          cancelled_by: "operator",
+          reason: "user-requested",
+        },
+      });
+
+      expect(memoryRetainSpy).toHaveBeenCalledOnce();
+      const [exchange, opts] = memoryRetainSpy.mock.calls[0];
+      expect(exchange).toContain("User: run the long task");
+      expect(exchange).toContain("[Task cancelled by operator] user-requested");
+      expect(opts.bank).toBe("mc-jarvis");
+      expect(opts.tags).toContain("outcome:failed");
     });
   });
 
