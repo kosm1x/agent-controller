@@ -23,6 +23,27 @@ describe("pricing", () => {
       expect(p.promptCostPer1k).toBe(0.001);
       expect(p.completionCostPer1k).toBe(0.003);
     });
+
+    it("should price Fireworks p-notation aliases (bare)", () => {
+      expect(getPricing("minimax-m2p7")).toEqual({
+        promptCostPer1k: 0.0003,
+        completionCostPer1k: 0.0012,
+      });
+      expect(getPricing("kimi-k2p5")).toEqual({
+        promptCostPer1k: 0.0006,
+        completionCostPer1k: 0.003,
+      });
+      expect(getPricing("qwen3p6-plus")).toEqual({
+        promptCostPer1k: 0.0008,
+        completionCostPer1k: 0.002,
+      });
+    });
+
+    it("should price Fireworks aliases when given full path", () => {
+      const p = getPricing("accounts/fireworks/models/minimax-m2p7");
+      expect(p.promptCostPer1k).toBe(0.0003);
+      expect(p.completionCostPer1k).toBe(0.0012);
+    });
   });
 
   describe("loadPricingOverride", () => {
