@@ -496,8 +496,17 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // Fires on: (a) write verb + file-ish noun, (b) direct tool name mention,
     // (c) knowledge-base phrase with action word (EN/ES),
     // (d) v7.7.2: plain "KB" / "base de conocimiento" with a write verb.
+    // 2026-05-07: ES learning vocab (lecci[oó]n/progreso/aprendizaje/avance)
+    // added after the algebra-progress incident — operator's natural phrasing
+    // "guarda mi progreso de Algebra" wasn't matching because the file-ish
+    // noun list was English-leaning. The learning-vocab arm REQUIRES `mi|tu`
+    // possessive (audit W1 mitigation): "actualiza el progreso del proyecto"
+    // and "registra el sprint progreso" must NOT fire jarvis_write — those
+    // are routine project-status chatter, not KB writes. Possessive anchor
+    // is the cleanest way to separate personal-learning intent from generic
+    // status updates without enumerating every excluded PP attachment.
     pattern:
-      /\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe)\w*(?:\s+(?:una?|el|la|los|las|un|mi|tu|este|esta|nuev[ao]))?(?:\s+\S+){0,2}\s+(?:archivo|nota|SOP|directiva|regla|fact|lesson|pattern|procedimiento|preferencia|conocimiento|jarvis[_\s]file)|jarvis_file_(?:write|update|delete|move)|knowledge\s*base\s+(?:write|update|save|append|edit)|mi\s+knowledge\s*base|\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta)\w*(?:\s+\S+){0,3}\s+(?:en|a|al)\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\b|\ben\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\s+(?:guarda|anota|registra|agrega|actualiza|escribe)/i,
+      /\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta|documenta)\w*(?:\s+(?:una?|el|la|los|las|un|mi|tu|este|esta|nuev[ao]))?(?:\s+\S+){0,2}\s+(?:archivo|nota|SOP|directiva|regla|fact|lesson|pattern|patr[oó]n(?:es)?|procedimiento|preferencia|conocimiento|jarvis[_\s]file)|\b(?:guarda|gu[aá]rda(?:me|lo|la)|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta|documenta)\w*(?:\s+(?:y|e)\s+(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta|documenta)\w*)?\s+(?:mis?|tus?)\s+(?:lecci[oó]n(?:es)?|progreso|aprendizaje|avance)|jarvis_file_(?:write|update|delete|move)|knowledge\s*base\s+(?:write|update|save|append|edit)|mi\s+knowledge\s*base|\b(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta)\w*(?:\s+\S+){0,3}\s+(?:en|a|al)\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\b|\ben\s+(?:la\s+|el\s+|mi\s+|tu\s+)?(?:KB|base\s+de\s+conocimiento)\s+(?:guarda|anota|registra|agrega|actualiza|escribe)/i,
     group: "jarvis_write",
   },
   {
@@ -989,8 +998,14 @@ export function scopeToolsForMessage(
       // and ML conversations also use it ("GEO scoring", "agent self-scoring");
       // run-verb + scoring co-occurrence is handled by the noun-phrase
       // alternation below, not as a top-level token.
+      // The `jarvis_file_*` arm is anchored without `\b` because `_` is a word
+      // char in JS regex — `\bfile_write\b` cannot match inside the literal
+      // `jarvis_file_write`. 2026-05-07 incident: operator typed
+      // "Usa tus tools de escritura jarvis_file_write" verbatim and the
+      // safety net missed because of this boundary trap. Substring match is
+      // safe here because these are unambiguous tool identifiers.
       const codingNounRe =
-        /\b(sql|psql|querie?s?|database|supabase|postgres|denue|shell_exec|file_write|file_edit|docker\s+exec)\b/i;
+        /\b(?:sql|psql|querie?s?|database|supabase|postgres|denue|shell_exec|file_write|file_edit|file_delete|docker\s+exec)\b|jarvis_file_(?:read|write|update|delete|move|search|list)/i;
       const codingVerbRe =
         /\b(?:ejecuta|corre|c[oó]rre|run|launch|lanza)\w*\s+(?:\S+\s+){0,3}(?:query|queries|consulta|consultas|script|scripts|sql|c[oó]digo|comando|migration|migrations?|stored\s+proc(?:edure)?|scoring)/i;
       const codingHit = (s: string) =>
@@ -1007,6 +1022,25 @@ export function scopeToolsForMessage(
       ) {
         activeGroups.add("coding");
       }
+    }
+    // jarvis_write safety net — semantic classifier silently misses explicit
+    // KB-write intent on personal-learning vocabulary (operator's natural
+    // phrasing in Spanish: "guarda mi progreso de Algebra", "escribe mi
+    // lección"). 2026-05-07 algebra-progress incident: classifier returned
+    // empty/wrong group, regex fallback only ran on recentUserMessages (not
+    // currentMessage), so jarvis_write never activated and JARVIS_WRITE_TOOLS
+    // stayed offscope. Mirrors the google/seo/coding injection pattern. The
+    // narrow `mi|tu` possessive guards routine status chatter ("actualiza el
+    // progreso del proyecto") from accidentally pulling write tools.
+    if (
+      !activeGroups.has("jarvis_write") &&
+      !activeGroups.has("coding") &&
+      !activeGroups.has("northstar_journal") &&
+      /\b(?:guarda|gu[aá]rda(?:me|lo|la)|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta|documenta)\w*(?:\s+(?:y|e)\s+(?:guarda|anota|registra|agrega|actualiza|crea|escribe|ap[úu]nta|documenta)\w*)?\s+(?:mis?|tus?)\s+(?:lecci[oó]n(?:es)?|progreso|aprendizaje|avance)/i.test(
+        currentMessage,
+      )
+    ) {
+      activeGroups.add("jarvis_write");
     }
     // General scope inheritance safety net: always scan prior user messages
     // with the full pattern set and merge any matches into the classifier's

@@ -243,6 +243,48 @@ describe("scope pattern matching", () => {
     expect(tools).not.toContain("shell_exec");
   });
 
+  it("coding safety net fires on literal jarvis_file_write mention (algebra incident 2026-05-07)", () => {
+    // Operator typed the tool name verbatim — "Usa tus tools de escritura
+    // jarvis_file_write y guarda mi progreso de mi lección de Algebra".
+    // The previous regex `\bfile_write\b` couldn't anchor inside
+    // `jarvis_file_write` because `_` is a word char in JS regex, so the
+    // safety net silently missed user-explicit tool intent and Jarvis spent
+    // 41s in a chant loop without write tools loaded.
+    const semantic = new Set(["research"]); // wrong-group bypass path
+    const tools = scopeToolsForMessage(
+      "Usa tus tools de escritura jarvis_file_write y guarda mi progreso de mi lección de Algebra. No lo guardes en memoria",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      semantic,
+    );
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("coding safety net fires on jarvis_file_read/update/delete/move/search/list literals", () => {
+    // Each literal tool name should activate coding scope when the classifier
+    // misses. Same word-boundary trap covered for the whole jarvis_file_*
+    // family.
+    const semantic = new Set(["research"]);
+    for (const tool of [
+      "jarvis_file_read",
+      "jarvis_file_update",
+      "jarvis_file_delete",
+      "jarvis_file_move",
+      "jarvis_file_search",
+      "jarvis_file_list",
+    ]) {
+      const tools = scopeToolsForMessage(
+        `usa ${tool} para esto`,
+        [],
+        DEFAULT_SCOPE_PATTERNS,
+        ALL_ON,
+        semantic,
+      );
+      expect(tools).toContain("jarvis_file_write");
+    }
+  });
+
   it("google scope does NOT over-fire on 'present' substrings (presentación, presentar)", () => {
     // The google regex had a bare `|present|` alt without closing `\b`, so it
     // matched any prefix — `presentación`, `presentar`, `presente` — pulling
@@ -1176,6 +1218,56 @@ describe("jarvis_write scope gating", () => {
   it("'en la KB guarda esto' (reversed order) activates jarvis_write", () => {
     const tools = scope("En la KB guarda esto como regla permanente");
     expect(tools).toContain("jarvis_file_write");
+  });
+
+  // 2026-05-07 algebra-progress incident — ES learning vocab
+
+  it("'guarda mi progreso de Algebra' activates jarvis_write", () => {
+    const tools = scope("Guarda mi progreso de Algebra de hoy");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'escribe mi lección de Algebra' activates jarvis_write", () => {
+    const tools = scope(
+      "Escribe mi lección de Algebra con los resultados de hoy",
+    );
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'actualiza mi aprendizaje' activates jarvis_write", () => {
+    const tools = scope("Actualiza mi aprendizaje de Unidad 2");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'guarda mis lecciones' (plural) activates jarvis_write", () => {
+    const tools = scope("Guarda mis lecciones de algebra");
+    expect(tools).toContain("jarvis_file_write");
+  });
+
+  it("'apunta mi avance' (synonym + clitic) activates jarvis_write", () => {
+    expect(scope("Apunta mi avance del día")).toContain("jarvis_file_write");
+    expect(scope("Documenta mi progreso de hoy")).toContain(
+      "jarvis_file_write",
+    );
+  });
+
+  // Audit W1 regression — learning-vocab arm requires `mi|tu` possessive
+  // so routine project-status chatter does NOT pull JARVIS_WRITE_TOOLS.
+
+  it("'actualiza el progreso del proyecto' does NOT activate jarvis_write (W1 FP)", () => {
+    const tools = scope("Actualiza el progreso del proyecto Atlas");
+    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).not.toContain("jarvis_file_delete");
+  });
+
+  it("'registra el progreso del sprint' does NOT activate jarvis_write (W1 FP)", () => {
+    const tools = scope("Registra el progreso del sprint actual");
+    expect(tools).not.toContain("jarvis_file_write");
+  });
+
+  it("'crea un reporte de progreso' does NOT activate jarvis_write (W1 FP)", () => {
+    const tools = scope("Crea un reporte de progreso para el cliente");
+    expect(tools).not.toContain("jarvis_file_write");
   });
 
   it("'apunta en mi KB' activates jarvis_write", () => {
