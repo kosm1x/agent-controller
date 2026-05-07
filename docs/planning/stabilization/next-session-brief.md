@@ -1,9 +1,11 @@
-# Next Session Brief — Hardening Phase
+# Next Session Brief — Hardening Phase (SUPERSEDED 2026-05-07)
 
+> **⚠️ SUPERSEDED 2026-05-07**: The stabilization freeze was lifted 15 days early (see `feedback_freeze_lifted_2026_05_07`). Active queue lives at `docs/planning/next-sessions-queue.md`, which carries the AV-key-rotation P0 + Hindsight follow-ups forward without freeze framing. This file retained as forensic record of the 2026-04-22 → 2026-05-07 hardening window.
+>
 > **Authored**: 2026-04-26 end-of-Session-111 · **Refreshed**: 2026-05-03 post-Session-124 (V8 S2 + per-bank Hindsight routing)
-> **Window**: 2026-04-22 → 2026-05-22 (day 12 of 30)
-> **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
-> **Phase posture**: Hardening + reliability only. Feature freeze in effect — see `30d-hardening-plan.md` separation policy.
+> **Window**: 2026-04-22 → 2026-05-07 (closed 15 days early; originally 2026-05-22)
+> **Re-benchmark target**: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md` (still planned, independent of freeze)
+> **Phase posture**: HARDENING WINDOW CLOSED. Mission-control core can take new tools/adapters/runners again.
 
 ---
 

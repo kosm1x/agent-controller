@@ -1,0 +1,122 @@
+# Next-Sessions Queue — Jarvis Stability & Efficiency
+
+> **Authored**: 2026-05-07 end-of-session, post-freeze-lift
+> **Replaces**: `stabilization/next-session-brief.md` (freeze-window framing, now obsolete)
+> **Scope**: post-freeze stability + efficiency work for Jarvis. Excludes new feature work; that gets its own queue when initiated.
+
+---
+
+## Two-week reflection (the synthesis behind the priority order)
+
+The freeze achieved its purpose — five distinct stability fixes in seven days without rollbacks, five hardening dims closed. But three patterns emerged across the incidents that shape what we do next:
+
+1. **Narrow regex gates were structurally fragile.** Three of the five fixes (algebra-progress, DENUE shell_exec, write-tool friction) were the same shape: a scope gate too tight to admit legitimate operator phrasing. The fix on each was widening — and on the fifth (write-tool friction) we capitulated entirely and promoted four tools to always-on. Calling discipline belongs at the tool-description + system-prompt layer, not at scope. Architectural rethink (#13) is on the back-burner only because incidents have been stamped out one by one; if a fourth recurs, it jumps the queue.
+
+2. **The Hindsight "promise gap" is real but mitigable.** "Jarvis remembers" was overpromised; what shipped is "Jarvis pattern-matches on similar-looking past text." Outcome-blind retrieval recycles failure narratives as recipes. Cross-encoder reranker is 99% of recall latency. Per-bank surgical demote on `mc-jarvis` is already a Path B pilot — but the strategic A/B/C decision can't be made without `was_used` and outcome-distribution data (~2 weeks once both ship).
+
+3. **Silent state was the dominant failure class.** Fireworks deprecated alias still answered, 1229 KB orphans were invisible, dead worker leases never cleaned up, mc cost ledger doesn't see Hindsight, cache-hit ratio drifted unnoticed. Stability gains compound when drift is observable; right now we only see what we've already had an incident about. **The cheapest two weeks of work are instrumentation moves**, not architecture moves.
+
+The queue below reflects: instrument first, decide later. The strategic decisions (#15 Hindsight A/B/C, #13 scope architecture) are gated on data that the instrumentation work produces.
+
+---
+
+## Execution-ordered queue
+
+| #   | Item                                                                                                                                                                                                                                                                        | Priority      | Estimate                               | Notes                                                                                                                                                                                               |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **mc systemctl restart async fix** — verify `newPid != oldPid` in `scripts/deploy.sh`; loop until new PID picks up                                                                                                                                                          | P0            | 1-2h                                   | Foundational. Old PID can serve 4+ min after restart. Every fix below depends on "did my deploy actually deploy" being trustworthy. See `feedback_mc_systemctl_restart_async.md`.                   |
+| 2   | **AV key rotation**                                                                                                                                                                                                                                                         | P0            | 1-2h                                   | Carryover from old `next-session-brief.md`. Independent — can run parallel to #1.                                                                                                                   |
+| 3   | **Pricing tables for minimax-m2p7 + kimi-k2p5 + qwen3p6-plus** in `mc/src/budget/pricing.ts` + `crm-azteca/crm/src/budget.ts`                                                                                                                                               | P2 → raised   | 30-45min                               | Prerequisite for #4. Closes punch-list P1 #3 in `project_hindsight_fireworks_followup.md`.                                                                                                          |
+| 4   | **Hindsight cost telemetry** — Prom scrape target (`:8888/metrics`) + cost-pull ritual to mc cost_ledger + alert rules (`HindsightTokenRateSpike`, `HindsightCircuitErrorRate`)                                                                                             | P1            | 2-3h                                   | **Session A.** Hindsight already exposes 26 metric families incl. `hindsight_llm_tokens_input_tokens_total` etc. Detail in §"Scope #5" below. Retires silent-leak class.                            |
+| 5   | **Reflect-model quality sample** — pull 5-10 reflect outputs on minimax-m2p7, decide kimi-k2p5 swap or stay                                                                                                                                                                 | P2            | 30-45min                               | **Deadline 2026-05-13.** Punch-list P1 #4. Cheap; do during next session naturally. 707 reflect calls/day means data is plentiful.                                                                  |
+| 6   | **Cache-hit audit** — investigate mc 47.6% vs ~60% baseline, identify drift cause, restore                                                                                                                                                                                  | P1 efficiency | 2-4h                                   | 🔔 already flagged in MEMORY.md. Estimated $10-15/d savings. No deps.                                                                                                                               |
+| 7   | **Outcome-aware retrieval close-the-loop** — wire retain into `handleTaskFailed`/`handleTaskCancelled`, recall-side soft bias (drop `outcome:failed` by default, +0.10 boost on `outcome:success`), `outcome_breakdown` audit column, `mc-ctl outcome-distribution` command | P1            | 1.5-2 days                             | **Session B.** Half-shipped already (`outcome-tag.ts` write-side tagging done 2026-04-29). Detail in §"Scope #3" below. Closes failure-narrative-as-recipe class.                                   |
+| 8   | **`was_used` recall audit** — extend `recall_audit` table with `query_text`, `top_k_ids`, `was_used` (did the LLM cite the recall?). 2-week measurement window starts after this ships                                                                                      | P1            | 1 day                                  | Gates the Hindsight A/B/C decision (#15). Ship before #15. Strategic-options doc names this "the single most important measurement."                                                                |
+| 9   | **Hindsight stuck-queue + dead-worker-lease cleanup** — stale-lease reaper for `01b79314f397`-class hangs + `postmaster.pid` cleanup in `crm-ctl hindsight-start`                                                                                                           | P2 stability  | 3-4h                                   | Punch-list P1 #1. Currently 3/5 24h-verify checks fail because of this lease. Pending queue stuck at 17.                                                                                            |
+| 10  | **Hindsight cross-encoder drop / two-tier retrieval** — cosine + metadata + recency boost as default, explicit `recall_with_rerank: true` for analysis tasks                                                                                                                | P2 efficiency | 1-2 days                               | 5-10× latency headroom. Strategic-options doc Path A item 2. Worth shipping even if final path is DEMOTE — preserves the option.                                                                    |
+| 11  | **Hardcoded `/root/claude/jarvis-kb/` path extraction** in `file.ts` / `shell.ts` / `file-convert.ts` — extract `getJarvisKbRoot()` helper                                                                                                                                  | P3            | 2-3h                                   | Audit Critical 2 carryover from KB-visibility session (`feedback_kb_visibility_drift.md`). Hidden coupling for tests via `JARVIS_KB_MIRROR_DIR`.                                                    |
+| 12  | **KB drift alerting** — Prometheus metric on hourly `kb-reindex` ritual, alert if `drift > 10` for consecutive runs                                                                                                                                                         | P3            | 1-2h                                   | Depends on #4 (Prometheus scrape pattern reusable for any mc metric). Closes the "KB silently drifted" failure mode end-to-end.                                                                     |
+| 13  | **Scope architecture rethink** — half-session investigation: keep narrow gates + invest in regression suite, or expand "always-on" surface for read-heavy/KB-write tools                                                                                                    | P3            | 1 session investigation, 1-2 days exec | Pattern of 3 scope incidents in 2 weeks. No urgency, but worth scoping before the next regex-arm-of-the-week patch. If a fourth incident hits, jumps to P1.                                         |
+| 14  | **Subagent verification FP reduction** — 75% FP on enum candidates per `feedback_subagent_verification.md`                                                                                                                                                                  | P3            | 1 day                                  | Operational tax on every audit. Worth a tightener pass.                                                                                                                                             |
+| 15  | **Hindsight A/B/C strategic decision** — HARDEN vs DEMOTE vs REPLACE                                                                                                                                                                                                        | P4            | 1-2 sessions analysis, then exec       | **Blocked on #4, #7, #8 data.** Don't pre-commit. Decision writes itself when 2 weeks of `was_used` + outcome breakdown + cost data accumulate. See `docs/planning/hindsight-strategic-options.md`. |
+
+---
+
+## Suggested session bundling
+
+| Session          | Items        | Description                                                                      |
+| ---------------- | ------------ | -------------------------------------------------------------------------------- |
+| 1                | #1 + #2      | P0 hygiene — deploy verification + key rotation                                  |
+| 2                | #3 + #4 + #5 | Cost telemetry bundle — pricing → scrape → reflect-model sample chains naturally |
+| 3                | #6           | Cache-hit audit, standalone                                                      |
+| 4–5              | #7           | Outcome-aware retrieval — the longer build                                       |
+| 6                | #8 + #9      | `was_used` audit + stuck-queue cleanup, parallel                                 |
+| 7+               | #10–#14      | Interleave as appetite allows                                                    |
+| ~Session 6 + 14d | #15          | Strategic decision when data window completes                                    |
+
+To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic decision lands ~3 weeks out.
+
+---
+
+## Scope #5 — Hindsight cost telemetry (detail)
+
+**Discovery**: Hindsight on `:8888/metrics` already exposes 26 metric families with full label sets `(model, provider, scope, success, tenant)`:
+
+- `hindsight_llm_calls_total` (counter)
+- `hindsight_llm_tokens_input_tokens_total` / `output_tokens_total` (counters, also bucketed by `token_bucket`)
+- `hindsight_llm_duration_seconds` (histogram)
+- HTTP duration/total, DB pool size/idle/min/max, process CPU/RSS/threads/fds
+
+`mc-prometheus` runs from `/root/claude/mission-control/monitoring/prometheus.yml`. mc `cost_ledger` schema already has all needed columns; no schema change.
+
+**Part 1 — Scrape target (~15 min)**: append `crm-hindsight` job to `prometheus.yml` targeting `host.docker.internal:8888` with `metrics_path: /metrics`, scrape_interval 30s. Reload via `docker exec mc-prometheus kill -HUP 1`. Verify at `:9090/targets`.
+
+**Part 2 — Cost ledger sidecar (~1.5h)**: new `src/rituals/hindsight-cost-pull.ts` runs every 5 min. Queries Prometheus HTTP API for `increase(hindsight_llm_tokens_input_tokens_total[5m])` + output. For each `(model, scope)` non-zero series: lookup `src/budget/pricing.ts`, compute cost, `INSERT OR IGNORE` into `cost_ledger` with `agent_type='hindsight'`, `run_id='hindsight-{scope}-{timestamp_5m_bucket}'`. Add to `src/rituals/scheduler.ts`: `cron.schedule("*/5 * * * *", ...)`.
+
+**Part 3 — Alert rules (~20 min)**: append to `monitoring/alerts.yml`:
+
+- `HindsightTokenRateSpike`: 5m token rate > 3× 24h baseline for 10m
+- `HindsightCircuitErrorRate`: success=false rate > 10% over 10m
+
+**Verification**: Prom target `up`, PromQL returns non-zero, cost_ledger rows accumulate, `mc-ctl stats` shows Hindsight cost line, force-trigger spike alert by lowering threshold then revert.
+
+**Risk / rollback**: misattribution if Hindsight `scope` label drift (already saw `verification`, `reflect_tool_call`) — log unknown scopes at warn, default `agent_type='hindsight-unknown'`. Pricing data freshness — yearly review note in `feedback_fireworks_qwen3p6_retry_storm.md`.
+
+---
+
+## Scope #3 — Outcome-aware retrieval close-the-loop (detail)
+
+**Discovery**: `src/memory/outcome-tag.ts` (shipped 2026-04-29) maps `task.status` → `outcome:{success|concerns|failed|unknown}`. Wired into `auto-persist.ts:207`. **Two known gaps in code comments**:
+
+1. `handleTaskFailed` doesn't call retain → `outcome:failed` rows are near-zero in production
+2. Recall-side ranking doesn't use the tag — Hindsight's recall API accepts `tags` filter (`hindsight-client.ts:172`), but no caller passes outcome tags
+
+**Part 1 — Close failed-task retain gap (~½ day)**: edit `router.ts:handleTaskFailed`, mirror `handleTaskCompleted` retain call. Same for `handleTaskCancelled`. Tests: 2 new in `router.test.ts`.
+
+**Part 2 — Recall-side soft bias (~½–1 day)**: edit `src/memory/index.ts` recall path. Submit recall with no tags filter, post-filter the response: drop `outcome:failed` by default, +0.10 boost on `outcome:success`, -0.05 penalty on `outcome:concerns`. Add `recall_audit.outcome_breakdown` TEXT JSON column. Provide `recall(query, { include_failed: true })` opt-in for analysis tasks. Tests: extend `recall-compare.ts`.
+
+**Part 3 — Distribution telemetry (~½ day)**: new `mc-ctl outcome-distribution` command. New `mc_recall_outcome_total` Prom metric in mc `/metrics`. Alert if `outcome:concerns` rate > 25% of last-7d retains for 24h.
+
+**Verification**: trigger deliberate task failure → confirm `outcome:failed` row in conversations within 30s. `mc-ctl outcome-distribution --window=7d` shows non-zero in all four. A/B 5 known queries.
+
+**Risk / rollback**: overcorrection on negative-precedent recalls (mitigated by `include_failed` opt-in). Tag-malformed JSON in old rows (saw one during scoping) — defensive try/catch, treat as `outcome:unknown`.
+
+**What this doesn't do**: doesn't ship the `was_used` audit (that's #8 — separate).
+
+---
+
+## Anchors / cross-references
+
+- Strategic decision context: `docs/planning/hindsight-strategic-options.md`
+- Open punch-list: `feedback_hindsight_fireworks_followup` memory
+- Two-week post-mortems: `feedback_fireworks_qwen3p6_retry_storm`, `feedback_kb_visibility_drift`, `feedback_scope_classifier_safety_net`, `feedback_jarvis_writes_always_on`
+- Re-benchmark target: 2026-05-22 vs `docs/benchmarks/2026-04-22-baseline.md`
+- Freeze closure: `feedback_freeze_lifted_2026_05_07`
+
+---
+
+## Updates log
+
+| Date       | Change                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-07 | File created. Replaces `stabilization/next-session-brief.md` after freeze lift. 15-item queue derived from 2-week incident pattern. |
