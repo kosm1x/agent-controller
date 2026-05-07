@@ -136,6 +136,26 @@ groups:
           summary: "Jarvis KB drift > 10 files for 2+ hours"
           description: "FS files not yet in jarvis_files: {{ $value }}. Check JARVIS_KB_MIRROR_DIR + recent shell_exec writes outside the upsertFile path."
 
+      # Retain outcome concerns rate — too many concerns-tagged retains pollute
+      # future recalls (Session 114 incident class). Threshold: > 25% of total
+      # retains in the rolling window are outcome:concerns, sustained 24h.
+      # Queue #7 part 3, 2026-05-07. Restrict denominator (> 5 retains/day rate)
+      # so the alert doesn't fire on idle days.
+      - alert: RetainOutcomeConcerns
+        expr: |
+          (
+            sum(rate(mc_retain_outcome_total{outcome="concerns"}[7d]))
+            /
+            sum(rate(mc_retain_outcome_total[7d]))
+          ) > 0.25
+          and sum(rate(mc_retain_outcome_total[7d])) > 5 / 86400
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Retain concerns ratio above 25% for 24h+"
+          description: 'concerns / total = {{ $value | printf "%.2f" }}. High concerns ratio means failure narratives are entering memory faster than success. Run mc-ctl outcome-distribution 7d.'
+
   - name: hindsight
     rules:
       # Token-rate spike: 5min rate > 3x the 24h rate, sustained for 10 min.

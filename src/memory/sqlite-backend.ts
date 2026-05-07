@@ -16,6 +16,7 @@ import {
   deserializeEmbedding,
 } from "./embeddings.js";
 import { rerankByCoherence } from "./graph-rerank.js";
+import { recordRetainOutcome } from "../observability/prometheus.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -147,6 +148,11 @@ export class SqliteMemoryBackend implements MemoryService {
           )
           .run(options.bank, tags, content, trustTier, source),
       );
+      // Queue #7 part 3 (2026-05-07): bump Prom counter AFTER the INSERT so
+      // failed writes (writeWithRetry exhausting SQLITE_BUSY) don't inflate
+      // mc_retain_outcome_total. SV1+W1 audit fixes: static import + post-
+      // insert placement.
+      recordRetainOutcome(options.bank, options.tags);
 
       // Async embed + store (fire-and-forget, non-blocking)
       const rowId = result.lastInsertRowid as number;

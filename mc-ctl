@@ -631,6 +631,99 @@ cmd_recall_utility() {
   fi
 }
 
+cmd_outcome_distribution() {
+  # Queue #7 part 3 (2026-05-07) — standalone view of outcome:* tag
+  # distribution across both retains (conversations.tags) and recalls
+  # (recall_audit.outcome_breakdown). Drives the Hindsight A/B/C decision
+  # together with mc-ctl recall-utility.
+  # Usage: mc-ctl outcome-distribution [WINDOW]   default 7d
+  need_db
+  local since_arg="${1:-7d}"
+  local since_clause
+
+  local prefix="${since_arg%[hdm]}"
+  if [[ "$prefix" =~ ^[0-9]+$ ]]; then
+    case "$since_arg" in
+      *h) since_clause="datetime('now','-${prefix} hours')" ;;
+      *d) since_clause="datetime('now','-${prefix} days')" ;;
+      *m) since_clause="datetime('now','-${prefix} minutes')" ;;
+      *)  since_clause="datetime('now','-7 days')" ;;
+    esac
+  else
+    echo -e "${YELLOW}Invalid window '${since_arg}', falling back to 7d${NC}"
+    since_clause="datetime('now','-7 days')"
+    since_arg="7d"
+  fi
+
+  echo -e "${BOLD}=== Outcome Distribution (last ${since_arg}) ===${NC}"
+  echo ""
+
+  echo -e "${BOLD}Retains (conversations.tags):${NC}"
+  # W6 audit fix (2026-05-07): exclusive case branches so a hypothetical
+  # multi-outcome retain (not produced today, but possible) doesn't
+  # double-count. First outcome wins, matching the recall-side and
+  # recordRetainOutcome semantics.
+  sql_raw "
+    SELECT
+      bank,
+      SUM(CASE WHEN tags LIKE '%outcome:success%' THEN 1 ELSE 0 END) AS success,
+      SUM(CASE WHEN tags LIKE '%outcome:concerns%' AND tags NOT LIKE '%outcome:success%' THEN 1 ELSE 0 END) AS concerns,
+      SUM(CASE WHEN tags LIKE '%outcome:failed%' AND tags NOT LIKE '%outcome:success%' AND tags NOT LIKE '%outcome:concerns%' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE WHEN (tags NOT LIKE '%outcome:success%' AND tags NOT LIKE '%outcome:concerns%' AND tags NOT LIKE '%outcome:failed%') THEN 1 ELSE 0 END) AS unknown,
+      COUNT(*) AS total
+    FROM conversations
+    WHERE created_at >= ${since_clause}
+    GROUP BY bank
+    ORDER BY total DESC;
+  " 2>/dev/null \
+    | awk -F'|' 'BEGIN { printf "  %-18s %8s %8s %8s %8s %8s\n", "bank", "success", "concerns", "failed", "unknown", "total" }
+                 { printf "  %-18s %8s %8s %8s %8s %8s\n", $1, $2, $3, $4, $5, $6 }'
+  echo ""
+
+  echo -e "${BOLD}Recalls (recall_audit.outcome_breakdown JSON):${NC}"
+  local rows
+  rows=$(sql_raw "SELECT COUNT(*) FROM recall_audit
+                  WHERE created_at >= ${since_clause}
+                    AND outcome_breakdown IS NOT NULL;" 2>/dev/null || echo "0")
+  if [[ "${rows:-0}" -eq 0 ]]; then
+    echo -e "  ${DIM}No outcome_breakdown rows yet (column added 2026-05-07).${NC}"
+    echo ""
+  else
+    sql_raw "
+      SELECT
+        bank,
+        ROUND(SUM(json_extract(outcome_breakdown, '\$.success')), 0) AS success,
+        ROUND(SUM(json_extract(outcome_breakdown, '\$.concerns')), 0) AS concerns,
+        ROUND(SUM(json_extract(outcome_breakdown, '\$.failed')), 0) AS failed,
+        ROUND(SUM(json_extract(outcome_breakdown, '\$.unknown')), 0) AS unknown,
+        COUNT(*) AS calls
+      FROM recall_audit
+      WHERE created_at >= ${since_clause}
+        AND outcome_breakdown IS NOT NULL
+      GROUP BY bank
+      ORDER BY calls DESC;
+    " 2>/dev/null \
+      | awk -F'|' 'BEGIN { printf "  %-18s %8s %8s %8s %8s %8s\n", "bank", "success", "concerns", "failed", "unknown", "calls" }
+                   { printf "  %-18s %8s %8s %8s %8s %8s\n", $1, $2, $3, $4, $5, $6 }'
+    echo ""
+  fi
+
+  # Headline ratio: concerns share of retains over the window. Drives the
+  # RetainOutcomeConcerns alert.
+  local concerns_pct
+  concerns_pct=$(sql_raw "
+    SELECT ROUND(
+      100.0 * SUM(CASE WHEN tags LIKE '%outcome:concerns%' THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*), 0),
+      1)
+    FROM conversations
+    WHERE created_at >= ${since_clause};
+  " 2>/dev/null || echo "0")
+  echo -e "${BOLD}Concerns ratio (all banks):${NC} ${concerns_pct:-0}%"
+  echo "  Threshold: 25% triggers RetainOutcomeConcerns alert (24h sustain)."
+  echo ""
+}
+
 cmd_recall_compare() {
   # Ship C (2026-04-30) — side-by-side replay of recent recall_audit
   # queries against both Hindsight and SQLite for manual quality eval.
@@ -1111,6 +1204,7 @@ usage() {
   echo -e "  ${GREEN}hindsight-restart${NC}   Restart Hindsight container"
   echo -e "  ${GREEN}hindsight-logs${NC} [N]  Container logs"
   echo -e "  ${GREEN}recall-utility${NC} [Nh] Recall was_used % by source/bank (default 24h, accepts 1h/7d/30m)"
+  echo -e "  ${GREEN}outcome-distribution${NC} [WIN]  outcome:* tag distribution across retains+recalls (default 7d)"
   echo -e "  ${GREEN}recall-compare${NC} [N] [SINCE]  Side-by-side replay vs SQLite (default 5 queries / 24h)"
   echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
@@ -1727,6 +1821,7 @@ case "$cmd" in
   hindsight-logs)    cmd_hindsight_logs "$@" ;;
 
   recall-utility)    cmd_recall_utility "${1:-24h}" ;;
+  outcome-distribution) cmd_outcome_distribution "${1:-7d}" ;;
   recall-compare)    cmd_recall_compare "$@" ;;
   drift)             cmd_drift ;;
   audit-claim)       cmd_audit_claim "$@" ;;

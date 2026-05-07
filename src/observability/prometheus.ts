@@ -203,6 +203,82 @@ export function recordKbReindex(result: {
   kbReindexErrored.set(result.errored);
 }
 
+// --- Outcome totals (queue #7 part 3, 2026-05-07) ---
+// Counters bumped at logRecall / retain time so outcome distribution is
+// observable in Prometheus without scrape-time SQL. Drives the
+// RetainOutcomeConcerns alert + cross-references the outcome bias from
+// queue #7 part 2.
+const recallOutcomeTotal = new client.Counter({
+  name: "mc_recall_outcome_total",
+  help: "Total recall results bucketed by outcome class (post-bias)",
+  labelNames: ["outcome", "bank"] as const,
+});
+const retainOutcomeTotal = new client.Counter({
+  name: "mc_retain_outcome_total",
+  help: "Total retain calls bucketed by outcome class derived from tags",
+  labelNames: ["outcome", "bank"] as const,
+});
+
+// W4 audit fix (queue #7 part 3): bound the bank label cardinality so a
+// typo'd producer can't accumulate dead label sets in prom-client memory
+// until process restart. Unknown banks fold to "unknown".
+const KNOWN_BANKS = new Set(["mc-jarvis", "mc-operational", "mc-system"]);
+function safeBank(bank: string): string {
+  return KNOWN_BANKS.has(bank) ? bank : "unknown";
+}
+
+/** Record a per-recall outcome distribution. Called from logRecall. */
+export function recordRecallOutcomes(
+  bank: string,
+  breakdown: {
+    success: number;
+    concerns: number;
+    failed: number;
+    unknown: number;
+  },
+): void {
+  const b = safeBank(bank);
+  if (breakdown.success > 0)
+    recallOutcomeTotal.inc({ outcome: "success", bank: b }, breakdown.success);
+  if (breakdown.concerns > 0)
+    recallOutcomeTotal.inc(
+      { outcome: "concerns", bank: b },
+      breakdown.concerns,
+    );
+  if (breakdown.failed > 0)
+    recallOutcomeTotal.inc({ outcome: "failed", bank: b }, breakdown.failed);
+  if (breakdown.unknown > 0)
+    recallOutcomeTotal.inc({ outcome: "unknown", bank: b }, breakdown.unknown);
+}
+
+/** Record a single retain by its outcome tag (extracted from tags array).
+ *  Multiple outcome:* tags on one retain is not produced today; first match
+ *  wins to match the recall-side `findOutcomeTag` semantics. */
+export function recordRetainOutcome(
+  bank: string,
+  tags: string[] | undefined,
+): void {
+  let outcome = "unknown";
+  if (tags) {
+    for (const t of tags) {
+      if (t === "outcome:success") {
+        outcome = "success";
+        break;
+      } else if (t === "outcome:concerns") {
+        outcome = "concerns";
+        break;
+      } else if (t === "outcome:failed") {
+        outcome = "failed";
+        break;
+      } else if (t === "outcome:unknown") {
+        outcome = "unknown";
+        break;
+      }
+    }
+  }
+  retainOutcomeTotal.inc({ outcome, bank: safeBank(bank) }, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Collect on scrape
 // ---------------------------------------------------------------------------

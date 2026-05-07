@@ -17,6 +17,7 @@
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import type { MemoryItem } from "./types.js";
+import { recordRecallOutcomes } from "../observability/prometheus.js";
 
 /** Time window for claiming unmatched recall rows during a turn-end sweep. */
 export const MATCH_WINDOW_MS = 60_000;
@@ -413,9 +414,15 @@ export function logRecall(input: LogRecallInput): void {
       }
     }
 
-    const breakdownJson = input.outcomeBreakdown
-      ? JSON.stringify(input.outcomeBreakdown)
-      : null;
+    // Queue #7 part 3 (2026-05-07): bump Prom counter from the breakdown so
+    // mc_recall_outcome_total stays in lockstep with the persisted JSON.
+    // SV1+W3 audit fixes: static import + local destructure to drop the
+    // non-null assertion that was brittle to future refactors.
+    const breakdown = input.outcomeBreakdown;
+    if (breakdown) {
+      recordRecallOutcomes(input.bank, breakdown);
+    }
+    const breakdownJson = breakdown ? JSON.stringify(breakdown) : null;
     const topKJson =
       input.topKIds && input.topKIds.length > 0
         ? JSON.stringify(input.topKIds)
