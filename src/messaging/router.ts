@@ -1871,7 +1871,15 @@ export class MessageRouter {
     // overwrote the cancelled status. The dispatcher updateTaskStatus guards
     // now prevent the row flip, but this handler still gets the event. Read
     // fresh status from DB and short-circuit if cancelled — prevents
-    // duplicate user-visible messages and double-tracking outcome.
+    // duplicate user-visible messages.
+    //
+    // Round-2 sweep audit C1 fix: still call trackTaskOutcome on the
+    // short-circuit path so telemetry doesn't go missing when status was
+    // flipped to 'cancelled' by a path that didn't emit task.cancelled
+    // (e.g. direct DB UPDATE, or a future code path). Idempotency caveat:
+    // if BOTH task.cancelled AND task.completed fire for the same task,
+    // we'll track twice — same as pre-fix behavior. Skip retain to avoid
+    // double-writing (handleTaskCancelled already retains).
     try {
       const row = getDatabase()
         .prepare("SELECT status FROM tasks WHERE task_id = ?")
@@ -1887,6 +1895,7 @@ export class MessageRouter {
           clearTimeout(stale.finalTimer);
           clearTimeout(stale.abandonTimer);
           this.pendingReplies.delete(taskId);
+          trackTaskOutcome(taskId, 0, false, stale.channel);
         }
         return;
       }
@@ -2222,6 +2231,7 @@ export class MessageRouter {
     // C2 deeper audit fix (queue #16, 2026-05-07): same short-circuit as
     // handleTaskCompleted — if the task was already cancelled, swallow the
     // event so the user doesn't see a duplicate "task failed" message.
+    // Round-2 sweep audit C1 fix: telemetry-preserve trackTaskOutcome.
     try {
       const row = getDatabase()
         .prepare("SELECT status FROM tasks WHERE task_id = ?")
@@ -2237,6 +2247,7 @@ export class MessageRouter {
           clearTimeout(stale.finalTimer);
           clearTimeout(stale.abandonTimer);
           this.pendingReplies.delete(taskId);
+          trackTaskOutcome(taskId, 0, false, stale.channel);
         }
         return;
       }

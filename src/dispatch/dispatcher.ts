@@ -641,10 +641,12 @@ function updateTaskStatus(
       `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(error ?? null, taskId);
   } else {
-    // Generic UPDATE (e.g. for non-terminal status transitions) — preserve
-    // existing semantics, no terminal guard needed.
+    // Round-2 audit W2 fix (2026-05-07): guard the generic UPDATE too so
+    // any future caller passing a non-enumerated status (e.g. "claimed",
+    // "queued") cannot flip a row out of a terminal state. Same exclusion
+    // list as the terminal branches above.
     db.prepare(
-      `UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE task_id = ?`,
+      `UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(status, taskId);
   }
 }

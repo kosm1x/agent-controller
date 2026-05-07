@@ -265,9 +265,17 @@ export class HindsightMemoryBackend implements MemoryService {
       console.log(
         `[memory] recall(hindsight) bank=${options.bank} results=${response.results.length} ${ms}ms`,
       );
-      const raw: MemoryItem[] = response.results.map((r) => ({
+      // Round-2 audit fix (queue #7 part 2, 2026-05-07): synthesize relevance
+      // from result-list position so applyOutcomeBias's score adjustments
+      // (+0.10/-0.05) actually take effect. Hindsight's API doesn't return a
+      // raw score, but the result list is already ranked by its internal
+      // pipeline (cross-encoder + cosine). A linear 1→0 mapping preserves
+      // that ordering while exposing a comparable scalar for bias arithmetic.
+      const total = response.results.length;
+      const raw: MemoryItem[] = response.results.map((r, idx) => ({
         content: r.text,
         tags: r.tags ?? [],
+        relevance: total > 1 ? 1 - idx / (total - 1) : 1,
       }));
       const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       if (excluded > 0) {

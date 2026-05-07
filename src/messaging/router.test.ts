@@ -50,6 +50,16 @@ vi.mock("../memory/outcome-tag.js", () => ({
   statusToOutcomeTag: vi.fn(() => "outcome:failed"),
 }));
 
+// Round-2 sweep audit: stub the DB-status read used by the cancel
+// short-circuit in handleTaskCompleted/Failed. Default returns undefined
+// (legacy path); tests can override to return {status:"cancelled"}.
+const dbStatusGet = vi.fn().mockReturnValue(undefined);
+vi.mock("../db/index.js", () => ({
+  getDatabase: () => ({
+    prepare: () => ({ get: dbStatusGet }),
+  }),
+}));
+
 import { MessageRouter } from "./router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
@@ -335,6 +345,43 @@ describe("MessageRouter", () => {
       expect(opts.tags).toContain("outcome:failed");
       expect(opts.tags).toContain("whatsapp");
       expect(opts.async).toBe(true);
+    });
+
+    it("handleTaskCompleted short-circuits when status is cancelled (round-2 audit C1)", async () => {
+      memoryRetainSpy.mockClear();
+
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "long-running query",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      // Set the DB stub AFTER inbound handling so unrelated DB lookups during
+      // submitTask classification don't consume the mock. The short-circuit
+      // is the next `.get()` call after this point.
+      dbStatusGet.mockReturnValue({ status: "cancelled" });
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: "Aquí está el resultado tardío...",
+          duration_ms: 60000,
+        },
+      });
+
+      // Only the inbound ack should have been sent — no result message
+      // (the short-circuit returns before sendToChannel).
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+      // No retain on the short-circuit path (handleTaskCancelled handles it).
+      expect(memoryRetainSpy).not.toHaveBeenCalled();
+      // Reset for subsequent tests
+      dbStatusGet.mockReturnValue(undefined);
     });
 
     it("should retain conversation with outcome:failed tag on task.cancelled", async () => {

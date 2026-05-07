@@ -142,4 +142,41 @@ describe("applyOutcomeBias", () => {
     const r = applyOutcomeBias(items, opts());
     expect(r.kept.map((k) => k.content)).toEqual(["a", "b", "c"]);
   });
+
+  it("excludeOutcomes: [] disables filtering (different from includeFailed)", () => {
+    const items = [
+      item("good", ["outcome:success"], 0.5),
+      item("bad", ["outcome:failed"], 0.5),
+    ];
+    const r = applyOutcomeBias(items, opts({ excludeOutcomes: [] }));
+    expect(r.kept).toHaveLength(2);
+    expect(r.excluded).toBe(0);
+  });
+
+  it("includeFailed: true overrides excludeOutcomes: ['outcome:failed']", () => {
+    // Both options say opposite things; includeFailed wins because the code
+    // short-circuits before consulting excludeOutcomes.
+    const items = [
+      item("good", ["outcome:success"], 0.5),
+      item("bad", ["outcome:failed"], 0.5),
+    ];
+    const r = applyOutcomeBias(
+      items,
+      opts({ includeFailed: true, excludeOutcomes: ["outcome:failed"] }),
+    );
+    expect(r.kept).toHaveLength(2);
+    expect(r.excluded).toBe(0);
+  });
+
+  it("first outcome:* tag wins on multi-outcome arrays (deterministic)", () => {
+    const items = [item("multi", ["outcome:concerns", "outcome:success"], 0.5)];
+    const r = applyOutcomeBias(items, opts());
+    expect(r.kept[0].relevance).toBeCloseTo(0.45); // -0.05 concerns penalty
+    expect(r.breakdown).toEqual({
+      success: 0,
+      concerns: 1,
+      failed: 0,
+      unknown: 0,
+    });
+  });
 });
