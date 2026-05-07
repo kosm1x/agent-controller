@@ -334,6 +334,12 @@ interface LogRecallInput {
     failed: number;
     unknown: number;
   };
+  /**
+   * Stable Hindsight memory IDs returned for this recall (queue #8). JSON
+   * array. Lets per-memory utility analysis cross-reference rows against
+   * retain history. Only populated on the hindsight path — null elsewhere.
+   */
+  topKIds?: string[];
 }
 
 /**
@@ -408,12 +414,16 @@ export function logRecall(input: LogRecallInput): void {
     const breakdownJson = input.outcomeBreakdown
       ? JSON.stringify(input.outcomeBreakdown)
       : null;
+    const topKJson =
+      input.topKIds && input.topKIds.length > 0
+        ? JSON.stringify(input.topKIds)
+        : null;
     writeWithRetry(() =>
       db
         .prepare(
           `INSERT INTO recall_audit
-             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown, top_k_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.bank,
@@ -424,6 +434,7 @@ export function logRecall(input: LogRecallInput): void {
           input.latencyMs,
           input.excludedCount ?? 0,
           breakdownJson,
+          topKJson,
         ),
     );
   } catch (err) {

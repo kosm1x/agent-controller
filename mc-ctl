@@ -601,6 +601,30 @@ cmd_recall_utility() {
       | awk -F'|' 'BEGIN { printf "  %-18s %6s %10s\n", "match_type", "n", "avg_score" }
                    { printf "  %-18s %6s %10s\n", $1, $2, $3 }'
     echo ""
+
+    # Outcome distribution (queue #7 part 2 + #8): aggregates per-recall
+    # outcome_breakdown JSON to surface what fraction of recalled material
+    # was failure narrative. Drives the Hindsight A/B/C decision when
+    # combined with the source/bank/match-type tables above.
+    local outcome_rows
+    outcome_rows=$(sql_raw "SELECT COUNT(*) FROM recall_audit
+                            WHERE created_at >= ${since_clause}
+                              AND outcome_breakdown IS NOT NULL;" 2>/dev/null || echo "0")
+    if [[ "${outcome_rows:-0}" -gt 0 ]]; then
+      echo -e "${BOLD}Outcome distribution (per-recall avg):${NC}"
+      sql_raw "SELECT
+                 ROUND(AVG(json_extract(outcome_breakdown, '\$.success')), 2) AS success_per_call,
+                 ROUND(AVG(json_extract(outcome_breakdown, '\$.concerns')), 2) AS concerns_per_call,
+                 ROUND(AVG(json_extract(outcome_breakdown, '\$.failed')), 2) AS failed_per_call,
+                 ROUND(AVG(json_extract(outcome_breakdown, '\$.unknown')), 2) AS unknown_per_call,
+                 COUNT(*) AS rows_with_breakdown
+               FROM recall_audit
+               WHERE created_at >= ${since_clause}
+                 AND outcome_breakdown IS NOT NULL;" 2>/dev/null \
+        | awk -F'|' 'BEGIN { printf "  %-12s %-12s %-12s %-12s %s\n", "success/call", "concerns/call", "failed/call", "unknown/call", "n" }
+                     { printf "  %-12s %-12s %-12s %-12s %s\n", $1, $2, $3, $4, $5 }'
+      echo ""
+    fi
   else
     echo -e "  ${DIM}No matched rows yet — wait for turn-end matches to accumulate.${NC}"
     echo ""

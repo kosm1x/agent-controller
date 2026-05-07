@@ -247,6 +247,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: ms,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        topKIds: response.results.map((r) => r.id), // queue #8
       });
       return kept;
     } catch (err) {
