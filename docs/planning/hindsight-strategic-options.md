@@ -3,14 +3,19 @@
 > **Status:** discussion document, not a plan. Drafted 2026-04-29 Session 114 after the
 > operator asked: _"Why is Hindsight falling short of its initial promise?"_
 >
+> **Update 2026-05-07:** Stabilization freeze lifted 15 days early. The "post-freeze
+> conversation" referenced below is now active. The three paths (HARDEN / DEMOTE /
+> REPLACE) are unblocked and can be acted on directly. Per-bank demote on `mc-jarvis`
+> already shipped (`HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis`) as an opportunistic Path B
+> pilot; mc-operational still on Hindsight. No global path commitment yet.
+>
 > **Constraints stated by the operator:**
 >
 > 1. **Context is king** — Jarvis remembering effectively is non-negotiable for product quality.
 > 2. **Semantic retrieval is of utmost priority** — keyword/regex fallbacks are insufficient.
 >
 > **Decision sought:** change, demote, or harden. This doc lays out what each path looks like,
-> what it would cost, and what the open questions are. **No commitments here** —
-> the freeze (2026-04-22 → 2026-05-22) still stands; this is for the post-freeze conversation.
+> what it would cost, and what the open questions are.
 
 ---
 
@@ -128,8 +133,8 @@ augmented it enough. Keep the vendor stack, fix the failure modes within it.
    downvotes, the row falls out of recall ranking. Doesn't delete — preserves audit trail.
 
 5. **Out-of-tree audit DB schema upgrade.** The current `recall_audit` only logs
-   latency + n_results + source. Add: `query_text`, `top_k_ids`, `was_used` (did the LLM's
-   response cite the recall?). Lets us measure recall _quality_, not just speed.
+   latency + n*results + source. Add: `query_text`, `top_k_ids`, `was_used` (did the LLM's
+   response cite the recall?). Lets us measure recall \_quality*, not just speed.
 
 **Cost:** roughly 2-3 weeks engineering work spread across mc + Hindsight bank config +
 some wrapper logic. No new infrastructure.
