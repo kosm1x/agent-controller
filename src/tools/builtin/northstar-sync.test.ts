@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import { upsertFile, getFile } from "../../db/jarvis-fs.js";
 import { northstarSyncTool } from "./northstar-sync.js";
+
+// Redirect KB mirror to a temp dir so tests don't leave `*--new.md` fixtures
+// in the live KB at /root/claude/jarvis-kb/. Each `beforeEach` provisions a
+// fresh dir; `afterEach` removes it. See jarvis-fs.ts:getMirrorDir().
+let testMirrorDir: string;
 
 // --- Fetch mock helpers ----------------------------------------------------
 
@@ -134,6 +142,8 @@ function journalGet(commitId: string): Record<string, unknown> | null {
 // --- Setup / teardown ------------------------------------------------------
 
 beforeEach(() => {
+  testMirrorDir = mkdtempSync(join(tmpdir(), "mc-jarvis-kb-test-"));
+  process.env.JARVIS_KB_MIRROR_DIR = testMirrorDir;
   initDatabase(":memory:");
   process.env.COMMIT_DB_KEY = "test-key";
   mockCalls = [];
@@ -146,6 +156,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   closeDatabase();
+  rmSync(testMirrorDir, { recursive: true, force: true });
+  delete process.env.JARVIS_KB_MIRROR_DIR;
 });
 
 // --- Tests -----------------------------------------------------------------

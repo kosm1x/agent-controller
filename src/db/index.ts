@@ -222,6 +222,62 @@ export function initDatabase(dbPath: string): Database.Database {
     /* column already exists */
   }
 
+  // 2026-05-07: FTS5 index on jarvis_files. Before this, searchFiles() used
+  // a `LIKE %query%` substring match — failed on multi-word queries because
+  // it required the literal phrase ("uncharted OOH" missed because the title
+  // is "México Uncharted — OOH Intelligence" with an em-dash). FTS5 with
+  // tokenizer='unicode61 remove_diacritics 2' tokenizes properly and supports
+  // AND-of-tokens via MATCH. External-content table avoids data duplication.
+  //
+  // VACUUM caveat (audit Critical 1): jarvis_files uses a TEXT primary key,
+  // so SQLite assigns an implicit integer rowid. VACUUM may reassign rowids
+  // and silently desync this external-content FTS index. If VACUUM is ever
+  // run, follow it with:
+  //   INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')
+  // We don't VACUUM anywhere in this codebase today, but the constraint is
+  // here for whoever adds it later.
+  _db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS jarvis_files_fts USING fts5(
+    title,
+    content,
+    path UNINDEXED,
+    content='jarvis_files',
+    content_rowid='rowid',
+    tokenize='unicode61 remove_diacritics 2'
+  )`);
+  _db.exec(`CREATE TRIGGER IF NOT EXISTS jarvis_files_ai AFTER INSERT ON jarvis_files BEGIN
+    INSERT INTO jarvis_files_fts(rowid, title, content, path) VALUES (new.rowid, new.title, new.content, new.path);
+  END`);
+  _db.exec(`CREATE TRIGGER IF NOT EXISTS jarvis_files_ad AFTER DELETE ON jarvis_files BEGIN
+    INSERT INTO jarvis_files_fts(jarvis_files_fts, rowid, title, content, path) VALUES('delete', old.rowid, old.title, old.content, old.path);
+  END`);
+  _db.exec(`CREATE TRIGGER IF NOT EXISTS jarvis_files_au AFTER UPDATE ON jarvis_files BEGIN
+    INSERT INTO jarvis_files_fts(jarvis_files_fts, rowid, title, content, path) VALUES('delete', old.rowid, old.title, old.content, old.path);
+    INSERT INTO jarvis_files_fts(rowid, title, content, path) VALUES (new.rowid, new.title, new.content, new.path);
+  END`);
+  // Backfill: rebuild the FTS index when it doesn't match the source table.
+  // The naive "rebuild if empty" check fails on the first boot after this
+  // migration ships, because seedDirectives() (called below) had already
+  // populated the FTS via triggers — making the index look "non-empty" but
+  // out of sync with the 1000+ rows that were upserted before the triggers
+  // existed. Triggering on count mismatch is the correct invariant.
+  const ftsCount =
+    (
+      _db.prepare("SELECT COUNT(*) AS n FROM jarvis_files_fts").get() as
+        | { n: number }
+        | undefined
+    )?.n ?? 0;
+  const filesCount =
+    (
+      _db.prepare("SELECT COUNT(*) AS n FROM jarvis_files").get() as
+        | { n: number }
+        | undefined
+    )?.n ?? 0;
+  if (ftsCount !== filesCount) {
+    _db.exec(
+      "INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')",
+    );
+  }
+
   // v7.3 Phase 2: SEO telemetry snapshots (PSI + GSC time-series)
   _db.exec(`CREATE TABLE IF NOT EXISTS seo_telemetry_snapshots (
     id                 INTEGER PRIMARY KEY,

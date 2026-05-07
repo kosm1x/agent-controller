@@ -18,7 +18,13 @@ import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
-const MIRROR_DIR = "/root/claude/jarvis-kb";
+// Env-overridable so tests can redirect to a temp dir; before this override
+// existed, the northstar-sync test suite was leaving 200+ stale `*--new.md`
+// fixtures in the live KB, polluting Jarvis's view of his own files.
+const DEFAULT_MIRROR_DIR = "/root/claude/jarvis-kb";
+function getMirrorDir(): string {
+  return process.env.JARVIS_KB_MIRROR_DIR ?? DEFAULT_MIRROR_DIR;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,12 +66,19 @@ export interface JarvisFileSummary {
 /** Mirror a file to the filesystem for human inspection. Non-fatal. */
 export function mirrorToDisk(path: string, content: string): void {
   try {
-    const fullPath = join(MIRROR_DIR, path);
-    if (!fullPath.startsWith(MIRROR_DIR)) return;
+    const mirrorDir = getMirrorDir();
+    const fullPath = join(mirrorDir, path);
+    if (!fullPath.startsWith(mirrorDir)) return;
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, content, "utf-8");
-  } catch {
-    // Non-fatal — SQLite is source of truth
+  } catch (err) {
+    // Non-fatal — SQLite is source of truth — but log so divergence is
+    // observable (audit Standards 7, 2026-05-07). The hourly KB reindexer
+    // recovers the FS→DB direction, not DB→FS, so silent mirror failures
+    // would let DB and FS drift indefinitely without any operator signal.
+    console.warn(
+      `[jarvis-fs] mirrorToDisk failed for ${path}: ${err instanceof Error ? err.message : err}`,
+    );
   }
 }
 
@@ -355,18 +368,82 @@ export function listFiles(filters?: {
 }
 
 /**
- * Search files by content keyword. Returns paths + matching snippet.
+ * Build an FTS5 MATCH expression from a free-form user query.
+ * Strategy: tokenize on whitespace + punctuation, drop empties, double-quote
+ * each token to escape FTS5 syntax characters (parens/AND/OR/NEAR), and
+ * join with implicit AND. Tokens shorter than 2 chars are dropped to avoid
+ * unhelpful matches. Returns null if no usable tokens remain.
+ */
+function buildFtsMatch(query: string): string | null {
+  const tokens = query
+    .toLowerCase()
+    .split(/[\s,;:!?¡¿"'`()[\]{}<>—–\-]+/)
+    .map((t) => t.replace(/[^a-z0-9_áéíóúüñ]/gi, ""))
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return null;
+  // Quote each token so FTS5 treats it as a literal (no operator parsing).
+  // Append `*` to enable prefix matching ("uncharted" matches "uncharted_v2").
+  return tokens.map((t) => `"${t}"*`).join(" ");
+}
+
+/**
+ * Search files by tokenized full-text. Returns paths + matching snippet.
  * Does NOT return full content — keeps LLM context light.
+ *
+ * 2026-05-07: rewritten to use FTS5 (jarvis_files_fts). Previous LIKE-based
+ * implementation required the literal phrase to appear verbatim, so
+ * "uncharted OOH" missed "México Uncharted — OOH Intelligence" because of
+ * the em-dash. FTS5 with the unicode61 tokenizer handles tokenization,
+ * diacritics, and ranks by relevance via bm25(). Falls back to LIKE on
+ * empty token set or FTS5 error to preserve the previous contract for
+ * single-character / punctuation-only queries.
  */
 export function searchFiles(
   query: string,
   limit: number = 20,
 ): Array<{ path: string; title: string; snippet: string; size: number }> {
   const db = getDatabase();
+  const match = buildFtsMatch(query);
+
+  if (match) {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT f.path, f.title, f.content, LENGTH(f.content) AS size,
+                  snippet(jarvis_files_fts, 1, '«', '»', '…', 16) AS snip
+             FROM jarvis_files_fts
+             JOIN jarvis_files f ON f.rowid = jarvis_files_fts.rowid
+            WHERE jarvis_files_fts MATCH ?
+            ORDER BY bm25(jarvis_files_fts), f.path ASC
+            LIMIT ?`,
+        )
+        .all(match, limit) as Array<{
+        path: string;
+        title: string;
+        content: string;
+        size: number;
+        snip: string;
+      }>;
+      if (rows.length > 0) {
+        return rows.map((r) => ({
+          path: r.path,
+          title: r.title,
+          snippet: r.snip || r.title,
+          size: r.size,
+        }));
+      }
+    } catch {
+      // FTS5 may reject tokens that look like operators after sanitization;
+      // fall through to LIKE so the caller still gets results.
+    }
+  }
+
+  // Fallback: LIKE substring (preserves previous behavior for short/punct
+  // queries and unblocks any FTS5 edge case).
   const escaped = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
   const rows = db
     .prepare(
-      `SELECT path, title, content, LENGTH(content) as size
+      `SELECT path, title, content, LENGTH(content) AS size
        FROM jarvis_files
        WHERE content LIKE ? OR title LIKE ? OR path LIKE ?
        ORDER BY
@@ -386,7 +463,6 @@ export function searchFiles(
     ) as Array<{ path: string; title: string; content: string; size: number }>;
 
   return rows.map((r) => {
-    // Extract a snippet around the first match
     const idx = r.content.toLowerCase().indexOf(query.toLowerCase());
     const start = Math.max(0, idx - 50);
     const end = Math.min(r.content.length, idx + query.length + 50);

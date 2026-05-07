@@ -195,6 +195,7 @@ export function startRitualScheduler(): void {
 
   // Mechanical backups + autonomous improvement + safeguards + canary + consolidation
   scheduleKbBackup();
+  scheduleKbReindex();
   scheduleAutonomousImprovement();
   scheduleDiffDigest();
   scheduleMemoryConsolidation();
@@ -339,6 +340,39 @@ function scheduleKbBackup(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * Mechanical KB reindex — walks the FS mirror at /root/claude/jarvis-kb/
+ * and upserts any .md files missing from the jarvis_files table. Catches
+ * drift introduced by external writers (shell_exec, manual edits, batch
+ * migrations) that bypass `upsertFile()`. 2026-05-07: shipped after a
+ * one-off pass restored 1229 orphan files. Hourly cadence keeps drift
+ * bounded without busy-looping.
+ */
+function scheduleKbReindex(): void {
+  const job = cron.schedule(
+    "10 * * * *",
+    async () => {
+      try {
+        const { reindexJarvisKb } = await import("../db/jarvis-reindex.js");
+        const result = reindexJarvisKb();
+        if (result.drift > 0) {
+          console.log(
+            `[rituals] kb-reindex: drift=${result.drift} upserted=${result.upserted} errored=${result.errored} (${result.durationMs}ms)`,
+          );
+        }
+      } catch (err) {
+        console.error("[rituals] kb-reindex failed:", err);
+        recordRitualFailure("kb-reindex", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] kb-reindex: scheduled (10 * * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 
