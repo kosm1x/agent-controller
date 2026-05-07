@@ -2,67 +2,104 @@
  * FFmpeg-based video composer — stitches images + audio + subtitles into MP4.
  */
 
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import type { VideoScript } from "./types.js";
 import { VIDEO_PROFILES } from "./types.js";
 import { formatFrameTime } from "./frame-clock.js";
+import { runPool } from "./worker-pool.js";
 
 /** Frame rate for all S5d compositions. Stays at 24fps per profile lock-in. */
 const COMPOSER_FPS = 24;
 
 const FFMPEG_TIMEOUT_MS = 120_000; // 2 min per step
 
+const execFileAsync = promisify(execFile);
+
 /**
  * Compose a video from images, audio, and subtitles.
  * Returns the path to the final MP4 file.
+ *
+ * v7.4 S1.1: per-scene clip creation runs through `runPool` so independent
+ * ffmpeg children execute in parallel. Pool auto-sizes from CPU + free
+ * memory, capped at 4 workers.
  */
-export function composeVideo(opts: {
+export async function composeVideo(opts: {
   jobId: string;
   script: VideoScript;
   imageFiles: string[];
   audioFile: string;
   subtitleFile: string;
   template: "landscape" | "portrait" | "square";
-}): string {
+}): Promise<string> {
   const { jobId, script, imageFiles, audioFile, subtitleFile, template } = opts;
   const profile = VIDEO_PROFILES[template];
   const workDir = join("/tmp", "video-jobs", jobId);
   mkdirSync(workDir, { recursive: true });
 
-  // Step 1: Create per-scene video clips from images
-  const clipFiles: string[] = [];
-  for (let i = 0; i < script.scenes.length; i++) {
-    const scene = script.scenes[i];
-    const imageFile = imageFiles[i] ?? imageFiles[imageFiles.length - 1]; // reuse last if short
-    const clipPath = join(workDir, `clip-${String(i).padStart(3, "0")}.mp4`);
+  // Step 1: Create per-scene video clips from images. Independent per scene,
+  // so we fan out via `runPool`. Each ffmpeg child runs as a separate OS
+  // process; concurrency cap protects against memory pressure on the VPS.
+  type ClipTask = {
+    sceneDuration: number;
+    imageFile: string;
+    clipPath: string;
+  };
 
-    execFileSync(
+  const clipTasks: ClipTask[] = script.scenes.map((scene, i) => ({
+    sceneDuration: scene.duration,
+    imageFile: imageFiles[i] ?? imageFiles[imageFiles.length - 1], // reuse last if short
+    clipPath: join(workDir, `clip-${String(i).padStart(3, "0")}.mp4`),
+  }));
+
+  const poolResult = await runPool(clipTasks, async (task) => {
+    await execFileAsync(
       "ffmpeg",
       [
         "-y",
         "-loop",
         "1",
         "-i",
-        imageFile,
+        task.imageFile,
         "-c:v",
         "libx264",
         "-t",
-        formatFrameTime(scene.duration, COMPOSER_FPS),
+        formatFrameTime(task.sceneDuration, COMPOSER_FPS),
         "-pix_fmt",
         "yuv420p",
         "-vf",
         `scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
         "-r",
         "24",
-        clipPath,
+        task.clipPath,
       ],
-      { timeout: FFMPEG_TIMEOUT_MS, stdio: "pipe" },
+      { timeout: FFMPEG_TIMEOUT_MS },
     );
+    return task.clipPath;
+  });
 
-    clipFiles.push(clipPath);
+  if (poolResult.cancelled) {
+    throw new Error("composeVideo: cancelled by abort signal");
   }
+
+  if (poolResult.errors.length > 0) {
+    // Surface every failure — single-error rethrow keeps the call site simple
+    // but the additional ones still need triage signal.
+    for (const e of poolResult.errors.slice(1)) {
+      console.warn(
+        `[composer] additional scene ${e.index} ffmpeg failure: ${e.error.message}`,
+      );
+    }
+    const first = poolResult.errors[0];
+    throw new Error(
+      `composeVideo: scene ${first.index} ffmpeg failed — ${first.error.message}`,
+    );
+  }
+
+  // input-order preserved by runPool; all entries defined when no errors.
+  const clipFiles = poolResult.results as string[];
 
   // Step 2: Create concat file
   const concatFile = join(workDir, "concat.txt");

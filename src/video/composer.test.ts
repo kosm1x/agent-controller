@@ -1,5 +1,37 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildOverlayFilterGraph } from "./composer.js";
+
+// Mock child_process for the per-scene clip fan-out test (no real ffmpeg)
+const childProcessMocks = vi.hoisted(() => ({
+  execFile: vi.fn(),
+  execFileSync: vi.fn(),
+}));
+vi.mock("child_process", async (importOriginal) => {
+  const orig = (await importOriginal()) as typeof import("child_process");
+  return {
+    ...orig,
+    execFile: (...args: unknown[]) => childProcessMocks.execFile(...args),
+    execFileSync: (...args: unknown[]) =>
+      childProcessMocks.execFileSync(...args),
+  };
+});
+
+// Pin worker-pool sizing so the parallelism assertion below isn't host-dependent.
+// Without this, a 1- or 2-core CI box yields pool size 1 and the `peak > 1`
+// assertion fails for environment reasons rather than code reasons.
+vi.mock("os", async (importOriginal) => {
+  const orig = (await importOriginal()) as typeof import("os");
+  return {
+    ...orig,
+    cpus: () =>
+      Array(8).fill({
+        model: "mock",
+        speed: 0,
+        times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
+      }) as ReturnType<typeof orig.cpus>,
+    freemem: () => 4 * 1024 * 1024 * 1024, // 4 GB free
+  };
+});
 
 describe("buildOverlayFilterGraph", () => {
   it("generates correct filter for 1 image", () => {
@@ -49,5 +81,118 @@ describe("buildOverlayFilterGraph", () => {
     expect(g1).toBe(g2);
     // And the quantized values are frame-aligned at 24fps (multiples of 1/24)
     expect(g1).toMatch(/between\(t,0\.000000,3\.1(?:2|4)\d+\)/);
+  });
+});
+
+describe("composeVideo — v7.4 S1.1 parallel scene-clip generation", () => {
+  afterEach(() => {
+    childProcessMocks.execFile.mockReset();
+    childProcessMocks.execFileSync.mockReset();
+  });
+
+  it("fans out per-scene clip ffmpeg calls via runPool (parallel observable)", async () => {
+    let inflight = 0;
+    let peak = 0;
+    const callTimes: { kind: "clip" | "other"; t: number }[] = [];
+
+    // execFile (async) — used for per-scene clip step via promisify
+    childProcessMocks.execFile.mockImplementation(
+      (
+        _file: string,
+        args: string[],
+        _opts: unknown,
+        cb: (e: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        const isClipStep = args.some((a) => /clip-\d{3}\.mp4$/.test(a));
+        const kind = isClipStep ? "clip" : "other";
+        if (isClipStep) {
+          inflight++;
+          peak = Math.max(peak, inflight);
+        }
+        callTimes.push({ kind, t: Date.now() });
+        setTimeout(() => {
+          if (isClipStep) inflight--;
+          cb(null, "", "");
+        }, 15);
+      },
+    );
+
+    // execFileSync — used for concat + final encode steps
+    childProcessMocks.execFileSync.mockImplementation(() => Buffer.from(""));
+
+    const { composeVideo } = await import("./composer.js");
+    const result = await composeVideo({
+      jobId: `test-${Date.now()}`,
+      script: {
+        title: "t",
+        scenes: [
+          { text: "a", duration: 1, imageQuery: "x" },
+          { text: "b", duration: 1, imageQuery: "x" },
+          { text: "c", duration: 1, imageQuery: "x" },
+          { text: "d", duration: 1, imageQuery: "x" },
+        ],
+        totalDuration: 4,
+        language: "en",
+      },
+      imageFiles: ["/x/0.jpg", "/x/1.jpg", "/x/2.jpg", "/x/3.jpg"],
+      audioFile: "/x/a.mp3",
+      subtitleFile: "/nope/missing.srt", // existsSync false → no -vf subtitles branch
+      template: "landscape",
+    });
+
+    expect(result).toMatch(/output\.mp4$/);
+
+    // Verify all 4 clip ffmpeg calls happened
+    const clipCalls = callTimes.filter((c) => c.kind === "clip");
+    expect(clipCalls).toHaveLength(4);
+
+    // Parallelism observable: with 8 mocked CPUs + 4GB mocked free mem,
+    // computePoolSize() returns min(MAX_WORKERS=4, 8*0.5=4, 4096/512=8) = 4.
+    // 4-task fan-out → peak inflight should hit 4 (or at least 2 worst case).
+    expect(peak).toBeGreaterThanOrEqual(2);
+
+    // Sequential downstream steps still run via execFileSync (concat + encode)
+    expect(
+      childProcessMocks.execFileSync.mock.calls.length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("propagates per-scene ffmpeg failures with scene index", async () => {
+    childProcessMocks.execFile.mockImplementation(
+      (
+        _file: string,
+        args: string[],
+        _opts: unknown,
+        cb: (e: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        if (args.some((a) => /clip-001\.mp4$/.test(a))) {
+          setTimeout(() => cb(new Error("ffmpeg exploded")), 5);
+          return;
+        }
+        setTimeout(() => cb(null, "", ""), 5);
+      },
+    );
+    childProcessMocks.execFileSync.mockImplementation(() => Buffer.from(""));
+
+    const { composeVideo } = await import("./composer.js");
+    await expect(
+      composeVideo({
+        jobId: `fail-${Date.now()}`,
+        script: {
+          title: "t",
+          scenes: [
+            { text: "a", duration: 1, imageQuery: "x" },
+            { text: "b", duration: 1, imageQuery: "x" },
+            { text: "c", duration: 1, imageQuery: "x" },
+          ],
+          totalDuration: 3,
+          language: "en",
+        },
+        imageFiles: ["/x/0.jpg", "/x/1.jpg", "/x/2.jpg"],
+        audioFile: "/x/a.mp3",
+        subtitleFile: "/nope/missing.srt",
+        template: "landscape",
+      }),
+    ).rejects.toThrow(/scene 1 ffmpeg failed/);
   });
 });

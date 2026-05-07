@@ -364,7 +364,7 @@ async function runPipeline(
 
     updateJob(jobId, { status: "composing" });
     const { composeVideo } = await import("../../video/composer.js");
-    outputFile = composeVideo({
+    outputFile = await composeVideo({
       jobId,
       script,
       imageFiles,
@@ -1093,7 +1093,7 @@ async function runManifestPipeline(
 
   updateJob(jobId, { status: "composing" });
   const { composeVideo } = await import("../../video/composer.js");
-  const outputFile = composeVideo({
+  const outputFile = await composeVideo({
     jobId,
     script,
     imageFiles,
@@ -1477,6 +1477,7 @@ USE WHEN:
 // ---------------------------------------------------------------------------
 
 import { HTML_MOTION_IDS } from "../../video/html-motion.js";
+import { htmlCompositionSkillSection } from "../../video/html-skills.js";
 import { validateViewport } from "../../video/html-renderer.js";
 
 const HTML_COMPOSE_DEFAULT_FPS = 24 as const;
@@ -1515,6 +1516,8 @@ USE WHEN:
 HTML file MUST live under /root/tmp-video-html/ and have .html extension. Network loads are blocked at the route handler — inline all assets as data: URIs. Service Workers are blocked.
 
 ${motionVocabSection()}
+
+${htmlCompositionSkillSection()}
 
 Example HTML: <style>@keyframes fade-in { from {opacity:0} to {opacity:1} } .fade-in { animation: fade-in 0.5s forwards }</style><h1 class="fade-in" data-start="0" data-duration="2">Hello</h1>
 
