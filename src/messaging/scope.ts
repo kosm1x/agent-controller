@@ -109,13 +109,25 @@ export const CRM_TOOLS_SCOPE = ["crm_query"];
 /** Other utility tools — always included (keep minimal for token budget).
  *  v6.3.1: Trimmed from 30→10 tools. Niche tools moved to scope-gated groups
  *  or deferred (name+description only, full schema on first call).
- *  2026-04-14: jarvis_file write tools moved to JARVIS_WRITE_TOOLS (see below).
- *  Leaving them always-on let memory-recalled SOPs (e.g. "log the delivered
- *  poem to a registry") drive silent tool calls on trivial chat requests. */
+ *  2026-04-14: jarvis_file write tools moved out (Rumi incident — see
+ *  JARVIS_WRITE_TOOLS comment for history).
+ *  2026-05-07: write tools restored to always-on per operator directive.
+ *  After 3+ weeks of friction on simple file moves and KB writes (algebra-
+ *  progress chant loop, KB-visibility drift, today's relocation friction),
+ *  operator explicitly chose "write tools available always" over the
+ *  Rumi-class SOP-drift mitigation. Replacement safety rails are at:
+ *    - tool description level (ACI guidance against silent SOP-following)
+ *    - handler-level confirmation gates for destructive ops
+ *    - system-prompt high-stakes data guard
+ *    - feedback_high_stakes_data_guard.md / feedback_jarvis_kb_directive_loading.md
+ */
 export const MISC_TOOLS = [
   // jarvis_file_read + jarvis_file_list already in CORE_TOOLS
-  // jarvis_file_{write,update,delete,move} now gated via JARVIS_WRITE_TOOLS
   "jarvis_file_search", // Read-only search — safe to keep always-on
+  "jarvis_file_write", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
+  "jarvis_file_update", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
+  "jarvis_file_delete", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
+  "jarvis_file_move", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
@@ -126,20 +138,23 @@ export const MISC_TOOLS = [
   "browser__markdown",
 ];
 
-/** Jarvis knowledge-base write tools — scope-gated.
+/** Jarvis knowledge-base write tools.
  *
- *  Moved out of MISC_TOOLS on 2026-04-14 after task 2378 ("Me regalas un
- *  poema de Rumi para dormir?") silently called jarvis_file_read +
- *  jarvis_file_update instead of answering. Root cause: memory enrichment
- *  recalled a self-written SOP ("Poemas de Rumi: registro obligatorio en
- *  cada uso futuro") that instructed the model to log every poem to a
- *  registry. With writes in always-on scope, the model faithfully followed
- *  the SOP on a bedtime chat message and never produced a user-visible
- *  reply. Read access is still always-on — the model can still consult the
- *  SOP. Writes now require one of:
- *    - explicit write verb + file-ish object (jarvis_write scope pattern)
- *    - northstar_write / northstar_journal (NorthStar lives in jarvis_files)
- *    - coding (code/project work implies knowledge-base writes)
+ *  History:
+ *    2026-04-14: Moved out of MISC_TOOLS after task 2378 ("Me regalas un
+ *      poema de Rumi para dormir?") silently called jarvis_file_read +
+ *      jarvis_file_update instead of answering. Memory enrichment recalled
+ *      a self-written SOP ("Poemas de Rumi: registro obligatorio en cada
+ *      uso futuro") that the model faithfully followed on a bedtime chat
+ *      message, producing no user-visible reply.
+ *    2026-05-07: Restored to MISC_TOOLS (always-on) after 3+ weeks of
+ *      operator friction on simple file moves and KB writes. The gate's
+ *      narrow regex repeatedly missed legitimate intent, and the algebra-
+ *      progress chant loop showed the cure was worse than the disease.
+ *      Rumi-class risk now mitigated at tool-description, confirmation-
+ *      gate, and system-prompt levels rather than at scope. The export
+ *      is preserved for back-compat with any external imports; it now
+ *      duplicates a subset of MISC_TOOLS rather than gating anything.
  */
 export const JARVIS_WRITE_TOOLS = [
   "jarvis_file_write",
@@ -1159,17 +1174,10 @@ export function scopeToolsForMessage(
   ) {
     tools.push("northstar_sync");
   }
-  // JARVIS_WRITE_TOOLS — gated to prevent silent drift from memory-recalled
-  // SOPs that instruct the model to log/register/save on trivial chat turns.
-  // Any of these four groups implies legitimate write intent.
-  if (
-    activeGroups.has("jarvis_write") ||
-    activeGroups.has("northstar_write") ||
-    activeGroups.has("northstar_journal") ||
-    activeGroups.has("coding")
-  ) {
-    tools.push(...JARVIS_WRITE_TOOLS);
-  }
+  // JARVIS_WRITE_TOOLS — 2026-05-07 promoted to MISC_TOOLS (always-on) per
+  // operator directive. Gating block removed; the `jarvis_write` regex group
+  // still fires for telemetry/inheritance purposes but no longer changes
+  // the tool surface. See JARVIS_WRITE_TOOLS comment for full history.
   if (activeGroups.has("specialty")) {
     tools.push(...SPECIALTY_TOOLS);
     // Niche tools activated by specialty context

@@ -87,12 +87,18 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("project_update");
   });
 
-  it("pure project ops do NOT activate NorthStar write tools", () => {
+  it("pure project ops include jarvis write tools (always-on since 2026-05-07)", () => {
+    // Pre-2026-05-07: jarvis_file_{write,update,delete,move} were scope-gated
+    // and "archiva el proyecto vlmp" did NOT pull them. Operator directive
+    // restored them to always-on after 3+ weeks of friction. Project ops
+    // still don't ACTIVATE the jarvis_write group, but the tools are now
+    // unconditionally available via MISC_TOOLS.
     const tools = scope("archiva el proyecto vlmp");
     expect(tools).toContain("project_update");
-    expect(tools).not.toContain("jarvis_file_write");
-    expect(tools).not.toContain("jarvis_file_update");
-    expect(tools).not.toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_update");
+    expect(tools).toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_move");
   });
 
   it("coding scope does NOT over-fire on bare 'react' substrings (reactiva, reactor, reaction)", () => {
@@ -1057,11 +1063,14 @@ describe("northstar_write sub-patterns", () => {
     expect(tools).toContain("jarvis_file_delete");
   });
 
-  it("non-NorthStar clitic does NOT pull jarvis_file_delete", () => {
-    // "borra esta imagen, bórrala" → destructive present but no NorthStar
-    // noun → co-occurrence rule does NOT fire → write tools stay out of scope.
+  it("non-NorthStar clitic includes jarvis_file_delete (always-on since 2026-05-07)", () => {
+    // Pre-2026-05-07: "borra esta imagen, bórrala" had destructive + no NorthStar
+    // noun → co-occurrence rule didn't fire → delete tool stayed out of scope.
+    // Post-2026-05-07: jarvis_file_delete moved to MISC_TOOLS (always-on).
+    // Handler-level confirmation gate + path-validation allowlist still prevent
+    // accidental deletes; scope no longer carries that load.
     const tools = scope("borra esta imagen, bórrala del feed");
-    expect(tools).not.toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_delete");
   });
 });
 
@@ -1084,7 +1093,12 @@ describe("destructive + northstar co-occurrence (classifier path)", () => {
     expect(tools).toContain("jarvis_file_delete");
   });
 
-  it("classifier groups [destructive] alone → jarvis_file_delete NOT present", () => {
+  it("classifier groups [destructive] alone → jarvis_file_delete present (always-on since 2026-05-07)", () => {
+    // Pre-2026-05-07: bare destructive without a NorthStar noun did NOT pull
+    // jarvis_file_delete — the co-occurrence rule needed both signals.
+    // Post-2026-05-07: jarvis_file_delete is in MISC_TOOLS (always-on); the
+    // co-occurrence gate is now redundant for tool exposure but still useful
+    // for telemetry. Test inverted to record the new contract.
     const tools = scopeToolsForMessage(
       "borra eso",
       [],
@@ -1092,7 +1106,7 @@ describe("destructive + northstar co-occurrence (classifier path)", () => {
       ALL_ON,
       new Set(["destructive"]),
     );
-    expect(tools).not.toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_delete");
   });
 
   it("classifier groups [destructive] + regex-activated northstar_read on noun → jarvis_file_delete present", () => {
@@ -1139,29 +1153,47 @@ describe("journal scope (jarvis files)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// jarvis_write scope — 2026-04-14
-// Moved jarvis_file_{write,update,delete,move} out of always-on MISC_TOOLS
-// after task 2378 ("Me regalas un poema de Rumi para dormir?") triggered
-// silent jarvis_file_read + jarvis_file_update on a trivial chat turn
-// because enrichment recalled a self-written SOP that said "log every
-// delivered poem". Writes must now require explicit intent.
+// jarvis write tools — 2026-04-14 → 2026-05-07
+//
+// 2026-04-14: Moved jarvis_file_{write,update,delete,move} out of always-on
+//   MISC_TOOLS after task 2378 ("Me regalas un poema de Rumi para dormir?")
+//   triggered silent jarvis_file_read + jarvis_file_update on a trivial chat
+//   turn — enrichment recalled a self-written SOP ("log every delivered poem")
+//   and the model faithfully followed it.
+// 2026-05-07: Restored to always-on after 3+ weeks of operator friction. The
+//   gate's narrow regex repeatedly missed legitimate intent (algebra-progress
+//   chant loop, KB-visibility drift, today's relocation friction), and the
+//   cure was worse than the disease. Rumi-class risk now mitigated at:
+//     - tool description level (ACI guidance against silent SOP-following)
+//     - handler-level confirmation gates for destructive ops
+//     - system-prompt high-stakes data guard
+// The `jarvis_write` regex group still fires for telemetry/inheritance; the
+// describe block below now asserts that write tools are universally present
+// rather than gated. The Rumi regression is preserved at the tool-description
+// + system-prompt layers, not at scope.
 // ---------------------------------------------------------------------------
 
-describe("jarvis_write scope gating", () => {
-  it("Rumi poem request does NOT pull jarvis_file_write/update (regression for task 2378)", () => {
+describe("jarvis write tools (always-on since 2026-05-07)", () => {
+  it("Rumi poem request includes jarvis_file_write/update — silent SOP-following now blocked at tool-description + system-prompt layers, not at scope", () => {
+    // Pre-2026-05-07: scope refused to expose write tools on this trivial chat
+    // turn (task 2378 regression). Post-2026-05-07: tools are exposed; the
+    // mitigation is that the tool descriptions + system prompt guide the model
+    // to refuse silent SOP-driven logging. If the model regresses to the 2378
+    // behavior, the fix belongs in those layers, not here.
     const tools = scope("Me regalas un poema de Rumi para dormir?");
-    expect(tools).not.toContain("jarvis_file_write");
-    expect(tools).not.toContain("jarvis_file_update");
-    expect(tools).not.toContain("jarvis_file_delete");
-    expect(tools).not.toContain("jarvis_file_move");
-    // Read access must remain — model can still consult SOPs if it wants to
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_update");
+    expect(tools).toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_move");
     expect(tools).toContain("jarvis_file_read");
   });
 
-  it("casual chat does NOT pull jarvis write tools", () => {
+  it("casual chat includes jarvis write tools (always-on)", () => {
     const tools = scope("Hola Jarvis, cómo estás hoy?");
-    expect(tools).not.toContain("jarvis_file_write");
-    expect(tools).not.toContain("jarvis_file_update");
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_update");
+    expect(tools).toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_move");
   });
 
   it("explicit 'guarda esta nota' activates jarvis_write", () => {
@@ -1251,23 +1283,26 @@ describe("jarvis_write scope gating", () => {
     );
   });
 
-  // Audit W1 regression — learning-vocab arm requires `mi|tu` possessive
-  // so routine project-status chatter does NOT pull JARVIS_WRITE_TOOLS.
+  // Audit W1 regression — pre-2026-05-07 these asserted that routine project-
+  // status chatter did NOT pull JARVIS_WRITE_TOOLS (the gate was narrow by
+  // design). Post-2026-05-07: write tools are always-on, so the assertion
+  // inverts. Kept as smoke tests proving the always-on contract holds across
+  // diverse phrasings, and as a forensic record of the prior FP shape.
 
-  it("'actualiza el progreso del proyecto' does NOT activate jarvis_write (W1 FP)", () => {
+  it("'actualiza el progreso del proyecto' includes write tools (always-on since 2026-05-07)", () => {
     const tools = scope("Actualiza el progreso del proyecto Atlas");
-    expect(tools).not.toContain("jarvis_file_write");
-    expect(tools).not.toContain("jarvis_file_delete");
+    expect(tools).toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_delete");
   });
 
-  it("'registra el progreso del sprint' does NOT activate jarvis_write (W1 FP)", () => {
+  it("'registra el progreso del sprint' includes write tools (always-on)", () => {
     const tools = scope("Registra el progreso del sprint actual");
-    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_write");
   });
 
-  it("'crea un reporte de progreso' does NOT activate jarvis_write (W1 FP)", () => {
+  it("'crea un reporte de progreso' includes write tools (always-on)", () => {
     const tools = scope("Crea un reporte de progreso para el cliente");
-    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_write");
   });
 
   it("'apunta en mi KB' activates jarvis_write", () => {
@@ -1275,10 +1310,13 @@ describe("jarvis_write scope gating", () => {
     expect(tools).toContain("jarvis_file_write");
   });
 
-  it("bare 'KB' mention without write verb does NOT activate", () => {
-    // "qué tienes en el KB sobre X" is a read question — no write tools
+  it("bare 'KB' mention without write verb still includes write tools (always-on)", () => {
+    // Pre-2026-05-07: "qué tienes en el KB sobre X" was a pure read question
+    // and the gate kept write tools out. Post-2026-05-07: tools are always-on;
+    // the model is guided NOT to call them on read questions via tool
+    // descriptions and system prompt — not via scope.
     const tools = scope("Qué tienes en el KB sobre Rumi?");
-    expect(tools).not.toContain("jarvis_file_write");
+    expect(tools).toContain("jarvis_file_write");
   });
 });
 

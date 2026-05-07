@@ -151,11 +151,15 @@ describe("MessageRouter", () => {
       // Jarvis file READ tools always-on (NorthStar visions live here)
       expect(call.tools).toContain("jarvis_file_read");
       expect(call.tools).toContain("jarvis_file_list");
-      // 2026-04-14: Jarvis file WRITE tools are now scope-gated (jarvis_write
-      // group). Generic chat must not carry write capabilities — prevents
-      // memory-recalled SOPs from driving silent tool calls. See task 2378.
-      expect(call.tools).not.toContain("jarvis_file_write");
-      expect(call.tools).not.toContain("jarvis_file_update");
+      // 2026-04-14 → 2026-05-07: Write tools were scope-gated (jarvis_write
+      // group) to prevent memory-recalled SOPs from driving silent tool calls
+      // (task 2378). After 3+ weeks of recurring friction on KB writes, the
+      // gate was reverted per operator directive — write tools are now in
+      // MISC_TOOLS (always-on). Rumi-class mitigation moved to tool-
+      // description, confirmation-gate, and system-prompt layers. See
+      // feedback_jarvis_writes_always_on.md.
+      expect(call.tools).toContain("jarvis_file_write");
+      expect(call.tools).toContain("jarvis_file_update");
       // Misc core still always present
       expect(call.tools).toContain("list_schedules");
       // Niche tools no longer always-on
