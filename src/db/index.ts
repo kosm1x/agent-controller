@@ -139,6 +139,12 @@ export function initDatabase(dbPath: string): Database.Database {
   if (!recallAuditCols.some((c) => c.name === "overlap_score")) {
     _db.exec("ALTER TABLE recall_audit ADD COLUMN overlap_score REAL");
   }
+  // 2026-05-07 queue #7 part 2: per-recall distribution of outcome tags
+  // (success / concerns / failed / unknown counts) persisted as JSON so
+  // ratio queries don't have to re-parse snippets. Additive — null on old rows.
+  if (!recallAuditCols.some((c) => c.name === "outcome_breakdown")) {
+    _db.exec("ALTER TABLE recall_audit ADD COLUMN outcome_breakdown TEXT");
+  }
 
   // v4.0 S1: composite indexes for query performance
   _db.exec(

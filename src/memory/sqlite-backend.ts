@@ -437,7 +437,14 @@ export class SqliteMemoryBackend implements MemoryService {
         `[memory] Hybrid recall: FTS5=${ftsResults.length}, embed=${embeddingResults.length}, merged=${allResults.size}, coherence=${coherence.toFixed(2)}`,
       );
 
-      return reranked.slice(0, limit).map(({ _score: _, ...item }) => item);
+      // 2026-05-07 queue #7 part 2: surface _score as `relevance` on each
+      // returned item so the recall-side outcome bias (outcome-bias.ts) has
+      // a comparable score to add ±0.05–0.10 onto. Without this the bias
+      // function falls back to insertion-order sort and the boost is a no-op.
+      return reranked.slice(0, limit).map(({ _score, ...item }) => ({
+        ...item,
+        relevance: _score,
+      }));
     } catch {
       return [];
     }

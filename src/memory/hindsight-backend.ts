@@ -17,7 +17,7 @@
 import { HindsightClient } from "./hindsight-client.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import { logRecall } from "./recall-utility.js";
-import { DEFAULT_EXCLUDE_OUTCOMES } from "./types.js";
+import { applyOutcomeBias } from "./outcome-bias.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -27,24 +27,9 @@ import type {
   ReflectOptions,
 } from "./types.js";
 
-/**
- * Filter MemoryItems whose tags include any of the excluded outcome tags.
- * Returns {kept, excluded} so callers can log + log_recall the drop count.
- */
-function applyOutcomeFilter(
-  items: MemoryItem[],
-  options: RecallOptions,
-): { kept: MemoryItem[]; excluded: number } {
-  const exclude = options.excludeOutcomes ?? DEFAULT_EXCLUDE_OUTCOMES;
-  if (exclude.length === 0) return { kept: items, excluded: 0 };
-  const excludeSet = new Set(exclude);
-  const kept = items.filter((item) => {
-    const tags = item.tags ?? [];
-    for (const t of tags) if (excludeSet.has(t)) return false;
-    return true;
-  });
-  return { kept, excluded: items.length - kept.length };
-}
+// applyOutcomeFilter (binary drop) replaced by applyOutcomeBias (drop +
+// score adjustment + re-sort). 2026-05-07 queue #7 part 2. See
+// outcome-bias.ts for details.
 
 // ---------------------------------------------------------------------------
 // Circuit breaker
@@ -161,7 +146,7 @@ export class HindsightMemoryBackend implements MemoryService {
     if (isBankDisabled(options.bank)) {
       const start = Date.now();
       const raw = await this.sqliteFallback.recall(query, options);
-      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       logRecall({
         bank: options.bank,
         query,
@@ -169,6 +154,7 @@ export class HindsightMemoryBackend implements MemoryService {
         results: kept,
         latencyMs: Date.now() - start,
         excludedCount: excluded,
+        outcomeBreakdown: breakdown,
       });
       if (excluded > 0) {
         console.log(
@@ -184,7 +170,7 @@ export class HindsightMemoryBackend implements MemoryService {
       // call dead-wait that was firing on every turn.
       const start = Date.now();
       const raw = await this.sqliteFallback.recall(query, options);
-      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       logRecall({
         bank: options.bank,
         query,
@@ -192,6 +178,7 @@ export class HindsightMemoryBackend implements MemoryService {
         results: kept,
         latencyMs: Date.now() - start,
         excludedCount: excluded,
+        outcomeBreakdown: breakdown,
       });
       if (excluded > 0) {
         console.log(
@@ -207,7 +194,7 @@ export class HindsightMemoryBackend implements MemoryService {
       );
       const start = Date.now();
       const raw = await this.sqliteFallback.recall(query, options);
-      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       logRecall({
         bank: options.bank,
         query,
@@ -215,6 +202,7 @@ export class HindsightMemoryBackend implements MemoryService {
         results: kept,
         latencyMs: Date.now() - start,
         excludedCount: excluded,
+        outcomeBreakdown: breakdown,
       });
       if (excluded > 0) {
         console.log(
@@ -245,7 +233,7 @@ export class HindsightMemoryBackend implements MemoryService {
         content: r.text,
         tags: r.tags ?? [],
       }));
-      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       if (excluded > 0) {
         console.log(
           `[memory] recall(hindsight) filtered ${excluded} outcome-tagged result(s)`,
@@ -258,6 +246,7 @@ export class HindsightMemoryBackend implements MemoryService {
         results: kept,
         latencyMs: ms,
         excludedCount: excluded,
+        outcomeBreakdown: breakdown,
       });
       return kept;
     } catch (err) {
@@ -273,7 +262,7 @@ export class HindsightMemoryBackend implements MemoryService {
       console.log(
         `[memory] recall(sqlite-fallback) results=${raw.length} ${fbMs}ms`,
       );
-      const { kept, excluded } = applyOutcomeFilter(raw, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
       if (excluded > 0) {
         console.log(
           `[memory] recall(sqlite-fallback) filtered ${excluded} outcome-tagged result(s)`,
@@ -286,6 +275,7 @@ export class HindsightMemoryBackend implements MemoryService {
         results: kept,
         latencyMs: ms + fbMs,
         excludedCount: excluded,
+        outcomeBreakdown: breakdown,
       });
       return kept;
     }

@@ -34,27 +34,37 @@ export interface RecallOptions {
   tags?: string[];
   maxResults?: number;
   /**
-   * Outcome tags to exclude from results. Defaults to DEFAULT_EXCLUDE_OUTCOMES
-   * which drops `outcome:concerns` and `outcome:failed` — closes the Session
-   * 114 poison-source class. Pass `[]` to disable filtering.
+   * Outcome tags to drop entirely from results. Defaults to
+   * DEFAULT_EXCLUDE_OUTCOMES which drops only `outcome:failed`.
+   * `outcome:concerns` is no longer dropped — it gets a -0.05 score
+   * penalty via OUTCOME_BIAS in outcome-bias.ts. Pass `[]` to disable
+   * dropping (or use `includeFailed: true` shorthand).
    */
   excludeOutcomes?: string[];
+  /**
+   * Convenience for analysis tasks: when true, recall returns ALL outcome
+   * classes including failures (maps to `excludeOutcomes: []`). Useful
+   * for "show me what didn't work" diagnostic queries that should not be
+   * silently filtered.
+   */
+  includeFailed?: boolean;
 }
 
 /**
- * Default outcome tags filtered out at recall time.
- * - `outcome:concerns` was the literal Session 114 incident class
- *   (a `completed_with_concerns` task whose body narrated a failure)
- * - `outcome:failed` is unreachable via the current retain wiring (router's
- *   handleTaskFailed doesn't retain) but documented for future-proofing
- * - `outcome:unknown` is intentionally KEPT in default — most historical rows
- *   pre-2026-04-29 lack the tag, and pre-task retains (positive feedback,
- *   fast-path) have no taskId so will tag as unknown
+ * Default outcome tags dropped at recall time (queue #7 part 2 update).
+ *
+ * - `outcome:failed` — pure-failure narratives are dropped to avoid
+ *   recycling them as recipes (Session 114 root cause).
+ * - `outcome:concerns` — NOT dropped; gets a -0.05 score penalty via
+ *   OUTCOME_BIAS so the partial signal is preserved but down-ranked.
+ *   Trade-off: more surface area for the Session 114 class than full
+ *   drop, but the score gap (concerns -0.05 vs success +0.10 = 0.15
+ *   spread) plus the existing relevance ranking should keep concerns
+ *   below higher-confidence matches in top-K.
+ * - `outcome:unknown` — KEPT. Historical rows pre-2026-04-29 and
+ *   pre-task retains have no outcome tag.
  */
-export const DEFAULT_EXCLUDE_OUTCOMES = [
-  "outcome:concerns",
-  "outcome:failed",
-] as const;
+export const DEFAULT_EXCLUDE_OUTCOMES = ["outcome:failed"] as const;
 
 /** Options for synthesizing memories. */
 export interface ReflectOptions {

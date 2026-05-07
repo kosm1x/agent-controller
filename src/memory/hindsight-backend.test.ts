@@ -136,7 +136,7 @@ describe("HindsightMemoryBackend", () => {
       expect(logRecallSpy.mock.calls[0][0].source).toBe("sqlite-fallback");
     });
 
-    it("excludes outcome:concerns and outcome:failed by default", async () => {
+    it("drops outcome:failed by default but keeps outcome:concerns with score penalty (queue #7 part 2)", async () => {
       mockClient.recall.mockResolvedValueOnce({
         results: [
           { id: "1", text: "good memory", tags: ["outcome:success"] },
@@ -149,11 +149,11 @@ describe("HindsightMemoryBackend", () => {
       const results = await backend.recall("q", { bank: "mc-operational" });
       const contents = results.map((r) => r.content);
       expect(contents).toContain("good memory");
+      expect(contents).toContain("concerns memory"); // kept under new bias design
       expect(contents).toContain("unknown memory");
       expect(contents).toContain("untagged memory");
-      expect(contents).not.toContain("concerns memory");
       expect(contents).not.toContain("failed memory");
-      expect(results).toHaveLength(3);
+      expect(results).toHaveLength(4);
     });
 
     it("respects explicit excludeOutcomes override", async () => {

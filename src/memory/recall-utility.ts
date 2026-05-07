@@ -322,6 +322,18 @@ interface LogRecallInput {
   latencyMs: number;
   /** Count of vendor results dropped by the recall-side outcome filter. */
   excludedCount?: number;
+  /**
+   * Distribution of input items by outcome class. Persisted as JSON to
+   * recall_audit.outcome_breakdown so we can compute "what fraction of
+   * recalled material was failure narrative" over time without re-parsing
+   * snippets. Keys: success, concerns, failed, unknown. (queue #7 part 2)
+   */
+  outcomeBreakdown?: {
+    success: number;
+    concerns: number;
+    failed: number;
+    unknown: number;
+  };
 }
 
 /**
@@ -393,12 +405,15 @@ export function logRecall(input: LogRecallInput): void {
       }
     }
 
+    const breakdownJson = input.outcomeBreakdown
+      ? JSON.stringify(input.outcomeBreakdown)
+      : null;
     writeWithRetry(() =>
       db
         .prepare(
           `INSERT INTO recall_audit
-             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.bank,
@@ -408,6 +423,7 @@ export function logRecall(input: LogRecallInput): void {
           JSON.stringify(allSnippets),
           input.latencyMs,
           input.excludedCount ?? 0,
+          breakdownJson,
         ),
     );
   } catch (err) {
