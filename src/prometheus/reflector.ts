@@ -11,7 +11,12 @@ import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson, convergenceScore } from "./types.js";
-import type { ReflectionResult, ExecutionResult, TokenUsage } from "./types.js";
+import type {
+  ReflectionResult,
+  ExecutionResult,
+  TokenUsage,
+  DimensionalCritique,
+} from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 import { logReflectorGap } from "../db/reflector-gap.js";
@@ -27,19 +32,26 @@ function useSdkPath(): boolean {
 
 const REFLECT_SYSTEM = `You are the reflection module of an autonomous agent. Evaluate execution results against task goals.
 
-Think step by step before scoring. For each of these points, write one short sentence:
-1. Which goals actually completed with usable output?
-2. Which goals failed or produced degenerate/empty results?
-3. Were claims/numbers in the outputs defensible given the tool evidence observed?
-4. Was the amount of work (tool calls, tokens, detail) appropriate for the task, or bloated/thin?
-5. If a domain knowledge map was provided, did execution cover the key concepts and avoid the listed gotchas?
+Think step by step before scoring. For each of these dimensions, write one short sentence:
+1. completion       — Which goals actually completed with usable output?
+2. correctness      — Which goals failed or produced degenerate/empty results?
+3. evidence_quality — Were claims/numbers in the outputs defensible given the tool evidence observed?
+4. effort           — Was the amount of work (tool calls, tokens, detail) appropriate, or bloated/thin?
+5. domain_coverage  — If a domain knowledge map was provided, did execution cover the key concepts and avoid the listed gotchas?
 
 After the reasoning, emit EXACTLY ONE JSON object as the FINAL content of your response:
 {
   "success": true,
   "score": 0.85,
   "learnings": ["actionable insight 1", "actionable insight 2"],
-  "summary": "brief overall assessment of what was accomplished"
+  "summary": "brief overall assessment of what was accomplished",
+  "dimensions": [
+    { "dimension": "completion",       "score": 0.9, "evidence": "4/5 goals reached usable output; goal-3 incomplete" },
+    { "dimension": "correctness",      "score": 1.0, "evidence": "no degenerate or empty results" },
+    { "dimension": "evidence_quality", "score": 0.8, "evidence": "claim X cites tool result Y; one number unsourced" },
+    { "dimension": "effort",           "score": 0.7, "evidence": "12 tool calls for a 3-goal task is on the heavy side" },
+    { "dimension": "domain_coverage",  "score": 1.0, "evidence": "no map provided" }
+  ]
 }
 
 Rules:
@@ -47,6 +59,7 @@ Rules:
 - success = true only if score >= 0.8 and no critical goals failed.
 - learnings should be actionable and specific, not generic.
 - summary should be 1-3 sentences.
+- dimensions: emit exactly the 5 listed names with score (0.0-1.0) and one-sentence evidence each. If a dimension does not apply (e.g. no domain map), emit it anyway with score 1.0 and evidence "n/a — <reason>".
 - The reasoning above can be any prose. Only the final JSON object is consumed.
 - Do NOT wrap the JSON in markdown fences. Emit it bare at the end of your response.`;
 
@@ -59,6 +72,57 @@ interface ReflectionAssessment {
   score: number;
   learnings: string[];
   summary: string;
+  dimensions?: DimensionalCritique[];
+}
+
+const DIMENSION_NAMES: ReadonlyArray<DimensionalCritique["dimension"]> = [
+  "completion",
+  "correctness",
+  "evidence_quality",
+  "effort",
+  "domain_coverage",
+];
+
+/**
+ * Sanitize the LLM-emitted `dimensions` array. Drops malformed entries,
+ * clamps scores to [0, 1], rejects unknown dimension names, and returns
+ * undefined if nothing remains so callers can detect "absent" cleanly.
+ */
+function sanitizeDimensions(raw: unknown): DimensionalCritique[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const known = new Set<string>(DIMENSION_NAMES);
+  const out: DimensionalCritique[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const dim = typeof e.dimension === "string" ? e.dimension : null;
+    const score = typeof e.score === "number" ? e.score : NaN;
+    const evidence = typeof e.evidence === "string" ? e.evidence : null;
+    if (!dim || !known.has(dim) || !Number.isFinite(score) || evidence === null)
+      continue;
+    out.push({
+      dimension: dim as DimensionalCritique["dimension"],
+      score: Math.max(0, Math.min(1, score)),
+      evidence,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Pick the lowest-scoring dimension from a critique array. Used by the
+ * planner to target replans; ties broken by DIMENSION_NAMES order so the
+ * choice is deterministic.
+ */
+export function lowestDimension(
+  dimensions: DimensionalCritique[] | undefined,
+): DimensionalCritique | undefined {
+  if (!dimensions || dimensions.length === 0) return undefined;
+  let best = dimensions[0];
+  for (const d of dimensions) {
+    if (d.score < best.score) best = d;
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +159,12 @@ export async function reflect(
       : await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";
     assessment = parseLLMJson<ReflectionAssessment>(content);
+    // Sanitize the optional dimensions array — drop malformed entries,
+    // clamp scores, normalize. Keeps the rest of the assessment usable
+    // even when only the dimensions block is malformed.
+    assessment.dimensions = sanitizeDimensions(
+      (assessment as { dimensions?: unknown }).dimensions,
+    );
     llmAvailable = true;
     rawLlmScore = assessment.score;
     usage = {
@@ -132,6 +202,12 @@ export async function reflect(
     });
   }
 
+  // Track whether the score was overridden away from the LLM's number. If
+  // so, the per-dimension critiques describe the LLM's view and may now
+  // contradict the kept score — drop them rather than ship contradictions
+  // (audit W1).
+  let scoreOverridden = false;
+
   if (Math.abs(assessment.score - heuristicScore) > 0.3) {
     console.log(
       `[reflector] LLM score (${assessment.score.toFixed(2)}) diverges from ` +
@@ -140,6 +216,7 @@ export async function reflect(
     assessment.score = heuristicScore;
     const hasFailedGoals = graph.getByStatus(GoalStatus.FAILED).length > 0;
     assessment.success = heuristicScore >= 0.8 && !hasFailedGoals;
+    scoreOverridden = true;
   }
 
   // Source anchoring heuristic (S5c): penalize unverified citations
@@ -157,6 +234,7 @@ export async function reflect(
     if (anchoringScore < 0.5 && total >= 3) {
       const penalty = (0.5 - anchoringScore) * 0.2; // Max 10% penalty
       assessment.score = Math.max(0, assessment.score - penalty);
+      scoreOverridden = true;
       console.log(
         `[reflector] Source anchoring penalty: ${penalty.toFixed(3)} (${verified}/${total} verified)`,
       );
@@ -174,6 +252,7 @@ export async function reflect(
   if (loopingGoals.length > 0) {
     const penalty = 0.1 * Math.min(loopingGoals.length, 3);
     assessment.score = Math.max(0, assessment.score - penalty);
+    scoreOverridden = true;
     console.log(
       `[reflector] Convergence penalty: -${penalty.toFixed(2)} (${loopingGoals.length} looping goals)`,
     );
@@ -206,6 +285,7 @@ export async function reflect(
   if (traceEfficiency.efficiency < 0.5) {
     const tracePenalty = (0.5 - traceEfficiency.efficiency) * 0.1;
     assessment.score = Math.max(0, assessment.score - tracePenalty);
+    scoreOverridden = true;
     console.log(
       `[reflector] Trace efficiency penalty: -${tracePenalty.toFixed(3)} ` +
         `(eff=${traceEfficiency.efficiency.toFixed(2)}, burn=${Math.round(tokenBurnRate)} tok/call)`,
@@ -242,6 +322,11 @@ export async function reflect(
       anchoringScore,
       convergenceData: loopingGoals.length > 0 ? convergenceData : undefined,
       traceEfficiency,
+      // Per-dimension critiques describe the LLM's score. If any pathway
+      // overrode the LLM score (heuristic divergence, anchoring, convergence,
+      // or trace-efficiency penalty), the dimensions may now contradict the
+      // kept score — drop them so consumers don't act on stale evidence.
+      dimensions: scoreOverridden ? undefined : assessment.dimensions,
     },
     usage,
   };

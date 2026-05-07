@@ -463,3 +463,190 @@ describe("reflect", () => {
     expect(result.anchoringScore).toBe(0);
   });
 });
+
+describe("reflect — per-dimension critiques (RationalRewards / v7.5 L3)", () => {
+  it("returns dimensions when LLM emits a well-formed array", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: ["L"],
+        summary: "ok",
+        dimensions: [
+          { dimension: "completion", score: 0.95, evidence: "9/10 done" },
+          { dimension: "correctness", score: 1.0, evidence: "no errors" },
+          {
+            dimension: "evidence_quality",
+            score: 0.8,
+            evidence: "1 unsourced",
+          },
+          {
+            dimension: "effort",
+            score: 0.6,
+            evidence: "12 calls for 3 goals",
+          },
+          {
+            dimension: "domain_coverage",
+            score: 1.0,
+            evidence: "n/a — no map",
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const graph = makeGraph(9, 1);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.dimensions).toHaveLength(5);
+    expect(result.dimensions?.[3]).toEqual({
+      dimension: "effort",
+      score: 0.6,
+      evidence: "12 calls for 3 goals",
+    });
+  });
+
+  it("drops malformed dimension entries (unknown name, bad score, missing evidence)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "ok",
+        dimensions: [
+          { dimension: "completion", score: 0.9, evidence: "ok" },
+          { dimension: "made-up-dim", score: 0.5, evidence: "x" }, // unknown name → drop
+          { dimension: "correctness", score: "high", evidence: "x" }, // bad score → drop
+          { dimension: "effort", score: 0.4 }, // missing evidence → drop
+          { dimension: "domain_coverage", score: 1.5, evidence: "x" }, // clamps to 1
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const graph = makeGraph(9, 1);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.dimensions?.length).toBe(2); // completion + domain_coverage
+    const names = result.dimensions?.map((d) => d.dimension);
+    expect(names).toEqual(["completion", "domain_coverage"]);
+    const dom = result.dimensions?.find(
+      (d) => d.dimension === "domain_coverage",
+    );
+    expect(dom?.score).toBe(1); // clamped from 1.5
+  });
+
+  it("returns dimensions = undefined when LLM omits the field", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "ok",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const graph = makeGraph(9, 1);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.dimensions).toBeUndefined();
+  });
+
+  it("returns dimensions = undefined when LLM emits a non-array value", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "ok",
+        dimensions: "completion: 0.9", // wrong type
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const graph = makeGraph(9, 1);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.dimensions).toBeUndefined();
+  });
+
+  it("heuristic fallback path emits no dimensions", async () => {
+    mockInfer.mockRejectedValueOnce(new Error("upstream down"));
+    const graph = makeGraph(8, 2);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.dimensions).toBeUndefined();
+  });
+
+  it("drops dimensions when score override fires (audit W1)", async () => {
+    // LLM claims 0.9 with detailed dimensions; heuristic disagrees by >0.3
+    // → score gets overwritten. Dimensions describe the LLM's number, not
+    // the kept score, so they MUST be dropped.
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: ["L"],
+        summary: "ok",
+        dimensions: [
+          {
+            dimension: "completion",
+            score: 0.9,
+            evidence: "9/10 complete (LLM view)",
+          },
+          { dimension: "correctness", score: 1.0, evidence: "no errors" },
+          { dimension: "evidence_quality", score: 0.9, evidence: "ok" },
+          { dimension: "effort", score: 0.9, evidence: "ok" },
+          { dimension: "domain_coverage", score: 1.0, evidence: "n/a" },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    // 2/10 completed → heuristic = 0.2 → divergence = 0.7 → override fires
+    const graph = makeGraph(2, 8);
+    const { result } = await reflect("t", graph, makeExecResult(graph));
+    expect(result.score).toBeCloseTo(0.2, 1);
+    expect(result.dimensions).toBeUndefined();
+  });
+});
+
+describe("lowestDimension — replan target picker", () => {
+  it("returns undefined for empty / missing input", async () => {
+    const { lowestDimension } = await import("./reflector.js");
+    expect(lowestDimension(undefined)).toBeUndefined();
+    expect(lowestDimension([])).toBeUndefined();
+  });
+
+  it("returns the minimum-scoring dimension", async () => {
+    const { lowestDimension } = await import("./reflector.js");
+    const min = lowestDimension([
+      { dimension: "completion", score: 0.9, evidence: "a" },
+      { dimension: "effort", score: 0.4, evidence: "b" },
+      { dimension: "correctness", score: 0.7, evidence: "c" },
+    ]);
+    expect(min?.dimension).toBe("effort");
+    expect(min?.score).toBe(0.4);
+  });
+
+  it("breaks ties deterministically by first occurrence", async () => {
+    const { lowestDimension } = await import("./reflector.js");
+    const min = lowestDimension([
+      { dimension: "effort", score: 0.5, evidence: "first" },
+      { dimension: "completion", score: 0.5, evidence: "second" },
+    ]);
+    expect(min?.dimension).toBe("effort");
+    expect(min?.evidence).toBe("first");
+  });
+});

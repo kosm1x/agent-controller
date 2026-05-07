@@ -110,6 +110,31 @@ export interface ExecutionResult {
 // Reflection types
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-dimension critique with evidence (RationalRewards pattern, v7.5 L3).
+ *
+ * Replaces "goal failed" with "Dimension X scored 0.4 because <evidence>".
+ * Lets the planner target the lowest-scoring dimension on replan instead of
+ * re-trying the entire goal graph blind.
+ *
+ * Dimensions match the 5-axis prompt in `reflector.ts`:
+ *   completion       — goals reached usable output
+ *   correctness      — goals failed/produced empty results (inverse axis)
+ *   evidence_quality — claims defensible from observed tool evidence
+ *   effort           — work appropriate for task (not bloated/thin)
+ *   domain_coverage  — domain-knowledge map concepts addressed (when available)
+ */
+export interface DimensionalCritique {
+  dimension:
+    | "completion"
+    | "correctness"
+    | "evidence_quality"
+    | "effort"
+    | "domain_coverage";
+  score: number; // 0.0 to 1.0
+  evidence: string; // citation / justification
+}
+
 export interface ReflectionResult {
   success: boolean;
   score: number;
@@ -129,6 +154,12 @@ export interface ReflectionResult {
     tokenBurnRate: number;
     avgConvergence: number;
   };
+  /**
+   * Per-dimension critiques (v7.5 L3 / RationalRewards). Optional —
+   * populated when the LLM emits a `dimensions` array in its JSON output.
+   * Absent for heuristic-only reflections and pre-L3 callers.
+   */
+  dimensions?: DimensionalCritique[];
 }
 
 // ---------------------------------------------------------------------------

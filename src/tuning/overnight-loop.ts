@@ -43,6 +43,13 @@ import { classifyFailureSource } from "./failure-classifier.js";
 import { computeConfidenceProxy } from "./confidence.js";
 import { runSelfReview } from "./self-review.js";
 import { mineTrajectory } from "./trajectory-miner.js";
+import {
+  isPredictiveConsistencyEnabled,
+  makeDefaultPredictionInfer,
+  runPredictiveCheck,
+  type PredictionInferFn,
+} from "./predictive-consistency.js";
+import { getActiveTestCases } from "./test-cases.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -63,6 +70,13 @@ export interface TuningConfig {
   evalInferFn?: InferFunction;
   /** Injectable inference for meta-agent (testing). */
   metaInferFn?: MetaInferFunction;
+  /**
+   * Injectable predict-from-hypothesis inference for the predictive
+   * consistency gate (v7.5 L3). Activated only when
+   * `TUNING_PREDICTIVE_CONSISTENCY=true`. Tests inject a deterministic
+   * stub; production wiring uses `makeDefaultPredictionInfer`.
+   */
+  predictionInferFn?: PredictionInferFn;
 }
 
 const DEFAULT_CONFIG: TuningConfig = {
@@ -614,15 +628,71 @@ export async function runOvernightTuning(
     // but breaks 1 is still unacceptable — the broken case will cause user-visible issues.
     const regressions = detectPerCaseRegressions(bestResult, merged);
 
+    // v7.5 L3: predictive consistency gate (RationalRewards / PARROT phase 2).
+    // Even if scores improved, reject mutations whose hypothesis can't predict
+    // per-case outcomes — those are post-hoc rationalisations, not causal claims.
+    // Opt-in via TUNING_PREDICTIVE_CONSISTENCY=true. Skip on regressions (the
+    // mutation is already going to be rejected; an extra LLM call buys nothing).
+    let predictiveCheckFailed = false;
+    let predictiveCheckReason: string | undefined;
+    if (
+      isPredictiveConsistencyEnabled() &&
+      !regressions.length &&
+      delta >= cfg.minDeltaToKeep
+    ) {
+      const inferFn: PredictionInferFn =
+        cfg.predictionInferFn ??
+        makeDefaultPredictionInfer(async (sys, user) => {
+          const { infer } = await import("../inference/adapter.js");
+          const r = await infer({
+            messages: [
+              { role: "system", content: sys },
+              { role: "user", content: user },
+            ],
+            temperature: 0.2,
+          });
+          return {
+            content: r.content ?? "",
+            tokensUsed:
+              (r.usage?.prompt_tokens ?? 0) + (r.usage?.completion_tokens ?? 0),
+          };
+        });
+      try {
+        const probe = await runPredictiveCheck(
+          mutation,
+          affectedCaseIds,
+          getActiveTestCases(),
+          targeted.perCase,
+          inferFn,
+        );
+        if (probe.tokensUsed > 0) cost.recordMetaAgent(probe.tokensUsed);
+        if (!probe.passed) {
+          predictiveCheckFailed = true;
+          predictiveCheckReason = probe.reason ?? "predictive consistency gate";
+          console.log(
+            `[tuning] ✗ PREDICTIVE-CONSISTENCY: ${predictiveCheckReason}`,
+          );
+        }
+      } catch (err) {
+        // Non-fatal: gate failure is opt-in instrumentation, never blocks.
+        console.warn(
+          `[tuning] predictive-consistency probe error: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
     // Record experiment
     const expId = `${runId}-exp-${i}`;
     const hasRegressions = regressions.length > 0;
-    const passed = delta >= cfg.minDeltaToKeep && !hasRegressions;
+    const passed =
+      delta >= cfg.minDeltaToKeep && !hasRegressions && !predictiveCheckFailed;
     const status = hasRegressions
       ? "regressed"
-      : passed
-        ? "passed"
-        : "regressed";
+      : predictiveCheckFailed
+        ? "rejected"
+        : passed
+          ? "passed"
+          : "regressed";
 
     const confidence = computeConfidenceProxy(targeted.perCase);
     insertExperiment({
@@ -664,6 +734,15 @@ export async function runOvernightTuning(
         `[tuning] ✗ REGRESSION: ${regressions.length} case(s) degraded — ${regressions.map((r) => `${r.caseId}: ${r.before.toFixed(2)}→${r.after.toFixed(2)}`).join(", ")}`,
       );
       consecutiveRegressions++;
+    } else if (predictiveCheckFailed) {
+      // Predictive-gate failure ≠ regression. Don't bump
+      // consecutiveRegressions — that counter trips stalledAfterN, and we
+      // don't want fluent-but-vague hypotheses on winning mutations to halt
+      // the entire run as if cases were degrading. The mutation is simply
+      // discarded; the parent stays best; the next iteration tries again.
+      console.log(
+        `[tuning] ✗ REJECT (predictive): hypothesis did not predict outcomes (${predictiveCheckReason ?? "n/a"})`,
+      );
     } else {
       console.log(
         `[tuning] ✗ DISCARD: ${newScore.toFixed(1)} (delta ${delta.toFixed(1)} < ${cfg.minDeltaToKeep})`,
