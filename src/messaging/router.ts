@@ -1360,6 +1360,10 @@ export class MessageRouter {
       console.log(`[enhancer] Analyzing: "${msg.text.slice(0, 60)}"`);
       const analysis = await analyzePrompt(msg.text, recentContext);
 
+      // Branch order is load-bearing: prefix-typed markers (ASSUME:, SPLIT:)
+      // MUST be checked before the generic non-PASS ASK branch — otherwise
+      // SPLIT plans silently regress to the `🔍 Antes de proceder:` ASK
+      // framing. See audit W5 (prompt-enhancer-leakage bundle).
       if (analysis.startsWith("ASSUME:")) {
         // v6.4 CL1.3: Show assumption to user, then proceed without blocking.
         const assumption = analysis.slice(7);
@@ -1367,17 +1371,37 @@ export class MessageRouter {
         console.log(
           "[enhancer] ASSUME — proceeding with stated interpretation",
         );
+      } else if (analysis.startsWith("SPLIT:")) {
+        // RC2: SPLIT path — proposal to chunk a too-big task. Frame as a
+        // plan suggestion, not a clarifying question. Wait for the user
+        // to confirm the proposed decomposition (or correct it).
+        const plan = analysis.slice("SPLIT:".length);
+        setWaiting(msg.channel, msg.text, plan);
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          `📋 Plan sugerido:\n\n${plan}\n\n¿Procedemos así, o prefieres otro orden?`,
+        );
+        console.log(
+          "[enhancer] SPLIT — proposing decomposition, awaiting confirmation",
+        );
+        return;
       } else if (analysis !== "PASS") {
-        // Send questions to user, wait for answers
+        // ASK path — actual clarifying questions
         setWaiting(msg.channel, msg.text, analysis);
         this.sendToChannel(
           msg.channel,
           msg.from,
           `🔍 Antes de proceder:\n\n${analysis}`,
         );
-        console.log(
-          `[enhancer] Asking ${analysis.split("\n").length} questions`,
-        );
+        // RC4: count actual numbered questions, not raw newlines. The old
+        // counter overcounted (counted blank lines, wrap artifacts, etc.)
+        // which masked RC1 in observability — "Asking 27 questions" was
+        // really "raw LLM blob with 27 newlines" not "27 questions".
+        const qCount = analysis
+          .split("\n")
+          .filter((l) => /^\s*\d+[\.\)]\s/.test(l)).length;
+        console.log(`[enhancer] Asking ${qCount} question(s)`);
         return;
       } else {
         console.log("[enhancer] PASS — message is clear enough");

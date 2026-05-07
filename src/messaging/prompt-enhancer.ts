@@ -220,11 +220,16 @@ export function parseCiricdResponse(raw: string): CiricdResult | null {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed.decision) return null;
+    // RC5: tighten shape check — reject anything that isn't a valid CIRICD
+    // decision string. Prevents `{"decision": null}` or `{"decision": "FOO"}`
+    // from masquerading as a parse success and reaching the legacy fallback.
+    if (!parsed.decision || typeof parsed.decision !== "string") return null;
+    const decisionUpper = parsed.decision.toUpperCase();
+    if (!["PASS", "ASSUME", "ASK", "SPLIT"].includes(decisionUpper)) {
+      return null;
+    }
     return {
-      decision: (
-        parsed.decision as string
-      ).toUpperCase() as CiricdResult["decision"],
+      decision: decisionUpper as CiricdResult["decision"],
       intent: parsed.intent ?? "",
       clarity: typeof parsed.clarity === "number" ? parsed.clarity : 5,
       risk: parsed.risk === "high" ? "high" : "low",
@@ -276,16 +281,38 @@ export async function analyzePrompt(
     // Parse CIRICD JSON response
     const ciricd = parseCiricdResponse(raw);
     if (!ciricd) {
-      // Failed to parse — check if it's a legacy-format response
-      if (raw.toUpperCase().startsWith("PASS")) return "PASS";
-      // Treat as raw questions (backward compat)
-      const questionLines = raw
-        .split("\n")
-        .filter((l) => /^\s*(\d+[\.\)]|[-•*])\s/.test(l));
-      if (questionLines.length > 2) {
-        return questionLines.slice(0, 2).join("\n");
-      }
-      return raw;
+      // RC1: CIRICD parse failed. We do NOT ship raw LLM output to users —
+      // the legacy fallback path was producing 20-27 line "questions" that
+      // were actually LLM preamble/JSON fragments. PASS is the safer
+      // default — a missed enhancement is strictly better than a malformed
+      // one shown as if it were Jarvis asking for clarification.
+      console.log(
+        `[enhancer] CIRICD parse failed (raw[${raw.length}]="${raw.slice(0, 80).replace(/\n/g, " ")}…"). Defaulting to PASS.`,
+      );
+      return "PASS";
+    }
+
+    // RC3: Cold-start guard. If the channel has no recent context AND the
+    // message itself is clear enough on its own, force PASS instead of
+    // asking. CIRICD cannot reliably score `context=unresolved` without
+    // grounding turns, and post-/compact / fresh-channel ASK was the
+    // dominant false-positive class.
+    //
+    // EXCEPTION (audit W1): risk=high prompts must NOT be force-passed.
+    // A destructive first-message after /compact (e.g. "borra todos los
+    // archivos del proyecto X") needs the ASK gate to fire even with no
+    // context — the safety net beats the ergonomic friction.
+    if (
+      ciricd.decision !== "PASS" &&
+      ciricd.decision !== "ASSUME" &&
+      ciricd.risk !== "high" &&
+      recentContext.trim().length < 50 &&
+      ciricd.clarity >= 5
+    ) {
+      console.log(
+        `[enhancer] Cold-start guard: forcing PASS (clarity=${ciricd.clarity}, risk=${ciricd.risk}, recentContext<50 chars)`,
+      );
+      return "PASS";
     }
 
     // Log CIRICD scores for observability
@@ -309,7 +336,12 @@ export async function analyzePrompt(
     }
 
     if (ciricd.decision === "SPLIT" && ciricd.splitPlan) {
-      return ciricd.splitPlan;
+      // RC2: SPLIT plans are NOT clarifying questions — they're proposals
+      // to break a task into chunks. Return a typed marker so the router
+      // can frame them with `📋 Plan sugerido:` instead of the misleading
+      // `🔍 Antes de proceder:` (which implies the user must answer
+      // questions before Jarvis acts).
+      return `SPLIT:${ciricd.splitPlan}`;
     }
 
     if (ciricd.decision === "ASK" && ciricd.questions?.length) {
