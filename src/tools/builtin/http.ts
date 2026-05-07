@@ -13,6 +13,11 @@ const MAX_BODY = 20_000; // chars
 export const httpTool: Tool = {
   name: "http_fetch",
   deferred: true,
+  // Verb is caller-controlled — POST/PUT/DELETE all allowed. Conservative.
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

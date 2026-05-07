@@ -93,6 +93,11 @@ async function stealthFallback(url: string): Promise<string> {
 
 export const webReadTool: Tool = {
   name: "web_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  // Same URL may return different content over time → not idempotent.
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

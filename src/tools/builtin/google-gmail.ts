@@ -15,6 +15,11 @@ export const gmailSendTool: Tool = {
   name: "gmail_send",
   requiresConfirmation: true,
   deferred: false,
+  // Sent email is irreversible — keep destructive hint in line with riskTier.
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   triggerPhrases: [
     "manda un correo",
     "envía un email",
@@ -162,6 +167,10 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
 export const gmailSearchTool: Tool = {
   name: "gmail_search",
   deferred: true,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false, // mailbox state mutates over time
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -321,6 +330,10 @@ function extractParts(
 export const gmailReadTool: Tool = {
   name: "gmail_read",
   deferred: true,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true, // single-message GET is stable for a given id
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

@@ -18,6 +18,10 @@ const MAX_OUTPUT = 15_000; // chars
 
 export const grepTool: Tool = {
   name: "grep",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -198,6 +202,10 @@ TIPS:
 
 export const globTool: Tool = {
   name: "glob",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -321,6 +329,10 @@ TIPS:
 
 export const listDirTool: Tool = {
   name: "list_dir",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -428,6 +440,12 @@ import { searchCode, symbolsInFile, type SymbolKind } from "./code-index.js";
 export const codeSearchTool: Tool = {
   name: "code_search",
   deferred: true,
+  readOnlyHint: true,
+  destructiveHint: false,
+  // Reads from a stale-able SQLite index that mutates as files change —
+  // closer to web_search semantics than to grep on a live FS.
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

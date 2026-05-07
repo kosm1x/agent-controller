@@ -143,6 +143,10 @@ async function readDocx(filePath: string): Promise<string> {
 
 export const fileReadTool: Tool = {
   name: "file_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -277,6 +281,12 @@ For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned
 export const fileWriteTool: Tool = {
   name: "file_write",
   deferred: true,
+  readOnlyHint: false,
+  // Silent overwrite of an existing file destroys the prior content; many
+  // write paths land outside version control (/tmp/, ad-hoc dirs).
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -373,6 +383,10 @@ export const fileDeleteTool: Tool = {
   name: "file_delete",
   requiresConfirmation: true,
   deferred: true,
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

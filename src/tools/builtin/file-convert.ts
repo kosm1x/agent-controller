@@ -283,6 +283,11 @@ function validateOutputPath(
 export const fileConvertTool: Tool = {
   name: "file_convert",
   deferred: true,
+  readOnlyHint: false,
+  // -y flag overwrites the output path silently — same reasoning as file_write.
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

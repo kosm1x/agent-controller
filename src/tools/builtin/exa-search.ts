@@ -15,6 +15,10 @@ const MAX_RESULTS = 10;
 
 export const exaSearchTool: Tool = {
   name: "exa_search",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

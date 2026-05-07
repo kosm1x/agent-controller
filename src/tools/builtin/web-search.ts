@@ -14,6 +14,10 @@ const MAX_RESULTS = 5;
 
 export const webSearchTool: Tool = {
   name: "web_search",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

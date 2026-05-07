@@ -34,6 +34,10 @@ import {
 
 export const jarvisFileReadTool: Tool = {
   name: "jarvis_file_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -214,6 +218,11 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
 
 export const jarvisFileWriteTool: Tool = {
   name: "jarvis_file_write",
+  readOnlyHint: false,
+  // Same logic as file_write: silent overwrite destroys prior content.
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -347,6 +356,11 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
 
 export const jarvisFileUpdateTool: Tool = {
   name: "jarvis_file_update",
+  readOnlyHint: false,
+  destructiveHint: false,
+  // Append + metadata changes accumulate — re-running the same call appends again.
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -445,6 +459,10 @@ USE WHEN:
 
 export const jarvisFileListTool: Tool = {
   name: "jarvis_file_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -515,6 +533,10 @@ export const jarvisFileDeleteTool: Tool = {
   name: "jarvis_file_delete",
   requiresConfirmation: true,
   deferred: true, // S5: precious paths need user confirmation
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -574,6 +596,10 @@ After user confirms, call again with confirmed:true to proceed.`,
 export const jarvisFileMoveTool: Tool = {
   name: "jarvis_file_move",
   deferred: true,
+  readOnlyHint: false,
+  destructiveHint: false, // rename/move, not delete; reversible
+  idempotentHint: false, // second call fails (source no longer at original path)
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -621,6 +647,10 @@ For batch moves, call this tool multiple times (one per file).`,
 
 export const jarvisFileSearchTool: Tool = {
   name: "jarvis_file_search",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

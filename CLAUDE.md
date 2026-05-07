@@ -57,6 +57,12 @@ Tool definitions are prompts — they deserve more engineering than the handler 
 
 - **Write descriptions for a capable but literal junior dev** — include when to use, when NOT to use, edge cases, and boundaries with similar tools
 - **Parameter names are documentation** — `due_date` > `date`, `objective_id` > `parent_id`. Add `.describe()` on every Zod field
+- **Annotate side-effect semantics** (MCP-spec hints, v7.5 leftovers L2). On every new tool, set the four optional booleans on the `Tool` interface:
+  - `readOnlyHint` — does NOT modify state (no FS write, DB mutation, side-effecting external call)
+  - `destructiveHint` — MAY perform an irreversible action (delete, send, force-push)
+  - `idempotentHint` — re-issuing the SAME call has no additional effect beyond the first
+  - `openWorldHint` — interacts with state outside the agent (network, FS, third-party API)
+    Defaults are deliberately conservative (`getToolAnnotations()` collapses absent hints to `{readOnly:false, destructive:true, idempotent:false, openWorld:true}`) so unannotated tools are treated as risky. Logical invariants enforced by tests in `src/tools/types.test.ts`: `readOnlyHint` ⇒ NOT `destructiveHint`; `requiresConfirmation` ⇒ NOT `readOnlyHint`.
 - **Use enums over free strings** — `z.enum(["high","medium","low"])` not `z.string()`. Constrain the model's output space
 - **Poka-yoke** — design interfaces that make mistakes impossible. If the model confuses relative/absolute paths, require absolute. If empty string vs null causes bugs, handle both (see `update_task`'s `""` → `null` pattern)
 - **Test tools with the model** — run real calls, observe mistakes, iterate on descriptions. Tool optimization often matters more than system prompt tuning
