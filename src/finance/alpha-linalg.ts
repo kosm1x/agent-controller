@@ -107,6 +107,11 @@ export function scalarOlsNoIntercept(
 /**
  * Pearson correlation coefficient between two equal-length vectors.
  * Returns 0 if either vector is flat (zero variance).
+ *
+ * Floating-point arithmetic can drive the raw ratio to slightly outside
+ * [-1, 1] (observed: 1 + 7e-16 on perfectly-correlated synthetic data).
+ * Clamping at the producer is one line and prevents downstream
+ * `sqrt(1 - c)` callers from hitting NaN — defense-in-depth.
  */
 export function correlation(a: number[], b: number[]): number {
   if (a.length !== b.length) {
@@ -128,7 +133,10 @@ export function correlation(a: number[], b: number[]): number {
     vb += db * db;
   }
   if (va <= DENOM_EPSILON || vb <= DENOM_EPSILON) return 0;
-  return cov / Math.sqrt(va * vb);
+  const raw = cov / Math.sqrt(va * vb);
+  // Clamp to [-1, 1] for floating-point safety. Distance/RHS ops downstream
+  // can produce NaN on a (1 + ε) input via sqrt(0.5 * (1 - c)).
+  return Math.max(-1, Math.min(1, raw));
 }
 
 /**
