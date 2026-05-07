@@ -298,6 +298,62 @@ describe("HindsightMemoryBackend", () => {
     });
   });
 
+  describe("recall — two-tier withRerank (queue #10)", () => {
+    it("withRerank=false routes to SQLite hybrid even when global flag is on", async () => {
+      process.env.HINDSIGHT_RECALL_ENABLED = "true";
+      logRecallSpy.mockClear();
+      await backend.recall("q", {
+        bank: "mc-operational",
+        withRerank: false,
+      });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("rerank-opt-out");
+    });
+
+    it("withRerank=true routes to Hindsight even when global flag is off", async () => {
+      process.env.HINDSIGHT_RECALL_ENABLED = "false";
+      logRecallSpy.mockClear();
+      await backend.recall("q", {
+        bank: "mc-operational",
+        withRerank: true,
+      });
+      expect(mockClient.recall).toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("hindsight");
+    });
+
+    it("bank-disabled takes precedence over withRerank=true", async () => {
+      // Operator's manual circuit breaker wins over caller intent.
+      process.env.HINDSIGHT_RECALL_ENABLED = "true";
+      process.env.HINDSIGHT_RECALL_DISABLED_BANKS = "mc-jarvis";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-jarvis", withRerank: true });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("bank-disabled");
+    });
+
+    it("undefined withRerank respects the global flag (legacy behavior)", async () => {
+      process.env.HINDSIGHT_RECALL_ENABLED = "false";
+      logRecallSpy.mockClear();
+      await backend.recall("q", { bank: "mc-operational" });
+      expect(mockClient.recall).not.toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe("sqlite-only");
+    });
+
+    it("withRerank=true that fails over to SQLite logs source=sqlite-fallback-opt-in (W1 audit fix)", async () => {
+      process.env.HINDSIGHT_RECALL_ENABLED = "false";
+      mockClient.recall.mockRejectedValueOnce(new Error("hindsight 503"));
+      logRecallSpy.mockClear();
+      await backend.recall("q", {
+        bank: "mc-operational",
+        withRerank: true,
+      });
+      expect(mockClient.recall).toHaveBeenCalled();
+      expect(logRecallSpy.mock.calls[0][0].source).toBe(
+        "sqlite-fallback-opt-in",
+      );
+    });
+  });
+
   describe("reflect", () => {
     it("should return synthesized reflection", async () => {
       const result = await backend.reflect("patterns", {

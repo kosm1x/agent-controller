@@ -48,6 +48,28 @@ export interface RecallOptions {
    * silently filtered.
    */
   includeFailed?: boolean;
+  /**
+   * Two-tier retrieval (queue #10, 2026-05-07).
+   *
+   * - `undefined` (default): respects the existing
+   *   `HINDSIGHT_RECALL_ENABLED` env flag and per-bank disable list. The
+   *   operator-side default for new deployments is SQLite hybrid (FTS5 +
+   *   embedding) for sub-second latency on every recall — flip
+   *   HINDSIGHT_RECALL_ENABLED=false in `.env` to activate it. Until that
+   *   flip lands, `undefined` continues to route to Hindsight on banks not
+   *   explicitly disabled via HINDSIGHT_RECALL_DISABLED_BANKS.
+   * - `true`: explicit opt-in to Hindsight's full pipeline including
+   *   the cross-encoder reranker. Reserved for analysis-grade tasks
+   *   (offline reflection, deep memory queries) where 2-5s latency is
+   *   acceptable in exchange for higher rerank precision.
+   * - `false`: explicit opt-out. Forces SQLite hybrid even if the
+   *   global default is Hindsight.
+   *
+   * Bank-level disable (HINDSIGHT_RECALL_DISABLED_BANKS) still wins
+   * over withRerank=true — the operator's manual circuit breaker takes
+   * priority over caller intent.
+   */
+  withRerank?: boolean;
 }
 
 /**

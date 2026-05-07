@@ -140,7 +140,7 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 - `HINDSIGHT_RECALL_ENABLED=true|false` — global recall path toggle. When false, all banks bypass Hindsight and answer from SQLite hybrid (FTS5 + embed). Retain/reflect unaffected.
 - `HINDSIGHT_RECALL_TIMEOUT_MS=N` — client-side recall cap. Tuned 5000→8000 on 2026-05-03 per rehab playbook.
 - `HINDSIGHT_RECALL_DISABLED_BANKS=csv` — surgical per-bank demote primitive (V8 substrate follow-up). Listed banks bypass Hindsight regardless of the global flag; logged as `source='bank-disabled'` in `recall_audit`. Use when one bank is hot (cap-saturated reranker) but others are healthy. Example: `HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis` keeps mc-operational on Hindsight while exempting mc-jarvis from the recall-time tax. Retain/reflect remain on Hindsight on disabled banks — the bank is not abandoned.
-- Recall source values populated to `recall_audit.source`: `hindsight | sqlite-fallback | sqlite-only | circuit-open | bank-disabled`. Filter / GROUP BY this column to attribute routing decisions.
+- Recall source values populated to `recall_audit.source`: `hindsight | sqlite-fallback | sqlite-fallback-opt-in | sqlite-only | circuit-open | bank-disabled | rerank-opt-out`. Filter / GROUP BY this column to attribute routing decisions. New 2026-05-07 (queue #10): `rerank-opt-out` = caller passed `withRerank: false`; `sqlite-fallback-opt-in` = caller passed `withRerank: true` but Hindsight failed and we degraded to SQLite. Two-tier retrieval: callers pass `withRerank: true` to opt into the cross-encoder rerank path on demand; default behavior remains driven by `HINDSIGHT_RECALL_ENABLED`. Operator activates the no-rerank default by flipping that env to `false`.
 
 ## Patterns
 

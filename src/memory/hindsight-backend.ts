@@ -136,6 +136,16 @@ export class HindsightMemoryBackend implements MemoryService {
   }
 
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
+    // Two-tier routing precedence (queue #10, 2026-05-07):
+    //   1. Bank-disabled: operator's manual circuit breaker — wins over
+    //      everything, including explicit withRerank=true.
+    //   2. withRerank === false: caller explicitly opted out.
+    //   3. withRerank === true: caller explicitly opted in; bypass the
+    //      global HINDSIGHT_RECALL_ENABLED flag (bank-disabled still wins).
+    //   4. Otherwise: respect global HINDSIGHT_RECALL_ENABLED + circuit.
+    // Reranker is structurally part of Hindsight's recall (no provider="none"
+    // option in vendor config), so "skip rerank" means "skip Hindsight" and
+    // route to the SQLite hybrid path which is FTS5 + embeddings + recency.
     // Per-bank Hindsight disable (V8 substrate follow-up, 2026-05-03).
     // Checked BEFORE the global flag so a HARDEN-mc-operational +
     // DEMOTE-mc-jarvis verdict can run with HINDSIGHT_RECALL_ENABLED=true
@@ -163,7 +173,33 @@ export class HindsightMemoryBackend implements MemoryService {
       }
       return kept;
     }
-    if (!isRecallPathEnabled()) {
+    // Caller-level rerank opt-out (queue #10): explicit `withRerank=false`
+    // forces SQLite hybrid even if the global flag is on. Source label
+    // 'rerank-opt-out' attributes the routing decision in recall_audit so
+    // we can measure caller-driven vs operator-driven SQLite traffic.
+    // Opt-out is unconditional — never consults circuit/global flag; SQLite
+    // is the contract. Don't reorder this past the circuit-open check.
+    if (options.withRerank === false) {
+      const start = Date.now();
+      const raw = await this.sqliteFallback.recall(query, options);
+      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
+      logRecall({
+        bank: options.bank,
+        query,
+        source: "rerank-opt-out",
+        results: kept,
+        latencyMs: Date.now() - start,
+        excludedCount: excluded,
+        outcomeBreakdown: breakdown,
+      });
+      return kept;
+    }
+    // Caller-level rerank opt-in (queue #10): explicit `withRerank=true`
+    // routes to Hindsight even when the global default is SQLite. The
+    // assumption is that an analysis-grade caller has weighed latency
+    // against rerank precision and opted in deliberately. Falls through
+    // to the Hindsight call path below.
+    if (options.withRerank !== true && !isRecallPathEnabled()) {
       // HINDSIGHT_RECALL_ENABLED=false: skip the Hindsight probe entirely.
       // SQLite hybrid (FTS5 + embed) is the actual answering path and runs
       // separately upstream of this call too. This branch removes the 1.5s/
@@ -269,10 +305,16 @@ export class HindsightMemoryBackend implements MemoryService {
           `[memory] recall(sqlite-fallback) filtered ${excluded} outcome-tagged result(s)`,
         );
       }
+      // W1 audit fix (queue #10): preserve withRerank=true caller intent
+      // through the failover so mc-ctl recall-utility can attribute opt-in
+      // path failures separately from default global-flag fallback.
       logRecall({
         bank: options.bank,
         query,
-        source: "sqlite-fallback",
+        source:
+          options.withRerank === true
+            ? "sqlite-fallback-opt-in"
+            : "sqlite-fallback",
         results: kept,
         latencyMs: ms + fbMs,
         excludedCount: excluded,

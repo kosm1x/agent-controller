@@ -313,9 +313,11 @@ interface LogRecallInput {
   source:
     | "hindsight"
     | "sqlite-fallback"
+    | "sqlite-fallback-opt-in"
     | "sqlite-only"
     | "circuit-open"
-    | "bank-disabled";
+    | "bank-disabled"
+    | "rerank-opt-out";
   /** Results AFTER the outcome filter has run. result_count and snippets in
    * the audit row reflect what the agent saw, not what the vendor returned. */
   results: MemoryItem[];
