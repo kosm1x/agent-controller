@@ -169,6 +169,40 @@ const webhookEventsTotal = new client.Gauge({
   help: "Total webhook events processed",
 });
 
+// --- KB drift (queue #12, 2026-05-07) ---
+// Hourly kb-reindex ritual surfaces these so silent-state regressions (FS files
+// orphaned to the DB) become visible before operators have to ask. Alert in
+// monitoring/alerts.yml fires if drift > 10 for two consecutive runs.
+const kbReindexDrift = new client.Gauge({
+  name: "mc_kb_reindex_drift",
+  help: "FS-only files not yet present in jarvis_files (last reindex run)",
+});
+const kbReindexFsCount = new client.Gauge({
+  name: "mc_kb_reindex_fs_files",
+  help: "Total .md files on disk under the jarvis-kb mirror root",
+});
+const kbReindexDbCount = new client.Gauge({
+  name: "mc_kb_reindex_db_files",
+  help: "Rows in jarvis_files at last reindex run",
+});
+const kbReindexErrored = new client.Gauge({
+  name: "mc_kb_reindex_errored",
+  help: "Files that errored during reindex (read fail or upsert exception)",
+});
+
+/** Record the result of a kb-reindex ritual run. Called from scheduler.ts. */
+export function recordKbReindex(result: {
+  drift: number;
+  fsCount: number;
+  dbCount: number;
+  errored: number;
+}): void {
+  kbReindexDrift.set(result.drift);
+  kbReindexFsCount.set(result.fsCount);
+  kbReindexDbCount.set(result.dbCount);
+  kbReindexErrored.set(result.errored);
+}
+
 // ---------------------------------------------------------------------------
 // Collect on scrape
 // ---------------------------------------------------------------------------

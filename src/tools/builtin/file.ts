@@ -19,6 +19,7 @@ import {
   countLines,
   PREVIEW_CHARS,
 } from "../../lib/file-slicing.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 /** Hard cap on a single `file_read` payload — protects against pathological
  *  slice requests (e.g. lines='1-100000' on a giant log). */
@@ -27,14 +28,18 @@ const MAX_READ = 50_000; // chars
 // Jarvis write boundaries — can read anything, writes restricted to project dirs.
 // /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code).
 // Granted: project workspaces, tmp, user directories.
-const ALLOW_WRITE_PREFIXES = [
-  "/root/claude/jarvis-kb/",
-  "/root/claude/cuatro-flor/",
-  "/root/claude/projects/",
-  "/root/claude/mission-control/", // allowed only on jarvis/* branches
-  "/tmp/",
-  "/workspace/",
-];
+// Queue #11 (2026-05-07): jarvis-kb path read dynamically via getJarvisKbRoot()
+// so JARVIS_KB_MIRROR_DIR overrides flow through tools too (tests, alt deploys).
+function getAllowWritePrefixes(): string[] {
+  return [
+    `${getJarvisKbRoot()}/`,
+    "/root/claude/cuatro-flor/",
+    "/root/claude/projects/",
+    "/root/claude/mission-control/", // allowed only on jarvis/* branches
+    "/tmp/",
+    "/workspace/",
+  ];
+}
 const DENY_WRITE_PREFIXES = [
   "/root/claude/mission-control/", // dynamic — overridden on jarvis/* branches
   "/root/.claude/",
@@ -119,12 +124,13 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
       }
     }
   }
-  if (ALLOW_WRITE_PREFIXES.some((p) => resolved.startsWith(p))) {
+  const allowPrefixes = getAllowWritePrefixes();
+  if (allowPrefixes.some((p) => resolved.startsWith(p))) {
     return { allowed: true };
   }
   return {
     allowed: false,
-    reason: `Write blocked: ${resolved} is outside Jarvis's allowed write directories. Allowed: ${ALLOW_WRITE_PREFIXES.join(", ")}`,
+    reason: `Write blocked: ${resolved} is outside Jarvis's allowed write directories. Allowed: ${allowPrefixes.join(", ")}`,
   };
 }
 
@@ -361,7 +367,7 @@ AFTER WRITING: Report the file path written.`,
 // ---------------------------------------------------------------------------
 
 // Delete uses same boundaries as write
-const ALLOW_DELETE_PREFIXES = ALLOW_WRITE_PREFIXES;
+const getAllowDeletePrefixes = getAllowWritePrefixes;
 
 export const fileDeleteTool: Tool = {
   name: "file_delete",
@@ -423,12 +429,13 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
     }
 
     // Safety: only allow deletion under known safe prefixes, at least 1 level deep
-    const matchedPrefix = ALLOW_DELETE_PREFIXES.find((p) =>
+    const allowDeletePrefixes = getAllowDeletePrefixes();
+    const matchedPrefix = allowDeletePrefixes.find((p) =>
       absPath.startsWith(p),
     );
     if (!matchedPrefix) {
       return JSON.stringify({
-        error: `Deletion blocked: '${absPath}' is outside allowed paths (${ALLOW_DELETE_PREFIXES.join(", ")})`,
+        error: `Deletion blocked: '${absPath}' is outside allowed paths (${allowDeletePrefixes.join(", ")})`,
       });
     }
     // Prevent deleting the prefix root or top-level project directories

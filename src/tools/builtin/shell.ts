@@ -8,6 +8,7 @@
 import { execSync, execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds
@@ -116,16 +117,20 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
 
 /** Safe path prefixes for write operations.
  *  Jarvis can read anything but writes are restricted to project dirs.
- *  /root/claude/mission-control/ is OFF LIMITS unless on a jarvis/* branch. */
-const ALLOW_WRITE_PREFIXES = [
-  "/root/claude/jarvis-kb/",
-  "/root/claude/cuatro-flor/",
-  "/root/claude/projects/",
-  "/root/claude/williams-entry-radar/", // Jarvis's autonomous radar build
-  "/root/claude/mission-control/", // allowed only on jarvis/* branches — checked dynamically
-  "/tmp/",
-  "/workspace/",
-];
+ *  /root/claude/mission-control/ is OFF LIMITS unless on a jarvis/* branch.
+ *  Queue #11 (2026-05-07): jarvis-kb path read dynamically via
+ *  getJarvisKbRoot() so JARVIS_KB_MIRROR_DIR overrides flow through tools too. */
+function getAllowWritePrefixes(): string[] {
+  return [
+    `${getJarvisKbRoot()}/`,
+    "/root/claude/cuatro-flor/",
+    "/root/claude/projects/",
+    "/root/claude/williams-entry-radar/", // Jarvis's autonomous radar build
+    "/root/claude/mission-control/", // allowed only on jarvis/* branches — checked dynamically
+    "/tmp/",
+    "/workspace/",
+  ];
+}
 
 /** Standard /dev/null sinks used as discard targets in shell idioms.
  *  These match WRITE_INDICATORS' shape (`>` redirect to absolute path) but
@@ -338,7 +343,7 @@ export function validateShellCommand(command: string): {
         return { allowed: false, reason: deny.reason };
       }
     }
-    const isSafe = ALLOW_WRITE_PREFIXES.some((prefix) =>
+    const isSafe = getAllowWritePrefixes().some((prefix) =>
       targetPath.startsWith(prefix),
     );
     if (!isSafe) {

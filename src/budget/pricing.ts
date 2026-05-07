@@ -86,13 +86,13 @@ export function loadPricingOverride(json: string): void {
 
 /** Strip known provider path prefixes so callers can pass either bare alias
  * or full path (e.g. "accounts/fireworks/models/minimax-m2p7"). */
-function normalizeModelName(model: string): string {
+function stripFireworksPrefix(model: string): string {
   return model.replace(/^accounts\/fireworks\/models\//, "");
 }
 
 /** Get pricing for a model, checking overrides then defaults then fallback. */
 export function getPricing(model: string): ModelPricing {
-  const normalized = normalizeModelName(model);
+  const normalized = stripFireworksPrefix(model);
   // Check override first — try both raw and normalized so operators can set
   // either form via BUDGET_PRICING_JSON.
   if (_pricingOverride?.[model]) return _pricingOverride[model];

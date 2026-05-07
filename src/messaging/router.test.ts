@@ -32,20 +32,18 @@ vi.mock("../lib/event-bus.js", () => ({
 // Outcome-aware retain coverage (queue item #7 part 1):
 // spy on memory.retain so failed/cancelled-task tests can verify the
 // outcome:failed retain call lands.
+// S2 audit fix (2026-05-07): no importActual — router only consumes
+// getMemoryService(); other exports stay stubbed so a memory/index.ts
+// refactor can't surface as a misleading router test failure.
 const memoryRetainSpy = vi.fn().mockResolvedValue(undefined);
-vi.mock("../memory/index.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../memory/index.js")>(
-      "../memory/index.js",
-    );
-  return {
-    ...actual,
-    getMemoryService: () => ({
-      retain: memoryRetainSpy,
-      recall: vi.fn().mockResolvedValue({ memories: [] }),
-    }),
-  };
-});
+vi.mock("../memory/index.js", () => ({
+  getMemoryService: () => ({
+    retain: memoryRetainSpy,
+    recall: vi.fn().mockResolvedValue({ memories: [] }),
+  }),
+  initMemoryService: vi.fn().mockResolvedValue(undefined),
+  resetMemoryService: vi.fn(),
+}));
 
 vi.mock("../memory/outcome-tag.js", () => ({
   getOutcomeTag: vi.fn((_taskId: string) => "outcome:failed"),

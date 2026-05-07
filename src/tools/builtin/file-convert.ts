@@ -23,6 +23,7 @@ import {
 import { resolve, extname, basename, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,13 +35,17 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  * tool as a self-source-code reader (file_read already handles that case
  * with its own guards). Outputs never live outside `/tmp` or `/workspace`.
  */
-const SOURCE_ALLOW_PREFIXES = [
-  "/tmp/",
-  "/workspace/",
-  "/root/claude/jarvis-kb/",
-  "/root/claude/projects/",
-  "/root/claude/mission-control/public/docs/",
-];
+// Queue #11 (2026-05-07): jarvis-kb path read dynamically via getJarvisKbRoot()
+// so JARVIS_KB_MIRROR_DIR overrides flow through the converter too.
+function getSourceAllowPrefixes(): string[] {
+  return [
+    "/tmp/",
+    "/workspace/",
+    `${getJarvisKbRoot()}/`,
+    "/root/claude/projects/",
+    "/root/claude/mission-control/public/docs/",
+  ];
+}
 
 const OUTPUT_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
 
@@ -213,10 +218,11 @@ function validateInputPath(
       error: "input_path must be canonical (no .. / symlink jumps)",
     };
   }
-  if (!isUnderPrefix(abs, SOURCE_ALLOW_PREFIXES)) {
+  const sourcePrefixes = getSourceAllowPrefixes();
+  if (!isUnderPrefix(abs, sourcePrefixes)) {
     return {
       ok: false,
-      error: `input_path must be under one of: ${SOURCE_ALLOW_PREFIXES.join(", ")}`,
+      error: `input_path must be under one of: ${sourcePrefixes.join(", ")}`,
     };
   }
   if (!existsSync(abs)) {
@@ -242,7 +248,7 @@ function validateInputPath(
   } catch {
     return { ok: false, error: `input_path realpath failed: ${abs}` };
   }
-  if (!isUnderPrefix(real, SOURCE_ALLOW_PREFIXES)) {
+  if (!isUnderPrefix(real, sourcePrefixes)) {
     return {
       ok: false,
       error: "input_path realpath escapes the allowed sandbox",

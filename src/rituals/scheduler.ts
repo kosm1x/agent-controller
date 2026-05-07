@@ -364,6 +364,17 @@ function scheduleKbReindex(): void {
             `[rituals] kb-reindex: drift=${result.drift} upserted=${result.upserted} errored=${result.errored} (${result.durationMs}ms)`,
           );
         }
+        // Queue #12 (2026-05-07): emit drift + counts to Prometheus so the
+        // KB-orphan failure mode is observable. Alert rule
+        // `KbReindexDrift` fires when drift > 10 for 2h+ (≥2 consecutive runs).
+        const { recordKbReindex } =
+          await import("../observability/prometheus.js");
+        recordKbReindex({
+          drift: result.drift,
+          fsCount: result.fsCount,
+          dbCount: result.dbCount,
+          errored: result.errored,
+        });
       } catch (err) {
         console.error("[rituals] kb-reindex failed:", err);
         recordRitualFailure("kb-reindex", err, "execute");

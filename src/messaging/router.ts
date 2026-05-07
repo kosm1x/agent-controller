@@ -1866,6 +1866,35 @@ export class MessageRouter {
   private handleTaskCompleted(data: TaskCompletedPayload): void {
     const taskId = data.task_id;
 
+    // C2 deeper audit fix (queue #16, 2026-05-07): a runner finishing after
+    // the user already cancelled previously emitted task.completed AND
+    // overwrote the cancelled status. The dispatcher updateTaskStatus guards
+    // now prevent the row flip, but this handler still gets the event. Read
+    // fresh status from DB and short-circuit if cancelled — prevents
+    // duplicate user-visible messages and double-tracking outcome.
+    try {
+      const row = getDatabase()
+        .prepare("SELECT status FROM tasks WHERE task_id = ?")
+        .get(taskId) as { status: string | null } | undefined;
+      if (row?.status === "cancelled") {
+        console.log(
+          `[router] handleTaskCompleted: task ${taskId} already cancelled — short-circuit`,
+        );
+        this.ritualWatches.delete(taskId);
+        const stale = this.pendingReplies.get(taskId);
+        if (stale) {
+          clearTimeout(stale.interimTimer);
+          clearTimeout(stale.finalTimer);
+          clearTimeout(stale.abandonTimer);
+          this.pendingReplies.delete(taskId);
+        }
+        return;
+      }
+    } catch {
+      // DB unavailable — proceed with legacy behavior (the WHERE-guard at
+      // dispatcher level still prevents the destructive row flip).
+    }
+
     // Check if it's a ritual task → broadcast
     const ritualId = this.ritualWatches.get(taskId);
     if (ritualId) {
@@ -2190,6 +2219,31 @@ export class MessageRouter {
   private handleTaskFailed(data: TaskFailedPayload): void {
     const taskId = data.task_id;
 
+    // C2 deeper audit fix (queue #16, 2026-05-07): same short-circuit as
+    // handleTaskCompleted — if the task was already cancelled, swallow the
+    // event so the user doesn't see a duplicate "task failed" message.
+    try {
+      const row = getDatabase()
+        .prepare("SELECT status FROM tasks WHERE task_id = ?")
+        .get(taskId) as { status: string | null } | undefined;
+      if (row?.status === "cancelled") {
+        console.log(
+          `[router] handleTaskFailed: task ${taskId} already cancelled — short-circuit`,
+        );
+        this.ritualWatches.delete(taskId);
+        const stale = this.pendingReplies.get(taskId);
+        if (stale) {
+          clearTimeout(stale.interimTimer);
+          clearTimeout(stale.finalTimer);
+          clearTimeout(stale.abandonTimer);
+          this.pendingReplies.delete(taskId);
+        }
+        return;
+      }
+    } catch {
+      // DB unavailable — proceed with legacy behavior
+    }
+
     // Clean up ritual watches. F9 audit W-R2-1: failed budget-aware rituals
     // still consumed tokens — charge the budget before clearing the watch so
     // runaway failure loops eventually trip the daily cap.
@@ -2282,6 +2336,16 @@ export class MessageRouter {
     clearTimeout(pending.finalTimer);
     clearTimeout(pending.abandonTimer);
     this.pendingReplies.delete(taskId);
+
+    // W2 audit fix (queue #16, 2026-05-07): non-user cancellations are
+    // typically cascades (parent timeout, dependency failure) — send a
+    // tailored message so the operator isn't left wondering why their
+    // request went silent. User-initiated cancels (e.g. /cancel command)
+    // already produced their own UX so we stay quiet there.
+    if (data.cancelled_by && data.cancelled_by !== "user") {
+      const cancelMsg = `Tarea cancelada (${data.reason ?? data.cancelled_by}).`;
+      this.sendToChannel(pending.channel, pending.to, cancelMsg);
+    }
 
     // Outcome-aware retain (queue item #7 part 1, 2026-05-07): cancelled tasks
     // map to outcome:failed via statusToOutcomeTag. We retain the user prompt

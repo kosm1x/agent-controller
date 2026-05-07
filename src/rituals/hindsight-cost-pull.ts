@@ -74,7 +74,13 @@ function shortHash(input: string): string {
  * model, success) combo as a cost_ledger row tagged agent_type='hindsight'.
  */
 export async function runHindsightCostPull(): Promise<PullSummary> {
-  const now = Date.now();
+  // W3 audit fix (2026-05-07): lag the bucket label by 30s before flooring so
+  // a cron fire that drifts to XX:09:58 doesn't collide with a fire that
+  // drifted to XX:10:01 (both would hash into the same XX:05 vs XX:10 bucket
+  // depending on jitter). Lagging once eliminates the boundary ambiguity at
+  // the cost of recording cost in the bucket whose end-of-window most cleanly
+  // matches the actual increase()[5m] window we just queried.
+  const now = Date.now() - 30_000;
   const bucket = Math.floor(now / BUCKET_MS) * BUCKET_MS;
   const bucketIso = new Date(bucket).toISOString();
 

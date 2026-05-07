@@ -123,15 +123,36 @@ groups:
           summary: "MC has tasks running for more than 30 minutes"
           description: "Active tasks: {{ $value }}"
 
+      # KB drift — FS files orphaned to the DB. Hourly kb-reindex catches them
+      # but a sustained > 10 drift means external writers are racing the reindex
+      # or the mirror dir is misconfigured. 2h sustain = at least 2 consecutive
+      # reindex runs both showed drift > 10. Queue #12, 2026-05-07.
+      - alert: KbReindexDrift
+        expr: mc_kb_reindex_drift > 10
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Jarvis KB drift > 10 files for 2+ hours"
+          description: "FS files not yet in jarvis_files: {{ $value }}. Check JARVIS_KB_MIRROR_DIR + recent shell_exec writes outside the upsertFile path."
+
   - name: hindsight
     rules:
       # Token-rate spike: 5min rate > 3x the 24h rate, sustained for 10 min.
       # Catches retry storms (cf. 2026-05-06 qwen3p6-plus $12 burn).
+      # W1 audit fix (2026-05-07): gate on Hindsight container uptime > 24h
+      # so the alert doesn't fire during cold-start when the 24h baseline is
+      # mostly-empty samples. Also require non-trivial baseline activity so
+      # a 10-token spike on an idle day doesn't trip a 3x threshold.
       - alert: HindsightTokenRateSpike
         expr: |
-          sum(rate(hindsight_llm_tokens_input_tokens_total[5m]))
-          >
-          3 * sum(rate(hindsight_llm_tokens_input_tokens_total[24h]))
+          (
+            sum(rate(hindsight_llm_tokens_input_tokens_total[5m]))
+            >
+            3 * sum(rate(hindsight_llm_tokens_input_tokens_total[24h]))
+          )
+          and on() (time() - min(process_start_time_seconds{job="crm-hindsight"})) > 86400
+          and sum(rate(hindsight_llm_tokens_input_tokens_total[24h])) > 1
         for: 10m
         labels:
           severity: warning

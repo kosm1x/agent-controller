@@ -26,6 +26,15 @@ function getMirrorDir(): string {
   return process.env.JARVIS_KB_MIRROR_DIR ?? DEFAULT_MIRROR_DIR;
 }
 
+/**
+ * Public helper for tools that need the Jarvis KB root path. Picks up
+ * JARVIS_KB_MIRROR_DIR overrides at call time (not module load) so tests
+ * setting the env in beforeEach take effect. Queue #11, 2026-05-07.
+ */
+export function getJarvisKbRoot(): string {
+  return getMirrorDir();
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
