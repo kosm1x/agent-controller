@@ -492,16 +492,52 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(false);
   });
 
-  // Round-1 audit W2: syntactic regex-source guard. Protects against future
-  // "let me simplify the regex" diffs that re-introduce drift. If anyone
-  // removes the negation lookbehind, the verb stems, or the start anchor,
-  // these trip immediately at CI time.
-  //
-  // Uses module-level access via the exported runtime path — the regex
-  // lives inside detectsHallucinatedExecution so we re-derive its shape via
-  // behavior assertions rather than reaching into the closure.
-  it("regex-source guard: negation lookbehind catches all 4 ES negators", () => {
-    const negators = ["no", "nunca", "tampoco", "jamás"];
+  // Round-2 audit W1 — correlative `ni…ni` negation must also block flagging.
+  // "Ni escribí ni borré nada" is a clear non-claim under verify/read intent.
+  // Without `ni` in the negation alternation, both verbs would fire.
+  it("STILL allows 'Ni escribí ni borré' correlative negation (round-2 W1)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Ni escribí ni borré nada nuevo en el archivo.",
+        ["jarvis_file_read"],
+        "verifica si hay cambios",
+      ),
+    ).toBe(false);
+  });
+
+  it("STILL allows 'Ni siquiera escribí' negation", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Ni siquiera escribí una línea de código.",
+        ["jarvis_file_read"],
+        "lista lo que hiciste",
+      ),
+    ).toBe(false);
+  });
+
+  // Round-2 audit S2 — pin the behavior that distant `no` does NOT block a
+  // genuine first-person claim later in the sentence. "Hoy no, pero ayer
+  // escribí el doc" has `no` 3 tokens before `escribí`, separated by a
+  // comma + clause. The lookbehind is immediate-only (`\s+` directly before
+  // the verb), so it correctly fires on `escribí` here. This prevents a
+  // future "let me make the lookbehind more permissive" diff from
+  // accidentally letting genuine claims slip through.
+  it("DOES flag distant 'no' followed by genuine first-person claim", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Hoy no hice mucho, pero escribí un documento largo en NorthStar.",
+        ["jarvis_file_read"],
+        "verifica el progreso de hoy",
+      ),
+    ).toBe(true);
+  });
+
+  // Round-1 audit W2 + Round-2 audit W2: syntactic regex-source guards.
+  // Protects against future "let me simplify the regex" diffs that re-
+  // introduce drift. If anyone removes the negation lookbehind, the verb
+  // stems, or the start anchor, these trip immediately at CI time.
+  it("regex-source guard: negation lookbehind catches all 6 ES negators", () => {
+    const negators = ["no", "ni", "nunca", "tampoco", "jamás", "siquiera"];
     for (const neg of negators) {
       const text = `${neg.charAt(0).toUpperCase() + neg.slice(1)} escribí nada nuevo en este archivo.`;
       expect(
@@ -511,27 +547,53 @@ describe("detectsHallucinatedExecution", () => {
     }
   });
 
+  // Round-2 audit W2 — parameterize over the FULL 22-verb-stem list so the
+  // syntactic guard rejects any future diff that drops a stem. Source of
+  // truth: the FIRST_PERSON_WRITE_RE alternation in fast-runner.ts. If
+  // someone deletes a stem from the regex, the corresponding test row trips.
   it("regex-source guard: every operator-typed verb stem still flags first-person", () => {
-    const stems = [
-      "escribí algo",
-      "actualicé el sheet",
-      "publiqué el post",
-      "subí el archivo",
-      "eliminé la tarea",
-      "borré el registro",
-      "envié el correo",
-      "creé el evento",
-      "modifiqué la config",
-      "edité el archivo",
-      "guardé el documento",
-      "programé el reporte",
+    const ALL_VERB_STEMS = [
+      "escribí",
+      "actualicé",
+      "publiqué",
+      "subí",
+      "eliminé",
+      "borré",
+      "envié",
+      "configuré",
+      "instalé",
+      "activé",
+      "desactivé",
+      "limpié",
+      "creé",
+      "modifiqué",
+      "edité",
+      "guardé",
+      "programé",
+      "completé",
+      "marqué",
+      "empujé",
+      "commiteé",
+      "comiteé",
     ];
-    for (const stem of stems) {
+    for (const stem of ALL_VERB_STEMS) {
+      const text = `${stem} algo importante en el sistema.`;
       expect(
-        detectsHallucinatedExecution(stem, ["jarvis_file_read"]),
+        detectsHallucinatedExecution(text, ["jarvis_file_read"]),
         `expected "${stem}" to flag (first-person carve-out)`,
       ).toBe(true);
     }
+    // Multi-word "hice push" / "hice commit" tested separately
+    expect(
+      detectsHallucinatedExecution("hice push del cambio principal.", [
+        "jarvis_file_read",
+      ]),
+    ).toBe(true);
+    expect(
+      detectsHallucinatedExecution("hice commit del trabajo de hoy.", [
+        "jarvis_file_read",
+      ]),
+    ).toBe(true);
   });
 });
 

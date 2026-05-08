@@ -397,14 +397,23 @@ export function detectsHallucinatedExecution(
   // pattern shipped in confirmations.ts; high-risk operator-typed verbs
   // bypass ergonomic-relief gates.
   //
-  // Negation guard (round-1 audit C1, 2026-05-08): the ES regex MUST exclude
-  // "no escribí" / "nunca actualicé" / "tampoco subí" / "jamás envié" — those
-  // are explicit non-claims under verify/read intent. JS variable-width
-  // lookbehind handles `(?<!\bno\s+)` etc. The EN side is structurally safe
-  // because the literal `I\s+` anchor doesn't match "I didn't" or "I never".
-  // \b start anchor on both regexes prevents within-word false positives.
+  // Negation guard (round-1 audit C1, round-2 audit W1, 2026-05-08): the ES
+  // regex MUST exclude common Spanish negation forms preceding a 1st-person
+  // past-tense verb. Coverage:
+  //   - "no escribí"            → `no`
+  //   - "ni escribí ni borré"   → `ni`        (correlative; round-2 W1)
+  //   - "nunca actualicé"       → `nunca`
+  //   - "tampoco subí"          → `tampoco`
+  //   - "jamás envié"           → `jam[aá]s`
+  //   - "ni siquiera escribí"   → `siquiera`  (siquiera carries the negation
+  //                                          when ni precedes it earlier)
+  // JS variable-width lookbehind handles `(?<!\bno\s+)` on Node ≥22 (V8 ≥6.2,
+  // shipped 2018). Repo `engines.node` floor is "22.0.0".
+  // The EN side is structurally safe — the literal `I\s+` anchor doesn't
+  // match "I didn't" or "I never". \b start anchor on both regexes prevents
+  // within-word false positives.
   const FIRST_PERSON_WRITE_RE =
-    /(?<!\b(?:no|nunca|tampoco|jam[aá]s)\s+)\b(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i;
+    /(?<!\b(?:no|ni|nunca|tampoco|jam[aá]s|siquiera)\s+)\b(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i;
   const FIRST_PERSON_WRITE_EN_RE =
     /\bI\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i;
   const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
