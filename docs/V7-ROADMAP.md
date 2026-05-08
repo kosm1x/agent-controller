@@ -69,6 +69,21 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 > All α work is complete. These sections document shipped scope for history and reference; skim them only if you need implementation details. **Phase β (F1) is where execution continues.**
 
+## v7.6 Reliability Phase — In Progress (Spines 1, 2, 4 closed 2026-05-08)
+
+> Reliability phase — make what we already have work and work well, instead of adding capability. Six spines. Tracked in `docs/V7.6-GUIDE.md`.
+
+| Spine                         | Status                  | Closure commits                                   | Audit log                            |
+| ----------------------------- | ----------------------- | ------------------------------------------------- | ------------------------------------ |
+| 1 — Gatekeeper audit pass     | **Closed** (2026-05-08) | `90ebc31` `ed52d6c` `228c0cd` `a9ac208` `74c6a73` | `docs/audit/v7.6-gatekeepers.md`     |
+| 2 — Observability backfill    | **Closed** (2026-05-08) | `36dbcd9` `9379fe1`                               | `docs/audit/v7.6-observability.md`   |
+| 3 — Hindsight A/B/C decision  | Data-ready 2026-05-21   | —                                                 | —                                    |
+| 4 — MCP annotation push       | **Closed** (2026-05-08) | `331678b` `b458293` `631ea0f`                     | `docs/audit/v7.6-mcp-annotations.md` |
+| 5 — Skill engine surface      | Pending                 | —                                                 | —                                    |
+| 6 — Composed L4-L6 smoke test | Pending                 | —                                                 | —                                    |
+
+**Cumulative through 2026-05-08**: 6 pre-existing bugs found (F5 + F8 + F10 + Spine 2 fullCount drift + 2 idempotent-convention drift), 14 bundle-regressions caught across 6 audit rounds, +121 new tests, 0 production regressions. Spine 1 hit-rate 3/9 = 33% matches V7.6-GUIDE projection. Spine 4 bulk-script misclassification floor: 7/162 = 4.3%.
+
 ## v7.9 — Prometheus Sonnet Port — **Done**
 
 > Shipped 2026-04-15 (session 70). Final α item before Phase β. Claude Sonnet 4.6 replaces qwen in Prometheus executor. Wrap-up in `feedback_v79_deferred_followups.md`.
