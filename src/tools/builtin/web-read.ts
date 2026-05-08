@@ -95,8 +95,12 @@ export const webReadTool: Tool = {
   name: "web_read",
   readOnlyHint: true,
   destructiveHint: false,
-  // Same URL may return different content over time → not idempotent.
-  idempotentHint: false,
+  // Round-2 audit W1 fix (Spine 4): per MCP-spec idempotentHint defines
+  // "no additional effect on system state beyond the first" — a pure read
+  // tool has no system-state effect at all, so re-issuing the same call
+  // is idempotent. External content drift (same URL returning different
+  // content over time) does not break this contract.
+  idempotentHint: true,
   openWorldHint: true,
   definition: {
     type: "function",

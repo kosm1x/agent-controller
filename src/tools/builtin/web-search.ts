@@ -16,7 +16,12 @@ export const webSearchTool: Tool = {
   name: "web_search",
   readOnlyHint: true,
   destructiveHint: false,
-  idempotentHint: false,
+  // Round-2 audit W1 fix (Spine 4): per MCP-spec idempotentHint defines
+  // "no additional effect on system state beyond the first" — a pure read
+  // tool has no system-state effect at all, so re-issuing the same call
+  // is idempotent. External-state drift (different results over time)
+  // does not break this contract.
+  idempotentHint: true,
   openWorldHint: true,
   definition: {
     type: "function",

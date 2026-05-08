@@ -12,8 +12,11 @@ const TIMEOUT_MS = 15_000;
 
 export const chartGenerateTool: Tool = {
   name: "chart_generate",
-  readOnlyHint: false,
-  destructiveHint: true,
+  // Round-2 audit S3 fix (Spine 4): handler returns a QuickChart URL — no
+  // FS write, no DB mutation, no state change. Same shape as the SEO and
+  // video pure-transform tools corrected in this round.
+  readOnlyHint: true,
+  destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
   deferred: true,

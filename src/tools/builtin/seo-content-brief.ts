@@ -35,9 +35,12 @@ const MAX_REFRESH_CONTENT = 3000;
 
 export const seoContentBriefTool: Tool = {
   name: "seo_content_brief",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-2 audit C1 fix (Spine 4): pure transform — fetches via web_read +
+  // calls infer(). No FS write, no DB mutation. Pre-fix `d` would pollute
+  // the destructive-cohort metric.
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   riskTier: "low",

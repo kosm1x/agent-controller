@@ -34,9 +34,11 @@ interface MetaVariant {
 
 export const seoMetaGenerateTool: Tool = {
   name: "seo_meta_generate",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-2 audit C2 fix (Spine 4): pure transform — optional URL fetch
+  // via web_read + LLM call. No FS write, no DB mutation.
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   riskTier: "low",

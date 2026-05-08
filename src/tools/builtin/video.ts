@@ -452,9 +452,12 @@ Returns: status, output file path (when completed), or error message (when faile
 
 export const videoScriptTool: Tool = {
   name: "video_script",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-2 audit C3 fix (Spine 4): pure LLM transform — no FS write,
+  // no DB mutation, returns script JSON. Description: "Generate a video
+  // script without rendering. For previewing/editing before committing."
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   definition: {
@@ -1338,9 +1341,13 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
 
 export const videoStoryboardTool: Tool = {
   name: "video_storyboard",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-2 audit W2 fix (Spine 4): pure LLM transform — optionally reads
+  // brand profile (DB SELECT) then calls infer(). No mutation. Description:
+  // "Does NOT render — operator reviews the manifest then pipes into
+  // video_compose_manifest for actual MP4 production."
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   definition: {
@@ -1451,9 +1458,12 @@ URLs in the brief are redacted before hitting the LLM (prompt-injection defense)
 
 export const videoBrandApplyTool: Tool = {
   name: "video_brand_apply",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-2 audit C4 fix (Spine 4): pure DB SELECT on ads_brand_profiles.
+  // No mutation. Description: "Convenience tool — it does not itself
+  // generate a storyboard."
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   definition: {
