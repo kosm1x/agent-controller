@@ -1863,6 +1863,12 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
         "Hola",
         "Lista todas las herramientas",
         "manda un correo a Juan",
+        // Round-2 audit S1: URL-based Google injection (scope.ts:953-959)
+        // adds "google" to activeGroups regardless of options.hasGoogle.
+        // Producer's double-gate at scope.ts:1208 (activeGroups.has("google")
+        // && options.hasGoogle) is what defends the envelope. Sample exists
+        // so the gate-flipped invariant exercises that defense path.
+        "abre https://docs.google.com/document/d/abc/edit",
         "edita el archivo README.md",
         "publica en livingjoyfully.art",
         "ejecuta una query en SQL",

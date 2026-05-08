@@ -1299,6 +1299,14 @@ export function scopeToolsForMessage(
  *
  * Invariant pinned by tests: scopeToolsForMessage(any-input).length must
  * always be ≤ getAllAvailableTools(options).size for the same options.
+ *
+ * Upper-bound looseness: a few tools (`northstar_sync`, `humanize_text`) are
+ * unconditional in the universe but conditional in the producer. This keeps
+ * the envelope strictly ≥ producer (correct for the `fullCount` use case),
+ * but means a future regression that drops one of those tools from the
+ * producer would be invisible to the coupling tests. If a tighter mirror
+ * becomes useful (e.g., for prompt-budget analytics), parameterize the
+ * universe by activeGroups, not just options.
  */
 export function getAllAvailableTools(options: ScopeOptions): Set<string> {
   const all = new Set<string>([
