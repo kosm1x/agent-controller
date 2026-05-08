@@ -27,12 +27,18 @@ export const GENERIC_CONFIRM_SRC =
 
 /** Generic action confirmation (dale, hazlo, procede, adelante, etc.).
  *
- * `vale` lives here (not GENERIC) because it can appear mid-sentence as a
- * filler ("vale, pero antes...") — same reason `va`/`go` were removed.
- * Lax-mode only.
+ * These are op-INDIFFERENT — "dale" / "hazlo" / "procede" mean "go ahead with
+ * whatever you proposed" regardless of op type, so they're safe in strict mode
+ * (no verb/op-mismatch risk like `súbelo` confirming a delete). The 30-char
+ * strict-mode length cap defends against incidental utterances like
+ * "Procedamos pero antes...".
+ *
+ * `vale` was considered but EXCLUDED because it has the same false-positive
+ * risk as the round-1 removed `va`/`go`: "vale la pena" / "no vale" / etc.
+ * read as filler, not consent. `dale` covers the same intent unambiguously.
  */
 export const ACTION_CONFIRM_SRC =
-  "dale|vale|hazlo|haz(?:lo)?|procede|proced(?:elo|ela|elos|elas)|proceed|adelante|ejecuta|do\\s*it|go\\s*ahead";
+  "dale|hazlo|haz(?:lo)?|procede|proced(?:elo|ela|elos|elas)|proceed|adelante|ejecuta|do\\s*it|go\\s*ahead";
 
 /**
  * Spanish imperative + clitic forms.
@@ -112,9 +118,15 @@ export const DESTRUCTIVE_CLITIC_CONFIRM_SRC =
   ].join("|") +
   ")(?:al[oa]s?|el[oa]s?|lo|la|los|las)";
 
-/** Decline verbs (Spanish + English). */
+/** Decline verbs (Spanish + English).
+ *
+ * Audit C4 fix (round 2, 2026-05-08): bare `para` was removed because in
+ * Spanish it overwhelmingly reads as the preposition "for/towards"
+ * (`"para mí está bien"` is consent, not decline). Imperative "stop"
+ * meanings are still covered by `detente`, `alto`, `stop`, and the
+ * compound `para\s+ya`. */
 export const DECLINE_SRC =
-  "no|cancela(?:do)?|para|detente|stop|nope|nel|mejor\\s*no|olv[ií]da(?:lo)?|don.?t|never\\s*mind";
+  "no|cancela(?:do)?|alto|para\\s+ya|detente|stop|nope|nel|mejor\\s*no|olv[ií]da(?:lo)?|don.?t|never\\s*mind";
 
 /**
  * Compose a confirmation regex anchored at start-of-string + word-boundary.
@@ -124,16 +136,31 @@ export const DECLINE_SRC =
  * **Lax** = generic + action verbs + every clitic form + EN. Used for normal
  * pending confirmations (gmail_send, gdrive_upload, etc.).
  *
- * **Strict** = generic affirmations + destructive-aligned clitic stems only.
- * Used when the pending tool has `destructiveHint: true`. The action verbs
- * `dale/hazlo/procede` are excluded (incidental utterance risk), and only
- * clitic stems aligned with destructive semantics are accepted (so `Bórralo`
- * still confirms a delete, but `Súbelo` cannot — verb/op mismatch).
+ * **Strict** = generic affirmations + op-indifferent action verbs +
+ * destructive-aligned clitic stems. Used when the pending tool has
+ * `destructiveHint: true`. Excludes:
+ *   - non-destructive clitics (`súbelo`, `créalo`) — verb/op-type mismatch
+ *   - bare incidental words (`va`, `go`, `vale`) — false-positive vectors
+ * Includes:
+ *   - generic affirmations (`sí`, `ok`, `confirmo`) — context-clear consent
+ *   - op-indifferent action verbs (`dale`, `hazlo`, `procede`, `adelante`)
+ *     — these mean "go ahead with whatever you proposed" regardless of op
+ *   - destructive-aligned clitics (`bórralo`, `elimínalo`) — verb matches op
+ *
+ * Audit refinement (round 2, 2026-05-08): the round-1 strict mode dropped
+ * action verbs entirely; this regressed the deletion two-step where users
+ * naturally reply "Dale" to "¿Confirmo la eliminación?" (existing test at
+ * `runners/fast-runner.test.ts:723`). Fix: action verbs are op-indifferent
+ * and stay in strict; only verb-typed clitics are gated by op semantics.
  */
 export function buildConfirmRegex(mode: "lax" | "strict" = "lax"): RegExp {
   const parts =
     mode === "strict"
-      ? [GENERIC_CONFIRM_SRC, DESTRUCTIVE_CLITIC_CONFIRM_SRC]
+      ? [
+          GENERIC_CONFIRM_SRC,
+          ACTION_CONFIRM_SRC,
+          DESTRUCTIVE_CLITIC_CONFIRM_SRC,
+        ]
       : [
           GENERIC_CONFIRM_SRC,
           ACTION_CONFIRM_SRC,

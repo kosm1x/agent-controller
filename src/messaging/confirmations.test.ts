@@ -102,7 +102,8 @@ describe("detectConfirmationResponse", () => {
     "no",
     "cancela",
     "cancelado",
-    "para",
+    "alto",
+    "para ya",
     "detente",
     "stop",
     "nope",
@@ -114,6 +115,16 @@ describe("detectConfirmationResponse", () => {
   ])("detects '%s' as decline", (text) => {
     expect(detectConfirmationResponse(text)).toBe("decline");
   });
+
+  // C4 fix (round 2): bare `para` is the Spanish preposition, not a decline.
+  // Regression-guard so a future "let's add common words back" doesn't
+  // resurrect the false-decline class.
+  it.each(["para mí", "para allá", "para que veas", "para él"])(
+    "rejects '%s' as decline (C4 — Spanish preposition)",
+    (text) => {
+      expect(detectConfirmationResponse(text)).toBeNull();
+    },
+  );
 
   // --- Neither ---
   it("returns null for ambiguous/unrelated messages", () => {
@@ -184,21 +195,29 @@ describe("detectConfirmationResponse", () => {
       );
     });
 
+    // Op-indifferent action verbs DO confirm in strict mode — they mean
+    // "go ahead with whatever you proposed" regardless of op type. Refined
+    // round-2 audit: dropping them was a regression on the deletion two-step
+    // where users naturally reply "Dale" to "¿Confirmo la eliminación?".
+    it.each(["dale", "hazlo", "procede", "adelante", "ejecuta"])(
+      "op-indifferent action verb '%s' confirms in strict mode",
+      (text) => {
+        expect(detectConfirmationResponse(text, { strict: true })).toBe(
+          "confirm",
+        );
+      },
+    );
+
     it.each([
-      // Action verbs and non-destructive clitic forms must NOT confirm a
-      // destructive op — these can appear in incidental utterances OR refer
-      // to the wrong op type (e.g. "Súbelo" replying to a delete prompt).
-      "dale",
-      "hazlo",
-      "procede",
-      "adelante",
+      // Non-destructive clitic forms must NOT confirm a destructive op —
+      // verb/op-type mismatch (e.g. "Súbelo" replying to a delete prompt).
       "súbelo", // upload verb to delete op = mismatch
       "lánzalo", // launch verb to delete op = mismatch
       "créalo", // create verb to delete op = mismatch
       "envíalo", // send verb to delete op = mismatch
       "guárdalo", // save verb to delete op = mismatch
     ])(
-      "rejects '%s' in strict mode (broad action verbs / non-destructive clitics)",
+      "rejects non-destructive clitic '%s' in strict mode (verb/op mismatch)",
       (text) => {
         expect(detectConfirmationResponse(text, { strict: true })).toBeNull();
       },
@@ -246,12 +265,14 @@ describe("detectConfirmationResponse", () => {
     });
   });
 
-  // --- F5 audit fix: producer/consumer coupling ---
-  // Pins a representative sample of LLM-side confirmation prompts to the
-  // natural user replies users produce. When a new confirmation-eliciting
-  // tool ships, add (prompt, expected-replies) here so the regex stays in
-  // lockstep with the producer side.
-  describe("producer/consumer coupling", () => {
+  // --- F5 audit fix: reply vocabulary by op family ---
+  // W1 round-2 audit fix: this is NOT a true producer/consumer coupling test
+  // (it doesn't run the LLM-side prompts through any producer code path).
+  // It pins a representative reply corpus per op family so the consumer regex
+  // stays comprehensive. A real coupling test would extract LLM-prompt strings
+  // from tool descriptions and assert each elicits at least one matching reply.
+  // Tracked as W1 in `docs/audit/v7.6-gatekeepers.md`.
+  describe("reply vocabulary by op family", () => {
     const cases: Array<{ llmPrompt: string; replies: string[] }> = [
       {
         llmPrompt: "¿Subo el archivo?",
@@ -294,5 +315,51 @@ describe("detectConfirmationResponse", () => {
         });
       }
     }
+  });
+
+  // --- R2 round-2 audit fix: syntactic guards on regex source ---
+  // Trip CI if a future "just add the verb back" diff re-introduces the
+  // bugs the round-2 audit caught.
+  describe("regex source syntactic guards (round-2 audit R2)", () => {
+    it("strict mode does NOT contain non-destructive clitic stems", async () => {
+      const { buildConfirmRegex } = await import("./confirmation-verbs.js");
+      const src = buildConfirmRegex("strict").source;
+      // Non-destructive clitic stems that must NOT appear in strict mode.
+      // If any future diff adds them back, this test fails.
+      const nonDestructiveStems = [
+        "s[uú]b", // subir
+        "cr[eé]", // crear
+        "l[aá]nz", // lanzar
+        "tr[aá]", // traer
+        "gu[aá]rd", // guardar
+        "agr[eé]g", // agregar
+        "modif[ií]c", // modificar
+        "escr[ií]b", // escribir
+        "actual[ií]z", // actualizar
+        "env[ií]", // enviar
+        "m[aá]nd", // mandar
+      ];
+      for (const stem of nonDestructiveStems) {
+        expect(src).not.toContain(stem);
+      }
+    });
+
+    it("strict mode DOES contain destructive-aligned clitic stems", async () => {
+      const { buildConfirmRegex } = await import("./confirmation-verbs.js");
+      const src = buildConfirmRegex("strict").source;
+      const destructiveStems = ["b[oó]rr", "elim[ií]n", "qu[ií]t"];
+      for (const stem of destructiveStems) {
+        expect(src).toContain(stem);
+      }
+    });
+
+    it("decline regex does NOT contain bare 'para' (C4 — Spanish preposition)", async () => {
+      const { buildDeclineRegex } = await import("./confirmation-verbs.js");
+      const src = buildDeclineRegex().source;
+      // Bare `para` would be `|para|` (alternation-bounded); the compound
+      // `para\s+ya` is allowed.
+      expect(src).not.toMatch(/\|para\|/);
+      expect(src).toMatch(/para\\s\+ya/);
+    });
   });
 });

@@ -103,8 +103,13 @@ import {
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
  * `messaging/confirmations.ts`. Two parallel regexes diverged before v7.6
- * Spine 1; the unified vocabulary prevents future drift. F5 audit fix. */
-const CONFIRM_PATTERN = buildConfirmRegex("lax");
+ * Spine 1; the unified vocabulary prevents future drift. F5 audit fix.
+ *
+ * Uses **strict** mode because `hasUserConfirmedDeletion` is inherently a
+ * destructive flow — accepting `súbelo`/`créalo` for a deletion two-step
+ * would be the exact verb/op-mismatch the strict mode was designed to
+ * prevent. C3 audit fix (round 2, 2026-05-08). */
+const CONFIRM_PATTERN = buildConfirmRegex("strict");
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
 const DELETION_ASK_PATTERN =
   /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que\s+(?:\S+\s+)?(?:elimine|borre)|want me to (?:delete|remove)|shall I (?:delete|remove)|should I (?:delete|remove)|confirm.*(?:delet|elimin|borr)|(?:delet|elimin|borr)\S*\s*\?|procedo con la eliminaci[oó]n|CONFIRMATION_REQUIRED)/i;
