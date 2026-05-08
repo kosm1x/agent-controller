@@ -1412,7 +1412,14 @@ export class MessageRouter {
     // Must be before feedback/fast-path/full pipeline — this is a direct tool execution.
     const pendingConf = getPendingConfirmation(tk);
     if (pendingConf) {
-      const confResponse = detectConfirmationResponse(msg.text);
+      // Destructive ops require stricter matching — a broad action verb
+      // ("dale", "súbelo") in incidental utterances must NOT accidentally
+      // confirm an irreversible operation. F5 carve-out per v7.6 audit.
+      const pendingTool = toolRegistry.get(pendingConf.toolName);
+      const isDestructive = pendingTool?.destructiveHint === true;
+      const confResponse = detectConfirmationResponse(msg.text, {
+        strict: isDestructive,
+      });
       if (confResponse === "confirm") {
         console.log(
           `[router] Confirmation accepted: ${pendingConf.toolName} — executing directly`,

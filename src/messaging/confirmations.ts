@@ -93,28 +93,40 @@ export function clearPendingConfirmation(threadKey: string): void {
 // Confirmation / decline detection
 // ---------------------------------------------------------------------------
 
-/** Patterns that indicate user confirms the pending operation.
- * Uses (\s|$|[.,!?]) instead of \b — word boundary breaks on accented chars (sí, envía). */
-const CONFIRM_PATTERNS =
-  /^(s[ií]|dale|hazlo|procede|adelante|ok|okey|va|confirmo|env[ií]a(lo)?|m[aá]ndalo|ejecuta|claro|por\s*favor|yes|go|confirm|send\s*it|do\s*it|approved?)(\s|$|[.,!?])/i;
+import { buildConfirmRegex, buildDeclineRegex } from "./confirmation-verbs.js";
 
-/** Patterns that indicate user declines. */
-const DECLINE_PATTERNS =
-  /^(no|cancela(do)?|para|detente|stop|nope|nel|mejor\s*no|olv[ií]da(lo)?|don.?t|never\s*mind)(\s|$|[.,!?])/i;
+/** Lax matcher — full vocabulary (generic + action + clitic + EN). */
+const CONFIRM_PATTERNS = buildConfirmRegex("lax");
+/** Strict matcher — generic affirmations + destructive-aligned clitic stems
+ * only (bórralo, elimínalo, etc.). Used when the pending op has
+ * destructiveHint: true. Excludes broad action verbs (dale/hazlo/procede)
+ * and non-destructive clitics (súbelo/créalo) so an action verb in incidental
+ * text or a verb/op-type mismatch can't accidentally confirm an irreversible
+ * operation. See `confirmation-verbs.ts:DESTRUCTIVE_CLITIC_CONFIRM_SRC`. */
+const CONFIRM_PATTERNS_STRICT = buildConfirmRegex("strict");
+const DECLINE_PATTERNS = buildDeclineRegex();
+
+/** Caller-supplied options. `strict: true` narrows the matcher. */
+export interface DetectOptions {
+  /** Use the strict matcher — required for destructive-hint tools. */
+  strict?: boolean;
+}
 
 /**
  * Detect if a user message is a confirmation or decline of a pending operation.
- * Only checks short messages (< 60 chars) to avoid false positives.
- * Returns null for ambiguous or unrelated messages.
+ * Only checks short messages (< 60 chars lax / < 30 chars strict) to avoid
+ * false positives. Returns null for ambiguous or unrelated messages.
  */
 export function detectConfirmationResponse(
   text: string,
+  options: DetectOptions = {},
 ): "confirm" | "decline" | null {
   const stripped = text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
-  // Only short messages are treated as confirmation/decline
-  if (stripped.length > 60) return null;
+  const maxLen = options.strict ? 30 : 60;
+  if (stripped.length > maxLen) return null;
 
-  if (CONFIRM_PATTERNS.test(stripped)) return "confirm";
+  const confirmRe = options.strict ? CONFIRM_PATTERNS_STRICT : CONFIRM_PATTERNS;
+  if (confirmRe.test(stripped)) return "confirm";
   if (DECLINE_PATTERNS.test(stripped)) return "decline";
   return null;
 }

@@ -21,6 +21,21 @@
 
 **Anchors**: `feedback_jarvis_writes_always_on.md`, `docs/planning/scope-architecture-rethink.md`, next-sessions-queue.md item #13.
 
+### Amendment 2026-05-08 — re-diagnosis required before surface fix
+
+The v7.6 Spine 1 gatekeeper audit (`docs/audit/v7.6-gatekeepers.md`) discovered that the original hypothesis here is **partially wrong**:
+
+- **JARVIS_WRITE_TOOLS is already always-on** (confirmed at `src/messaging/scope.ts:1177-1180`, comment "2026-05-07 promoted to MISC_TOOLS (always-on)"). So the friction class CANNOT be scope-loss for `jarvis_file_write` — the tool is in scope on every message regardless of classifier output.
+- **`procede`, `dale`, `hazlo` already match** in both confirmation regexes (`messaging/confirmations.ts:99` and `runners/fast-runner.ts:104`). So the friction class CANNOT be a confirmation regex miss for those specific phrases.
+
+What this leaves as the actual root cause for the 4-day friction class:
+
+1. **LLM didn't gate on `CONFIRMATION_REQUIRED`**: the write tool returned its result directly (skipping the pending-confirmation flow) and the user's "Procede" landed in a normal turn with no pending op to consume it.
+2. **No pending was stashed**: the LLM emitted "¿guardo esto?" prose without actually returning the `CONFIRMATION_REQUIRED` sentinel — so `getPendingConfirmation(tk)` returned null and the confirmation path never engaged.
+3. **A different write tool**: maybe the friction was about `northstar_create_task` or another write surface, not `jarvis_file_write` specifically. Operator should clarify the failing flow before diagnosis continues.
+
+**Revised first move**: pull the journalctl context for one of the failing incidents (look for the operator typing "Procede" / "Dale" with no follow-through) and trace WHY the pending confirmation flow didn't trigger. Re-frame the surface fix only after the actual gate failure is identified. The Spine 1 F5 fix bundle (shipped 2026-05-08, commit pending) addresses a related-but-distinct producer/consumer drift class — it does NOT fix the friction-pickup #1 incidents.
+
 ---
 
 ## #2 — `max_turns` involuntary task truncation (new friction class, 3 incidents in 4 days)
@@ -48,7 +63,7 @@
 
 **Origin**: 2026-05-05 evolution-log — _"Fede explicitly articulated that NorthStar should be a compass, not a backlog — visions are his alone, execution lives in the KB. This is now a permanent operational principle, not just a preference."_
 
-**Status as of 2026-05-08**: declared but never operationalized. NorthStar stayed stale 4+ consecutive days. Today's strict-mirror sync work made COMMIT↔NorthStar reconciliation trustworthy but did NOT change what NorthStar contains — it's still a task list with stale on_hold items. The friction class the log calls out is structural, not infrastructural: the operator wants NorthStar to hold _intentions_, not _tasks_.
+**Status as of 2026-05-08**: declared but never operationalized. NorthStar stayed stale 4+ consecutive days. Today's strict-mirror sync work made COMMIT↔NorthStar reconciliation trustworthy but did NOT change what NorthStar contains — it's still a task list with stale on*hold items. The friction class the log calls out is structural, not infrastructural: the operator wants NorthStar to hold \_intentions*, not _tasks_.
 
 **What "operationalization" means concretely** (to be confirmed with operator):
 

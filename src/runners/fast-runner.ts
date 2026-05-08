@@ -27,6 +27,7 @@ import {
   conditionMatches,
 } from "../messaging/kb-injection.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { getConfig } from "../config.js";
 
 // Re-export for back-compat with existing imports (e.g. tests).
@@ -99,9 +100,11 @@ import {
   HALLUCINATION_RETRY_HEADROOM,
 } from "../config/constants.js";
 
-/** Confirmation words from the user (Spanish + English). */
-const CONFIRM_PATTERN =
-  /^(s[ií]|confirmo|dale|ok|yes|hazlo|adelante|procede|proceed|confirm|bórrala|bórralas|elimínalas?|go ahead|do it|haz(?:lo)?|claro)(\s|$|[.,!?])/i;
+/** Confirmation words from the user — built from the shared vocabulary in
+ * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
+ * `messaging/confirmations.ts`. Two parallel regexes diverged before v7.6
+ * Spine 1; the unified vocabulary prevents future drift. F5 audit fix. */
+const CONFIRM_PATTERN = buildConfirmRegex("lax");
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
 const DELETION_ASK_PATTERN =
   /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que\s+(?:\S+\s+)?(?:elimine|borre)|want me to (?:delete|remove)|shall I (?:delete|remove)|should I (?:delete|remove)|confirm.*(?:delet|elimin|borr)|(?:delet|elimin|borr)\S*\s*\?|procedo con la eliminaci[oó]n|CONFIRMATION_REQUIRED)/i;
