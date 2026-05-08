@@ -37,9 +37,13 @@ delve, landscape, tapestry, realm, paradigm, embark, beacon, testament to, robus
 
 export const humanizeTextTool: Tool = {
   name: "humanize_text",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
+  // Round-1 audit W2 fix (Spine 4): pure LLM transform — no FS write, no DB
+  // mutation, no external state change. Returns transformed text only. Same
+  // category as web_read, currency_convert, etc. Pre-fix `d` would pollute
+  // the destructive-cohort metric the spine claims to enable.
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: true,
   deferred: true,
   definition: {

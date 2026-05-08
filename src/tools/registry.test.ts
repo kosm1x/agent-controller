@@ -360,10 +360,12 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     }
   });
 
-  it("coverage statistic — at least 180 production tools annotated", () => {
-    // Sanity check on the source-of-truth count. If this drops, either a
-    // tool was removed (update the threshold) or a regression unannotated
-    // some tools (find and re-annotate).
-    expect(ALL_TOOLS.length).toBeGreaterThanOrEqual(180);
+  it("coverage statistic — production tool count must be exactly tracked", () => {
+    // Round-1 audit W3 fix (Spine 4): pin exact count. Loose `>= 180` allowed
+    // up to 6 tools to silently regress out of the registry. If a new tool is
+    // added or removed, this test trips and the maintainer must update the
+    // expected count intentionally — same forcing-function as the syntactic
+    // regex-source guards used in earlier spines.
+    expect(ALL_TOOLS.length).toBe(186);
   });
 });

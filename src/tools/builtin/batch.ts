@@ -11,10 +11,13 @@ import { submitTask } from "../../dispatch/dispatcher.js";
 
 export const batchDecomposeTool: Tool = {
   name: "batch_decompose",
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
+  // Round-1 audit W1 fix (Spine 4): handler calls submitTask() which mutates
+  // the dispatcher task queue. Re-issuing the same call enqueues N MORE
+  // subtasks — explicitly NOT idempotent. Pre-fix `rL` (pure local) was wrong.
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
