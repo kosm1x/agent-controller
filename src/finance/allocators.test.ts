@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  covarianceMatrix,
   equalWeight,
   inverseVolatility,
   varianceVector,
@@ -48,6 +49,95 @@ describe("varianceVector", () => {
     expect(() => varianceVector([])).toThrow();
     expect(() => varianceVector([[1, 2], [3]])).toThrow();
     expect(() => varianceVector([[]])).toThrow();
+  });
+});
+
+describe("covarianceMatrix (v7.6 Spine 6 — round-1 audit W3)", () => {
+  it("diagonal equals varianceVector exactly (single math source)", () => {
+    const ret = [
+      [1, 10],
+      [2, 20],
+      [3, 30],
+      [4, 40],
+    ];
+    const v = varianceVector(ret);
+    const Sigma = covarianceMatrix(ret);
+    expect(Sigma[0]![0]).toBeCloseTo(v[0]!, 12);
+    expect(Sigma[1]![1]).toBeCloseTo(v[1]!, 12);
+  });
+
+  it("is symmetric", () => {
+    const ret = [
+      [0.01, -0.02, 0.005],
+      [-0.005, 0.015, -0.01],
+      [0.02, 0.005, 0.012],
+      [-0.015, -0.01, 0.008],
+    ];
+    const Sigma = covarianceMatrix(ret);
+    for (let i = 0; i < 3; i++) {
+      for (let j = i + 1; j < 3; j++) {
+        expect(Sigma[i]![j]!).toBeCloseTo(Sigma[j]![i]!, 12);
+      }
+    }
+  });
+
+  it("computes correct off-diagonal covariance for perfectly correlated columns", () => {
+    // Asset 0 = [1,2,3,4] (var = 5/3), Asset 1 = 10× Asset 0 (var = 500/3).
+    // Cov = 50/3, ratio Cov / σ_0 σ_1 = 1.0 (perfect correlation).
+    const ret = [
+      [1, 10],
+      [2, 20],
+      [3, 30],
+      [4, 40],
+    ];
+    const Sigma = covarianceMatrix(ret);
+    expect(Sigma[0]![1]!).toBeCloseTo(50 / 3, 6);
+    const corr = Sigma[0]![1]! / Math.sqrt(Sigma[0]![0]! * Sigma[1]![1]!);
+    expect(corr).toBeCloseTo(1.0, 10);
+  });
+
+  it("computes negative covariance for anti-correlated columns (round-2 audit W7)", () => {
+    // Asset 0 = [1,2,3,4], Asset 1 = -1× Asset 0. Cov = -5/3, corr = -1.0.
+    const ret = [
+      [1, -1],
+      [2, -2],
+      [3, -3],
+      [4, -4],
+    ];
+    const Sigma = covarianceMatrix(ret);
+    expect(Sigma[0]![1]!).toBeLessThan(0);
+    expect(Sigma[0]![1]!).toBeCloseTo(-5 / 3, 6);
+    const corr = Sigma[0]![1]! / Math.sqrt(Sigma[0]![0]! * Sigma[1]![1]!);
+    expect(corr).toBeCloseTo(-1.0, 10);
+  });
+
+  it("returns exactly-zero off-diagonal for orthogonal columns (round-2 audit W7)", () => {
+    // Asset 0 = [1,-1,1,-1] (mean 0), Asset 1 = [1,1,-1,-1] (mean 0).
+    // Both already mean-centered. Cross-product sum:
+    //   1·1 + (-1)·1 + 1·(-1) + (-1)·(-1) = 1 - 1 - 1 + 1 = 0.
+    // True orthogonality on mean-centered samples → cov = 0 exactly.
+    const ret = [
+      [1, 1],
+      [-1, 1],
+      [1, -1],
+      [-1, -1],
+    ];
+    const Sigma = covarianceMatrix(ret);
+    expect(Math.abs(Sigma[0]![1]!)).toBeLessThan(1e-10);
+  });
+
+  it("returns all-zero N×N for a single observation (T=1)", () => {
+    const ret = [[1, 2, 3]];
+    const Sigma = covarianceMatrix(ret);
+    expect(Sigma).toHaveLength(3);
+    expect(Sigma[0]).toHaveLength(3);
+    expect(Sigma.every((r) => r.every((v) => v === 0))).toBe(true);
+  });
+
+  it("throws on empty / ragged matrices (matches varianceVector contract)", () => {
+    expect(() => covarianceMatrix([])).toThrow();
+    expect(() => covarianceMatrix([[1, 2], [3]])).toThrow();
+    expect(() => covarianceMatrix([[]])).toThrow();
   });
 });
 

@@ -49,6 +49,60 @@ export function equalWeight(N: number): number[] {
 }
 
 /**
+ * Sample covariance matrix from a T×N returns matrix. Uses Bessel's
+ * correction (n-1 denominator) so it stays consistent with `varianceVector`
+ * — `covarianceMatrix(returns)[i][i]` equals `varianceVector(returns)[i]`
+ * exactly.
+ *
+ * Exists so callers wiring HRP → Black-Litterman through
+ * `equilibriumReturnsReverse` use a single math source for Σ instead of
+ * authoring inline covariance helpers in test files (v7.6 Spine 6 round-1
+ * audit W3 fix).
+ *
+ * Output: N×N symmetric matrix. Σ[i][i] is sample variance; Σ[i][j] is
+ * sample covariance with Bessel correction.
+ */
+export function covarianceMatrix(returns: number[][]): number[][] {
+  assertReturnsShape(returns, "covarianceMatrix");
+  const T = returns.length;
+  const N = returns[0]!.length;
+  if (T < 2) {
+    // Bessel correction divides by (T-1); a single observation has no
+    // sample covariance in this convention. Return all-zeros so callers
+    // get a defined shape rather than NaN.
+    return Array.from({ length: N }, () => new Array<number>(N).fill(0));
+  }
+  // Per-asset means (one pass)
+  const means = new Array<number>(N).fill(0);
+  for (let t = 0; t < T; t++) {
+    for (let i = 0; i < N; i++) means[i]! += returns[t]![i]!;
+  }
+  for (let i = 0; i < N; i++) means[i]! /= T;
+
+  const Sigma: number[][] = Array.from({ length: N }, () =>
+    new Array<number>(N).fill(0),
+  );
+  for (let t = 0; t < T; t++) {
+    const row = returns[t]!;
+    for (let i = 0; i < N; i++) {
+      const di = row[i]! - means[i]!;
+      for (let j = i; j < N; j++) {
+        Sigma[i]![j]! += di * (row[j]! - means[j]!);
+      }
+    }
+  }
+  const denom = T - 1;
+  for (let i = 0; i < N; i++) {
+    for (let j = i; j < N; j++) {
+      const v = Sigma[i]![j]! / denom;
+      Sigma[i]![j] = v;
+      Sigma[j]![i] = v;
+    }
+  }
+  return Sigma;
+}
+
+/**
  * Per-asset variance vector from a T×N returns matrix. Uses Bessel's
  * correction (n-1 denominator). Zero-variance assets are returned as 0.
  *
