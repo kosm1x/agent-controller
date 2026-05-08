@@ -215,6 +215,10 @@ async function tryImagen(
 
 export const geminiImageTool: Tool = {
   name: "gemini_image",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,

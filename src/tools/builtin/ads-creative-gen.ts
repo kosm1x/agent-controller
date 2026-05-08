@@ -158,6 +158,10 @@ function coerceVariants(raw: unknown): Variant[] {
 
 export const adsCreativeGenTool: Tool = {
   name: "ads_creative_gen",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

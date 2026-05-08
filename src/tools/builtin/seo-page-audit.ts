@@ -603,6 +603,10 @@ function persistAudit(
 
 export const seoPageAuditTool: Tool = {
   name: "seo_page_audit",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

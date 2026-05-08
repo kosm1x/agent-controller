@@ -171,6 +171,10 @@ function coerceStringList(x: unknown, fallback: string[] = []): string[] {
 
 export const adsBrandDnaTool: Tool = {
   name: "ads_brand_dna",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

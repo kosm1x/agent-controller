@@ -210,7 +210,7 @@ import { marketChartPatternsTool } from "../builtin/market-chart-patterns.js";
 import { TEACHING_TOOL_OBJECTS } from "../builtin/teaching-tools.js";
 import type { Tool } from "../types.js";
 
-const BUILTIN_TOOLS: Tool[] = [
+export const BUILTIN_TOOLS: Tool[] = [
   shellTool,
   httpTool,
   fileReadTool,
@@ -364,23 +364,23 @@ const BUILTIN_TOOLS: Tool[] = [
 ];
 
 // Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured
-const SOCIAL_TOOLS: Tool[] = [
+export const SOCIAL_TOOLS: Tool[] = [
   socialPublishTool,
   socialAccountsListTool,
   socialPublishStatusTool,
 ];
 
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured
-const CRM_TOOLS: Tool[] = [crmQueryTool];
+export const CRM_TOOLS: Tool[] = [crmQueryTool];
 
 // Google Workspace CLI dispatch tool — registered when GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN
 // are configured. v7.6 infrastructure unblocker for Chat, Tasks, People, Forms,
 // Meet, Classroom, Admin Reports, Apps Script, Keep, Workspace Events. Per-call
 // token injection via getAccessToken() — no parallel credential store.
-const GWS_TOOLS: Tool[] = [googleWorkspaceCliTool];
+export const GWS_TOOLS: Tool[] = [googleWorkspaceCliTool];
 
 // WordPress tools — conditionally registered when WP_SITES is configured
-const WP_TOOLS: Tool[] = [
+export const WP_TOOLS: Tool[] = [
   wpListPostsTool,
   wpReadPostTool,
   wpPublishTool,

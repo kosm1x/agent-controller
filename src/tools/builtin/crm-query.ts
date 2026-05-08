@@ -30,6 +30,10 @@ type CrmEndpoint = (typeof VALID_ENDPOINTS)[number];
 
 export const crmQueryTool: Tool = {
   name: "crm_query",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

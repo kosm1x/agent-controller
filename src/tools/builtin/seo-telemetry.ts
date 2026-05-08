@@ -258,6 +258,10 @@ function persistSnapshot(
 
 export const seoTelemetryTool: Tool = {
   name: "seo_telemetry",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {

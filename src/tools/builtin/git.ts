@@ -121,6 +121,10 @@ function run(cmd: string, timeout = 30_000, cwd?: string): string {
 
 export const gitStatusTool: Tool = {
   name: "git_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -162,6 +166,10 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
 
 export const gitDiffTool: Tool = {
   name: "git_diff",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -215,6 +223,10 @@ Returns unified diff. Use staged=true to see staged changes.`,
 
 export const gitCommitTool: Tool = {
   name: "git_commit",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -300,6 +312,10 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
 
 export const gitPushTool: Tool = {
   name: "git_push",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -430,6 +446,10 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
 export const ghRepoCreateTool: Tool = {
   name: "gh_repo_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -490,6 +510,10 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
 
 export const ghCreatePrTool: Tool = {
   name: "gh_create_pr",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

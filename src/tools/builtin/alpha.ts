@@ -137,6 +137,10 @@ function formatRunSummary(r: AlphaRunResult, withTopN = 3): string {
 
 export const alphaRunTool: Tool = {
   name: "alpha_run",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -319,6 +323,10 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
 
 export const alphaLatestTool: Tool = {
   name: "alpha_latest",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -373,6 +381,10 @@ N / N_excluded / N_effective, ranked active weights. Latency <50ms.`,
 
 export const alphaExplainTool: Tool = {
   name: "alpha_explain",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

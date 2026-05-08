@@ -12,6 +12,10 @@ import { validatePathSafety } from "./immutable-core.js";
 
 export const gsheetsReadTool: Tool = {
   name: "gsheets_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -94,6 +98,10 @@ AFTER READING: Report the spreadsheet name and range read. Only report data that
 
 export const gsheetsWriteTool: Tool = {
   name: "gsheets_write",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -307,6 +315,10 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
 
 export const gdocsReadTool: Tool = {
   name: "gdocs_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -381,6 +393,10 @@ document as plain text with no truncation limit.`,
 
 export const gdocsReadFullTool: Tool = {
   name: "gdocs_read_full",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -446,6 +462,10 @@ Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
 
 export const gdocsWriteTool: Tool = {
   name: "gdocs_write",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -563,6 +583,10 @@ AFTER WRITING: Report the document title and what was appended.`,
 
 export const gdocsReplaceTool: Tool = {
   name: "gdocs_replace",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -690,6 +714,10 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
 
 export const gslidesReadTool: Tool = {
   name: "gslides_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   triggerPhrases: [
     "lee esta presentación",
@@ -808,6 +836,10 @@ Pass the presentation ID (from the URL: docs.google.com/presentation/d/{ID}/edit
 
 export const gslidesCreateTool: Tool = {
   name: "gslides_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -930,6 +962,10 @@ export const gslidesCreateTool: Tool = {
 
 export const gtasksCreateTool: Tool = {
   name: "gtasks_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

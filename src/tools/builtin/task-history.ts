@@ -14,6 +14,10 @@ import { toMexTime } from "../../lib/timezone.js";
 
 export const taskHistoryTool: Tool = {
   name: "task_history",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

@@ -190,6 +190,10 @@ function compactFindings(scored: ScoredAudit): {
 
 export const adsAuditTool: Tool = {
   name: "ads_audit",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

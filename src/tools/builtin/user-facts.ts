@@ -20,6 +20,10 @@ import { toMexTime } from "../../lib/timezone.js";
 
 export const userFactSetTool: Tool = {
   name: "user_fact_set",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -99,6 +103,10 @@ BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, cred
 
 export const userFactListTool: Tool = {
   name: "user_fact_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -155,6 +163,10 @@ USE WHEN:
 
 export const userFactDeleteTool: Tool = {
   name: "user_fact_delete",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

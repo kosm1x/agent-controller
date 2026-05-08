@@ -98,6 +98,10 @@ function getJob(jobId: string): VideoJobRow | undefined {
 
 export const videoCreateTool: Tool = {
   name: "video_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,
@@ -389,6 +393,10 @@ async function runPipeline(
 
 export const videoStatusTool: Tool = {
   name: "video_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -444,6 +452,10 @@ Returns: status, output file path (when completed), or error message (when faile
 
 export const videoScriptTool: Tool = {
   name: "video_script",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -495,6 +507,10 @@ USE WHEN:
 
 export const videoTtsTool: Tool = {
   name: "video_tts",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -559,6 +575,10 @@ Long texts (>2000 chars) are automatically split at sentence boundaries with sil
 
 export const videoListVoicesTool: Tool = {
   name: "video_list_voices",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -613,6 +633,10 @@ Returns voice names, genders, and locales. Filter by language to narrow results.
 
 export const videoImageTool: Tool = {
   name: "video_image",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -661,6 +685,10 @@ USE WHEN:
 
 export const videoListProfilesTool: Tool = {
   name: "video_list_profiles",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -686,6 +714,10 @@ USE WHEN:
 
 export const videoBackgroundDownloadTool: Tool = {
   name: "video_background_download",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -791,6 +823,10 @@ Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same n
 
 export const videoTransitionPreviewTool: Tool = {
   name: "video_transition_preview",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -902,6 +938,10 @@ const MAX_MANIFEST_JSON_BYTES = 256 * 1024; // 256 KB
 
 export const videoComposeManifestTool: Tool = {
   name: "video_compose_manifest",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,
@@ -1117,6 +1157,10 @@ async function runManifestPipeline(
 
 export const videoJobCancelTool: Tool = {
   name: "video_job_cancel",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1195,6 +1239,10 @@ No-op if the job is already completed/failed/cancelled. Returns {ok:false} if th
 
 export const videoJobCleanupTool: Tool = {
   name: "video_job_cleanup",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1290,6 +1338,10 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
 
 export const videoStoryboardTool: Tool = {
   name: "video_storyboard",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1399,6 +1451,10 @@ URLs in the brief are redacted before hitting the LLM (prompt-injection defense)
 
 export const videoBrandApplyTool: Tool = {
   name: "video_brand_apply",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1498,6 +1554,10 @@ function motionVocabSection(): string {
 
 export const videoHtmlComposeTool: Tool = {
   name: "video_html_compose",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,

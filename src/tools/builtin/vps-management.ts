@@ -21,6 +21,10 @@ const BACKUP_RETENTION_DAYS = 7;
 
 export const vpsStatusTool: Tool = {
   name: "vps_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   triggerPhrases: [
     "cómo está el servidor",
@@ -152,6 +156,10 @@ AFTER CHECKING: Report the key metrics concisely.`,
 
 export const vpsDeployTool: Tool = {
   name: "vps_deploy",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   deferred: true,
   definition: {
@@ -238,6 +246,10 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
 
 export const vpsBackupTool: Tool = {
   name: "vps_backup",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -306,6 +318,10 @@ AFTER BACKUP: Report the backup file path and size.`,
 
 export const vpsLogsTool: Tool = {
   name: "vps_logs",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

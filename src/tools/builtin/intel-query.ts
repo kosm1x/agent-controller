@@ -8,6 +8,10 @@ import { getRecentSignals } from "../../intel/signal-store.js";
 
 export const intelQueryTool: Tool = {
   name: "intel_query",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

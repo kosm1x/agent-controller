@@ -17,6 +17,10 @@ import { deactivateSkill, getUnderperformingSkills } from "../../db/skills.js";
 
 export const evolutionGetDataTool: Tool = {
   name: "evolution_get_data",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -79,6 +83,10 @@ DO NOT USE: During regular task execution.`,
 
 export const evolutionDeactivateSkillTool: Tool = {
   name: "evolution_deactivate_skill",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

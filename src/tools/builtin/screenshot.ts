@@ -27,6 +27,10 @@ export function calculateDSF(width: number): number {
 
 export const screenshotElementTool: Tool = {
   name: "screenshot_element",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

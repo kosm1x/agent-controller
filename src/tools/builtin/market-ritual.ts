@@ -31,6 +31,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const marketCalendarTool: Tool = {
   name: "market_calendar",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -88,6 +92,10 @@ Read-only, <1ms. Covers NYSE 2024–2027.`,
 
 export const alertBudgetStatusTool: Tool = {
   name: "alert_budget_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

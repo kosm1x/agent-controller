@@ -9,6 +9,10 @@ import { toMexTime } from "../../lib/timezone.js";
 
 export const intelAlertHistoryTool: Tool = {
   name: "intel_alert_history",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

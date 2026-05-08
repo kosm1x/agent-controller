@@ -222,6 +222,10 @@ function buildMarkdown(
 
 export const seoLlmsTxtGenerateTool: Tool = {
   name: "seo_llms_txt_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {

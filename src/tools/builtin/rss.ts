@@ -13,6 +13,10 @@ const MAX_ITEMS = 20;
 
 export const rssReadTool: Tool = {
   name: "rss_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

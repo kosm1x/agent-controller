@@ -40,6 +40,10 @@ function currentBranch(): string {
 
 export const jarvisDiagnoseTool: Tool = {
   name: "jarvis_diagnose",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -204,6 +208,10 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
 
 export const jarvisTestRunTool: Tool = {
   name: "jarvis_test_run",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

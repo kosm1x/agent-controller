@@ -16,6 +16,10 @@ import {
 
 export const seoSchemaGenerateTool: Tool = {
   name: "seo_schema_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

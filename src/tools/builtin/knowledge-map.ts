@@ -148,6 +148,10 @@ function formatMapResponse(
 
 export const knowledgeMapTool: Tool = {
   name: "knowledge_map",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -259,6 +263,10 @@ NOT FOR: Answering specific factual questions (use web_search). This builds doma
 
 export const knowledgeMapExpandTool: Tool = {
   name: "knowledge_map_expand",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

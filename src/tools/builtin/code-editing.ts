@@ -59,6 +59,10 @@ function isPathAllowedForSelfImprovement(filePath: string): boolean {
 
 export const fileEditTool: Tool = {
   name: "file_edit",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

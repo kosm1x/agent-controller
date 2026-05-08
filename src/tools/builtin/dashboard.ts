@@ -87,6 +87,10 @@ const chartsDiv = document.getElementById('charts');
 
 export const dashboardGenerateTool: Tool = {
   name: "dashboard_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -202,6 +206,10 @@ Serve via: GET /dashboard/{id}`,
 
 export const dashboardListTool: Tool = {
   name: "dashboard_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

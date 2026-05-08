@@ -64,6 +64,10 @@ function resolvePlanId(args: Record<string, unknown>): string | null {
 
 export const learningPlanCreateTool: Tool = {
   name: "learning_plan_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [
@@ -188,6 +192,10 @@ Returns: plan_id + list of units {index, title, predicted_difficulties}.`,
 
 export const learningPlanAdvanceTool: Tool = {
   name: "learning_plan_advance",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: ["next unit", "avanzar", "advance plan", "next lesson"],
@@ -228,6 +236,10 @@ export const learningPlanAdvanceTool: Tool = {
 
 export const learningPlanQuizTool: Tool = {
   name: "learning_plan_quiz",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: ["quiz me", "quízame", "tómame un quiz", "test me on"],
@@ -330,6 +342,10 @@ export const learningPlanQuizTool: Tool = {
 
 export const learningPlanExplainBackTool: Tool = {
   name: "learning_plan_explain_back",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [
@@ -491,6 +507,10 @@ Two modes:
 
 export const learningPlanSummarizeTool: Tool = {
   name: "learning_plan_summarize",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: ["summarize session", "resume la sesión"],
@@ -636,6 +656,10 @@ export const learningPlanSummarizeTool: Tool = {
 
 export const learningPlanStatusTool: Tool = {
   name: "learning_plan_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [
@@ -721,6 +745,10 @@ plan_id is OPTIONAL — omit it to get the most recently active plan automatical
 
 export const learnerModelStatusTool: Tool = {
   name: "learner_model_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

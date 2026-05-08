@@ -198,6 +198,10 @@ const FORMAT_INSTRUCTIONS: Record<string, string> = {
 
 export const geminiUploadTool: Tool = {
   name: "gemini_upload",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -489,6 +493,10 @@ EDGE CASES:
 
 export const geminiResearchTool: Tool = {
   name: "gemini_research",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -707,6 +715,10 @@ OUTPUT FORMAT — Return ONLY valid JSON (no markdown fences):
 
 export const geminiAudioOverviewTool: Tool = {
   name: "gemini_audio_overview",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,

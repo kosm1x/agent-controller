@@ -181,6 +181,10 @@ function computeWarnings(coverage: BotCoverage[]): string[] {
 
 export const seoRobotsAuditTool: Tool = {
   name: "seo_robots_audit",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {

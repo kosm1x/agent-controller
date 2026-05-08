@@ -109,6 +109,10 @@ function parseGwsOutput(stdout: string, pageAll: boolean): unknown {
 
 export const googleWorkspaceCliTool: Tool = {
   name: "google_workspace_cli",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

@@ -13,6 +13,10 @@ const USER_AGENT = "AgentController/1.0";
 
 export const geocodeAddressTool: Tool = {
   name: "geocode_address",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

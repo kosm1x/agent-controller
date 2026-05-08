@@ -11,6 +11,10 @@ import { submitTask } from "../../dispatch/dispatcher.js";
 
 export const batchDecomposeTool: Tool = {
   name: "batch_decompose",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
   deferred: true,
   definition: {
     type: "function",

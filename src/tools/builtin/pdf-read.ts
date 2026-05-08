@@ -76,6 +76,10 @@ function searchContent(
 
 export const pdfReadTool: Tool = {
   name: "pdf_read",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

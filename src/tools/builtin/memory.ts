@@ -50,6 +50,10 @@ export function setMemoryTaskContext(taskId: string | null): void {
 
 export const memorySearchTool: Tool = {
   name: "memory_search",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -127,6 +131,10 @@ BANKS:
 
 export const memoryStoreTool: Tool = {
   name: "memory_store",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -212,6 +220,10 @@ TIPS:
 
 export const memoryReflectTool: Tool = {
   name: "memory_reflect",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -266,6 +278,10 @@ DO NOT USE WHEN:
 
 export const memoryKgQueryTool: Tool = {
   name: "memory_kg_query",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

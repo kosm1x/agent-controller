@@ -19,6 +19,10 @@ import { toMexTime } from "../../lib/timezone.js";
 
 export const scheduleTaskTool: Tool = {
   name: "schedule_task",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   triggerPhrases: [
     "programa un reporte",
     "hazlo cada día",
@@ -166,6 +170,10 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
 
 export const listSchedulesTool: Tool = {
   name: "list_schedules",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -223,6 +231,10 @@ RELATED: schedule_task (create), delete_schedule (remove)`,
 
 export const deleteScheduleTool: Tool = {
   name: "delete_schedule",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   triggerPhrases: [
     "elimina la rutina",

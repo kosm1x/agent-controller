@@ -34,6 +34,10 @@ interface MetaVariant {
 
 export const seoMetaGenerateTool: Tool = {
   name: "seo_meta_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

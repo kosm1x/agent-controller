@@ -35,6 +35,10 @@ const MAX_REFRESH_CONTENT = 3000;
 
 export const seoContentBriefTool: Tool = {
   name: "seo_content_brief",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

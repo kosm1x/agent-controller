@@ -64,6 +64,10 @@ import {
 
 export const marketQuoteTool: Tool = {
   name: "market_quote",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -119,6 +123,10 @@ function formatQuote(bar: MarketBar): string {
 
 export const marketHistoryTool: Tool = {
   name: "market_history",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -215,6 +223,10 @@ function formatHistory(
 
 export const marketWatchlistAddTool: Tool = {
   name: "market_watchlist_add",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -318,6 +330,10 @@ rejects if projected daily API usage would exceed the Alpha Vantage tier ceiling
 
 export const marketWatchlistReseedTool: Tool = {
   name: "market_watchlist_reseed",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -371,6 +387,10 @@ Output: one line with bars inserted + signals inserted, or skip reason.`,
 
 export const marketWatchlistRemoveTool: Tool = {
   name: "market_watchlist_remove",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -402,6 +422,10 @@ Soft delete — row kept with active=0, can be re-added.`,
 
 export const marketWatchlistListTool: Tool = {
   name: "market_watchlist_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -444,6 +468,10 @@ Output: compact text table, no API calls.`,
 
 export const marketBudgetStatsTool: Tool = {
   name: "market_budget_stats",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -521,6 +549,10 @@ const DAILY_DEFAULT_INDICATORS: AllIndicatorName[] = [
 
 export const marketIndicatorsTool: Tool = {
   name: "market_indicators",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -744,6 +776,10 @@ type ScanOperator = "lt" | "le" | "gt" | "ge" | "eq";
 
 export const marketScanTool: Tool = {
   name: "market_scan",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -961,6 +997,10 @@ function formatScanResult(
 
 export const macroRegimeTool: Tool = {
   name: "macro_regime",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1088,6 +1128,10 @@ const ALL_SIGNAL_TYPES: SignalType[] = [
 
 export const marketSignalsTool: Tool = {
   name: "market_signals",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1289,6 +1333,10 @@ function formatSignalsResult(
 
 export const predictionMarketsTool: Tool = {
   name: "prediction_markets",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1412,6 +1460,10 @@ function formatPredictionMarkets(
 
 export const whaleTradesTool: Tool = {
   name: "whale_trades",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -1541,6 +1593,10 @@ function formatWhaleTrades(
 
 export const sentimentSnapshotTool: Tool = {
   name: "sentiment_snapshot",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

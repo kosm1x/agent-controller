@@ -22,6 +22,10 @@ import {
 
 export const projectListTool: Tool = {
   name: "project_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -77,6 +81,10 @@ NOTE: This returns DB project metadata (status, URLs, credentials). For project 
 
 export const projectGetTool: Tool = {
   name: "project_get",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -153,6 +161,10 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
 
 export const projectUpdateTool: Tool = {
   name: "project_update",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: false,
   deferred: true,
   definition: {

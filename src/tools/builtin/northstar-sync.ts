@@ -924,6 +924,10 @@ function findParentTitle(
 
 export const northstarSyncTool: Tool = {
   name: "northstar_sync",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   triggerPhrases: [

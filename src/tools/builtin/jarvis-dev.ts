@@ -556,6 +556,10 @@ function actionStatus(): string {
 
 export const jarvisDevTool: Tool = {
   name: "jarvis_dev",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   deferred: true,
   definition: {

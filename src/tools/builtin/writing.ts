@@ -37,6 +37,10 @@ delve, landscape, tapestry, realm, paradigm, embark, beacon, testament to, robus
 
 export const humanizeTextTool: Tool = {
   name: "humanize_text",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

@@ -189,6 +189,10 @@ async function renderIfNeeded(args: {
 
 export const marketChartPatternsTool: Tool = {
   name: "market_chart_patterns",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

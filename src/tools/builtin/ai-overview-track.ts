@@ -235,6 +235,10 @@ function persistSnapshot(result: AIOverviewResult): number | null {
 
 export const aiOverviewTrackTool: Tool = {
   name: "ai_overview_track",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {

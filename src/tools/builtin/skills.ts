@@ -18,6 +18,10 @@ import { getMemoryService } from "../../memory/index.js";
 
 export const skillSaveTool: Tool = {
   name: "skill_save",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -129,6 +133,10 @@ WHAT HAPPENS:
 
 export const skillListTool: Tool = {
   name: "skill_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

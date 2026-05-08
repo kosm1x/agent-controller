@@ -101,6 +101,10 @@ async function wpFetch(
 
 export const wpPagesTool: Tool = {
   name: "wp_pages",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -187,6 +191,10 @@ treats pages similarly to posts for create/update operations.`,
 
 export const wpPluginsTool: Tool = {
   name: "wp_plugins",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   definition: {
@@ -363,6 +371,10 @@ COMMON PLUGINS for script injection:
 
 export const wpSettingsTool: Tool = {
   name: "wp_settings",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -447,6 +459,10 @@ For reading, call without any update fields. For updating, include the fields to
 
 export const wpDeleteTool: Tool = {
   name: "wp_delete",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   definition: {
     type: "function",
@@ -525,6 +541,10 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
 
 export const wpRawApiTool: Tool = {
   name: "wp_raw_api",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   definition: {

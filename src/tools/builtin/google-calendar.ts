@@ -11,6 +11,10 @@ import { googleFetch } from "../../google/client.js";
 
 export const calendarListTool: Tool = {
   name: "calendar_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -93,6 +97,10 @@ USE WHEN:
 
 export const calendarCreateTool: Tool = {
   name: "calendar_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,
@@ -196,6 +204,10 @@ AFTER CREATING: Report the event title, date/time, and calendar link.`,
 
 export const calendarUpdateTool: Tool = {
   name: "calendar_update",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,

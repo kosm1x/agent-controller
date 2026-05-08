@@ -56,6 +56,10 @@ function fmtPct(n: number | null | undefined, digits = 2): string {
 
 export const paperRebalanceTool: Tool = {
   name: "paper_rebalance",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "medium",
   definition: {
@@ -219,6 +223,10 @@ no shorts, no options. MARKET orders only. Weekly cadence.`,
 
 export const paperPortfolioTool: Tool = {
   name: "paper_portfolio",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -280,6 +288,10 @@ Read-only, ~100ms. Marks to market using latest weekly close per symbol.`,
 
 export const paperHistoryTool: Tool = {
   name: "paper_history",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

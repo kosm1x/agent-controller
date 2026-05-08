@@ -200,6 +200,10 @@ async function extractCandidates(
 
 export const seoKeywordResearchTool: Tool = {
   name: "seo_keyword_research",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   triggerPhrases: [

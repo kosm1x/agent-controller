@@ -207,6 +207,10 @@ function parseConfigOverride(raw: string): PmAlphaConfig {
 
 export const pmAlphaRunTool: Tool = {
   name: "pm_alpha_run",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {
@@ -320,6 +324,10 @@ Prerequisite: \`prediction_markets\` + \`sentiment_snapshot\` tools must have po
 
 export const pmAlphaLatestTool: Tool = {
   name: "pm_alpha_latest",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

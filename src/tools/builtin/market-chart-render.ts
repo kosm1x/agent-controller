@@ -179,6 +179,10 @@ export function resolveChartOutputPath(
 
 export const marketChartRenderTool: Tool = {
   name: "market_chart_render",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

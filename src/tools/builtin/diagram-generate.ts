@@ -165,6 +165,10 @@ Render this as a single self-contained HTML file per the system instructions. St
 export const diagramGenerateTool: Tool = {
   name: "diagram_generate",
   deferred: true,
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

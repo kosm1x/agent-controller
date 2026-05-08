@@ -167,6 +167,10 @@ const MIME_TYPES: Record<string, string> = {
 
 export const gdriveListTool: Tool = {
   name: "gdrive_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -266,6 +270,10 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
 
 export const gdriveCreateTool: Tool = {
   name: "gdrive_create",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -351,6 +359,10 @@ Returns the file URL for sharing.`,
 
 export const gdriveShareTool: Tool = {
   name: "gdrive_share",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   deferred: true,
   definition: {
@@ -414,6 +426,10 @@ WORKFLOW: If user mentions a file by name, call gdrive_list first to find the fi
 
 export const gdriveDeleteTool: Tool = {
   name: "gdrive_delete",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   deferred: true,
   definition: {
@@ -495,6 +511,10 @@ NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.
 
 export const gdriveMoveTool: Tool = {
   name: "gdrive_move",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -586,6 +606,10 @@ Also supports renaming — pass new_name to rename while moving (or rename in pl
 
 export const gdriveUploadTool: Tool = {
   name: "gdrive_upload",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -754,6 +778,10 @@ IMPORTANT: Always use parent_folder_id when creating new files to place them in 
 
 export const gdriveDownloadTool: Tool = {
   name: "gdrive_download",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

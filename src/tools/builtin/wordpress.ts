@@ -187,6 +187,10 @@ export const _testing = {
 
 export const wpListPostsTool: Tool = {
   name: "wp_list_posts",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -298,6 +302,10 @@ ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, d
 
 export const wpReadPostTool: Tool = {
   name: "wp_read_post",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {
@@ -394,6 +402,10 @@ This approach prevents content truncation and article destruction.`,
 
 export const wpPublishTool: Tool = {
   name: "wp_publish",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   definition: {
@@ -743,6 +755,10 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
 
 export const wpMediaUploadTool: Tool = {
   name: "wp_media_upload",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   definition: {
@@ -952,6 +968,10 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
 
 export const wpCategoriesTool: Tool = {
   name: "wp_categories",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   definition: {
     type: "function",
     function: {

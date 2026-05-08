@@ -33,6 +33,10 @@ const UUID_RE =
 
 export const kbIngestPdfStructuredTool: Tool = {
   name: "kb_ingest_pdf_structured",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -150,6 +154,10 @@ them later if needed.`,
 
 export const kbBatchInsertTool: Tool = {
   name: "kb_batch_insert",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

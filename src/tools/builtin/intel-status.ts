@@ -10,6 +10,10 @@ import { getRecentAlerts } from "../../intel/alert-router.js";
 
 export const intelStatusTool: Tool = {
   name: "intel_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

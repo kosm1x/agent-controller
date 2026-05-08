@@ -187,6 +187,10 @@ async function loadAntv() {
 
 export const infographicGenerateTool: Tool = {
   name: "infographic_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

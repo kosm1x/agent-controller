@@ -17,6 +17,10 @@ const NOT_CONFIGURED_MSG =
 
 export const socialPublishTool: Tool = {
   name: "social_publish",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -99,6 +103,10 @@ WORKFLOW:
 
 export const socialAccountsListTool: Tool = {
   name: "social_accounts_list",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -167,6 +175,10 @@ USE WHEN:
 
 export const socialPublishStatusTool: Tool = {
   name: "social_publish_status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

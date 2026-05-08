@@ -14,6 +14,10 @@ const DEFAULT_LON = -99.1332;
 
 export const weatherForecastTool: Tool = {
   name: "weather_forecast",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

@@ -12,6 +12,10 @@ const TIMEOUT_MS = 15_000;
 
 export const chartGenerateTool: Tool = {
   name: "chart_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

@@ -9,6 +9,10 @@ import { getSnapshot } from "../../intel/signal-store.js";
 
 export const intelBaselineTool: Tool = {
   name: "intel_baseline",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

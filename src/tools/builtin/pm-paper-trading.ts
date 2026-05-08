@@ -39,6 +39,10 @@ function fmtPct(n: number | null | undefined, digits = 2): string {
 
 export const pmPaperRebalanceTool: Tool = {
   name: "pm_paper_rebalance",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "medium",
   definition: {
@@ -221,6 +225,10 @@ MARKET orders only. Dust threshold: $10 per trade.`,
 
 export const pmPaperPortfolioTool: Tool = {
   name: "pm_paper_portfolio",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -278,6 +286,10 @@ Read-only, ~100ms. Marks to market using cached midpoint per token.`,
 
 export const pmPaperHistoryTool: Tool = {
   name: "pm_paper_history",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

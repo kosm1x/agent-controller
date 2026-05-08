@@ -161,6 +161,10 @@ async function generateImage(
 
 export const hfGenerateTool: Tool = {
   name: "hf_generate",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   requiresConfirmation: true,
   riskTier: "medium",
   deferred: true,
@@ -411,6 +415,10 @@ DO NOT narrate generation — call this tool. If it fails, report the actual err
 
 export const hfSpacesTool: Tool = {
   name: "hf_spaces",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",

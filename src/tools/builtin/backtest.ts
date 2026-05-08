@@ -214,6 +214,10 @@ function formatRunSummary(params: {
 
 export const backtestRunTool: Tool = {
   name: "backtest_run",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
   deferred: true,
   riskTier: "low",
   definition: {
@@ -439,6 +443,10 @@ Operator can override via override_ship: true (logged).`,
 
 export const backtestLatestTool: Tool = {
   name: "backtest_latest",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
@@ -515,6 +523,10 @@ Reads backtest_runs + backtest_overfit. No side effects. < 1ms typical.`,
 
 export const backtestExplainTool: Tool = {
   name: "backtest_explain",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
   deferred: true,
   definition: {
     type: "function",
