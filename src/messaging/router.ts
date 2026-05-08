@@ -97,7 +97,9 @@ import {
   codingSection,
   browserSection,
   researchSection,
+  availableSkillsSection,
 } from "./prompt-sections.js";
+import { listSkillsForTools } from "../skills/catalog.js";
 import {
   scopeToolsForMessage as scopeToolsPure,
   detectActiveGroups,
@@ -223,6 +225,13 @@ function buildJarvisSystemPrompt(
   if (flags.hasCoding) p3.push(codingSection());
   if (flags.hasBrowser) p3.push(browserSection());
   if (flags.hasResearch) p3.push(researchSection());
+  // v7.6 Spine 5 — surface first-party skill catalog. Filtered to skills whose
+  // parent tool is in scope so we never advertise a skill the LLM cannot use
+  // (round-1 audit H1: identity-section rule "no menciones herramientas que no
+  // están en tu lista"). availableSkillsSection returns "" when the filtered
+  // list is empty so the section auto-omits cleanly.
+  const skillsBlock = availableSkillsSection(listSkillsForTools(tools));
+  if (skillsBlock) p3.push(skillsBlock);
 
   // P4: Supplementary data (VARIABLE — per-call user facts, enrichment)
   if (userFactsBlock) p4.push(userFactsBlock);

@@ -87,3 +87,26 @@ ${COCOON_LAYOUT_RULES}
 
 Respond with the complete HTML document starting with <!doctype html>. Do not wrap in \`\`\`html fences. Do not add commentary before or after.`;
 }
+
+/**
+ * Discoverable surface for the runtime skill catalog (v7.6 Spine 5).
+ * Symmetric with `HTML_COMPOSE_SKILLS` in src/video/html-skills.ts so the
+ * catalog can spread both arrays without authoring surface keys downstream.
+ */
+export const COCOON_SVG_SKILLS = [
+  {
+    surface: "svg-diagram-palette-dark",
+    label: "SVG diagram palette (dark theme)",
+    content: COCOON_PALETTE_DARK,
+  },
+  {
+    surface: "svg-diagram-palette-light",
+    label: "SVG diagram palette (light theme)",
+    content: COCOON_PALETTE_LIGHT,
+  },
+  {
+    surface: "svg-diagram-layout-rules",
+    label: "SVG diagram layout + craft rules",
+    content: COCOON_LAYOUT_RULES,
+  },
+] as const;

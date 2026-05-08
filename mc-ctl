@@ -1201,6 +1201,7 @@ usage() {
   echo -e "  ${GREEN}tools${NC}               List registered tools"
   echo -e "  ${GREEN}tool-health${NC}          Health check tool sources"
   echo -e "  ${GREEN}tool-chains${NC} [days]   Tool chain success rates (default: 7 days)"
+  echo -e "  ${GREEN}skills${NC} [list]        First-party catalog + DB-saved skills (v7.6 Spine 5)"
   echo ""
   echo -e "  ${BOLD}Memory${NC}"
   echo -e "  ${GREEN}conversations${NC} [N]   Last N conversations (default 10)"
@@ -1793,6 +1794,69 @@ cmd_mcp_token() {
 }
 
 # ---------------------------------------------------------------------------
+# Skills (v7.6 Spine 5)
+# ---------------------------------------------------------------------------
+
+cmd_skills() {
+  local subcmd="${1:-list}"
+  case "$subcmd" in
+    list)
+      echo -e "${BOLD}=== Skills ===${NC}"
+      echo ""
+      echo -e "${BOLD}First-party catalog${NC} (src/skills/catalog.ts):"
+      # Render the catalog from TS via tsx so the CLI never duplicates the
+      # registry. stderr is captured (not suppressed) so a real failure
+      # surfaces actionable diagnostics — round-1 audit M2 fix.
+      local render_script render_err
+      render_script="import { listFirstPartySkills, groupFirstPartySkillsBySource } from './src/skills/catalog.ts';
+const grouped = groupFirstPartySkillsBySource();
+for (const [src, list] of Object.entries(grouped)) {
+  console.log('  [' + src + ']');
+  for (const s of list) console.log('    ' + s.surface.padEnd(34) + ' — ' + s.label);
+}
+console.log('  ' + '-'.repeat(60));
+console.log('  total: ' + listFirstPartySkills().length);"
+      local render_log render_failed=0
+      render_log=$(mktemp)
+      if ! ( cd "$PROJECT_DIR" && npx --no-install tsx -e "$render_script" 2>"$render_log" ); then
+        echo -e "  ${YELLOW}(catalog render failed)${NC}"
+        if [ -s "$render_log" ]; then
+          head -5 "$render_log" | sed "s/^/  /"
+        fi
+        render_failed=1
+      fi
+      rm -f "$render_log"
+      echo ""
+      if [ -f "$DB_PATH" ]; then
+        echo -e "${BOLD}DB-saved skills${NC} (skills table):"
+        local rows
+        rows=$(sql_raw "SELECT COUNT(*) FROM skills;" 2>/dev/null || echo "0")
+        if [ "$rows" = "0" ]; then
+          echo -e "  ${DIM}(none — populate via skill_save tool)${NC}"
+        else
+          sql "SELECT skill_id, name, active, use_count, success_count
+               FROM skills
+               ORDER BY active DESC, use_count DESC
+               LIMIT 50;"
+        fi
+      else
+        echo -e "  ${DIM}(database not found — run service first)${NC}"
+      fi
+      # Round-2 audit H3: propagate non-zero exit when the catalog render
+      # failed so CI/scripts wrapping `mc-ctl skills` can detect breakage.
+      if [ "$render_failed" -ne 0 ]; then
+        exit 1
+      fi
+      ;;
+    *)
+      echo -e "${RED}Unknown skills subcommand:${NC} $subcmd"
+      echo "  Usage: mc-ctl skills [list]"
+      exit 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -1819,6 +1883,7 @@ case "$cmd" in
 
   tools)             cmd_tools ;;
   tool-health)       cmd_tool_health ;;
+  skills)            cmd_skills "$@" ;;
 
   conversations)     cmd_conversations "${1:-}" ;;
   memory)            cmd_memory ;;

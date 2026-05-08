@@ -425,3 +425,35 @@ Tienes herramientas para analizar documentos en profundidad:
 - Para lectura simple de un PDF, usa pdf_read (más rápido, no requiere upload)
 - gemini_research usa Flash por defecto. Usa model="gemini-2.5-pro" solo para análisis complejos multi-documento`;
 }
+
+/**
+ * v7.6 Spine 5 — Available skills section.
+ *
+ * Lists first-party skill scaffolding (html-compose suite + svg-diagram
+ * palettes/rules) by surface key + label. Full content is NOT duplicated
+ * here — html-compose content lives in the `video_html_compose` tool
+ * description, and svg-diagram content lives in `svgHtmlSystemPrompt()`
+ * at exec time of `diagram_generate`. This section is an INDEX so the
+ * planning LLM knows the catalog exists and can name surface keys.
+ *
+ * Returns "" when the supplied list is empty so the caller can omit the
+ * section cleanly (cache-stable: section only present when there's payload
+ * to announce; no empty header drifting in P3). Caller is responsible for
+ * filtering skills against the in-scope tool list — see
+ * `listSkillsForTools()` in src/skills/catalog.ts. This prevents the
+ * section from advertising a skill whose parent tool isn't loaded, which
+ * would violate the identity-section "no menciones herramientas que no
+ * están en tu lista" rule (round-1 audit H1, v7.6 Spine 5).
+ */
+export function availableSkillsSection(
+  skills: ReadonlyArray<{ surface: string; label: string; source: string }>,
+): string {
+  if (skills.length === 0) return "";
+  const lines = skills.map(
+    (s) => `- \`${s.surface}\` (${s.source}) — ${s.label}`,
+  );
+  return `## Skills disponibles
+First-party skill scaffolding registrado en el catálogo. Cada skill tiene una "surface" key estable que puedes mencionar al planear. El contenido completo viaja en la descripción de la herramienta correspondiente.
+
+${lines.join("\n")}`;
+}

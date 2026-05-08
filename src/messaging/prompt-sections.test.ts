@@ -15,7 +15,9 @@ import {
   researchSection,
   confirmationSection,
   toolFirstSection,
+  availableSkillsSection,
 } from "./prompt-sections.js";
+import { listFirstPartySkills, listSkillsForTools } from "../skills/catalog.js";
 
 // ---------------------------------------------------------------------------
 // detectToolFlags
@@ -177,5 +179,75 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("gemini_upload");
     expect(s).toContain("gemini_research");
     expect(s).toContain("48h");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// availableSkillsSection (v7.6 Spine 5)
+// ---------------------------------------------------------------------------
+
+describe("availableSkillsSection", () => {
+  it("returns empty string when registry is empty (cache-stable omission)", () => {
+    expect(availableSkillsSection([])).toBe("");
+  });
+
+  it("renders header + bullet list when registry is populated", () => {
+    const s = availableSkillsSection([
+      { surface: "test-a", label: "Test A", source: "html-compose" },
+      { surface: "test-b", label: "Test B", source: "svg-diagram" },
+    ]);
+    expect(s).toContain("## Skills disponibles");
+    expect(s).toContain("test-a");
+    expect(s).toContain("test-b");
+    expect(s).toContain("Test A");
+    expect(s).toContain("Test B");
+    expect(s).toContain("(html-compose)");
+    expect(s).toContain("(svg-diagram)");
+  });
+
+  it("renders the production catalog with all 6 first-party surfaces visible", () => {
+    const s = availableSkillsSection(listFirstPartySkills());
+    expect(s).toContain("## Skills disponibles");
+    expect(s).toContain("html-compose-skill-gate");
+    expect(s).toContain("html-compose-house-style");
+    expect(s).toContain("html-compose-visual-styles");
+    expect(s).toContain("svg-diagram-palette-dark");
+    expect(s).toContain("svg-diagram-palette-light");
+    expect(s).toContain("svg-diagram-layout-rules");
+  });
+
+  it("does NOT inline full skill content (only surface + label)", () => {
+    // Content stays in tool descriptions; the section is an index, not a
+    // duplicate. Spot-check a few content fragments that should NOT appear.
+    const s = availableSkillsSection(listFirstPartySkills());
+    expect(s).not.toContain("HARD CONSTRAINTS");
+    expect(s).not.toContain("FRAME RATE");
+    expect(s).not.toContain("EDITORIAL");
+    expect(s).not.toContain("Layout rules");
+  });
+
+  it("omits the section entirely when no parent tool is in scope (round-1 H1 fix)", () => {
+    // Identity-section rule violation guard: section must NOT advertise a
+    // skill whose parent tool isn't loaded.
+    const s = availableSkillsSection(
+      listSkillsForTools(["web_search", "memory_store"]),
+    );
+    expect(s).toBe("");
+  });
+
+  it("renders only html-compose surfaces when only video_html_compose is in scope", () => {
+    const s = availableSkillsSection(
+      listSkillsForTools(["video_html_compose"]),
+    );
+    expect(s).toContain("html-compose-skill-gate");
+    expect(s).not.toContain("svg-diagram-palette-dark");
+    expect(s).not.toContain("svg-diagram-layout-rules");
+  });
+
+  it("renders only svg-diagram surfaces when only diagram_generate is in scope", () => {
+    const s = availableSkillsSection(listSkillsForTools(["diagram_generate"]));
+    expect(s).toContain("svg-diagram-palette-dark");
+    expect(s).not.toContain("html-compose-skill-gate");
+    expect(s).not.toContain("html-compose-house-style");
   });
 });
