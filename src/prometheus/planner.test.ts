@@ -151,7 +151,7 @@ describe("plan", () => {
     expect(graph.getGoal("g-1").dependsOn).toEqual([]);
   });
 
-  it("should throw on invalid JSON from LLM", async () => {
+  it("should throw a typed LLMJsonParseError on invalid JSON from LLM", async () => {
     mockInfer.mockResolvedValueOnce({
       content: "This is not JSON at all",
       tool_calls: undefined,
@@ -161,8 +161,39 @@ describe("plan", () => {
     });
 
     await expect(plan("Invalid JSON test")).rejects.toThrow(
-      /no parseable JSON object/,
+      "LLM returned unparseable JSON",
     );
+  });
+
+  // v7.6 Spine 1 G8 — the planner's "Planning failed: ..." wrapper must NOT
+  // carry raw LLM content into the user-visible error.message. The wrapper
+  // is built in orchestrator.ts:129 from `err.message`. By contract, the
+  // typed LLMJsonParseError keeps `.message` generic; the rawSample lives
+  // on a separate field accessible only to operators (journalctl).
+  // Failure case: a regression that re-introduces raw content into the
+  // message would surface in router.ts:2321 (background-agent failure
+  // reply) and rituals/dynamic.ts:574 (scheduled-task failure broadcast).
+  it("error.message does NOT leak raw LLM content (Spine 1 G8 invariant)", async () => {
+    const sentinel = "INTERNAL-PROMPT-LEAK-SENTINEL-9876";
+    mockInfer.mockResolvedValueOnce({
+      content: `Some prose with ${sentinel} inside that is not valid JSON`,
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    let caught: unknown = null;
+    try {
+      await plan("Leak test");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as Error;
+    // Direct planner throw — message is the raw LLMJsonParseError generic.
+    expect(err.message).not.toContain(sentinel);
+    expect(err.message).toBe("LLM returned unparseable JSON");
   });
 
   it("should throw on missing goals array", async () => {

@@ -360,6 +360,91 @@ describe("detectsHallucinatedExecution", () => {
       ),
     ).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // v7.6 Spine 1 G5 — first-person past-tense write claim is ALWAYS a
+  // hallucination, even on verification/read requests. The Layer 2 verify/
+  // read carve-out was previously too broad: any user message containing
+  // "verifica" or "lista" exempted ALL write claims, including first-person
+  // past-tense ("escribí", "actualicé", "I wrote"). Mirror of the W1 risk-
+  // carve-out pattern shipped in confirmations.ts.
+  // -------------------------------------------------------------------------
+
+  it("flags first-person ES write claim under VERIFY request (Spine 1 G5 carve-out)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Verifiqué las tareas y actualicé las 5 pendientes.",
+        ["jarvis_file_read"],
+        // user said "verifica" — used to exempt ALL write claims; now first-
+        // person carve-out fires regardless
+        "verifica las tareas y actualízalas si hace falta",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags first-person EN write claim under VERIFY request", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "I updated the 5 pending tasks after verifying them.",
+        ["jarvis_file_read"],
+        "verify and update the tasks",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags first-person ES write claim under READ/LIST request", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Listé las tareas y completé la última.",
+        ["jarvis_file_read"],
+        "lista mis tareas",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags first-person ES 'eliminé' under VERIFY request", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Verifiqué los archivos y eliminé los duplicados.",
+        ["jarvis_file_search"],
+        "verifica si hay duplicados",
+      ),
+    ).toBe(true);
+  });
+
+  it("STILL allows passive 'están actualizadas' under VERIFY request (state report)", () => {
+    // The carve-out is FIRST-PERSON only. Passive observation remains
+    // exempted on verify/read requests — the LLM is reporting state.
+    expect(
+      detectsHallucinatedExecution(
+        "Las tareas están actualizadas y publicadas correctamente.",
+        ["jarvis_file_read"],
+        "verifica el estado de las tareas",
+      ),
+    ).toBe(false);
+  });
+
+  it("STILL allows 'no las veo registradas' (genuine state report) under VERIFY", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "No las veo registradas en NorthStar; quizás se borraron.",
+        ["jarvis_file_read"],
+        "verifica si las tareas están registradas",
+      ),
+    ).toBe(false);
+  });
+
+  it("first-person carve-out does NOT fire when a write tool was actually called", () => {
+    // The carve-out is gated by `!calledAnyWriteTool`. If the LLM did call a
+    // write tool, "actualicé" is legitimate ground truth.
+    expect(
+      detectsHallucinatedExecution(
+        "Verifiqué y actualicé las tareas pendientes.",
+        ["jarvis_file_read", "jarvis_file_update"],
+        "verifica y actualiza las tareas",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("write-claim false positive fixes (v6.4 OH2)", () => {

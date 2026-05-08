@@ -177,6 +177,36 @@ describe("orchestrate", () => {
     );
   });
 
+  // v7.6 Spine 1 G8 — the "Planning failed: ${err.message}" wrapper at
+  // orchestrator.ts:129 inherits user-visibility from the underlying error
+  // message. Regression guard: even when planner throws an
+  // LLMJsonParseError carrying a raw LLM sentinel in `.rawSample`, the
+  // wrapper's user-facing message MUST NOT contain that sentinel.
+  // (router.ts:2321 sends `data.error` to the user verbatim for background
+  // agents; rituals/dynamic.ts:574 broadcasts to all users.)
+  it("Planning failed wrapper does NOT leak raw LLM content (Spine 1 G8)", async () => {
+    const sentinel = "PLANNER-RAW-LEAK-SENTINEL-1234";
+    // Import the typed error inside the test so test parity with planner
+    // is explicit (no transitive dependence on planner's import).
+    const { LLMJsonParseError } = await import("./types.js");
+    const parseErr = new LLMJsonParseError({
+      stage: "no-object",
+      rawSample: `random LLM prose with ${sentinel} inline`,
+    });
+    mockPlan.mockRejectedValueOnce(parseErr);
+
+    let caught: unknown = null;
+    try {
+      await orchestrate("task-leak", "Failing task");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as Error;
+    expect(err.message).toContain("Planning failed");
+    expect(err.message).not.toContain(sentinel);
+  });
+
   it("should trigger replan when tool failure rate exceeds threshold for 2 consecutive passes (k=2)", async () => {
     const graph = makeGraph();
     mockPlan.mockResolvedValueOnce({

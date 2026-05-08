@@ -10,7 +10,12 @@ import type { ChatMessage } from "../inference/adapter.js";
 import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
-import { GoalStatus, parseLLMJson, convergenceScore } from "./types.js";
+import {
+  GoalStatus,
+  parseLLMJson,
+  convergenceScore,
+  LLMJsonParseError,
+} from "./types.js";
 import type {
   ReflectionResult,
   ExecutionResult,
@@ -178,9 +183,18 @@ export async function reflect(
       }),
     };
   } catch (err) {
-    console.warn(
-      `[reflector] Failed to get LLM reflection: ${err instanceof Error ? err.message : err}; using heuristic`,
-    );
+    if (err instanceof LLMJsonParseError) {
+      // Generic message + structured diagnostic detail. Diagnostic stays in
+      // journalctl; the message itself never embeds raw LLM content (per
+      // LLMJsonParseError contract — same surface used by planner).
+      console.warn(
+        `[reflector] Failed to get LLM reflection: ${err.message} ${err.diagnosticDetail()}; using heuristic`,
+      );
+    } else {
+      console.warn(
+        `[reflector] Failed to get LLM reflection: ${err instanceof Error ? err.message : err}; using heuristic`,
+      );
+    }
     assessment = heuristicFallback(graph);
   }
 

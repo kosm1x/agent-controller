@@ -390,6 +390,16 @@ export function detectsHallucinatedExecution(
   // actions (gsheets_write, wp_publish, gmail_send) without calling them.
   // EXCEPTION: if the user asked to verify/check/confirm, the LLM is REPORTING
   // what it found using read tools — descriptive language about state is expected.
+  // Risk carve-out (v7.6 Spine 1 G5): first-person past-tense write verbs
+  // ("escribí", "actualicé", "I wrote") are NEVER reporting state — they're
+  // claiming the LLM personally performed an action. They override both the
+  // verification and read-request exemptions. Mirror of the W1 risk-carve-out
+  // pattern shipped in confirmations.ts; high-risk operator-typed verbs
+  // bypass ergonomic-relief gates.
+  const FIRST_PERSON_WRITE_RE =
+    /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i;
+  const FIRST_PERSON_WRITE_EN_RE =
+    /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i;
   const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
   const isVerificationRequest = userMessage
     ? /\b(verifica|verificar|confirma|confirmar|revisa|revisar|check|verify|confirm|comprueba|comprobar|existen|existe|están|registrad[oa]s?|ves|aparece|no las veo|no lo veo|puedes ver)\b/i.test(
@@ -402,6 +412,20 @@ export function detectsHallucinatedExecution(
         userMessage,
       )
     : false;
+
+  // First-person carve-out: even on verify/read requests, a first-person past-
+  // tense write claim with no write tool called is a hallucination.
+  const hasFirstPersonWriteClaim =
+    !calledAnyWriteTool &&
+    toolsCalled.length > 0 &&
+    (FIRST_PERSON_WRITE_RE.test(text) || FIRST_PERSON_WRITE_EN_RE.test(text));
+  if (hasFirstPersonWriteClaim) {
+    console.log(
+      `[fast-runner] First-person hallucination: write claim ("escribí"/"I wrote" class) but no write tool called. Tools: [${toolsCalled.join(", ")}]`,
+    );
+    return true;
+  }
+
   if (
     !calledAnyWriteTool &&
     toolsCalled.length > 0 &&
@@ -410,12 +434,8 @@ export function detectsHallucinatedExecution(
   ) {
     const claimsAction =
       // First-person past tense (always hallucination)
-      /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i.test(
-        text,
-      ) ||
-      /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i.test(
-        text,
-      ) ||
+      FIRST_PERSON_WRITE_RE.test(text) ||
+      FIRST_PERSON_WRITE_EN_RE.test(text) ||
       // Git-specific claims (Spanish + English)
       /(?:PUSH|COMMIT)\s+EXITOSO/i.test(text) ||
       /(?:push|commit)\s+\w*\s*(?:exitosamente|correctamente|con éxito|successfully)/i.test(

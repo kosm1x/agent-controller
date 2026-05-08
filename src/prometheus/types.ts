@@ -244,6 +244,51 @@ export function defaultConfig(
  *
  * Throws with a descriptive error on failure.
  */
+/**
+ * Typed error for parseLLMJson failures. The user-safe `.message` is generic
+ * and never carries raw LLM content. The raw content is attached as a
+ * separate field so operators (in journalctl) can still diagnose, but it
+ * never propagates to user-visible error surfaces.
+ *
+ * History (v7.6 Spine 1 G8): the previous Error subclass embedded "Raw
+ * (first 500 chars): ..." directly in the message. That message rode the
+ * `Planning failed: ${err.message}` chain through `task.failed` events and
+ * surfaced verbatim to users in router.ts:2321 (background-agent failures)
+ * and rituals/dynamic.ts:574 (scheduled-task broadcasts). Same prompt-
+ * enhancer-leakage class as the original CIRICD bug — error path leaking
+ * unparsed LLM output.
+ */
+export class LLMJsonParseError extends Error {
+  /** Raw LLM output (first 500 chars). Operator-visible only — never user-facing. */
+  readonly rawSample: string;
+  /** Stage at which parsing failed. Helps disambiguate in logs. */
+  readonly stage: "no-object" | "extracted-invalid";
+  /** Underlying JSON parse error message, if any. */
+  readonly innerMessage: string | undefined;
+
+  constructor(opts: {
+    stage: "no-object" | "extracted-invalid";
+    rawSample: string;
+    innerMessage?: string;
+  }) {
+    // User-safe message — generic, no raw content.
+    super("LLM returned unparseable JSON");
+    this.name = "LLMJsonParseError";
+    this.stage = opts.stage;
+    this.rawSample = opts.rawSample;
+    this.innerMessage = opts.innerMessage;
+  }
+
+  /**
+   * Operator-only diagnostic detail. Returns the raw sample + inner message
+   * formatted for journalctl. NEVER call this from a user-facing surface.
+   */
+  diagnosticDetail(): string {
+    const inner = this.innerMessage ? ` (${this.innerMessage})` : "";
+    return `[${this.stage}]${inner} sample: ${this.rawSample}`;
+  }
+}
+
 export function parseLLMJson<T = unknown>(raw: string): T {
   let text = raw.trim();
 
@@ -267,15 +312,17 @@ export function parseLLMJson<T = unknown>(raw: string): T {
       try {
         return JSON.parse(extracted) as T;
       } catch (err) {
-        throw new Error(
-          `LLM returned invalid JSON (after extraction): ${err instanceof Error ? err.message : err}\n` +
-            `Extracted (first 500 chars): ${extracted.slice(0, 500)}`,
-        );
+        throw new LLMJsonParseError({
+          stage: "extracted-invalid",
+          rawSample: extracted.slice(0, 500),
+          innerMessage: err instanceof Error ? err.message : String(err),
+        });
       }
     }
-    throw new Error(
-      `LLM returned no parseable JSON object.\nRaw (first 500 chars): ${text.slice(0, 500)}`,
-    );
+    throw new LLMJsonParseError({
+      stage: "no-object",
+      rawSample: text.slice(0, 500),
+    });
   }
 }
 

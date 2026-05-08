@@ -10,7 +10,7 @@ import type { ChatMessage } from "../inference/adapter.js";
 import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
-import { GoalStatus, parseLLMJson } from "./types.js";
+import { GoalStatus, parseLLMJson, LLMJsonParseError } from "./types.js";
 import type { TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
@@ -229,7 +229,19 @@ export async function replan(
 // ---------------------------------------------------------------------------
 
 function parseGoalGraph(raw: string): GoalGraph {
-  const data = parseLLMJson<PlanResponse>(raw);
+  let data: PlanResponse;
+  try {
+    data = parseLLMJson<PlanResponse>(raw);
+  } catch (err) {
+    if (err instanceof LLMJsonParseError) {
+      // Operator-only diagnostic to journalctl — the user-facing error.message
+      // stays generic per LLMJsonParseError contract. Without this log line,
+      // operators have no visibility into the raw LLM output that failed to
+      // parse, which makes diagnosing planner regressions much harder.
+      console.warn(`[planner] parse-failure ${err.diagnosticDetail()}`);
+    }
+    throw err;
+  }
 
   if (!data.goals || !Array.isArray(data.goals)) {
     throw new Error("LLM plan response missing 'goals' array");
