@@ -396,10 +396,17 @@ export function detectsHallucinatedExecution(
   // verification and read-request exemptions. Mirror of the W1 risk-carve-out
   // pattern shipped in confirmations.ts; high-risk operator-typed verbs
   // bypass ergonomic-relief gates.
+  //
+  // Negation guard (round-1 audit C1, 2026-05-08): the ES regex MUST exclude
+  // "no escribí" / "nunca actualicé" / "tampoco subí" / "jamás envié" — those
+  // are explicit non-claims under verify/read intent. JS variable-width
+  // lookbehind handles `(?<!\bno\s+)` etc. The EN side is structurally safe
+  // because the literal `I\s+` anchor doesn't match "I didn't" or "I never".
+  // \b start anchor on both regexes prevents within-word false positives.
   const FIRST_PERSON_WRITE_RE =
-    /(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i;
+    /(?<!\b(?:no|nunca|tampoco|jam[aá]s)\s+)\b(?:escribí|actualicé|publiqué|subí|eliminé|borré|envié|configuré|instalé|activé|desactivé|limpié|creé|modifiqué|edité|guardé|programé|completé|marqué|empujé|commiteé|comiteé|hice\s+(?:push|commit))\s/i;
   const FIRST_PERSON_WRITE_EN_RE =
-    /I\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i;
+    /\bI\s+(?:wrote|updated|published|uploaded|deleted|sent|created|saved|edited|pushed|committed)\s/i;
   const calledAnyWriteTool = toolsCalled.some((t) => WRITE_TOOLS.has(t));
   const isVerificationRequest = userMessage
     ? /\b(verifica|verificar|confirma|confirmar|revisa|revisar|check|verify|confirm|comprueba|comprobar|existen|existe|están|registrad[oa]s?|ves|aparece|no las veo|no lo veo|puedes ver)\b/i.test(

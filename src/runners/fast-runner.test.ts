@@ -445,6 +445,94 @@ describe("detectsHallucinatedExecution", () => {
       ),
     ).toBe(false);
   });
+
+  // Round-1 audit C1 (2026-05-08): the FIRST_PERSON_WRITE_RE lookbehind MUST
+  // exclude Spanish negation. "no escribí nada" is a legitimate state report
+  // under verify/read intent, not a hallucination claim. Without the
+  // negation guard, the LLM saying "He revisado las tareas — ya estaban
+  // actualizadas, no escribí nada nuevo" would fire `task.failed` with a
+  // generic-but-disruptive error. Bundle-regression catch.
+  it("STILL allows 'no escribí nada' negation under VERIFY (C1 round-1 audit)", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "He revisado las tareas — ya estaban actualizadas, no escribí nada nuevo.",
+        ["jarvis_file_read"],
+        "verifica el estado de las tareas",
+      ),
+    ).toBe(false);
+  });
+
+  it("STILL allows 'no actualicé' negation under VERIFY", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "No actualicé el archivo porque ya estaba al día.",
+        ["jarvis_file_read"],
+        "verifica si el archivo necesita actualización",
+      ),
+    ).toBe(false);
+  });
+
+  it("STILL allows 'nunca subí' negation under READ", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Nunca subí ese archivo al servidor; aún está pendiente.",
+        ["jarvis_file_read"],
+        "lista los archivos subidos",
+      ),
+    ).toBe(false);
+  });
+
+  it("STILL allows 'tampoco envié' negation", () => {
+    expect(
+      detectsHallucinatedExecution(
+        "Tampoco envié el correo de seguimiento.",
+        ["jarvis_file_read"],
+        "verifica los correos enviados",
+      ),
+    ).toBe(false);
+  });
+
+  // Round-1 audit W2: syntactic regex-source guard. Protects against future
+  // "let me simplify the regex" diffs that re-introduce drift. If anyone
+  // removes the negation lookbehind, the verb stems, or the start anchor,
+  // these trip immediately at CI time.
+  //
+  // Uses module-level access via the exported runtime path — the regex
+  // lives inside detectsHallucinatedExecution so we re-derive its shape via
+  // behavior assertions rather than reaching into the closure.
+  it("regex-source guard: negation lookbehind catches all 4 ES negators", () => {
+    const negators = ["no", "nunca", "tampoco", "jamás"];
+    for (const neg of negators) {
+      const text = `${neg.charAt(0).toUpperCase() + neg.slice(1)} escribí nada nuevo en este archivo.`;
+      expect(
+        detectsHallucinatedExecution(text, ["jarvis_file_read"]),
+        `expected "${neg} escribí" to NOT flag (negation guard)`,
+      ).toBe(false);
+    }
+  });
+
+  it("regex-source guard: every operator-typed verb stem still flags first-person", () => {
+    const stems = [
+      "escribí algo",
+      "actualicé el sheet",
+      "publiqué el post",
+      "subí el archivo",
+      "eliminé la tarea",
+      "borré el registro",
+      "envié el correo",
+      "creé el evento",
+      "modifiqué la config",
+      "edité el archivo",
+      "guardé el documento",
+      "programé el reporte",
+    ];
+    for (const stem of stems) {
+      expect(
+        detectsHallucinatedExecution(stem, ["jarvis_file_read"]),
+        `expected "${stem}" to flag (first-person carve-out)`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe("write-claim false positive fixes (v6.4 OH2)", () => {
