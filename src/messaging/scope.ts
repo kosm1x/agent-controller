@@ -1286,6 +1286,77 @@ export function scopeToolsForMessage(
 }
 
 /**
+ * Universe of every tool name that scopeToolsForMessage could ever return for
+ * the given options. Single source of truth for the "X / Y tools" log line.
+ *
+ * Why: the previous `fullCount` was hand-rolled arithmetic at the call site
+ * (`router.ts:437`) that summed only 9 of ~30 tool groups. Adding a new group
+ * (FINANCE / SEO / VIDEO / etc.) silently kept the denominator stale, so the
+ * scope-fraction observability metric was meaningless within weeks of any new
+ * group being added. This is the prompt-enhancer-leakage class — a counter
+ * that "claims to count something" drifts from reality because the arithmetic
+ * doesn't share a shape with the producer (scopeToolsForMessage).
+ *
+ * Invariant pinned by tests: scopeToolsForMessage(any-input).length must
+ * always be ≤ getAllAvailableTools(options).size for the same options.
+ */
+export function getAllAvailableTools(options: ScopeOptions): Set<string> {
+  const all = new Set<string>([
+    ...CORE_TOOLS,
+    ...MISC_TOOLS,
+    "northstar_sync",
+    ...SPECIALTY_TOOLS,
+    "humanize_text",
+    "dashboard_generate",
+    "dashboard_list",
+    "http_fetch",
+    "pdf_read",
+    ...RESEARCH_TOOLS,
+    ...INTEL_TOOLS,
+    ...VIDEO_TOOLS,
+    ...SOCIAL_TOOLS,
+    ...SCHEDULE_TOOLS,
+    ...BROWSER_TOOLS,
+    ...BROWSER_EXTRA_TOOLS,
+    ...CODING_TOOLS,
+    "project_get",
+    "project_update",
+    ...UTILITY_TOOLS,
+    ...SEO_TOOLS,
+    ...ADS_TOOLS,
+    ...FINANCE_TOOLS,
+    ...KB_INGEST_TOOLS,
+    ...ALPHA_TOOLS,
+    ...BACKTEST_TOOLS,
+    ...PAPER_TOOLS,
+    ...MARKET_RITUAL_TOOLS,
+    ...PM_ALPHA_TOOLS,
+    ...PM_PAPER_TOOLS,
+    ...GRAPH_TOOLS,
+    ...XPOZ_TOOLS,
+    ...DIAGRAM_TOOLS,
+    ...CHART_TOOLS,
+    ...TEACHING_TOOLS,
+  ]);
+  if (options.hasGoogle) {
+    for (const t of GOOGLE_TOOLS) all.add(t);
+  }
+  if (options.hasWordpress) {
+    for (const t of WORDPRESS_TOOLS) all.add(t);
+    all.add("humanize_text");
+  }
+  if (options.hasCrm) {
+    for (const t of CRM_TOOLS_SCOPE) all.add(t);
+  }
+  if (options.hasMemory) {
+    all.add("memory_search");
+    all.add("memory_store");
+    all.add("memory_reflect");
+  }
+  return all;
+}
+
+/**
  * Detect which scope groups are active for a message.
  *
  * Utility for the eval harness — returns just the group names,

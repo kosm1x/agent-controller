@@ -101,17 +101,9 @@ import {
 import {
   scopeToolsForMessage as scopeToolsPure,
   detectActiveGroups,
+  getAllAvailableTools,
   DEFAULT_SCOPE_PATTERNS,
   CONVERSATIONAL_PATTERN,
-  CORE_TOOLS,
-  SCHEDULE_TOOLS,
-  GOOGLE_TOOLS,
-  CODING_TOOLS,
-  WORDPRESS_TOOLS,
-  MISC_TOOLS,
-  BROWSER_TOOLS,
-  SPECIALTY_TOOLS,
-  RESEARCH_TOOLS,
 } from "./scope.js";
 import { classifyScopeGroups } from "./scope-classifier.js";
 import { normalizeForMatching, wasNormalized } from "./normalize.js";
@@ -423,17 +415,16 @@ function scopeToolsForMessage(
     activeGroups,
   );
 
-  const fullCount =
-    CORE_TOOLS.length +
-    SCHEDULE_TOOLS.length +
-    MISC_TOOLS.length +
-    BROWSER_TOOLS.length +
-    CODING_TOOLS.length +
-    SPECIALTY_TOOLS.length +
-    RESEARCH_TOOLS.length +
-    (process.env.GOOGLE_CLIENT_ID ? GOOGLE_TOOLS.length : 0) +
-    (process.env.WP_SITES ? WORDPRESS_TOOLS.length : 0) +
-    2; // memory
+  // fullCount = the universe of every tool name scopeToolsForMessage could
+  // return for the current env config. Source of truth co-located with the
+  // assembly logic in scope.ts so adding a new tool group can't silently rot
+  // this denominator (v7.6 Spine 2 — observability backfill).
+  const fullCount = getAllAvailableTools({
+    hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
+    hasWordpress: !!process.env.WP_SITES,
+    hasMemory: getMemoryService().backend === "hindsight",
+    hasCrm: !!process.env.CRM_API_TOKEN,
+  }).size;
   console.log(`[router] Tool scope: ${tools.length}/${fullCount} tools`);
 
   return { tools, activeGroups: [...activeGroups] };

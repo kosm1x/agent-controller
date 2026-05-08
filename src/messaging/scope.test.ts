@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   scopeToolsForMessage,
   detectActiveGroups,
+  getAllAvailableTools,
   DEFAULT_SCOPE_PATTERNS,
   CORE_TOOLS,
   GOOGLE_TOOLS,
@@ -23,6 +24,12 @@ import {
   CHART_TOOLS,
   TEACHING_TOOLS,
   VIDEO_TOOLS,
+  PM_ALPHA_TOOLS,
+  PM_PAPER_TOOLS,
+  MARKET_RITUAL_TOOLS,
+  KB_INGEST_TOOLS,
+  GRAPH_TOOLS,
+  XPOZ_TOOLS,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -1794,6 +1801,166 @@ describe("meta scope completeness", () => {
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
     expect(hasAll(tools, CODING_TOOLS)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAllAvailableTools — RC4-style producer/consumer coupling for the
+// "[router] Tool scope: X / Y tools" log line. Y must be a true upper
+// bound on every X that scopeToolsForMessage can return for the same opts.
+// History: previously hand-rolled `fullCount` arithmetic in router.ts:437
+// summed only 9 of 30 tool groups, silently rotting whenever a new group
+// (FINANCE/SEO/VIDEO/...) was added. Spine 2 / v7.6.
+// ---------------------------------------------------------------------------
+
+describe("getAllAvailableTools — fullCount producer/consumer coupling", () => {
+  // Round-2 audit (W2): exercise the envelope under each gate-flip individually,
+  // not just ALL_ON. ALL_ON enables every gated group, so a gate-omission bug in
+  // the universe would still pass the meta-scope test under ALL_ON. Flip each
+  // gate to false and re-run; the envelope must still cover every emitted tool.
+  const ENV_VARIANTS: Array<[string, ScopeOptions]> = [
+    ["ALL_ON", ALL_ON],
+    ["hasGoogle=false", { ...ALL_ON, hasGoogle: false }],
+    ["hasWordpress=false", { ...ALL_ON, hasWordpress: false }],
+    ["hasCrm=false", { ...ALL_ON, hasCrm: false }],
+    ["hasMemory=false", { ...ALL_ON, hasMemory: false }],
+    [
+      "ALL_OFF",
+      {
+        hasGoogle: false,
+        hasWordpress: false,
+        hasCrm: false,
+        hasMemory: false,
+      },
+    ],
+  ];
+
+  it.each(ENV_VARIANTS)(
+    "envelope contains every meta-scope-emitted tool [%s]",
+    (_label, opts) => {
+      const universe = getAllAvailableTools(opts);
+      const tools = scopeToolsForMessage(
+        "Lista todas las herramientas",
+        [],
+        DEFAULT_SCOPE_PATTERNS,
+        opts,
+      );
+      for (const t of tools) {
+        expect(universe.has(t), `tool ${t} missing from universe`).toBe(true);
+      }
+    },
+  );
+
+  // Round-2 audit (W1): tools.length ≤ universe.size invariant must hold across
+  // all gate combinations, not just ALL_ON. Otherwise a producer that pushes a
+  // tool the universe forgot to gate (e.g., GOOGLE_TOOLS member emitted in a
+  // hasGoogle=false world due to upstream regex carryover) would slip through.
+  it.each(ENV_VARIANTS)(
+    "tools.length never exceeds universe.size for any single message [%s]",
+    (_label, opts) => {
+      const universe = getAllAvailableTools(opts);
+      const samples = [
+        "Hola",
+        "Lista todas las herramientas",
+        "manda un correo a Juan",
+        "edita el archivo README.md",
+        "publica en livingjoyfully.art",
+        "ejecuta una query en SQL",
+        "genera un pie chart con estos valores",
+        "haz un study guide del PDF",
+        "borra la tarea de Algebra",
+        "crea una vista para el dashboard",
+        "alpha run de NVDA",
+        "backtest este portfolio",
+        "infografía de KPIs Q1",
+        "abre el sitio web de Apple",
+      ];
+      for (const msg of samples) {
+        const tools = scopeToolsForMessage(
+          msg,
+          [],
+          DEFAULT_SCOPE_PATTERNS,
+          opts,
+        );
+        expect(
+          tools.length,
+          `tools.length (${tools.length}) > universe.size (${universe.size}) for "${msg}"`,
+        ).toBeLessThanOrEqual(universe.size);
+      }
+    },
+  );
+
+  it("env-conditional groups extend the universe only when their gate is on", () => {
+    const noGoogle = getAllAvailableTools({ ...ALL_ON, hasGoogle: false });
+    const withGoogle = getAllAvailableTools(ALL_ON);
+    expect(withGoogle.size).toBeGreaterThan(noGoogle.size);
+    for (const t of GOOGLE_TOOLS) {
+      expect(noGoogle.has(t)).toBe(false);
+      expect(withGoogle.has(t)).toBe(true);
+    }
+  });
+
+  it("memory tools are gated by hasMemory (3 tools, not 2 — pre-fix off-by-one)", () => {
+    const noMemory = getAllAvailableTools({ ...ALL_ON, hasMemory: false });
+    const withMemory = getAllAvailableTools(ALL_ON);
+    expect(withMemory.size - noMemory.size).toBe(3);
+    expect(withMemory.has("memory_search")).toBe(true);
+    expect(withMemory.has("memory_store")).toBe(true);
+    expect(withMemory.has("memory_reflect")).toBe(true);
+  });
+
+  it("CRM is in the universe when hasCrm=true (was missing from old fullCount)", () => {
+    const u = getAllAvailableTools(ALL_ON);
+    expect(u.has("crm_query")).toBe(true);
+  });
+
+  // Round-2 audit (S2): tighten gate-arithmetic test. ALL_OFF → ALL_ON delta
+  // must equal the sum of every gated contribution exactly, not "more than 5".
+  // Loose threshold could mask a missing gate add (e.g., forgetting CRM).
+  it("gate flips contribute exactly the gated tool sets (no over/undercount)", () => {
+    const min = getAllAvailableTools({
+      hasGoogle: false,
+      hasWordpress: false,
+      hasMemory: false,
+      hasCrm: false,
+    });
+    const max = getAllAvailableTools(ALL_ON);
+    // Gated contributions: GOOGLE_TOOLS + WORDPRESS_TOOLS + CRM_TOOLS_SCOPE + 3
+    // memory tools. WordPress also adds humanize_text but that is unconditional
+    // in the universe (already in min), so the delta does NOT include it.
+    const expectedDelta =
+      GOOGLE_TOOLS.length + WORDPRESS_TOOLS.length + CRM_TOOLS_SCOPE.length + 3;
+    expect(max.size - min.size).toBe(expectedDelta);
+  });
+
+  // Syntactic regex-source-style guard: protects against a future "let me
+  // just hand-roll this denominator" diff that would re-introduce drift.
+  // Round-2 audit (S1): sentinel set covers BOTH (a) groups the OLD arithmetic
+  // omitted (the historical drift) AND (b) groups added most recently to the
+  // codebase (the next-most-likely drift target). Two-axis coverage so the
+  // guard ages with the codebase.
+  it("guards against regression to a hand-rolled fullCount", () => {
+    const u = getAllAvailableTools(ALL_ON);
+    const sentinels = [
+      // Historical drift — groups missing from the original 9-group sum
+      ...VIDEO_TOOLS,
+      ...SEO_TOOLS,
+      ...ADS_TOOLS,
+      ...CHART_TOOLS,
+      ...TEACHING_TOOLS,
+      ...CRM_TOOLS_SCOPE,
+      // Recent additions — most likely to be forgotten by the next "let me
+      // hand-roll this" diff because they post-date the original arithmetic
+      ...PM_ALPHA_TOOLS,
+      ...PM_PAPER_TOOLS,
+      ...MARKET_RITUAL_TOOLS,
+      ...KB_INGEST_TOOLS,
+      ...GRAPH_TOOLS,
+      ...XPOZ_TOOLS,
+    ];
+    for (const t of sentinels) {
+      expect(u.has(t), `expected ${t} in universe`).toBe(true);
+    }
   });
 });
 
