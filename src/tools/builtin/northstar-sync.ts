@@ -128,6 +128,66 @@ function ts(s: string | null | undefined): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
+/**
+ * True when `s` is a value PostgreSQL's `date` type will accept: `YYYY-MM-DD`
+ * or full ISO 8601 datetime. Rejects user-typed sentinels ("none", "TBD",
+ * "pending", "-", "n/a") that would trigger PG `22007 invalid_datetime_format`
+ * and brick the entire sync run for every record on that table.
+ *
+ * Also rejects calendar-impossible dates like `2026-02-30` that `Date.parse`
+ * silently rolls over (→ March 2). Those would pass the regex and `Date.parse`
+ * but PG rejects with `22008 datetime_field_overflow` — same brick, narrower
+ * trigger.
+ */
+function isValidDateValue(s: string | null | undefined): boolean {
+  if (!s) return false;
+  const trimmed = s.trim();
+  if (!trimmed) return false;
+  // Require a leading 4-digit year + month/day separator. Cheap pre-check that
+  // rejects "none"/"TBD"/"-" without falling through to Date.parse, which is
+  // permissive enough to coerce things like "1" into a valid date.
+  if (!/^\d{4}-\d{2}-\d{2}([T ]|$)/.test(trimmed)) return false;
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return false;
+  // Reject silent rollovers (`2026-02-30` → `2026-03-02`). The first 10 chars
+  // of the input are the user's claimed Y-M-D; round-trip through UTC and
+  // compare. UTC is correct here because PG `date` has no timezone.
+  return new Date(parsed).toISOString().slice(0, 10) === trimmed.slice(0, 10);
+}
+
+/**
+ * Strip `Due: <non-date>` and `Target: <non-date>` lines from local file
+ * content. Idempotent. Returns the cleaned content + a list of stripped
+ * fields for operator visibility.
+ *
+ * Rationale: the strict mirror invariant requires that local files contain
+ * only values that COMMIT will accept. Sentinels like `Due: none` would be
+ * silently dropped from the POST/PATCH payload but live on in the file
+ * forever — the next sync can't reconcile a value that exists locally but
+ * not remotely. Removing the line on the local side closes the gap.
+ */
+function sanitizeLocalContent(content: string): {
+  sanitized: string;
+  changed: boolean;
+  stripped: string[];
+} {
+  const stripped: string[] = [];
+  const out: string[] = [];
+  for (const line of content.split("\n")) {
+    const m = line.match(/^(Due|Target):[ \t]*(.+)$/i);
+    if (m && !isValidDateValue(m[2])) {
+      stripped.push(`${m[1]}: ${m[2].trim()}`);
+      continue;
+    }
+    out.push(line);
+  }
+  return {
+    sanitized: out.join("\n"),
+    changed: stripped.length > 0,
+    stripped,
+  };
+}
+
 async function fetchTable(
   table: string,
   apiKey: string,
@@ -351,11 +411,20 @@ function extractPatchFields(
   // non-task kinds where they mean target_date. Accept it as a target alias;
   // the `allowed.includes("target_date")` guard prevents it from leaking into
   // task PATCHes (tasks have no target_date column).
+  // Date sentinels like `Target: none` / `Due: TBD` are rejected by PG with
+  // `22007 invalid_datetime_format`. On a PATCH path the field is in
+  // CLEARABLE_FIELDS, so we propagate the user's intent ("no date") as `null`
+  // rather than silently dropping it — otherwise a user can't clear a stale
+  // date by editing the line.
   const target = extractFieldWithAlias(content, "Target", "target_date", "Due");
-  if (allowed.includes("target_date") && target) fields.target_date = target;
+  if (allowed.includes("target_date") && target) {
+    fields.target_date = isValidDateValue(target) ? target : null;
+  }
 
   const due = extractField(content, "Due");
-  if (allowed.includes("due_date") && due) fields.due_date = due;
+  if (allowed.includes("due_date") && due) {
+    fields.due_date = isValidDateValue(due) ? due : null;
+  }
 
   const notes = extractField(content, "Notes");
   if (allowed.includes("notes") && notes !== null) fields.notes = notes;
@@ -498,6 +567,10 @@ function buildCreateFields(
   // Tasks have no target_date column — skip entirely. For other kinds, accept
   // `Due:` as an alias for `target_date` (common user typo on objectives/goals
   // where they mean "target date" but wrote the tasks-canonical `Due:`).
+  // Skip date sentinels ("none", "TBD", etc.) on push-new — POST has no
+  // existing column value to clear, so omitting the field is correct. PG would
+  // reject the literal string with `22007 invalid_datetime_format` and brick
+  // every record on that table for this run.
   if (kind !== "task") {
     const target = extractFieldWithAlias(
       entry.content,
@@ -505,10 +578,10 @@ function buildCreateFields(
       "target_date",
       "Due",
     );
-    if (target) fields.target_date = target;
+    if (target && isValidDateValue(target)) fields.target_date = target;
   }
   const due = extractField(entry.content, "Due");
-  if (due && kind === "task") fields.due_date = due;
+  if (due && kind === "task" && isValidDateValue(due)) fields.due_date = due;
   const notes = extractField(entry.content, "Notes");
   if (notes && kind === "task") fields.notes = notes;
 
@@ -624,6 +697,14 @@ interface SyncReport {
   skippedPaths: string[];
   destructive: string[];
   selfHealed: string[]; // Paths repaired from a prior crashed run.
+  // Strict-mirror invariant: a local record that COMMIT cannot accept (POST
+  // 4xx, unresolvable parent ref) is removed from the local store rather than
+  // left as a permanent orphan. `dropped` surfaces the deletions so the
+  // operator can re-create with valid data if the loss was unintentional.
+  dropped: string[];
+  // Paths whose content had `Due: <non-date>` / `Target: <non-date>` lines
+  // stripped during the pre-flight sanitization pass.
+  sanitized: string[];
 }
 
 async function syncKind(
@@ -857,33 +938,25 @@ export const northstarSyncTool: Tool = {
       name: "northstar_sync",
       description: `Reconciliation between NorthStar files (Jarvis local) and COMMIT (db.mycommit.net app). NorthStar and COMMIT are PEER data stores, not master-mirror. Changes on either side stay local until THIS tool is invoked.
 
+STRICT-MIRROR INVARIANT (LWW mode, 2nd sync onward): after a successful run, every local NorthStar record has a matching COMMIT record by id and vice versa. The 4-phase architecture enforces this:
+  * Phase 0 — sanitization: \`Due: <non-date>\` and \`Target: <non-date>\` lines (e.g. \`Due: none\`, \`Target: TBD\`) are stripped from local files before sync. Sentinels can never reach COMMIT or live on locally.
+  * Phase 1 — push-new: local files without a COMMIT_ID are POSTed. Validation 4xx (bad date, NULL violation, parent unresolvable) results in the LOCAL FILE BEING DELETED — surfaced under \`Dropped:\` with the PG SQLSTATE. Transport failures (HTTP 401/403/5xx) abort the sync without deleting (retry when upstream recovers).
+  * Phase 2 — LWW: each side's most recent user-edit wins the whole record. Cleared dates (line removed locally) push as \`null\`.
+  * Phase 4 — verification: re-fetches all 4 tables and reconciles. Local files without a COMMIT_ID, or with a COMMIT_ID missing on remote, are dropped. Remote-only records are pulled.
+
+BOOTSTRAP MODE (first run, journal empty): destructive paths in Phases 1–4 are GATED OFF. The first sync can only create across the gap. Strict mirror enforcement starts on the second run.
+
 RULES:
-- Record-level LWW for updates: whichever side edited most recently wins the whole record.
-  * COMMIT-side user edit = \`modified_by == "user"\` + advanced \`last_edited_at\`
-  * Jarvis-side user edit = \`user_edit_time > journal.last_sync_at\`
-- Deletions propagate BOTH ways via the \`northstar_sync_state\` journal:
-  * journal has it + missing on one side → propagate delete to other side
-  * journal empty on first run → bootstrap mode (create across the gap, NO deletes)
-- Create propagation is BIDIRECTIONAL:
-  * COMMIT→Jarvis: new COMMIT records pulled down as local files.
-  * Jarvis→COMMIT: local files without a COMMIT_ID get POSTed to their
-    table with a generated UUID. The local file is rewritten with the
-    populated COMMIT_ID. Parent-FK references (Vision: / Goal: /
-    Objective:) accept either the parent's UUID or its exact title.
-    Goals + objectives require a resolvable parent; tasks may be orphans.
+- LWW user-edit gates: COMMIT-side = \`modified_by == "user"\` + advanced \`last_edited_at\`; Jarvis-side = \`user_edit_time > journal.last_sync_at\`.
+- Deletions propagate BOTH ways via the \`northstar_sync_state\` journal.
+- Create propagation is BIDIRECTIONAL. Parent-FK refs (Vision: / Goal: / Objective:) accept either the parent's UUID or its exact title. Goals + objectives require a resolvable parent; tasks may be orphans.
 
 USE WHEN:
-- User explicitly asks to "sync" / "reconcilia" / "actualiza COMMIT".
-- Verifying state after a series of edits, deletes, or creates.
-- After creating new NorthStar records locally and wanting them
-  reflected in the COMMIT app.
+- User asks to "sync" / "reconcilia" / "actualiza COMMIT".
+- Verifying state after edits, deletes, or creates.
+- After creating new NorthStar records locally and wanting them reflected in the COMMIT app.
 
-GOTCHA: "0 created + 0 pulled + 0 pushed + 0 deleted, Unchanged: N"
-means everything's already in sync. "Skipped: N" with file paths listed
-means those records couldn't propagate — usually because a goal/objective
-references a parent that doesn't exist on COMMIT (create the parent
-first, or include both in the same sync — parents are processed before
-children so goal + vision in one sync works).`,
+GOTCHA: "Dropped: N" lists local files that COMMIT could not accept (validation failure on push-new, or post-Phase-3 orphans). The deletion is permanent — there is no recovery path besides re-creating with a payload COMMIT will accept. Read the dropped reasons in the return string to understand which records were lost. "Skipped: N" is a softer state — record couldn't propagate but local file was preserved (rare, mostly bootstrap-mode escape hatches).`,
       parameters: {
         type: "object",
         properties: {},
@@ -937,7 +1010,54 @@ children so goal + vision in one sync works).`,
         skippedPaths: [],
         destructive: [],
         selfHealed: [],
+        dropped: [],
+        sanitized: [],
       };
+
+      // Phase 0: strict-mirror sanitization. Walk every NorthStar record file
+      // and strip `Due: <non-date>` / `Target: <non-date>` lines so the local
+      // representation matches what we'd send to COMMIT (no sentinels left
+      // over). Idempotent — a no-op file is touched exactly when content
+      // actually changes. `skipUserEdit: true` so this cleanup doesn't
+      // masquerade as a user edit and trick LWW into thinking the local side
+      // is newer. Read+pass-through `condition`/`related_to` from the live
+      // row — listFiles returns a projection without those columns so a
+      // hardcoded null/[] would silently clobber them on every sanitized
+      // file.
+      for (const kind of KINDS) {
+        const basePath = KIND_TO_PATH[kind];
+        const files = listFiles({ prefix: basePath + "/" });
+        for (const meta of files) {
+          if (meta.path === `${basePath}/INDEX.md`) continue;
+          const file = getFile(meta.path);
+          if (!file) continue;
+          const { sanitized, changed } = sanitizeLocalContent(file.content);
+          if (!changed) continue;
+          let relatedTo: string[] = [];
+          try {
+            const parsed = JSON.parse(file.related_to);
+            if (Array.isArray(parsed))
+              relatedTo = parsed.filter(
+                (r): r is string => typeof r === "string",
+              );
+          } catch {
+            // Malformed JSON in DB — preserve as empty array, the original
+            // garbage would have failed downstream anyway.
+          }
+          upsertFile(
+            meta.path,
+            meta.title,
+            sanitized,
+            meta.tags,
+            meta.qualifier,
+            meta.priority,
+            file.condition,
+            relatedTo,
+            { skipUserEdit: true },
+          );
+          report.sanitized.push(meta.path);
+        }
+      }
 
       // Phase 1: push-new-to-COMMIT. Local files with no COMMIT_ID (user
       // created via `jarvis_file_write`, never existed on COMMIT) are POSTed
@@ -996,8 +1116,13 @@ children so goal + vision in one sync works).`,
           }
           const { fields, error } = buildCreateFields(entry, kind, commitData);
           if (error) {
-            report.skipped++;
-            report.skippedPaths.push(`${entry.path} (${error})`);
+            // Strict-mirror invariant: a local record COMMIT cannot accept
+            // (e.g. unresolvable parent ref) is removed from the local store
+            // rather than left as a permanent orphan. The next sync would
+            // hit the same error and skip again forever, drifting the two
+            // stores. Logged via report.dropped for operator visibility.
+            deleteFile(entry.path);
+            report.dropped.push(`${entry.path} (${error})`);
             continue;
           }
           const newId = crypto.randomUUID();
@@ -1025,20 +1150,55 @@ children so goal + vision in one sync works).`,
             apiKey,
           );
           if (!res.ok) {
-            // POST failed — drop the pre-seeded journal row so the next run
-            // can retry with a fresh UUID. Local file is untouched.
+            // Transport-level / auth / upstream-down failures (401, 403,
+            // 5xx) are orthogonal to record validity — a config disaster
+            // (rotated key, Supabase reboot, Caddy outage) must NOT cause
+            // every push-new file to be deleted in lockstep. Drop the
+            // pre-seeded journal row and abort the sync; the operator
+            // retries once the upstream is healthy.
+            if (res.status === 401 || res.status === 403 || res.status >= 500) {
+              deleteJournal(newId);
+              journalByPath.delete(entry.path);
+              throw new Error(
+                `aborting: HTTP ${res.status} on POST ${KIND_TO_TABLE[kind]} for ${entry.path} — refusing to drop local content for transport/auth failures, retry after upstream recovers`,
+              );
+            }
+            // Genuine 4xx validation failure (bad date, NOT NULL, CHECK,
+            // etc.) — drop the journal row so a future create attempt
+            // isn't blocked by the tombstone, and remove the local file
+            // so the strict-mirror invariant holds. The operator sees the
+            // deletion + the upstream error code under `report.dropped`;
+            // if the loss was unintentional they can re-create with a
+            // payload that COMMIT will accept.
             deleteJournal(newId);
             journalByPath.delete(entry.path);
-            report.skipped++;
-            report.skippedPaths.push(
-              `${entry.path} (POST failed: HTTP ${res.status}${res.error ? ` ${res.error}` : ""})`,
+            deleteFile(entry.path);
+            // Extract the PG SQLSTATE code from the PostgREST error JSON when
+            // present (`{"code":"22007", ...}` → `22007`). Operators can map
+            // these to root cause: 22007 = bad date, 23502 = NOT NULL
+            // violation, 23514 = CHECK violation, 22P02 = invalid text repr,
+            // 23505 = unique violation. Without the code the reason looks
+            // identical for very different bugs.
+            let pgCode = "";
+            if (res.error) {
+              const m = res.error.match(/"code"\s*:\s*"([0-9A-Z]{5})"/);
+              if (m) pgCode = ` PG ${m[1]}`;
+            }
+            report.dropped.push(
+              `${entry.path} (POST failed: HTTP ${res.status}${pgCode}${res.error ? ` ${res.error}` : ""})`,
             );
             continue;
           }
           // Success: rewrite local file with populated COMMIT_ID, and inject
           // the record into commitData so subsequent kinds can resolve it
           // as a parent + syncKind sees it as already-matched.
-          populateCommitIdInFile(entry.path, entry.title, entry.content, newId);
+          populateCommitIdInFile(
+            entry.path,
+            entry.title,
+            entry.content,
+            newId,
+            kind,
+          );
           const injected: CommitItem = {
             id: newId,
             title: entry.title,
@@ -1093,6 +1253,94 @@ children so goal + vision in one sync works).`,
           apiKey,
           report,
         );
+      }
+
+      // Phase 4: post-sync mirror verification. Re-fetches the canonical
+      // state from COMMIT (post-deletes, post-creates, post-PATCHes) and
+      // walks every local file to ensure id-level identity with the remote.
+      // Any local file whose COMMIT_ID is missing remotely (or is itself
+      // missing) is dropped; any remote record without a matching local
+      // file is pulled. Catches paths Phases 1–3 missed (network blip,
+      // race, bug) and brings the two stores into structural identity.
+      const verified = await Promise.all(
+        KINDS.map((k) => fetchTable(KIND_TO_TABLE[k], apiKey)),
+      );
+      KINDS.forEach((k, i) => {
+        commitData[KIND_TO_TABLE[k]] = verified[i];
+      });
+
+      for (const kind of KINDS) {
+        const basePath = KIND_TO_PATH[kind];
+        const remoteById = new Map(
+          commitData[KIND_TO_TABLE[kind]].map((c) => [c.id, c]),
+        );
+        const localCommitIds = new Set<string>();
+
+        const filesForKind = listFiles({ prefix: basePath + "/" });
+        for (const meta of filesForKind) {
+          if (meta.path === `${basePath}/INDEX.md`) continue;
+          const file = getFile(meta.path);
+          if (!file) continue;
+          const commitId = extractCommitId(file.content);
+          // Bootstrap mode preserves all local content (the sync run is the
+          // very first reconciliation; the operator's local files MAY be the
+          // canonical source). Phase 2's bootstrap branch already pulls
+          // remote-only records, so the only Phase-4 work left for bootstrap
+          // is to re-add new pulls for any that slipped — destructive paths
+          // are gated.
+          if (!commitId) {
+            if (!bootstrap) {
+              // No COMMIT_ID after all phases ran → Phase 1 either failed
+              // silently or the file was just created and never rewritten.
+              // Either way, this is an unsyncable orphan under the strict
+              // mirror invariant.
+              deleteFile(meta.path);
+              report.dropped.push(`${meta.path} (post-sync: no COMMIT_ID)`);
+            }
+            continue;
+          }
+          if (!remoteById.has(commitId)) {
+            if (!bootstrap) {
+              // Local has a COMMIT_ID that isn't on the remote any more.
+              // Phase 3 deletes propagation should have caught this, but if
+              // it slipped (e.g. DELETE 5xx with retry exhaustion), drop the
+              // local now so the next read isn't operating on a ghost.
+              deleteFile(meta.path);
+              report.dropped.push(
+                `${meta.path} (post-sync orphan: id ${commitId.slice(0, 8)} missing on COMMIT)`,
+              );
+            }
+            continue;
+          }
+          localCommitIds.add(commitId);
+        }
+
+        // Remote records without a local file → pull. Phase 2 should have
+        // produced these via the bootstrap/missing-locally branch; this is
+        // defense-in-depth for the case where that write failed silently.
+        // Membership is keyed by COMMIT_ID (not filename) so a record that
+        // exists locally under a stale slug (parent title renamed on
+        // COMMIT) is NOT re-created under the new canonical path — the
+        // existing file is left alone and will rename naturally on the
+        // next push-or-pull pass when LWW notices the title change.
+        for (const [id, commit] of remoteById) {
+          if (localCommitIds.has(id)) continue;
+          const parentTitle = findParentTitle(commit, commitData);
+          const filePath = buildLocalPath(basePath, commit.id, commit.title);
+          const content = buildFileContent(commit, kind, parentTitle);
+          upsertFile(
+            filePath,
+            commit.title,
+            content,
+            ["northstar", kind],
+            "reference",
+            30,
+            null,
+            [],
+            { skipUserEdit: true },
+          );
+          report.pulled++;
+        }
       }
 
       // Rebuild INDEX.md from POST-sync local state — what's on disk right
@@ -1168,6 +1416,11 @@ children so goal + vision in one sync works).`,
           `[northstar-sync] destructive ops:\n  ${report.destructive.join("\n  ")}`,
         );
       }
+      if (report.dropped.length > 0) {
+        console.warn(
+          `[northstar-sync] dropped unsyncable local records:\n  ${report.dropped.join("\n  ")}`,
+        );
+      }
 
       const skippedNote =
         report.skippedPaths.length > 0
@@ -1180,7 +1433,15 @@ children so goal + vision in one sync works).`,
         report.selfHealed.length > 0
           ? ` Self-healed ${report.selfHealed.length} file(s) from a prior crashed run: ${report.selfHealed.slice(0, 3).join(", ")}${report.selfHealed.length > 3 ? ` (+${report.selfHealed.length - 3} more)` : ""}.`
           : "";
-      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Created remote: ${report.createdRemote}, Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}.${selfHealNote}${skippedNote}${transitionNote}`;
+      const droppedNote =
+        report.dropped.length > 0
+          ? ` Dropped unsyncable: ${report.dropped.slice(0, 5).join(", ")}${report.dropped.length > 5 ? ` (+${report.dropped.length - 5} more)` : ""}.`
+          : "";
+      const sanitizedNote =
+        report.sanitized.length > 0
+          ? ` Sanitized ${report.sanitized.length} file(s) (stripped invalid date sentinels): ${report.sanitized.slice(0, 3).join(", ")}${report.sanitized.length > 3 ? ` (+${report.sanitized.length - 3} more)` : ""}.`
+          : "";
+      return `NorthStar sync complete (${bootstrap ? "bootstrap" : "LWW"}). Created remote: ${report.createdRemote}, Pulled: ${report.pulled}, Pushed: ${report.pushed}, Deleted local: ${report.deletedLocal}, Deleted remote: ${report.deletedRemote}, Unchanged: ${report.unchanged}, Skipped: ${report.skipped}, Dropped: ${report.dropped.length}.${selfHealNote}${sanitizedNote}${droppedNote}${skippedNote}${transitionNote}`;
     } catch (err) {
       return JSON.stringify({
         error: `Sync failed: ${err instanceof Error ? err.message : err}`,

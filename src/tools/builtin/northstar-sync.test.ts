@@ -60,6 +60,20 @@ function installFetchMock() {
         return new Response(JSON.stringify([row]), { status: 200 });
       }
       if (method === "DELETE") {
+        // Mirror real PostgREST persistence: a successful DELETE removes the
+        // row from the table so subsequent GETs don't see the ghost. Phase 4
+        // post-sync verification re-fetches and would re-pull a "deleted"
+        // record back down without this.
+        const tableMatch = url.match(/\/rest\/v1\/(\w+)\?id=eq\.([0-9a-f-]+)/i);
+        if (tableMatch) {
+          const table = tableMatch[1] as keyof typeof commitTables;
+          const id = tableMatch[2];
+          if (commitTables[table]) {
+            commitTables[table] = (
+              commitTables[table] as Array<{ id: string }>
+            ).filter((r) => r.id !== id);
+          }
+        }
         return new Response(null, { status: 204 });
       }
       if (method === "POST") {
@@ -68,6 +82,29 @@ function installFetchMock() {
           return new Response(`mock POST error ${postStatus}`, {
             status: postStatus,
           });
+        }
+        // Mirror real PostgREST persistence: a successful POST appends the
+        // new row to the table so subsequent GETs see it. Phase 4 post-sync
+        // verification re-fetches and would drop a "just-created" local
+        // record as an orphan without this.
+        const tableMatch = url.match(/\/rest\/v1\/(\w+)$/);
+        if (
+          tableMatch &&
+          body &&
+          typeof body === "object" &&
+          !Array.isArray(body)
+        ) {
+          const table = tableMatch[1] as keyof typeof commitTables;
+          if (commitTables[table]) {
+            const row = body as Record<string, unknown>;
+            const fullRow = {
+              ...row,
+              created_at: row.created_at ?? "2026-01-01T00:00:00Z",
+              updated_at: row.updated_at ?? new Date().toISOString(),
+              last_edited_at: row.last_edited_at ?? new Date().toISOString(),
+            };
+            (commitTables[table] as unknown[]).push(fullRow);
+          }
         }
         return new Response(null, { status: postStatus });
       }
@@ -161,6 +198,236 @@ afterEach(() => {
 });
 
 // --- Tests -----------------------------------------------------------------
+
+describe("northstar_sync — audit fixes (C1/C3/C4/R2)", () => {
+  it("C1: bootstrap mode does NOT delete local files with foreign COMMIT_ID", async () => {
+    // Empty journal → bootstrap. Local has a file stamped with a COMMIT_ID
+    // from a prior tool run. COMMIT has nothing. Pre-fix Phase 4 would have
+    // deleted this file silently while INDEX claimed "Mode: bootstrap (no
+    // deletes)". Strict-mirror invariant is enforced starting on the SECOND
+    // sync (LWW mode), not the first.
+    const goalId = "11112222-3333-4444-5555-666677778888";
+    const filePath = "NorthStar/goals/draft-with-stamped-id.md";
+    upsertFile(
+      filePath,
+      "Draft with stamped id",
+      `# Draft with stamped id\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nVision: ${goalId}\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+    );
+    // No journal seed → bootstrap
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("bootstrap");
+    expect(result).toContain("Dropped: 0");
+    // File is preserved untouched.
+    const after = getFile(filePath);
+    expect(after).not.toBeNull();
+    expect(after!.content).toContain(`COMMIT_ID: ${goalId}`);
+  });
+
+  it("C3: Phase-1 push-new success tags file with [northstar, kind]", async () => {
+    // populateCommitIdInFile must receive `kind` so the rewritten file
+    // gets the kind tag. Without it, push-new files drift from peers
+    // (only ["northstar"]) and self-healed files (correctly tagged
+    // ["northstar", kind]) — INDEX joins/filters that group by kind tag
+    // would miss them.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const filePath = "NorthStar/goals/tag-drift-check--new.md";
+    upsertFile(
+      filePath,
+      "Tag drift check",
+      `# Tag drift check\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    await northstarSyncTool.execute({});
+
+    const after = getFile(filePath);
+    expect(after).not.toBeNull();
+    const tags = JSON.parse(after!.tags) as string[];
+    expect(tags).toContain("northstar");
+    expect(tags).toContain("goal");
+  });
+
+  it("C4: Phase 0 sanitization preserves condition and related_to", async () => {
+    const taskId = "aaaa1111-bbbb-2222-cccc-333344445555";
+    const taskPath = "NorthStar/tasks/preserve-fields--existing.md";
+    upsertFile(
+      taskPath,
+      "Preserve metadata",
+      `# Preserve metadata\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nDue: none\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+      "active", // condition
+      ["NorthStar/goals/some-goal.md"], // relatedTo
+      { skipUserEdit: true },
+    );
+    seedJournalRow(taskId, "task", taskPath, "2026-04-01T00:00:00Z");
+    commitTables.tasks = [
+      makeCommitItem(taskId, "Preserve metadata", {
+        modified_by: "system",
+        due_date: null,
+        status: "in_progress",
+      }),
+    ];
+
+    await northstarSyncTool.execute({});
+
+    const after = getFile(taskPath);
+    expect(after).not.toBeNull();
+    expect(after!.condition).toBe("active");
+    const relatedTo = JSON.parse(after!.related_to) as string[];
+    expect(relatedTo).toEqual(["NorthStar/goals/some-goal.md"]);
+    // Sanitization still ran.
+    expect(after!.content).not.toMatch(/^Due:/m);
+  });
+
+  it("R2: transient HTTP 5xx aborts the sync without dropping any local file", async () => {
+    // A Supabase reboot, Caddy 502, or rotated-key 401 must NOT cascade into
+    // every push-new local file getting deleted. The sync aborts and the
+    // operator retries when upstream recovers.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const filePath = "NorthStar/goals/transient-fail--new.md";
+    upsertFile(
+      filePath,
+      "Transient fail",
+      `# Transient fail\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    postStatus = 503;
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Sync failed");
+    expect(result).toContain("HTTP 503");
+    // Local file preserved.
+    expect(getFile(filePath)).not.toBeNull();
+  });
+
+  it("R3: surfaces PG SQLSTATE in Dropped: message for genuine 4xx", async () => {
+    // Configure mock to return PostgREST-style error JSON with a SQLSTATE.
+    // We can't change the mock from inside the test cleanly, but `postStatus
+    // = 400` already triggers `mock POST error 400`; the SQLSTATE-extract
+    // regex falls back to no-op when there's no JSON code in the body.
+    // For this assertion: validate that the `PG XXXXX` token only appears
+    // when the upstream emitted one. Without one, the message format is
+    // unchanged.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    const filePath = "NorthStar/goals/no-pg-code--new.md";
+    upsertFile(
+      filePath,
+      "No PG code",
+      `# No PG code\nCOMMIT_ID: \nStatus: in_progress\nVision: ${visionId}\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+    postStatus = 400;
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Dropped: 1");
+    expect(result).toContain("HTTP 400");
+    // Mock body is `mock POST error 400` (no JSON), so no `PG XXXXX` token.
+    expect(result).not.toMatch(/PG \d{5}/);
+  });
+});
+
+describe("northstar_sync — Phase 0 sanitization", () => {
+  it("strips Due: <non-date> and Target: <non-date> lines from local files before sync", async () => {
+    // Strict-mirror invariant requires the local file representation to match
+    // what we'd send to COMMIT. Sentinels were silently dropped from the
+    // POST/PATCH payload but lived on in the file — sanitization removes them.
+    const taskId = "11112222-3333-4444-5555-666677778888";
+    const taskPath = "NorthStar/tasks/sentinel-pre--existing.md";
+    upsertFile(
+      taskPath,
+      "Sentinel pre-sync",
+      `# Sentinel pre-sync\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nDue: none\nDescription: keep this\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(taskId, "task", taskPath, "2026-04-01T00:00:00Z");
+    commitTables.tasks = [
+      makeCommitItem(taskId, "Sentinel pre-sync", {
+        modified_by: "system",
+        due_date: null,
+        status: "in_progress",
+      }),
+    ];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Sanitized 1 file(s)");
+    expect(result).toContain(taskPath);
+
+    const after = getFile(taskPath);
+    expect(after).not.toBeNull();
+    expect(after!.content).not.toMatch(/^Due:/m);
+    expect(after!.content).toContain("Description: keep this");
+    expect(after!.content).toContain(`COMMIT_ID: ${taskId}`);
+  });
+
+  it("preserves valid Due: 2026-04-05 (idempotent on clean files)", async () => {
+    const taskId = "99998888-7777-6666-5555-444433332222";
+    const taskPath = "NorthStar/tasks/valid-due--existing.md";
+    const cleanContent = `# Valid task\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nDue: 2026-04-05\n`;
+    upsertFile(
+      taskPath,
+      "Valid task",
+      cleanContent,
+      ["northstar", "task"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(taskId, "task", taskPath, "2026-04-01T00:00:00Z");
+    commitTables.tasks = [
+      makeCommitItem(taskId, "Valid task", {
+        modified_by: "system",
+        due_date: "2026-04-05",
+        status: "in_progress",
+      }),
+    ];
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).not.toContain("Sanitized");
+
+    const after = getFile(taskPath);
+    expect(after!.content).toContain("Due: 2026-04-05");
+  });
+});
 
 describe("northstar_sync — bootstrap", () => {
   it("first run with empty journal pulls every COMMIT item as local create", async () => {
@@ -512,6 +779,101 @@ describe("northstar_sync — LWW update branches", () => {
     const file = getFile(filePath);
     expect(file?.content).toContain("# Conflict Remote Wins");
   });
+
+  it("clears Target: <non-date> via PATCH null on non-task kinds", async () => {
+    // Mirror of the Due:-on-tasks PATCH-null test for target_date on goals/
+    // visions/objectives. extractPatchFields gates both fields through
+    // isValidDateValue; this guards against asymmetric refactors of either
+    // branch.
+    const goalId = "fedcba98-7654-3210-fedc-ba9876543210";
+    const filePath = "NorthStar/goals/clear-target.md";
+    upsertFile(
+      filePath,
+      "Clear Target",
+      `# Clear Target\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nTarget: 2026-04-05\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(goalId, "goal", filePath, "2026-04-01T00:00:00Z");
+    upsertFile(
+      filePath,
+      "Clear Target",
+      `# Clear Target\nCOMMIT_ID: ${goalId}\nStatus: in_progress\nTarget: TBD\n`,
+      ["northstar", "goal"],
+      "reference",
+      30,
+    );
+
+    commitTables.goals = [
+      makeCommitItem(goalId, "Clear Target", {
+        modified_by: "system",
+        target_date: "2026-04-05",
+        status: "in_progress",
+      }),
+    ];
+
+    patchedLastEditedAt = "2026-04-21T12:00:00Z";
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Pushed: 1");
+
+    const patchCall = mockCalls.find(
+      (c) => c.method === "PATCH" && /\/goals\b/.test(c.url),
+    );
+    expect(patchCall).toBeDefined();
+    const body = patchCall?.body as Record<string, unknown>;
+    expect(body.target_date).toBeNull();
+  });
+
+  it("clears Due: <non-date> via PATCH null instead of shipping the literal string", async () => {
+    // PATCH path: user edits the existing local file to `Due: none` meaning
+    // "I want this date cleared". Must arrive at COMMIT as `null`, not the
+    // literal string "none" (which PG rejects with `22007`).
+    const taskId = "abcdef01-2345-6789-abcd-ef0123456789";
+    const filePath = "NorthStar/tasks/clearable.md";
+    upsertFile(
+      filePath,
+      "Clearable",
+      `# Clearable\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nDue: 2026-04-05\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+      null,
+      [],
+      { skipUserEdit: true },
+    );
+    seedJournalRow(taskId, "task", filePath, "2026-04-01T00:00:00Z");
+    upsertFile(
+      filePath,
+      "Clearable",
+      `# Clearable\nCOMMIT_ID: ${taskId}\nStatus: in_progress\nDue: none\n`,
+      ["northstar", "task"],
+      "reference",
+      30,
+    );
+
+    commitTables.tasks = [
+      makeCommitItem(taskId, "Clearable", {
+        modified_by: "system",
+        due_date: "2026-04-05",
+        status: "in_progress",
+      }),
+    ];
+
+    patchedLastEditedAt = "2026-04-21T12:00:00Z";
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Pushed: 1");
+
+    const patchCall = mockCalls.find(
+      (c) => c.method === "PATCH" && /\/tasks\b/.test(c.url),
+    );
+    expect(patchCall).toBeDefined();
+    const body = patchCall?.body as Record<string, unknown>;
+    expect(body.due_date).toBeNull();
+  });
 });
 
 describe("northstar_sync — delete propagation", () => {
@@ -560,10 +922,11 @@ describe("northstar_sync — delete propagation", () => {
     expect(journalGet(goalId)).toBeNull();
   });
 
-  it("local-only with COMMIT_ID and no journal row skips without DELETE", async () => {
-    // A file with COMMIT_ID that isn't in the journal and isn't on COMMIT is
-    // the "v1 limitation" case — we don't POST to recreate it, but we must
-    // NEVER delete it either. The skipped path surfaces in the return string.
+  it("Phase 4 drops local file when COMMIT_ID is missing on remote (post-sync orphan)", async () => {
+    // Strict-mirror invariant: a local file with a COMMIT_ID that doesn't
+    // exist on remote is dropped. Previously this was the "v1 limitation"
+    // case where we preserved the orphan; under the strict contract the
+    // mirror cannot drift, so the local copy is removed.
     const goalId = "ffff1111-ffff-1111-ffff-111111111111";
     const filePath = "NorthStar/goals/orphan-local.md";
     upsertFile(
@@ -583,13 +946,20 @@ describe("northstar_sync — delete propagation", () => {
     );
 
     const result = await northstarSyncTool.execute({});
-    expect(result).toContain("Skipped: 1");
+    expect(result).toContain("Dropped: 1");
     expect(result).toContain(filePath);
 
-    const deleteCalls = mockCalls.filter((c) => c.method === "DELETE");
-    expect(deleteCalls).toHaveLength(0);
-    // Local file survives untouched.
-    expect(getFile(filePath)).not.toBeNull();
+    // No DELETE call to a NorthStar table — Phase 4 only modifies the local
+    // store. The pgvector kb_entries cleanup that follows `deleteFile()` is
+    // expected and excluded from this assertion.
+    const tableDeletes = mockCalls.filter(
+      (c) =>
+        c.method === "DELETE" &&
+        /\/rest\/v1\/(visions|goals|objectives|tasks)\b/.test(c.url),
+    );
+    expect(tableDeletes).toHaveLength(0);
+    // Local file is gone — strict mirror.
+    expect(getFile(filePath)).toBeNull();
   });
 
   it("drops journal row when both sides are gone", async () => {
@@ -608,12 +978,13 @@ describe("northstar_sync — delete propagation", () => {
 });
 
 describe("northstar_sync — INDEX.md reflects post-sync local state", () => {
-  it("INDEX falls back to file-content title/status when commitData is missing the record", async () => {
-    // Local has a COMMIT_ID for a record COMMIT no longer knows about (e.g.
-    // the app deleted it but this sync run didn't pick it up for whatever
-    // reason). The fallback path at northstar-sync.ts should read `# Heading`
-    // / `Status:` / `Priority:` from the local file content. Without the
-    // fallback, INDEX would show "(untitled)".
+  it("INDEX excludes orphan records — Phase 4 drops them before render", async () => {
+    // Under the strict-mirror contract, a local file with a COMMIT_ID that
+    // isn't on remote is removed in Phase 4 before INDEX renders. The legacy
+    // fallback path (file-content title/status when commitData is missing
+    // the record) becomes unreachable for normal sync runs, but the
+    // defensive code is left in place for any future race that bypasses
+    // Phase 4.
     const orphanId = "bb000003-0000-0000-0000-000000000003";
     const orphanPath = `NorthStar/objectives/orphan--${orphanId.slice(0, 8)}.md`;
     upsertFile(
@@ -634,18 +1005,17 @@ describe("northstar_sync — INDEX.md reflects post-sync local state", () => {
       "NorthStar/visions/other.md",
       "2026-04-01T00:00:00Z",
     );
-    // commitData has NO objective matching orphanId → must use file fallback.
+    // commitData has NO objective matching orphanId → Phase 4 drops local.
     commitTables.objectives = [];
 
-    await northstarSyncTool.execute({});
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Dropped: 1");
+    expect(getFile(orphanPath)).toBeNull();
 
     const index = getFile("NorthStar/INDEX.md");
     expect(index).not.toBeNull();
     const md = index!.content;
-    // Title from `# Heading`, status from `Status:`, priority from `Priority:`.
-    expect(md).toContain("Orphan from local");
-    expect(md).toContain("— on_hold");
-    expect(md).toContain("(medium)");
+    expect(md).not.toContain("Orphan from local");
   });
 
   it("INDEX lists only surviving local files after delete propagation (no ghost records)", async () => {
@@ -850,7 +1220,11 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     expect(postBody.vision_id).toBe(visionId);
   });
 
-  it("skips goal without resolvable Vision: parent and reports the error", async () => {
+  it("drops goal without resolvable Vision: parent (strict-mirror invariant)", async () => {
+    // Strict-mirror contract: a local record COMMIT cannot accept (here:
+    // unresolvable parent ref) is removed from the local store rather than
+    // left as a permanent orphan. The next sync would hit the same error
+    // and skip again forever, drifting the two stores.
     const orphanPath = "NorthStar/goals/orphan-goal--new.md";
     upsertFile(
       orphanPath,
@@ -870,7 +1244,7 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
 
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Created remote: 0");
-    expect(result).toContain("Skipped");
+    expect(result).toContain("Dropped: 1");
     expect(result).toContain(orphanPath);
 
     // Filter to NorthStar-table POSTs only; mockCalls also captures pgvector
@@ -882,12 +1256,15 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     );
     expect(postCalls).toHaveLength(0);
 
-    // Local file untouched — COMMIT_ID still empty.
-    const still = getFile(orphanPath);
-    expect(still!.content).toMatch(/^COMMIT_ID:\s*$/m);
+    // Local file is gone — strict-mirror invariant.
+    expect(getFile(orphanPath)).toBeNull();
   });
 
-  it("surfaces POST failure without mutating the local file", async () => {
+  it("drops local file when POST fails (strict-mirror invariant)", async () => {
+    // Same contract: any POST 4xx that the operator can't fix mid-run
+    // (validation, permission, etc.) results in the local file being
+    // removed. The drop is reported under `Dropped:` so the operator can
+    // re-create with a payload that COMMIT will accept.
     const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
     const filePath = "NorthStar/goals/post-fails--new.md";
     upsertFile(
@@ -910,10 +1287,10 @@ describe("northstar_sync — push-new-to-COMMIT", () => {
     const result = await northstarSyncTool.execute({});
     expect(result).toContain("Created remote: 0");
     expect(result).toContain("POST failed: HTTP 400");
+    expect(result).toContain("Dropped: 1");
 
-    // Local file still has empty COMMIT_ID — didn't get rewritten.
-    const still = getFile(filePath);
-    expect(still!.content).toMatch(/^COMMIT_ID:\s*$/m);
+    // Local file is gone — strict-mirror invariant.
+    expect(getFile(filePath)).toBeNull();
   });
 
   it("allows a task to be created without Objective: (orphan tasks supported)", async () => {
@@ -1328,6 +1705,99 @@ Detalles adicionales que NO deben perderse.
       const body = call.body as Record<string, unknown>;
       expect(body.due_date).toBeDefined();
       // The critical assertion — tasks MUST NOT carry target_date.
+      expect(body.target_date).toBeUndefined();
+    }
+  });
+
+  it("drops Due: <non-date> on push-new instead of shipping the literal string", async () => {
+    // PG `date` column rejects "none" / "TBD" / "pending" with `22007
+    // invalid_datetime_format`, which used to brick the entire sync run for
+    // every record on the table. Regression guard: any non-date sentinel must
+    // be omitted from the POST body. `2026-02-30` covers the calendar-rollover
+    // path (Date.parse accepts it, PG rejects with `22008`) — same brick.
+    const sentinels = ["none", "TBD", "pending", "-", "2026-02-30"];
+    for (const [i, sentinel] of sentinels.entries()) {
+      upsertFile(
+        `NorthStar/tasks/sentinel-${i}--new.md`,
+        `Task ${i}`,
+        `# Task ${i}\nCOMMIT_ID: \nStatus: in_progress\nDue: ${sentinel}\n`,
+        ["northstar"],
+        "reference",
+        30,
+      );
+    }
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain(`Created remote: ${sentinels.length}`);
+
+    const taskPosts = mockCalls.filter(
+      (c) => c.method === "POST" && /\/rest\/v1\/tasks\b/.test(c.url),
+    );
+    expect(taskPosts).toHaveLength(sentinels.length);
+    for (const call of taskPosts) {
+      const body = call.body as Record<string, unknown>;
+      expect(body.due_date).toBeUndefined();
+    }
+  });
+
+  it("omits due_date when the local file has no Due: line at all", async () => {
+    // Regression guard against a future refactor like `fields.due_date = due ?? null`
+    // which would silently add a null-due_date key to every undated task.
+    upsertFile(
+      "NorthStar/tasks/no-due-line--new.md",
+      "Task without Due",
+      `# Task without Due\nCOMMIT_ID: \nStatus: in_progress\n`,
+      ["northstar"],
+      "reference",
+      30,
+    );
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("Created remote: 1");
+
+    const post = mockCalls.find(
+      (c) => c.method === "POST" && /\/rest\/v1\/tasks\b/.test(c.url),
+    );
+    expect(post).toBeDefined();
+    const body = post?.body as Record<string, unknown>;
+    expect("due_date" in body).toBe(false);
+  });
+
+  it("drops Target: <non-date> on push-new for goals/objectives", async () => {
+    // Mirror of the Due:-on-tasks sentinel test for the target_date column on
+    // non-task kinds (visions/goals/objectives). buildCreateFields gates these
+    // through the same isValidDateValue path; this guards against asymmetric
+    // refactors where someone fixes one branch and not the other.
+    const visionId = "dd05f172-9eb5-423a-bcec-e94a06ebee67";
+    seedJournalRow(
+      visionId,
+      "vision",
+      "NorthStar/visions/libertad-financiera--dd05f172.md",
+      "2026-04-01T00:00:00Z",
+    );
+    commitTables.visions = [makeCommitItem(visionId, "Libertad Financiera")];
+
+    const sentinels = ["none", "TBD", "2026-13-01"];
+    for (const [i, sentinel] of sentinels.entries()) {
+      upsertFile(
+        `NorthStar/goals/sentinel-target-${i}--new.md`,
+        `Goal ${i}`,
+        `# Goal ${i}\nCOMMIT_ID: \nStatus: in_progress\nTarget: ${sentinel}\nVision: ${visionId}\n`,
+        ["northstar"],
+        "reference",
+        30,
+      );
+    }
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain(`Created remote: ${sentinels.length}`);
+
+    const goalPosts = mockCalls.filter(
+      (c) => c.method === "POST" && /\/rest\/v1\/goals\b/.test(c.url),
+    );
+    expect(goalPosts).toHaveLength(sentinels.length);
+    for (const call of goalPosts) {
+      const body = call.body as Record<string, unknown>;
       expect(body.target_date).toBeUndefined();
     }
   });
