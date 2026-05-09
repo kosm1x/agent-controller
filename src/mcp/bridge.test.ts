@@ -136,6 +136,62 @@ describe("createMcpTool", () => {
   });
 
   // -------------------------------------------------------------------------
+  // v7.6 Spine 4 W4 — name-pattern annotation override propagation
+  // -------------------------------------------------------------------------
+
+  describe("MCP-tool annotation propagation (Spine 4 W4)", () => {
+    const callFn: McpCallFn = vi.fn();
+
+    it("propagates read-only hints from name-pattern lookup", () => {
+      // xpoz_get_* prefix → READ_ONLY in annotations.ts
+      const tool = createMcpTool(
+        "xpoz",
+        { name: "xpoz_get_digest", description: "Get digest" },
+        callFn,
+      );
+      expect(tool.readOnlyHint).toBe(true);
+      expect(tool.destructiveHint).toBe(false);
+      expect(tool.idempotentHint).toBe(true);
+      expect(tool.openWorldHint).toBe(true);
+    });
+
+    it("propagates destructive hints for trigger-class verbs", () => {
+      const tool = createMcpTool(
+        "xpoz",
+        { name: "xpoz_trigger_run", description: "Trigger run" },
+        callFn,
+      );
+      expect(tool.destructiveHint).toBe(true);
+    });
+
+    it("propagates write-class hints for browser interaction verbs", () => {
+      const tool = createMcpTool(
+        "browser",
+        { name: "click", description: "Click element" },
+        callFn,
+      );
+      expect(tool.readOnlyHint).toBe(false);
+      expect(tool.destructiveHint).toBe(false);
+      expect(tool.idempotentHint).toBe(false);
+    });
+
+    it("leaves hints undefined for unmatched tool names (preserves caller defaults)", () => {
+      // Unknown tool — getMcpToolHints returns undefined; the bridge
+      // should not stamp any of the four hints, so getToolAnnotations'
+      // conservative-unknown defaults remain (destructive: true).
+      const tool = createMcpTool(
+        "novel-server",
+        { name: "novel_unknown_verb", description: "?" },
+        callFn,
+      );
+      expect(tool.readOnlyHint).toBeUndefined();
+      expect(tool.destructiveHint).toBeUndefined();
+      expect(tool.idempotentHint).toBeUndefined();
+      expect(tool.openWorldHint).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // v7.6.1 — SSRF defense at MCP bridge boundary
   // -------------------------------------------------------------------------
 

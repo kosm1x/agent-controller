@@ -11,6 +11,7 @@ import type { McpConfig, McpServerConfig } from "./types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
 import { createMcpTool } from "./bridge.js";
 import type { McpCallResult } from "./bridge.js";
+import { getMcpToolHints } from "./annotations.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 
@@ -171,6 +172,7 @@ export class McpManager {
 
     // Register each tool in the global registry
     const deferSet = new Set(config.deferredTools ?? []);
+    const unannotatedTools: string[] = [];
     for (const mcpTool of tools) {
       const tool = createMcpTool(
         serverId,
@@ -184,12 +186,29 @@ export class McpManager {
       );
       registry.register(tool);
       toolNames.push(tool.name);
+      // v7.6 Spine 4 W4 audit W3 (2026-05-09): track tools whose names
+      // didn't match any pattern in `getMcpToolHints`. They register with
+      // undefined hints, which collapses to conservative-unknown defaults
+      // (destructive: true) — re-polluting the very metric this fix
+      // closes. Surfacing the gap at startup lets operators see which
+      // verbs need to be added to the lookup.
+      if (
+        tool.readOnlyHint === undefined &&
+        tool.destructiveHint === undefined
+      ) {
+        unannotatedTools.push(tool.name);
+      }
     }
 
     this.servers.set(serverId, { client, transport, toolNames });
     console.log(
       `[mcp] ${serverId}: connected, ${tools.length} tools (${toolNames.join(", ")})`,
     );
+    if (unannotatedTools.length > 0) {
+      console.warn(
+        `[mcp] ${serverId}: ${unannotatedTools.length} tool(s) without hint overrides — will fall back to conservative-destructive defaults: ${unannotatedTools.join(", ")}`,
+      );
+    }
 
     return { toolCount: tools.length };
   }
@@ -211,9 +230,26 @@ export class McpManager {
       const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${toolDef.name}`;
       // Tag proxy tools so we can detect self-referencing after activation
       const proxyMarker = Symbol("lazy-proxy");
+      // v7.6 Spine 4 W4 (shipped 2026-05-09): apply name-pattern hint
+      // overrides to lazy proxies too, so the deferred-catalog view sees
+      // the same hint cohort as eager tools. Without this, lazy tools
+      // would default to destructive even after the bridge gets
+      // activated. INVARIANT: this lookup must produce the same result
+      // as `createMcpTool`'s lookup at activation time (bridge.ts:60),
+      // since both pass the same namespaced name to `getMcpToolHints`.
+      // If a future split-lookup is introduced, both call sites must
+      // remain in agreement or the proxy and post-activation tool will
+      // disagree on hints — surface as a regression test before splitting.
+      const hints = getMcpToolHints(namespacedName);
       const tool: Tool = {
         name: namespacedName,
         deferred: deferSet.has(toolDef.name),
+        ...(hints && {
+          readOnlyHint: hints.readOnlyHint,
+          destructiveHint: hints.destructiveHint,
+          idempotentHint: hints.idempotentHint,
+          openWorldHint: hints.openWorldHint,
+        }),
         definition: {
           type: "function",
           function: {

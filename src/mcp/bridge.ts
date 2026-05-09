@@ -8,6 +8,7 @@
 import type { Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
 import { validateArgsUrls } from "../lib/url-safety.js";
+import { getMcpToolHints } from "./annotations.js";
 
 /** MCP tool info as returned by client.listTools(). */
 export interface McpToolInfo {
@@ -58,9 +59,23 @@ export function createMcpTool(
 ): Tool {
   const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${mcpTool.name}`;
 
+  // v7.6 Spine 4 W4 (shipped 2026-05-09): hint override by name pattern.
+  // MCP servers don't currently ship hints with their tool schemas, so
+  // every MCP-registered tool would otherwise fall back to
+  // getToolAnnotations defaults (destructive: true) — polluting the
+  // destructive-cohort metric mc-ctl audit-claim reports. When upstream
+  // servers begin supplying hints, prefer those over our pattern lookup.
+  const hints = getMcpToolHints(namespacedName);
+
   return {
     name: namespacedName,
     deferred,
+    ...(hints && {
+      readOnlyHint: hints.readOnlyHint,
+      destructiveHint: hints.destructiveHint,
+      idempotentHint: hints.idempotentHint,
+      openWorldHint: hints.openWorldHint,
+    }),
     definition: {
       type: "function",
       function: {
