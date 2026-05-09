@@ -1056,9 +1056,12 @@ describe("northstar_sync — INDEX.md reflects post-sync local state", () => {
     const md = index!.content;
     expect(md).toContain("Keep me");
     expect(md).not.toContain("Deleted should not appear in INDEX");
-    // The Goals heading reports the LOCAL count (1), not the pre-sync
-    // commit count (2).
-    expect(md).toMatch(/## Goals \(1\)/);
+    // 2026-05-09 friction-pickup #3: format is now compass narrative.
+    // The "Keep me" goal has no parent vision_id, so it lands in the
+    // orphan footer block. Footer total still reflects local count.
+    expect(md).toContain("# NorthStar — La Brújula");
+    expect(md).toContain("## Sin parent");
+    expect(md).toMatch(/\*\*Meta\*\*: \[Keep me\]/);
     expect(md).toContain("Local records: 1");
   });
 });

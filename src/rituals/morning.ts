@@ -15,22 +15,27 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call jarvis_file_read to read NorthStar/ files and get today's full context (visions, goals, objectives, tasks).
-2. Review the vision and active goals to frame the day strategically.
-3. Analyze pending tasks and classify each using the Eisenhower matrix:
+NorthStar is the **compass** (intent: visions, goals, objectives, recurring rhythms).
+Project KB tree is the **execution surface** (in-flight project work). Read both;
+NorthStar tells you *where Fede is heading*, projects tell you *what's moving today*.
+
+1. Read NorthStar/INDEX.md (compass narrative — already in your context) for today's intent framing: active visions, goals, objectives, and recurring tasks.
+2. Call project_list to see active projects. For projects with imminent milestones or active sprints, call jarvis_file_read on projects/<slug>/README.md to surface execution-level priorities. Cap project drill-downs at 3 to keep budget tight.
+3. Review the vision and active goals to frame the day strategically.
+4. Analyze pending NorthStar tasks (recurring rhythms) AND project-level deliverables; classify each using the Eisenhower matrix:
    - CRITICAL: Urgent + Important (do first)
    - URGENT: Urgent + Not as important (do second or delegate)
    - IMPORTANT: Not urgent + Important (schedule time blocks)
    - DELEGABLE: Not urgent + Not important (defer or drop)
    Use these signals: due_date proximity, priority field, whether the task blocks other tasks, and alignment with active goals.
-4. Check recurring tasks that need completion today.
-5. Identify the top 3 tasks that would make today a win.
-6. If any tasks have overdue due_dates, flag them prominently.
-7. If any goals have no active objectives or tasks, flag the gap.
-8. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
-9. Call intel_query with hours=12 to get overnight signal intelligence from the depot. Call intel_alert_history with hours=12 to check for any FLASH or PRIORITY alerts. Include a "📡 Señales del Depot" section with the top deltas and any active alerts.
-10. Call learner_model_status with filter="due" to check concepts that are due for spaced-repetition review today. If the count is > 0, include a "📚 Repaso de hoy" section listing up to 5 concepts with a one-line nudge: "Responde 'quiz me on X' o 'explícame X de vuelta' para repasar." If count is 0, OMIT the section entirely (do not write "nothing due").
-11. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
+5. Check NorthStar recurring tasks that need completion today (the daily/weekly rhythms — pisos, pantalla en avión, etc.).
+6. Identify the top 3 actions that would make today a win — pull from BOTH NorthStar tasks AND active project deliverables.
+7. If any tasks have overdue due_dates, flag them prominently.
+8. If any goals have no active objectives or tasks, flag the gap. If any active project shows no recent progress (last commit / KB update >7d), flag it.
+9. Call memory_search with query "evolution" in bank "operational" to check for skill evolution insights from last night. If found, include a brief "Evolución del agente" section noting deactivated skills or tool pattern changes.
+10. Call intel_query with hours=12 to get overnight signal intelligence from the depot. Call intel_alert_history with hours=12 to check for any FLASH or PRIORITY alerts. Include a "📡 Señales del Depot" section with the top deltas and any active alerts.
+11. Call learner_model_status with filter="due" to check concepts that are due for spaced-repetition review today. If the count is > 0, include a "📚 Repaso de hoy" section listing up to 5 concepts with a one-line nudge: "Responde 'quiz me on X' o 'explícame X de vuelta' para repasar." If count is 0, OMIT the section entirely (do not write "nothing due").
+12. Send the briefing via gmail_send to fede@eurekamd.net with subject "Buenos días — ${dateLabel}".
 
 IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user's personal input.
 

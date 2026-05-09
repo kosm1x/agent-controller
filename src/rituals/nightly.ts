@@ -15,12 +15,17 @@ export function createNightlyClose(dateLabel: string): TaskSubmission {
 
 ## Instructions (BUDGET: max 8 tool calls)
 
-1. Read NorthStar/INDEX.md (already in your context) — scan for today's active tasks.
-2. Read ONLY the 3-5 tasks with today's due date or highest priority. Do NOT read all NorthStar files.
-3. For each: completed or pending? If pending, carry over to tomorrow.
-4. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
+NorthStar is the **compass** (recurring rhythms, intent). Projects are the
+**execution surface** (in-flight work). The close should report both: which
+compass-rhythms held today, and which project deliverables moved.
 
-CRITICAL: Do NOT read every NorthStar file. INDEX.md has the summary. Only drill into specific tasks if you need detail. Budget is 8 tool calls total.
+1. Read NorthStar/INDEX.md (already in your context) — scan for today's active tasks (recurring rhythms).
+2. Read ONLY the 3-5 NorthStar tasks with today's due date or highest priority. Do NOT read all NorthStar files.
+3. Call project_list to see active projects. If any deliverable was clearly worked on today (operator mentioned it, commits landed, KB updated), include it in the close.
+4. For each NorthStar task and surfaced project deliverable: completed or pending? If pending, carry over to tomorrow.
+5. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
+
+CRITICAL: Do NOT read every NorthStar file. INDEX.md has the summary. Do NOT drill into every project README. Surface only projects with visible activity today. Budget is 8 tool calls total.
 
 Do NOT write to the journal. Do NOT rebalance tasks — just report.
 
@@ -41,7 +46,12 @@ Do NOT write to the journal. Do NOT rebalance tasks — just report.
 
 [1 sentence reflection + streak if applicable]`,
     agentType: "fast",
-    tools: ["jarvis_file_read", "jarvis_file_list", "gmail_send"],
+    tools: [
+      "jarvis_file_read",
+      "jarvis_file_list",
+      "project_list",
+      "gmail_send",
+    ],
     requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

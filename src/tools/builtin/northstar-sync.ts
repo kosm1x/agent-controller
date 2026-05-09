@@ -24,6 +24,12 @@ import {
   listFiles,
 } from "../../db/jarvis-fs.js";
 import { getDatabase } from "../../db/index.js";
+import {
+  renderCompassIndex,
+  type IndexKind,
+  type IndexLocalEntry,
+  type IndexCommitItem,
+} from "./northstar-index.js";
 
 const BASE_URL = "https://db.mycommit.net/rest/v1";
 const USER_ID = "a8ad98e1-b9c6-4447-ab80-bac467835b3a";
@@ -1353,60 +1359,57 @@ GOTCHA: "Dropped: N" lists local files that COMMIT could not accept (validation 
       // any records this sync had just deleted on COMMIT still appeared in
       // the INDEX. User-visible symptom: "sync ignored my deletes" when in
       // fact the DELETEs fired correctly but INDEX showed stale ghosts.
-      const indexLines = ["# NorthStar — Hierarchy\n"];
+      //
+      // 2026-05-09 friction-pickup #3: format changed from flat per-kind list
+      // to compass narrative (vision → goal → objective → task tree, sorted
+      // by status). Renderer extracted to `northstar-index.ts` so it can be
+      // unit-tested independently of the sync's network/DB harness.
+      const indexLocals: Record<IndexKind, IndexLocalEntry[]> = {
+        vision: [],
+        goal: [],
+        objective: [],
+        task: [],
+      };
+      const indexCommits: Record<IndexKind, Map<string, IndexCommitItem>> = {
+        vision: new Map(),
+        goal: new Map(),
+        objective: new Map(),
+        task: new Map(),
+      };
       let totalListed = 0;
       for (const kind of KINDS) {
         const locals = enumerateLocal(kind);
-        const commitById = new Map(
-          commitData[KIND_TO_TABLE[kind]].map((c) => [c.id, c]),
-        );
-        // Single sort key per entry — mixed-mode (commit-backed + local-only)
-        // needs a consistent ordering, not a branch on commit presence that
-        // violates transitivity.
-        const sortKey = (entry: LocalEntry): string => {
-          const commit = commitById.get(entry.commitId);
-          return (
-            commit?.title ??
-            extractTitle(entry.content) ??
-            entry.path
-          ).toLowerCase();
-        };
-        const sorted = Array.from(locals.values()).sort((a, b) =>
-          sortKey(a).localeCompare(sortKey(b)),
-        );
-        indexLines.push(
-          `## ${KIND_TO_TABLE[kind].charAt(0).toUpperCase() + KIND_TO_TABLE[kind].slice(1)} (${sorted.length})`,
-        );
-        for (const entry of sorted) {
-          const commit = commitById.get(entry.commitId);
-          // Prefer commitData for title/status (authoritative when present);
-          // fall back to the file's `# Heading` / `Status:` / `Priority:`
-          // line when the local file has a COMMIT_ID that no longer exists
-          // on COMMIT (e.g. after an app-side delete that hasn't propagated
-          // yet). Empty-string commit values (not null/undefined) fall
-          // through to the file content by design — an empty remote field
-          // has no display value.
-          const title =
-            commit?.title ?? extractTitle(entry.content) ?? "(untitled)";
-          const status =
-            commit?.status ?? extractField(entry.content, "Status") ?? "";
-          const prio =
-            commit?.priority || extractField(entry.content, "Priority") || "";
-          indexLines.push(
-            `- [${title}](${entry.path})${status ? ` — ${status}` : ""}${prio ? ` (${prio})` : ""}`,
-          );
+        for (const entry of locals.values()) {
+          indexLocals[kind].push({
+            path: entry.path,
+            commitId: entry.commitId,
+            content: entry.content,
+          });
           totalListed++;
         }
-        indexLines.push("");
+        for (const c of commitData[KIND_TO_TABLE[kind]]) {
+          indexCommits[kind].set(c.id, {
+            id: c.id,
+            title: c.title,
+            status: c.status,
+            priority: c.priority ?? null,
+            vision_id: c.vision_id ?? null,
+            goal_id: c.goal_id ?? null,
+            objective_id: c.objective_id ?? null,
+          });
+        }
       }
-      indexLines.push(
-        `---\nLast sync: ${new Date().toISOString()}\nMode: ${bootstrap ? "bootstrap (no deletes)" : "LWW (deletes propagated)"}\nLocal records: ${totalListed}\nSource of truth: local NorthStar files (post-sync). Run northstar_sync to reconcile with db.mycommit.net.`,
-      );
+
+      const indexBody = renderCompassIndex(indexLocals, indexCommits, {
+        bootstrap,
+        totalListed,
+        syncedAt: new Date().toISOString(),
+      });
 
       upsertFile(
         "NorthStar/INDEX.md",
         "NorthStar Hierarchy",
-        indexLines.join("\n"),
+        indexBody,
         ["northstar", "index"],
         "reference",
         5,

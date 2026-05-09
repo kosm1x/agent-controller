@@ -66,9 +66,10 @@ export function createEvolutionLogEntry(dateLabel: string): TaskSubmission {
 
 ## Instructions
 
-1. Call jarvis_file_read to read NorthStar/ files and see today's final state (tasks, completions, streaks).
-2. Call memory_search with query "user interactions" in bank "jarvis" to recall today's interactions.
-3. Call memory_reflect with query "What patterns emerged in today's conversations? What did the user care about? What went well and what caused friction?" in bank "jarvis".
+1. Call jarvis_file_read on NorthStar/INDEX.md to see the compass state at end-of-day (visions, goals, objectives, recurring task rhythms).
+2. Call project_list to see active projects — execution-surface complement to the compass. If a project moved meaningfully today (operator engaged it, KB README touched), note it; do NOT drill into project READMEs unless one shows up repeatedly in interaction memory.
+3. Call memory_search with query "user interactions" in bank "jarvis" to recall today's interactions.
+4. Call memory_reflect with query "What patterns emerged in today's conversations? What did the user care about? What went well and what caused friction?" in bank "jarvis".
 
 ## What to write
 
@@ -108,6 +109,7 @@ If there were zero interactions today, still write an entry noting the quiet day
     agentType: "fast",
     tools: [
       "jarvis_file_read",
+      "project_list",
       "memory_search",
       "memory_reflect",
       "file_read",
