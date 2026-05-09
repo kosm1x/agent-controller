@@ -212,6 +212,16 @@ if [ -n "$P95" ]; then
   fi
 fi
 
+# --- Check 10: Disk soft-cap (alert-only forecasting) ---
+# Budget: 200 GB hard / 150 GB soft. Fires before Check 5 (90% / 174 GB) so the
+# operator gets a months-out heads-up to trim, not a panic alarm.
+DISK_USED_GB=$(df -BG / | tail -1 | awk '{print $3}' | tr -d 'G')
+if [ "$DISK_USED_GB" -ge 150 ]; then
+  TOP=$(du -sh /var/lib/docker /opt/supabase/backups /root/claude/mission-control/data 2>/dev/null | awk '{printf "%s=%s ", $2, $1}')
+  maybe_alert /var/lib/mc-watchdog-disk-soft-alert \
+    "Disk at ${DISK_USED_GB} GB (soft cap 150 / hard 200). Trim time. Top: ${TOP}"
+fi
+
 # --- Summary ---
 if [ ${#ACTIONS[@]} -eq 0 ]; then
   echo "$LOG_PREFIX OK: all checks passed"
