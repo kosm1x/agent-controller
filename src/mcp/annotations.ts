@@ -115,6 +115,22 @@ const READ_VERBS: ReadonlyArray<string> = [
 const READ_PREFIXES: ReadonlyArray<string> = ["xpoz_get_", "xpoz_list_"];
 
 /**
+ * Graphify-code server — read-only graph query tools. Added 2026-05-09
+ * after the W3 startup-warning surfaced them as unannotated. These
+ * answer "what does the codebase look like" queries (community
+ * detection, neighbor traversal, stats); none mutate the graph.
+ */
+const GRAPHIFY_READ_VERBS: ReadonlyArray<string> = [
+  "query_graph",
+  "get_node",
+  "get_neighbors",
+  "get_community",
+  "god_nodes",
+  "graph_stats",
+  "shortest_path",
+];
+
+/**
  * Write-class but reversible verbs — UI interactions, form fills,
  * navigation that mutate browser/session state but don't delete user
  * data. Not idempotent (a second click is not a no-op).
@@ -172,6 +188,7 @@ export function getMcpToolHints(
 
   if (DESTRUCTIVE_VERBS.includes(local)) return DESTRUCTIVE;
   if (READ_VERBS.includes(local)) return READ_ONLY;
+  if (GRAPHIFY_READ_VERBS.includes(local)) return READ_ONLY;
   if (WRITE_VERBS.includes(local)) return WRITE_NETWORKED;
   if (READ_PREFIXES.some((p) => local.startsWith(p))) return READ_ONLY;
 

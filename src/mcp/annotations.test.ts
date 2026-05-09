@@ -110,6 +110,26 @@ describe("getMcpToolHints — playwright server", () => {
   });
 });
 
+describe("getMcpToolHints — graphify-code graph query server", () => {
+  it.each([
+    "graphify-code__query_graph",
+    "graphify-code__get_node",
+    "graphify-code__get_neighbors",
+    "graphify-code__get_community",
+    "graphify-code__god_nodes",
+    "graphify-code__graph_stats",
+    "graphify-code__shortest_path",
+  ])("%s is read-only", (name) => {
+    const hints = getMcpToolHints(name);
+    expect(hints).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
+  });
+});
+
 describe("getMcpToolHints — fallback", () => {
   it("returns undefined for unmatched tool names", () => {
     expect(getMcpToolHints("unknown_server__some_random_tool")).toBeUndefined();
