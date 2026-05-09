@@ -56,8 +56,17 @@ export const TOKEN_BUDGET_FAST = int("TOKEN_BUDGET_FAST", 28_000);
 export const TOKEN_BUDGET_CODING = int("TOKEN_BUDGET_CODING", 70_000);
 /** Token budget for Playwright browser tasks (SPAs need more context). */
 export const TOKEN_BUDGET_BROWSER = int("TOKEN_BUDGET_BROWSER", 40_000);
-/** Max inference rounds for fast tasks. */
-export const MAX_ROUNDS_DEFAULT = int("MAX_ROUNDS_DEFAULT", 20);
+/** Max inference rounds for fast tasks.
+ *
+ * 2026-05-09 friction-pickup #2: bumped 20 → 30 after audit found 12 of 21
+ * `error_max_turns` incidents (2026-05-04 → 2026-05-09) terminated at exactly
+ * the 20-round default with mixed tool diversity (Pattern B in
+ * `docs/audit/friction-pickup-2026-05-09.md`). The 12-incident cluster sits at
+ * 20-26 rounds; 30 catches the long tail without doubling cost (cache
+ * amortization keeps marginal turn cost low). The 6 Pattern A incidents
+ * (bulk-throughput at 55 rounds) are NOT solved by this bump — they need
+ * batch tools, tracked as a separate follow-up. */
+export const MAX_ROUNDS_DEFAULT = int("MAX_ROUNDS_DEFAULT", 30);
 /** Max inference rounds for coding tasks (plan→code→test→iterate→commit→push→PR). */
 export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 55);
 /** Max inference rounds for Playwright browser tasks (navigate+snapshot+click cycles). */

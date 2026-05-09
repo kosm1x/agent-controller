@@ -1325,6 +1325,36 @@ describe("jarvis write tools (always-on since 2026-05-07)", () => {
     const tools = scope("Qué tienes en el KB sobre Rumi?");
     expect(tools).toContain("jarvis_file_write");
   });
+
+  // Friction-pickup #1 regression — 2026-05-04 → 2026-05-07 the operator hit
+  // 4 incidents where short Spanish confirmations after a write proposal
+  // ("Procede", "Dale", "hazlo", "Tenlo listo para el post 4") failed to
+  // produce a file write because the JARVIS_WRITE_TOOLS gate's narrow regex
+  // did not match the confirmation surface. Promotion to MISC_TOOLS resolved
+  // the class. These tests pin the contract: every documented trigger phrase
+  // must surface jarvis_file_write/update unconditionally, with NO prior-
+  // message context and NO scope-classifier signal. If a future commit re-
+  // gates these tools, this block fires loudly.
+
+  it.each([
+    "Procede",
+    "Procede.",
+    "Dale",
+    "Dale.",
+    "hazlo",
+    "Hazlo ya",
+    "Tenlo listo para el post 4",
+    "Se ve bien. Tenlo listo para el post 4",
+    "Adelante",
+    "Confirmado",
+  ])(
+    "friction-pickup #1: %j (no priors) includes jarvis_file_write",
+    (phrase) => {
+      const tools = scope(phrase);
+      expect(tools).toContain("jarvis_file_write");
+      expect(tools).toContain("jarvis_file_update");
+    },
+  );
 });
 
 // v7.7.2 audit fix — VALID_GROUPS in scope-classifier.ts must include
