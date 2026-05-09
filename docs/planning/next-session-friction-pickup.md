@@ -1,5 +1,11 @@
 # Next-Session Friction Pickup — 2026-05-08 → next session
 
+> ✅ **CLOSED 2026-05-09**. All three items shipped in a single session.
+> See `docs/audit/friction-pickup-2026-05-09.md` for the closure record.
+> Commits `6c0be55` (#1 + #2) and `edd9778` (#3 — operator-narrowed scope).
+> This brief is preserved as a reference artifact for the 4-decision-matrix
+> pattern that compressed #3's scope by ~80%.
+>
 > **Purpose**: After /compact, the next conversation MUST tackle these three unresolved friction items head-on. Distilled from the 2026-05-04 → 2026-05-07 evolution log. The strict-mirror sync work shipped today (`e78d71d`) closed the NorthStar↔COMMIT bricking; these three remain.
 >
 > **Authored**: 2026-05-08, end of strict-mirror sync session. Priority order is execution-ready — start with #1.
