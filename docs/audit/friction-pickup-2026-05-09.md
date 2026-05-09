@@ -93,31 +93,51 @@ The shell_exec×55 incidents (Williams Journal weekly) are a separate ergonomic 
 - 4 kinds in sync (`vision | goal | objective | task`); kind axis at `northstar-sync.ts:36,50,57,410-616`
 - Strict-mirror invariant means retiring tasks-on-COMMIT requires either: (a) excluding `task` from `KINDS[]` or (b) keeping the table but never reading it from NorthStar-side
 
-### 4 open spec decisions (operator-blocking)
+### 4 spec decisions — operator-confirmed 2026-05-09
 
-| #   | Decision                                                                                                       | Default if no input         | Hardest implication                                                                |
-| --- | -------------------------------------------------------------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
-| D1  | Task migration target path: `projects/<slug>/tasks/<task>.md`? Or a flat `tasks/` under each project's README? | per-project `tasks/` subdir | requires choosing slug-disambiguation rule for tasks not bound to a single project |
-| D2  | What stays in NorthStar/? Visions + goals + objectives only, or keep INDEX.md as the compass?                  | keep INDEX.md, drop tasks/  | INDEX must now read from KB project tree; renderer change                          |
-| D3  | Briefings (morning, nightly, evolution-log) — split intentions (NorthStar) from execution (KB)?                | split                       | 3 ritual prompts need editing in lockstep so context budget doesn't double         |
-| D4  | COMMIT tasks table — keep + sync-exclude, or drop entirely?                                                    | keep, sync-exclude          | dropping requires destructive migration; keeping leaves a stale-by-design column   |
+| #   | Decision                                                                                                       | Operator answer                                                 |
+| --- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| D1  | Task migration target path: `projects/<slug>/tasks/<task>.md`? Or a flat `tasks/` under each project's README? | **Tasks stay in `NorthStar/tasks/`** — no migration             |
+| D2  | What stays in NorthStar/? Visions + goals + objectives only, or keep INDEX.md as the compass?                  | **Keep current shape; rewrite INDEX.md as a compass narrative** |
+| D3  | Briefings (morning, nightly, evolution-log) — split intentions (NorthStar) from execution (KB)?                | **Yes — read both** (NorthStar=intent, projects=execution)      |
+| D4  | COMMIT tasks table — keep + sync-exclude, or drop entirely?                                                    | **Do nothing** — accept the existing system as-is               |
 
-### Recommended ordering once operator confirms
+The narrowed scope ships in **two surfaces** (commit `edd9778`, 2026-05-09):
 
-1. KB project structure design (target path + INDEX rendering rule)
-2. Backfill: copy current 117 task files from `NorthStar/tasks/` into the new layout (idempotent, additive)
-3. Sync rule: extend `KINDS` filter or `northstar-sync.ts` to skip `task` kind
-4. Ritual prompt updates (morning, nightly, evolution-log) — single commit, all 3 in lockstep
-5. INDEX.md renderer reads from KB project tree
-6. Cutover: stop writing to `NorthStar/tasks/`; remove path entry from sync map
-7. Post-cutover verification: morning briefing references KB-sourced execution; no task-class records appear in NorthStar after cutover
+1. **INDEX.md compass narrative** — extracted to `src/tools/builtin/northstar-index.ts` as a pure renderer over post-sync local entries + commit data. Walks vision → goal → objective → task tree, sorts by status (active first), captures parent-resolution failures in a `## Sin parent` footer. Replaces the flat `## Visions (2) … ## Tasks (4)` listing. 17 unit tests in `northstar-index.test.ts`.
 
-This sequence is approximately 3-5 medium-effort sessions (including 1 for spec lock and 1 for post-cutover regression). The entire migration is reversible if D4=keep+sync-exclude.
+2. **Ritual split** — `morning.ts`, `nightly.ts`, `evolution-log.ts` reframe NorthStar as the compass (intent + recurring rhythms) and the project KB tree as the execution surface. `project_list` added to nightly+evolution-log tool sets so they can surface execution-level activity alongside compass rhythms. Morning was already at 7 tools (deferral pre-active); nightly stayed at 4 (still skipDeferral); evolution-log crossed 6→7 (minor first-call schema-resolution cost on `shell_exec`).
 
-## Files Touched This Session (so far)
+D1 + D4 explicitly skipped per operator. The original migration plan (`projects/<slug>/tasks/`, 117-file backfill, sync filter, ritual lockstep, cutover, verification — 3-5 sessions) is **not happening**.
 
-| File                                       | Action | Δ                                                     |
-| ------------------------------------------ | ------ | ----------------------------------------------------- |
-| `src/messaging/scope.test.ts`              | MODIFY | +30 lines (10 regression cases for #1)                |
-| `src/config/constants.ts`                  | MODIFY | `MAX_ROUNDS_DEFAULT` 20→30 + 9-line rationale comment |
-| `docs/audit/friction-pickup-2026-05-09.md` | NEW    | this file                                             |
+### Audit findings — round 1 (no round 2 needed; bundle is small)
+
+qa-auditor surfaced 4 issues + 2 test gaps; all addressed in the same bundle:
+
+- **W1 (Critical)**: Markdown injection on user-typed titles ("FX trade [WIP]") — added 4-line `escMd()` helper applied at 10 render sites. 2 tests pin the contract.
+- **W2**: strict-mirror fallback could resurrect deleted records on partial Phase-4 failure — `unsynced` flag on `Display`, surfaced as `` `[unsynced]` `` tag. 1 test.
+- **W3**: status-line format drift between vision-heading / goal-heading / objective-bullet / task-bullet — extracted `metaSuffix()` helper, applied symmetrically across all 4 levels.
+- **W4**: tool-budget creep concern → verified non-blocking; morning was already at 7 tools (deferral was already active before my changes); nightly stays ≤6.
+- **W5/W6 test gaps**: orphan kind-ordering and cascading-orphan capture → 2 new tests pin these as operator-visible invariants.
+
+62/62 renderer + sync tests pass; 4592/4592 full suite pass.
+
+## Files Touched This Session
+
+| File                                        | Action | Δ                                                                   |
+| ------------------------------------------- | ------ | ------------------------------------------------------------------- |
+| `src/messaging/scope.test.ts`               | MODIFY | +30 lines (10 regression cases for #1)                              |
+| `src/config/constants.ts`                   | MODIFY | `MAX_ROUNDS_DEFAULT` 20→30 + 9-line rationale comment               |
+| `src/tools/builtin/northstar-index.ts`      | NEW    | ~270 lines (compass-narrative renderer + audit-driven hardening)    |
+| `src/tools/builtin/northstar-index.test.ts` | NEW    | ~270 lines (17 tests — hierarchy, orphan, escape, unsynced, format) |
+| `src/tools/builtin/northstar-sync.ts`       | MODIFY | INDEX-render block rewired to call `renderCompassIndex` (~70 lines) |
+| `src/tools/builtin/northstar-sync.test.ts`  | MODIFY | 1 test updated for new format (preserves all original assertions)   |
+| `src/rituals/morning.ts`                    | MODIFY | Prompt: NorthStar=intent, project_list=execution; 12 numbered steps |
+| `src/rituals/nightly.ts`                    | MODIFY | Prompt + tool: `project_list` added; surface project activity       |
+| `src/rituals/evolution-log.ts`              | MODIFY | Prompt + tool: `project_list` added; execution-surface complement   |
+| `docs/audit/friction-pickup-2026-05-09.md`  | NEW    | this file                                                           |
+
+**Commits**:
+
+- `6c0be55` — fix(friction): close #1 + #2; queue #3 for operator alignment
+- `edd9778` — feat(northstar): close friction-pickup #3 — compass narrative + ritual split
