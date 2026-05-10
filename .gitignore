@@ -19,6 +19,7 @@ logs/
 # Env backups (never commit — may contain secrets)
 .env.bak-*
 .env.bak.*
+.env.revert-bak.*
 
 # Session 101 audit cleanup: runtime-only artifacts
 .playwright-mcp/

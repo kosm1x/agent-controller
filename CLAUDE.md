@@ -117,6 +117,17 @@ After deploy, always verify:
 2. `journalctl -u mission-control --since '30 sec ago' --no-pager | tail -10` — check for startup errors
 3. Test at least one affected endpoint or trigger one affected workflow
 
+### Inference provider cutover & revert
+
+The inference adapter routes through the Anthropic Claude Agent SDK when `INFERENCE_PRIMARY_PROVIDER=claude-sdk` (current default since 2026-05-10) — Sonnet primary, Haiku fallback for `infer()`/`inferWithTools()` callers, Opus→Sonnet for Prometheus complex paths. CRM and the Hindsight container deliberately stay on Fireworks; vision and Whisper stay on Groq. Cutover memory: `feedback_anthropic_sdk_cutover_2026_05_10.md`.
+
+Two operational scripts maintain the cutover state:
+
+- `scripts/cutover-env-cleanup.sh` — apply or re-apply the cutover (comments OpenAI-compat env vars, flips provider to claude-sdk, disables HINDSIGHT_ENABLED).
+- `/RevertInference/revert-to-openai.sh` — emergency revert back to OpenAI-compat routing if the SDK becomes unavailable. See `/RevertInference/README.md`. Lives outside the repo because it manipulates a permission-protected `.env` and is rarely invoked.
+
+The two scripts are exact inverses; round-trip tests verify multi-cycle stability. Both honor `ENV_FILE` env override for testing against fixtures.
+
 ### tsx caching gotcha
 
 `tsx` caches compiled files in `/tmp/tsx-0/`. When live behavior doesn't match source code:
