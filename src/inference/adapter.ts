@@ -112,6 +112,15 @@ export interface InferenceResponse {
   };
   provider: string;
   latency_ms: number;
+  /**
+   * Actual model ID the inference layer invoked (e.g. "claude-sonnet-4-6",
+   * "claude-haiku-4-5-20251001", "claude-opus-4-7"). 2026-05-10 cutover:
+   * cost_ledger attribution must read this when present, otherwise SDK-mode
+   * Opus/Haiku traffic gets mislabeled as Sonnet by getModelFromTask().
+   * Populated by the claude-sdk shim from the SDK's terminal `model` field;
+   * undefined on the OpenAI path where the model is the request's model id.
+   */
+  model?: string;
 }
 
 export interface ToolExecutor {
@@ -735,6 +744,98 @@ async function parseSSEStream(
 // ---------------------------------------------------------------------------
 
 /**
+ * Claude Agent SDK path with Sonnet→Haiku fallback.
+ *
+ * Used when INFERENCE_PRIMARY_PROVIDER=claude-sdk to route all infer() callers
+ * through the SDK instead of the OpenAI-compat providers list. Sonnet is the
+ * default; on transient failure (circuit OPEN, surrogates, timeout, etc.) we
+ * retry once with Haiku. If both fail, the error bubbles to the caller.
+ *
+ * Per-model circuit breaker keys ('claude-sdk', 'claude-sdk-haiku') prevent
+ * Sonnet failures from poisoning the Haiku fallback.
+ */
+async function inferViaClaudeSdk(
+  request: InferenceRequest,
+  options: InferOptions | undefined,
+): Promise<InferenceResponse> {
+  const { queryClaudeSdkAsInfer, SONNET_MODEL_ID, HAIKU_MODEL_ID } =
+    await import("./claude-sdk.js");
+  try {
+    return await queryClaudeSdkAsInfer(request.messages, {
+      signal: options?.signal,
+      model: SONNET_MODEL_ID,
+    });
+  } catch (err) {
+    console.warn(
+      `[inference] claude-sdk Sonnet failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+    );
+    return await queryClaudeSdkAsInfer(request.messages, {
+      signal: options?.signal,
+      model: HAIKU_MODEL_ID,
+    });
+  }
+}
+
+/**
+ * Tool-calling counterpart to inferViaClaudeSdk. Same Sonnet→Haiku fallback
+ * pattern via queryClaudeSdkAsInferWithTools. Returns the synthetic message
+ * shape that downstream consumers expect.
+ *
+ * Options not forwarded under SDK mode (audit W6): `taskId` is irrelevant —
+ * provider metrics aren't recorded for SDK calls. `skipToolNudge` and
+ * `exemptAnalysisParalysis` are openai-path doom-loop guards; the SDK has
+ * its own internal turn-bound + abort handling that subsumes them. These
+ * options are accepted but no-ops on this code path by design.
+ */
+async function inferWithToolsViaClaudeSdk(
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  executor: ToolExecutor,
+  options: InferWithToolsOptions | undefined,
+): Promise<{
+  content: string;
+  messages: ChatMessage[];
+  totalUsage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+  };
+  toolRepairs: Array<{ original: string; repaired: string }>;
+  exitReason: string;
+  roundsCompleted: number;
+  contextPressure: number;
+  compactionApplied?: { level: CompactionLevel; removedCount: number };
+  /** SDK-reported model — populated under claude-sdk routing for cost_ledger. */
+  model?: string;
+}> {
+  const { queryClaudeSdkAsInferWithTools, SONNET_MODEL_ID, HAIKU_MODEL_ID } =
+    await import("./claude-sdk.js");
+  const passthrough = {
+    maxRounds: options?.maxRounds,
+    signal: options?.signal,
+    onTextChunk: options?.onTextChunk,
+    tokenBudget: options?.tokenBudget,
+    compressionContext: options?.compressionContext,
+    providerName: options?.providerName,
+  };
+  try {
+    return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
+      ...passthrough,
+      model: SONNET_MODEL_ID,
+    });
+  } catch (err) {
+    console.warn(
+      `[inference] claude-sdk Sonnet (with tools) failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+    );
+    return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
+      ...passthrough,
+      model: HAIKU_MODEL_ID,
+    });
+  }
+}
+
+/**
  * Send a single inference request with automatic failover.
  * Tries providers in priority order; retries on 429/5xx with exponential backoff.
  */
@@ -750,6 +851,18 @@ export async function infer(
 ): Promise<InferenceResponse> {
   const { onTextChunk, signal, providerName } = options ?? {};
   const config = getConfig();
+
+  // 2026-05-10: when claude-sdk is primary, route ALL infer() callers through
+  // the SDK with Sonnet→Haiku fallback. Prevents the silent Fireworks/Groq
+  // leak that occurred when callers (tool builtins, tuning loops, etc.) used
+  // infer() directly: providers list still contained OpenAI-compat entries
+  // even after operator nulled the env vars at file level. Reaches every
+  // caller, including those unaware of the SDK branch (fast-runner has its
+  // own SDK path; this covers the rest).
+  if (config.inferencePrimaryProvider === "claude-sdk") {
+    return inferViaClaudeSdk(request, options);
+  }
+
   const providers = loadProviders();
 
   // If providerName specified, try that provider first
@@ -1215,7 +1328,16 @@ export async function inferWithTools(
   roundsCompleted: number;
   contextPressure: number;
   compactionApplied?: { level: CompactionLevel; removedCount: number };
+  /** Surfaced under claude-sdk routing (2026-05-10) so callers can plumb
+   * actualModel into runner tokenUsage; undefined on the OpenAI HTTP path. */
+  model?: string;
 }> {
+  // 2026-05-10: claude-sdk primary → route through SDK with Sonnet→Haiku
+  // fallback. See inferViaClaudeSdk comment for rationale.
+  if (getConfig().inferencePrimaryProvider === "claude-sdk") {
+    return inferWithToolsViaClaudeSdk(messages, tools, executor, options);
+  }
+
   const maxRounds = options?.maxRounds ?? 10;
   const onTextChunk = options?.onTextChunk;
   const signal = options?.signal;

@@ -1664,6 +1664,15 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         tokenUsage: {
           promptTokens: result.totalUsage.prompt_tokens,
           completionTokens: result.totalUsage.completion_tokens,
+          ...(result.totalUsage.cache_read_tokens !== undefined && {
+            cacheReadTokens: result.totalUsage.cache_read_tokens,
+          }),
+          ...(result.totalUsage.cache_creation_tokens !== undefined && {
+            cacheCreationTokens: result.totalUsage.cache_creation_tokens,
+          }),
+          // 2026-05-10 cutover audit C1: actualModel from inferWithTools
+          // surfaces SDK-routed Haiku/Opus correctly; absent on OpenAI path.
+          ...(result.model !== undefined && { actualModel: result.model }),
         },
         durationMs: Date.now() - start,
       };

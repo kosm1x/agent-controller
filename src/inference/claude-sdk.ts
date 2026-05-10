@@ -142,15 +142,47 @@ export function buildMcpServer(toolNames: string[]) {
 // ---------------------------------------------------------------------------
 
 /**
- * Canonical Sonnet model ID for cost_ledger attribution.
+ * Canonical model IDs for cost_ledger attribution.
  *
  * The Claude Agent SDK auths via ~/.claude/.credentials.json and defaults to
  * claude-sonnet-4-6. The config's INFERENCE_PRIMARY_MODEL env var is unused
  * under provider='claude-sdk' (often stale qwen-era string), so every call
- * site that needs to record a model name for SDK-routed calls must use this
- * constant instead of cfg.inferencePrimaryModel.
+ * site that needs to record a model name for SDK-routed calls must use these
+ * constants instead of cfg.inferencePrimaryModel.
+ *
+ * 2026-05-10: HAIKU_MODEL_ID and OPUS_MODEL_ID added for the operator-directed
+ * cutover off Fireworks/Groq. Haiku replaces the OpenAI-compat fallback chain;
+ * Opus is reserved for Prometheus complex paths (planner/executor/reflector).
  */
 export const SONNET_MODEL_ID = "claude-sonnet-4-6";
+export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
+export const OPUS_MODEL_ID = "claude-opus-4-7";
+
+/**
+ * Opus→Sonnet fallback wrapper for Prometheus complex paths.
+ *
+ * Heavy/swarm tasks call planner/executor/reflector with Opus, but Opus access
+ * is plan-gated and can return 403 when the auth token's plan doesn't cover
+ * it. Without a fallback the entire heavy task fails. This wrapper retries
+ * with Sonnet on any Opus failure (5xx, circuit OPEN, plan denial), trading
+ * the Opus quality bump for availability.
+ *
+ * Generic over the call shape so both queryClaudeSdkAsInfer (returns
+ * InferenceResponse) and queryClaudeSdkAsInferWithTools (returns custom
+ * shape) can share the wrapper without type erasure.
+ */
+export async function queryClaudeSdkComplexWithFallback<T>(
+  call: (model: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await call(OPUS_MODEL_ID);
+  } catch (err) {
+    console.warn(
+      `[claude-sdk] Opus failed (${err instanceof Error ? err.message : String(err)}), retrying with Sonnet`,
+    );
+    return await call(SONNET_MODEL_ID);
+  }
+}
 
 export interface ClaudeSdkResult {
   text: string;
@@ -233,12 +265,23 @@ export async function queryClaudeSdk(opts: {
   // Dim-4 R2 fix: claude-sdk path was unguarded since the 2026-04-22 Sonnet
   // primary flip. The shared circuitRegistry (adapter.ts:770) only protected
   // the openai path, so N consecutive Sonnet 500s each burned the full
-  // SDK_TIMEOUT_MS before failing over. Register on key "claude-sdk" so
-  // one failure family trips the breaker for fast-runner + PER alike.
-  const breaker = circuitRegistry.get("claude-sdk");
+  // SDK_TIMEOUT_MS before failing over.
+  //
+  // 2026-05-10 cutover audit C2: with Sonnet→Haiku and Opus→Sonnet fallback
+  // chains active, a SHARED breaker key would collapse those fallbacks —
+  // when Sonnet trips OPEN the immediate Haiku/Opus retry would be rejected
+  // on the same OPEN breaker, defeating the point of the fallback in the
+  // exact outage window it was designed for. Bucket per model so each model
+  // family has independent failure-tracking. Default ('claude-sdk') stays
+  // for callers that don't pass a model — preserves the historical breaker
+  // identity that the Dim-4 R2 fix introduced.
+  let breakerKey = "claude-sdk";
+  if (opts.model === HAIKU_MODEL_ID) breakerKey = "claude-sdk-haiku";
+  else if (opts.model === OPUS_MODEL_ID) breakerKey = "claude-sdk-opus";
+  const breaker = circuitRegistry.get(breakerKey);
   if (!breaker.allowRequest()) {
     throw new Error(
-      "[claude-sdk] Circuit breaker OPEN — refusing call until cooldown elapses",
+      `[${breakerKey}] Circuit breaker OPEN — refusing call until cooldown elapses`,
     );
   }
 
@@ -652,7 +695,7 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
  */
 export async function queryClaudeSdkAsInfer(
   messages: ChatMessage[],
-  options?: { signal?: AbortSignal; maxTurns?: number },
+  options?: { signal?: AbortSignal; maxTurns?: number; model?: string },
 ): Promise<InferenceResponse> {
   const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
   const start = Date.now();
@@ -661,6 +704,7 @@ export async function queryClaudeSdkAsInfer(
     systemPrompt,
     toolNames: [],
     maxTurns: options?.maxTurns ?? 3,
+    model: options?.model,
     abortSignal: options?.signal,
   });
 
@@ -684,6 +728,10 @@ export async function queryClaudeSdkAsInfer(
     },
     provider: "claude-sdk",
     latency_ms: result.durationMs || Date.now() - start,
+    // 2026-05-10 cutover audit C1: surface SDK-reported model so dispatcher
+    // attributes Opus/Haiku traffic correctly in cost_ledger instead of
+    // falling through to getModelFromTask() which hardcodes Sonnet.
+    model: result.model,
   };
 }
 
@@ -711,6 +759,7 @@ export async function queryClaudeSdkAsInferWithTools(
     tokenBudget?: number;
     compressionContext?: string;
     providerName?: string;
+    model?: string;
   },
 ): Promise<{
   content: string;
@@ -725,6 +774,12 @@ export async function queryClaudeSdkAsInferWithTools(
   exitReason: string;
   roundsCompleted: number;
   contextPressure: number;
+  /**
+   * 2026-05-10 cutover audit C1: SDK-reported model surfaced so the
+   * dispatcher's `result.tokenUsage.actualModel` path attributes Opus/Haiku
+   * runs correctly in cost_ledger.
+   */
+  model?: string;
 }> {
   const flat = flattenMessagesForSdk(messages);
   const systemPrompt = flat.systemPrompt;
@@ -744,6 +799,7 @@ export async function queryClaudeSdkAsInferWithTools(
     systemPrompt,
     toolNames,
     maxTurns: options?.maxRounds ?? 20,
+    model: options?.model,
     abortSignal: options?.signal,
   });
 
@@ -805,5 +861,6 @@ export async function queryClaudeSdkAsInferWithTools(
     exitReason,
     roundsCompleted: result.numTurns,
     contextPressure: 0,
+    model: result.model,
   };
 }

@@ -7,7 +7,10 @@
 
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
-import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
+import {
+  queryClaudeSdkAsInfer,
+  queryClaudeSdkComplexWithFallback,
+} from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus, parseLLMJson, LLMJsonParseError } from "./types.js";
@@ -164,7 +167,9 @@ export async function plan(
   ];
 
   const response = useSdkPath()
-    ? await queryClaudeSdkAsInfer(messages)
+    ? await queryClaudeSdkComplexWithFallback((model) =>
+        queryClaudeSdkAsInfer(messages, { model }),
+      )
     : await infer({ messages, temperature: 0.4 });
   const content = response.content ?? "";
   return {
@@ -207,7 +212,9 @@ export async function replan(
   ];
 
   const response = useSdkPath()
-    ? await queryClaudeSdkAsInfer(messages)
+    ? await queryClaudeSdkComplexWithFallback((model) =>
+        queryClaudeSdkAsInfer(messages, { model }),
+      )
     : await infer({ messages, temperature: 0.4 });
   return {
     graph: parseGoalGraph(response.content ?? ""),

@@ -7,7 +7,10 @@
 
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
-import { queryClaudeSdkAsInfer } from "../inference/claude-sdk.js";
+import {
+  queryClaudeSdkAsInfer,
+  queryClaudeSdkComplexWithFallback,
+} from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
 import {
@@ -160,7 +163,9 @@ export async function reflect(
 
   try {
     const response = useSdkPath()
-      ? await queryClaudeSdkAsInfer(messages)
+      ? await queryClaudeSdkComplexWithFallback((model) =>
+          queryClaudeSdkAsInfer(messages, { model }),
+        )
       : await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";
     assessment = parseLLMJson<ReflectionAssessment>(content);

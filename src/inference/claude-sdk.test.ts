@@ -35,6 +35,10 @@ import {
   queryClaudeSdk,
   queryClaudeSdkAsInfer,
   queryClaudeSdkAsInferWithTools,
+  queryClaudeSdkComplexWithFallback,
+  HAIKU_MODEL_ID,
+  OPUS_MODEL_ID,
+  SONNET_MODEL_ID,
 } from "./claude-sdk.js";
 import type { ChatMessage, ToolDefinition } from "./adapter.js";
 
@@ -938,5 +942,192 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
     expect(breaker.getStatus().failures).toBe(0);
 
     circuitRegistry.reset();
+  });
+
+  it("buckets Sonnet, Haiku, and Opus into separate breakers (audit C2 + W4)", async () => {
+    // Without this separation, Sonnet failures would trip the shared breaker
+    // and the immediate Haiku fallback in inferViaClaudeSdk would also be
+    // rejected — defeating the point of the fallback in the exact outage
+    // window it was designed for.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+
+    // Trip the Sonnet breaker by recording threshold consecutive failures.
+    // 5 failures within the rolling window opens the breaker (CB defaults).
+    const sonnetBreaker = circuitRegistry.get("claude-sdk");
+    for (let i = 0; i < 5; i++) sonnetBreaker.recordFailure();
+    expect(sonnetBreaker.getStatus().state).toBe("OPEN");
+
+    // Haiku breaker is independent — should remain CLOSED and accept calls.
+    const haikuBreaker = circuitRegistry.get("claude-sdk-haiku");
+    expect(haikuBreaker.getStatus().state).toBe("CLOSED");
+    expect(haikuBreaker.allowRequest()).toBe(true);
+
+    // A successful Haiku call uses its own breaker; Sonnet's stays OPEN.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({
+      prompt: "x",
+      systemPrompt: "s",
+      toolNames: [],
+      model: HAIKU_MODEL_ID,
+    });
+    expect(circuitRegistry.get("claude-sdk").getStatus().state).toBe("OPEN");
+    expect(circuitRegistry.get("claude-sdk-haiku").getStatus().state).toBe(
+      "CLOSED",
+    );
+
+    // Opus also needs its own breaker — Opus 403s shouldn't poison the
+    // Opus→Sonnet fallback's Sonnet retry (which lives on "claude-sdk").
+    const opusBreaker = circuitRegistry.get("claude-sdk-opus");
+    expect(opusBreaker.getStatus().state).toBe("CLOSED");
+    expect(opusBreaker.allowRequest()).toBe(true);
+
+    circuitRegistry.reset();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model selection threading (2026-05-10 Anthropic-only cutover)
+// ---------------------------------------------------------------------------
+
+describe("model selection threading (2026-05-10 cutover)", () => {
+  it("exports distinct model IDs for Sonnet, Haiku, and Opus", () => {
+    expect(SONNET_MODEL_ID).toBe("claude-sonnet-4-6");
+    expect(HAIKU_MODEL_ID).toBe("claude-haiku-4-5-20251001");
+    expect(OPUS_MODEL_ID).toBe("claude-opus-4-7");
+    // No two ids should collide — drift guard for future model bumps.
+    const ids = new Set([SONNET_MODEL_ID, HAIKU_MODEL_ID, OPUS_MODEL_ID]);
+    expect(ids.size).toBe(3);
+  });
+
+  it("queryClaudeSdkAsInfer forwards caller-provided model to the SDK", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+      },
+    ];
+    await queryClaudeSdkAsInfer([{ role: "user", content: "hola" }], {
+      model: OPUS_MODEL_ID,
+    });
+    const opts = lastQueryArgs.value?.options as { model: string };
+    expect(opts.model).toBe(OPUS_MODEL_ID);
+  });
+
+  it("queryClaudeSdkAsInfer defaults to Sonnet when no model passed", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+      },
+    ];
+    await queryClaudeSdkAsInfer([{ role: "user", content: "hola" }]);
+    const opts = lastQueryArgs.value?.options as { model: string };
+    // queryClaudeSdk applies SONNET_MODEL_ID default when model param is undefined.
+    expect(opts.model).toBe(SONNET_MODEL_ID);
+  });
+
+  it("queryClaudeSdkAsInferWithTools forwards caller-provided model", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+      },
+    ];
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { model: HAIKU_MODEL_ID },
+    );
+    const opts = lastQueryArgs.value?.options as { model: string };
+    expect(opts.model).toBe(HAIKU_MODEL_ID);
+  });
+
+  it("queryClaudeSdkAsInfer surfaces SDK-reported model on InferenceResponse (audit C1)", async () => {
+    // Without this, dispatcher.getModelFromTask() falls through to the
+    // hardcoded SONNET_MODEL_ID branch under SDK mode — Opus and Haiku
+    // traffic would be miscredited in cost_ledger.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+        modelUsage: { [OPUS_MODEL_ID]: {} },
+      },
+    ];
+    const response = await queryClaudeSdkAsInfer(
+      [{ role: "user", content: "hola" }],
+      { model: OPUS_MODEL_ID },
+    );
+    expect(response.model).toBe(OPUS_MODEL_ID);
+  });
+
+  it("queryClaudeSdkAsInferWithTools surfaces SDK-reported model on totalUsage (audit C1)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+        modelUsage: { [HAIKU_MODEL_ID]: {} },
+      },
+    ];
+    const result = await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { model: HAIKU_MODEL_ID },
+    );
+    expect(result.model).toBe(HAIKU_MODEL_ID);
+  });
+
+  it("queryClaudeSdkComplexWithFallback retries with Sonnet when Opus throws (audit W4)", async () => {
+    // Pin the Prometheus fallback contract: heavy/swarm tasks call Opus
+    // first, but Opus access is plan-gated and can 403. The wrapper must
+    // retry with Sonnet so the entire Prometheus task doesn't hard-fail.
+    const calls: string[] = [];
+    const result = await queryClaudeSdkComplexWithFallback(async (model) => {
+      calls.push(model);
+      if (model === OPUS_MODEL_ID) {
+        throw new Error("synthetic Opus 403 (plan-gated)");
+      }
+      return { content: `served by ${model}`, model };
+    });
+    expect(calls).toEqual([OPUS_MODEL_ID, SONNET_MODEL_ID]);
+    expect(result).toEqual({
+      content: `served by ${SONNET_MODEL_ID}`,
+      model: SONNET_MODEL_ID,
+    });
+  });
+
+  it("queryClaudeSdkComplexWithFallback returns Opus result on success — no Sonnet attempt", async () => {
+    const calls: string[] = [];
+    const result = await queryClaudeSdkComplexWithFallback(async (model) => {
+      calls.push(model);
+      return { content: `served by ${model}`, model };
+    });
+    expect(calls).toEqual([OPUS_MODEL_ID]);
+    expect(result.model).toBe(OPUS_MODEL_ID);
   });
 });

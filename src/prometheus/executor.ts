@@ -11,6 +11,7 @@ import type { ChatMessage } from "../inference/adapter.js";
 import {
   queryClaudeSdkAsInfer,
   queryClaudeSdkAsInferWithTools,
+  queryClaudeSdkComplexWithFallback,
 } from "../inference/claude-sdk.js";
 import { CB_COOLDOWN_MS } from "../config/constants.js";
 import { getConfig } from "../config.js";
@@ -143,7 +144,9 @@ export async function selfAssess(
       { role: "user", content: userContent },
     ];
     const response = useSdkPath()
-      ? await queryClaudeSdkAsInfer(selfAssessMessages)
+      ? await queryClaudeSdkComplexWithFallback((model) =>
+          queryClaudeSdkAsInfer(selfAssessMessages, { model }),
+        )
       : await infer({ messages: selfAssessMessages, temperature: 0.1 });
     const usage: TokenUsage = {
       promptTokens: response.usage.prompt_tokens,
@@ -322,16 +325,19 @@ export async function executeGoal(
         `Criteria: ${goal.completionCriteria.join("; ")}`,
       ].join("\n");
       const inferPromise = useSdkPath()
-        ? queryClaudeSdkAsInferWithTools(
-            messages,
-            definitions,
-            (name, args) => toolRegistry.execute(name, args),
-            {
-              maxRounds: MAX_ROUNDS_PER_GOAL,
-              signal,
-              tokenBudget: TOKEN_BUDGET_HEAVY,
-              compressionContext,
-            },
+        ? queryClaudeSdkComplexWithFallback((model) =>
+            queryClaudeSdkAsInferWithTools(
+              messages,
+              definitions,
+              (name, args) => toolRegistry.execute(name, args),
+              {
+                maxRounds: MAX_ROUNDS_PER_GOAL,
+                signal,
+                tokenBudget: TOKEN_BUDGET_HEAVY,
+                compressionContext,
+                model,
+              },
+            ),
           )
         : inferWithTools(
             messages,
@@ -424,16 +430,19 @@ export async function executeGoal(
         };
 
         const retryResult = useSdkPath()
-          ? await queryClaudeSdkAsInferWithTools(
-              [...currentMessages, reflectionMsg],
-              definitions,
-              (name, args) => toolRegistry.execute(name, args),
-              {
-                maxRounds: MAX_ROUNDS_PER_GOAL,
-                signal,
-                tokenBudget: TOKEN_BUDGET_HEAVY,
-                compressionContext,
-              },
+          ? await queryClaudeSdkComplexWithFallback((model) =>
+              queryClaudeSdkAsInferWithTools(
+                [...currentMessages, reflectionMsg],
+                definitions,
+                (name, args) => toolRegistry.execute(name, args),
+                {
+                  maxRounds: MAX_ROUNDS_PER_GOAL,
+                  signal,
+                  tokenBudget: TOKEN_BUDGET_HEAVY,
+                  compressionContext,
+                  model,
+                },
+              ),
             )
           : await inferWithTools(
               [...currentMessages, reflectionMsg],
