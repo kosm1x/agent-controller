@@ -1130,4 +1130,81 @@ describe("model selection threading (2026-05-10 cutover)", () => {
     expect(calls).toEqual([OPUS_MODEL_ID]);
     expect(result.model).toBe(OPUS_MODEL_ID);
   });
+
+  it("queryClaudeSdkComplexWithFallback propagates the Sonnet error when both Opus and Sonnet fail (round-2 W7)", async () => {
+    // Pin the both-fail contract so a future change can't silently swallow
+    // the second throw — Prometheus's classifyError relies on the error
+    // surfacing to decide retry vs escalate.
+    const calls: string[] = [];
+    await expect(
+      queryClaudeSdkComplexWithFallback(async (model) => {
+        calls.push(model);
+        if (model === OPUS_MODEL_ID) throw new Error("opus 403 plan-gate");
+        throw new Error("sonnet 5xx upstream");
+      }),
+    ).rejects.toThrow(/sonnet 5xx upstream/);
+    expect(calls).toEqual([OPUS_MODEL_ID, SONNET_MODEL_ID]);
+  });
+
+  it("queryClaudeSdkComplexWithFallback skips Sonnet retry on AbortError (round-2 W8)", async () => {
+    // User-cancelled tasks shouldn't double-spend on the retry. The wrapper
+    // detects AbortError by name OR an "aborted" substring in message.
+    const calls: string[] = [];
+    await expect(
+      queryClaudeSdkComplexWithFallback(async (model) => {
+        calls.push(model);
+        const err = new Error("operation aborted by user");
+        err.name = "AbortError";
+        throw err;
+      }),
+    ).rejects.toThrow(/aborted/i);
+    expect(calls).toEqual([OPUS_MODEL_ID]);
+  });
+
+  it("queryClaudeSdkComplexWithFallback skips Sonnet retry on aborted-message variant (round-2 W8)", async () => {
+    // Some abort surfaces don't carry name='AbortError' (e.g. SDK throws a
+    // plain Error with "aborted" in the message). The substring guard
+    // covers that path.
+    const calls: string[] = [];
+    await expect(
+      queryClaudeSdkComplexWithFallback(async (model) => {
+        calls.push(model);
+        throw new Error("[claude-sdk] Query aborted after 30s");
+      }),
+    ).rejects.toThrow(/aborted/i);
+    expect(calls).toEqual([OPUS_MODEL_ID]);
+  });
+
+  it("breaker bucketing prefix-matches model family rather than exact-equality (round-2 W9)", async () => {
+    // Future model ID bumps (e.g. claude-haiku-5-0-...) must still land in
+    // the haiku bucket, not silently collapse to the shared 'claude-sdk' key.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    // Hypothetical future-bumped Haiku ID — exact-equality match against
+    // HAIKU_MODEL_ID would fail; prefix-match keeps it bucketed correctly.
+    await queryClaudeSdk({
+      prompt: "x",
+      systemPrompt: "s",
+      toolNames: [],
+      model: "claude-haiku-5-0-future",
+    });
+    // The haiku breaker should have recorded a success; the default sonnet
+    // breaker should be untouched.
+    expect(circuitRegistry.get("claude-sdk-haiku").getStatus().state).toBe(
+      "CLOSED",
+    );
+    expect(circuitRegistry.get("claude-sdk").getStatus().failures).toBe(0);
+
+    circuitRegistry.reset();
+  });
 });

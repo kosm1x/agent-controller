@@ -60,6 +60,17 @@ export interface TokenUsage {
    */
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /**
+   * 2026-05-10 cutover audit C1 (round-2): SDK-reported model the underlying
+   * inference call actually invoked. The wrapper at queryClaudeSdkComplexWith-
+   * Fallback may swap Opus→Sonnet on plan-gate failure, so the goal-level
+   * model is decided per-call, not per-task. Heavy/swarm aggregations take
+   * the LAST non-empty model across rounds — sufficient for cost_ledger
+   * attribution since dispatcher rolls up per-task. The dispatcher prefers
+   * `result.tokenUsage.actualModel` over `getModelFromTask()` (which
+   * hardcodes Sonnet under SDK mode).
+   */
+  actualModel?: string;
 }
 
 export interface GoalResult {

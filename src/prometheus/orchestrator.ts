@@ -50,6 +50,10 @@ export async function orchestrate(
     let totalCompletionTokens = 0;
     let totalCacheReadTokens = 0;
     let totalCacheCreationTokens = 0;
+    // 2026-05-10 cutover round-2 C1: surface SDK-reported model so dispatcher
+    // attributes Opus/Haiku in cost_ledger correctly. Last-write-wins across
+    // execute/replan/reflect cycles.
+    let totalActualModel: string | undefined;
     // Autoreason Phase 1: k=2 stability rule for soft replan signals.
     // Counter increments on each consecutive soft vote from checkReplan; the
     // replan only fires when the counter reaches 2. Any iteration with no
@@ -182,6 +186,9 @@ export async function orchestrate(
       totalCacheReadTokens += executionResults.tokenUsage.cacheReadTokens ?? 0;
       totalCacheCreationTokens +=
         executionResults.tokenUsage.cacheCreationTokens ?? 0;
+      if (executionResults.tokenUsage.actualModel) {
+        totalActualModel = executionResults.tokenUsage.actualModel;
+      }
 
       // Record tool repairs to scope telemetry (non-fatal)
       if (executionResults.toolRepairs.length > 0) {
@@ -451,6 +458,9 @@ export async function orchestrate(
         }),
         ...(totalCacheCreationTokens > 0 && {
           cacheCreationTokens: totalCacheCreationTokens,
+        }),
+        ...(totalActualModel !== undefined && {
+          actualModel: totalActualModel,
         }),
       },
       iterationsUsed: budget.consumed,

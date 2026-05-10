@@ -134,6 +134,32 @@ describe("heavyRunner", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("propagates actualModel from orchestrator tokenUsage so cost_ledger attributes Opus correctly (round-2 C1)", async () => {
+    // Without this propagation, every Opus task would land in cost_ledger
+    // with model='claude-sonnet-4-6' via dispatcher.getModelFromTask() —
+    // the exact mislabeling round-2 caught.
+    mockOrchestrate.mockResolvedValueOnce(
+      makeOrchestratorResult({
+        tokenUsage: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          cacheReadTokens: 200,
+          actualModel: "claude-opus-4-7",
+        },
+      }),
+    );
+
+    const result = await heavyRunner.execute({
+      taskId: "task-opus",
+      runId: "run-1",
+      title: "Test",
+      description: "Test description",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.tokenUsage?.actualModel).toBe("claude-opus-4-7");
+  });
+
   it("should return failure from orchestrate result", async () => {
     mockOrchestrate.mockResolvedValueOnce(
       makeOrchestratorResult({

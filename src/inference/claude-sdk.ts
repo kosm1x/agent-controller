@@ -170,6 +170,11 @@ export const OPUS_MODEL_ID = "claude-opus-4-7";
  * Generic over the call shape so both queryClaudeSdkAsInfer (returns
  * InferenceResponse) and queryClaudeSdkAsInferWithTools (returns custom
  * shape) can share the wrapper without type erasure.
+ *
+ * Round-2 audit W8: aborts skip the Sonnet retry. A user-cancelled task
+ * should not silently consume a second SDK subprocess + initial token
+ * submission on the retry. Detected via Error.name === "AbortError" or
+ * the SDK's own "aborted" error message substring.
  */
 export async function queryClaudeSdkComplexWithFallback<T>(
   call: (model: string) => Promise<T>,
@@ -177,8 +182,16 @@ export async function queryClaudeSdkComplexWithFallback<T>(
   try {
     return await call(OPUS_MODEL_ID);
   } catch (err) {
+    const errorName =
+      err instanceof Error
+        ? err.name
+        : ((err as { name?: string })?.name ?? "");
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (errorName === "AbortError" || /aborted/i.test(errorMsg)) {
+      throw err;
+    }
     console.warn(
-      `[claude-sdk] Opus failed (${err instanceof Error ? err.message : String(err)}), retrying with Sonnet`,
+      `[claude-sdk] Opus failed (${errorMsg}), retrying with Sonnet`,
     );
     return await call(SONNET_MODEL_ID);
   }
@@ -275,9 +288,16 @@ export async function queryClaudeSdk(opts: {
   // family has independent failure-tracking. Default ('claude-sdk') stays
   // for callers that don't pass a model — preserves the historical breaker
   // identity that the Dim-4 R2 fix introduced.
+  //
+  // Round-2 audit W9: prefix-match by model FAMILY rather than exact-equality
+  // against the constant. Model IDs version (HAIKU_MODEL_ID has bumped from
+  // claude-haiku-3-5-* to claude-haiku-4-5-20251001) and exact-equality would
+  // silently collapse a future-bumped Haiku ID to the default 'claude-sdk'
+  // bucket — the precise drift this audit was added to prevent.
   let breakerKey = "claude-sdk";
-  if (opts.model === HAIKU_MODEL_ID) breakerKey = "claude-sdk-haiku";
-  else if (opts.model === OPUS_MODEL_ID) breakerKey = "claude-sdk-opus";
+  if (opts.model?.startsWith("claude-haiku-")) breakerKey = "claude-sdk-haiku";
+  else if (opts.model?.startsWith("claude-opus-"))
+    breakerKey = "claude-sdk-opus";
   const breaker = circuitRegistry.get(breakerKey);
   if (!breaker.allowRequest()) {
     throw new Error(

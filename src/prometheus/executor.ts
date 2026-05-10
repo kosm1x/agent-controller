@@ -398,6 +398,12 @@ export async function executeGoal(
       // since the openai path returns undefined for cache fields.
       let totalCacheRead = result.totalUsage.cache_read_tokens ?? 0;
       let totalCacheCreation = result.totalUsage.cache_creation_tokens ?? 0;
+      // 2026-05-10 cutover round-2 C1: capture SDK-reported model so cost_ledger
+      // attributes Opus correctly when wrapper picks Opus, or Sonnet correctly
+      // when the wrapper falls back. last-write-wins across self-assess + retry
+      // rounds — sufficient because dispatcher rolls up per-task. Only the
+      // claude-sdk path returns this; openai path leaves it undefined.
+      let actualModel: string | undefined = result.model;
 
       for (let round = 0; round < MAX_SELF_ASSESS; round++) {
         const { assessment, usage: assessUsage } = await selfAssess(
@@ -462,6 +468,7 @@ export async function executeGoal(
         totalCompletion += retryResult.totalUsage.completion_tokens;
         totalCacheRead += retryResult.totalUsage.cache_read_tokens ?? 0;
         totalCacheCreation += retryResult.totalUsage.cache_creation_tokens ?? 0;
+        if (retryResult.model) actualModel = retryResult.model;
         allRepairs.push(...retryResult.toolRepairs);
 
         // Collect additional tool calls from retry
@@ -532,6 +539,7 @@ export async function executeGoal(
           ...(totalCacheCreation > 0 && {
             cacheCreationTokens: totalCacheCreation,
           }),
+          ...(actualModel !== undefined && { actualModel }),
         },
       };
     } catch (err) {
@@ -609,6 +617,10 @@ export async function executeGraph(
   let totalCompletionTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
+  // 2026-05-10 cutover round-2 C1: aggregate the SDK-reported model across
+  // goals. Last-write-wins — the final goal's model wins. This is fine for
+  // cost_ledger because dispatcher records cost per-task, not per-goal.
+  let aggregatedActualModel: string | undefined;
   const maxIterations = graph.size * 4 + 1;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -664,6 +676,9 @@ export async function executeGraph(
       totalCacheReadTokens += goalResult.tokenUsage.cacheReadTokens ?? 0;
       totalCacheCreationTokens +=
         goalResult.tokenUsage.cacheCreationTokens ?? 0;
+      if (goalResult.tokenUsage.actualModel) {
+        aggregatedActualModel = goalResult.tokenUsage.actualModel;
+      }
       if (goalResult.toolRepairs)
         allToolRepairs.push(...goalResult.toolRepairs);
       if (goalResult.provenanceRecords) {
@@ -697,6 +712,9 @@ export async function executeGraph(
       }),
       ...(totalCacheCreationTokens > 0 && {
         cacheCreationTokens: totalCacheCreationTokens,
+      }),
+      ...(aggregatedActualModel !== undefined && {
+        actualModel: aggregatedActualModel,
       }),
     },
     toolRepairs: allToolRepairs,

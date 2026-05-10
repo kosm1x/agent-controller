@@ -66,6 +66,11 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         ...(result.tokenUsage.cacheCreationTokens !== undefined && {
           cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
         }),
+        // 2026-05-10 cutover round-2 C1: surface SDK-reported model so
+        // dispatcher attributes Opus/Haiku correctly in cost_ledger.
+        ...(result.tokenUsage.actualModel !== undefined && {
+          actualModel: result.tokenUsage.actualModel,
+        }),
       },
       durationMs: Date.now() - start,
       goalGraph: result.goalGraph,
@@ -142,6 +147,9 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
         completionTokens: number;
         cacheReadTokens?: number;
         cacheCreationTokens?: number;
+        // 2026-05-10 cutover round-2 C1: container-side heavy-worker emits
+        // this so the dispatcher attributes Opus/Haiku correctly.
+        actualModel?: string;
       };
       goalGraph?: unknown;
       trace?: unknown[];
