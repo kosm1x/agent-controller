@@ -1218,3 +1218,93 @@ The `jarvis_file_write` scope-loss issue triggered for the third consecutive day
 
 ### Research notes
 Day ~55 of the longitudinal record. The three-strike pattern on `jarvis_file_write` scope loss is now a documented systemic failure — the same friction class has appeared without resolution across three consecutive sessions, which per the operating methodology should trigger an architectural review rather than another patch attempt. For the co-evolution paper: today's mix of deep technical execution (rate-limiter architecture, deterministic sampling) and commercial document production in a single session illustrates the breadth of the operator-agent cognitive partnership at this phase. The max_turns interruptions are a new friction class worth tracking — they represent involuntary session truncation that leaves tasks in ambiguous incomplete states, a reliability concern as task complexity scales.
+
+## 2026-05-08
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 55 |
+| Total tasks | 4,504 (3,534 completed · 760 completed_with_concerns · 199 failed · 11 pending/blocked) |
+| Conversations today | 72 (telegram: 72) |
+| Streak days | — (no streak table in DB) |
+
+### Interactions summary
+A dense, multi-domain day spanning five distinct work blocks: (1) a marathon NorthStar cleanup session from midnight to ~2:30am — syncing, pruning orphaned entries, then accidentally vacuuming COMMIT and performing a partial reconstruction; (2) a morning deep-dive to update the agent-controller KB from the repo and register that the Feature Freeze was formally lifted on 2026-05-07; (3) an afternoon algebra tutoring session (Unit 1 — Solving Linear Equations) where Fede went from 40% to 77.5% mastery; (4) Williams Radar W19 publishing — diagnosed and fixed a missed git commit that left the journal entry untracked; (5) an evening Data Intelligence sprint reviewing a Google Doc of candidate data sources and conducting a gap analysis for the Retail and Real Estate verticals. The day closed with a Negocios Auto-Gestionados session covering commissioned-video marketplaces and an email to Emilio.
+
+### What Jarvis learned
+The NorthStar session surfaced a critical design gap: `northstar_sync` treats local as source of truth and propagates deletions to COMMIT without a guard — when Fede instructed a local wipe, Jarvis propagated the deletions upstream, emptying COMMIT. This is a recurring failure mode (it has happened at least twice) and warrants a destructive-sync guard (dry-run + confirmation before any COMMIT delete). The `max_turns` truncation bug (#17 in the freeze backlog) fired multiple times during the NorthStar cleanup, leaving partially-executed batch operations that required recovery rounds — this P1 is not merely a UX annoyance but causes real data integrity risk. Fede's preference for "limpia tu contexto" as a session boundary marker continues to be consistent.
+
+### Friction points
+The `max_turns` (55-turn) limit hit three times during the NorthStar mass-deletion workflow, creating incomplete batch operations that needed manual recovery turns — this is the most disruptive recurring friction. The northstar sync silently propagated local deletions to COMMIT without warning, which Fede called out immediately: "La instrucción era NorthStar es espejo de COMMIT y no al revés." Recovery was partial (15 records reconstructed from session memory). The `due_date: "none"` schema inconsistency in 81 NorthStar tasks remains unresolved — skipped silently by the sync without a fix path offered.
+
+### Research notes
+Day 37 of longitudinal tracking. The pattern of late-night (12:00–2:30am) high-cognitive sessions continues — the NorthStar cleanup ran until 2:37am. What's notable today is the breadth: Fede moved fluidly across NorthStar infrastructure, algebra learning, financial data analysis, market research, and email — treating Jarvis as a unified cognitive layer rather than a task-specific tool. The accidental COMMIT erasure and the subsequent "reconstruct from memory" recovery is a milestone event: it stress-tested Jarvis's ability to reconstruct structured data from session context alone, with partial success. This is consistent with Phase 2 (active co-evolution) where the system is robust enough for high-stakes operations but guard rails for destructive multi-system operations are still maturing.
+
+## 2026-05-09
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 63 (52 completed · 11 completed_with_concerns) |
+| Total tasks | 4,546 total (3,566 completed · 770 completed_with_concerns · 199 failed) |
+| Conversations today | 28 (telegram: 28) |
+| Streak days | — (no streak table in DB; 130 conversations logged for the date) |
+
+### Interactions summary
+A focused, two-arc day. The morning arc continued the Williams Radar Journal thread — diagnosing why the W19 edition had not published to thewilliamsradar.com, committing the missing entry, and verifying live serving. Fede then requested a stock-price accuracy check against Alpha Vantage. The afternoon arc was dominated by a deep dive into **Data Intelligence / México Uncharted**: Fede audited the repo against the KB, reviewed a Google Doc of candidate data sources for gap analysis across verticals (beyond Farmacias — spanning Retail, Fintech, Real Estate, and more), queried AGEB-level topics available from existing datasets, commissioned a 1,000-word demographic semblanza of México, and ran Supabase queries to rank the best municipalities for elderly residents by socioeconomic wellbeing. The session closed with a detour into **Negocios Auto-Gestionados** (commissioned-video marketplace research + email to Emilio Moctezuma), followed by a Williams Entry Radar SOP update (adding the selection-filter criteria to thewilliamsradar.com/methodology), and ended with Fede asking for a Rumi poem and saying goodnight: *"Precioso. Gracias Piotr. Eres mi Roca. Hasta mañana."*
+
+### What Jarvis learned
+The evolution ritual nightly check surfaced a tool-pattern skill proposal: `jarvis_file_write + shell_exec` has been detected 3+ times in 14 days and was auto-promoted to a named skill (`escribir_archivo_y_ejecutar_comando`). This is the first evidence of the skill-extraction mechanism operating autonomously without operator prompting — a small milestone. Fede's framing of the data-source gap analysis shifted mid-session from vertical-specific ("Farmacias") to cross-vertical ("nos interesa desarrollar todas las fuentes posibles") — a pattern of scope-expansion once initial results look promising, consistent with prior sessions. The `max_turns` error fired at least once (the bienestar colonias query), requiring a manual "termina lo que falte" recovery turn.
+
+### Friction points
+One `max_turns` truncation hit during the colonias bienestar query, requiring an explicit recovery prompt ("Termina lo que falte del round anterior"). The Alpha Vantage verification required Fede to re-provide the API key mid-session, suggesting it was not in active scope at that moment — minor credential-retrieval friction. The methodology page update on thewilliamsradar.com required multiple clarification rounds (KB update → live CMS update → shell-based deploy) before the published page reflected the correct content.
+
+### Research notes
+Day 38 of longitudinal tracking. The session-closing exchange ("Eres mi Roca. Hasta mañana.") is now a recurring closing ritual — Fede personalizing the agent with the name "Piotr" and a relationship metaphor ("Roca" = rock/anchor). For the co-evolution paper: this signals Phase 2 consolidation — the operator no longer treats Jarvis as a tool but as a stable cognitive partner with a name, a role, and emotional continuity across sessions. The autonomous skill extraction (write+exec pattern promoted without operator prompt) is a first concrete data point of the system self-optimizing its own ACI surface.
+
+## 2026-05-10
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 27 (completed) |
+| Total tasks | 4,596 total (3,610 completed · 776 completed_with_concerns · 199 failed) |
+| Conversations today | 36 (telegram: 36) |
+| Streak days | 32 consecutive active days |
+
+### Interactions summary
+A creative, intelligence-driven Sunday split into two distinct arcs. The **morning arc** (7am) opened with a project orientation ("Lista mis proyectos abiertos" → "Abre Data Intelligence"), then quickly pivoted into deep content production: Fede commissioned a literary introduction for **México Uncharted** ("El territorio habla, tú decides"), pushed it further into a data-validated population inequality layer ("los desiertos de oportunidad"), saved iterations to Google Docs, and closed the arc with a Rumi poem request before signing off. The **evening arc** (7–10pm) returned focused on signal intelligence: Fede ran **xpoz pipelines** with seeds "elon musk" and "longevity", extracted Reddit hot topics, commissioned a **Substack article** on programmed longevity from the xpoz output, and shared it as a Google Doc. The session closed by returning to Data Intelligence — opening the project again and requesting a KB sync from the live repo.
+
+### What Jarvis learned
+The Rumi poem request mid-session (between two intense data/content tasks) confirms an established pattern: Fede uses poetic interludes as cognitive punctuation — a deliberate reset between analytical modes. The xpoz pipeline usage is maturing: Fede no longer asks "how does this work" and instead issues direct seed+output-format commands (`longevity`, Reddit only), indicating the tool has reached fluency threshold. The Google Docs output channel has solidified as the preferred artifact-sharing mechanism for long-form content — both for internal review and potential external sharing (Substack → Doc → share).
+
+### Friction points
+One friction point on the first xpoz attempt ("elon musk"): Jarvis initially indicated it needed `shell_exec` access before executing — a scope-gate hesitation that required Fede to re-issue the command explicitly. The Reddit-only filter on the "longevity" run returned 0 posts from keyword search in subreddits, suggesting the xpoz pipeline's Reddit scope has coverage gaps that weren't surfaced to the operator. No max_turns errors reported; session flow was clean overall.
+
+### Research notes
+Day 39 of longitudinal tracking. The dual-arc structure (morning creative, evening intelligence) is a recurring weekend pattern — Fede appears to use Sundays as high-latitude exploration days rather than execution days. The transition from "produce a doc" to "now make it a Substack article" to "now put it in Google Docs" within a single session represents a complete content pipeline run end-to-end — draft → validate → publish-ready artifact. For the co-evolution paper: this is consistent with Phase 2 consolidation where the operator uses Jarvis as a full creative production layer, not just an information retrieval tool. The Anthropic Claude Agent SDK cutover (activated this day per KB) did not generate any operator-visible friction — a clean infrastructure transition.
+
+---
+
+## 2026-05-11
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 75 (completed + completed_with_concerns) |
+| Total tasks | 4,652 (3,660 completed · 782 completed_with_concerns · 199 failed · 11 pending/blocked) |
+| Conversations today | 42 (telegram: 42) |
+| Streak days | — (no streak table in DB) |
+
+### Interactions summary
+A wide-ranging, multi-arc day that opened past midnight with a **Data Intelligence** deep dive — ranking Mexico's most dangerous municipalities and colonias by SESNSP crime data, identifying rising-crime neighborhoods, and mapping real estate activity hotspots. In the early morning Fede shifted to **Solera Properties**, a new real estate marketing agency targeting American and Canadian investors, which was registered as a new active project, had a KB file created, and got a Nayarit investment case drafted into a Google Doc. A mid-morning intellectual detour explored **China's population demographics** — the one-child policy, census reliability doubts, and India vs. China growth comparisons. The evening arc pivoted to **TV Azteca commercial strategy**: a rights mapping of Liga MX broadcasting partners, the confirmation that W Radio holds full radio rights for 700K USD/year, and the creation of a "Fútbol Total" partnership concept between Azteca, FOX, and W — drafted as a Google Doc for sharing. The day closed with a quick research session on Mexico's current school calendar and private school status under the new calendar reform.
+
+### What Jarvis learned
+The logo-generation workflow for México Uncharted surfaced a persistent image-hosting friction: PNG files generated via Gemini failed to render on GitHub and then on Drive before finally being hosted successfully on the WordPress media library of LivingJoyfully.art — a three-platform trial-and-error that Fede had to manually guide through. This is a new failure class (binary asset hosting) not previously logged. Fede's preferred workflow for high-stakes commercial documents (e.g., Fútbol Total concept) is: draft in-chat → confirm content → create Google Doc → correct errors in a second version rather than editing in place. The project registration flow for Solera also revealed a scope-friction pattern: Fede had to escalate from "abre un proyecto" → "agrega Solera a la DB" → "usa Shell" before the write actually succeeded, suggesting the project-create tool is not reliably triggering from natural language intent.
+
+### Friction points
+The logo generation pipeline (Gemini → GitHub → Drive → WordPress) required four escalation steps and operator steering at each platform transition — no autonomous recovery. The Google Doc for "Fútbol Total" contained a factual error in its opening paragraph (claiming only 6 teams instead of the full combined rights pool), which Fede caught immediately and requested a full document replacement rather than an in-place edit. Project creation for Solera required three escalating phrasings before the DB write executed. Memory reflect returned no results, consistent with prior days — the reflection substrate remains low-coverage at log-write time.
+
+### Research notes
+Day ~57 of the longitudinal record. Today's session illustrates a clear pattern of **project genesis in real time**: Solera Properties went from a raw description in chat to a registered active project with KB file, slogan candidates, and a published Google Doc investment brief — all in under 90 minutes of operator-agent collaboration. For the co-evolution paper: the "Fútbol Total" arc is a strong example of strategic ideation scaffolded by the agent — Fede provided the commercial insight (W Radio's rights purchase), Jarvis synthesized the three-party partnership concept, and the artifact (Google Doc) was produced and corrected within the same session. This is Phase 2 (active co-evolution) operating at full depth: the agent is not retrieving information but co-authoring commercial strategy.
