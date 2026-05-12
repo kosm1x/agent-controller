@@ -17,6 +17,17 @@ import { join, relative } from "node:path";
 import { getDatabase } from "./index.js";
 import { upsertFile } from "./jarvis-fs.js";
 
+/**
+ * Path prefixes (relative to kbRoot) whose authority lies elsewhere and must
+ * NOT be auto-restored by the hourly kb-reindex walk.
+ *
+ * `NorthStar/` — synced from db.mycommit.net via `northstar_sync`. Any FS file
+ * under here that is not on COMMIT is, by definition, a stale orphan. Letting
+ * kb-reindex resurrect them creates the 2026-05-12 loop where wipes are undone
+ * within the hour.
+ */
+export const MANAGED_NAMESPACES = ["NorthStar/"];
+
 export interface ReindexResult {
   /** Files on disk under the mirror root. */
   fsCount: number;
@@ -86,7 +97,11 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
     "/root/claude/jarvis-kb";
 
   const fsFiles = walkKbDir(kbRoot);
-  const fsRel = new Set(fsFiles.map((f) => relative(kbRoot, f)));
+  const fsRel = new Set(
+    fsFiles
+      .map((f) => relative(kbRoot, f))
+      .filter((p) => !MANAGED_NAMESPACES.some((ns) => p.startsWith(ns))),
+  );
 
   const db = getDatabase();
   const dbPaths = new Set(

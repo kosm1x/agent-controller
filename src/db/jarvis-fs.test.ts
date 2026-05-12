@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initDatabase, closeDatabase } from "./index.js";
-import { upsertFile, searchFiles } from "./jarvis-fs.js";
+import {
+  upsertFile,
+  searchFiles,
+  deleteFile,
+  syncDeleteFromKbMirror,
+} from "./jarvis-fs.js";
+import { existsSync, writeFileSync } from "node:fs";
 
 let testKbDir: string;
 
@@ -116,6 +122,41 @@ describe("searchFiles — FTS5 tokenized search", () => {
     // token in double-quotes so they are literal.
     const results = searchFiles("(AND OR NOT)", 10);
     expect(results.length).toBeGreaterThan(0);
+  });
+
+  // 2026-05-12 orphan-resurrection incident — DB delete must clear FS mirror
+  it("deleteFile() removes the FS mirror file (symmetric delete)", () => {
+    upsertFile("knowledge/del-target.md", "Title", "body text");
+    const fullPath = join(testKbDir, "knowledge/del-target.md");
+    expect(existsSync(fullPath)).toBe(true);
+    expect(deleteFile("knowledge/del-target.md")).toBe(true);
+    expect(existsSync(fullPath)).toBe(false);
+  });
+
+  // qa-auditor C1 (2026-05-12): empty / "." / "/" must not wipe the mirror root
+  it("syncDeleteFromKbMirror refuses to delete the mirror root itself", () => {
+    // Seed a file so we can prove the root still exists after.
+    upsertFile("knowledge/witness.md", "Witness", "still here");
+    expect(existsSync(testKbDir)).toBe(true);
+    for (const evil of ["", ".", "/", "//", "./"]) {
+      syncDeleteFromKbMirror(evil);
+    }
+    expect(existsSync(testKbDir)).toBe(true);
+    expect(existsSync(join(testKbDir, "knowledge/witness.md"))).toBe(true);
+  });
+
+  // Path-traversal guard: refuses to delete outside the mirror root
+  it("syncDeleteFromKbMirror refuses path traversal attempts", () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "mc-fs-outside-"));
+    const outsideFile = join(outsideDir, "victim.md");
+    writeFileSync(outsideFile, "should survive", "utf-8");
+    try {
+      // Build a path that, if naively joined, would resolve outside testKbDir.
+      syncDeleteFromKbMirror(`../${outsideDir.split("/").pop()}/victim.md`);
+      expect(existsSync(outsideFile)).toBe(true);
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 
   // Audit Rec 9 — FTS trigger contract regression

@@ -152,6 +152,20 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 - Additive schema changes (new tables/indexes) apply live: `sqlite3 ./data/mc.db < ddl.sql`
 - All DB access goes through `getDatabase()` singleton — no raw `sqlite3` CLI in tools
 
+### FS-mirror managed namespaces
+
+The KB mirror at `/root/claude/jarvis-kb/` is walked hourly by `kb-reindex` and auto-upserts any FS-only `.md` into `jarvis_files`. This catches drift from external writers but conflicts with tools that have their OWN authoritative store: any path that kb-reindex resurrects from FS will undo a wipe from those tools.
+
+`MANAGED_NAMESPACES` in `src/db/jarvis-reindex.ts` lists prefixes that kb-reindex MUST skip. Their authority lies elsewhere:
+
+| Prefix       | Authority         | Sync tool        |
+| ------------ | ----------------- | ---------------- |
+| `NorthStar/` | `db.mycommit.net` | `northstar_sync` |
+
+When adding a new tool whose authority is non-FS, add the prefix here so its wipes can't be undone by the hourly walk. The 2026-05-12 incident — 247 NorthStar records mass-deleted by `northstar_sync` and resurrected by `kb-reindex` within the hour — is the motivating case.
+
+`deleteFile()` in `src/db/jarvis-fs.ts` propagates DB deletes to (a) pgvector, (b) Drive, (c) the FS mirror. The FS-mirror leg via `syncDeleteFromKbMirror()` is path-traversal-guarded (`resolve()` against the mirror root, rejects empty/`.`/`/`).
+
 ### Hindsight recall routing
 
 - `HINDSIGHT_RECALL_ENABLED=true|false` — global recall path toggle. When false, all banks bypass Hindsight and answer from SQLite hybrid (FTS5 + embed). Retain/reflect unaffected.

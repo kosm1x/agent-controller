@@ -1805,3 +1805,164 @@ Detalles adicionales que NO deben perderse.
     }
   });
 });
+
+// Drift-ratio safety guard — 2026-05-12 orphan-resurrection incident
+describe("northstar_sync — drift guard (>2× orphans-vs-remote)", () => {
+  // An in-sync vision with a journal row. Keeps bootstrap=false (so Phase 4
+  // destructive paths engage) WITHOUT becoming an orphan itself. Counts as
+  // +1 toward remote_total.
+  const ANCHOR_VISION_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const ANCHOR_PATH = "NorthStar/visions/bootstrap-anchor.md";
+
+  function seedBootstrapAnchor() {
+    commitTables.visions.push(
+      makeCommitItem(ANCHOR_VISION_ID, "Bootstrap Anchor"),
+    );
+    upsertFile(
+      ANCHOR_PATH,
+      "Bootstrap Anchor",
+      `# Bootstrap Anchor\nCOMMIT_ID: ${ANCHOR_VISION_ID}\nStatus: in_progress\n`,
+      ["northstar", "vision"],
+      "reference",
+      30,
+    );
+    seedJournalRow(
+      ANCHOR_VISION_ID,
+      "vision",
+      ANCHOR_PATH,
+      "2026-04-01T00:00:00Z",
+    );
+  }
+
+  function seedOrphans(count: number) {
+    // Each "orphan" is a local task file with a COMMIT_ID that points to
+    // nothing on the remote AND no journal row. Phase 1 ignores (has
+    // COMMIT_ID), Phase 2-3 ignore (no journal row). Only Phase 4's
+    // listFiles walk catches them.
+    for (let i = 0; i < count; i++) {
+      const id = `0000000${i.toString().padStart(2, "0")}-1111-2222-3333-444444444444`;
+      const path = `NorthStar/tasks/orphan-${i}.md`;
+      upsertFile(
+        path,
+        `Orphan ${i}`,
+        `# Orphan ${i}\nCOMMIT_ID: ${id}\nStatus: in_progress\n`,
+        ["northstar", "task"],
+        "reference",
+        30,
+      );
+    }
+  }
+
+  function seedRemoteVisions(count: number) {
+    for (let i = 0; i < count; i++) {
+      commitTables.visions.push(
+        makeCommitItem(
+          `v0000000-vvvv-vvvv-vvvv-vvvvvvvv000${i}`,
+          `Vision ${i}`,
+        ),
+      );
+    }
+  }
+
+  it("aborts with manifest preview when orphans > 2× remote and force is unset", async () => {
+    seedBootstrapAnchor(); // +1 to remote_total, keeps bootstrap=false
+    seedRemoteVisions(1); // +1 → remote_total = 2
+    seedOrphans(10); // local orphans = 10 > 4
+
+    const result = await northstarSyncTool.execute({});
+    const parsed = JSON.parse(result);
+    expect(parsed.aborted).toBe(true);
+    expect(parsed.reason).toBe("safety_drift_exceeded");
+    expect(parsed.orphans).toBe(10);
+    expect(parsed.remote_total).toBe(2);
+    expect(parsed.threshold).toBe("orphans >= 2 × remote_total");
+    expect(Array.isArray(parsed.manifest_preview)).toBe(true);
+    expect(parsed.manifest_preview.length).toBeLessThanOrEqual(20);
+    expect(parsed.manifest_preview[0]).toMatch(/NorthStar\/tasks\/orphan-/);
+    // CRITICAL: no DELETEs were issued; orphan files survive.
+    expect(getFile("NorthStar/tasks/orphan-0.md")).not.toBeNull();
+    expect(getFile("NorthStar/tasks/orphan-9.md")).not.toBeNull();
+  });
+
+  it("force=true bypasses the guard and lets Phase 4 wipe orphans", async () => {
+    seedBootstrapAnchor(); // +1 to remote_total
+    seedOrphans(5); // 5 orphans > 2 → guard would fire without force
+
+    const result = await northstarSyncTool.execute({ force: true });
+    // Sync ran to completion (not the aborted JSON shape).
+    expect(result).toContain("NorthStar sync complete");
+    expect(result).toContain("Dropped: 5");
+    // Phase 4 destructive loop ran — orphans are gone.
+    expect(getFile("NorthStar/tasks/orphan-0.md")).toBeNull();
+    expect(getFile("NorthStar/tasks/orphan-4.md")).toBeNull();
+  });
+
+  it("does not abort when orphans < 2× ratio (normal drift)", async () => {
+    seedBootstrapAnchor(); // +1 to remote_total
+    seedRemoteVisions(9); // remote_total = 10
+    seedOrphans(5); // 5 orphans < 20 → guard does NOT fire
+
+    const result = await northstarSyncTool.execute({});
+    expect(result).toContain("NorthStar sync complete");
+    expect(result).not.toContain("safety_drift_exceeded");
+  });
+
+  // qa-auditor W1 (2026-05-12): the >=2× boundary fires exactly at 2×
+  it("aborts at the exact 2× boundary (orphans = 2 × remote_total)", async () => {
+    seedBootstrapAnchor(); // remote_total = 1
+    seedOrphans(2); // 2 orphans == 2 × 1 → guard fires
+
+    const result = await northstarSyncTool.execute({});
+    const parsed = JSON.parse(result);
+    expect(parsed.aborted).toBe(true);
+    expect(parsed.reason).toBe("safety_drift_exceeded");
+    expect(parsed.orphans).toBe(2);
+    expect(parsed.remote_total).toBe(1);
+  });
+
+  // qa-auditor W2 (2026-05-12): remote-empty + local-records aborts distinctly
+  it("aborts with remote_empty_with_local_records when remote_total = 0 and local has records", async () => {
+    // Seed local records with COMMIT_IDs but DO NOT populate commitTables.
+    // bootstrap=false because we'll seed at least one journal row.
+    seedJournalRow(
+      "00000001-0000-0000-0000-000000000000",
+      "task",
+      "NorthStar/tasks/synced.md",
+      "2026-04-01T00:00:00Z",
+    );
+    seedOrphans(15); // ≥ REMOTE_EMPTY_MASS_WIPE_FLOOR (10)
+
+    const result = await northstarSyncTool.execute({});
+    const parsed = JSON.parse(result);
+    expect(parsed.aborted).toBe(true);
+    expect(parsed.reason).toBe("remote_empty_with_local_records");
+    expect(parsed.remote_total).toBe(0);
+    expect(parsed.orphans).toBe(15);
+    // Critical: no DELETE issued against COMMIT during this aborted run
+    const remoteDeletes = mockCalls.filter((c) => c.method === "DELETE");
+    expect(remoteDeletes).toHaveLength(0);
+    // Critical: local orphans survive
+    expect(getFile("NorthStar/tasks/orphan-0.md")).not.toBeNull();
+    expect(getFile("NorthStar/tasks/orphan-14.md")).not.toBeNull();
+  });
+});
+
+describe("northstar_sync — tool annotations", () => {
+  it("is registered as riskTier=high with destructive + confirmation hints", () => {
+    // The 2026-05-12 incident showed that riskTier=medium understated the
+    // blast radius of a single `{}` call (247 records wiped). High triggers
+    // confirmation by default.
+    expect(northstarSyncTool.riskTier).toBe("high");
+    expect(northstarSyncTool.destructiveHint).toBe(true);
+    expect(northstarSyncTool.requiresConfirmation).toBe(true);
+    expect(northstarSyncTool.readOnlyHint).toBe(false);
+  });
+
+  it("exposes force as a boolean parameter on the tool schema", () => {
+    const params = northstarSyncTool.definition.function.parameters as {
+      properties: Record<string, { type: string }>;
+    };
+    expect(params.properties.force).toBeDefined();
+    expect(params.properties.force.type).toBe("boolean");
+  });
+});

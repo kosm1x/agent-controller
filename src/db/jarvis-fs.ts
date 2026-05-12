@@ -10,8 +10,8 @@
  */
 
 import { getDatabase } from "./index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 import type { DriveMetadata } from "./drive-sync.js";
 import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
@@ -71,6 +71,43 @@ export interface JarvisFileSummary {
 // ---------------------------------------------------------------------------
 // Core operations
 // ---------------------------------------------------------------------------
+
+/**
+ * Best-effort delete on the FS mirror. Symmetric companion to mirrorToDisk
+ * so that deleteFile() in SQLite also clears the FS-side representation.
+ *
+ * Before this existed, `deleteFile()` propagated to pgvector + Drive but
+ * NOT to /root/claude/jarvis-kb/. The hourly kb-reindex ritual walks that
+ * FS mirror and upserts anything missing back into jarvis_files, which
+ * resurrected every operator-triggered NorthStar wipe within the hour
+ * (2026-05-12 incident). Symmetric deletes close that loop.
+ *
+ * Path-traversal guarded: resolved absolute path must remain under the
+ * mirror root, else the operation is a silent no-op.
+ */
+export function syncDeleteFromKbMirror(path: string): void {
+  try {
+    // Reject empty / dot / absolute / parent-only paths up-front. Without
+    // this, `resolve(mirrorDir, "")` and `resolve(mirrorDir, ".")` both
+    // collapse to `mirrorDir` itself and `rmSync(mirrorDir)` would wipe the
+    // entire KB mirror. Caught by qa-auditor C1, 2026-05-12.
+    if (!path || path === "." || path === "/" || path.startsWith("/")) return;
+    const mirrorDir = getMirrorDir();
+    const mirrorAbs = resolve(mirrorDir);
+    const fullPath = resolve(mirrorAbs, path);
+    // Strict containment: fullPath must be a STRICT child of mirrorAbs.
+    // `=== mirrorAbs` is rejected (that's the mirror root itself).
+    if (fullPath === mirrorAbs) return;
+    if (!fullPath.startsWith(mirrorAbs + "/")) return;
+    if (!existsSync(fullPath)) return;
+    rmSync(fullPath, { force: true });
+  } catch (err) {
+    // Non-fatal. Same rationale as mirrorToDisk: SQLite is source of truth.
+    console.warn(
+      `[jarvis-fs] syncDeleteFromKbMirror failed for ${path}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
 
 /** Mirror a file to the filesystem for human inspection. Non-fatal. */
 export function mirrorToDisk(path: string, content: string): void {
@@ -266,6 +303,7 @@ export function deleteFile(path: string): boolean {
   if (result.changes > 0) {
     syncDeleteToPgvector(path);
     syncDeleteToDrive(path);
+    syncDeleteFromKbMirror(path);
   }
   return result.changes > 0;
 }

@@ -935,7 +935,11 @@ export const northstarSyncTool: Tool = {
   idempotentHint: false,
   openWorldHint: true,
   requiresConfirmation: true,
-  riskTier: "medium",
+  // riskTier "high" because Phase 4 can mass-delete local files under
+  // strict-mirror enforcement. 2026-05-12: a single `{}` call wiped 247 of
+  // 284 local NorthStar records when the FS mirror had drifted out of sync.
+  // The drift-ratio guard below blocks the silent wipe unless force=true.
+  riskTier: "high",
   triggerPhrases: [
     "sincroniza con NorthStar",
     "sync con db.mycommit",
@@ -966,15 +970,24 @@ USE WHEN:
 - Verifying state after edits, deletes, or creates.
 - After creating new NorthStar records locally and wanting them reflected in the COMMIT app.
 
-GOTCHA: "Dropped: N" lists local files that COMMIT could not accept (validation failure on push-new, or post-Phase-3 orphans). The deletion is permanent — there is no recovery path besides re-creating with a payload COMMIT will accept. Read the dropped reasons in the return string to understand which records were lost. "Skipped: N" is a softer state — record couldn't propagate but local file was preserved (rare, mostly bootstrap-mode escape hatches).`,
+GOTCHA: "Dropped: N" lists local files that COMMIT could not accept (validation failure on push-new, or post-Phase-3 orphans). The deletion is permanent — there is no recovery path besides re-creating with a payload COMMIT will accept. Read the dropped reasons in the return string to understand which records were lost. "Skipped: N" is a softer state — record couldn't propagate but local file was preserved (rare, mostly bootstrap-mode escape hatches).
+
+SAFETY ABORT: if the count of local orphans (records that Phase 4 would drop) exceeds 2× the remote total, the sync aborts BEFORE deleting anything and returns a JSON manifest preview. Re-run with \`force: true\` to confirm the wipe. This guard exists because a single \`{}\` call on 2026-05-12 mass-deleted 247 local records when the FS mirror had drifted asymmetrically from COMMIT.`,
       parameters: {
         type: "object",
-        properties: {},
+        properties: {
+          force: {
+            type: "boolean",
+            description:
+              "Bypass the 2× drift-ratio safety guard. Set true only after reviewing the manifest preview from a prior aborted run. Default false.",
+          },
+        },
       },
     },
   },
 
-  async execute(_args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const force = args.force === true;
     const apiKey = process.env.COMMIT_DB_KEY;
     if (!apiKey) {
       return JSON.stringify({
@@ -1008,6 +1021,85 @@ GOTCHA: "Dropped: N" lists local files that COMMIT could not accept (validation 
 
       const journal = loadJournal();
       const bootstrap = journal.size === 0;
+
+      // Drift-ratio safety guard (2026-05-12 incident + qa-auditor C2).
+      // A naked `{}` call wiped 247 of 284 local NorthStar records on
+      // 2026-05-12 when the FS mirror had drifted ~7.7× past the canonical
+      // remote. The guard runs BEFORE any destructive phase (1 dropouts,
+      // 2 LWW commit-missing-deletes, 4 orphan sweep) so it can stop a
+      // mass-wipe from any of those vectors. The pre-scan iterates the
+      // SAME local files those phases will, applying the SAME orphan
+      // criteria (no COMMIT_ID; or COMMIT_ID not on remote). If the
+      // resulting count is ≥ 2× the remote record total, abort with a
+      // manifest preview and require explicit `force: true` to proceed.
+      //
+      // Bootstrap mode is exempt — destructive paths are gated off when
+      // `journal.size === 0`, so no wipe can occur. Remote-empty
+      // (`remoteTotal === 0`) WITH local orphans is treated as a
+      // suspicious "everything was deleted on COMMIT" state and also
+      // aborts, distinct from the >=2× ratio case.
+      if (!bootstrap && !force) {
+        // Count ONLY files with a COMMIT_ID whose remote row is gone — the
+        // mass-wipe vector that fired on 2026-05-12. Files WITHOUT a
+        // COMMIT_ID are legitimate Phase-1 push-new candidates (or Phase-0
+        // unsyncable drops, which are individual validation failures, not
+        // mass-wipes). Excluding them avoids false-positives when the
+        // operator has just authored fresh local content.
+        const orphanPreview: string[] = [];
+        let remoteTotal = 0;
+        for (const kind of KINDS) {
+          const basePath = KIND_TO_PATH[kind];
+          const remoteById = new Map(
+            commitData[KIND_TO_TABLE[kind]].map((c) => [c.id, c]),
+          );
+          remoteTotal += remoteById.size;
+          const filesForKind = listFiles({ prefix: basePath + "/" });
+          for (const meta of filesForKind) {
+            if (meta.path === `${basePath}/INDEX.md`) continue;
+            const file = getFile(meta.path);
+            if (!file) continue;
+            const commitId = extractCommitId(file.content);
+            if (!commitId) continue;
+            if (!remoteById.has(commitId)) {
+              orphanPreview.push(
+                `${meta.path} (id ${commitId.slice(0, 8)} missing on COMMIT)`,
+              );
+            }
+          }
+        }
+        // Remote-empty mass-wipe floor: when COMMIT has zero records across
+        // every kind, the 2× ratio is undefined. A single-orphan cleanup is
+        // routine and should flow through, but a large mirror-down would
+        // mass-delete. The floor (10) trips only on the latter and gives
+        // the operator a manifest preview to verify a transient empty fetch
+        // didn't masquerade as a real remote wipe.
+        const REMOTE_EMPTY_MASS_WIPE_FLOOR = 10;
+        if (
+          remoteTotal === 0 &&
+          orphanPreview.length >= REMOTE_EMPTY_MASS_WIPE_FLOOR
+        ) {
+          return JSON.stringify({
+            aborted: true,
+            reason: "remote_empty_with_local_records",
+            orphans: orphanPreview.length,
+            remote_total: 0,
+            threshold: `remote_total === 0 AND orphans >= ${REMOTE_EMPTY_MASS_WIPE_FLOOR}`,
+            manifest_preview: orphanPreview.slice(0, 20),
+            next: "COMMIT has no records for any NorthStar kind, but local has substantial content. This is either a remote wipe or a transient fetch issue. Re-run with force=true to mirror the wipe locally, or investigate the remote before retrying.",
+          });
+        }
+        if (remoteTotal > 0 && orphanPreview.length >= 2 * remoteTotal) {
+          return JSON.stringify({
+            aborted: true,
+            reason: "safety_drift_exceeded",
+            orphans: orphanPreview.length,
+            remote_total: remoteTotal,
+            threshold: "orphans >= 2 × remote_total",
+            manifest_preview: orphanPreview.slice(0, 20),
+            next: "Inspect the manifest. If the wipe is intended, re-run with force=true. The deletion is permanent.",
+          });
+        }
+      }
 
       const report: SyncReport = {
         pulled: 0,

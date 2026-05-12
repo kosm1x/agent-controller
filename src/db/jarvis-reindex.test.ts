@@ -9,7 +9,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initDatabase, closeDatabase, getDatabase } from "./index.js";
-import { reindexJarvisKb, walkKbDir } from "./jarvis-reindex.js";
+import {
+  reindexJarvisKb,
+  walkKbDir,
+  MANAGED_NAMESPACES,
+} from "./jarvis-reindex.js";
 import { upsertFile, getFile } from "./jarvis-fs.js";
 
 let testKbDir: string;
@@ -132,6 +136,36 @@ describe("reindexJarvisKb", () => {
     // upserted+errored covers all candidates.
     expect(r.upserted + r.errored).toBe(2);
     expect(r.errored).toBeGreaterThanOrEqual(0);
+  });
+
+  it("skips managed namespaces (NorthStar/) — authority lies in northstar_sync", () => {
+    // The 2026-05-12 orphan-resurrection incident: a NorthStar/ FS mirror with
+    // 226 stale .md files was being upserted hourly into jarvis_files, undoing
+    // every operator-triggered northstar_sync wipe within the hour. kb-reindex
+    // must treat NorthStar/ as opaque.
+    expect(MANAGED_NAMESPACES).toContain("NorthStar/");
+    writeFs("NorthStar/tasks/orphan.md", "# Orphan\n\nshould not be upserted");
+    writeFs("NorthStar/goals/another.md", "# Another orphan");
+    writeFs("knowledge/legit.md", "# Legit");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    // fsCount excludes managed-namespace files: only seeds + the legit user file
+    expect(r.fsCount).toBe(SEED_FILES + 1);
+    expect(r.upserted).toBe(1);
+    expect(getFile("NorthStar/tasks/orphan.md")).toBeNull();
+    expect(getFile("NorthStar/goals/another.md")).toBeNull();
+    expect(getFile("knowledge/legit.md")?.title).toBe("Legit");
+  });
+
+  // qa-auditor W3 (2026-05-12): sibling-prefix safety
+  it("does not skip a sibling prefix like NorthStarLite/", () => {
+    // The skip rule must match `NorthStar/` strictly — not `NorthStar`
+    // alone (which would swallow `NorthStarLite/foo.md`).
+    writeFs("NorthStarLite/foo.md", "# Sibling, not managed");
+    writeFs("NorthStar.md", "# Root file, not managed");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.upserted).toBe(2);
+    expect(getFile("NorthStarLite/foo.md")?.title).toBe("Sibling, not managed");
+    expect(getFile("NorthStar.md")?.title).toBe("Root file, not managed");
   });
 
   it("kbRoot override propagates", () => {
