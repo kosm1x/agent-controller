@@ -157,6 +157,10 @@ export async function selfAssess(
       ...(response.usage.cache_creation_tokens !== undefined && {
         cacheCreationTokens: response.usage.cache_creation_tokens,
       }),
+      // 2026-05-13 R3-1: surface SDK-reported model so selfAssess tokens are
+      // attributed to the model that ran (Opus→Sonnet wrapper can downgrade
+      // independently of the main goal call).
+      ...(response.model !== undefined && { actualModel: response.model }),
     };
     const raw = parseLLMJson<Partial<SelfAssessment>>(response.content ?? "");
     // Shape guard: ensure required fields have safe defaults
@@ -414,6 +418,11 @@ export async function executeGoal(
         totalCompletion += assessUsage.completionTokens;
         totalCacheRead += assessUsage.cacheReadTokens ?? 0;
         totalCacheCreation += assessUsage.cacheCreationTokens ?? 0;
+        // 2026-05-13 R3-1 W2: roll selfAssess's model into goal-level
+        // actualModel so a Sonnet fallback inside selfAssess (Opus→Sonnet
+        // wrapper) updates attribution; otherwise the local main-call model
+        // shadows it and cost_ledger under-counts Sonnet usage.
+        if (assessUsage.actualModel) actualModel = assessUsage.actualModel;
         // null = no criteria to check, met = passed
         if (!assessment || assessment.met) break;
 
@@ -618,8 +627,10 @@ export async function executeGraph(
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
   // 2026-05-10 cutover round-2 C1: aggregate the SDK-reported model across
-  // goals. Last-write-wins — the final goal's model wins. This is fine for
-  // cost_ledger because dispatcher records cost per-task, not per-goal.
+  // goals. Last-write-wins — within a parallel batch this is array-index
+  // order (see R3-2 note at the assignment site below), not wall-clock time.
+  // This is fine for cost_ledger because dispatcher records cost per-task,
+  // not per-goal.
   let aggregatedActualModel: string | undefined;
   const maxIterations = graph.size * 4 + 1;
 
@@ -676,6 +687,10 @@ export async function executeGraph(
       totalCacheReadTokens += goalResult.tokenUsage.cacheReadTokens ?? 0;
       totalCacheCreationTokens +=
         goalResult.tokenUsage.cacheCreationTokens ?? 0;
+      // 2026-05-13 R3-2: LWW is array-index order (settled[j] iteration on a
+      // single Promise.allSettled batch), not wall-clock time. Per-task rollup
+      // is approximate by design — within a parallel iteration, the last
+      // non-empty model in array order wins, not the goal that finished last.
       if (goalResult.tokenUsage.actualModel) {
         aggregatedActualModel = goalResult.tokenUsage.actualModel;
       }

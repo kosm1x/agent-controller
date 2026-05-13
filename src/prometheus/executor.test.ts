@@ -197,8 +197,10 @@ describe("executeGoal", () => {
     const result = await executeGoal(makeGoal(), "");
     expect(result.ok).toBe(true);
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
-  }, // test tolerates that because the mock resolves on the second call. // + up to 5s jitter. Real delivery would sleep the full cooldown; this // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
-  45_000);
+    // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
+    // + up to 5s jitter. Real delivery would sleep the full cooldown; this
+    // test tolerates that because the mock resolves on the second call.
+  }, 45_000);
 
   it("injects [JARVIS KNOWLEDGE BASE] into system prompt when enforce file present", async () => {
     const { getFilesByQualifier } = await import("../db/jarvis-fs.js");
@@ -414,6 +416,70 @@ describe("selfAssess", () => {
     expect(assessment!.met).toBe(false);
     expect(assessment!.unmetCriteria).toEqual([]); // safe default
     expect(assessment!.reasoning).toBe(""); // safe default
+  });
+
+  it("R3-1: surfaces response.model into usage.actualModel for cost attribution", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: true,
+        unmetCriteria: [],
+        reasoning: "ok",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+      model: "claude-sonnet-4-6",
+    });
+
+    const goal = makeGoal({ completionCriteria: ["criterion"] });
+    const { usage } = await selfAssess(goal, "output");
+    expect(usage.actualModel).toBe("claude-sonnet-4-6");
+  });
+
+  it("R3-1: omits actualModel when response.model is undefined (OpenAI path)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: true,
+        unmetCriteria: [],
+        reasoning: "ok",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+      // no `model` field — OpenAI HTTP path does not populate it
+    });
+
+    const goal = makeGoal({ completionCriteria: ["criterion"] });
+    const { usage } = await selfAssess(goal, "output");
+    expect(usage.actualModel).toBeUndefined();
+  });
+
+  it("R3-1 W2: selfAssess actualModel rolls up into goal-level tokenUsage", async () => {
+    mockInferWithTools.mockResolvedValueOnce({
+      content: "Goal output",
+      messages: [
+        { role: "system", content: "..." },
+        { role: "assistant", content: "Goal output" },
+      ],
+      toolRepairs: [],
+      totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
+      // no `model` from the main call (mock doesn't surface it)
+    });
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: true,
+        unmetCriteria: [],
+        reasoning: "ok",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+      model: "claude-sonnet-4-6",
+    });
+
+    const result = await executeGoal(makeGoal(), "");
+    expect(result.ok).toBe(true);
+    expect(result.tokenUsage.actualModel).toBe("claude-sonnet-4-6");
   });
 });
 

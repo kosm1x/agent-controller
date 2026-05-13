@@ -182,6 +182,15 @@ export async function queryClaudeSdkComplexWithFallback<T>(
   try {
     return await call(OPUS_MODEL_ID);
   } catch (err) {
+    // 2026-05-13 R3-3: this abort branch is defensive belt-and-suspenders.
+    // `queryClaudeSdk` catches AbortError internally (see claude-sdk.ts catch
+    // block ~line 543) and returns a degraded `ClaudeSdkResult` whose `text`
+    // is the partial streamed content or an "Error: query aborted — …"
+    // marker, so the typical production path never throws aborts up to here.
+    // The guard exists for (a) integration tests that throw synthetic aborts
+    // and (b) any future direct caller that bypasses the internal catch. Do
+    // not simplify it out without first confirming abort handling in every
+    // call shape.
     const errorName =
       err instanceof Error
         ? err.name
