@@ -31,8 +31,11 @@ export async function initMessaging(): Promise<MessageRouter | null> {
   if (process.env.EMAIL_ENABLED === "true") {
     const { EmailAdapter } = await import("./channels/email.js");
     const email = new EmailAdapter();
-    await email.start();
+    // Register before start(): start() runs an initial poll, and the adapter
+    // must already hold the router's onMessage handler — otherwise unseen
+    // owner mail present at boot is marked \Seen and silently dropped.
     router.registerChannel(email);
+    await email.start();
     console.log("[messaging] Email channel active");
   }
 

@@ -94,7 +94,11 @@ class SocketReader {
 }
 
 /** Reject `promise` if it does not settle within `ms`. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`${label} timed out after ${ms}ms`)),
@@ -242,6 +246,12 @@ export class EmailAdapter implements ChannelAdapter {
       port: IMAP_PORT,
       servername: IMAP_HOST,
     });
+    // Idle-timeout the socket itself: withTimeout() rejects the caller but
+    // cannot unblock a readUntil() awaiting a silent socket — only a real
+    // socket event (error/close) wakes the reader and lets `finally` run.
+    socket.setTimeout(OP_TIMEOUT_MS, () => {
+      socket.destroy(new Error("IMAP socket idle timeout"));
+    });
     const reader = new SocketReader(socket);
     let tagSeq = 0;
     const nextTag = () => `a${++tagSeq}`;
@@ -272,7 +282,14 @@ export class EmailAdapter implements ChannelAdapter {
       await command(`LOGIN ${imapQuote(USERNAME!)} ${imapQuote(PASSWORD!)}`);
       await command("SELECT INBOX");
 
-      const searchResp = await command("UID SEARCH UNSEEN");
+      // Scope the search to owner mail server-side. Non-owner unseen mail is
+      // then never fetched and never flagged \Seen — Jarvis must not mutate
+      // the read state of other mail in a shared mailbox. handleRawEmail()
+      // keeps its own owner check as defense-in-depth (FROM is a substring
+      // match and can over-match).
+      const searchResp = await command(
+        `UID SEARCH UNSEEN FROM ${imapQuote(OWNER_ADDRESS)}`,
+      );
       const searchLine = searchResp
         .split("\r\n")
         .find((l) => /^\* SEARCH/i.test(l));
@@ -389,6 +406,10 @@ export class EmailAdapter implements ChannelAdapter {
       host: SMTP_HOST!,
       port: SMTP_PORT,
       servername: SMTP_HOST,
+    });
+    // Idle-timeout the socket itself — see the matching note in pollInternal().
+    socket.setTimeout(OP_TIMEOUT_MS, () => {
+      socket.destroy(new Error("SMTP socket idle timeout"));
     });
     const reader = new SocketReader(socket);
 
