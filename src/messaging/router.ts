@@ -491,6 +491,16 @@ function threadKey(channel: string, from?: string, senderJid?: string): string {
   return channel;
 }
 
+/**
+ * Whether a channel name belongs to the email transport. Email is
+ * multi-mailbox — every account is its own `email:<id>` channel — so an
+ * exact `=== "email"` check is wrong. Precise (not a loose `startsWith`):
+ * matches the bare `"email"` and `email:<id>`, nothing else.
+ */
+function isEmailChannel(channel: string): boolean {
+  return channel === "email" || channel.startsWith("email:");
+}
+
 // ---------------------------------------------------------------------------
 // Critical data persistence safety net
 // ---------------------------------------------------------------------------
@@ -778,10 +788,13 @@ function hydrateThreadIfNeeded(tk: string): void {
   if (hydratedChannels.has(tk)) return;
   hydratedChannels.add(tk);
 
-  // Extract base channel from compound key for DB query.
+  // Extract the channel tag used to tag conversations for this thread.
   // Compound keys: "whatsapp:group@g.us:sender@s.whatsapp.net" → "whatsapp"
   // Simple keys: "telegram" → "telegram"
-  const baseChannel = tk.split(":")[0];
+  // Email is the exception: each mailbox is its own `email:<id>` channel and
+  // conversations are tagged with that full name, so the hydration query must
+  // use the whole key — splitting on ":" would collapse all mailboxes to one.
+  const baseChannel = tk.startsWith("email:") ? tk : tk.split(":")[0];
 
   try {
     const db = getDatabase();
@@ -1581,7 +1594,7 @@ export class MessageRouter {
     // Fallback ACK for non-Telegram or if streaming setup failed.
     // Email is skipped: it is async by nature, so a separate "working on it"
     // email per message is just inbox noise — the result email is the reply.
-    if (!streamController && msg.channel !== "email") {
+    if (!streamController && !isEmailChannel(msg.channel)) {
       this.sendToChannel(
         msg.channel,
         msg.from,
@@ -1851,6 +1864,10 @@ export class MessageRouter {
     const promises: Promise<void>[] = [];
 
     for (const [name, adapter] of this.channels) {
+      // Email channels are request/response, not push surfaces — a ritual or
+      // proactive broadcast must not email every project mailbox's owner
+      // unsolicited (each email:<id> resolves a non-null owner address).
+      if (isEmailChannel(name)) continue;
       const to = this.getOwnerAddress(name);
       if (to) {
         promises.push(
@@ -2465,10 +2482,14 @@ export class MessageRouter {
   }
 
   private getOwnerAddress(channel: ChannelName): string | null {
+    // Adapters that own their owner mapping (email accounts each carry one)
+    // win over the env-var lookup — there is no single EMAIL_OWNER_ADDRESS
+    // once mailboxes are per-account.
+    const adapter = this.channels.get(channel);
+    if (adapter?.ownerAddress) return adapter.ownerAddress;
     if (channel === "whatsapp") return process.env.WHATSAPP_OWNER_JID ?? null;
     if (channel === "telegram")
       return process.env.TELEGRAM_OWNER_CHAT_ID ?? null;
-    if (channel === "email") return process.env.EMAIL_OWNER_ADDRESS ?? null;
     return null;
   }
 }

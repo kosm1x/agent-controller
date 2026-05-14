@@ -29,14 +29,23 @@ export async function initMessaging(): Promise<MessageRouter | null> {
   }
 
   if (process.env.EMAIL_ENABLED === "true") {
-    const { EmailAdapter } = await import("./channels/email.js");
-    const email = new EmailAdapter();
-    // Register before start(): start() runs an initial poll, and the adapter
-    // must already hold the router's onMessage handler — otherwise unseen
-    // owner mail present at boot is marked \Seen and silently dropped.
-    router.registerChannel(email);
-    await email.start();
-    console.log("[messaging] Email channel active");
+    const { EmailAdapter, parseEmailAccounts } =
+      await import("./channels/email.js");
+    // parseEmailAccounts() throws on a misconfigured .env — fail fast at boot
+    // rather than silently running zero mailboxes. One adapter per account,
+    // each registered under its own `email:<id>` channel name.
+    const accounts = parseEmailAccounts();
+    for (const account of accounts) {
+      const email = new EmailAdapter(account);
+      // Register before start(): start() runs an initial poll, and the adapter
+      // must already hold the router's onMessage handler — otherwise unseen
+      // owner mail present at boot is marked \Seen and silently dropped.
+      router.registerChannel(email);
+      await email.start();
+    }
+    console.log(
+      `[messaging] Email channel active — ${accounts.length} mailbox(es)`,
+    );
   }
 
   if (router.channelCount === 0) {
