@@ -28,6 +28,17 @@ export async function initMessaging(): Promise<MessageRouter | null> {
     console.log("[messaging] Telegram channel active");
   }
 
+  if (process.env.EMAIL_ENABLED === "true") {
+    const { EmailAdapter } = await import("./channels/email.js");
+    const email = new EmailAdapter();
+    // Register before start(): start() runs an initial poll, and the adapter
+    // must already hold the router's onMessage handler — otherwise unseen
+    // owner mail present at boot is marked \Seen and silently dropped.
+    router.registerChannel(email);
+    await email.start();
+    console.log("[messaging] Email channel active");
+  }
+
   if (router.channelCount === 0) {
     console.log("[messaging] No channels enabled");
     router = null;
