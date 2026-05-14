@@ -997,7 +997,7 @@ export class MessageRouter {
         .prepare(`SELECT metadata FROM tasks WHERE task_id = ? LIMIT 1`)
         .get(orphans[0].task_id) as { metadata: string } | undefined;
 
-      let channel = defaultChannel;
+      let channel: ChannelName = defaultChannel;
       let to = defaultTo;
       try {
         if (thread?.metadata) {
@@ -1578,8 +1578,10 @@ export class MessageRouter {
       }
     }
 
-    // Fallback ACK for non-Telegram or if streaming setup failed
-    if (!streamController) {
+    // Fallback ACK for non-Telegram or if streaming setup failed.
+    // Email is skipped: it is async by nature, so a separate "working on it"
+    // email per message is just inbox noise — the result email is the reply.
+    if (!streamController && msg.channel !== "email") {
       this.sendToChannel(
         msg.channel,
         msg.from,
@@ -2466,6 +2468,7 @@ export class MessageRouter {
     if (channel === "whatsapp") return process.env.WHATSAPP_OWNER_JID ?? null;
     if (channel === "telegram")
       return process.env.TELEGRAM_OWNER_CHAT_ID ?? null;
+    if (channel === "email") return process.env.EMAIL_OWNER_ADDRESS ?? null;
     return null;
   }
 }

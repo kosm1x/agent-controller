@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatForWhatsApp,
   formatForTelegram,
+  formatForEmail,
   splitMessage,
 } from "./formatter.js";
 
@@ -112,6 +113,42 @@ describe("formatForTelegram", () => {
     for (const chunk of result) {
       expect(chunk.length).toBeLessThanOrEqual(4096);
     }
+  });
+});
+
+describe("formatForEmail", () => {
+  it("should strip **bold** markers", () => {
+    expect(formatForEmail("This is **bold** text")).toBe("This is bold text");
+  });
+
+  it("should strip ## header markers", () => {
+    expect(formatForEmail("## My Header")).toBe("My Header");
+  });
+
+  it("should strip single-asterisk italics", () => {
+    expect(formatForEmail("an *italic* word")).toBe("an italic word");
+  });
+
+  it("should strip inline code backticks", () => {
+    expect(formatForEmail("run `npm test` now")).toBe("run npm test now");
+  });
+
+  it("should keep code fence contents and drop the fences", () => {
+    expect(formatForEmail("```js\nconst x = 1;\n```")).toBe("const x = 1;");
+  });
+
+  it("should convert links to text (url)", () => {
+    expect(formatForEmail("see [docs](https://x.com)")).toBe(
+      "see docs (https://x.com)",
+    );
+  });
+
+  it("should leave bullet lists readable", () => {
+    expect(formatForEmail("- one\n- two")).toBe("- one\n- two");
+  });
+
+  it("should return empty string for empty input", () => {
+    expect(formatForEmail("")).toBe("");
   });
 });
 

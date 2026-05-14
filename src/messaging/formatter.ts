@@ -84,6 +84,45 @@ export function formatForTelegram(text: string): string[] {
 }
 
 /**
+ * Convert standard markdown to clean plain text for email bodies.
+ * Email is plain text — strip markdown decoration rather than translate it.
+ * - Code fences: keep contents, drop the ``` markers
+ * - Headers `## H` → `H`
+ * - `**bold**` / `__bold__` → `bold`, `*i*` / `_i_` → `i`
+ * - Inline code `` `x` `` → `x`, `~~s~~` → `s`
+ * - Links `[text](url)` → `text (url)`
+ * - Bullet markers and numbered lists are left as-is (readable in plain text)
+ */
+export function formatForEmail(text: string): string {
+  if (!text) return "";
+
+  let result = text;
+
+  // Code fences: keep the inner content, drop the fence markers
+  result = result.replace(/```[\w]*\n?([\s\S]*?)```/g, "$1");
+
+  // Headers: ## Header → Header
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, "$1");
+
+  // Links: [text](url) → text (url)
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
+
+  // Bold / italic: strip the surrounding markers
+  result = result.replace(/\*\*(.+?)\*\*/g, "$1");
+  result = result.replace(/__(.+?)__/g, "$1");
+  result = result.replace(/(?<!\*)\*(?!\*)([^*\n]+?)\*(?!\*)/g, "$1");
+  result = result.replace(/~~(.+?)~~/g, "$1");
+
+  // Inline code: `x` → x
+  result = result.replace(/`([^`]+)`/g, "$1");
+
+  // Strip any leaked HTML tags
+  result = result.replace(/<\/?[a-z][^>]*>/gi, "");
+
+  return result.trim();
+}
+
+/**
  * Split a message at paragraph boundaries, falling back to sentence
  * boundaries if a single paragraph exceeds the limit.
  */

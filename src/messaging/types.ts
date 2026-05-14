@@ -5,7 +5,7 @@
  * communication over WhatsApp and Telegram.
  */
 
-export type ChannelName = "whatsapp" | "telegram";
+export type ChannelName = "whatsapp" | "telegram" | "email";
 
 export interface IncomingMessage {
   channel: ChannelName;
