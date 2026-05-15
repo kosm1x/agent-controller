@@ -2,8 +2,9 @@
  * Shell command validation tests.
  */
 
-import { describe, it, expect } from "vitest";
-import { validateShellCommand } from "./shell.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import { shellTool, validateShellCommand } from "./shell.js";
+import { _resetFlailingGuard } from "../flailing-guard.js";
 
 describe("validateShellCommand", () => {
   describe("allowed commands", () => {
@@ -494,5 +495,46 @@ B`;
       );
       expect(r.allowed).toBe(false);
     });
+  });
+});
+
+describe("shellTool flailing guard integration", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("blocks the 4th attempt after 3 prior failures share a token", async () => {
+    // Three prior failures running the same kind of nonexistent script.
+    // exit(127) is what bash returns for "command not found"; the integer
+    // doesn't matter — what matters is non-zero.
+    for (const variant of ["v1", "v2", "v3"]) {
+      const result = await shellTool.execute({
+        command: `node /tmp/flailing_probe_${variant}_nonexistent.cjs`,
+      });
+      const parsed = JSON.parse(result);
+      expect(parsed.exit_code).not.toBe(0);
+    }
+
+    const blocked = await shellTool.execute({
+      command: "node /tmp/flailing_probe_v4_nonexistent.cjs",
+    });
+    const parsed = JSON.parse(blocked);
+    expect(parsed.exit_code).toBe(-1);
+    expect(parsed.stderr).toContain("FLAILING DETECTED");
+    expect(parsed.stderr).toContain("3-strike");
+    expect(parsed.stdout).toBe("");
+  });
+
+  it("does not block unrelated commands even after others have failed", async () => {
+    // Three failures on script-A
+    for (const variant of ["v1", "v2", "v3"]) {
+      await shellTool.execute({
+        command: `node /tmp/scriptA_${variant}_nope.cjs`,
+      });
+    }
+    // An unrelated, succeeding command should still run cleanly
+    const result = await shellTool.execute({ command: "true" });
+    const parsed = JSON.parse(result);
+    expect(parsed.exit_code).toBe(0);
   });
 });

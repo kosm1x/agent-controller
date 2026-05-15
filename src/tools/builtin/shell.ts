@@ -9,6 +9,11 @@ import { execSync, execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import {
+  buildFlailingBlockMessage,
+  checkFlailing,
+  recordCall,
+} from "../flailing-guard.js";
 
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds
@@ -422,6 +427,24 @@ RESTRICTIONS:
         error: `Command blocked by security policy: ${validation.reason}`,
       });
     }
+
+    // 3-strike flailing guard: if the last N shell calls sharing a significant
+    // token with this command all failed, short-circuit instead of attempting
+    // another variation. The LLM's next turn then escalates to the operator.
+    const flail = checkFlailing(command);
+    if (flail) {
+      console.log(
+        `[shell-guard] FLAILING: token="${flail.token}" strikes=${flail.strikes} command="${command.length > 80 ? command.slice(0, 80) + "..." : command}"`,
+      );
+      // Do NOT record the blocked call — it never executed, so it isn't a 4th
+      // strike. The history reflects real attempts only.
+      return JSON.stringify({
+        exit_code: -1,
+        stdout: "",
+        stderr: buildFlailingBlockMessage(flail.token, flail.strikes),
+      });
+    }
+
     console.log(
       `[shell-guard] OK: ${command.length > 120 ? command.slice(0, 120) + "..." : command}`,
     );
@@ -445,6 +468,7 @@ RESTRICTIONS:
             `\n... (truncated, ${output.length} total chars)`
           : output;
 
+      recordCall(command, 0);
       return JSON.stringify({ stdout: trimmed, exit_code: 0 });
     } catch (err: unknown) {
       const error = err as {
@@ -453,8 +477,10 @@ RESTRICTIONS:
         stderr?: string;
         message?: string;
       };
+      const exitCode = error.status ?? 1;
+      recordCall(command, exitCode);
       return JSON.stringify({
-        exit_code: error.status ?? 1,
+        exit_code: exitCode,
         stdout: (error.stdout ?? "").slice(0, MAX_OUTPUT),
         stderr: (error.stderr ?? error.message ?? "").slice(0, MAX_OUTPUT),
       });
