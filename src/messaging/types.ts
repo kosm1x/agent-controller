@@ -32,14 +32,32 @@ export interface OutgoingMessage {
   replyTo?: string;
 }
 
+/**
+ * Email-channel policy. `owner-only` (default) treats the mailbox like the
+ * Telegram channel — one trusted sender (the operator) drives Jarvis with full
+ * tool access. `community-manager` treats the mailbox as a public-facing org
+ * inbox: any sender's mail is read and answered, threads are per-sender, the
+ * tool set is restricted to read-only / lookup, and the system prompt branches
+ * to a "responding on behalf of the org" persona.
+ */
+export type EmailChannelMode = "owner-only" | "community-manager";
+
 export interface ChannelAdapter {
   readonly name: ChannelName;
   /**
    * The owner address for this channel, when the adapter owns that mapping
    * itself (email accounts each carry their own owner). When absent, the
-   * router falls back to its env-var lookup (WhatsApp/Telegram).
+   * router falls back to its env-var lookup (WhatsApp/Telegram). In email
+   * community-manager mode this is the operator escalation address (optional,
+   * may be null) — it is NOT a sender filter in that mode.
    */
   readonly ownerAddress?: string | null;
+  /**
+   * Mode hint, set by email adapters. The router uses this to decide whether
+   * to apply the restricted community-manager tool scope. Non-email adapters
+   * leave it undefined.
+   */
+  readonly mode?: EmailChannelMode;
   start(): Promise<void>;
   send(msg: OutgoingMessage): Promise<string>; // Returns message ID
   onMessage(handler: (msg: IncomingMessage) => void): void;

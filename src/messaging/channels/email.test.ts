@@ -28,11 +28,13 @@ const EMAIL_KEYS = [
   "EMAIL_COMUNIDADES_ADDRESS",
   "EMAIL_COMUNIDADES_OWNER_ADDRESS",
   "EMAIL_COMUNIDADES_POLL_INTERVAL_MS",
+  "EMAIL_COMUNIDADES_MODE",
   "EMAIL_PROYECTO2_IMAP_HOST",
   "EMAIL_PROYECTO2_SMTP_HOST",
   "EMAIL_PROYECTO2_USERNAME",
   "EMAIL_PROYECTO2_PASSWORD",
   "EMAIL_PROYECTO2_OWNER_ADDRESS",
+  "EMAIL_PROYECTO2_MODE",
 ];
 
 function clearEmailEnv(): void {
@@ -113,6 +115,8 @@ describe("parseEmailAccounts", () => {
       password: "app-password",
       // fromAddress defaults to username
       fromAddress: "comunidades@mexiconecesario.org.mx",
+      // mode defaults to owner-only
+      mode: "owner-only",
       // owner address is lowercased
       ownerAddress: "owner@example.com",
       pollIntervalMs: 60_000,
@@ -176,6 +180,62 @@ describe("parseEmailAccounts", () => {
     expect(() => parseEmailAccounts()).toThrow(
       /invalid EMAIL_COMUNIDADES_POLL_INTERVAL_MS="5000"/,
     );
+  });
+
+  it("defaults to mode=owner-only when EMAIL_<ID>_MODE is unset", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    setComunidades();
+    expect(parseEmailAccounts()[0]?.mode).toBe("owner-only");
+  });
+
+  it("accepts EMAIL_<ID>_MODE=community-manager", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    setComunidades({ EMAIL_COMUNIDADES_MODE: "community-manager" });
+    expect(parseEmailAccounts()[0]?.mode).toBe("community-manager");
+  });
+
+  it("throws on an invalid EMAIL_<ID>_MODE value", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    setComunidades({ EMAIL_COMUNIDADES_MODE: "supervisor" });
+    expect(() => parseEmailAccounts()).toThrow(
+      /invalid EMAIL_COMUNIDADES_MODE="supervisor"/,
+    );
+  });
+
+  it("makes OWNER_ADDRESS optional in community-manager mode", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    process.env.EMAIL_COMUNIDADES_IMAP_HOST = "imap.hostinger.com";
+    process.env.EMAIL_COMUNIDADES_SMTP_HOST = "smtp.hostinger.com";
+    process.env.EMAIL_COMUNIDADES_USERNAME =
+      "comunidades@mexiconecesario.org.mx";
+    process.env.EMAIL_COMUNIDADES_PASSWORD = "pw";
+    process.env.EMAIL_COMUNIDADES_MODE = "community-manager";
+    // no OWNER_ADDRESS
+    const [acct] = parseEmailAccounts();
+    expect(acct?.mode).toBe("community-manager");
+    expect(acct?.ownerAddress).toBeNull();
+  });
+
+  it("still requires OWNER_ADDRESS in owner-only mode (explicit)", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    process.env.EMAIL_COMUNIDADES_IMAP_HOST = "imap.hostinger.com";
+    process.env.EMAIL_COMUNIDADES_SMTP_HOST = "smtp.hostinger.com";
+    process.env.EMAIL_COMUNIDADES_USERNAME =
+      "comunidades@mexiconecesario.org.mx";
+    process.env.EMAIL_COMUNIDADES_PASSWORD = "pw";
+    process.env.EMAIL_COMUNIDADES_MODE = "owner-only";
+    expect(() => parseEmailAccounts()).toThrow(
+      /missing required env vars: EMAIL_COMUNIDADES_OWNER_ADDRESS/,
+    );
+  });
+
+  it("lowercases the optional OWNER_ADDRESS in community-manager mode when set", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    setComunidades({
+      EMAIL_COMUNIDADES_MODE: "community-manager",
+      EMAIL_COMUNIDADES_OWNER_ADDRESS: "Escalation@Org.MX",
+    });
+    expect(parseEmailAccounts()[0]?.ownerAddress).toBe("escalation@org.mx");
   });
 
   it("throws when two accounts point at the same (host, username) mailbox", () => {
@@ -262,7 +322,7 @@ describe("extractFetchLiteral", () => {
 });
 
 describe("EmailAdapter identity", () => {
-  it("registers under the `email:<id>` channel name and exposes its owner", () => {
+  it("registers under the `email:<id>` channel name and exposes its owner + mode", () => {
     const adapter = new EmailAdapter({
       id: "comunidades",
       imapHost: "imap.hostinger.com",
@@ -272,12 +332,32 @@ describe("EmailAdapter identity", () => {
       username: "comunidades@mexiconecesario.org.mx",
       password: "pw",
       fromAddress: "comunidades@mexiconecesario.org.mx",
+      mode: "owner-only",
       ownerAddress: "owner@example.com",
       pollIntervalMs: 60_000,
     });
     expect(adapter.name).toBe("email:comunidades");
     expect(adapter.ownerAddress).toBe("owner@example.com");
+    expect(adapter.mode).toBe("owner-only");
     // Not yet polled — isConnected is false until the first successful poll.
     expect(adapter.isConnected()).toBe(false);
+  });
+
+  it("accepts community-manager mode with no owner address", () => {
+    const adapter = new EmailAdapter({
+      id: "comunidades",
+      imapHost: "imap.hostinger.com",
+      imapPort: 993,
+      smtpHost: "smtp.hostinger.com",
+      smtpPort: 465,
+      username: "comunidades@mexiconecesario.org.mx",
+      password: "pw",
+      fromAddress: "comunidades@mexiconecesario.org.mx",
+      mode: "community-manager",
+      ownerAddress: null,
+      pollIntervalMs: 60_000,
+    });
+    expect(adapter.mode).toBe("community-manager");
+    expect(adapter.ownerAddress).toBeNull();
   });
 });

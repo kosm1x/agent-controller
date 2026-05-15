@@ -396,6 +396,70 @@ export const XPOZ_TOOLS = [
   "xpoz__xpoz_get_history",
 ];
 
+/**
+ * Tool allowlist for community-manager email channels (EMAIL_<ID>_MODE=
+ * community-manager). These mailboxes are public-facing: ANY sender's mail
+ * lands on the runner, so Jarvis must only have read / lookup tools — a
+ * malicious or confused stranger cannot drive destructive actions on the
+ * org's behalf. The router replies via its own send path, not via a tool, so
+ * Jarvis does NOT need a "send email" tool here.
+ *
+ * Add a tool to this list ONLY after auditing that on a stranger's request it
+ * cannot:
+ *   - mutate FS / DB / KB / Drive / WordPress / projects / NorthStar state,
+ *   - send mail or post anywhere on behalf of the org (impersonation risk),
+ *   - exfiltrate org data to an external destination,
+ *   - schedule, cancel, or alter automated jobs.
+ *
+ * Activated by the router for any inbound on a `community-manager`-mode email
+ * channel; bypasses the semantic scope classifier so this set is identical
+ * across messages and across senders.
+ */
+export const COMMUNITY_EMAIL_TOOLS = [
+  // General lookup / web read
+  "web_search",
+  "web_read",
+  "exa_search",
+  // Local read
+  "file_read",
+  "list_dir",
+  "task_history",
+  // Jarvis KB read (no writes — JARVIS_WRITE_TOOLS deliberately omitted)
+  "jarvis_file_read",
+  "jarvis_file_list",
+  "jarvis_file_search",
+  // Read-only status / index
+  "list_schedules",
+  "project_list",
+  "vps_status",
+  // Google Workspace — READ ONLY (no _send, _write, _create, _delete, _share,
+  // _upload, _move). gmail_read is gated by config in scope mode-selection.
+  "gmail_search",
+  "gmail_read",
+  "gdrive_list",
+  "gdrive_download",
+  "gdocs_read",
+  "gdocs_read_full",
+  "gsheets_read",
+  "gslides_read",
+  "calendar_list",
+  // Lightpanda browser — fetch + render (no interactive form fill / click /
+  // evaluate; those live in BROWSER_EXTRA_TOOLS).
+  "browser__goto",
+  "browser__markdown",
+  // Domain read
+  "intel_query",
+  "intel_status",
+  "intel_alert_history",
+  "intel_baseline",
+  "knowledge_map",
+  "knowledge_map_expand",
+  // Utilities — all pure
+  "weather_forecast",
+  "currency_convert",
+  "geocode_address",
+];
+
 // ---------------------------------------------------------------------------
 // Default scope patterns
 // ---------------------------------------------------------------------------

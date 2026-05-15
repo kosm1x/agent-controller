@@ -106,6 +106,7 @@ import {
   getAllAvailableTools,
   DEFAULT_SCOPE_PATTERNS,
   CONVERSATIONAL_PATTERN,
+  COMMUNITY_EMAIL_TOOLS,
 } from "./scope.js";
 import { classifyScopeGroups } from "./scope-classifier.js";
 import { normalizeForMatching, wasNormalized } from "./normalize.js";
@@ -1650,12 +1651,33 @@ export class MessageRouter {
     // Dynamic tool scoping — uses semantic groups if available, regex fallback.
     // Pass normalizedText so regex fallback benefits from typo corrections.
     // Pass prior scope so empty-classifier follow-ups inherit (v8 2026-04-26).
-    const { tools, activeGroups } = scopeToolsForMessage(
+    let { tools, activeGroups } = scopeToolsForMessage(
       normalizedText,
       conversationHistory,
       semanticGroups,
       previousScopeGroups.get(tk),
     );
+
+    // Channel-policy override. A community-manager email channel accepts mail
+    // from anyone on the public internet — the classifier-derived scope is the
+    // wrong primitive (a stranger's message text shouldn't decide which tools
+    // Jarvis can touch). Force the read-only / lookup allowlist regardless of
+    // what the classifier said. Stable across messages, identical across
+    // senders. Owner-only mailboxes and non-email channels are unaffected.
+    const adapter = this.channels.get(msg.channel);
+    if (adapter?.mode === "community-manager") {
+      const allAvailable = getAllAvailableTools({
+        hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
+        hasWordpress: !!process.env.WP_SITES,
+        hasMemory: getMemoryService().backend === "hindsight",
+        hasCrm: !!process.env.CRM_API_TOKEN,
+      });
+      tools = COMMUNITY_EMAIL_TOOLS.filter((t) => allAvailable.has(t));
+      activeGroups = ["email-community"];
+      console.log(
+        `[router] Channel ${msg.channel} is community-manager → restricted scope (${tools.length} tools)`,
+      );
+    }
 
     // Implicit feedback: compare current scope groups with previous message's.
     // Uses feedbackTaskId captured at line 592 (checkFeedbackWindow is destructive

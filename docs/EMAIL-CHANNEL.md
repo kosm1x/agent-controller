@@ -8,11 +8,23 @@ deployed; **activation is operator-pending** — the channel only runs once
 
 ## Goal
 
-Let Jarvis converse over email — the owner emails a question, Jarvis runs the
-task, Jarvis replies in the same thread from the same mailbox. Functionally
-identical to the WhatsApp and Telegram channels: a transport adapter that feeds
-inbound messages into the router and sends outbound replies. Unlike those two,
-email is **multi-instance**: Jarvis manages several project mailboxes at once.
+Two distinct use cases share one transport, picked per account via
+`EMAIL_<ID>_MODE`:
+
+- **owner-only** — the operator emails a question, Jarvis runs the task,
+  Jarvis replies in the same thread from the same mailbox. Same trust model
+  as Telegram: one trusted sender, full tool access. Used for a private
+  Jarvis admin mailbox.
+- **community-manager** — Jarvis is the named community manager of a
+  public-facing org mailbox (e.g. `comunidades@mexiconecesario.org.mx`).
+  _Anyone_ writing to that address gets read and answered on behalf of the
+  organisation. Tool scope is forced to a read-only / lookup allowlist so a
+  stranger cannot drive destructive actions; replies are per-sender (each
+  conversation has its own thread context).
+
+Functionally still a transport adapter feeding inbound to the router and
+sending outbound replies; unlike WhatsApp/Telegram it is **multi-instance** —
+Jarvis manages several project mailboxes at once.
 
 ## Scope decision: client, not server
 
@@ -142,31 +154,71 @@ of account ids (each `[a-z0-9_]+`). Every id `ID` carries its own
 `EMAIL_<ID>_*` block (the id is uppercased for the env-var infix). Channels
 read `process.env` directly — no `Config` change.
 
-| Var (per account `<ID>`)      | Required | Default     | Notes                                        |
-| ----------------------------- | -------- | ----------- | -------------------------------------------- |
-| `EMAIL_ENABLED`               | —        | `false`     | Global gate.                                 |
-| `EMAIL_ACCOUNTS`              | yes      | —           | Comma list of account ids.                   |
-| `EMAIL_<ID>_IMAP_HOST`        | yes      | —           | e.g. `imap.hostinger.com`.                   |
-| `EMAIL_<ID>_IMAP_PORT`        | —        | `993`       | Implicit TLS.                                |
-| `EMAIL_<ID>_SMTP_HOST`        | yes      | —           | e.g. `smtp.hostinger.com`.                   |
-| `EMAIL_<ID>_SMTP_PORT`        | —        | `465`       | Implicit TLS.                                |
-| `EMAIL_<ID>_USERNAME`         | yes      | —           | Login for both IMAP and SMTP.                |
-| `EMAIL_<ID>_PASSWORD`         | yes      | —           | App password — keep in `.env`, never commit. |
-| `EMAIL_<ID>_ADDRESS`          | —        | `_USERNAME` | `From:` address.                             |
-| `EMAIL_<ID>_OWNER_ADDRESS`    | yes      | —           | Only mail from this sender is processed.     |
-| `EMAIL_<ID>_POLL_INTERVAL_MS` | —        | `60000`     | IMAP poll cadence.                           |
+| Var (per account `<ID>`)      | Required            | Default      | Notes                                                                                                                               |
+| ----------------------------- | ------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `EMAIL_ENABLED`               | —                   | `false`      | Global gate.                                                                                                                        |
+| `EMAIL_ACCOUNTS`              | yes                 | —            | Comma list of account ids.                                                                                                          |
+| `EMAIL_<ID>_MODE`             | —                   | `owner-only` | `owner-only` or `community-manager`. Drives the sender filter, thread keying, and tool scope (see _Modes_).                         |
+| `EMAIL_<ID>_IMAP_HOST`        | yes                 | —            | e.g. `imap.hostinger.com`.                                                                                                          |
+| `EMAIL_<ID>_IMAP_PORT`        | —                   | `993`        | Implicit TLS.                                                                                                                       |
+| `EMAIL_<ID>_SMTP_HOST`        | yes                 | —            | e.g. `smtp.hostinger.com`.                                                                                                          |
+| `EMAIL_<ID>_SMTP_PORT`        | —                   | `465`        | Implicit TLS.                                                                                                                       |
+| `EMAIL_<ID>_USERNAME`         | yes                 | —            | Login for both IMAP and SMTP.                                                                                                       |
+| `EMAIL_<ID>_PASSWORD`         | yes                 | —            | App password — keep in `.env`, never commit.                                                                                        |
+| `EMAIL_<ID>_ADDRESS`          | —                   | `_USERNAME`  | `From:` address.                                                                                                                    |
+| `EMAIL_<ID>_OWNER_ADDRESS`    | yes in `owner-only` | —            | In `owner-only`: only mail from this sender is processed. In `community-manager`: optional operator-escalation address (no filter). |
+| `EMAIL_<ID>_POLL_INTERVAL_MS` | —                   | `60000`      | IMAP poll cadence (floor 10000).                                                                                                    |
 
 Any missing required var, an invalid or duplicate id, or a port / poll
 interval that is present but not an integer in range makes
 `parseEmailAccounts()` throw at boot with a precise message. Absent optional
 vars fall back to the defaults above; present-but-garbage values fail fast.
 
+## Modes
+
+Each account declares one of two modes via `EMAIL_<ID>_MODE`:
+
+### `owner-only` (default)
+
+Same trust model as Telegram. The IMAP search is scoped server-side to
+`UID SEARCH UNSEEN FROM <owner>` so non-owner mail is never fetched or flagged;
+`handleRawEmail()` re-checks the sender as defense-in-depth (IMAP `FROM` is a
+substring match and can over-match). The inbound header is
+`[Cuenta: <id> (<addr>) | Asunto: <subject>]` and Jarvis has full tool access —
+the operator is trusted. `OWNER_ADDRESS` is required.
+
+### `community-manager`
+
+Public-facing org mailbox. Every unseen message is fetched and routed; replies
+go back to the originating sender (thread context is keyed per-sender so two
+concurrent conversations on one mailbox do not clobber each other). The
+inbound header is
+`[Cuenta: <id> (<addr>) | Modo: community-manager | De: <sender> | Asunto: <subject>]`
+so the system prompt branches to a "respond as the org's community manager"
+persona. Because _any_ sender can drive a task, the router forces a fixed
+read-only / lookup tool allowlist (`COMMUNITY_EMAIL_TOOLS` in
+`src/messaging/scope.ts`) — no send/write/delete/create/upload tools, no admin
+or destructive actions. A stranger cannot ask Jarvis to wire money, delete
+files, post on behalf of the org, or call any tool that mutates external
+state. `OWNER_ADDRESS` is optional in this mode; when set it is reserved as
+the operator-escalation address, not a sender filter.
+
+The system prompt (`identitySection()` in `src/messaging/prompt-sections.ts`)
+teaches Jarvis to read the `Modo:` tag, sign as the community manager (not as
+"Jarvis"), decline admin requests with a polite acknowledgement-only reply,
+and keep tone professional in the sender's language (Spanish by default).
+
 ## Security / robustness
 
-- **Owner-only, server-side.** Each account's IMAP search is scoped
-  `FROM <owner>` so non-owner mail is never fetched or flagged;
-  `handleRawEmail()` re-checks the sender as a second layer — same trust model
-  as the Telegram owner-chat filter.
+- **Server-side sender scope (owner-only).** Each `owner-only` account's IMAP
+  search is `FROM <owner>` so non-owner mail is never fetched or flagged;
+  `handleRawEmail()` re-checks the sender as a second layer.
+- **Tool scope restricted (community-manager).** Inbound on a
+  `community-manager`-mode email channel forces the router's tool list to the
+  curated `COMMUNITY_EMAIL_TOOLS` allowlist (read / lookup only) regardless of
+  what the semantic scope classifier decided. A stranger cannot prompt Jarvis
+  into a destructive action because the action's tool is not exposed for that
+  task.
 - **Credentials** stay in `.env`. Use a provider app password, not the account
   password.
 - **Polls are isolated.** Each poll opens and closes its own connection; a

@@ -37,6 +37,23 @@ if grep -q "^EMAIL_${ID_UP}_" "$ENV_FILE"; then
   note "An EMAIL_${ID_UP}_* block already exists — it will be replaced."
 fi
 
+# --- mode -------------------------------------------------------------------
+echo
+echo "Mode:"
+echo "  owner-only         — private Jarvis channel (Telegram-style). Only mail"
+echo "                       FROM the operator is read; full tool access."
+echo "  community-manager  — public-facing org mailbox. ALL senders are read,"
+echo "                       Jarvis replies on behalf of the org with a"
+echo "                       restricted (read-only / lookup) tool set."
+while true; do
+  read -rp "Mode [owner-only | community-manager] (default: owner-only): " MODE
+  MODE="${MODE:-owner-only}"
+  case "$MODE" in
+    owner-only|community-manager) break ;;
+    *) err "Must be exactly 'owner-only' or 'community-manager'." ;;
+  esac
+done
+
 # --- required fields --------------------------------------------------------
 req() { # req VARNAME "prompt"
   local _v
@@ -62,7 +79,13 @@ case "$PASSWORD" in
     note "Note: password contains '#', a space or a tab. systemd reads .env values literally to end-of-line so this should still work, but a provider app-password without those characters is safest." ;;
 esac
 
-req OWNER_ADDRESS "Owner address (ONLY mail from this sender is processed)"
+# Owner address is the sender filter in owner-only mode (required), and the
+# optional operator-escalation address in community-manager mode.
+if [[ "$MODE" == "owner-only" ]]; then
+  req OWNER_ADDRESS "Owner address (ONLY mail from this sender is processed)"
+else
+  read -rp "Operator escalation address (optional, press Enter to skip): " OWNER_ADDRESS
+fi
 
 read -rp "From address [default: $USERNAME]: " FROM_ADDRESS
 FROM_ADDRESS="${FROM_ADDRESS:-$USERNAME}"
@@ -88,12 +111,13 @@ echo
 note "About to add this mailbox to $ENV_FILE:"
 cat <<SUMMARY
   id              : $ACCOUNT_ID   (channel: email:$ACCOUNT_ID)
+  mode            : $MODE
   IMAP            : $IMAP_HOST:$IMAP_PORT
   SMTP            : $SMTP_HOST:$SMTP_PORT
   username        : $USERNAME
   password        : (hidden, ${#PASSWORD} chars)
   from address    : $FROM_ADDRESS
-  owner address   : $OWNER_ADDRESS
+  owner address   : ${OWNER_ADDRESS:-(none — community-manager mode)}
   poll interval   : ${POLL_INTERVAL_MS}ms
 SUMMARY
 read -rp "Proceed? [y/N]: " CONFIRM
@@ -133,6 +157,7 @@ grep -vE "^EMAIL_ENABLED=|^EMAIL_ACCOUNTS=|^EMAIL_${ID_UP}_|^# >>> email account
   printf 'EMAIL_ENABLED=true\n'
   printf 'EMAIL_ACCOUNTS=%s\n' "$MERGED"
   printf '# >>> email account: %s <<<\n' "$ACCOUNT_ID"
+  printf 'EMAIL_%s_MODE=%s\n'             "$ID_UP" "$MODE"
   printf 'EMAIL_%s_IMAP_HOST=%s\n'        "$ID_UP" "$IMAP_HOST"
   printf 'EMAIL_%s_IMAP_PORT=%s\n'        "$ID_UP" "$IMAP_PORT"
   printf 'EMAIL_%s_SMTP_HOST=%s\n'        "$ID_UP" "$SMTP_HOST"
@@ -140,7 +165,10 @@ grep -vE "^EMAIL_ENABLED=|^EMAIL_ACCOUNTS=|^EMAIL_${ID_UP}_|^# >>> email account
   printf 'EMAIL_%s_USERNAME=%s\n'         "$ID_UP" "$USERNAME"
   printf 'EMAIL_%s_PASSWORD=%s\n'         "$ID_UP" "$PASSWORD"
   printf 'EMAIL_%s_ADDRESS=%s\n'          "$ID_UP" "$FROM_ADDRESS"
-  printf 'EMAIL_%s_OWNER_ADDRESS=%s\n'    "$ID_UP" "$OWNER_ADDRESS"
+  # OWNER_ADDRESS line is omitted in community-manager mode if left blank.
+  if [[ -n "$OWNER_ADDRESS" ]]; then
+    printf 'EMAIL_%s_OWNER_ADDRESS=%s\n'  "$ID_UP" "$OWNER_ADDRESS"
+  fi
   printf 'EMAIL_%s_POLL_INTERVAL_MS=%s\n' "$ID_UP" "$POLL_INTERVAL_MS"
 } >> "$TMP"
 
