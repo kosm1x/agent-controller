@@ -366,6 +366,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // added or removed, this test trips and the maintainer must update the
     // expected count intentionally — same forcing-function as the syntactic
     // regex-source guards used in earlier spines.
-    expect(ALL_TOOLS.length).toBe(186);
+    // 2026-05-15: 186 → 188 (queue #17 — batch_write + batch_delete added).
+    expect(ALL_TOOLS.length).toBe(188);
   });
 });

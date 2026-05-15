@@ -1404,6 +1404,27 @@ describe("jarvis write tools (always-on since 2026-05-07)", () => {
       expect(tools).toContain("project_get");
     },
   );
+
+  // Queue #17 (2026-05-15) — batch tools for Pattern A bulk-throughput
+  // throttle fix. Same always-on contract as their single-item siblings:
+  // operator-explicit bulk-write / bulk-delete intent doesn't need to be
+  // inferred from a scope-classifier signal. These it.each pin the
+  // availability against re-gating.
+  it.each([
+    "Procede",
+    "borra todos los archivos de NorthStar/tasks/",
+    "reconstruye la sección de proyectos",
+    "limpia el workspace",
+    "guarda las 10 notas",
+    "qué tareas tengo pendientes?",
+  ])(
+    "queue #17: %j (no priors) includes batch_write + batch_delete",
+    (phrase) => {
+      const tools = scope(phrase);
+      expect(tools).toContain("jarvis_files_batch_write");
+      expect(tools).toContain("jarvis_files_batch_delete");
+    },
+  );
 });
 
 // v7.7.2 audit fix — VALID_GROUPS in scope-classifier.ts must include

@@ -887,6 +887,24 @@ function formatConfirmationResult(
       return `✅ Post eliminado de WordPress.`;
     case "file_delete":
       return `✅ Archivo eliminado: ${args.path ?? ""}`;
+    case "jarvis_file_delete":
+      return `✅ Archivo eliminado: ${args.path ?? ""}`;
+    case "jarvis_files_batch_delete": {
+      const ok = (result as { ok?: number }).ok ?? 0;
+      const nf = (result as { not_found?: number }).not_found ?? 0;
+      const err = (result as { errors?: number }).errors ?? 0;
+      const parts = [`✅ ${ok} archivo(s) eliminado(s)`];
+      if (nf > 0) parts.push(`${nf} no encontrado(s)`);
+      if (err > 0) parts.push(`${err} error(es)`);
+      return parts.join("; ") + ".";
+    }
+    case "jarvis_files_batch_write": {
+      const ok = (result as { ok?: number }).ok ?? 0;
+      const err = (result as { errors?: number }).errors ?? 0;
+      return err > 0
+        ? `✅ ${ok} archivo(s) escrito(s); ${err} error(es).`
+        : `✅ ${ok} archivo(s) escrito(s).`;
+    }
     case "vps_deploy":
       return `✅ Deploy ejecutado.`;
     case "schedule_delete":
@@ -1487,10 +1505,19 @@ export class MessageRouter {
         );
         clearPendingConfirmation(tk);
         try {
-          const result = await toolRegistry.execute(
-            pendingConf.toolName,
-            pendingConf.args,
-          );
+          // Tools with handler-level precious-path / precious-target re-checks
+          // (jarvis_file_delete, jarvis_files_batch_delete, etc.) ALSO read a
+          // `confirmed: true` arg to skip the secondary scan. The router has
+          // already validated operator intent via the conversation flow, so we
+          // inject the flag here. Tools that don't have a `confirmed` param
+          // simply ignore the extra arg (no schema-level rejection on extras).
+          // Without this, a precious-path delete loops: tool returns
+          // CONFIRMATION_REQUIRED → router formats as "Error: ..." → operator
+          // never gets the actual deletion. Queue #17 audit W2 (2026-05-15).
+          const result = await toolRegistry.execute(pendingConf.toolName, {
+            ...pendingConf.args,
+            confirmed: true,
+          });
           // Format result for user — human-readable confirmation
           let userResponse: string;
           try {

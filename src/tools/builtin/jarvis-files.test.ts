@@ -19,6 +19,10 @@ vi.mock("../../db/index.js", () => ({
 vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
+  // Silence syncDeleteFromKbMirror's existsSync/rmSync probes during
+  // delete-path tests. Pre-existing noise; multiplied by batch tests.
+  existsSync: vi.fn().mockReturnValue(false),
+  rmSync: vi.fn(),
 }));
 
 import {
@@ -27,6 +31,8 @@ import {
   jarvisFileUpdateTool,
   jarvisFileListTool,
   jarvisFileDeleteTool,
+  jarvisFilesBatchWriteTool,
+  jarvisFilesBatchDeleteTool,
 } from "./jarvis-files.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
 
@@ -427,5 +433,257 @@ describe("getFilesByQualifier", () => {
     expect(mockDb.prepare).toHaveBeenCalledWith(
       expect.stringContaining("qualifier IN"),
     );
+  });
+});
+
+// Queue #17 (2026-05-15) — Pattern A bulk-throughput throttle fix. These
+// tools collapse N runner turns → 1 for bulk-write / bulk-delete workflows
+// (NS reconstruction at 53× writes, NS bulk-delete at 54× deletes both hit
+// MAX_ROUNDS_CODING=55 in May 2026 with one op per turn).
+
+describe("jarvis_files_batch_write", () => {
+  it("writes a batch of 3 files and reports all ok", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchWriteTool.execute({
+      files: [
+        { path: "a.md", title: "A", content: "alpha" },
+        { path: "b.md", title: "B", content: "beta" },
+        { path: "c.md", title: "C", content: "gamma" },
+      ],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.total).toBe(3);
+    expect(parsed.ok).toBe(3);
+    expect(parsed.errors).toBe(0);
+    expect(parsed.results).toHaveLength(3);
+    expect(
+      parsed.results.every((r: { status: string }) => r.status === "ok"),
+    ).toBe(true);
+    // Each item triggers an INSERT via upsertFile — exactly N prepare calls
+    // for the INSERT statement (plus any mirror writes). Loose assertion is
+    // fine — what we're pinning is "all 3 made it through."
+    expect(mockRun).toHaveBeenCalledTimes(3);
+  });
+
+  it("partial failure: invalid .md path on item 2 does NOT abort items 1+3", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchWriteTool.execute({
+      files: [
+        { path: "ok1.md", title: "OK1", content: "x" },
+        { path: "bad.txt", title: "Bad", content: "x" }, // wrong extension
+        { path: "ok2.md", title: "OK2", content: "x" },
+      ],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.ok).toBe(2);
+    expect(parsed.errors).toBe(1);
+    expect(parsed.results[0].status).toBe("ok");
+    expect(parsed.results[1].status).toBe("error");
+    expect(parsed.results[1].error).toContain(".md");
+    expect(parsed.results[2].status).toBe("ok");
+    // Only 2 INSERTs (item 2 short-circuited before upsertFile).
+    expect(mockRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("partial failure: logs/day-logs/ guard rejects without aborting batch", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchWriteTool.execute({
+      files: [
+        { path: "ok.md", title: "OK", content: "x" },
+        {
+          path: "logs/day-logs/2026-05-15.md",
+          title: "log",
+          content: "x",
+        },
+      ],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(1);
+    expect(parsed.errors).toBe(1);
+    expect(parsed.results[1].error).toContain("mechanically managed");
+  });
+
+  it("enforce qualifier is silently downgraded to reference per item", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchWriteTool.execute({
+      files: [{ path: "x.md", title: "X", content: "x", qualifier: "enforce" }],
+    });
+    expect(JSON.parse(result).ok).toBe(1);
+    // The qualifier passed to the SQL row binding must be "reference", not
+    // "enforce" — verified by inspecting the run call args.
+    const firstRunArgs = mockRun.mock.calls[0];
+    expect(firstRunArgs).toContain("reference");
+    expect(firstRunArgs).not.toContain("enforce");
+  });
+
+  it("rejects empty array before doing any work", async () => {
+    const result = await jarvisFilesBatchWriteTool.execute({ files: [] });
+    expect(JSON.parse(result).error).toContain("non-empty");
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects > 50 items before doing any work (cap enforcement)", async () => {
+    const files = Array.from({ length: 51 }, (_, i) => ({
+      path: `f${i}.md`,
+      title: `F${i}`,
+      content: "x",
+    }));
+    const result = await jarvisFilesBatchWriteTool.execute({ files });
+    expect(JSON.parse(result).error).toContain("cap exceeded");
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("accepts exactly 50 items (boundary)", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const files = Array.from({ length: 50 }, (_, i) => ({
+      path: `f${i}.md`,
+      title: `F${i}`,
+      content: "x",
+    }));
+    const result = await jarvisFilesBatchWriteTool.execute({ files });
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.ok).toBe(50);
+  });
+});
+
+describe("jarvis_files_batch_delete", () => {
+  it("deletes a batch of 3 non-precious files and reports all ok", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["tmp/a.md", "tmp/b.md", "tmp/c.md"],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.total).toBe(3);
+    expect(parsed.ok).toBe(3);
+    expect(parsed.errors).toBe(0);
+    expect(parsed.not_found).toBe(0);
+  });
+
+  it("returns CONFIRMATION_REQUIRED when any path is precious (no deletes happen)", async () => {
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["tmp/a.md", "NorthStar/visions/x.md", "tmp/b.md"],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
+    expect(parsed.precious_paths).toHaveLength(1);
+    expect(parsed.precious_paths[0].path).toBe("NorthStar/visions/x.md");
+    // CRITICAL: no DELETE runs before confirmation — even non-precious
+    // siblings are NOT deleted on the first call.
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("with confirmed:true, precious paths are deleted alongside non-precious", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["tmp/a.md", "NorthStar/visions/x.md"],
+      confirmed: true,
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.ok).toBe(2);
+    expect(mockRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports not_found separately from errors when file isn't in DB", async () => {
+    // Two deletes: first succeeds (changes=1), second returns 0 (not found).
+    mockRun
+      .mockReturnValueOnce({ changes: 1 })
+      .mockReturnValueOnce({ changes: 0 });
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["tmp/exists.md", "tmp/missing.md"],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(1);
+    expect(parsed.not_found).toBe(1);
+    expect(parsed.errors).toBe(0);
+    expect(parsed.results[0].status).toBe("ok");
+    expect(parsed.results[1].status).toBe("not_found");
+  });
+
+  it("rejects empty array before scanning for precious paths", async () => {
+    const result = await jarvisFilesBatchDeleteTool.execute({ paths: [] });
+    expect(JSON.parse(result).error).toContain("non-empty");
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects > 50 paths before doing any work", async () => {
+    const paths = Array.from({ length: 51 }, (_, i) => `tmp/f${i}.md`);
+    const result = await jarvisFilesBatchDeleteTool.execute({ paths });
+    expect(JSON.parse(result).error).toContain("cap exceeded");
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string path entries with status:error, doesn't abort batch", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      // Cast: simulate an LLM passing junk inside the array.
+      paths: ["tmp/a.md", "" as unknown as string, "tmp/b.md"],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(2);
+    expect(parsed.errors).toBe(1);
+    expect(parsed.results[1].status).toBe("error");
+  });
+
+  it("dedupes duplicate paths up front (audit W3)", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["tmp/a.md", "tmp/a.md", "tmp/b.md"],
+    });
+    const parsed = JSON.parse(result);
+    // After dedup: total reflects what we actually attempted.
+    expect(parsed.total).toBe(2);
+    expect(parsed.ok).toBe(2);
+    expect(mockRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("precious-path scan sees the deduped set (one precious dup → one precious entry)", async () => {
+    const result = await jarvisFilesBatchDeleteTool.execute({
+      paths: ["NorthStar/x.md", "NorthStar/x.md"],
+    });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
+    expect(parsed.precious_paths).toHaveLength(1);
+  });
+});
+
+describe("jarvis_files_batch_write — additional audit-driven cases", () => {
+  it("dedupes duplicate file paths up front (audit W3)", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    const result = await jarvisFilesBatchWriteTool.execute({
+      files: [
+        { path: "x.md", title: "X1", content: "a" },
+        { path: "x.md", title: "X2", content: "b" },
+        { path: "y.md", title: "Y", content: "c" },
+      ],
+    });
+    const parsed = JSON.parse(result);
+    // After dedup: 2 distinct paths attempted.
+    expect(parsed.total).toBe(2);
+    expect(parsed.ok).toBe(2);
+    expect(mockRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("batch tool annotations", () => {
+  it("jarvis_files_batch_write has correct hints + deferred:true", () => {
+    expect(jarvisFilesBatchWriteTool.readOnlyHint).toBe(false);
+    expect(jarvisFilesBatchWriteTool.destructiveHint).toBe(true);
+    expect(jarvisFilesBatchWriteTool.idempotentHint).toBe(true);
+    expect(jarvisFilesBatchWriteTool.openWorldHint).toBe(true);
+    expect(jarvisFilesBatchWriteTool.deferred).toBe(true);
+  });
+
+  it("jarvis_files_batch_delete has correct hints + requiresConfirmation + deferred", () => {
+    expect(jarvisFilesBatchDeleteTool.readOnlyHint).toBe(false);
+    expect(jarvisFilesBatchDeleteTool.destructiveHint).toBe(true);
+    expect(jarvisFilesBatchDeleteTool.idempotentHint).toBe(true);
+    expect(jarvisFilesBatchDeleteTool.openWorldHint).toBe(true);
+    expect(jarvisFilesBatchDeleteTool.requiresConfirmation).toBe(true);
+    expect(jarvisFilesBatchDeleteTool.deferred).toBe(true);
   });
 });

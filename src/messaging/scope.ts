@@ -128,6 +128,8 @@ export const MISC_TOOLS = [
   "jarvis_file_update", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
   "jarvis_file_delete", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
   "jarvis_file_move", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
+  "jarvis_files_batch_write", // 2026-05-15: queue #17 — collapse N writes → 1 turn
+  "jarvis_files_batch_delete", // 2026-05-15: queue #17 — collapse N deletes → 1 turn
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
   // 2026-05-15: project_get + project_update promoted (queue #13, Option B

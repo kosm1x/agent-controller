@@ -704,3 +704,367 @@ WORKFLOW: search → pick best match → jarvis_file_read to get full content. N
     return lines.join("\n");
   },
 };
+
+// ---------------------------------------------------------------------------
+// Batch tools (queue #17 Pattern A — bulk-throughput throttle fix).
+//
+// Single-item jarvis_file_write / jarvis_file_delete each consume one runner
+// turn. Bulk tasks (NS reconstruction at 53× writes, NS bulk-delete at 54×
+// deletes) hit MAX_ROUNDS_CODING=55 because the throughput is throttled at
+// 1 op/turn. Raising the cap is the wrong fix — it postpones failure to
+// N=100 and multiplies cost linearly. These batch tools collapse N rounds
+// → 1 while preserving per-item atomicity and side-effect invariants
+// (pgvector / Drive / FS-mirror sync).
+//
+// Design:
+// - Cap at 50 items per call. Defensive against a hostile or buggy LLM
+//   trying to walk a directory inside a single tool call.
+// - Partial error policy: per-item status; one item's failure does NOT
+//   abort the batch. Each underlying op is independently atomic at the DB
+//   layer, so partial-batch failures are recoverable by re-issuing only
+//   the failed items.
+// - Same precious-path confirmation flow as single-item delete: precious
+//   paths in the batch trigger CONFIRMATION_REQUIRED with the explicit
+//   list, requiring `confirmed:true` to proceed.
+// ---------------------------------------------------------------------------
+
+const BATCH_CAP = 50;
+
+export const jarvisFilesBatchWriteTool: Tool = {
+  name: "jarvis_files_batch_write",
+  deferred: true,
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "jarvis_files_batch_write",
+      description: `Create or overwrite MULTIPLE files in the Jarvis Knowledge Base in one tool call. Same per-file semantics as jarvis_file_write — use this when you need to write 3+ files in one task.
+
+USE WHEN:
+- Reconstructing a section of the KB (≥3 files)
+- Bulk-creating project scaffolding (README + notes/ + planning/)
+- Replaying a snapshot of multiple files
+- Any operation that would otherwise call jarvis_file_write 3+ times in one task
+
+DO NOT USE FOR:
+- Single files (call jarvis_file_write directly — clearer intent, no array boilerplate)
+- Mixed write+delete operations (use the two batch tools sequentially, or single-item tools)
+- More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
+
+PATH HIERARCHY AND QUALIFIERS: see jarvis_file_write description — the same rules apply per item (paths must end .md, logs/day-logs/ is blocked, qualifier "enforce" is silently downgraded to "reference", projects/ + knowledge/ + NorthStar/ + directives/ are the canonical homes).
+
+PER-FILE PARAMETERS — same as jarvis_file_write: path (.md required), title, content, optional tags, qualifier, condition, priority, related_to. Each file is validated and written independently.
+
+ERROR POLICY: partial. One item's failure does NOT abort the batch. Response includes per-item status. After a partial-failure response, re-issue ONLY the failed items (do not retry the successful ones). Duplicate paths within the same call are de-duplicated up front (only the first occurrence is written) — pre-deduplicate if you want full visibility per item.
+
+RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, ...]}.`,
+      parameters: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            description: `Array of file specs to write. Max ${BATCH_CAP} per call.`,
+            minItems: 1,
+            maxItems: BATCH_CAP,
+            items: {
+              type: "object",
+              properties: {
+                path: {
+                  type: "string",
+                  description: "File path ending in .md",
+                },
+                title: { type: "string", description: "Human-readable title" },
+                content: {
+                  type: "string",
+                  description: "Full Markdown content",
+                },
+                tags: { type: "array", items: { type: "string" } },
+                qualifier: {
+                  type: "string",
+                  enum: [
+                    "always-read",
+                    "conditional",
+                    "reference",
+                    "workspace",
+                    "enforce",
+                  ],
+                },
+                condition: { type: "string" },
+                priority: { type: "number" },
+                related_to: { type: "array", items: { type: "string" } },
+              },
+              required: ["path", "title", "content"],
+            },
+          },
+        },
+        required: ["files"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const rawFiles = args.files as Array<Record<string, unknown>> | undefined;
+
+    if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+      return JSON.stringify({
+        error: "files must be a non-empty array",
+      });
+    }
+    if (rawFiles.length > BATCH_CAP) {
+      return JSON.stringify({
+        error: `Batch cap exceeded: ${rawFiles.length} > ${BATCH_CAP}. Split into multiple calls.`,
+      });
+    }
+
+    // Dedupe by path: first occurrence wins. Avoids double-upsert (2×
+    // pgvector re-embed + 2× Drive sync per duplicate) and keeps per-item
+    // status meaningful. Entries with a missing/invalid path fall through
+    // to the per-item validation loop and report as errors.
+    const seen = new Set<string>();
+    const files: Array<Record<string, unknown>> = [];
+    for (const f of rawFiles) {
+      const p = typeof f?.path === "string" ? f.path : "";
+      if (p && seen.has(p)) continue;
+      if (p) seen.add(p);
+      files.push(f);
+    }
+
+    const results: Array<{ path: string; status: string; error?: string }> = [];
+    let ok = 0;
+    let errors = 0;
+
+    for (const f of files) {
+      const path = (f.path as string) ?? "";
+      try {
+        const title = f.title as string;
+        const content = f.content as string;
+        const tags = (f.tags as string[]) ?? [];
+        let qualifier = (f.qualifier as string) ?? "reference";
+        const condition = (f.condition as string) ?? null;
+        const priority = (f.priority as number) ?? 50;
+        const relatedTo = (f.related_to as string[]) ?? [];
+
+        // Mirror jarvis_file_write's guards exactly.
+        if (qualifier === "enforce") {
+          qualifier = "reference";
+        }
+        if (!path || typeof path !== "string") {
+          results.push({
+            path,
+            status: "error",
+            error: "path is required",
+          });
+          errors++;
+          continue;
+        }
+        if (!path.endsWith(".md")) {
+          results.push({
+            path,
+            status: "error",
+            error: "path must end with .md",
+          });
+          errors++;
+          continue;
+        }
+        if (path.startsWith("logs/day-logs/")) {
+          results.push({
+            path,
+            status: "error",
+            error:
+              "logs/day-logs/ is mechanically managed; write to logs/day-narratives/ instead",
+          });
+          errors++;
+          continue;
+        }
+        if (typeof title !== "string" || typeof content !== "string") {
+          results.push({
+            path,
+            status: "error",
+            error: "title and content are required strings",
+          });
+          errors++;
+          continue;
+        }
+
+        upsertFile(
+          path,
+          title,
+          content,
+          tags,
+          qualifier,
+          priority,
+          condition,
+          relatedTo,
+        );
+        results.push({ path, status: "ok" });
+        ok++;
+      } catch (err) {
+        results.push({
+          path,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        errors++;
+      }
+    }
+
+    return JSON.stringify({
+      success: errors === 0,
+      total: files.length,
+      ok,
+      errors,
+      results,
+    });
+  },
+};
+
+export const jarvisFilesBatchDeleteTool: Tool = {
+  name: "jarvis_files_batch_delete",
+  deferred: true,
+  requiresConfirmation: true,
+  readOnlyHint: false,
+  destructiveHint: true,
+  // Deleting an already-deleted file is a no-op at the DB layer (status:
+  // "not_found"), so re-issuing the same batch is safe.
+  idempotentHint: true,
+  openWorldHint: true,
+  definition: {
+    type: "function",
+    function: {
+      name: "jarvis_files_batch_delete",
+      description: `Delete MULTIPLE files from the Jarvis Knowledge Base in one tool call. Same per-file semantics as jarvis_file_delete — use when you need to delete 3+ files in one task.
+
+USE WHEN:
+- Cleaning up workspace files after completing a multi-file task
+- Bulk-removing stale entries (e.g., archived project subtree)
+- Replaying a deletion snapshot
+
+DO NOT USE FOR:
+- Single files (call jarvis_file_delete directly)
+- More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
+
+CONFIRMATION FLOW: Files in knowledge/, projects/, NorthStar/, directives/, logs/day-logs/ are precious and require user confirmation. In INTERACTIVE tasks, the runner intercepts the first call and asks the operator regardless of precious-path membership (the standard pendingConfirmation flow); the tool's own CONFIRMATION_REQUIRED response with the precious_paths list only surfaces on retries / non-interactive paths. The router auto-injects confirmed:true on the operator-accepted retry, so the LLM does NOT need to set it manually — only set confirmed:true explicitly when responding to a tool-level CONFIRMATION_REQUIRED message that you've already shown to the user.
+
+ERROR POLICY: partial. One item's failure (not_found, error) does NOT abort the batch. Response includes per-item status. After a partial-failure response, re-issue ONLY the failed items. Duplicate paths within the same call are de-duplicated up front (only the first occurrence is attempted).
+
+RESPONSE SHAPE: {success, total, ok, not_found, errors, results: [{path, status, error?}, ...]} OR {error: "CONFIRMATION_REQUIRED", precious_paths, message}.`,
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: BATCH_CAP,
+            description: `Paths to delete. Max ${BATCH_CAP} per call.`,
+          },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true after user confirms deletion of precious paths surfaced by an earlier CONFIRMATION_REQUIRED response.",
+          },
+        },
+        required: ["paths"],
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const rawPaths = args.paths as string[] | undefined;
+    const confirmed = args.confirmed === true;
+
+    if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
+      return JSON.stringify({
+        error: "paths must be a non-empty array",
+      });
+    }
+    if (rawPaths.length > BATCH_CAP) {
+      return JSON.stringify({
+        error: `Batch cap exceeded: ${rawPaths.length} > ${BATCH_CAP}. Split into multiple calls.`,
+      });
+    }
+
+    // Dedupe paths: first occurrence wins. Avoids the "delete-then-not-
+    // found" noise for duplicates within the same batch and bounds the
+    // precious-scan + delete work to distinct paths only. Non-string
+    // entries fall through to the per-item validation loop where they
+    // report as errors.
+    const seenPaths = new Set<string>();
+    const paths: string[] = [];
+    for (const p of rawPaths) {
+      if (typeof p === "string") {
+        if (seenPaths.has(p)) continue;
+        seenPaths.add(p);
+      }
+      paths.push(p);
+    }
+
+    // Precious-path pre-scan: if any path is precious and the operator hasn't
+    // confirmed, return the full precious list at once so the operator can
+    // confirm or trim the batch in one pass instead of N round-trips.
+    if (!confirmed) {
+      const { isPreciousPath } = await import("./immutable-core.js");
+      const precious: Array<{ path: string; reason: string }> = [];
+      for (const p of paths) {
+        if (typeof p !== "string") continue;
+        const r = isPreciousPath(p);
+        if (r.precious) {
+          precious.push({ path: p, reason: r.reason ?? "protected area" });
+        }
+      }
+      if (precious.length > 0) {
+        return JSON.stringify({
+          error: "CONFIRMATION_REQUIRED",
+          precious_paths: precious,
+          message: `${precious.length} of ${paths.length} paths are in protected areas. Present them to the user and ask: '¿Los elimino?' After confirmation, call again with confirmed:true.`,
+        });
+      }
+    }
+
+    const results: Array<{ path: string; status: string; error?: string }> = [];
+    let ok = 0;
+    let notFound = 0;
+    let errors = 0;
+
+    for (const p of paths) {
+      if (typeof p !== "string" || p.length === 0) {
+        results.push({
+          path: String(p ?? ""),
+          status: "error",
+          error: "path must be a non-empty string",
+        });
+        errors++;
+        continue;
+      }
+      try {
+        const deleted = deleteFile(p);
+        if (deleted) {
+          results.push({ path: p, status: "ok" });
+          ok++;
+        } else {
+          results.push({ path: p, status: "not_found" });
+          notFound++;
+        }
+      } catch (err) {
+        results.push({
+          path: p,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        errors++;
+      }
+    }
+
+    return JSON.stringify({
+      success: errors === 0,
+      total: paths.length,
+      ok,
+      not_found: notFound,
+      errors,
+      results,
+    });
+  },
+};

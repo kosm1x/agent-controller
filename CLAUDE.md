@@ -189,6 +189,23 @@ When adding a new tool whose authority is non-FS, add the prefix here so its wip
 2. Add `sourceManager.addSource(new XyzSource())` in `src/index.ts` (with any env-var guards)
 3. `ToolSourceManager.initAll()` catches per-source errors — one failing source won't block others
 
+### Adding a batch tool (collapse N rounds → 1)
+
+When operator workflows trigger ≥3 calls of the same single-item tool in one task (NorthStar bulk-delete, NS reconstruction, weekly publish), wrap the single-item op in a batch tool that collapses N runner turns → 1. Reference: `jarvis_files_batch_write` / `jarvis_files_batch_delete` in `src/tools/builtin/jarvis-files.ts` (queue #17, commit `c2dd51e`'s successor).
+
+Recipe:
+
+1. **Iterate over the existing single-item function** — preserves all sync invariants (pgvector / Drive / FS-mirror, path-traversal guards, precious-path checks). Do NOT bypass them by re-implementing the underlying op.
+2. **Batch-size cap = 50** as the default. Defensive against a hostile or buggy LLM looping inside one call.
+3. **Partial error policy** — per-item `{path/id, status: "ok"|"not_found"|"error", error?}`. One item's failure does NOT abort the batch; the operator re-issues only the failed items.
+4. **Dedupe inputs up front** — sets up the precious-path scan and the inner loop to work on distinct items, and prevents 2× side-effect cost (re-embed, re-sync) per duplicate.
+5. **Cap enforcement happens BEFORE any work** — return cap-exceeded error before any precious scan or op execution.
+6. **Precious-path / confirmation flow** — pre-scan ALL items; if any require confirmation, return `CONFIRMATION_REQUIRED` with the full list (one trip, not N), refuse to act on non-precious siblings on that call.
+7. **Router auto-injects `confirmed: true`** on the operator-accepted retry (router.ts:1517), so the LLM does NOT need to set it manually. Document this in the tool description.
+8. **Schema constraints**: `minItems: 1`, `maxItems: BATCH_CAP` — most LLMs honor them.
+9. **Annotations**: `deferred: true` (schema loads on first call); `destructiveHint` and `idempotentHint` mirror the single-item parent.
+10. **Add a `formatConfirmationResult` case** in `router.ts` for human-readable post-confirmation echo (e.g., "✅ 50 archivo(s) eliminado(s)").
+
 ### Adding a new runner
 
 1. Implement `Runner` interface in `src/runners/<name>-runner.ts`
