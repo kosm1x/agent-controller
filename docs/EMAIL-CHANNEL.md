@@ -190,6 +190,38 @@ message loss (register-before-start ordering), socket leak on a hung host
 `FROM` scoping). The multi-mailbox refactor that followed preserves all three
 fixes.
 
+### Audit (multi-mailbox, pre-deploy)
+
+A second independent audit of the multi-mailbox commit ran before the channel
+was deployed. Verdict: pass with warnings — no critical defects, router blast
+radius contained, prompt-cache stability and the owner-filter defense both
+verified clean. Six items were fixed in the follow-up hardening commit:
+
+- **Silent send failure** — `send()` returned an `"error"` sentinel string on
+  SMTP failure, which `sendToChannel()` could not distinguish from success (it
+  only catches a _thrown_ rejection). `send()` now throws, so a failed reply is
+  logged at both the adapter and router layers instead of vanishing.
+- **CRLF injection guard** — `assertNoCrlf()` now gates every value that flows
+  into an SMTP envelope command (`MAIL FROM` / `RCPT TO` / `EHLO`) or an RFC822
+  header (`buildMimeMessage`). Not reachable with attacker input under the
+  owner-only model, but the type system permitted it — this is the poka-yoke.
+- **Unbounded dedup set** — the in-memory processed-id guard is now capped to a
+  recency window (`PROCESSED_ID_CAP`) instead of growing for the process life.
+- **Duplicate-mailbox config** — `parseEmailAccounts()` now rejects two account
+  ids pointing at the same `(IMAP host, username)` pair; they would otherwise
+  race to STORE `\Seen` and double-deliver.
+- **Poll-interval floor** — `EMAIL_<ID>_POLL_INTERVAL_MS` must be ≥ 10s; a
+  typo'd sub-second value used to pass validation.
+- **Consistency** — `hydrateThreadIfNeeded()` routes its email check through
+  the shared `isEmailChannel()` predicate; the inaccurate `\Seen`-on-parse-fail
+  comment was corrected.
+
+The IMAP/SMTP frame parsers (`imapTaggedEnd`, `extractFetchLiteral`,
+`smtpReplyEnd`, `imapQuote`) were exported and given unit tests — these
+literal-handling paths are the ones most likely to break against a non-Hostinger
+provider. The networked `poll()` / `send()` paths remain covered by the live
+round-trip test, not unit tests.
+
 ## Known limitations
 
 - Plain-text bodies only; no inbound attachment handling (a PDF/image arrives

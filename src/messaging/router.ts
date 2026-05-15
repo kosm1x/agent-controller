@@ -794,7 +794,9 @@ function hydrateThreadIfNeeded(tk: string): void {
   // Email is the exception: each mailbox is its own `email:<id>` channel and
   // conversations are tagged with that full name, so the hydration query must
   // use the whole key — splitting on ":" would collapse all mailboxes to one.
-  const baseChannel = tk.startsWith("email:") ? tk : tk.split(":")[0];
+  // Routed through the shared isEmailChannel() predicate so every "is this
+  // email" check in the router stays consistent.
+  const baseChannel = isEmailChannel(tk) ? tk : tk.split(":")[0];
 
   try {
     const db = getDatabase();

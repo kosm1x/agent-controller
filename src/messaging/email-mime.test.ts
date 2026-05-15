@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  assertNoCrlf,
   extractAddress,
   decodeRfc2047,
   encodeRfc2047,
@@ -16,6 +17,30 @@ import {
   generateMessageId,
   buildMimeMessage,
 } from "./email-mime.js";
+
+describe("assertNoCrlf", () => {
+  it("accepts a clean value", () => {
+    expect(() => assertNoCrlf("owner@example.com", "addr")).not.toThrow();
+  });
+
+  it("rejects an embedded CR", () => {
+    expect(() => assertNoCrlf("a@b.com\rX-Evil: 1", "addr")).toThrow(
+      /CR or LF/,
+    );
+  });
+
+  it("rejects an embedded LF", () => {
+    expect(() => assertNoCrlf("a@b.com\nRCPT TO:<x>", "addr")).toThrow(
+      /CR or LF/,
+    );
+  });
+
+  it("names the label in the error", () => {
+    expect(() => assertNoCrlf("x\ny", "SMTP MAIL FROM")).toThrow(
+      /SMTP MAIL FROM/,
+    );
+  });
+});
 
 describe("extractAddress", () => {
   it("pulls the address out of a Name <addr> header", () => {
@@ -43,9 +68,7 @@ describe("decodeRfc2047", () => {
   });
 
   it("joins adjacent encoded-words separated by whitespace", () => {
-    expect(
-      decodeRfc2047("=?UTF-8?B?aG9s?= =?UTF-8?B?YQ==?="),
-    ).toBe("hola");
+    expect(decodeRfc2047("=?UTF-8?B?aG9s?= =?UTF-8?B?YQ==?=")).toBe("hola");
   });
 
   it("leaves plain text untouched", () => {
@@ -227,6 +250,27 @@ describe("buildMimeMessage", () => {
     expect(Buffer.from(body, "base64").toString("utf8")).toBe("the answer");
   });
 
+  it("rejects a header value containing a CRLF (injection guard)", () => {
+    expect(() =>
+      buildMimeMessage({
+        from: "j@e.com",
+        to: "o@e.com\r\nBcc: attacker@evil.com",
+        subject: "ok",
+        body: "x",
+        messageId: "<x@e.com>",
+      }),
+    ).toThrow(/CR or LF/);
+    expect(() =>
+      buildMimeMessage({
+        from: "j@e.com",
+        to: "o@e.com",
+        subject: "ok\r\nX-Injected: 1",
+        body: "x",
+        messageId: "<x@e.com>",
+      }),
+    ).toThrow(/CR or LF/);
+  });
+
   it("round-trips a non-ASCII body and subject", () => {
     const mime = buildMimeMessage({
       from: "j@e.com",
@@ -238,9 +282,7 @@ describe("buildMimeMessage", () => {
     const subjectLine = mime
       .split("\r\n")
       .find((l) => l.startsWith("Subject:"))!;
-    expect(decodeRfc2047(subjectLine.replace("Subject: ", ""))).toBe(
-      "Café ☕",
-    );
+    expect(decodeRfc2047(subjectLine.replace("Subject: ", ""))).toBe("Café ☕");
     const body = mime.split("\r\n\r\n")[1];
     expect(Buffer.from(body, "base64").toString("utf8")).toBe(
       "respuesta en español",

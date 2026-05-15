@@ -31,6 +31,23 @@ export interface ParsedEmail {
   text: string;
 }
 
+/**
+ * Reject a value containing a CR or LF. RFC822 headers and SMTP envelope
+ * commands are line-delimited, so an embedded CRLF in an address, subject or
+ * message-id would let a crafted value inject extra headers or SMTP commands.
+ * Every value that flows into a header line or a `MAIL FROM` / `RCPT TO` /
+ * `EHLO` must pass through this first. The email channel is owner-only so this
+ * is not currently reachable with attacker input, but the type system permits
+ * it — this is the poka-yoke that closes the gap.
+ */
+export function assertNoCrlf(value: string, label: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(
+      `${label} contains a CR or LF character — refusing to use it`,
+    );
+  }
+}
+
 /** Extract the bare address from a `Name <addr@x>` / `addr@x` header value. */
 export function extractAddress(headerValue: string): string {
   const angle = headerValue.match(/<([^>]+)>/);
@@ -264,6 +281,15 @@ export interface OutboundMime {
  * pitfalls). Lines are CRLF-terminated.
  */
 export function buildMimeMessage(opts: OutboundMime): string {
+  // Guard every value that lands on a header line — a CRLF here would inject
+  // arbitrary headers into the outbound message.
+  assertNoCrlf(opts.from, "MIME From");
+  assertNoCrlf(opts.to, "MIME To");
+  assertNoCrlf(opts.subject, "MIME Subject");
+  assertNoCrlf(opts.messageId, "MIME Message-ID");
+  if (opts.inReplyTo) assertNoCrlf(opts.inReplyTo, "MIME In-Reply-To");
+  if (opts.references) assertNoCrlf(opts.references, "MIME References");
+
   const date = (opts.date ?? new Date()).toUTCString().replace(/GMT$/, "+0000");
   const lines: string[] = [
     `From: ${opts.from}`,

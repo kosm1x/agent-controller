@@ -1,11 +1,20 @@
 /**
- * Unit tests for the multi-mailbox config parser and adapter identity.
- * No network — parseEmailAccounts() is pure over process.env, and the
- * EmailAdapter constructor only assigns fields.
+ * Unit tests for the multi-mailbox config parser, adapter identity, and the
+ * raw IMAP/SMTP protocol-frame parsers. No network — parseEmailAccounts() is
+ * pure over process.env, the EmailAdapter constructor only assigns fields, and
+ * the frame parsers are pure string functions. The networked paths (poll/send)
+ * are covered by the live round-trip test, not here.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EmailAdapter, parseEmailAccounts } from "./email.js";
+import {
+  EmailAdapter,
+  extractFetchLiteral,
+  imapQuote,
+  imapTaggedEnd,
+  parseEmailAccounts,
+  smtpReplyEnd,
+} from "./email.js";
 
 /** Env keys this suite touches — cleared around every test for isolation. */
 const EMAIL_KEYS = [
@@ -159,6 +168,96 @@ describe("parseEmailAccounts", () => {
     expect(() => parseEmailAccounts()).toThrow(
       /invalid EMAIL_COMUNIDADES_POLL_INTERVAL_MS="0"/,
     );
+  });
+
+  it("throws on a poll interval below the 10s floor", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades";
+    setComunidades({ EMAIL_COMUNIDADES_POLL_INTERVAL_MS: "5000" });
+    expect(() => parseEmailAccounts()).toThrow(
+      /invalid EMAIL_COMUNIDADES_POLL_INTERVAL_MS="5000"/,
+    );
+  });
+
+  it("throws when two accounts point at the same (host, username) mailbox", () => {
+    process.env.EMAIL_ACCOUNTS = "comunidades,proyecto2";
+    setComunidades();
+    // proyecto2 reuses comunidades' IMAP host + username — same underlying
+    // mailbox, would race to STORE \Seen and double-deliver.
+    process.env.EMAIL_PROYECTO2_IMAP_HOST = "imap.hostinger.com";
+    process.env.EMAIL_PROYECTO2_SMTP_HOST = "smtp.hostinger.com";
+    process.env.EMAIL_PROYECTO2_USERNAME = "comunidades@mexiconecesario.org.mx";
+    process.env.EMAIL_PROYECTO2_PASSWORD = "pw2";
+    process.env.EMAIL_PROYECTO2_OWNER_ADDRESS = "owner@example.com";
+    expect(() => parseEmailAccounts()).toThrow(/same mailbox/);
+  });
+});
+
+describe("smtpReplyEnd", () => {
+  it("finds the end of a single-line reply", () => {
+    expect(smtpReplyEnd("250 OK\r\n")).toBe(8);
+  });
+
+  it("returns -1 on an incomplete line", () => {
+    expect(smtpReplyEnd("250 OK")).toBe(-1);
+  });
+
+  it("skips continuation lines and ends on the final code-space line", () => {
+    const buf = "250-first\r\n250-second\r\n250 done\r\n";
+    expect(smtpReplyEnd(buf)).toBe(buf.length);
+  });
+
+  it("does not end on a continuation line alone", () => {
+    expect(smtpReplyEnd("250-only\r\n")).toBe(-1);
+  });
+});
+
+describe("imapTaggedEnd", () => {
+  it("finds the end of a simple tagged OK response", () => {
+    const buf = "* OK greeting\r\na1 OK LOGIN done\r\n";
+    expect(imapTaggedEnd("a1", buf)).toBe(buf.length);
+  });
+
+  it("returns -1 when the tagged line has not arrived", () => {
+    expect(imapTaggedEnd("a1", "* 1 EXISTS\r\n")).toBe(-1);
+  });
+
+  it("treats {n} literal bytes as opaque, including CRLF inside them", () => {
+    // The literal payload contains its own CRLF — it must not be mistaken for
+    // the end of the response line.
+    const literal = "line1\r\nline2";
+    const buf =
+      `* 1 FETCH (BODY[] {${literal.length}}\r\n` +
+      `${literal})\r\na2 OK FETCH\r\n`;
+    expect(imapTaggedEnd("a2", buf)).toBe(buf.length);
+  });
+
+  it("returns -1 when a literal is announced but not fully buffered", () => {
+    expect(imapTaggedEnd("a2", "* 1 FETCH (BODY[] {100}\r\nonly-partial")).toBe(
+      -1,
+    );
+  });
+});
+
+describe("imapQuote", () => {
+  it("wraps a plain string in double quotes", () => {
+    expect(imapQuote("INBOX")).toBe('"INBOX"');
+  });
+
+  it("escapes embedded quotes and backslashes", () => {
+    expect(imapQuote('a"b\\c')).toBe('"a\\"b\\\\c"');
+  });
+});
+
+describe("extractFetchLiteral", () => {
+  it("pulls the literal payload of the announced byte length", () => {
+    const payload = "From: o@e.com\r\n\r\nbody";
+    const resp =
+      `* 1 FETCH (BODY[] {${payload.length}}\r\n` + `${payload})\r\na1 OK\r\n`;
+    expect(extractFetchLiteral(resp)).toBe(payload);
+  });
+
+  it("returns null when there is no literal marker", () => {
+    expect(extractFetchLiteral("a1 OK no literal here\r\n")).toBeNull();
   });
 });
 
