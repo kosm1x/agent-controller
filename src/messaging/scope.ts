@@ -399,66 +399,86 @@ export const XPOZ_TOOLS = [
 /**
  * Tool allowlist for community-manager email channels (EMAIL_<ID>_MODE=
  * community-manager). These mailboxes are public-facing: ANY sender's mail
- * lands on the runner, so Jarvis must only have read / lookup tools — a
- * malicious or confused stranger cannot drive destructive actions on the
- * org's behalf. The router replies via its own send path, not via a tool, so
- * Jarvis does NOT need a "send email" tool here.
+ * lands on the runner, so Jarvis must only have tools that are safe to expose
+ * to an anonymous external sender — a malicious or confused stranger cannot
+ * drive destructive actions, enumerate operator-side data, or exfiltrate the
+ * collected data via attacker-controlled URLs.
  *
- * Add a tool to this list ONLY after auditing that on a stranger's request it
- * cannot:
- *   - mutate FS / DB / KB / Drive / WordPress / projects / NorthStar state,
- *   - send mail or post anywhere on behalf of the org (impersonation risk),
- *   - exfiltrate org data to an external destination,
- *   - schedule, cancel, or alter automated jobs.
+ * **Default-deny.** This list is deliberately tiny. "Read-only" alone is not a
+ * sufficient safety criterion: most "read" tools in this codebase target
+ * operator-side data (KB, personal Gmail, Drive, task history, FS) — a
+ * stranger should not be able to enumerate any of that. Add a tool ONLY after
+ * auditing that on a stranger's request it cannot:
+ *   - mutate FS / DB / KB / Drive / WordPress / projects / NorthStar / schedule state,
+ *   - send mail, post, or otherwise act anywhere on behalf of the org (impersonation),
+ *   - enumerate or read operator-side data (KB files, personal mail, Drive,
+ *     task history, FS) — even read-only,
+ *   - exfiltrate collected data via attacker-controlled URLs (web_read,
+ *     browser fetch, anything that takes a URL),
+ *   - amplify cost (open-ended LLM calls, large fetches).
  *
- * Activated by the router for any inbound on a `community-manager`-mode email
- * channel; bypasses the semantic scope classifier so this set is identical
- * across messages and across senders.
+ * Two-test rule for additions: (1) "could a stranger discover something
+ * operator-private with this tool?" — if yes, reject; (2) "could the output
+ * of this tool be passed back to an attacker via a different allowed tool?" —
+ * if yes, reject the pair.
+ *
+ * Activated by the router for any inbound on an email channel that is NOT
+ * explicitly in owner-only mode (fail-safe default — undefined mode on an
+ * email channel restricts by default). Bypasses the semantic scope classifier
+ * so this set is identical across messages and across senders.
  */
 export const COMMUNITY_EMAIL_TOOLS = [
-  // General lookup / web read
+  // Public web research. web_search returns snippets to the runner; the LLM
+  // can quote them in the reply. No attacker-controlled URL fetched.
   "web_search",
-  "web_read",
   "exa_search",
-  // Local read
-  "file_read",
-  "list_dir",
-  "task_history",
-  // Jarvis KB read (no writes — JARVIS_WRITE_TOOLS deliberately omitted)
-  "jarvis_file_read",
-  "jarvis_file_list",
-  "jarvis_file_search",
-  // Read-only status / index
-  "list_schedules",
-  "project_list",
-  "vps_status",
-  // Google Workspace — READ ONLY (no _send, _write, _create, _delete, _share,
-  // _upload, _move). gmail_read is gated by config in scope mode-selection.
-  "gmail_search",
-  "gmail_read",
-  "gdrive_list",
-  "gdrive_download",
-  "gdocs_read",
-  "gdocs_read_full",
-  "gsheets_read",
-  "gslides_read",
-  "calendar_list",
-  // Lightpanda browser — fetch + render (no interactive form fill / click /
-  // evaluate; those live in BROWSER_EXTRA_TOOLS).
-  "browser__goto",
-  "browser__markdown",
-  // Domain read
-  "intel_query",
-  "intel_status",
-  "intel_alert_history",
-  "intel_baseline",
-  "knowledge_map",
-  "knowledge_map_expand",
-  // Utilities — all pure
+  // Pure stateless utilities — no operator data, no external fetch with
+  // attacker-controlled inputs.
   "weather_forecast",
   "currency_convert",
   "geocode_address",
 ];
+
+/**
+ * Compute the channel-policy scope override for one inbound. Fail-safe by
+ * default: any email channel whose adapter is NOT explicitly `owner-only`
+ * (undefined adapter, undefined mode, or `community-manager`) gets the
+ * COMMUNITY_EMAIL_TOOLS allowlist. Owner-only mailboxes and non-email
+ * channels pass through unchanged.
+ *
+ * Extracted as a pure function so router-level tests can pin the contract
+ * "community-manager email channel → restricted scope" without standing up
+ * the full router. A regression that wires past this function will fail the
+ * scope.test.ts invariants AND will fail the router-level integration check.
+ */
+export function applyCommunityChannelScopeOverride(args: {
+  /** True when the channel name is `email` or `email:<id>` — caller supplies
+   *  this rather than re-deriving so this module stays decoupled from router. */
+  isEmail: boolean;
+  /** Adapter's declared mode. Undefined when the adapter is missing/non-email
+   *  or didn't set a mode. Treated identically to community-manager (default-deny). */
+  mode: "owner-only" | "community-manager" | undefined;
+  /** Tools the classifier would have used absent any override. */
+  baseTools: string[];
+  /** Active scope groups the classifier produced. */
+  baseActiveGroups: string[];
+  /** Env flags needed by getAllAvailableTools to determine the universe. */
+  envFlags: ScopeOptions;
+}): { tools: string[]; activeGroups: string[]; restricted: boolean } {
+  if (!args.isEmail || args.mode === "owner-only") {
+    return {
+      tools: args.baseTools,
+      activeGroups: args.baseActiveGroups,
+      restricted: false,
+    };
+  }
+  const allAvailable = getAllAvailableTools(args.envFlags);
+  return {
+    tools: COMMUNITY_EMAIL_TOOLS.filter((t) => allAvailable.has(t)),
+    activeGroups: ["email-community"],
+    restricted: true,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Default scope patterns

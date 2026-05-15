@@ -30,6 +30,8 @@ import {
   KB_INGEST_TOOLS,
   GRAPH_TOOLS,
   XPOZ_TOOLS,
+  COMMUNITY_EMAIL_TOOLS,
+  applyCommunityChannelScopeOverride,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -2739,5 +2741,172 @@ describe("Dim-5 C-SCP-1: NFD input normalization", () => {
       DEFAULT_SCOPE_PATTERNS,
     );
     expect([...nfd].sort()).toEqual([...nfc].sort());
+  });
+});
+
+describe("COMMUNITY_EMAIL_TOOLS allowlist invariants", () => {
+  // The whole point of this constant is that a stranger emailing a public
+  // mailbox cannot drive Jarvis into a tool that exposes operator-side data
+  // or mutates external state. These tests pin the contract so a future
+  // refactor / well-meaning addition fails CI before it ships.
+
+  it("contains only the v1 minimal safe set", () => {
+    expect([...COMMUNITY_EMAIL_TOOLS].sort()).toEqual([
+      "currency_convert",
+      "exa_search",
+      "geocode_address",
+      "weather_forecast",
+      "web_search",
+    ]);
+  });
+
+  it("excludes every name that touches operator-side data", () => {
+    // Each prefix represents a category that exposes operator-private state
+    // (KB, personal Gmail/Drive/Docs/Calendar, FS, VPS, intel, scheduling,
+    // CRM, NorthStar, WordPress, social channels, video, coding, browser).
+    const forbiddenPrefixes = [
+      "jarvis_",
+      "gmail_",
+      "gdrive_",
+      "gdocs_",
+      "gsheets_",
+      "gslides_",
+      "calendar_",
+      "google_",
+      "intel_",
+      "northstar_",
+      "crm_",
+      "wp_",
+      "social_",
+      "video_",
+      "shell_",
+      "git_",
+      "gh_",
+      "schedule_",
+      "browser__",
+      "playwright__",
+      "xpoz__",
+    ];
+    const forbiddenExact = new Set([
+      "file_read",
+      "file_write",
+      "file_edit",
+      "file_delete",
+      "list_dir",
+      "task_history",
+      "list_schedules",
+      "project_list",
+      "vps_status",
+      "web_read",
+      "knowledge_map",
+      "knowledge_map_expand",
+    ]);
+    for (const t of COMMUNITY_EMAIL_TOOLS) {
+      expect(forbiddenExact.has(t)).toBe(false);
+      for (const p of forbiddenPrefixes) {
+        expect(t.startsWith(p)).toBe(false);
+      }
+    }
+  });
+
+  it("excludes any name containing a destructive verb", () => {
+    // Belt-and-braces: any tool whose name announces a side effect is out,
+    // regardless of where it lives in the registry.
+    const destructiveVerb =
+      /\b(write|create|update|delete|send|move|upload|share|publish|sync|commit|push|exec|edit|cancel)\b/;
+    for (const t of COMMUNITY_EMAIL_TOOLS) {
+      expect(t).not.toMatch(destructiveVerb);
+    }
+  });
+});
+
+describe("applyCommunityChannelScopeOverride", () => {
+  const ENV: ScopeOptions = {
+    hasGoogle: true,
+    hasWordpress: true,
+    hasMemory: true,
+    hasCrm: true,
+  };
+  const baseTools = ["jarvis_file_read", "shell_exec", "schedule_task"];
+  const baseGroups = ["coding"];
+
+  it("restricts a community-manager email channel to the allowlist", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: true,
+      mode: "community-manager",
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+    });
+    expect(out.restricted).toBe(true);
+    expect(out.activeGroups).toEqual(["email-community"]);
+    for (const t of out.tools) {
+      expect(COMMUNITY_EMAIL_TOOLS).toContain(t);
+    }
+    expect(out.tools).not.toContain("jarvis_file_read");
+    expect(out.tools).not.toContain("shell_exec");
+  });
+
+  it("FAIL-SAFE: undefined mode on an email channel restricts (not bypasses)", () => {
+    // Adapter race during shutdown or a channel-name typo where the router
+    // can't find the adapter — mode is undefined. Must NOT fall through to
+    // the classifier's tools, or a stranger sees the full registry.
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: true,
+      mode: undefined,
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+    });
+    expect(out.restricted).toBe(true);
+    expect(out.tools).not.toContain("jarvis_file_read");
+  });
+
+  it("owner-only email passes through unchanged (backward-compat)", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: true,
+      mode: "owner-only",
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+    });
+    expect(out.restricted).toBe(false);
+    expect(out.tools).toBe(baseTools);
+    expect(out.activeGroups).toBe(baseGroups);
+  });
+
+  it("non-email channel passes through unchanged regardless of mode", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: false,
+      mode: "community-manager",
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+    });
+    expect(out.restricted).toBe(false);
+    expect(out.tools).toBe(baseTools);
+  });
+
+  it("intersects the allowlist with the env-available toolset", () => {
+    // None of the v1 allowlist depends on hasGoogle/hasWordpress/etc., so
+    // an all-off env still yields the same set today. The test pins the
+    // intersection contract so a future addition that DOES depend on a
+    // feature flag automatically gets correctly filtered.
+    const OFF: ScopeOptions = {
+      hasGoogle: false,
+      hasWordpress: false,
+      hasMemory: false,
+      hasCrm: false,
+    };
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: true,
+      mode: "community-manager",
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: OFF,
+    });
+    expect(out.tools.length).toBeGreaterThan(0);
+    // Sanity: web_search is always available, so should always appear.
+    expect(out.tools).toContain("web_search");
   });
 });

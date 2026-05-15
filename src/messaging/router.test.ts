@@ -60,7 +60,7 @@ vi.mock("../db/index.js", () => ({
   }),
 }));
 
-import { MessageRouter } from "./router.js";
+import { MessageRouter, threadKey } from "./router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
   ChannelAdapter,
@@ -644,6 +644,83 @@ describe("MessageRouter", () => {
       );
       expect(result.source).toBe("inherited");
       expect([...result.groups]).toEqual(["coding"]);
+    });
+  });
+
+  describe("threadKey", () => {
+    // Pinned because the audit caught this as a Critical: collapsing every
+    // sender to one community-manager mailbox into a single thread key
+    // bleeds Sender A's conversationHistory + scope-inheritance bag + DB
+    // hydration query results into Sender B's next turn.
+
+    it("keeps channel-only key for owner-only email (backward-compat)", () => {
+      expect(
+        threadKey(
+          "email:comunidades",
+          "alice@example.com",
+          undefined,
+          "owner-only",
+        ),
+      ).toBe("email:comunidades");
+    });
+
+    it("isolates per sender for community-manager email", () => {
+      const a = threadKey(
+        "email:comunidades",
+        "alice@example.com",
+        undefined,
+        "community-manager",
+      );
+      const b = threadKey(
+        "email:comunidades",
+        "bob@example.com",
+        undefined,
+        "community-manager",
+      );
+      expect(a).toBe("email:comunidades:alice@example.com");
+      expect(b).toBe("email:comunidades:bob@example.com");
+      expect(a).not.toBe(b);
+    });
+
+    it("lowercases the sender so case variants share one key", () => {
+      const a = threadKey(
+        "email:comunidades",
+        "Alice@Example.COM",
+        undefined,
+        "community-manager",
+      );
+      const b = threadKey(
+        "email:comunidades",
+        "alice@example.com",
+        undefined,
+        "community-manager",
+      );
+      expect(a).toBe("email:comunidades:alice@example.com");
+      expect(a).toBe(b);
+    });
+
+    it("falls back to channel-only when community-manager mode lacks a from", () => {
+      // Defensive — should not happen in practice (every IncomingMessage from
+      // the email adapter carries `from`), but if it did we collapse to one
+      // mailbox-wide thread rather than crashing.
+      expect(
+        threadKey(
+          "email:comunidades",
+          undefined,
+          undefined,
+          "community-manager",
+        ),
+      ).toBe("email:comunidades");
+    });
+
+    it("WhatsApp group keying is unchanged by the email mode parameter", () => {
+      expect(threadKey("whatsapp", "group@g.us", "sender@s.whatsapp.net")).toBe(
+        "whatsapp:group@g.us:sender@s.whatsapp.net",
+      );
+    });
+
+    it("Telegram channel-only key is unchanged", () => {
+      expect(threadKey("telegram", "12345")).toBe("telegram");
     });
   });
 });

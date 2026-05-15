@@ -41,6 +41,7 @@ import type {
 import type {
   ChannelAdapter,
   ChannelName,
+  EmailChannelMode,
   IncomingMessage,
   OutgoingMessage,
 } from "./types.js";
@@ -106,7 +107,7 @@ import {
   getAllAvailableTools,
   DEFAULT_SCOPE_PATTERNS,
   CONVERSATIONAL_PATTERN,
-  COMMUNITY_EMAIL_TOOLS,
+  applyCommunityChannelScopeOverride,
 } from "./scope.js";
 import { classifyScopeGroups } from "./scope-classifier.js";
 import { normalizeForMatching, wasNormalized } from "./normalize.js";
@@ -216,7 +217,10 @@ function buildJarvisSystemPrompt(
   // tasks without NorthStar tools won't see this either way.
   if (flags.hasNorthStar) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
-  p2.push(personalDataSection());
+  // personalDataSection instructs the model to call user_fact_set — gate on
+  // the tool's availability. Community-manager email scope excludes the tool
+  // (the section would otherwise hallucinate calls on stranger-sent data).
+  if (flags.hasUserFacts) p2.push(personalDataSection());
   p2.push(correctionMemorySection());
 
   // P3: Domain-specific (VARIABLE — varies by tool scope)
@@ -481,14 +485,33 @@ const hydratedChannels = new Set<string>();
  * Thread key: isolates conversation buffers per unique endpoint.
  * WhatsApp groups use group:sender so each person has their own thread.
  * DMs and Telegram use the channel name (backward-compatible).
+ *
+ * Community-manager email channels MUST isolate per sender — otherwise every
+ * stranger writing to a public mailbox shares one conversationHistory buffer,
+ * one scope-inheritance bag, and one SQLite hydration query, and Sender A's
+ * PII bleeds into Sender B's runner context on the next turn. Owner-only
+ * email keeps the channel-only key (one trusted sender, backward-compat with
+ * existing persisted conversations).
  */
-function threadKey(channel: string, from?: string, senderJid?: string): string {
+export function threadKey(
+  channel: string,
+  from?: string,
+  senderJid?: string,
+  mode?: EmailChannelMode,
+): string {
   // Groups: isolate per sender so Person A's budget talk doesn't leak into Person B's poetry
   if (from && from.endsWith("@g.us") && senderJid) {
     return `${channel}:${from}:${senderJid}`;
   }
   // Groups without sender (shouldn't happen, but fallback to group-level isolation)
   if (from && from.endsWith("@g.us")) return `${channel}:${from}`;
+  // Community-manager email: isolate per sender. The address is already
+  // lowercased by extractAddress() in email-mime.ts, but lowercasing again
+  // here is cheap and removes any ambiguity if a non-email caller upstream
+  // passes a mixed-case `from`.
+  if (isEmailChannel(channel) && mode === "community-manager" && from) {
+    return `${channel}:${from.toLowerCase()}`;
+  }
   return channel;
 }
 
@@ -1067,7 +1090,16 @@ export class MessageRouter {
     const CONTEXT_CLEAR_RE =
       /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
-    const tk = threadKey(msg.channel, msg.from, senderJid);
+    // Pass the channel adapter's email mode so threadKey can per-sender isolate
+    // community-manager mailboxes (each external sender gets their own buffer +
+    // scope-inheritance bag). Owner-only email and non-email channels keep the
+    // channel-only key (backward-compat with existing persisted conversations).
+    const tk = threadKey(
+      msg.channel,
+      msg.from,
+      senderJid,
+      this.channels.get(msg.channel)?.mode,
+    );
     // Strip WhatsApp group prefix before matching (same pattern as feedback/fast-path)
     const textForClear = msg.text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
     if (CONTEXT_CLEAR_RE.test(textForClear)) {
@@ -1658,24 +1690,32 @@ export class MessageRouter {
       previousScopeGroups.get(tk),
     );
 
-    // Channel-policy override. A community-manager email channel accepts mail
-    // from anyone on the public internet — the classifier-derived scope is the
-    // wrong primitive (a stranger's message text shouldn't decide which tools
-    // Jarvis can touch). Force the read-only / lookup allowlist regardless of
-    // what the classifier said. Stable across messages, identical across
-    // senders. Owner-only mailboxes and non-email channels are unaffected.
+    // Channel-policy override (FAIL-SAFE). A public-facing email channel must
+    // not let stranger-controlled text decide which tools Jarvis can touch.
+    // Pure helper in scope.ts so the contract is testable end-to-end. Default-
+    // deny: any email channel whose adapter is NOT explicitly owner-only
+    // (undefined adapter, undefined mode, or community-manager) gets the
+    // restricted allowlist. Owner-only mailboxes and non-email channels pass
+    // through unchanged.
     const adapter = this.channels.get(msg.channel);
-    if (adapter?.mode === "community-manager") {
-      const allAvailable = getAllAvailableTools({
+    const override = applyCommunityChannelScopeOverride({
+      isEmail: isEmailChannel(msg.channel),
+      mode: adapter?.mode,
+      baseTools: tools,
+      baseActiveGroups: activeGroups,
+      envFlags: {
         hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
         hasWordpress: !!process.env.WP_SITES,
         hasMemory: getMemoryService().backend === "hindsight",
         hasCrm: !!process.env.CRM_API_TOKEN,
-      });
-      tools = COMMUNITY_EMAIL_TOOLS.filter((t) => allAvailable.has(t));
-      activeGroups = ["email-community"];
+      },
+    });
+    tools = override.tools;
+    activeGroups = override.activeGroups;
+    if (override.restricted) {
+      const modeLabel = adapter?.mode ?? "<undefined>";
       console.log(
-        `[router] Channel ${msg.channel} is community-manager → restricted scope (${tools.length} tools)`,
+        `[router] Channel ${msg.channel} (mode=${modeLabel}) → restricted community scope (${tools.length} tools)`,
       );
     }
 
