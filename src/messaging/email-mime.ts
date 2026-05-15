@@ -300,6 +300,13 @@ export function buildMimeMessage(opts: OutboundMime): string {
   ];
   if (opts.inReplyTo) lines.push(`In-Reply-To: ${opts.inReplyTo}`);
   if (opts.references) lines.push(`References: ${opts.references}`);
+  // RFC 3834: an auto-responder MUST flag its replies so other auto-responders
+  // do not reply back. Without this, two cooperating Jarvis instances (or
+  // Jarvis + an Outlook out-of-office, or Jarvis + a vacation responder) loop
+  // forever. `Auto-Submitted: auto-replied` is the canonical signal;
+  // `Precedence: bulk` is the legacy form some MTAs still honour.
+  lines.push("Auto-Submitted: auto-replied");
+  lines.push("Precedence: bulk");
   lines.push("MIME-Version: 1.0");
   lines.push("Content-Type: text/plain; charset=utf-8");
   lines.push("Content-Transfer-Encoding: base64");

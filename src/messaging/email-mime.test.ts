@@ -271,6 +271,21 @@ describe("buildMimeMessage", () => {
     ).toThrow(/CR or LF/);
   });
 
+  it("emits RFC 3834 auto-reply markers on every outbound", () => {
+    // Without these headers, sending a reply to an Outlook out-of-office or
+    // another auto-responder loops forever. Incident 2026-05-15 was triggered
+    // by a single send that bounced and the bounce was answered.
+    const mime = buildMimeMessage({
+      from: "a@x.com",
+      to: "b@x.com",
+      subject: "test",
+      body: "hi",
+      messageId: "<x@x.com>",
+    });
+    expect(mime).toMatch(/^Auto-Submitted: auto-replied$/m);
+    expect(mime).toMatch(/^Precedence: bulk$/m);
+  });
+
   it("round-trips a non-ASCII body and subject", () => {
     const mime = buildMimeMessage({
       from: "j@e.com",

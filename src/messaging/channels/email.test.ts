@@ -12,9 +12,11 @@ import {
   extractFetchLiteral,
   imapQuote,
   imapTaggedEnd,
+  isAutoReplyOrBounce,
   parseEmailAccounts,
   smtpReplyEnd,
 } from "./email.js";
+import { parseEmail } from "../email-mime.js";
 
 /** Env keys this suite touches — cleared around every test for isolation. */
 const EMAIL_KEYS = [
@@ -359,5 +361,115 @@ describe("EmailAdapter identity", () => {
     });
     expect(adapter.mode).toBe("community-manager");
     expect(adapter.ownerAddress).toBeNull();
+  });
+});
+
+describe("isAutoReplyOrBounce", () => {
+  // Pinned because the 2026-05-15 incident was a bounce cascade where Jarvis
+  // kept replying to MAILER-DAEMON. Each branch below corresponds to a
+  // distinct way an MTA / OOO / auto-responder marks itself.
+  const headers = (h: Record<string, string>) =>
+    Object.entries(h)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\r\n") + "\r\n\r\nbody text";
+
+  it("drops mailer-daemon by From local-part", () => {
+    const raw = headers({
+      From: "Mail Delivery System <MAILER-DAEMON@mailchannels.net>",
+      Subject: "Undelivered Mail Returned to Sender",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+  });
+
+  it("drops postmaster", () => {
+    const raw = headers({
+      From: "postmaster@example.com",
+      Subject: "Delivery Status Notification",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+  });
+
+  it("drops no-reply / noreply senders", () => {
+    for (const sender of ["no-reply@x.com", "noreply@x.com"]) {
+      const raw = headers({ From: sender, Subject: "Receipt" });
+      expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+    }
+  });
+
+  it("drops on Auto-Submitted header (RFC 3834)", () => {
+    const raw = headers({
+      From: "real-person@example.com",
+      Subject: "Re: tu mensaje",
+      "Auto-Submitted": "auto-replied",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+  });
+
+  it("allows Auto-Submitted: no (explicit human-sent)", () => {
+    const raw = headers({
+      From: "real@example.com",
+      Subject: "Pregunta",
+      "Auto-Submitted": "no",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(false);
+  });
+
+  it("drops on Precedence: bulk", () => {
+    const raw = headers({
+      From: "newsletter@x.com",
+      Subject: "Newsletter",
+      Precedence: "bulk",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+  });
+
+  it("drops on multipart/report Content-Type (RFC 3464 DSN)", () => {
+    const raw = headers({
+      From: "x@example.com",
+      Subject: "Report",
+      "Content-Type":
+        'multipart/report; report-type=delivery-status; boundary="x"',
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+  });
+
+  it("drops common bounce subject prefixes (EN + ES)", () => {
+    const subjects = [
+      "Undelivered Mail Returned to Sender",
+      "Returned mail: see transcript for details",
+      "Delivery Status Notification (Failure)",
+      "Failure Notice",
+      "Mail Delivery Failure",
+      "Auto: Vacation",
+      "Out of Office: back Monday",
+      "Fuera de la oficina hasta el lunes",
+      "Respuesta automática: estoy fuera",
+      "Correo no entregado",
+      "Notificación de estado de entrega",
+    ];
+    for (const s of subjects) {
+      const raw = headers({ From: "x@example.com", Subject: s });
+      expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
+    }
+  });
+
+  it("allows a normal community message", () => {
+    const raw = headers({
+      From: "vecina@example.com",
+      Subject: "Pregunta sobre el programa de cuidadores",
+    });
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(false);
+  });
+
+  it("body content that mentions 'auto-submitted' does not trigger the header check", () => {
+    // A real sender quoting an old bounce report inline should not be dropped.
+    // The check stops at the headers/body separator.
+    const raw =
+      headers({
+        From: "real@example.com",
+        Subject: "Quoting an old bounce",
+      }) +
+      "\r\n\r\nQuoted text:\r\nAuto-Submitted: auto-replied\r\nFrom: mailer-daemon@x";
+    expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(false);
   });
 });
