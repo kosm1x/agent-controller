@@ -86,8 +86,14 @@ export const DEFAULT_INVARIANTS: readonly Invariant[] = [
   },
   {
     key: "HINDSIGHT_RECALL_ENABLED",
-    description: "Hindsight recall path (re-enabled session 112 after rehab)",
-    expected: "true",
+    // 2026-05-15 (queue #15): flipped true → false after the 30-day data
+    // showed mc-operational on Hindsight at 4.0% utility / 2496ms vs
+    // mc-jarvis on SQLite-hybrid at 38.9% / 301ms. Drift detector now
+    // expects the demoted default; a flip back to "true" indicates either
+    // a deliberate re-evaluation or an unintentional revert.
+    description:
+      "Hindsight recall path (demoted 2026-05-15 per queue #15 verdict — SQLite hybrid is the primary recall layer)",
+    expected: "false",
     severity: "warning",
   },
   {

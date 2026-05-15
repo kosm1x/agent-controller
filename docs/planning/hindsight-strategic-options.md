@@ -1,5 +1,47 @@
 # Hindsight: Strategic Options Discussion
 
+> ## ✅ Verdict — 2026-05-15 (Queue #15 CLOSED): DEMOTE (small version)
+>
+> `HINDSIGHT_RECALL_ENABLED=false` flipped via `scripts/recall-demote.sh`. Global recall demote shipped. Hindsight container, retain/reflect, observation, and cost-ledger pull-job paths all stay active — only the synchronous recall hop is removed from the request path.
+>
+> ### Data behind the decision (since #4/#7/#8 shipped 2026-05-07, n=315)
+>
+> | Bank           | Source                        | n   | Utility | Latency | Verdict              |
+> | -------------- | ----------------------------- | --- | ------- | ------- | -------------------- |
+> | mc-jarvis      | bank-disabled (SQLite hybrid) | 157 | 38.9%   | 301ms   | clear winner         |
+> | mc-operational | hindsight                     | 149 | 4.0%    | 2496ms  | catastrophic         |
+> | mc-operational | sqlite-fallback               | 9   | 11.1%   | 7443ms  | only when HS crashes |
+>
+> The `<20% utility AND >50% latency tax` threshold from the rehab playbook is comprehensively blown for mc-operational. mc-jarvis already pre-demoted via per-bank list on 2026-05-07 — the data since shows SQLite-hybrid outperforming on utility AND latency by 10×.
+>
+> ### What this does NOT do
+>
+> - Does NOT ship the ~2-week L4 wiring (Path B as originally scoped) — L4 is already built. SQLite hybrid retrieval (`conversation_embeddings` + `conversations_fts`) is the L4 layer and it's outperforming Hindsight at 1/8 the latency.
+> - Does NOT pursue HARDEN (Path A): even when Hindsight worked for mc-jarvis (n=66 pre-disable), reranker added +2.3 utility points at 10× the latency. Cross-encoder isn't earning its keep.
+> - Does NOT pursue REPLACE (Path C): no 3-4 week DIY pgvector migration. The existing layer is already serving traffic well.
+> - Does NOT touch the Hindsight container itself. It stays up — useful as a frozen-but-queryable long-term store with data through 2026-05-09 and as raw material for a future REPLACE evaluation if one is ever pursued.
+>
+> ### Important context: HINDSIGHT_ENABLED has been false since 2026-05-10
+>
+> The 2026-05-10 Anthropic SDK cutover (commits `5b62c3f` + `64071fd` + `925c32b`) flipped `HINDSIGHT_ENABLED=false` for unrelated reasons. That flag controls the entire mc-side memory backend: at startup, `initMemoryService()` in `src/memory/index.ts` checks `HINDSIGHT_ENABLED` and instantiates `HindsightMemoryBackend` only when it's `true`. With it false, the service is `SqliteMemoryBackend` for ALL operations — recall, retain, AND reflect. Net effect: retain/reflect have NOT been writing new memories to Hindsight since 2026-05-10 either. The recall demote shipped 2026-05-15 codifies that operational state at the recall-path level (so even a future flip of `HINDSIGHT_ENABLED=true` won't re-enable recall by default).
+>
+> ### Escape hatches preserved (but currently dormant)
+>
+> - **`RecallOptions.withRerank: true`** (queue #10 mechanism): the routing code in `hindsight-backend.ts` honors caller-level `withRerank: true` and bypasses the global flag. BUT this only matters when `MemoryService` is `HindsightMemoryBackend` — currently it's `SqliteMemoryBackend` because `HINDSIGHT_ENABLED=false`. Reactivation path if an analysis-task opt-in becomes load-bearing: flip `HINDSIGHT_ENABLED=true` AND keep `HINDSIGHT_RECALL_ENABLED=false`; callers passing `withRerank: true` will then route to Hindsight while default callers stay on SQLite.
+> - **`HINDSIGHT_RECALL_DISABLED_BANKS=csv`** primitive is kept (now empty) — if a future evaluation re-enables global recall, the per-bank surgical demote is still wired.
+>
+> ### Re-evaluation triggers
+>
+> - mc-jarvis SQLite-hybrid utility drops below 25% for 7d → reinvest in L4 (denser embeddings, better FTS scoring, recency boost).
+> - New memory-product candidate emerges that's plausibly worth a REPLACE evaluation (Mem0 / Letta / Zep / DIY-pgvector-on-Supabase).
+> - A turn-quality regression manifests that traces back to "Jarvis forgot something it should have remembered" — the autonomous-recall feature was real-but-misfiring; removing it MAY surface gaps.
+>
+> Memory pin: `feedback_hindsight_demote_verdict_2026_05_15.md`. Ship script: `scripts/recall-demote.sh` (idempotent; revert via `cp -p` of the timestamped backup).
+>
+> The body of this doc below is preserved as the decision rationale (drafted 2026-04-29, updated 2026-05-07 + 2026-05-15). Sections 1–10 describe the option space that the verdict was selected from — useful context for future re-evaluations.
+>
+> ---
+
 > **Status:** discussion document, not a plan. Drafted 2026-04-29 Session 114 after the
 > operator asked: _"Why is Hindsight falling short of its initial promise?"_
 >
@@ -8,6 +50,8 @@
 > REPLACE) are unblocked and can be acted on directly. Per-bank demote on `mc-jarvis`
 > already shipped (`HINDSIGHT_RECALL_DISABLED_BANKS=mc-jarvis`) as an opportunistic Path B
 > pilot; mc-operational still on Hindsight. No global path commitment yet.
+>
+> **Update 2026-05-15:** Decision made. See verdict block at the top of this doc.
 >
 > **Constraints stated by the operator:**
 >

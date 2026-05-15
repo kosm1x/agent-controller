@@ -243,7 +243,8 @@ describe("DEFAULT_INVARIANTS", () => {
       INFERENCE_PRIMARY_PROVIDER: "openai-but-wrong",
       INFERENCE_PRIMARY_MODEL: "qwen2.5-plus", // pre-2026-04-26 stale model
       // HINDSIGHT_URL deliberately unset — should report missing
-      HINDSIGHT_RECALL_ENABLED: "false", // pre-rehab disabled state
+      // 2026-05-15: post-queue-#15 default is "false"; "true" now drifts.
+      HINDSIGHT_RECALL_ENABLED: "true",
       HINDSIGHT_RECALL_TIMEOUT_MS: "1500", // pre-rehab timeout
       TZ: "UTC", // wrong timezone
     });
@@ -257,7 +258,7 @@ describe("DEFAULT_INVARIANTS", () => {
     expect(byKey["INFERENCE_PRIMARY_PROVIDER"]?.status).toBe("different");
     expect(byKey["INFERENCE_PRIMARY_MODEL"]?.expected).toBe("qwen3.6-plus");
     expect(byKey["HINDSIGHT_URL"]?.status).toBe("missing");
-    expect(byKey["HINDSIGHT_RECALL_ENABLED"]?.expected).toBe("true");
+    expect(byKey["HINDSIGHT_RECALL_ENABLED"]?.expected).toBe("false");
     expect(byKey["HINDSIGHT_RECALL_TIMEOUT_MS"]?.expected).toBe("8000");
     expect(byKey["HINDSIGHT_RECALL_TIMEOUT_MS"]?.actual).toBe("1500");
     expect(byKey["TZ"]?.expected).toBe("America/Mexico_City");
@@ -268,7 +269,7 @@ describe("DEFAULT_INVARIANTS", () => {
       INFERENCE_PRIMARY_PROVIDER: "claude-sdk",
       INFERENCE_PRIMARY_MODEL: "qwen3.6-plus",
       HINDSIGHT_URL: "http://localhost:8888",
-      HINDSIGHT_RECALL_ENABLED: "true",
+      HINDSIGHT_RECALL_ENABLED: "false",
       HINDSIGHT_RECALL_TIMEOUT_MS: "8000",
       TZ: "America/Mexico_City",
     });
