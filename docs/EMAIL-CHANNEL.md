@@ -92,7 +92,8 @@ the unchanged `ChannelAdapter` boundary.
 | `src/messaging/types.ts`               | `ChannelName` gains `` `email:${string}` ``; `ChannelAdapter` gains optional `ownerAddress`.                                           |
 | `src/messaging/router.ts`              | `getOwnerAddress` per-account, `email*` ACK skip, `email:<id>` hydration key.                                                          |
 | `src/messaging/index.ts`               | `EMAIL_ENABLED` gate → one adapter per `parseEmailAccounts()` entry.                                                                   |
-| `src/messaging/channels/email.test.ts` | `parseEmailAccounts()` validation + `EmailAdapter` identity tests.                                                                     |
+| `src/messaging/channels/email.test.ts` | `parseEmailAccounts()` validation + `EmailAdapter` identity + IMAP/SMTP frame-parser tests.                                            |
+| `scripts/add-email-account.sh`         | Operator helper — interactively adds/replaces one mailbox block in `.env` (idempotent, validates input, backs up before writing).      |
 
 ## Inbound flow (per account)
 
@@ -250,8 +251,34 @@ _tools_ are distinct surfaces.
 
 ## Activation
 
-The code ships disabled. To turn the channel on, the operator sets in `.env` —
-one block per mailbox:
+The code ships disabled. `.env` is permission-protected on the VPS, so
+activation is **operator-only** — Claude cannot set the credentials.
+
+### Recommended: `scripts/add-email-account.sh`
+
+Run the helper once per mailbox:
+
+```
+./scripts/add-email-account.sh
+```
+
+It prompts for the account id and the IMAP/SMTP/credential fields (the password
+is read hidden, never echoed, never stored in the script), validates the input
+(id shape, port and poll-interval ranges), then edits `.env`:
+
+- sets `EMAIL_ENABLED=true`,
+- merges the new id into `EMAIL_ACCOUNTS` (de-duplicated),
+- writes the `EMAIL_<ID>_*` block under a `# >>> email account: <id> <<<`
+  marker.
+
+It is idempotent — re-running with an existing id **replaces** that account's
+block rather than duplicating it — and it takes a timestamped `.env.bak.*`
+backup (matched by `.gitignore`) before every write. `ENV_FILE=<path>` overrides
+the target for testing.
+
+### Manual alternative
+
+Edit `.env` directly — one block per mailbox:
 
 ```
 EMAIL_ENABLED=true
@@ -268,8 +295,9 @@ EMAIL_PROYECTO2_IMAP_HOST=...
 # ...one block per id listed in EMAIL_ACCOUNTS
 ```
 
-then `./scripts/deploy.sh`. Verify with `journalctl -u mission-control` for
-`[messaging] Email channel active — N mailbox(es)` and per-account
-`[email:<id>] Channel active`, and check `/health` for the `email:<id>` channel
-statuses. `.env` is permission-protected on the VPS, so this step is
-operator-only — Claude cannot set the credentials.
+### Deploy + verify
+
+Either path ends with `./scripts/deploy.sh`. Verify with
+`journalctl -u mission-control` for `[messaging] Email channel active — N
+mailbox(es)` and per-account `[email:<id>] Channel active`, and check `/health`
+for the `email:<id>` channel statuses.
