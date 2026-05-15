@@ -87,6 +87,7 @@ import {
   timeContextLine,
   fileSystemSection,
   capabilitiesSection,
+  orgPersonaSection,
   personalDataSection,
   confirmationSection,
   verificationSection,
@@ -195,6 +196,7 @@ function buildJarvisSystemPrompt(
   tools: string[],
   userFactsBlock: string,
   enrichmentBlock: string,
+  personaContent: string | null = null,
 ): { stable: string; variable: string } {
   const flags = detectToolFlags(tools);
 
@@ -207,6 +209,12 @@ function buildJarvisSystemPrompt(
 
   // P1: Identity + safety (STABLE)
   p1.push(identitySection());
+  // Per-channel org persona for community-manager email mailboxes. Loaded
+  // once at startup from `EMAIL_<ID>_PERSONA_FILE`, so the content is byte-
+  // stable across calls on the same channel and prompt-cache friendly. P1
+  // because it is authoritative context for the reply — never truncate it
+  // in favour of variable-half blocks.
+  if (personaContent) p1.push(orgPersonaSection(personaContent));
   p1.push(confirmationSection(flags));
   p1.push(toolFirstSection(flags));
   p1.push(mechanicalVerificationSection());
@@ -1165,7 +1173,12 @@ export class MessageRouter {
         const mxDate = nowMexDate();
         const mxTime = nowMexTime();
         const { stable: stableSP, variable: variableSP } =
-          buildJarvisSystemPrompt(scopedTools, "", enrichment.contextBlock);
+          buildJarvisSystemPrompt(
+            scopedTools,
+            "",
+            enrichment.contextBlock,
+            this.channels.get(msg.channel)?.personaContent ?? null,
+          );
 
         // Worker isolation (OpenClaude InProcessBackend pattern):
         // - No conversationHistory passed (parent context NOT leaked)
@@ -1776,6 +1789,10 @@ export class MessageRouter {
       tools,
       userFactsBlock,
       enrichment.contextBlock,
+      // Per-channel persona — set on email adapters when EMAIL_<ID>_PERSONA_FILE
+      // is configured; null elsewhere. The function adds an org-context section
+      // to the stable half only when this is non-null.
+      this.channels.get(msg.channel)?.personaContent ?? null,
     );
 
     // Execution pattern memory: inject relevant past lessons. Patterns vary

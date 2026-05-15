@@ -90,6 +90,29 @@ fi
 read -rp "From address [default: $USERNAME]: " FROM_ADDRESS
 FROM_ADDRESS="${FROM_ADDRESS:-$USERNAME}"
 
+# Persona file — optional in both modes, but the prompt suggests one in
+# community-manager mode where it's the org-context source. Validate the
+# path is readable (the service will throw at boot otherwise).
+PERSONA_FILE=""
+if [[ "$MODE" == "community-manager" ]]; then
+  PERSONA_DEFAULT="data/email-personas/${ACCOUNT_ID}.md"
+  echo
+  echo "Persona file (optional but recommended in community-manager mode):"
+  echo "  A markdown file with the org's mission, programs, voice, contacts, and"
+  echo "  reply guidelines. Jarvis grounds every reply in it."
+  echo "  Suggested location: $PERSONA_DEFAULT (gitignored, edit any time)."
+  while true; do
+    read -rp "Persona file path (relative to repo root, or absolute; Enter to skip): " PERSONA_FILE
+    [[ -z "$PERSONA_FILE" ]] && break
+    PERSONA_RESOLVED="$PERSONA_FILE"
+    [[ "$PERSONA_FILE" != /* ]] && PERSONA_RESOLVED="$REPO_ROOT/$PERSONA_FILE"
+    if [[ -f "$PERSONA_RESOLVED" ]]; then
+      break
+    fi
+    err "File not found: $PERSONA_RESOLVED — type a different path or Enter to skip."
+  done
+fi
+
 # --- optional numeric fields ------------------------------------------------
 numopt() { # numopt VARNAME "prompt" DEFAULT MIN MAX
   local _v
@@ -118,6 +141,7 @@ cat <<SUMMARY
   password        : (hidden, ${#PASSWORD} chars)
   from address    : $FROM_ADDRESS
   owner address   : ${OWNER_ADDRESS:-(none — community-manager mode)}
+  persona file    : ${PERSONA_FILE:-(none — Jarvis will reply generically)}
   poll interval   : ${POLL_INTERVAL_MS}ms
 SUMMARY
 read -rp "Proceed? [y/N]: " CONFIRM
@@ -168,6 +192,9 @@ grep -vE "^EMAIL_ENABLED=|^EMAIL_ACCOUNTS=|^EMAIL_${ID_UP}_|^# >>> email account
   # OWNER_ADDRESS line is omitted in community-manager mode if left blank.
   if [[ -n "$OWNER_ADDRESS" ]]; then
     printf 'EMAIL_%s_OWNER_ADDRESS=%s\n'  "$ID_UP" "$OWNER_ADDRESS"
+  fi
+  if [[ -n "$PERSONA_FILE" ]]; then
+    printf 'EMAIL_%s_PERSONA_FILE=%s\n'   "$ID_UP" "$PERSONA_FILE"
   fi
   printf 'EMAIL_%s_POLL_INTERVAL_MS=%s\n' "$ID_UP" "$POLL_INTERVAL_MS"
 } >> "$TMP"

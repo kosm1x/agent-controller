@@ -122,6 +122,8 @@ describe("parseEmailAccounts", () => {
       // owner address is lowercased
       ownerAddress: "owner@example.com",
       pollIntervalMs: 60_000,
+      // no EMAIL_<ID>_PERSONA_FILE → personaContent is null
+      personaContent: null,
     });
   });
 
@@ -337,6 +339,7 @@ describe("EmailAdapter identity", () => {
       mode: "owner-only",
       ownerAddress: "owner@example.com",
       pollIntervalMs: 60_000,
+      personaContent: null,
     });
     expect(adapter.name).toBe("email:comunidades");
     expect(adapter.ownerAddress).toBe("owner@example.com");
@@ -358,9 +361,11 @@ describe("EmailAdapter identity", () => {
       mode: "community-manager",
       ownerAddress: null,
       pollIntervalMs: 60_000,
+      personaContent: null,
     });
     expect(adapter.mode).toBe("community-manager");
     expect(adapter.ownerAddress).toBeNull();
+    expect(adapter.personaContent).toBeNull();
   });
 });
 

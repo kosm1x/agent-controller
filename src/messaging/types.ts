@@ -58,6 +58,15 @@ export interface ChannelAdapter {
    * leave it undefined.
    */
   readonly mode?: EmailChannelMode;
+  /**
+   * Per-account persona content for community-manager email channels — the
+   * org's identity, mission, voice, contact info, and behavioural rules.
+   * Loaded once at startup from `EMAIL_<ID>_PERSONA_FILE` and injected into
+   * the system prompt for every inbound on this channel. Null when not
+   * configured (community-manager mode without a persona still works — Jarvis
+   * replies generically; with persona he replies grounded in the org's facts).
+   */
+  readonly personaContent?: string | null;
   start(): Promise<void>;
   send(msg: OutgoingMessage): Promise<string>; // Returns message ID
   onMessage(handler: (msg: IncomingMessage) => void): void;
