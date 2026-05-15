@@ -96,39 +96,34 @@ the unchanged `ChannelAdapter` boundary.
 
 ## Components
 
-| File                                   | Responsibility                                                                                                                         |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/messaging/email-mime.ts`          | Pure helpers: RFC822 parse, MIME multipart text extraction, RFC2047 / base64 / quoted-printable codecs, outbound MIME builder. No I/O. |
-| `src/messaging/channels/email.ts`      | `MailboxConfig`, `parseEmailAccounts()`, and `EmailAdapter` — raw IMAP poll loop + raw SMTP send over TLS, owner filtering, threading. |
-| `src/messaging/formatter.ts`           | `formatForEmail()` — strips markdown decoration to clean plain text.                                                                   |
-| `src/messaging/types.ts`               | `ChannelName` gains `` `email:${string}` ``; `ChannelAdapter` gains optional `ownerAddress`.                                           |
-| `src/messaging/router.ts`              | `getOwnerAddress` per-account, `email*` ACK skip, `email:<id>` hydration key.                                                          |
-| `src/messaging/index.ts`               | `EMAIL_ENABLED` gate → one adapter per `parseEmailAccounts()` entry.                                                                   |
-| `src/messaging/channels/email.test.ts` | `parseEmailAccounts()` validation + `EmailAdapter` identity + IMAP/SMTP frame-parser tests.                                            |
-| `scripts/add-email-account.sh`         | Operator helper — interactively adds/replaces one mailbox block in `.env` (idempotent, validates input, backs up before writing).      |
+| File                                   | Responsibility                                                                                                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/messaging/email-mime.ts`          | Pure helpers: RFC822 parse, MIME multipart text extraction, RFC2047 / base64 / quoted-printable codecs, outbound MIME builder. No I/O.                                    |
+| `src/messaging/channels/email.ts`      | `MailboxConfig`, `parseEmailAccounts()`, and `EmailAdapter` — raw IMAP poll loop + raw SMTP send over TLS, owner filtering, threading.                                    |
+| `src/messaging/formatter.ts`           | `formatForEmail()` — strips markdown decoration to clean plain text.                                                                                                      |
+| `src/messaging/types.ts`               | `ChannelName` gains `` `email:${string}` ``; `ChannelAdapter` gains optional `ownerAddress`.                                                                              |
+| `src/messaging/router.ts`              | `getOwnerAddress` per-account, `email*` ACK skip, `threadKey()` per-sender isolation in `community-manager` mode, calls the scope override + injects the persona section. |
+| `src/messaging/scope.ts`               | `COMMUNITY_EMAIL_TOOLS` allowlist + `applyCommunityChannelScopeOverride()` pure helper. The 5-tool gate is enforced here, audited by name, default-deny.                  |
+| `src/messaging/index.ts`               | `EMAIL_ENABLED` gate → one adapter per `parseEmailAccounts()` entry.                                                                                                      |
+| `src/messaging/channels/email.test.ts` | `parseEmailAccounts()` validation + `EmailAdapter` identity + IMAP/SMTP frame-parser tests.                                                                               |
+| `scripts/add-email-account.sh`         | Operator helper — interactively adds/replaces one mailbox block in `.env` (idempotent, validates input, backs up before writing).                                         |
 
 ## Inbound flow (per account)
 
 1. Every `pollIntervalMs` (default 60s), open a TLS IMAP connection. The socket
    carries its own `setTimeout` idle guard so a host that connects then goes
    silent cannot leak the socket past the operation ceiling (audit fix, PR #25).
-2. `LOGIN`, `SELECT INBOX`, `UID SEARCH UNSEEN FROM <ownerAddress>` (capped at
-   20 per poll). The search is scoped to the owner **server-side**: non-owner
-   mail is never fetched and never flagged `\Seen`, so the channel does not
-   mutate the read state of other mail in a shared mailbox (audit fix, PR #25).
+2. `LOGIN`, `SELECT INBOX`. The IMAP search depends on mode:
+   - `owner-only`: `UID SEARCH UNSEEN FROM <ownerAddress>` — non-owner mail is never fetched and never flagged `\Seen` (audit fix, PR #25).
+   - `community-manager`: `UID SEARCH UNSEEN` — every sender is fetched.
+     Capped at 20 per poll either way.
 3. For each UID: `UID FETCH <uid> (BODY.PEEK[])`, parse the RFC822 literal.
-4. Filter: `handleRawEmail()` re-checks `From` against the account's
-   `ownerAddress` as defense-in-depth — IMAP `FROM` search is a substring match
-   and can over-match.
-5. Extract a plain-text body (prefer `text/plain` MIME part; fall back to
-   stripped HTML), strip the quoted reply tail.
-6. Emit an `IncomingMessage` with `channel: "email:<id>"`. The text is prefixed
-   `[Cuenta: <id> (<from-address>) | Asunto: <subject>]` — the account `id` is
-   the stable project identifier (same token as the channel name, tags and
-   logs), with the address in parens for context. Thread context
-   (`Message-ID`, `References`, `Subject`) is recorded per account.
-7. `UID STORE <uid> +FLAGS (\Seen)` so it is never reprocessed. An in-memory
-   processed-id set is a second guard if the flag store fails.
+4. **Bounce / auto-reply filter** — `isAutoReplyOrBounce()` runs first, before owner/mode checks. Drops `mailer-daemon` / `postmaster` / `no-reply` senders, any `Auto-Submitted` header != "no" (RFC 3834), `Precedence: bulk|list|junk`, `Content-Type: multipart/report` (RFC 3464 DSN), and common bounce / out-of-office subject patterns (EN + ES). Required because an auto-responder MUST NOT reply to an auto-reply — without this, a single bouncing outbound creates a sustained 2-message-per-minute cascade (incident 2026-05-15).
+5. In `owner-only`, `handleRawEmail()` re-checks `From` against `ownerAddress` (IMAP `FROM` is substring-match; this is defense-in-depth). In `community-manager`, the bounce filter is the only sender gate — the mailbox is public-facing by design.
+6. Extract a plain-text body (prefer `text/plain` MIME part; fall back to stripped HTML), strip the quoted reply tail.
+7. Sanitise `mail.from` and `mail.subject` (strip `\r\n|[]`) before composing the inbound header — a hostile display name otherwise injects fake `Modo:` tags.
+8. Emit an `IncomingMessage` with `channel: "email:<id>"`. The text is prefixed `[Cuenta: <id> (<addr>) | …]`; in `community-manager` mode the header also carries `Modo: community-manager | De: <sender>` so the system prompt branches to the org-persona path. Thread context (`Message-ID`, `References`, `Subject`) is recorded **per sender** so two concurrent conversations on one community mailbox do not clobber each other.
+9. `UID STORE <uid> +FLAGS (\Seen)` so it is never reprocessed. An in-memory processed-id set (bounded recency window) is a second guard if the flag store fails.
 
 `BODY.PEEK[]` is used (not `BODY[]`) so the fetch itself does not set `\Seen` —
 the flag is set explicitly only _after_ the message is handed to the router.
@@ -144,8 +139,18 @@ the flag is set explicitly only _after_ the message is handed to the router.
    with no context → fresh subject.
 3. Body is base64 `Content-Transfer-Encoding` — sidesteps dot-stuffing,
    bare-LF, and line-length pitfalls; UTF-8 safe.
-4. SMTP over implicit TLS: `EHLO`, `AUTH LOGIN`, `MAIL FROM`, `RCPT TO`,
-   `DATA`, `QUIT` — from the account's own `fromAddress`.
+4. Every outbound message carries **RFC 3834 auto-reply markers**:
+   `Auto-Submitted: auto-replied` (canonical) and `Precedence: bulk` (legacy MTAs).
+   Without these, two cooperating auto-responders (Jarvis + Outlook OOO,
+   Jarvis + Jarvis, Jarvis + a vacation responder) loop forever.
+5. SMTP over implicit TLS: `EHLO`, `AUTH LOGIN`, `MAIL FROM`, `RCPT TO`,
+   `DATA`, `QUIT` — from the account's own `fromAddress`. `assertNoCrlf()`
+   guards every envelope command (`MAIL FROM`/`RCPT TO`/`EHLO`) against
+   header-injection.
+6. `send()` **throws** on SMTP failure (instead of returning a sentinel
+   string). The router's `sendToChannel().catch` surfaces every failure
+   at `[router] Send to email:<id> failed:` — silent drops are not
+   possible.
 
 ## Configuration
 
@@ -216,10 +221,28 @@ and keep tone professional in the sender's language (Spanish by default).
   `handleRawEmail()` re-checks the sender as a second layer.
 - **Tool scope restricted (community-manager).** Inbound on a
   `community-manager`-mode email channel forces the router's tool list to the
-  curated `COMMUNITY_EMAIL_TOOLS` allowlist (read / lookup only) regardless of
-  what the semantic scope classifier decided. A stranger cannot prompt Jarvis
-  into a destructive action because the action's tool is not exposed for that
-  task.
+  curated `COMMUNITY_EMAIL_TOOLS` allowlist (5 tools: `web_search`,
+  `exa_search`, `weather_forecast`, `currency_convert`, `geocode_address`).
+  Default-deny — every operator-data tool (`jarvis_file_*`, `gmail_*`,
+  `gdrive_*`, `task_history`, `list_dir`, `file_read`, `web_read`, `browser__*`)
+  is excluded by name. The override is FAIL-SAFE: an email channel with
+  undefined mode also restricts.
+- **Bounce / auto-reply filter (both modes).** `isAutoReplyOrBounce()`
+  drops `mailer-daemon`/`postmaster`/`no-reply` senders, `Auto-Submitted` !=
+  "no" headers, `Precedence: bulk|list|junk`, `Content-Type: multipart/report`
+  DSNs, and bounce-pattern subjects (EN + ES) — at the top of
+  `handleRawEmail`, before owner/mode checks. Combined with RFC 3834
+  outbound markers, this makes runaway loops architecturally impossible.
+- **Per-sender thread isolation (community-manager).** `threadKey()`
+  returns `${channel}:${from.toLowerCase()}` so each stranger gets their
+  own `conversationHistory` buffer + scope-inheritance bag + DB hydration
+  scope. Sender A's PII cannot bleed into Sender B's runner context.
+- **CRLF injection guards.** `assertNoCrlf()` runs on every value reaching
+  an SMTP envelope command or RFC822 header (`From`, `To`, `Subject`,
+  `Message-ID`, `In-Reply-To`, `References`). Inbound headers are also
+  sanitised before joining into the `[Cuenta: … | Modo: … | De: … | Asunto: …]`
+  prompt header to prevent a hostile display-name from injecting a fake
+  `Modo: owner-only`.
 - **Credentials** stay in `.env`. Use a provider app password, not the account
   password.
 - **Polls are isolated.** Each poll opens and closes its own connection; a
@@ -275,6 +298,49 @@ The IMAP/SMTP frame parsers (`imapTaggedEnd`, `extractFetchLiteral`,
 literal-handling paths are the ones most likely to break against a non-Hostinger
 provider. The networked `poll()` / `send()` paths remain covered by the live
 round-trip test, not unit tests.
+
+### Audit (community-manager pivot, pre-activation)
+
+Third independent audit, on the community-manager pivot before any public
+traffic was allowed to hit the mailbox. Verdict: FAIL → PASS WITH WARNINGS in
+one fix cycle. Ten Critical findings were remediated:
+
+- **C1–C9 (allowlist too permissive)** — first cut included `jarvis_file_*`,
+  `gmail_*`, `gdrive_*`, `task_history`, `list_dir`, `file_read`, `web_read`,
+  `browser__*`, `intel_*`, `knowledge_map*`. Every one is an operator-data
+  leak or exfil channel when the sender is arbitrary. Trimmed to 5 tools.
+  Invariant tests pin the constant against forbidden prefixes and destructive
+  verbs.
+- **C10 (cross-sender state bleed)** — `threadKey()` collapsed every sender on
+  a community mailbox to one channel-only key, so `conversationHistory` +
+  scope-inheritance + DB hydration all shared across senders. Per-sender
+  keying now in `community-manager` mode; owner-only keeps channel-only key
+  for backward-compat. Pure helper `applyCommunityChannelScopeOverride()`
+  extracted to `scope.ts` with unit tests pinning the contract.
+
+Plus seven Warnings folded same-bundle (mode fail-safe, prompt promises
+matching trimmed scope, header injection guard, `[` added to sanitised chars,
+allowlist comment refresh).
+
+### Incident (bounce cascade, 2026-05-15 05:00 UTC)
+
+Two hours after community-manager went live, an outbound reply bounced from
+`mailchannels.net`. The bounce arrived as `mailer-daemon@…` → Jarvis correctly
+identified it as a bounce but the router unconditionally SMTP-sent his reply →
+that reply bounced → infinite cascade at 2 messages/minute. Operator
+intervened, fix shipped within ~15 minutes:
+
+- `isAutoReplyOrBounce()` — RFC 3834 inbound filter, drops every bounce /
+  auto-reply / OOO / mailer-daemon at the top of `handleRawEmail`.
+- `buildMimeMessage()` — every outbound carries `Auto-Submitted: auto-replied`
+  - `Precedence: bulk` so cooperating auto-responders skip us pre-emptively.
+
+Hostinger's abuse heuristic suspended outbound on the mailbox after the
+cascade (`554 5.7.1 Disabled by user from hPanel`). Operator reactivated via
+hPanel + rotated password; service resumed without issue. Lesson captured in
+`feedback_email_bounce_cascade` memory. Filter caught its first real
+production bounce live at 06:09 (`Skipped bounce/auto-reply from
+mailer-daemon@fr-int-smtpout25.hostinger.io`).
 
 ## Known limitations
 
