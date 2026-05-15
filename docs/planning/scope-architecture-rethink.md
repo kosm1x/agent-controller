@@ -94,8 +94,57 @@ Threshold for promotion to P1: 4th scope incident in the next 30 days. If we hit
 - `mc/src/messaging/scope.ts` — the file that would change under either option.
 - `mc/docs/planning/next-sessions-queue.md` — item #13 ledger entry.
 
+## Verdict — 2026-05-15
+
+**Option B wins.** 30-day inventory (2026-04-15 → 2026-05-15) tally: **admission 7 / genuine 1 / discipline 1**. Per the decision rule above, when admission failures dominate, B is the right architectural posture: expand always-on for routine read+light-write tools, push calling discipline to the tool-description + system-prompt layers.
+
+### Inventory (one row per incident)
+
+| Date  | Tool                  | Class      | Closed by                                                        |
+| ----- | --------------------- | ---------- | ---------------------------------------------------------------- |
+| 04-20 | WordPress             | genuine    | wp regex widened 2026-04-20 (`feedback_scope_regex_patterns` §4) |
+| 04-21 | `project_update`      | discipline | (model wrong; closed by 2026-05-15 always-on promotion)          |
+| 04-26 | `gdrive_*`            | admission  | open — see "Deferred B promotions" below                         |
+| 05-02 | `jarvis_file_write`   | admission  | always-on 2026-05-07                                             |
+| 05-04 | `jarvis_file_write`   | admission  | always-on 2026-05-07                                             |
+| 05-05 | `shell_exec` / coding | admission  | regex widened `ab016ad` (operator-explicit tool names)           |
+| 05-06 | `shell_exec` / coding | admission  | regex widened `ab016ad`                                          |
+| 05-07 | `project_update`      | admission  | always-on 2026-05-15 (this commit)                               |
+| 05-14 | `browser__*` extras   | admission  | open — see "Deferred B promotions" below                         |
+
+### Promotion criteria (codified for future PRs)
+
+A tool MAY be promoted to `MISC_TOOLS` if all four hold:
+
+1. Operator-explicit invocation pattern recurs in the operator-message corpus (≥2 incidents in 30 days OR the operator typed the tool name literally).
+2. Wrong-tool-called blast radius is bounded — idempotent, confirmation-gated, or read-only. Destructive non-idempotent tools without a handler-level confirmation gate are NOT candidates.
+3. Tool is `deferred: true` (always-on cost is ≤ name + 1-line summary, ~30 tokens) OR the unconditional description is < 100 tokens.
+4. Rumi-class risk (model calls inappropriately) is mitigated by tool-description + system-prompt + handler-level confirmation, not by scope alone.
+
+A tool STAYS scope-gated if any of:
+
+- Real semantic context is required (domain-specific keywords, not short imperatives).
+- Description is heavy (>200 tokens) and the prompt-budget cost is non-trivial.
+- Misuse is destructive + non-idempotent + has no handler-level confirmation.
+
+### Executed promotions this commit
+
+- `project_get`, `project_update` → MISC_TOOLS. Closes incidents 04-21 + 05-07. Dead pushes under `coding` and `projects` scope groups removed. 8 regression tests added to `scope.test.ts` (`queue #13` `it.each` block) pin the always-on contract for short-imperative phrases that previously fell through.
+
+### Deferred B promotions (queue follow-ups, NOT in this commit)
+
+- `gdrive_list` / `gdrive_create` / `gdrive_share` — incident 04-26. Tradeoff: full Google bundle is 22 tools (~2K tokens unconditional). Spec needs to pick a "Google MISC" subset (3-5 tools) vs the full GOOGLE_TOOLS bundle promotion. Defer until a second incident recurs.
+- `browser__*` extras (links/click/fill/scroll/evaluate) — incident 05-14. Tradeoff: 8 tools × ~150 tokens = ~1.2K unconditional. Operator-explicit invocation is rare (most operator use is "navega a X" which already activates browser scope). Defer until a second non-X-posting incident recurs.
+
+### What we explicitly are NOT doing
+
+- ⛔ Not building a regression-test catalog for every scope group (Option A). Catalogs make sense per-group, on demand, when a specific group has churn. Not a blanket investment.
+- ⛔ Not retiring scope groups that still have value (coding, wordpress, browser, finance) — the gating still protects prompt-token budget for tools that genuinely need semantic context.
+- ⛔ Not promoting destructive non-idempotent tools without handler-level confirmation (e.g., `git_push`, `gh_create_pr`, `wp_delete`) — the Rumi-class mitigation chain doesn't bind for those.
+
 ## Updates log
 
-| Date       | Change                                                                                          |
-| ---------- | ----------------------------------------------------------------------------------------------- |
-| 2026-05-07 | File created. Investigation deferred to post-#1–#12 cleanup or on 4th scope-incident threshold. |
+| Date       | Change                                                                                                                                                                                                                                               |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-07 | File created. Investigation deferred to post-#1–#12 cleanup or on 4th scope-incident threshold.                                                                                                                                                      |
+| 2026-05-15 | Verdict shipped — Option B. 30-day inventory tallied 7/1/1; `project_get` + `project_update` promoted (closes 04-21 + 05-07 incidents). Promotion criteria codified. `gdrive_*` and `browser__*` extras deferred pending second-incident recurrence. |

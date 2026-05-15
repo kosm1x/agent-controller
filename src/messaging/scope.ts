@@ -130,6 +130,15 @@ export const MISC_TOOLS = [
   "jarvis_file_move", // 2026-05-07: restored from JARVIS_WRITE_TOOLS gate
   "list_schedules", // Read-only, lightweight
   "project_list", // Read-only, lightweight
+  // 2026-05-15: project_get + project_update promoted (queue #13, Option B
+  // verdict). Operator routinely says short imperatives like "archiva X" /
+  // "marca completado" / "actualiza este proyecto" that no scope group
+  // catches reliably. Both are deferred (schema loads on first call), so
+  // always-on cost is name + 1-line summary only (~30 tokens). The 04-21
+  // discipline failure (model claimed false-unavailable) + 05-07 admission
+  // failure (Alianza CMLL archive needed shell_exec UPDATE SQL) both close.
+  "project_get",
+  "project_update",
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
   "vps_status", // Always available — "how's the server?" doesn't need coding scope
   "northstar_sync", // Always available — "sync con db.mycommit" shouldn't need NorthStar keywords
@@ -1297,14 +1306,12 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("coding")) {
     tools.push(...CODING_TOOLS);
-    // Projects need write access in coding context
-    tools.push("project_get", "project_update");
+    // project_get + project_update moved to MISC_TOOLS 2026-05-15 (queue #13)
   }
   if (activeGroups.has("projects")) {
-    // Project entity operations — distinct from NorthStar goal mutations.
-    // project_list is in MISC_TOOLS (always available); only get/update need
-    // explicit scope activation since they are deferred.
-    tools.push("project_get", "project_update");
+    // project_get + project_update moved to MISC_TOOLS 2026-05-15 (queue #13)
+    // — the scope group itself is now redundant for project entity ops; the
+    // dispatcher may still activate it but no tools are appended here.
   }
   if (activeGroups.has("crm") && options.hasCrm) {
     tools.push(...CRM_TOOLS_SCOPE);
@@ -1411,8 +1418,7 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     ...BROWSER_TOOLS,
     ...BROWSER_EXTRA_TOOLS,
     ...CODING_TOOLS,
-    "project_get",
-    "project_update",
+    // project_get + project_update now in MISC_TOOLS (2026-05-15, queue #13)
     ...UTILITY_TOOLS,
     ...SEO_TOOLS,
     ...ADS_TOOLS,

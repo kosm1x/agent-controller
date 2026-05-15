@@ -341,24 +341,45 @@ describe("scope pattern matching", () => {
     "google scope should not over-fire on bare 'agenda' / 'drive' / 'documento' (post-freeze tightening)",
   );
 
-  it("NorthStar mentions without project verbs do NOT activate project tools", () => {
-    const tools = scope("Qué tareas tengo pendientes?");
-    expect(tools).not.toContain("project_update");
-    expect(tools).not.toContain("project_get");
+  // 2026-05-15 (queue #13 Option B verdict): `project_update` + `project_get`
+  // are now in MISC_TOOLS (always-on). The two tests that previously asserted
+  // these tools were OUT on generic / adverbial messages were guarding the
+  // pre-promotion scope-gating contract — they no longer apply. Replacement
+  // contract: the `projects` regex's job is to drive the SEMANTIC CLASSIFIER's
+  // signal (and historical telemetry), not to gate tool availability. The
+  // group itself can still be active or inactive; the always-on tools are
+  // available regardless. Below we keep both tests but flip them to assert
+  // the new contract: the regex still does NOT add `projects` to the active
+  // group set on these inputs (preventing classifier-side over-firing /
+  // mis-labelling), while the tools remain available via MISC_TOOLS.
+
+  it("NorthStar mentions without project verbs do NOT activate the `projects` regex group (tools still always-on via MISC_TOOLS)", async () => {
+    const { detectActiveGroups } = await import("./scope.js");
+    const groups = detectActiveGroups(
+      "Qué tareas tengo pendientes?",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+    );
+    expect(groups.has("projects")).toBe(false);
+    // Tools remain available — always-on contract:
+    expect(scope("Qué tareas tengo pendientes?")).toContain("project_update");
   });
 
-  it("projects scope does NOT over-fire on adverbs that share verb prefixes", () => {
-    // "activamente"/"completamente"/"infografía" must not trigger projects.
-    // Word boundary on the verb alternation prevents adverbial false positives.
-    expect(scope("trabajamos activamente en este proyecto")).not.toContain(
-      "project_update",
-    );
-    expect(scope("revisé completamente el proyecto")).not.toContain(
-      "project_update",
-    );
-    expect(scope("genera una infografía sobre proyectos")).not.toContain(
-      "project_update",
-    );
+  it("`projects` regex does NOT over-fire on adverbs that share verb prefixes (tools still always-on)", async () => {
+    // "activamente"/"completamente"/"infografía" must not add `projects` to
+    // the active group set (prevents classifier-side mis-label). Word boundary
+    // on the verb alternation prevents adverbial false positives. The actual
+    // project_update tool is always-on via MISC_TOOLS regardless.
+    const { detectActiveGroups } = await import("./scope.js");
+    for (const msg of [
+      "trabajamos activamente en este proyecto",
+      "revisé completamente el proyecto",
+      "genera una infografía sobre proyectos",
+    ]) {
+      const groups = detectActiveGroups(msg, [], DEFAULT_SCOPE_PATTERNS);
+      expect(groups.has("projects")).toBe(false);
+      expect(scope(msg)).toContain("project_update");
+    }
   });
 
   it("projects scope handles accent-tolerant read verbs", () => {
@@ -1355,6 +1376,32 @@ describe("jarvis write tools (always-on since 2026-05-07)", () => {
       const tools = scope(phrase);
       expect(tools).toContain("jarvis_file_write");
       expect(tools).toContain("jarvis_file_update");
+    },
+  );
+
+  // Queue #13 (2026-05-15) — Option B verdict execution. The 30-day
+  // admission-failure inventory (7/9 incidents) showed `project_update` /
+  // `project_get` were the next-highest-leverage promotions. 2026-04-21
+  // incident: model claimed `project_update` was unavailable (it was in
+  // scope under `projects` group, but the short follow-up didn't activate
+  // it). 2026-05-07 incident: archiving the Alianza CMLL project required
+  // shell_exec UPDATE SQL because `project_update` wasn't in scope on the
+  // archive-imperative turn. Both close with always-on promotion.
+  it.each([
+    "archiva Alianza CMLL",
+    "marca completado el proyecto X",
+    "actualiza este proyecto",
+    "pausa el proyecto",
+    "cambia el status del proyecto a archived",
+    "guarda credenciales WP",
+    "qué hay en el proyecto X",
+    "ver proyecto Y",
+  ])(
+    "queue #13: %j (no priors) includes project_update + project_get",
+    (phrase) => {
+      const tools = scope(phrase);
+      expect(tools).toContain("project_update");
+      expect(tools).toContain("project_get");
     },
   );
 });
