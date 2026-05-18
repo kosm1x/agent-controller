@@ -109,6 +109,14 @@ export interface InferenceResponse {
      */
     cache_read_tokens?: number;
     cache_creation_tokens?: number;
+    /**
+     * SDK-reported `total_cost_usd` for this single call. Populated by the
+     * claude-sdk shim. Undefined on the OpenAI HTTP path (cost is computed
+     * downstream via `calculateCost()`). Prometheus aggregates these across
+     * plan/reflect/executor calls so heavy-runner can surface the sum to the
+     * dispatcher as `actualCostUsd`.
+     */
+    cost_usd?: number;
   };
   provider: string;
   latency_ms: number;
@@ -1331,6 +1339,10 @@ export async function inferWithTools(
   /** Surfaced under claude-sdk routing (2026-05-10) so callers can plumb
    * actualModel into runner tokenUsage; undefined on the OpenAI HTTP path. */
   model?: string;
+  /** SDK-reported total_cost_usd. Populated by the claude-sdk shim;
+   * undefined on the OpenAI HTTP path (dispatcher falls back to
+   * calculateCost() in that case). */
+  costUsd?: number;
 }> {
   // 2026-05-10: claude-sdk primary → route through SDK with Sonnet→Haiku
   // fallback. See inferViaClaudeSdk comment for rationale.

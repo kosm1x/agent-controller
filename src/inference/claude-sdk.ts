@@ -754,6 +754,11 @@ export async function queryClaudeSdkAsInfer(
       ...(result.usage.cacheCreationTokens > 0 && {
         cache_creation_tokens: result.usage.cacheCreationTokens,
       }),
+      // Surface SDK-reported total_cost_usd so Prometheus can roll it up.
+      // Always emit (including 0) so an SDK-routed call with $0 billing
+      // (Max plan) is distinguishable from an openai-path call where cost
+      // is unknown and the dispatcher fallback to calculateCost() applies.
+      cost_usd: result.costUsd,
     },
     provider: "claude-sdk",
     latency_ms: result.durationMs || Date.now() - start,
@@ -809,6 +814,12 @@ export async function queryClaudeSdkAsInferWithTools(
    * runs correctly in cost_ledger.
    */
   model?: string;
+  /**
+   * SDK-reported `total_cost_usd` for this single SDK invocation. Aggregated
+   * by the executor across self-assess + retry rounds and surfaced through
+   * the orchestrator so heavy/swarm runners record real spend instead of $0.
+   */
+  costUsd?: number;
 }> {
   const flat = flattenMessagesForSdk(messages);
   const systemPrompt = flat.systemPrompt;
@@ -891,5 +902,6 @@ export async function queryClaudeSdkAsInferWithTools(
     roundsCompleted: result.numTurns,
     contextPressure: 0,
     model: result.model,
+    costUsd: result.costUsd,
   };
 }

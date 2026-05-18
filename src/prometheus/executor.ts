@@ -161,6 +161,9 @@ export async function selfAssess(
       // attributed to the model that ran (Opus→Sonnet wrapper can downgrade
       // independently of the main goal call).
       ...(response.model !== undefined && { actualModel: response.model }),
+      ...(response.usage.cost_usd !== undefined && {
+        actualCostUsd: response.usage.cost_usd,
+      }),
     };
     const raw = parseLLMJson<Partial<SelfAssessment>>(response.content ?? "");
     // Shape guard: ensure required fields have safe defaults
@@ -408,6 +411,9 @@ export async function executeGoal(
       // rounds — sufficient because dispatcher rolls up per-task. Only the
       // claude-sdk path returns this; openai path leaves it undefined.
       let actualModel: string | undefined = result.model;
+      // SDK-reported cost accumulator. Stays undefined if no SDK call ever
+      // reported one (openai path) so dispatcher falls back to calculateCost.
+      let totalCostUsd: number | undefined = result.costUsd;
 
       for (let round = 0; round < MAX_SELF_ASSESS; round++) {
         const { assessment, usage: assessUsage } = await selfAssess(
@@ -423,6 +429,9 @@ export async function executeGoal(
         // wrapper) updates attribution; otherwise the local main-call model
         // shadows it and cost_ledger under-counts Sonnet usage.
         if (assessUsage.actualModel) actualModel = assessUsage.actualModel;
+        if (assessUsage.actualCostUsd !== undefined) {
+          totalCostUsd = (totalCostUsd ?? 0) + assessUsage.actualCostUsd;
+        }
         // null = no criteria to check, met = passed
         if (!assessment || assessment.met) break;
 
@@ -478,6 +487,9 @@ export async function executeGoal(
         totalCacheRead += retryResult.totalUsage.cache_read_tokens ?? 0;
         totalCacheCreation += retryResult.totalUsage.cache_creation_tokens ?? 0;
         if (retryResult.model) actualModel = retryResult.model;
+        if (retryResult.costUsd !== undefined) {
+          totalCostUsd = (totalCostUsd ?? 0) + retryResult.costUsd;
+        }
         allRepairs.push(...retryResult.toolRepairs);
 
         // Collect additional tool calls from retry
@@ -521,6 +533,10 @@ export async function executeGoal(
             totalCompletion += condensed.usage.completionTokens;
             totalCacheRead += condensed.usage.cacheReadTokens ?? 0;
             totalCacheCreation += condensed.usage.cacheCreationTokens ?? 0;
+            if (condensed.usage.actualCostUsd !== undefined) {
+              totalCostUsd =
+                (totalCostUsd ?? 0) + condensed.usage.actualCostUsd;
+            }
           }
         }
       } catch (err) {
@@ -549,6 +565,7 @@ export async function executeGoal(
             cacheCreationTokens: totalCacheCreation,
           }),
           ...(actualModel !== undefined && { actualModel }),
+          ...(totalCostUsd !== undefined && { actualCostUsd: totalCostUsd }),
         },
       };
     } catch (err) {
@@ -632,6 +649,7 @@ export async function executeGraph(
   // This is fine for cost_ledger because dispatcher records cost per-task,
   // not per-goal.
   let aggregatedActualModel: string | undefined;
+  let aggregatedActualCostUsd: number | undefined;
   const maxIterations = graph.size * 4 + 1;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -694,6 +712,10 @@ export async function executeGraph(
       if (goalResult.tokenUsage.actualModel) {
         aggregatedActualModel = goalResult.tokenUsage.actualModel;
       }
+      if (goalResult.tokenUsage.actualCostUsd !== undefined) {
+        aggregatedActualCostUsd =
+          (aggregatedActualCostUsd ?? 0) + goalResult.tokenUsage.actualCostUsd;
+      }
       if (goalResult.toolRepairs)
         allToolRepairs.push(...goalResult.toolRepairs);
       if (goalResult.provenanceRecords) {
@@ -730,6 +752,9 @@ export async function executeGraph(
       }),
       ...(aggregatedActualModel !== undefined && {
         actualModel: aggregatedActualModel,
+      }),
+      ...(aggregatedActualCostUsd !== undefined && {
+        actualCostUsd: aggregatedActualCostUsd,
       }),
     },
     toolRepairs: allToolRepairs,

@@ -54,6 +54,11 @@ export async function orchestrate(
     // attributes Opus/Haiku in cost_ledger correctly. Last-write-wins across
     // execute/replan/reflect cycles.
     let totalActualModel: string | undefined;
+    // SDK-reported cost summed across plan + executeGraph + replan + reflect.
+    // Surfaced as OrchestratorResult.tokenUsage.actualCostUsd so heavy/swarm
+    // runners write real cost into cost_ledger instead of $0 (the
+    // calculateCost() fallback returns $0 for Claude models).
+    let totalActualCostUsd: number | undefined;
     // Autoreason Phase 1: k=2 stability rule for soft replan signals.
     // Counter increments on each consecutive soft vote from checkReplan; the
     // replan only fires when the counter reaches 2. Any iteration with no
@@ -125,6 +130,10 @@ export async function orchestrate(
         totalCompletionTokens += planUsage.completionTokens;
         totalCacheReadTokens += planUsage.cacheReadTokens ?? 0;
         totalCacheCreationTokens += planUsage.cacheCreationTokens ?? 0;
+        if (planUsage.actualCostUsd !== undefined) {
+          totalActualCostUsd =
+            (totalActualCostUsd ?? 0) + planUsage.actualCostUsd;
+        }
       } catch (err) {
         traceRecord(trace, "phase_error", {
           phase: Phase.PLAN,
@@ -188,6 +197,10 @@ export async function orchestrate(
         executionResults.tokenUsage.cacheCreationTokens ?? 0;
       if (executionResults.tokenUsage.actualModel) {
         totalActualModel = executionResults.tokenUsage.actualModel;
+      }
+      if (executionResults.tokenUsage.actualCostUsd !== undefined) {
+        totalActualCostUsd =
+          (totalActualCostUsd ?? 0) + executionResults.tokenUsage.actualCostUsd;
       }
 
       // Record tool repairs to scope telemetry (non-fatal)
@@ -319,6 +332,10 @@ export async function orchestrate(
           totalCompletionTokens += replanUsage.completionTokens;
           totalCacheReadTokens += replanUsage.cacheReadTokens ?? 0;
           totalCacheCreationTokens += replanUsage.cacheCreationTokens ?? 0;
+          if (replanUsage.actualCostUsd !== undefined) {
+            totalActualCostUsd =
+              (totalActualCostUsd ?? 0) + replanUsage.actualCostUsd;
+          }
         } catch (err) {
           console.warn(
             `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
@@ -388,6 +405,10 @@ export async function orchestrate(
     totalCompletionTokens += reflectUsage.completionTokens;
     totalCacheReadTokens += reflectUsage.cacheReadTokens ?? 0;
     totalCacheCreationTokens += reflectUsage.cacheCreationTokens ?? 0;
+    if (reflectUsage.actualCostUsd !== undefined) {
+      totalActualCostUsd =
+        (totalActualCostUsd ?? 0) + reflectUsage.actualCostUsd;
+    }
 
     traceRecord(trace, "phase_end", {
       phase: Phase.REFLECT,
@@ -461,6 +482,9 @@ export async function orchestrate(
         }),
         ...(totalActualModel !== undefined && {
           actualModel: totalActualModel,
+        }),
+        ...(totalActualCostUsd !== undefined && {
+          actualCostUsd: totalActualCostUsd,
         }),
       },
       iterationsUsed: budget.consumed,

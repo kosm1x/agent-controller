@@ -71,6 +71,16 @@ export interface TokenUsage {
    * hardcodes Sonnet under SDK mode).
    */
   actualModel?: string;
+  /**
+   * SDK-reported `total_cost_usd` summed across every inference call inside
+   * a Prometheus run (plan + replan + executor goal calls + selfAssess +
+   * retry + reflect). Heavy/swarm surface this to dispatcher as
+   * `actualCostUsd` so cost_ledger reflects real billing instead of the
+   * `calculateCost()` fallback which returns $0 for Claude models (those
+   * defaults expect SDK to always surface the authoritative number, which
+   * only the fast-runner chat branch was doing prior to this fix).
+   */
+  actualCostUsd?: number;
 }
 
 export interface GoalResult {

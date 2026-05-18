@@ -71,6 +71,12 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         ...(result.tokenUsage.actualModel !== undefined && {
           actualModel: result.tokenUsage.actualModel,
         }),
+        // Surface SDK-reported total_cost_usd summed by the orchestrator so
+        // dispatcher writes real $$ into cost_ledger instead of $0 (the
+        // calculateCost() fallback returns $0 for Claude models).
+        ...(result.tokenUsage.actualCostUsd !== undefined && {
+          actualCostUsd: result.tokenUsage.actualCostUsd,
+        }),
       },
       durationMs: Date.now() - start,
       goalGraph: result.goalGraph,
@@ -150,6 +156,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
         // 2026-05-10 cutover round-2 C1: container-side heavy-worker emits
         // this so the dispatcher attributes Opus/Haiku correctly.
         actualModel?: string;
+        actualCostUsd?: number;
       };
       goalGraph?: unknown;
       trace?: unknown[];

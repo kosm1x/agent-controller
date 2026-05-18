@@ -80,7 +80,7 @@ export interface Config {
   budgetDailyLimitUsd: number;
   /** Hourly spend limit in USD (default: 2.0). */
   budgetHourlyLimitUsd: number;
-  /** Monthly spend limit in USD (default: 200.0). */
+  /** Monthly spend limit in USD (default: 400.0). */
   budgetMonthlyLimitUsd: number;
   /** Custom model pricing JSON (optional override). */
   budgetPricingJson?: string;
@@ -198,7 +198,7 @@ export function loadConfig(): Config {
     budgetEnabled: process.env.BUDGET_ENABLED === "true",
     budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 10.0),
     budgetHourlyLimitUsd: float("BUDGET_HOURLY_LIMIT_USD", 2.0),
-    budgetMonthlyLimitUsd: float("BUDGET_MONTHLY_LIMIT_USD", 200.0),
+    budgetMonthlyLimitUsd: float("BUDGET_MONTHLY_LIMIT_USD", 400.0),
     budgetPricingJson: optional("BUDGET_PRICING_JSON"),
 
     tuningEnabled: process.env.TUNING_ENABLED === "true",

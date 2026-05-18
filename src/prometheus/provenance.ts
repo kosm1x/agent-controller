@@ -284,6 +284,9 @@ export async function condenseSearchResults(
         ...(response.usage.cache_creation_tokens !== undefined && {
           cacheCreationTokens: response.usage.cache_creation_tokens,
         }),
+        ...(response.usage.cost_usd !== undefined && {
+          actualCostUsd: response.usage.cost_usd,
+        }),
       },
     };
   } catch (err) {
