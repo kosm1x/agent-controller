@@ -69,19 +69,25 @@ F10 (crypto WS, optional) can slot in any time after F3 (≈1 session, parallel-
 
 > All α work is complete. These sections document shipped scope for history and reference; skim them only if you need implementation details. **Phase β (F1) is where execution continues.**
 
-## v7.6 Reliability Phase — In Progress (5 of 6 spines closed 2026-05-08)
+## v7.6 Reliability Phase — **Done** (closed 2026-05-18, tag `v7.6-closed`)
 
-> Reliability phase — make what we already have work and work well, instead of adding capability. Six spines. Tracked in `docs/V7.6-GUIDE.md`.
+> Reliability phase — make what we already have work and work well, instead of adding capability. 7 spines (6 work + closure ritual). Tracked in `docs/V7.6-GUIDE.md`. **Closure doc**: `docs/V7.6-CLOSURE.md`. **Post-closure watchlist**: `docs/planning/v7.6-leftovers-queue.md`.
 
-| Spine                         | Status                                                 | Closure commits                                         | Audit log                              |
-| ----------------------------- | ------------------------------------------------------ | ------------------------------------------------------- | -------------------------------------- |
-| 1 — Gatekeeper audit pass     | **Closed** (2026-05-08)                                | `90ebc31` `ed52d6c` `228c0cd` `a9ac208` `74c6a73`       | `docs/audit/v7.6-gatekeepers.md`       |
-| 2 — Observability backfill    | **Closed** (2026-05-08)                                | `36dbcd9` `9379fe1`                                     | `docs/audit/v7.6-observability.md`     |
-| 3 — Hindsight A/B/C decision  | Data-ready 2026-05-21                                  | —                                                       | —                                      |
-| 4 — MCP annotation push       | **Closed** (2026-05-08; W4 residual closed 2026-05-09) | `331678b` `b458293` `631ea0f` + W4: `396bcd7` `6d1a411` | `docs/audit/v7.6-mcp-annotations.md`   |
-| 5 — Skill engine surface      | **Closed** (2026-05-08)                                | `b5f651e`                                               | `docs/audit/v7.6-skill-engine.md`      |
-| 6 — Composed L4-L6 smoke test | **Closed** (2026-05-08)                                | `cc0dc87`                                               | `docs/audit/v7.6-composed-pipeline.md` |
-| 7 — Closure ritual            | Pending — once 3 lands                                 | —                                                       | —                                      |
+| Spine                         | Status                                                   | Closure commits                                         | Audit log                                                      |
+| ----------------------------- | -------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| 1 — Gatekeeper audit pass     | **Closed** (2026-05-08)                                  | `90ebc31` `ed52d6c` `228c0cd` `a9ac208` `74c6a73`       | `docs/audit/v7.6-gatekeepers.md`                               |
+| 2 — Observability backfill    | **Closed** (2026-05-08)                                  | `36dbcd9` `9379fe1`                                     | `docs/audit/v7.6-observability.md`                             |
+| 3 — Hindsight A/B/C decision  | **Closed** (retroactive 2026-05-15 via queue #15 DEMOTE) | `dce4280`                                               | `docs/planning/hindsight-strategic-options.md` (verdict block) |
+| 4 — MCP annotation push       | **Closed** (2026-05-08; W4 residual closed 2026-05-09)   | `331678b` `b458293` `631ea0f` + W4: `396bcd7` `6d1a411` | `docs/audit/v7.6-mcp-annotations.md`                           |
+| 5 — Skill engine surface      | **Closed** (2026-05-08)                                  | `b5f651e`                                               | `docs/audit/v7.6-skill-engine.md`                              |
+| 6 — Composed L4-L6 smoke test | **Closed** (2026-05-08)                                  | `cc0dc87`                                               | `docs/audit/v7.6-composed-pipeline.md`                         |
+| 7 — Closure ritual            | **Closed** (2026-05-18, this commit)                     | `docs/V7.6-CLOSURE.md` + tag `v7.6-closed`              | —                                                              |
+
+**Final scoreboard**: 6 pre-existing bugs + 40 bundle-regressions + 159 new tests + 0 production regressions + 0 new user-facing capabilities. 4-week-projection landed in 10 days due to spine independence. 33% gatekeeper-audit hit-rate matched projection exactly. Three patterns codified in closure doc: round-2 audits catch contract-level drift, producer/consumer coupling tests as the observability invariant, phase-architecture independence as the timeline driver. Hindsight DEMOTE shipped via queue #15; `HINDSIGHT_RECALL_ENABLED=false` is the documented default. Inference primary cut over to Claude Agent SDK (`claude-sdk`) per-model breaker keys. Email channel shipped multi-mailbox with `owner-only` + `community-manager` modes + RFC 3834 both ways. 248 tools live (was 246; queue #17 added batch tools). **Recommended v7.7 entry point**: Spine 1 (S2 self-audit) — fastest first-win, value compounds across remaining v7.7 spines.
+
+## v7.7 Substrate Completion Phase — **Pre-planned, not opened**
+
+> Pre-plan at `docs/V7.7-PREPLAN.md` (authored 2026-05-08). 8 spines: S2 (self-audit), S3 (drift detector), S5 (skills-as-stored-procedures), Conway Patterns 1-3, Hindsight A/B/C action carry, closure ritual. Anti-mission: no V8.1/V8.2/V8.3 capability work. Open after operator alignment on V7.7-PREPLAN open questions. ETA close ~2026-07-20.
 
 **Cumulative through 2026-05-09**: 6 pre-existing bugs found (F5 + F8 + F10 from Spine 1, fullCount drift from Spine 2, 2 idempotent-convention drifts from Spine 4) + 40 bundle-regressions across 10 audit rounds + 4 audit-driven fixes on the 2026-05-09 W4 ship (W1 dup / W2 too-permissive prefix / W3 observability / R3 precedence) + 165 new tests (159 + 6 across Spine 4 W4 ship) + 0 production regressions. **Spine 4 W4 closure 2026-05-09**: 40/40 live MCP tools now annotate correctly (4 xpoz + 8 browser + 21 playwright + 7 graphify-code) — was 0/40 before, every MCP tool fell back to conservative-destructive defaults. W3 startup-warning surfaced graphify-code at first deploy → second deploy is silent. Remaining residuals (Spine 4 W5, Spine 6 W11 + S2) verified deferred — trigger conditions unmet.
 
