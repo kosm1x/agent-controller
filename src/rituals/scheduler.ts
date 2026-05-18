@@ -581,10 +581,26 @@ function scheduleDiffDigest(): void {
  * from mc-prometheus and write per-(scope, model) cost_ledger rows so
  * Hindsight spend rolls into the 3-window budget. Set
  * HINDSIGHT_COST_PULL_ENABLED=false to disable. See queue item #4.
+ *
+ * Auto-gated when HINDSIGHT_ENABLED!=true: under the 2026-05-10 SDK cutover,
+ * retain/reflect stopped writing to Hindsight, so every 5-min pull queries
+ * a flat-line series (series=0 recorded=0 cost=$0). Skipping the cron when
+ * the write side is off keeps journald free of 288 noise lines/day without
+ * losing real signal. Operator can force-run via HINDSIGHT_COST_PULL_ENABLED=true.
  */
 function scheduleHindsightCostPull(): void {
   if (process.env.HINDSIGHT_COST_PULL_ENABLED === "false") {
     console.log("[rituals] hindsight-cost-pull: disabled via env");
+    return;
+  }
+  // Skip when Hindsight writes are off, unless explicitly force-enabled.
+  if (
+    process.env.HINDSIGHT_ENABLED !== "true" &&
+    process.env.HINDSIGHT_COST_PULL_ENABLED !== "true"
+  ) {
+    console.log(
+      "[rituals] hindsight-cost-pull: skipped (HINDSIGHT_ENABLED!=true; set HINDSIGHT_COST_PULL_ENABLED=true to override)",
+    );
     return;
   }
   const job = cron.schedule(
@@ -594,12 +610,15 @@ function scheduleHindsightCostPull(): void {
         const { runHindsightCostPull } =
           await import("./hindsight-cost-pull.js");
         const summary = await runHindsightCostPull();
-        // Always log so operators can confirm the ritual is firing even when
-        // Hindsight has been idle (silent-failure resistance — see queue
-        // synthesis "instrument first, decide later" principle).
-        console.log(
-          `[rituals] hindsight-cost-pull: bucket=${summary.bucket} series=${summary.series} recorded=${summary.recorded} skipped=${summary.skipped} cost=$${summary.cost_usd}`,
-        );
+        // Only log when there's actual data. Empty pulls (series=0) accumulate
+        // 288 lines/day of "nothing happened" — operators get no signal from
+        // the noise. A failure still logs via the catch below, so silent
+        // failure is impossible.
+        if (summary.series > 0) {
+          console.log(
+            `[rituals] hindsight-cost-pull: bucket=${summary.bucket} series=${summary.series} recorded=${summary.recorded} skipped=${summary.skipped} cost=$${summary.cost_usd}`,
+          );
+        }
       } catch (err) {
         console.error(
           `[rituals] hindsight-cost-pull failed: ${err instanceof Error ? err.message : err}`,

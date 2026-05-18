@@ -24,6 +24,7 @@ import type {
   OutgoingMessage,
 } from "../types.js";
 import { formatForWhatsApp } from "../formatter.js";
+import { recordWhatsappDisconnect } from "../../observability/prometheus.js";
 
 const AUTH_DIR = "./data/whatsapp-session";
 const OWNER_JID = process.env.WHATSAPP_OWNER_JID;
@@ -83,7 +84,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     fs.mkdirSync(AUTH_DIR, { recursive: true });
     return new Promise<void>((resolve, reject) => {
-      this.connectInternal(resolve).catch(reject);
+      this.connectInternal(resolve).catch((err) => {
+        // Initial pairing path bypasses the connection.update "close" branch;
+        // bump the counter so a hard-failure session shows up in Grafana
+        // instead of silently flatlining (audit W1).
+        recordWhatsappDisconnect("connect_failed");
+        reject(err);
+      });
     });
   }
 
@@ -121,6 +128,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         )?.output?.statusCode;
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
 
+        recordWhatsappDisconnect(reason);
         console.log(
           `[whatsapp] Connection closed (reason: ${reason}, reconnect: ${shouldReconnect})`,
         );
@@ -128,6 +136,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
         if (shouldReconnect) {
           setTimeout(() => {
             this.connectInternal().catch((err) => {
+              // Reconnect throwing means the session is degrading faster
+              // than the original "close" counter increment suggests
+              // (audit W1).
+              recordWhatsappDisconnect("reconnect_failed");
               console.error("[whatsapp] Reconnect failed:", err);
             });
           }, 3000);

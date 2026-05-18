@@ -2,6 +2,9 @@
  * Health check endpoint. No authentication required.
  */
 
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { getConfig } from "../../config.js";
@@ -16,6 +19,25 @@ import { getMessagingStatus } from "../../messaging/index.js";
 
 const health = new Hono();
 
+/**
+ * Under the claude-sdk provider, `inferencePrimaryUrl` is stale (the SDK
+ * auths via ~/.claude/.credentials.json and picks its own endpoint), so the
+ * legacy openai-style fetch probe always returns null and /health reports
+ * `inference: unreachable` even while Sonnet is happily serving traffic.
+ * The strongest non-billable readiness signal for SDK mode is the existence
+ * of a non-empty credentials file — the SDK subprocess would fail to spawn
+ * without it. We avoid actually hitting Anthropic's API to keep /health
+ * free, fast, and not dependent on third-party reachability.
+ */
+function sdkCredentialsReady(): boolean {
+  try {
+    const path = join(homedir(), ".claude", ".credentials.json");
+    return statSync(path).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 health.get("/health", async (c) => {
   let dbOk = false;
   try {
@@ -29,27 +51,31 @@ health.get("/health", async (c) => {
   }
 
   let inferenceOk = false;
-  try {
-    const config = getConfig();
-    const baseUrl = config.inferencePrimaryUrl.replace(/\/v1\/?$/, "");
-    // Try /health first, fall back to /v1/models (DashScope has no /health)
-    const healthRes = await fetch(`${baseUrl}/health`, {
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => null);
-    if (healthRes?.ok) {
-      inferenceOk = true;
-    } else {
-      const modelsRes = await fetch(
-        `${config.inferencePrimaryUrl.replace(/\/+$/, "")}/models`,
-        {
-          headers: { Authorization: `Bearer ${config.inferencePrimaryKey}` },
-          signal: AbortSignal.timeout(3000),
-        },
-      ).catch(() => null);
-      inferenceOk = modelsRes !== null && modelsRes.status < 500;
+  const config = getConfig();
+  if (config.inferencePrimaryProvider === "claude-sdk") {
+    inferenceOk = sdkCredentialsReady();
+  } else {
+    try {
+      const baseUrl = config.inferencePrimaryUrl.replace(/\/v1\/?$/, "");
+      // Try /health first, fall back to /v1/models (DashScope has no /health)
+      const healthRes = await fetch(`${baseUrl}/health`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
+      if (healthRes?.ok) {
+        inferenceOk = true;
+      } else {
+        const modelsRes = await fetch(
+          `${config.inferencePrimaryUrl.replace(/\/+$/, "")}/models`,
+          {
+            headers: { Authorization: `Bearer ${config.inferencePrimaryKey}` },
+            signal: AbortSignal.timeout(3000),
+          },
+        ).catch(() => null);
+        inferenceOk = modelsRes !== null && modelsRes.status < 500;
+      }
+    } catch {
+      // Inference provider unreachable
     }
-  } catch {
-    // Inference provider unreachable
   }
 
   const status = dbOk ? "healthy" : "degraded";

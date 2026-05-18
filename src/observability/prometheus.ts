@@ -409,6 +409,70 @@ export function taskCompleted(runner: string): void {
   tasksActiveByRunner.dec({ runner });
 }
 
+// --- WhatsApp socket flap tracking ---
+// Baileys disconnects ~8x/day on this account (reason codes 428/440/etc.)
+// and auto-reconnects, so individual disconnects don't break delivery — but
+// a sustained spike in the rate is the earliest signal that the session is
+// degrading toward a re-auth requirement (logged out). Counter, not log,
+// because at 8/day a log line per event is noise; rate() over a window in
+// Grafana surfaces a real trend without polluting journald.
+//
+// The counter must also fire on initial-connect-failure and reconnect-
+// failure paths — those bypass the post-connect "close" handler, so a
+// session that fails to ever recover would otherwise flatline the metric
+// (the opposite of the detection goal). See `recordWhatsappDisconnect`
+// call sites in whatsapp.ts.
+//
+// will_reconnect is intentionally NOT a label: it's derivable from `reason`
+// (only loggedOut prevents reconnect) and adds redundant series. The
+// failure-class reasons below are self-explanatory.
+const whatsappDisconnectsTotal = new client.Counter({
+  name: "mc_whatsapp_disconnects_total",
+  help: "WhatsApp socket disconnect / connect-failure events bucketed by reason",
+  labelNames: ["reason"] as const,
+});
+
+/** Translate Baileys numeric `statusCode` into enum-name strings so Grafana
+ * labels read like the source-of-truth enum (`loggedOut`, `restartRequired`)
+ * instead of HTTP-looking integers that collide with operator muscle memory.
+ * Codes pulled from @whiskeysockets/baileys DisconnectReason. */
+const WA_REASON_NAME: Record<number, string> = {
+  401: "loggedOut",
+  403: "forbidden",
+  408: "timedOut",
+  428: "connectionClosed",
+  440: "connectionReplaced",
+  500: "badSession",
+  503: "unavailableService",
+  515: "restartRequired",
+};
+
+/** Reasons we expect to see in practice; anything else folds to "other"
+ * so a cardinality bomb (e.g. transient codes from upstream changes)
+ * can't fill prom-client memory. Includes the two synthetic
+ * connect-failure markers bumped from whatsapp.ts catch handlers. */
+const KNOWN_WA_REASONS = new Set([
+  ...Object.values(WA_REASON_NAME),
+  "connect_failed",
+  "reconnect_failed",
+  "unknown",
+]);
+
+export function recordWhatsappDisconnect(
+  reasonCode: number | string | undefined,
+): void {
+  let raw: string;
+  if (reasonCode === undefined) {
+    raw = "unknown";
+  } else if (typeof reasonCode === "number") {
+    raw = WA_REASON_NAME[reasonCode] ?? String(reasonCode);
+  } else {
+    raw = reasonCode;
+  }
+  const reason = KNOWN_WA_REASONS.has(raw) ? raw : "other";
+  whatsappDisconnectsTotal.inc({ reason });
+}
+
 /** Return Prometheus-formatted metrics string. */
 export async function getMetricsText(): Promise<string> {
   collectMetrics();

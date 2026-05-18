@@ -67,10 +67,15 @@ beforeEach(() => {
   // Re-wire after clearAllMocks
   mockAll.mockReturnValue([]);
   mockPrepare.mockReturnValue({ get: mockGet, all: mockAll });
+  // hindsight-cost-pull is gated on HINDSIGHT_ENABLED=true since 2026-05-18
+  // to suppress 288 empty-pull log lines/day under the SDK cutover. Set
+  // explicitly so the schedule-count assertion below stays at 18.
+  process.env.HINDSIGHT_ENABLED = "true";
 });
 
 afterEach(() => {
   stopRitualScheduler();
+  delete process.env.HINDSIGHT_ENABLED;
 });
 
 describe("startRitualScheduler", () => {
@@ -90,6 +95,40 @@ describe("startRitualScheduler", () => {
       expect(call[2]).toEqual(
         expect.objectContaining({ timezone: expect.any(String) }),
       );
+    }
+  });
+
+  it("skips hindsight-cost-pull when HINDSIGHT_ENABLED!=true", () => {
+    // 2026-05-18: the */5min cost-pull was emitting series=0 cost=$0 logs
+    // 288×/day under the SDK cutover (HINDSIGHT_ENABLED=false). Confirm the
+    // gate fires when the env var is absent.
+    const prior = process.env.HINDSIGHT_ENABLED;
+    delete process.env.HINDSIGHT_ENABLED;
+    try {
+      startRitualScheduler();
+      expect(mockSchedule).toHaveBeenCalledTimes(17);
+    } finally {
+      if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
+    }
+  });
+
+  it("schedules hindsight-cost-pull when HINDSIGHT_COST_PULL_ENABLED=true overrides", () => {
+    // Operator escape hatch: force-run cost-pull even with writes off.
+    const priorEnabled = process.env.HINDSIGHT_ENABLED;
+    const priorOverride = process.env.HINDSIGHT_COST_PULL_ENABLED;
+    delete process.env.HINDSIGHT_ENABLED;
+    process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
+    try {
+      startRitualScheduler();
+      expect(mockSchedule).toHaveBeenCalledTimes(18);
+    } finally {
+      if (priorEnabled !== undefined)
+        process.env.HINDSIGHT_ENABLED = priorEnabled;
+      if (priorOverride !== undefined) {
+        process.env.HINDSIGHT_COST_PULL_ENABLED = priorOverride;
+      } else {
+        delete process.env.HINDSIGHT_COST_PULL_ENABLED;
+      }
     }
   });
 });
