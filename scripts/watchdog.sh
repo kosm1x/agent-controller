@@ -146,6 +146,12 @@ fi
 # Desktop rsync backup skips Docker volumes — we rely on /opt/supabase/backups/*.sql.gz
 # dumps created by the 4 AM UTC cron. If that cron fails silently, the only backup path
 # dies. Alert when latest dump is stale (>36h) or suspiciously small (<1 MB).
+#
+# In-flight handling: backup.sh's `>` redirect creates a 0-byte file at cron-fire instant.
+# The */5 watchdog cron races the `0 4` backup cron in the same second, so a naive size
+# check tripped daily at 04:00:01. Skip the size check while the latest file is younger
+# than 15 min (longest historical pg_dump wall time is ~7 min). A truly-silent cron
+# failure still surfaces via the >36h freshness branch on the next day.
 SB_DIR=/opt/supabase/backups
 if [ -d "$SB_DIR" ]; then
   SB_LATEST=$(find "$SB_DIR" -maxdepth 1 -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
@@ -157,7 +163,8 @@ if [ -d "$SB_DIR" ]; then
       echo "$NOW" > "$STATE"
     fi
   else
-    SB_AGE_H=$(( ($(date +%s) - $(stat -c %Y "$SB_LATEST")) / 3600 ))
+    SB_AGE_S=$(( $(date +%s) - $(stat -c %Y "$SB_LATEST") ))
+    SB_AGE_H=$(( SB_AGE_S / 3600 ))
     SB_SIZE=$(stat -c %s "$SB_LATEST")
     SB_NAME=$(basename "$SB_LATEST")
     STATE=/var/lib/mc-watchdog-sb-alert
@@ -167,6 +174,10 @@ if [ -d "$SB_DIR" ]; then
         alert "Supabase latest pg_dump is ${SB_AGE_H}h old (${SB_NAME}, threshold 36h) — 4 AM UTC backup cron may have failed"
         echo "$NOW" > "$STATE"
       fi
+    elif [ "$SB_AGE_S" -ge 0 ] && [ "$SB_AGE_S" -lt 900 ]; then
+      : # backup likely still writing (file <15min old); next tick re-checks.
+      # The `-ge 0` guard prevents a future-dated mtime (clock skew, manual touch)
+      # from muting every Check 8 alert forever.
     elif [ "$SB_SIZE" -lt 1048576 ]; then
       if [ $((NOW - LAST)) -gt 86400 ]; then
         alert "Supabase latest pg_dump suspiciously small: ${SB_NAME} is ${SB_SIZE} bytes (expected >=1 MB)"
