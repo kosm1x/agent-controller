@@ -24,6 +24,7 @@
  */
 
 import { getDatabase } from "../../db/index.js";
+import { loadAgingBaselines, formatAgingSection } from "./aging.js";
 
 export interface BriefAlertRow {
   id: number;
@@ -161,6 +162,50 @@ export function formatAlertSection(set: BriefAlertSet): string {
   }
 
   return lines.join("\n").trimEnd();
+}
+
+/**
+ * Compose the full morning-brief drift section, including aging-baseline
+ * hygiene reminders on Sundays (Bundle 3).
+ *
+ * - Mon-Sat: alerts only (P0/P1; no P2 digest, no aging)
+ * - Sun: alerts + P2 weekly digest + aging baselines >90d
+ *
+ * Returns empty string when nothing to report (OMIT discipline).
+ */
+export function composeMorningBriefDriftSection(
+  now: Date = new Date(),
+): string {
+  const sunday = isSundayInMxTime(now);
+  const set = loadActiveAlertsForBrief({ includeP2Digest: sunday });
+  const alertSection = formatAlertSection(set);
+
+  // Aging baselines only on Sundays — per spec §6 it's a weekly hygiene nudge.
+  let agingSection = "";
+  if (sunday) {
+    try {
+      const aging = loadAgingBaselines();
+      agingSection = formatAgingSection(aging);
+    } catch (err) {
+      // Aging load failure must NOT block alert delivery — alerts are
+      // higher-priority. Log and proceed without the aging subsection.
+      console.warn(
+        "[s3-delivery] aging baseline load failed (alerts section unaffected):",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  if (alertSection === "" && agingSection === "") return "";
+  if (alertSection === "") {
+    // R1-W3 fold: aging-only Sundays use a distinct hygiene heading, NOT
+    // the "🚨 Alertas de deriva" alarm-bell heading. Baselines past 90d are
+    // a maintenance nudge, not an alert; aligning urgency with content
+    // keeps the operator's eye properly tuned.
+    return `## 🟢 Higiene de baselines (S3)\n\n${agingSection}`;
+  }
+  if (agingSection === "") return alertSection;
+  return `${alertSection}\n\n${agingSection}`;
 }
 
 function appendAlerts(lines: string[], alerts: BriefAlertRow[]): void {

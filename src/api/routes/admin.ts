@@ -11,6 +11,7 @@ import { cancelTask } from "../../dispatch/dispatcher.js";
 import { checkDrift, summarizeDrift } from "../../observability/drift.js";
 import { compareBackends } from "../../memory/recall-compare.js";
 import type { MemoryBank } from "../../memory/types.js";
+import { suppressAlert } from "../../lib/s3/suppression.js";
 
 export const admin = new Hono();
 
@@ -171,4 +172,75 @@ admin.post("/recall-compare", async (c) => {
     },
   );
   return c.json(result);
+});
+
+/**
+ * POST /api/admin/alerts/:id/suppress
+ *
+ * v7.7 Spine 2 Bundle 3 — suppress an active drift alert.
+ *
+ * Body: { reason: string, until?: ISO datetime, acknowledged_by?: string }
+ *
+ * Behavior per spec §8:
+ *   - reason starts with "false positive: " → resolution_kind='false_positive'
+ *   - otherwise → resolution_kind='operator_acknowledged'
+ *   - sets delivery_status='suppressed' + resolution_at=NOW
+ *   - resolution_notes preserves the full reason + until-timestamp for audit
+ *
+ * Auto-unsuppress when `until` passes is DEFERRED (v8.0).
+ */
+admin.post("/alerts/:id/suppress", async (c) => {
+  const idStr = c.req.param("id");
+  const alertId = Number(idStr);
+  if (!Number.isInteger(alertId) || alertId <= 0) {
+    return c.json({ error: "alert id must be a positive integer" }, 400);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const params = body as {
+    reason?: unknown;
+    until?: unknown;
+    acknowledged_by?: unknown;
+  };
+
+  if (typeof params.reason !== "string" || params.reason.trim().length === 0) {
+    return c.json({ error: "reason is required (non-empty string)" }, 400);
+  }
+  const until =
+    typeof params.until === "string" && params.until.length > 0
+      ? params.until
+      : undefined;
+  const acknowledgedBy =
+    typeof params.acknowledged_by === "string" &&
+    params.acknowledged_by.length > 0
+      ? params.acknowledged_by
+      : "operator";
+
+  const result = suppressAlert(alertId, params.reason, until, acknowledgedBy);
+  if (!result.ok) {
+    if (result.kind === "not_found") {
+      return c.json({ error: `alert ${alertId} not found` }, 404);
+    }
+    if (result.kind === "already_resolved") {
+      return c.json(
+        {
+          error: `alert ${alertId} already resolved at ${result.resolvedAt}`,
+        },
+        409,
+      );
+    }
+    // invalid_reason
+    return c.json({ error: result.detail }, 400);
+  }
+  return c.json({
+    ok: true,
+    alert_id: result.alertId,
+    resolution_kind: result.resolutionKind,
+    resolved_at: result.resolvedAt,
+  });
 });

@@ -1972,7 +1972,22 @@ export class MessageRouter {
   }
 
   /** Broadcast a message to all active channels. */
-  async broadcastToAll(text: string): Promise<void> {
+  /**
+   * Broadcast `text` to all non-email channels.
+   *
+   * Per-channel send failures are swallowed (logged) so a Telegram outage
+   * doesn't block a WhatsApp delivery. The optional `onChannelFailure`
+   * callback fires for each failure — used by Bundle 3's S3 push counter
+   * (R1-C1 fold from v7.7-spine-2-bundle-3 audit): without it, callers
+   * couldn't observe per-channel failures because the inner `.catch`
+   * resolves before `Promise.all`. The callback must not throw; if it
+   * throws, the throw is logged and ignored to keep this method's
+   * fire-and-forget contract intact.
+   */
+  async broadcastToAll(
+    text: string,
+    onChannelFailure?: (channelName: ChannelName, err: unknown) => void,
+  ): Promise<void> {
     const promises: Promise<void>[] = [];
 
     for (const [name, adapter] of this.channels) {
@@ -1988,6 +2003,16 @@ export class MessageRouter {
             .then(() => undefined)
             .catch((err) => {
               console.error(`[router] Broadcast to ${name} failed:`, err);
+              if (onChannelFailure) {
+                try {
+                  onChannelFailure(name, err);
+                } catch (cbErr) {
+                  console.error(
+                    `[router] broadcastToAll onChannelFailure callback threw:`,
+                    cbErr instanceof Error ? cbErr.message : cbErr,
+                  );
+                }
+              }
             }),
         );
       }

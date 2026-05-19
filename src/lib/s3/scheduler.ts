@@ -116,13 +116,20 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
   evaluated: number;
   alertsEmitted: number;
   bundlesEmitted: number;
+  pushesDispatched: number;
 }> {
   const signals = loadEnabledSignalsByCadence(cadence);
   let alertsEmitted = 0;
+  // Bundle 3: collect emitted alert ids so post-burst push dispatch can
+  // look them up by id (avoids re-querying every pending P0 in the table).
+  const emittedAlertIds: number[] = [];
   for (const signal of signals) {
     try {
       const alertId = await evaluateSignal(signal);
-      if (alertId !== null) alertsEmitted += 1;
+      if (alertId !== null) {
+        alertsEmitted += 1;
+        emittedAlertIds.push(alertId);
+      }
     } catch (err) {
       // Per-signal error isolation — one signal's failure doesn't block the
       // others in the cadence. Evaluator already promotes query failures
@@ -168,13 +175,50 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
     }
   }
 
+  // Bundle 3: dispatch P0 push notifications AFTER burst detection so each
+  // bundle produces ONE consolidated message instead of N per-alert messages.
+  // Fire-and-forget — push failure logs + bumps counter, never blocks the
+  // brief or the next cron tick. Done via dynamic import to keep scheduler
+  // independent of messaging boot order.
+  let pushesDispatched = 0;
+  if (emittedAlertIds.length > 0) {
+    try {
+      const [
+        { loadNewlyEmittedP0Alerts, composePushMessages, dispatchPushAlerts },
+        messagingMod,
+      ] = await Promise.all([
+        import("./push.js"),
+        import("../../messaging/index.js"),
+      ]);
+      const p0Alerts = loadNewlyEmittedP0Alerts(emittedAlertIds);
+      if (p0Alerts.length > 0) {
+        const messages = composePushMessages(p0Alerts);
+        const router = messagingMod.getRouter();
+        pushesDispatched = await dispatchPushAlerts(router, messages);
+      }
+    } catch (err) {
+      console.error(
+        `[s3] push dispatch failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      try {
+        const { recordS3PushError } =
+          await import("../../observability/prometheus.js");
+        recordS3PushError("broadcast");
+      } catch {
+        /* counter shouldn't block delivery */
+      }
+    }
+  }
+
   console.log(
-    `[s3] ${cadence} tick: ${signals.length} signals evaluated, ${alertsEmitted} alerts, ${bundlesEmitted} bundles`,
+    `[s3] ${cadence} tick: ${signals.length} signals evaluated, ${alertsEmitted} alerts, ${bundlesEmitted} bundles, ${pushesDispatched} push(es)`,
   );
   return {
     evaluated: signals.length,
     alertsEmitted,
     bundlesEmitted,
+    pushesDispatched,
   };
 }
 

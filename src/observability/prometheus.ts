@@ -482,6 +482,21 @@ export function recordS3EvaluatorError(cadence: string, kind: string): void {
   s3EvaluatorErrorsTotal.inc({ cadence: c, kind: k });
 }
 
+// v7.7 Spine 2 Bundle 3: P0 push dispatch failures bucketed by channel
+// or failure kind. Closed cardinality: {broadcast | router_unavailable | unknown}.
+const s3PushErrorsTotal = new client.Counter({
+  name: "mc_s3_push_errors_total",
+  help: "S3 P0-push dispatch failures bucketed by failure channel",
+  labelNames: ["channel"] as const,
+});
+
+const KNOWN_S3_PUSH_CHANNELS = new Set(["broadcast", "router_unavailable"]);
+
+export function recordS3PushError(channel: string): void {
+  const c = KNOWN_S3_PUSH_CHANNELS.has(channel) ? channel : "unknown";
+  s3PushErrorsTotal.inc({ channel: c });
+}
+
 // v7.7 Spine 1 Phase 2b: community-reply write-gate verdicts.
 // One label `verdict` with closed cardinality (pass | fail | error). Used to
 // monitor false-positive rate (fail % of non-error replies) and infra health

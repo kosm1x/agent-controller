@@ -14,11 +14,7 @@ import { getRouter } from "../messaging/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
-import {
-  loadActiveAlertsForBrief,
-  formatAlertSection,
-  isSundayInMxTime,
-} from "../lib/s3/delivery.js";
+import { composeMorningBriefDriftSection } from "../lib/s3/delivery.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { createDayNarrative } from "./day-narrative.js";
@@ -85,21 +81,18 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
     case "signal-intelligence":
       return createSignalIntelligence(date);
     case "morning-briefing": {
-      // v7.7 Spine 2 Bundle 2: pre-render S3 drift alerts for inclusion in
-      // the brief. Computed at task-creation time (not via an LLM tool) so
-      // the LLM's job is verbatim delivery, not source-of-truth authorship.
-      // P2 alerts only on Sunday per spec §8 weekly-digest semantic.
-      // DB query is best-effort — alert injection failure must NOT block the
-      // brief itself.
+      // v7.7 Spine 2 Bundle 2+3: pre-render S3 drift alerts + Sunday aging
+      // baseline reminders for inclusion in the brief. Computed at task-
+      // creation time (not via an LLM tool) so the LLM's job is verbatim
+      // delivery, not source-of-truth authorship. DB query failure is
+      // swallowed at the composer layer; alert injection failure MUST NOT
+      // block the brief itself.
       let alertSection = "";
       try {
-        const set = loadActiveAlertsForBrief({
-          includeP2Digest: isSundayInMxTime(),
-        });
-        alertSection = formatAlertSection(set);
+        alertSection = composeMorningBriefDriftSection();
       } catch (err) {
         console.warn(
-          "[rituals] S3 alert section load failed (brief proceeds without it):",
+          "[rituals] S3 brief section load failed (brief proceeds without it):",
           err instanceof Error ? err.message : err,
         );
       }
