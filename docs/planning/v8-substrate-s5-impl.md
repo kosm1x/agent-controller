@@ -3,7 +3,7 @@
 > **Status**: Active spine (v7.7 Spine 3). Phase 1 of 5 complete; Phase 2 Bundle 1 of 2 complete; Phase 2 Bundle 2 + Phases 3-5 pending.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
 > **Phase 1 commit**: `422d985`
-> **Phase 2 Bundle 1 commit**: `<this commit>`
+> **Phase 2 Bundle 1 commit**: `5866f49`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
