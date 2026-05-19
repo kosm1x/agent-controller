@@ -76,7 +76,13 @@ export const DataSourceCitationSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("file"),
     path: z.string().min(1),
-    sha256: z.string().regex(SHA256_HEX),
+    // sha256 is OPTIONAL in Phase 2a — `jarvis_file_read` does not yet expose
+    // a content hash, and the morning_brief LLM cannot compute one without
+    // additional tooling. Path alone proves what was read; sha256 strengthens
+    // forensic reconstruction when available. Phase 2b retrofit candidate:
+    // have jarvis_file_read return sha256 in its output, then promote this
+    // field back to required.
+    sha256: z.string().regex(SHA256_HEX).optional(),
     lines: z.string().optional(),
     ...baseCitationFields,
   }),

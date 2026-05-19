@@ -141,6 +141,7 @@ import {
   socialPublishStatusTool,
 } from "../builtin/social.js";
 import { humanizeTextTool } from "../builtin/writing.js";
+import { submitReportTool } from "../builtin/submit-report.js";
 import {
   dashboardGenerateTool,
   dashboardListTool,
@@ -286,6 +287,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   videoHtmlComposeTool,
   screenshotElementTool,
   humanizeTextTool,
+  submitReportTool,
   dashboardGenerateTool,
   dashboardListTool,
   jarvisFileReadTool,

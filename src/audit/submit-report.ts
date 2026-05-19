@@ -25,6 +25,7 @@
  * is returned after a single critic pass with `fail_returned_anyway` on fail.
  */
 
+import type Database from "better-sqlite3";
 import { getDatabase } from "../db/index.js";
 import { runCritic, type CriticOptions } from "./critic.js";
 import {
@@ -272,6 +273,36 @@ const REPORT_JSON_MAX_BYTES = 256 * 1024;
  * `tasks`, and mc.db convention is to skip cross-table FK enforcement.
  * task_id is preserved as a free-text column for join-by-app-code.
  */
+
+const INSERT_REPORT_SQL = `INSERT INTO reports
+       (report_id, surface, task_id, started_at, produced_at, report_json,
+        critic_verdict, critic_retries, critic_cost_usd, producer_cost_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(report_id) DO NOTHING`;
+
+/**
+ * S2-W6 fold (Phase 2a): prepared statements are per-Database in better-sqlite3,
+ * and tests swap in `:memory:` instances under `initDatabase`. Cache by Database
+ * reference so production sees one warm statement for life-of-process while
+ * tests get a fresh statement on each in-memory DB. WeakMap so closed test DBs
+ * GC freely.
+ */
+type ReportInsertStmt = Database.Statement<
+  [
+    string, // report_id
+    string, // surface
+    string | null, // task_id
+    string, // started_at
+    string, // produced_at
+    string, // report_json
+    string, // critic_verdict
+    number, // critic_retries
+    number | null, // critic_cost_usd
+    number | null, // producer_cost_usd
+  ]
+>;
+const insertStmtCache = new WeakMap<Database.Database, ReportInsertStmt>();
+
 function persistReport(report: Report): void {
   const db = getDatabase();
   const reportJson = JSON.stringify(report);
@@ -283,26 +314,23 @@ function persistReport(report: Report): void {
     return;
   }
 
-  const result = db
-    .prepare(
-      `INSERT INTO reports
-       (report_id, surface, task_id, started_at, produced_at, report_json,
-        critic_verdict, critic_retries, critic_cost_usd, producer_cost_usd)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(report_id) DO NOTHING`,
-    )
-    .run(
-      report.report_id,
-      report.surface,
-      report.task_id ?? null,
-      report.started_at,
-      report.produced_at,
-      reportJson,
-      report.critic_verdict,
-      report.retry_count,
-      report.critic_cost_usd ?? null,
-      report.producer_cost_usd ?? null,
-    );
+  let stmt = insertStmtCache.get(db);
+  if (!stmt) {
+    stmt = db.prepare(INSERT_REPORT_SQL) as ReportInsertStmt;
+    insertStmtCache.set(db, stmt);
+  }
+  const result = stmt.run(
+    report.report_id,
+    report.surface,
+    report.task_id ?? null,
+    report.started_at,
+    report.produced_at,
+    reportJson,
+    report.critic_verdict,
+    report.retry_count,
+    report.critic_cost_usd ?? null,
+    report.producer_cost_usd ?? null,
+  );
 
   // ON CONFLICT swallows duplicates silently. Surface a warning so a
   // producer that's re-using report_id (UUID-collision = producer bug per

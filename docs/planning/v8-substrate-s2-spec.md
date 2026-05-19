@@ -266,7 +266,7 @@ Additive migration, applies live (per CLAUDE.md schema rules).
 
 ## §7 — Retrofit plan (post-freeze)
 
-### Phase 1: harness + schema (~3 days)
+### Phase 1: harness + schema (~3 days) — **SHIPPED 2026-05-19 (commit `ebf68c0`)**
 
 1. Add `src/audit/report-schema.ts` (Zod definitions)
 2. Add `src/audit/critic.ts` (critic LLM call wrapper, uses heavy-runner SDK path for cache stability)
@@ -274,11 +274,30 @@ Additive migration, applies live (per CLAUDE.md schema rules).
 4. Add `reports` table migration
 5. Tests: schema validation, critic mock returning pass/fail/error, retry exhaustion path, allowlist skip path
 
-### Phase 2: morning_brief retrofit (~2 days)
+Audit log: `docs/audit/v7.7-spine-1-phase-1.md` (R1: 0 Crit / 8 Warning / 4 Info).
 
-- `rituals/morning.ts` first, since it's V8.1's primary surface
-- Replace prose template with structured JSON emission via `submit_report`
-- Validate operator-facing rendering: render the JSON to markdown for Telegram, with `verified_against` as a footer (collapsed by default, visible on tap)
+### Phase 2: production retrofit (~2 days) — sliced into three independent ships
+
+#### Phase 2a — morning_brief retrofit — **SHIPPED 2026-05-19** (this commit)
+
+- New `submit_report` builtin tool exposing the Phase 1 boundary to LLM-driven rituals
+- `rituals/morning.ts` updated to call submit_report before gmail_send; per-task call cap (3 audit revisions, passes don't count)
+- `submit_report` is OBSERVABILITY, not a delivery gate — gmail_send runs even on audit failure to avoid dropping the brief
+- S2-W6 deferred from Phase 1 folded (WeakMap-cached prepared statement)
+- Audit log: `docs/audit/v7.7-spine-1-phase-2a.md`
+- R1-C2 design lesson: do NOT put audit tools in `requiredTools` — dispatcher auto-retries on missing required tool, which would duplicate gmail_send
+
+#### Phase 2b — community-manager email reply path (pending)
+
+- Retrofit `src/messaging/router.ts` community-manager mailbox reply path (`comunidades@mexiconecesario.org.mx`)
+- Unlike morning_brief: critic IS a true write-gate here. External-facing org reply must not ship un-audited claims about organizational metrics.
+- Must compose with RFC 3834 + persona-injection patterns already shipped (see `feedback_email_channel_arc_2026_05_15`)
+
+#### Phase 2c — closure-doc convention + validator (likely absorbed into Spine 7)
+
+- Codify `verified_against:` lines on closure-doc scoreboard rows (v7.6 closure-audit caught 4 fidelity bugs this would prevent)
+- Likely shipped as part of `mc audit-closure` continuity-tool (Spine 7 Q4 absorption) rather than a runtime tool retrofit
+- The v7.7 closure itself becomes the proof case
 
 ### Phase 3: V8.2 proposals (during V8.2 build)
 
