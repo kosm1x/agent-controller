@@ -20,6 +20,7 @@
  */
 
 import { infer } from "../inference/adapter.js";
+import { parseCriticVerdict } from "../lib/critic-verdict.js";
 import type { Report, ReportDraft } from "./report-schema.js";
 
 export const CRITIC_SYSTEM_PROMPT = `You are the audit gate for a report produced by another agent. Your only job is to detect:
@@ -130,7 +131,7 @@ export async function runCritic(
       };
     }
 
-    const parsed = parseVerdict(raw);
+    const parsed = parseCriticVerdict(raw);
     if (!parsed) {
       return {
         verdict: "fail",
@@ -161,75 +162,5 @@ export async function runCritic(
   }
 }
 
-/**
- * Tolerant JSON parser for critic output. Accepts:
- *   - Pure JSON: `{"verdict": "pass", "critique": ""}`
- *   - JSON inside a markdown code fence: ```json\n{...}\n```
- *   - JSON with surrounding prose (extracts the first `{...}` block)
- *
- * Rejects anything that doesn't yield a `{verdict: 'pass'|'fail', critique: string}` shape.
- */
-function parseVerdict(
-  raw: string,
-): { verdict: "pass" | "fail"; critique: string } | null {
-  let candidate = raw;
-
-  // Strip markdown fences.
-  const fenceMatch = candidate.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (fenceMatch) candidate = fenceMatch[1];
-
-  // Greedy `{...}` over the whole string fails when the response embeds an
-  // example JSON before the real verdict. Walk balanced `{...}` candidates and
-  // return the FIRST one that parses to a valid verdict shape.
-  for (const balanced of extractBalancedObjects(candidate)) {
-    let obj: unknown;
-    try {
-      obj = JSON.parse(balanced);
-    } catch {
-      continue;
-    }
-    if (!obj || typeof obj !== "object") continue;
-    const v = (obj as Record<string, unknown>).verdict;
-    const c = (obj as Record<string, unknown>).critique;
-    if (v !== "pass" && v !== "fail") continue;
-    if (typeof c !== "string") continue;
-    return { verdict: v, critique: c };
-  }
-  return null;
-}
-
-/**
- * Yield each top-level balanced `{...}` substring in scan order. Tracks string
- * literals (single/double-quoted) so `{` inside a JSON string doesn't confuse
- * depth counting. Backslash-escape aware.
- */
-function* extractBalancedObjects(s: string): Generator<string> {
-  let depth = 0;
-  let start = -1;
-  let inString: '"' | "'" | null = null;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (inString) {
-      if (ch === "\\") {
-        i += 1; // skip escaped char
-        continue;
-      }
-      if (ch === inString) inString = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      inString = ch;
-      continue;
-    }
-    if (ch === "{") {
-      if (depth === 0) start = i;
-      depth += 1;
-    } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0 && start !== -1) {
-        yield s.slice(start, i + 1);
-        start = -1;
-      }
-    }
-  }
-}
+// parseVerdict + extractBalancedObjects extracted to src/lib/critic-verdict.ts
+// (v7.7 Spine 3 Phase 2 — shared with S5's runSkillCritic per spec §8).
