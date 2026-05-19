@@ -9,7 +9,24 @@
 import { randomUUID } from "node:crypto";
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
 
-export function createMorningBriefing(dateLabel: string): TaskSubmission {
+/**
+ * `alertSection`: optional pre-rendered S3 drift-alerts markdown (Spine 2
+ * Bundle 2). Computed by the scheduler via `loadActiveAlertsForBrief` +
+ * `formatAlertSection` BEFORE this template runs. Empty string ("") or
+ * undefined → no S3 section is injected and no LLM instruction is added.
+ * Non-empty → the section is embedded in the description and an instruction
+ * tells the LLM to copy it verbatim into the email body.
+ *
+ * Pre-rendering at the scheduler layer (not exposing a tool the LLM calls)
+ * matches the Spine 1 P2a R1-C2 lesson: tools that put discipline on the
+ * LLM's must-call list risk dispatcher retry → duplicate gmail_send. The
+ * S3 alerts are operator-facing strings; the LLM's job is delivery
+ * fidelity, not authorship.
+ */
+export function createMorningBriefing(
+  dateLabel: string,
+  alertSection?: string,
+): TaskSubmission {
   // Stable per-ritual-run identifier the LLM passes to submit_report so the
   // per-task call cap (3 audit attempts per task_id) can fire. The dispatcher's
   // task_id is allocated after submission and never reaches the LLM's prompt
@@ -17,6 +34,19 @@ export function createMorningBriefing(dateLabel: string): TaskSubmission {
   // Generated at template-create time so every prompt embeds a concrete value
   // instead of a placeholder the LLM would have to invent.
   const morningBriefTaskId = `morning-brief-${dateLabel}-${randomUUID().slice(0, 8)}`;
+
+  // S3 drift-alerts block (Spine 2 Bundle 2). Two parts injected only when
+  // alertSection is non-empty: the section itself (in description body) and
+  // a verbatim-copy instruction the LLM must follow.
+  const hasAlerts =
+    typeof alertSection === "string" && alertSection.trim().length > 0;
+  // R1-W1 fold: single unambiguous placement directive. Section is appended
+  // at the VERY BOTTOM of the email, after "Racha actual" — matches its
+  // physical position in this description template. No "move from here to
+  // there" instruction (LLMs are unreliable at that under long context).
+  const s3SectionForPrompt = hasAlerts
+    ? `\n\n## Sección de alertas S3 — COPIA VERBATIM al final del email\n\nAl final del email, DESPUÉS de la línea "Racha actual", incluye exactamente la siguiente sección. Cópiala tal cual: no la parafrasees, no traduzcas los nombres de señal, mantén los emojis y la jerarquía exacta de Markdown.\n\n---\n\n${alertSection}\n\n---`
+    : "";
   return {
     title: `Morning briefing — ${dateLabel}`,
     description: `You are Jarvis, Fede's personal strategic assistant. Execute the morning briefing ritual.
@@ -85,7 +115,7 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
 2. ...
 3. ...
 
-Racha actual: X días consecutivos.`,
+Racha actual: X días consecutivos.${s3SectionForPrompt}`,
     agentType: "fast",
     tools: [
       "jarvis_file_read",

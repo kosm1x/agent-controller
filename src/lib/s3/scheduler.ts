@@ -67,9 +67,10 @@ export function registerS3CronJobs(): number {
   }
 
   for (const [cadence, cronExpr] of Object.entries(CRON_BY_CADENCE)) {
+    const c = cadence as Cadence;
     const job = cron.schedule(
       cronExpr,
-      () => void runCadenceTick(cadence as Cadence).catch(noticeError),
+      () => void runCadenceTick(c).catch((err) => noticeError(c, err)),
       { timezone: S3_TIMEZONE },
     );
     scheduledJobs.push(job);
@@ -130,6 +131,16 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
         `[s3] evaluator threw on signal ${signal.signal_name}:`,
         err instanceof Error ? err.message : err,
       );
+      // S3-I2 fold (Bundle 2): also surface to Grafana via the Prom counter.
+      // Dynamic import keeps the scheduler module independent of the
+      // observability registration order at boot.
+      try {
+        const { recordS3EvaluatorError } =
+          await import("../../observability/prometheus.js");
+        recordS3EvaluatorError(cadence, "signal");
+      } catch {
+        /* counter registration shouldn't ever block the cron tick */
+      }
     }
   }
 
@@ -147,6 +158,13 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
         `[s3] burst detection failed:`,
         err instanceof Error ? err.message : err,
       );
+      try {
+        const { recordS3EvaluatorError } =
+          await import("../../observability/prometheus.js");
+        recordS3EvaluatorError(cadence, "burst");
+      } catch {
+        /* counter registration shouldn't ever block the cron tick */
+      }
     }
   }
 
@@ -160,9 +178,18 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
   };
 }
 
-function noticeError(err: unknown): void {
+function noticeError(cadence: Cadence, err: unknown): void {
   console.error(
-    `[s3] cron tick threw:`,
+    `[s3] cron tick threw (${cadence}):`,
     err instanceof Error ? err.message : err,
   );
+  // S3-I2 fold: tick-level failures (the cron callback itself, outside
+  // per-signal isolation) also bump the Prom counter so Grafana sees them.
+  void import("../../observability/prometheus.js")
+    .then(({ recordS3EvaluatorError }) =>
+      recordS3EvaluatorError(cadence, "tick"),
+    )
+    .catch(() => {
+      /* counter registration shouldn't ever block the cron tick */
+    });
 }

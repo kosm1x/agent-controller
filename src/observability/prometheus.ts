@@ -458,6 +458,30 @@ const KNOWN_WA_REASONS = new Set([
   "unknown",
 ]);
 
+// v7.7 Spine 2 Bundle 2 (S3-I2 fold): per-signal + per-cadence cron-tick
+// failure counter. Closes the "silent failure in journalctl only" gap pinned
+// in feedback_prometheus_counter_recovery_path.
+//
+// Two labels: `cadence` (hourly|every_4h|nightly|weekly) and `kind`:
+//   - 'signal'    → one signal's evaluateSignal threw (per-signal isolation)
+//   - 'tick'      → the cadence tick itself threw outside the per-signal loop
+//   - 'burst'     → burst detection / persistence threw
+// Closed cardinality: 4 cadences × 3 kinds = 12 distinct series.
+const s3EvaluatorErrorsTotal = new client.Counter({
+  name: "mc_s3_evaluator_errors_total",
+  help: "S3 drift-detector cron-tick failures bucketed by cadence + failure kind",
+  labelNames: ["cadence", "kind"] as const,
+});
+
+const KNOWN_S3_KINDS = new Set(["signal", "tick", "burst"]);
+const KNOWN_S3_CADENCES = new Set(["hourly", "every_4h", "nightly", "weekly"]);
+
+export function recordS3EvaluatorError(cadence: string, kind: string): void {
+  const c = KNOWN_S3_CADENCES.has(cadence) ? cadence : "unknown";
+  const k = KNOWN_S3_KINDS.has(kind) ? kind : "unknown";
+  s3EvaluatorErrorsTotal.inc({ cadence: c, kind: k });
+}
+
 // v7.7 Spine 1 Phase 2b: community-reply write-gate verdicts.
 // One label `verdict` with closed cardinality (pass | fail | error). Used to
 // monitor false-positive rate (fail % of non-error replies) and infra health

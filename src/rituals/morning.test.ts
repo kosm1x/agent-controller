@@ -45,4 +45,46 @@ describe("createMorningBriefing", () => {
       /task_id="morning-brief-2026-04-21-[a-f0-9]{8}"/,
     );
   });
+
+  describe("v7.7 Spine 2 Bundle 2 — S3 alert section", () => {
+    it("when alertSection is undefined: no S3 section appears", () => {
+      const submission = createMorningBriefing("2026-04-21");
+      expect(submission.description).not.toContain("Sección de alertas S3");
+      expect(submission.description).not.toContain(
+        "COPIA VERBATIM al final del email",
+      );
+    });
+
+    it("when alertSection is empty string: no S3 section appears (OMIT discipline)", () => {
+      const submission = createMorningBriefing("2026-04-21", "");
+      expect(submission.description).not.toContain("Sección de alertas S3");
+    });
+
+    it("when alertSection is whitespace only: still treated as empty", () => {
+      const submission = createMorningBriefing("2026-04-21", "   \n  ");
+      expect(submission.description).not.toContain("Sección de alertas S3");
+    });
+
+    it("when alertSection is non-empty: section + verbatim-copy instruction appear", () => {
+      const alert =
+        "## 🚨 Alertas de deriva (S3)\n\n### 🔴 Crítico (P0) — 1\n\n- **test_signal** (test) — above, observado: 42";
+      const submission = createMorningBriefing("2026-04-21", alert);
+      expect(submission.description).toContain("Sección de alertas S3");
+      expect(submission.description).toContain(
+        "COPIA VERBATIM al final del email",
+      );
+      // CRITICAL: the section markdown must appear verbatim, not paraphrased
+      expect(submission.description).toContain(alert);
+    });
+
+    it("verbatim-copy instruction tells the LLM not to translate signal names", () => {
+      const alert = "## 🚨 Alertas de deriva (S3)\n\n- **sig_name**";
+      const submission = createMorningBriefing("2026-04-21", alert);
+      // Case-insensitive: instruction wording moved to lowercase after R1-W1
+      // fold ("no traduzcas los nombres de señal"), but the constraint stands.
+      expect(submission.description).toMatch(
+        /no traduzcas los nombres de señal/i,
+      );
+    });
+  });
 });

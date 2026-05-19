@@ -497,6 +497,17 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_drift_signals_priority ON drift_signals(alert_priority) WHERE enabled = 1",
   );
 
+  // NOTE for next maintainer (R1-I4 fold, Spine 2 Bundle 2):
+  //   - delivery_status: Bundle 2 does NOT mutate this. Alerts surface in
+  //     every morning brief while resolution_at IS NULL. delivery_status
+  //     stays 'pending' until Bundle 3's suppressAlert API lands. So
+  //     `pending` ≠ undelivered (it just means: not yet resolved or
+  //     suppressed). The active-alerts query filters on resolution_at, not
+  //     delivery_status.
+  //   - signal_id: deliberately no `REFERENCES drift_signals(id)` clause —
+  //     orphaned alerts (signal deleted) are rendered with a placeholder
+  //     name by delivery.ts's LEFT JOIN + COALESCE (R1-W3 fold). Adding the
+  //     FK is a Bundle 3+ option; see `S3-W3-fk-and-cascade` in queue.
   _db.exec(`CREATE TABLE IF NOT EXISTS drift_alerts (
     id                         INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id                  INTEGER NOT NULL,
