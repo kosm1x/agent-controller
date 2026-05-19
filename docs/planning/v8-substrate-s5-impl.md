@@ -155,7 +155,7 @@ Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (c
 
 ## §6.1 — Phase 4 Bundle 1 closure (2026-05-19)
 
-**Commit**: `<this commit>` — dispatcher + inputs schema + mini-runner extract + cycle detection + Prom counter.
+**Commit**: `9712536` — dispatcher + inputs schema + mini-runner extract + cycle detection + Prom counter.
 
 **Shipped surfaces**:
 
