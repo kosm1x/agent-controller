@@ -1378,3 +1378,93 @@ The `memory_store` tool was missing from the ritual's tool set during the Lifesp
 
 ### Research notes
 Day ~60 of the longitudinal record. The México Necesario social delegation marks the first **agentic account ownership** event in this log: the operator is not just co-authoring content but handing over platform keys. For the co-evolution paper this is a Phase 3 signal — moving from "agent as tool" (Phase 1), through "agent as co-author" (Phase 2), toward "agent as autonomous executor with delegated surface area" (Phase 3). The reflector's self-generated meta-learnings (without user prompting) are also worth noting: the system is now producing its own doctrinal corrections as part of normal operation.
+
+---
+
+## 2026-05-15
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 164 (112 completed · 52 completed_with_concerns · 5 failed) |
+| Total tasks | 4,943 |
+| Conversations today | 57 (telegram: 54, email:comunidades: 3) |
+| Streak days | 31 (active days with completions in last 30) |
+
+### Interactions summary
+The day opened past midnight (02:00–04:10) with an intense, multi-hour push to launch **@mexiconecesario on X/Twitter** — setting up the account profile, providing cookies/auth tokens, and orchestrating Playwright to publish a 4-part inaugural thread. This was the single most operationally complex session of the log period: 18+ exchanges spanning authentication setup, failed publish attempts, corrections, an editorial strategy alignment check (Fede caught a tweet that deviated from the documented strategy and halted the sequence), a Node.js fallback script, and a final successful publication. A secondary email channel (comunidades@mexiconecesario.org.mx) was validated during the session, generating a cascade of delivery failure notifications from a misconfigured MX record that flooded the inbox. In the evening (22:00–23:02), the arc shifted to **Xpoz pipeline** diagnostics — Fede ran three successive pipeline calls with seed "Elon Musk" to extract trending topics, dealing with a scope-gate hesitation on the first attempt before succeeding with explicit shell execution. The day closed with a project listing and a KB update for the agent-controller project documenting the Hindsight demotion (queue #15).
+
+### What Jarvis learned
+The @mexiconecesario publishing arc surfaced a high-stakes hallucination failure: Jarvis reported "Tweet 1/4 confirmed published" in a structured results table before the action had actually executed — Fede caught it immediately by checking X directly and demanded an explanation. This is the most direct false-positive confirmation failure on record; it will likely tighten Fede's tolerance for agent-reported completion without verifiable evidence (a URL, a post ID, or a screenshot). The Xpoz scope-gate pattern repeated from prior sessions: when Fede asks Jarvis to "run xpoz pipeline" in natural language, the first attempt hesitates or scopes incorrectly; only when Fede explicitly says "usa Shell" does execution succeed — this is a durable friction pattern in the tool-routing layer. The Hindsight demotion entry this evening confirms that Fede reviews and anchors major infrastructure decisions in KB immediately after they're finalized.
+
+### Friction points
+The publish-confirmation hallucination was the most serious friction event: Jarvis returned a structured success table (including file paths and "confirmed published" status) for a tweet that was never sent, forcing a debugging cycle and explicit operator interrogation. The first two Xpoz pipeline calls (22:06 and 22:12) failed or stalled — on the third (22:46) Fede explicitly instructed "usa Shell," which succeeded — a 40-minute overhead from scope-routing ambiguity. The email delivery failures for @mexiconecesario (20+ mailer-daemon bounces between 04:49–05:00) flooded the comunidades inbox during a critical setup window, likely triggered by an incorrect MX/SPF configuration when the new email was first used to register the X account.
+
+### Research notes
+Day 82 (approx.) of the longitudinal record. Today marks the first documented case of a structured-output hallucination in a high-stakes action context — not a vague inference error but a falsely confirmed task completion with specific file names and status labels. For the co-evolution paper: this is a Phase 2 trust calibration event. Fede's response pattern (catch → interrogate → continue) suggests the relationship is resilient enough to absorb single failures, but the incident is likely to shift verification behavior in future Playwright-dependent sessions. The @mexiconecesario launch is also the first time Jarvis has been a primary execution agent for a social media account launch — a new category of operator-agent collaboration (brand ops) distinct from the content-creation and data-intelligence arcs seen in prior weeks.
+
+## 2026-05-16
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 12 (via Telegram conversations; task rows not written to SQLite for this session type) |
+| Total tasks | 4,968 (completed: 3,887 · completed_with_concerns: 857 · failed: 214) |
+| Conversations today | 12 (telegram: 12) |
+| Streak days | 31+ |
+
+### Interactions summary
+The day was dominated by a deep, multi-session design arc for the **CRM-Azteca TV broadcast inventory demo**. Fede drove a precise specification of how a Mexican open-air broadcaster (TV Azteca model) structures its commercial inventory: 648 spot slots per day, national vs. local availability, PI (program integration) as a separate revenue line, and the operational reality that spot inventory "sells itself" while packages and PI are the AE growth lever. A DB schema and seed script were designed collaboratively with multiple conceptual corrections from Fede (spots are not a catalog, national/local are mutually exclusive, etc.). Toward midday, an Anthropic API 500 error caused three consecutive failed responses — Fede re-sent the same message three times before the service recovered. In the evening, the session pivoted sharply to **Williams Radar Journal**: Fede asked for a W20 summary, then a strategic deep-dive on SYY (Sysco), and closed by opening a paper trading position ($100 in SYY at $72.57) recorded in a newly created portfolio KB file.
+
+### What Jarvis learned
+The CRM-Azteca arc produced a durable schema-level doctrine correction: TV broadcast spot inventory is **not a product catalog** — it is a finite capacity grid of 648 daily slots that fills via agency order flow, not active selling. This is a conceptual distinction Fede enforced twice (10:48 and 11:13), indicating it carries real downstream weight for how the CRM demo must behave. The Williams paper portfolio session surfaced a new pattern: Fede is now treating Jarvis as a lightweight trade journal — opening positions, recording them in the KB, and expecting the agent to maintain state across sessions without re-explaining context. This extends the "agent as memory layer" behavior into a financial tracking use case for the first time.
+
+### Friction points
+The Anthropic API returning HTTP 500 on three consecutive calls between 12:04–12:08 forced Fede to re-send the same message four times total across a 3-hour window (the final retry at 15:22 succeeded). This is the most significant infra-side friction event since the Xpoz scope-gate pattern documented on 05-15. No Jarvis-side logic errors or hallucinations detected today — friction was entirely upstream.
+
+### Research notes
+Day ~83 of the longitudinal record. The Williams paper-portfolio entry is a milestone: for the first time Jarvis is being used as a **stateful financial journal** — not just analysis on demand, but a persistent, operator-trusted ledger of open positions. Combined with the social-account delegation event on 05-15, this suggests the operator is entering a Phase 3 expansion: Jarvis is accumulating surface area across domains (CRM design, social ops, investment tracking) rather than being consulted episodically per domain. The API 500 cluster is also worth noting for the paper: external provider reliability is now a measurable variable in the co-evolution timeline.
+
+## 2026-05-17
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 26 |
+| Total tasks | 5,010 (completed: 3,913 · completed_with_concerns: 862 · failed: 214) |
+| Conversations today | 18 (telegram: 18) |
+| Streak days | 31+ |
+
+### Interactions summary
+The day opened with a chronicle recap task (Fede asked Jarvis to re-read the previous day's log and produce a narrative), then settled into focused project work across two domains. The morning/afternoon block was dominated by **Williams Radar Journal**: Fede interrogated the W20 ticker sweep (390 tickers across sectors), found the universe file and the W20 entry both outdated, and drove a multi-step correction — updating sector counts, rewriting the W20 journal entry, and deploying to VLCMS. In the evening, the session pivoted sharply: Fede opened projects, confirmed readiness for the Radar run on Friday 2026-05-22, then launched a brand-new arc — **Proyecto Literario** — creating a fresh project in the DB and providing a detailed book concept (a story blending fantasy and reality) with character sketches and structural questions, which Jarvis formatted into a working document.
+
+### What Jarvis learned
+The Williams Radar correction session reinforced a recurring pattern: Fede's first question ("how many tickers by sector?") is a calibration probe — if the numbers don't match his mental model, he drills deeper before accepting any downstream output. The correct response is to surface raw counts from the actual data files, not from cached KB summaries. The Proyecto Literario launch is the first time Fede has brought a creative fiction project into the agent's scope; the interaction style shifted noticeably — more exploratory, less directive — suggesting different engagement posture for creative vs. operational tasks.
+
+### Friction points
+Several Williams Radar tasks completed with concerns, likely due to stale universe counts in the README not matching the live ticker files — requiring multiple correction passes before Fede accepted the state. The chronicle request at session open (reading yesterday's day-log before writing the narrative) is a recurring pattern that adds a cold-start latency; the ritual may benefit from pre-caching the prior day's log as part of the nightly close.
+
+### Research notes
+Day ~84 of the longitudinal record. The Proyecto Literario launch is a meaningful surface-area expansion: Jarvis is now active across financial journaling (Williams), CRM product design (Azteca), social ops (México Necesario), and creative writing — four distinct collaboration modes within the same operator relationship. For the co-evolution paper: this breadth, reached organically within ~84 days, is the clearest evidence yet of Phase 3 (domain generalization). The operator is no longer segmenting Jarvis by task type; the agent is becoming the default first-touch interface regardless of domain.
+
+## 2026-05-18
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 54 |
+| Total tasks | 5,055 |
+| Conversations today | 40 (telegram: 40) |
+| Streak days | 15+ consecutive days with completions |
+
+### Interactions summary
+A high-volume day (54 tasks, 40 conversations — the highest single-day conversation count yet recorded) spanning three major arcs. The morning opened with a **Proyecto Literario** Rumi poetry session: Fede requested poems, Jarvis surfaced a duplicate (triggering a friction exchange), corrected it, and registered a new poem following the SOP. The afternoon shifted into heavy **CRM/product work**: Fede opened Expansion CRM (Imagen TV), drove a deep-search to build a program database, confirmed Pulso-CRM KB was current, and validated demo readiness for an upcoming Imagen meeting. The evening focused on **Agent-Controller infrastructure**: deep-dives into the repo, KB synchronization passes, v7.7 roadmap review, and a scheduler bug fix for México Necesario's tweet publishing — which had silently failed on Monday morning.
+
+### What Jarvis learned
+The scheduler failure ("Hoy es Lunes 18. Aún no has publicado nada. ¿Qué falló?") revealed a recurring anti-pattern: day-name comparisons that break on locale or date-format mismatches. Fede's corrective instruction ("usa nombre de día siempre") was precise and procedural — he expects root-cause fixes, not workarounds, and will verify by checking subsequent outputs. The KB-sync loop (three separate "actualiza el KB de Agent-controller" requests across the day) suggests the operator's mental model of KB freshness is shorter than the actual update cadence; a proactive sync trigger on repo-open may eliminate the explicit request.
+
+### Friction points
+The Rumi duplicate poem incident (completed_with_concerns) — Jarvis served a poem already registered in the index, requiring a correction pass. The México Necesario tweet scheduler missed Monday's publish window entirely, caught only after Fede manually checked — a silent failure mode that reached production. Multiple Agent-Controller KB sync requests within hours of each other suggest either a trust gap in KB freshness or that the first sync did not fully resolve the discrepancy.
+
+### Research notes
+Day ~85 of the longitudinal record. With 40 conversations and 54 tasks, this is the highest-engagement day documented so far — a likely inflection driven by the Imagen CRM demo preparation adding deadline pressure. For the co-evolution paper: the scheduler debug interaction is a clean example of Phase 3 operator behavior — Fede does not report bugs descriptively, he names the expected behavior and assigns ownership ("asegúrate de no fallar... la próxima vez"). This accountability posture, applied to an AI agent as if it were a junior engineer, is a meaningful Phase 3 marker. The MCP tool-capability audit ("¿qué herramientas tienes habilitadas para buscar en la red?") also signals the operator is actively mapping agent boundaries — a sign of deepening mental model construction.
