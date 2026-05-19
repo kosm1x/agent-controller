@@ -1,12 +1,8 @@
 # V8 Substrate S5 — Implementation Delta vs. Spec
 
-> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 ✅ (B1+B2); Phase 4 ✅ (B1+B2); Phase 5 pending.
+> **Status**: ✅ Spine 3 CLOSED 2026-05-19. All 5 phases shipped; activation gate (spec §14) MET.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
-> **Phase 1 commit**: `422d985`
-> **Phase 2 Bundle 1 commit**: `5866f49`
-> **Phase 2 Bundle 2 commit**: `acfbdfd`
-> **Phase 3 Bundle 1 commit**: `0d0bd5c`
-> **Phase 3 Bundle 2 commit**: `144dc42`
+> **Phase commits**: P1 `422d985` · P2 `5866f49`+`acfbdfd` · P3 `0d0bd5c`+`144dc42` · P4 `9712536`+`6a456f0` · P5 `16e7ac8`+`e179c56`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
@@ -16,14 +12,14 @@ Read this alongside the spec. The spec is _intent_; this is _delivered_. Where t
 
 | Aspect                      | Spec said                             | Shipped as                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Effort                      | ~10 days across 5 phases              | Phase 1: ~1h; Phase 2 B1: ~2h; Phase 2 B2: ~3h (incl. R1 FAIL→fold→R2 PASS); Phases 3-5 pending                                                                                                                                                                                                                                                             |
+| Effort                      | ~10 days across 5 phases              | All 5 phases shipped 2026-05-19 (one calendar day, ~11 bundles). Spec's 10-day estimate compressed by phase-independence + tight bundle-slice cadence.                                                                                                                                                                                                      |
 | Frontmatter format          | YAML mirror of DATAGEN                | YAML-subset (scalar k/v + string arrays + comments). Complex shapes (`inputs[]`, `tests[]`) JSON-encoded into `*_json` string fields validated via Zod `.refine()`. Real YAML parsers can still read this — we just write a strict subset until/unless `yaml` dep is approved.                                                                              |
 | Schema                      | ALTER skills (10 cols) + 3 new tables | Same (P1) — 10 additive `ALTER TABLE skills ADD COLUMN`, plus `skill_versions` / `skill_test_runs` / `skill_failures`. All additive; safe on 67 existing rows.                                                                                                                                                                                              |
-| Embeddings                  | qwen3-embedding-coder, dim=1024       | Phase 3 work — not shipped in P1                                                                                                                                                                                                                                                                                                                            |
+| Embeddings                  | qwen3-embedding-coder, dim=1024       | P3 shipped — reused `src/memory/embeddings.ts` (Gemini embedding-001 @ 1536d), no new dep. `description_embedding` BLOB column + cosine retrieval.                                                                                                                                                                                                          |
 | Critic gate                 | Voyager pattern, retry budget 3       | P2 B1 shipped: `runSkillCritic` mirrors S2's call shape with skill-specific 5-check prompt (DUPLICATION #6 deferred to Phase 3). Retry budget NOT in lifecycle — spec §8's "3 producer revisions max" refers to a producer agent revising in response to critique. Lifecycle returns critique to caller; Phase 4+ producer-helper may wrap in a retry loop. |
-| `skill_run()` callable tool | Phase 4                               | Not shipped in P1                                                                                                                                                                                                                                                                                                                                           |
-| Operator surface            | `mc-ctl skills`                       | Phase 5 — partial pre-existence (`mc-ctl skills` exists for legacy DB skills); full surface ships at P5 close                                                                                                                                                                                                                                               |
-| Anti-mission                | Registers, does NOT author            | **HELD** in P1 — zero authored skills in bundle                                                                                                                                                                                                                                                                                                             |
+| `skill_run()` callable tool | Phase 4                               | P4 shipped — `runSkill` dispatcher + 3 deferred builtin tools (`skill_describe`/`skill_load`/`skill_run`). Cost ledger + anti-list + cycle detection + Prom counter.                                                                                                                                                                                        |
+| Operator surface            | `mc-ctl skills`                       | P5 shipped — `mc-ctl skills list/show/certify/archive/revert` + `skill-health`. Frontend page DEFERRED to V8.x per V7.7-GUIDE (CLI is the operator surface).                                                                                                                                                                                                |
+| Anti-mission                | Registers, does NOT author            | **HELD P1-P4** (zero authored skills). **P5 carve-out**: authoring 5 production skills IS the Phase 5 mission (spec §14 activation-gate deliverable). 5 authored, critic-passed, certified.                                                                                                                                                                 |
 
 ---
 
@@ -138,18 +134,16 @@ The spec lists 7 open Qs. P1 touched Q4. P2 B1 confirmed Q6 + partially resolved
 
 ---
 
-## §6 — Next phase entry points
+## §6 — Spine 3 CLOSED 2026-05-19
 
-**Phase 2 (critic + test harness, ~3d)** ships:
+All 5 phases shipped. The S5 substrate is complete: skills are versioned,
+critic-gated, test-certified, vector-retrieved, callable via `skill_run`,
+and operator-manageable via `mc-ctl skills`. The V8.0 activation gate
+(spec §14) is MET — 5 certified production skills with green tests.
 
-- `src/skills/critic.ts` — second-LLM grade of body against declared tests, returns `{verdict: 'pass'|'fail', critique}` per spec §8
-- `src/skills/test-harness.ts` — runs `tests_json` entries; writes `skill_test_runs` rows; `is_certified` flips after N green runs in 7d
-- Wires critic into the loader: `created_by='boot-scan'` rows get `critic_verdict='skipped'` (today's state); a separate refresh path runs the critic on activation
-- Updates `pointSkillAtVersion` to set `is_certified` based on the test harness outcome
-
-Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (currently `enabled=0` in Spine 2's registry with `awaiting:S5` sentinel).
-
----
+Substrate-availability: Spine 2's `s5_skill_failure_rate` drift signal
+(`enabled=0` with `awaiting:S5` sentinel) can now be flipped on by the
+operator — the substrate it awaited exists.
 
 ---
 
@@ -230,7 +224,53 @@ Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (c
 
 **Live deploy verification**: `[mc] Tool source "skills" initialized (5 tools)` in boot log (2026-05-19 20:53 UTC). All 3 new tools registered alongside skill_save + skill_list.
 
-**What's next**: Phase 5 — operator surface (`mc-ctl skills certify|archive|test`) + the activation gate (≥5 certified skills with green tests in last 7 days). Authoring those 5 production skill bodies is the gating work; the substrate is complete.
+**Live deploy verification**: `[mc] Tool source "skills" initialized (5 tools)` in boot log (2026-05-19 20:53 UTC).
+
+---
+
+## §6.3 — Phase 5 + Spine 3 closure (2026-05-19)
+
+**Commits**: B1 `16e7ac8` (CLI surface) · B2 `e179c56` (5 production skills). Closes Phase 5 AND Spine 3.
+
+**Bundle 1 — `mc-ctl skills` operator surface**:
+
+- 4 subcommands added to `cmd_skills()`: `show <name>` (L2 view), `certify <name>` (manual is_certified override + audit-marker row), `archive <name> "<reason>"` (soft-delete active=0 + skill_failures audit row), `revert <name> <version>` (current_version_id repoint).
+- All reuse the `cmd_skill_health` name-regex sanitizer. R1 PASS WITH WARNINGS: 1 Crit (archive non-transactional → folded BEGIN/COMMIT) + 3 Warn folded.
+
+**Bundle 2 — 5 production skills**:
+
+- `scripts/skills-seed-phase5.ts` — reads 5 SKILL.md from `seed/skills/`, upserts to jarvis_files, runs `skillSave` (critic) + `runSkillTests`.
+- 5 skills authored as pure-reasoning transforms (the mini-runner test harness runs bodies as pure LLM calls, no tools): `planificar-proyecto-por-fases`, `resumir-avance-de-tareas`, `clasificar-prioridad-tarea`, `construir-peticion-http`, `evaluar-roi-de-fase`. Derived from the operator's highest-use legacy workflows.
+- Live result: 5/5 critic-passed, 10/10 test runs pass, **activation gate query returns 5**.
+- R1 PASS WITH WARNINGS, 0 Critical confirmed; 2 folds (drift-branch hint, cwd guard).
+
+**Spec §13.5 — all Phase 5 tasks complete**:
+
+1. ✅ `mc-ctl skills list/show/certify/archive/revert` + pre-existing `skill-health`
+2. ⏭️ Frontend skills page — DEFERRED (V7.7-GUIDE: CLI is the operator surface; frontend is V8.x)
+3. ✅ Activation check: `SELECT COUNT(*) ... is_certified=1 AND active=1` ≥ 5 → returns 5
+4. ✅ 5 production skills picked, authored, tested, certified
+
+**Spec §14 activation gate — MET**: 5 certified active skills, each with `result='pass'` test runs in the last 7 days. V8.0's S5 prerequisite is satisfied.
+
+**Cumulative Spine 3 scoreboard (Phases 1-5)**:
+
+| Metric                   | Value                                                            |
+| ------------------------ | ---------------------------------------------------------------- |
+| Phases                   | 5/5 closed                                                       |
+| LOC                      | ~7355 net across ~55 files                                       |
+| Tests                    | +176 vitest + 5 certified production skills (10 skill-test runs) |
+| Bundles                  | 10 (P1x1, P2x2, P3x2, P4x2, P5x3 — P5-B3 is the closure doc)     |
+| R1 audits                | 9 (one per code bundle; P5-B3 doc-only)                          |
+| R2 audits                | 1 (Phase 2 B2 — prompt-injection bundle)                         |
+| In-bundle folds          | ~30                                                              |
+| P3 hygiene queued        | 21                                                               |
+| Pre-existing-bug catches | 4                                                                |
+| Production regressions   | 0                                                                |
+
+**Open queue (21 P3 items)**: all in `docs/planning/next-sessions-queue.md` with triggers. Most load-bearing: S5-P2-I1 + S5-P4-B1-I1 + S5-P5-B1-W4 — three schema-CHECK-enum-gap items batched for the v8.0 schema reset.
+
+**Substrate unblock**: Spine 2's `s5_skill_failure_rate` drift signal can now be operator-enabled.
 
 ---
 
