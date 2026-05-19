@@ -6,7 +6,7 @@
 > **Phase 2 Bundle 1 commit**: `5866f49`
 > **Phase 2 Bundle 2 commit**: `acfbdfd`
 > **Phase 3 Bundle 1 commit**: `0d0bd5c`
-> **Phase 3 Bundle 2 commit**: `<this commit>`
+> **Phase 3 Bundle 2 commit**: `144dc42`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
