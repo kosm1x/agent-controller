@@ -441,6 +441,33 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_kt_valid ON knowledge_triples(valid_from, valid_to)",
   );
 
+  // v7.7 Spine 1 (S2 substrate): self-audit before reporting.
+  // Every report tool output that flows through submitReport() is persisted
+  // here with its critic verdict + cost breakdown for the V8-VISION §3-S2
+  // activation gate (zero "Audited?" cycles).
+  _db.exec(`CREATE TABLE IF NOT EXISTS reports (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id         TEXT UNIQUE NOT NULL,
+    surface           TEXT NOT NULL,
+    task_id           TEXT,
+    started_at        TEXT NOT NULL,
+    produced_at       TEXT NOT NULL,
+    report_json       TEXT NOT NULL,
+    critic_verdict    TEXT NOT NULL CHECK (critic_verdict IN ('pass','fail_returned_anyway','skipped_allowlist')),
+    critic_retries    INTEGER NOT NULL DEFAULT 0,
+    critic_cost_usd   REAL,
+    producer_cost_usd REAL
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_reports_surface ON reports(surface)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_reports_critic_verdict ON reports(critic_verdict)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_reports_produced ON reports(produced_at DESC)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

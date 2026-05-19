@@ -194,6 +194,8 @@ export const ReportSchema = z.object({
     "proposal",
     "signal_intel",
     "project_status",
+    "closure_doc", // v7.7 Spine 1 Phase 2 delta — codifies closure-doc audit pattern
+    "community_email", // v7.7 Spine 1 Phase 2 delta — community-manager email reply path
     "ad_hoc",
   ]),
   verified_against: z.array(DataSourceCitationSchema).min(1),
