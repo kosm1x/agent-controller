@@ -58,6 +58,7 @@ export class TelegramStreamController {
 
     if (!this.messageId) return;
 
+    let plainFallbacks = 0;
     try {
       const chunks = formatForTelegram(fullText);
       // Edit the existing message with the first chunk (HTML formatted)
@@ -67,6 +68,7 @@ export class TelegramStreamController {
         })
         .catch(async () => {
           // Fallback: plain text if HTML fails
+          plainFallbacks++;
           const plain = chunks[0].replace(/<[^>]+>/g, "");
           await this.bot.api.editMessageText(
             this.chatId,
@@ -80,6 +82,7 @@ export class TelegramStreamController {
         await this.bot.api
           .sendMessage(this.chatId, chunks[i], { parse_mode: "HTML" })
           .catch(async () => {
+            plainFallbacks++;
             const plain = chunks[i].replace(/<[^>]+>/g, "");
             await this.bot.api.sendMessage(this.chatId, plain);
           });
@@ -87,6 +90,10 @@ export class TelegramStreamController {
           await new Promise((r) => setTimeout(r, 200));
         }
       }
+
+      console.log(
+        `[telegram-stream] Finalized ${chunks.length} chunk(s) to ${this.chatId} (msgId=${this.messageId}${plainFallbacks ? `, ${plainFallbacks} HTML→plain fallback` : ""})`,
+      );
     } catch (err) {
       console.error("[telegram-stream] Finalize failed:", err);
       // Last resort: send as new message
