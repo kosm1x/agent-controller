@@ -109,6 +109,23 @@ async function main(): Promise<void> {
     log.warn({ err }, "startup task reconcile failed (non-fatal)");
   }
 
+  // v7.7 Spine 3 Phase 1: skills boot-loader. Walks jarvis_files for
+  // skills/<name>/SKILL.md, parses frontmatter, registers skill_versions
+  // rows. Empty namespace = no-op. JARVIS_SKILLS_BOOT_LOAD_DISABLED=true
+  // disables (used by tests that already init the DB without a loader run).
+  if (process.env.JARVIS_SKILLS_BOOT_LOAD_DISABLED !== "true") {
+    try {
+      const { loadSkillsFromJarvisFiles } = await import("./skills/loader.js");
+      loadSkillsFromJarvisFiles({
+        info: (msg, fields) => log.info(fields ?? {}, msg),
+        warn: (msg, fields) => log.warn(fields ?? {}, msg),
+        error: (msg, fields) => log.error(fields ?? {}, msg),
+      });
+    } catch (err) {
+      log.warn({ err }, "skills boot-loader failed (non-fatal)");
+    }
+  }
+
   // Initialize event bus
   initEventBus(db);
   log.info("event bus initialized");

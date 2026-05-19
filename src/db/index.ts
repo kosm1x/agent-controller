@@ -548,6 +548,132 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_baseline_history_signal ON baseline_history(signal_name)",
   );
 
+  // v7.7 Spine 3 (S5 substrate): skills as stored procedures.
+  // Phase 1 — additive migrations on `skills` + 3 new tables (versions /
+  // test_runs / failures). See docs/planning/v8-substrate-s5-spec.md §5 for
+  // the canonical schema. Anti-mission: Phase 1 REGISTERS skills, does NOT
+  // author. The 57 existing rows continue to work via DEFAULT values; backfill
+  // of frontmatter bodies is a separate later task.
+  const skillColsExt = _db.prepare("PRAGMA table_info(skills)").all() as Array<{
+    name: string;
+  }>;
+  const skillColNames = new Set(skillColsExt.map((c) => c.name));
+  if (!skillColNames.has("version")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
+    );
+  }
+  if (!skillColNames.has("inputs_json")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN inputs_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+  if (!skillColNames.has("output_type")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN output_type TEXT NOT NULL DEFAULT 'text'",
+    );
+  }
+  if (!skillColNames.has("trigger_examples_json")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN trigger_examples_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+  if (!skillColNames.has("tests_json")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN tests_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+  if (!skillColNames.has("body_path")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN body_path TEXT");
+  }
+  if (!skillColNames.has("consecutive_failures")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+  if (!skillColNames.has("last_failure_at")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN last_failure_at TEXT");
+  }
+  if (!skillColNames.has("is_certified")) {
+    _db.exec(
+      "ALTER TABLE skills ADD COLUMN is_certified INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+  if (!skillColNames.has("current_version_id")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN current_version_id INTEGER");
+  }
+  if (!skillColNames.has("registry_sha")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN registry_sha TEXT");
+  }
+
+  // skill_versions — write-only history. Natural key (skill_id, version).
+  // INSERT OR IGNORE on (skill_id, version) collision; body drift on the
+  // same version is detected via body_sha256 mismatch and logged by the
+  // loader (Phase 1 does NOT auto-bump versions; that's an authoring duty).
+  _db.exec(`CREATE TABLE IF NOT EXISTS skill_versions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id          TEXT NOT NULL,
+    version           TEXT NOT NULL,
+    body              TEXT NOT NULL,
+    body_sha256       TEXT NOT NULL,
+    inputs_json       TEXT NOT NULL,
+    tests_json        TEXT NOT NULL,
+    tools_used_json   TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by        TEXT NOT NULL CHECK (created_by IN ('operator','discovery','refiner','critic-revised','boot-scan')),
+    supersedes_id     INTEGER,
+    critic_verdict    TEXT NOT NULL DEFAULT 'skipped' CHECK (critic_verdict IN ('pass','fail_returned_anyway','skipped')),
+    critic_critique   TEXT,
+    UNIQUE(skill_id, version)
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id)",
+  );
+
+  // skill_test_runs — every test execution. Activation invariant: a skill is
+  // is_certified=1 iff every test in tests_json has a 'pass' row for the
+  // current version_id within the last 7 days. The activation gate query
+  // becomes a single GROUP BY. Phase 1 ships the table; Phase 2 ships the
+  // harness that writes to it.
+  _db.exec(`CREATE TABLE IF NOT EXISTS skill_test_runs (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id             TEXT NOT NULL,
+    version_id           INTEGER NOT NULL,
+    test_name            TEXT NOT NULL,
+    ran_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    result               TEXT NOT NULL CHECK (result IN ('pass','fail','error','timeout')),
+    actual_output_json   TEXT,
+    expected_output_json TEXT,
+    diff_summary         TEXT,
+    duration_ms          INTEGER,
+    task_id              TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_skill_test_runs_skill ON skill_test_runs(skill_id, ran_at DESC)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_skill_test_runs_recent ON skill_test_runs(ran_at DESC)",
+  );
+
+  // skill_failures — Voyager anti-list. Active rows (resolved_at IS NULL)
+  // become a negative filter for the planner: "skills that have failed
+  // recently are deprioritized." Phase 1 ships the table; Phase 4 wires
+  // skill_run to write entries on failure.
+  _db.exec(`CREATE TABLE IF NOT EXISTS skill_failures (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id      TEXT NOT NULL,
+    task_id       TEXT,
+    failed_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    input_json    TEXT,
+    error_class   TEXT NOT NULL CHECK (error_class IN ('wrong_output','tool_unavailable','timeout','critic_runtime_fail','other')),
+    error_detail  TEXT,
+    resolved_at   TEXT,
+    resolution    TEXT CHECK (resolution IS NULL OR resolution IN ('reverted_version','fixed_in_new_version','archived'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_skill_failures_active ON skill_failures(skill_id, resolved_at) WHERE resolved_at IS NULL",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
