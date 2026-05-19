@@ -1217,11 +1217,212 @@ console.log('  total: ' + listFirstPartySkills().length);"
        npx tsx scripts/skills-retrieve.ts)
       ;;
 
+    show)
+      # v7.7 Spine 3 Phase 5 Bundle 1 — operator-facing L2 view.
+      # Parallel to the `skill_load` builtin tool but rendered for the CLI.
+      local target_name="${1:-}"
+      if [ -z "$target_name" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl skills show <name>"
+        return 2
+      fi
+      if [[ ! "$target_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$ ]]; then
+        echo -e "${RED}Invalid name:${NC} must be lowercase + hyphens/underscores (2-64 chars)"
+        return 2
+      fi
+      if [ ! -f "$DB_PATH" ]; then
+        echo -e "${RED}Database not found.${NC}"
+        return 1
+      fi
+      local exists
+      exists=$(sql_raw "SELECT COUNT(*) FROM skills WHERE name = '$target_name';")
+      if [ "$exists" = "0" ]; then
+        echo -e "${RED}skill_not_found:${NC} $target_name"
+        return 1
+      fi
+      echo -e "${BOLD}=== Skill: $target_name ===${NC}"
+      sql "SELECT skill_id, name, description, version, is_certified, active,
+                  use_count, success_count, consecutive_failures,
+                  last_used, last_failure_at, current_version_id
+           FROM skills WHERE name = '$target_name';"
+      echo ""
+      echo -e "${BOLD}Active version body:${NC}"
+      sql "SELECT sv.version, sv.created_by, sv.critic_verdict, sv.created_at,
+                  SUBSTR(sv.body, 1, 800) || (CASE WHEN LENGTH(sv.body) > 800 THEN ' …(truncated)' ELSE '' END) AS body_excerpt
+           FROM skill_versions sv
+           JOIN skills s ON s.current_version_id = sv.id
+           WHERE s.name = '$target_name';"
+      echo ""
+      echo -e "${BOLD}Recent test runs (last 7d):${NC}"
+      sql "SELECT test_name, result, duration_ms, ran_at
+           FROM skill_test_runs str
+           JOIN skills s ON s.skill_id = str.skill_id
+           WHERE s.name = '$target_name' AND str.ran_at >= datetime('now','-7 days')
+           ORDER BY str.ran_at DESC LIMIT 10;"
+      ;;
+
+    certify)
+      # v7.7 Spine 3 Phase 5 Bundle 1 — manual operator override of the
+      # is_certified flag. Sweep already auto-certifies on N green tests
+      # within the 7-day window (Phase 2 B2); this is the immediate path
+      # for skills whose tests have all just passed but the next sweep
+      # hasn't run yet.
+      local target_name="${1:-}"
+      if [ -z "$target_name" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl skills certify <name>"
+        return 2
+      fi
+      if [[ ! "$target_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$ ]]; then
+        echo -e "${RED}Invalid name:${NC} must be lowercase + hyphens/underscores (2-64 chars)"
+        return 2
+      fi
+      local exists
+      exists=$(sql_raw "SELECT COUNT(*) FROM skills WHERE name = '$target_name';")
+      if [ "$exists" = "0" ]; then
+        echo -e "${RED}skill_not_found:${NC} $target_name"
+        return 1
+      fi
+      # W2 fold: write an audit-marker into skill_failures so V8.0
+      # watchpoints (spec §14) can count operator overrides. Also surface
+      # WARNING when zero recent test runs exist — sweep is the
+      # autonomous path, this is the manual override.
+      local recent_passes
+      recent_passes=$(sql_raw "SELECT COUNT(*) FROM skill_test_runs str
+                               JOIN skills s ON s.skill_id = str.skill_id
+                               WHERE s.name = '$target_name'
+                                 AND str.result = 'pass'
+                                 AND str.ran_at >= datetime('now','-7 days');")
+      if [ "$recent_passes" = "0" ]; then
+        echo -e "${YELLOW}⚠ Override warning:${NC} no 'pass' test runs in last 7d. Sweep would NOT auto-certify."
+        echo -e "${DIM}  Proceeding because manual override is the operator-only path (spec §9 / §15 Q7).${NC}"
+      fi
+      local skill_id
+      skill_id=$(sql_raw "SELECT skill_id FROM skills WHERE name = '$target_name';")
+      sql_raw "BEGIN;
+               UPDATE skills SET is_certified = 1, updated_at = datetime('now') WHERE skill_id = '$skill_id';
+               INSERT INTO skill_failures (skill_id, error_class, error_detail, resolved_at, resolution)
+               VALUES ('$skill_id', 'other', '[certify-override] manual certification by operator', datetime('now'), NULL);
+               COMMIT;" >/dev/null
+      echo -e "${GREEN}✓${NC} Certified: $target_name (audit row written to skill_failures)"
+      sql "SELECT name, is_certified, active, version, use_count, success_count
+           FROM skills WHERE name = '$target_name';"
+      ;;
+
+    archive)
+      # v7.7 Spine 3 Phase 5 Bundle 1 — soft-delete via active=0.
+      # Per spec §10 "archive" is the resolution for a skill that's
+      # decisively failing; the skill stays queryable but disappears
+      # from retrieval. Reason captured into a `skill_failures` row so
+      # the audit trail survives.
+      local target_name="${1:-}"
+      local reason="${2:-}"
+      if [ -z "$target_name" ] || [ -z "$reason" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl skills archive <name> \"<reason>\""
+        echo -e "  Reason is required — captured into skill_failures for audit trail."
+        return 2
+      fi
+      if [[ ! "$target_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$ ]]; then
+        echo -e "${RED}Invalid name:${NC} must be lowercase + hyphens/underscores (2-64 chars)"
+        return 2
+      fi
+      local row
+      row=$(sql_raw "SELECT skill_id || '|' || active FROM skills WHERE name = '$target_name';")
+      if [ -z "$row" ]; then
+        echo -e "${RED}skill_not_found:${NC} $target_name"
+        return 1
+      fi
+      local skill_id="${row%|*}"
+      local was_active="${row#*|}"
+      if [ "$was_active" = "0" ]; then
+        echo -e "${YELLOW}Already archived:${NC} $target_name (active=0)"
+        return 0
+      fi
+
+      # Escape single quotes in reason for safe interpolation.
+      local reason_escaped="${reason//\'/\'\'}"
+      # C1 fold: wrap both writes in a single transaction so a failed
+      # INSERT can't leave the skill orphan-archived without the audit
+      # row. Single sqlite3 process per sql_raw call IS atomic per
+      # statement, but the two calls are NOT atomic across each other.
+      sql_raw "BEGIN;
+               UPDATE skills SET active = 0, updated_at = datetime('now') WHERE skill_id = '$skill_id';
+               INSERT INTO skill_failures (skill_id, error_class, error_detail, resolved_at, resolution)
+               VALUES ('$skill_id', 'other', '[archive] $reason_escaped', datetime('now'), 'archived');
+               COMMIT;" >/dev/null
+      echo -e "${GREEN}✓${NC} Archived: $target_name"
+      echo -e "${DIM}  Reason logged to skill_failures (resolution=archived).${NC}"
+      sql "SELECT name, active, consecutive_failures, last_failure_at
+           FROM skills WHERE skill_id = '$skill_id';"
+      ;;
+
+    revert)
+      # v7.7 Spine 3 Phase 5 Bundle 1 — point current_version_id at an
+      # older (or newer) version that exists in skill_versions. Spec §7
+      # version pinning; does NOT delete the current version row.
+      local target_name="${1:-}"
+      local target_version="${2:-}"
+      if [ -z "$target_name" ] || [ -z "$target_version" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl skills revert <name> <version>"
+        return 2
+      fi
+      if [[ ! "$target_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$ ]]; then
+        echo -e "${RED}Invalid name:${NC} must be lowercase + hyphens/underscores (2-64 chars)"
+        return 2
+      fi
+      if [[ ! "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}Invalid version:${NC} must be semver MAJOR.MINOR.PATCH"
+        return 2
+      fi
+      local skill_id
+      skill_id=$(sql_raw "SELECT skill_id FROM skills WHERE name = '$target_name';")
+      if [ -z "$skill_id" ]; then
+        echo -e "${RED}skill_not_found:${NC} $target_name"
+        return 1
+      fi
+      local version_row
+      version_row=$(sql_raw "SELECT id || '|' || critic_verdict FROM skill_versions WHERE skill_id = '$skill_id' AND version = '$target_version';")
+      if [ -z "$version_row" ]; then
+        echo -e "${RED}version_not_found:${NC} $target_name @ $target_version"
+        echo -e "${DIM}  Available versions:${NC}"
+        sql "SELECT version, created_at, critic_verdict
+             FROM skill_versions WHERE skill_id = '$skill_id'
+             ORDER BY created_at DESC;"
+        return 1
+      fi
+      local version_id="${version_row%|*}"
+      local critic_verdict="${version_row#*|}"
+      # W1 fold: surface a warning when reverting to a critic-rejected
+      # version (operator override path per spec §7 + §15 Q7). Still
+      # allow it — override is the point — but make it visible.
+      if [ "$critic_verdict" = "fail_returned_anyway" ]; then
+        echo -e "${YELLOW}⚠ Override warning:${NC} target version has critic_verdict='fail_returned_anyway'"
+        echo -e "${DIM}  Proceeding because operator override is the documented escape hatch.${NC}"
+      fi
+      # W3 fold: atomic update — current_version_id pointer and the
+      # denormalized skills.version cache must move together.
+      sql_raw "BEGIN;
+               UPDATE skills SET current_version_id = $version_id,
+                                  version = '$target_version',
+                                  updated_at = datetime('now')
+               WHERE skill_id = '$skill_id';
+               COMMIT;" >/dev/null
+      echo -e "${GREEN}✓${NC} Reverted: $target_name → $target_version (version_id=$version_id)"
+      sql "SELECT name, version, current_version_id, is_certified
+           FROM skills WHERE skill_id = '$skill_id';"
+      ;;
+
     ""|help|--help|-h)
       echo "Usage: mc-ctl skills SUBCOMMAND"
       echo ""
       echo "Subcommands:"
       echo "  list                                              (default — first-party catalog + DB skills)"
+      echo "  show <name>"
+      echo "      L2 view of a skill: metadata + active version body + recent test runs."
+      echo "  certify <name>"
+      echo "      Manually flip is_certified=1 (operator override; sweep auto-certifies otherwise)."
+      echo "  archive <name> \"<reason>\""
+      echo "      Soft-delete: sets active=0; logs reason to skill_failures with resolution='archived'."
+      echo "  revert <name> <version>"
+      echo "      Point current_version_id at an existing skill_versions row (semver MAJOR.MINOR.PATCH)."
       echo "  backfill-embeddings [--limit=N] [--sleep-ms=N]"
       echo "      Compute description embeddings for skills missing them."
       echo "  retrieve \"<task description>\" [--k=N] [--threshold=F]"
