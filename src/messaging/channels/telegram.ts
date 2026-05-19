@@ -528,6 +528,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
     const chunks = formatForTelegram(msg.text);
     let lastMessageId = "";
+    let plainFallbacks = 0;
 
     for (let i = 0; i < chunks.length; i++) {
       try {
@@ -535,6 +536,7 @@ export class TelegramAdapter implements ChannelAdapter {
         const result = await this.bot.api
           .sendMessage(msg.to, chunks[i], { parse_mode: "HTML" })
           .catch(async () => {
+            plainFallbacks++;
             const plain = chunks[i].replace(/<[^>]+>/g, "");
             return this.bot!.api.sendMessage(msg.to, plain);
           });
@@ -550,6 +552,9 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     }
 
+    console.log(
+      `[telegram] Sent ${chunks.length} chunk(s) to ${msg.to} (msgId=${lastMessageId}${plainFallbacks ? `, ${plainFallbacks} HTML→plain fallback` : ""})`,
+    );
     return lastMessageId;
   }
 
