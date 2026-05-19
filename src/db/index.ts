@@ -468,6 +468,75 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_reports_produced ON reports(produced_at DESC)",
   );
 
+  // v7.7 Spine 2 (S3 substrate): out-of-band drift detector.
+  // Three tables: drift_signals (registry), drift_alerts (history),
+  // baseline_history (audit trail of baseline evolution). See
+  // docs/planning/v8-substrate-s3-spec.md §5/§6/§8 for schemas.
+  _db.exec(`CREATE TABLE IF NOT EXISTS drift_signals (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_name                TEXT NOT NULL UNIQUE,
+    signal_kind                TEXT NOT NULL,
+    source_substrate           TEXT NOT NULL,
+    baseline_query             TEXT NOT NULL,
+    baseline_value_json        TEXT NOT NULL,
+    tolerance_json             TEXT NOT NULL,
+    cadence                    TEXT NOT NULL CHECK (cadence IN ('hourly','every_4h','nightly','weekly','on_event')),
+    alert_priority             TEXT NOT NULL CHECK (alert_priority IN ('P0','P1','P2')),
+    enabled                    INTEGER NOT NULL DEFAULT 1,
+    established_at             TEXT NOT NULL,
+    established_by             TEXT NOT NULL,
+    notes                      TEXT,
+    last_evaluated_at          TEXT,
+    last_observed_value_json   TEXT,
+    last_alert_id              INTEGER
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_drift_signals_cadence ON drift_signals(cadence) WHERE enabled = 1",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_drift_signals_priority ON drift_signals(alert_priority) WHERE enabled = 1",
+  );
+
+  _db.exec(`CREATE TABLE IF NOT EXISTS drift_alerts (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id                  INTEGER NOT NULL,
+    triggered_at               TEXT NOT NULL,
+    observed_value_json        TEXT NOT NULL,
+    baseline_value_json        TEXT NOT NULL,
+    deviation_kind             TEXT NOT NULL CHECK (deviation_kind IN ('above','below','absent','changed','query_failure','correlated_burst')),
+    severity                   TEXT NOT NULL CHECK (severity IN ('P0','P1','P2')),
+    delivery_status            TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending','delivered','suppressed','expired')),
+    delivered_in_brief_id      INTEGER,
+    acknowledged_at            TEXT,
+    acknowledged_by            TEXT,
+    resolution_kind            TEXT CHECK (resolution_kind IN ('auto_resolved','operator_acknowledged','escalated','false_positive','superseded')),
+    resolution_at              TEXT,
+    resolution_notes           TEXT,
+    bundle_id                  INTEGER
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_drift_alerts_active ON drift_alerts(triggered_at) WHERE resolution_at IS NULL",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_drift_alerts_signal ON drift_alerts(signal_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_drift_alerts_bundle ON drift_alerts(bundle_id) WHERE bundle_id IS NOT NULL",
+  );
+
+  _db.exec(`CREATE TABLE IF NOT EXISTS baseline_history (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_name                TEXT NOT NULL,
+    baseline_value_json        TEXT NOT NULL,
+    established_at             TEXT NOT NULL,
+    established_by             TEXT NOT NULL,
+    retired_at                 TEXT,
+    retired_reason             TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_baseline_history_signal ON baseline_history(signal_name)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

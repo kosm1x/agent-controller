@@ -244,6 +244,18 @@ async function main(): Promise<void> {
       );
     });
 
+  // v7.7 Spine 2 (S3 substrate): register drift-detector cron jobs.
+  // Seeds 13 signals on first boot (idempotent on subsequent boots).
+  // Registration failure is non-fatal — service runs without drift watching.
+  import("./lib/s3/scheduler.js")
+    .then(({ registerS3CronJobs }) => registerS3CronJobs())
+    .catch((err) => {
+      console.warn(
+        "[s3] Cron registration failed (non-fatal):",
+        err instanceof Error ? err.message : err,
+      );
+    });
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 
@@ -270,6 +282,15 @@ async function main(): Promise<void> {
     stopDynamicScheduler();
     stopProactiveScheduler();
     stopRitualScheduler();
+
+    // v7.7 Spine 2: stop S3 cron jobs so an in-flight tick doesn't hit a
+    // closed DB during shutdown. Dynamic import keeps boot independent.
+    try {
+      const { stopS3CronJobs } = await import("./lib/s3/scheduler.js");
+      stopS3CronJobs();
+    } catch (err) {
+      log.warn({ err }, "stopS3CronJobs failed (non-fatal)");
+    }
 
     // 3. Flush messaging channels
     await shutdownMessaging();
