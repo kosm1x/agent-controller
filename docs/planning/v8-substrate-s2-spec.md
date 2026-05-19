@@ -298,11 +298,14 @@ Audit log: `docs/audit/v7.7-spine-1-phase-1.md` (R1: 0 Crit / 8 Warning / 4 Info
 - Audit log: `docs/audit/v7.7-spine-1-phase-2b.md`
 - Composes with RFC 3834 + persona-injection patterns from `feedback_email_channel_arc_2026_05_15` (not re-implemented; new gate is post-LLM, not at the email-protocol layer)
 
-#### Phase 2c — closure-doc convention + validator (likely absorbed into Spine 7)
+#### Phase 2c — closure-doc convention + validator — **SHIPPED 2026-05-19**
 
-- Codify `verified_against:` lines on closure-doc scoreboard rows (v7.6 closure-audit caught 4 fidelity bugs this would prevent)
-- Likely shipped as part of `mc audit-closure` continuity-tool (Spine 7 Q4 absorption) rather than a runtime tool retrofit
-- The v7.7 closure itself becomes the proof case
+- `docs/audit/CLOSURE-DOC-CONVENTION.md` codifies `verified_against:` lines on closure-doc scoreboard rows; reuses the 8-variant citation enum from §3 verbatim
+- `docs/audit/CLOSURE-TEMPLATE.md` is the pre-filled template for V7.7+ closure docs
+- `src/audit/closure-doc-validator.ts` library + `scripts/validate-closure-doc.ts` CLI implement heuristic markdown parsing + claim/citation matching
+- Proof case: V7.6-CLOSURE.md back-test surfaced 10 unverified scoreboard claims; 3 map directly to the v7.6 R1 fidelity bugs caught manually
+- Audit log: `docs/audit/v7.7-spine-1-phase-2c.md`
+- Spine 7's `mc audit-closure` continuity tool will WRAP this validator (Q4 absorption) — no rework, no premature integration. The standalone validator stands today.
 
 ### Phase 3: V8.2 proposals (during V8.2 build)
 
