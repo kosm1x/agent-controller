@@ -112,6 +112,10 @@ import {
 } from "./scope.js";
 import { classifyScopeGroups } from "./scope-classifier.js";
 import { normalizeForMatching, wasNormalized } from "./normalize.js";
+import {
+  gateCommunityReply,
+  COMMUNITY_REPLY_FALLBACK,
+} from "./community-reply-gate.js";
 
 import {
   recordScopeDecision,
@@ -2010,6 +2014,17 @@ export class MessageRouter {
     }
     this.pendingReplies.clear();
 
+    // v7.7 Spine 1 Phase 2b: drain in-flight community-reply gate IIFEs
+    // BEFORE stopping adapters. Otherwise a reply finalized in the ~30-100ms
+    // before shutdown is silently dropped — sender gets no reply even though
+    // the task is marked completed. R1-C1 from the Phase 2b audit.
+    if (this.gateInflight.size > 0) {
+      console.log(
+        `[router] Awaiting ${this.gateInflight.size} in-flight community-reply gate(s) before shutdown...`,
+      );
+      await Promise.allSettled([...this.gateInflight]);
+    }
+
     // Stop channels
     for (const adapter of this.channels.values()) {
       await adapter.stop();
@@ -2159,7 +2174,10 @@ export class MessageRouter {
             ? resultText.slice(0, 500) + "..."
             : resultText;
         const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}\n\n_Escribe "mis agentes" para ver el historial._`;
-        this.sendToChannel(pending.channel, pending.to, notification);
+        // Background-agent notification IS LLM-derived (summary contains LLM
+        // output); route through the gate so community-manager mailboxes get
+        // the same write-gate protection as direct LLM replies.
+        this.sendLLMReplyToChannel(pending.channel, pending.to, notification);
         appendDayLog(
           "JARVIS",
           `[Agente background] ${notification.slice(0, 200)}`,
@@ -2171,10 +2189,10 @@ export class MessageRouter {
         if (pending.streamController) {
           pending.streamController.finalize(resultText).catch((err) => {
             console.error("[router] Stream finalize failed:", err);
-            this.sendToChannel(pending.channel, pending.to, resultText);
+            this.sendLLMReplyToChannel(pending.channel, pending.to, resultText);
           });
         } else {
-          this.sendToChannel(pending.channel, pending.to, resultText);
+          this.sendLLMReplyToChannel(pending.channel, pending.to, resultText);
         }
       }
 
@@ -2539,6 +2557,12 @@ export class MessageRouter {
     trackTaskOutcome(taskId, 0, false, pending.channel);
   }
 
+  /**
+   * Direct sync send. Use for router-generated text (status notifications,
+   * orphan-restart messages, etc.) that is safe-by-construction and does NOT
+   * need the community-reply write-gate. LLM-generated replies MUST flow
+   * through `sendLLMReplyToChannel` instead so the Phase 2b critic gate fires.
+   */
   private sendToChannel(channel: ChannelName, to: string, text: string): void {
     const adapter = this.channels.get(channel);
     if (!adapter) return;
@@ -2552,6 +2576,103 @@ export class MessageRouter {
     adapter.send(msg).catch((err) => {
       console.error(`[router] Send to ${channel} failed:`, err);
     });
+  }
+
+  /**
+   * In-flight gate IIFEs from community-manager email channels (v7.7 Spine 1
+   * Phase 2b). `stopAll()` MUST await Promise.allSettled([...this.gateInflight])
+   * before stopping adapters; otherwise a community reply finalized in the
+   * ~30-100ms before shutdown would be silently dropped (sender gets no reply,
+   * task already marked completed). R1-C1 from the Phase 2b audit.
+   */
+  private gateInflight: Set<Promise<unknown>> = new Set();
+
+  /**
+   * Send an LLM-produced reply text. For email channels NOT in `owner-only`
+   * mode (i.e. community-manager mailboxes facing the public), runs the
+   * v7.7 Spine 1 Phase 2b critic write-gate before sending — on fail or
+   * critic infra error, replaces the reply with COMMUNITY_REPLY_FALLBACK.
+   * For all other channels, behaves identically to sendToChannel.
+   *
+   * Sync signature (callers fire-and-forget). The actual gate+send happens
+   * on the microtask queue via an IIFE tracked in `this.gateInflight` so
+   * shutdown can await pending sends.
+   */
+  private sendLLMReplyToChannel(
+    channel: ChannelName,
+    to: string,
+    text: string,
+  ): void {
+    const adapter = this.channels.get(channel);
+    if (!adapter) return;
+
+    // v6.3 W1.5: log AI writing patterns on the ORIGINAL text, before any
+    // gate substitution, so observability captures what the LLM produced.
+    import("./post-filter.js")
+      .then(({ logAIPatterns }) => logAIPatterns(text, channel))
+      .catch(() => {});
+
+    // Positive default-deny: any email channel that is NOT explicitly
+    // owner-only gets the gate. Matches applyCommunityChannelScopeOverride's
+    // fail-safe semantic (scope.ts:479): undefined mode on an email channel
+    // is treated as community-manager. R1-W2 from the Phase 2b audit.
+    const needsGate = isEmailChannel(channel) && adapter.mode !== "owner-only";
+    if (!needsGate) {
+      adapter
+        .send({ channel, to, text })
+        .catch((err) =>
+          console.error(`[router] Send to ${channel} failed:`, err),
+        );
+      return;
+    }
+
+    const inflight = (async () => {
+      let outbound = text;
+      let verdictBucket: "pass" | "fail" | "error" = "error";
+      try {
+        const verdict = await gateCommunityReply(text);
+        if (verdict.error) {
+          verdictBucket = "error";
+          console.warn(
+            `[router] community-reply gate ERROR for ${channel}→${to} (${verdict.latencyMs}ms): ${verdict.critique.slice(0, 200)}`,
+          );
+          outbound = COMMUNITY_REPLY_FALLBACK;
+        } else if (verdict.verdict !== "pass") {
+          verdictBucket = "fail";
+          console.warn(
+            `[router] community-reply gate FAIL for ${channel}→${to} (${verdict.latencyMs}ms): ${verdict.critique.slice(0, 200)}`,
+          );
+          outbound = COMMUNITY_REPLY_FALLBACK;
+        } else {
+          verdictBucket = "pass";
+          console.log(
+            `[router] community-reply gate PASS for ${channel}→${to} (${verdict.latencyMs}ms)`,
+          );
+        }
+      } catch (err) {
+        verdictBucket = "error";
+        console.error(
+          `[router] community-reply gate threw, using fallback:`,
+          err,
+        );
+        outbound = COMMUNITY_REPLY_FALLBACK;
+      }
+      try {
+        const { recordCommunityGateVerdict } =
+          await import("../observability/prometheus.js");
+        recordCommunityGateVerdict(verdictBucket);
+      } catch {
+        /* metric registration shouldn't block delivery */
+      }
+      try {
+        await adapter.send({ channel, to, text: outbound });
+      } catch (err) {
+        console.error(`[router] Send to ${channel} failed:`, err);
+      }
+    })();
+
+    this.gateInflight.add(inflight);
+    inflight.finally(() => this.gateInflight.delete(inflight));
   }
 
   private extractResultText(result: unknown): string | null {

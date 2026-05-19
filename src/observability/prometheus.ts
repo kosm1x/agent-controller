@@ -458,6 +458,23 @@ const KNOWN_WA_REASONS = new Set([
   "unknown",
 ]);
 
+// v7.7 Spine 1 Phase 2b: community-reply write-gate verdicts.
+// One label `verdict` with closed cardinality (pass | fail | error). Used to
+// monitor false-positive rate (fail % of non-error replies) and infra health
+// (error % of total). Reset to zero on each restart per prom-client default.
+const communityGateVerdictTotal = new client.Counter({
+  name: "mc_community_gate_verdict_total",
+  help: "Community-manager email reply write-gate verdicts bucketed by outcome",
+  labelNames: ["verdict"] as const,
+});
+
+const KNOWN_GATE_VERDICTS = new Set(["pass", "fail", "error"]);
+
+export function recordCommunityGateVerdict(verdict: string): void {
+  const bucket = KNOWN_GATE_VERDICTS.has(verdict) ? verdict : "error";
+  communityGateVerdictTotal.inc({ verdict: bucket });
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {

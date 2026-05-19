@@ -54,6 +54,15 @@ vi.mock("../memory/outcome-tag.js", () => ({
 // short-circuit in handleTaskCompleted/Failed. Default returns undefined
 // (legacy path); tests can override to return {status:"cancelled"}.
 const dbStatusGet = vi.fn().mockReturnValue(undefined);
+vi.mock("./community-reply-gate.js", () => ({
+  gateCommunityReply: vi.fn(),
+  COMMUNITY_REPLY_FALLBACK: "FALLBACK_TEXT_FOR_TEST",
+}));
+
+vi.mock("../observability/prometheus.js", () => ({
+  recordCommunityGateVerdict: vi.fn(),
+}));
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({ get: dbStatusGet }),
@@ -722,5 +731,234 @@ describe("MessageRouter", () => {
     it("Telegram channel-only key is unchanged", () => {
       expect(threadKey("telegram", "12345")).toBe("telegram");
     });
+  });
+});
+
+// ===========================================================================
+// v7.7 Spine 1 Phase 2b — sendLLMReplyToChannel write-gate integration
+// ===========================================================================
+
+describe("MessageRouter — community-reply write-gate (v7.7 Phase 2b)", () => {
+  let router: MessageRouter;
+
+  // Minimal email adapter mock — typed as ChannelAdapter & extras. The
+  // production EmailChannel sets `mode: "owner-only" | "community-manager"`
+  // per-account; we control it directly here to exercise each branch.
+  function createEmailAdapter(
+    name: string,
+    mode: "owner-only" | "community-manager" | undefined,
+  ) {
+    const sent: OutgoingMessage[] = [];
+    return {
+      name,
+      mode,
+      sentMessages: sent,
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockImplementation(async (msg: OutgoingMessage) => {
+        sent.push(msg);
+        return "id";
+      }),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    };
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    router = new MessageRouter();
+
+    // Reset the gate mock to default-pass before each test
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply).mockResolvedValue({
+      verdict: "pass",
+      critique: "",
+      latencyMs: 5,
+      error: false,
+    });
+  });
+
+  it("community-manager email: pass verdict → original text shipped", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply).mockResolvedValueOnce({
+      verdict: "pass",
+      critique: "",
+      latencyMs: 5,
+      error: false,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "email:comunidades",
+      "alice@example.com",
+      "Hola, gracias por escribirnos.",
+    );
+    // Drain microtasks AND any in-flight gate IIFEs
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+
+    expect(adapter.sentMessages.length).toBe(1);
+    expect(adapter.sentMessages[0].text).toBe("Hola, gracias por escribirnos.");
+    expect(vi.mocked(gateCommunityReply)).toHaveBeenCalledOnce();
+  });
+
+  it("community-manager email: fail verdict → FALLBACK shipped, NOT the original", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply).mockResolvedValueOnce({
+      verdict: "fail",
+      critique: "cites specific date without source",
+      latencyMs: 10,
+      error: false,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "email:comunidades",
+      "alice@example.com",
+      "Nuestro próximo evento es el 15 de junio.",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+
+    expect(adapter.sentMessages.length).toBe(1);
+    expect(adapter.sentMessages[0].text).toBe("FALLBACK_TEXT_FOR_TEST");
+    expect(adapter.sentMessages[0].text).not.toContain("15 de junio");
+  });
+
+  it("community-manager email: infra error → FALLBACK shipped (fail-safe)", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply).mockResolvedValueOnce({
+      verdict: "fail",
+      critique: "critic call failed: upstream 503",
+      latencyMs: 100,
+      error: true,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "email:comunidades",
+      "alice@example.com",
+      "anything",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+
+    expect(adapter.sentMessages[0].text).toBe("FALLBACK_TEXT_FOR_TEST");
+  });
+
+  it("owner-only email: gate NOT called → original shipped", async () => {
+    const adapter = createEmailAdapter("email:fede", "owner-only");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "email:fede",
+      "fede@example.com",
+      "private reply to operator with sensitive data",
+    );
+    // Owner-only path is sync direct send; await one microtask
+    await Promise.resolve();
+
+    expect(adapter.sentMessages[0].text).toBe(
+      "private reply to operator with sensitive data",
+    );
+    expect(vi.mocked(gateCommunityReply)).not.toHaveBeenCalled();
+  });
+
+  it("undefined mode on email channel: gate FIRES (fail-safe default-deny)", async () => {
+    // Future regression: if a new email adapter is added without setting
+    // mode, it must still get the gate. R1-W2 from Phase 2b audit.
+    const adapter = createEmailAdapter("email:new", undefined);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel("email:new", "x@example.com", "text");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+
+    expect(vi.mocked(gateCommunityReply)).toHaveBeenCalledOnce();
+  });
+
+  it("non-email channel (whatsapp): gate NOT called", async () => {
+    const wa = createMockAdapter("whatsapp");
+    router.registerChannel(wa);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "whatsapp",
+      "x@s.whatsapp.net",
+      "hola",
+    );
+    await Promise.resolve();
+
+    expect(wa.sentMessages[0].text).toBe("hola");
+    expect(vi.mocked(gateCommunityReply)).not.toHaveBeenCalled();
+  });
+
+  it("stopAll() awaits in-flight gate IIFEs (R1-C1 regression guard)", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+
+    // Make the gate hang briefly so we can race shutdown against it
+    let resolveGate: (v: {
+      verdict: "pass";
+      critique: string;
+      latencyMs: number;
+      error: false;
+    }) => void = () => {};
+    vi.mocked(gateCommunityReply).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveGate = resolve as never;
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).sendLLMReplyToChannel(
+      "email:comunidades",
+      "x@example.com",
+      "hola",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((router as any).gateInflight.size).toBe(1);
+
+    // Kick off stopAll WITHOUT awaiting the gate first
+    const stopPromise = router.stopAll();
+    // Now release the gate
+    resolveGate({ verdict: "pass", critique: "", latencyMs: 5, error: false });
+    await stopPromise;
+
+    // Adapter MUST have received the send before stop completed
+    expect(adapter.send).toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((router as any).gateInflight.size).toBe(0);
   });
 });

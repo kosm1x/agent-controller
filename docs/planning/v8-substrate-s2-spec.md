@@ -287,11 +287,16 @@ Audit log: `docs/audit/v7.7-spine-1-phase-1.md` (R1: 0 Crit / 8 Warning / 4 Info
 - Audit log: `docs/audit/v7.7-spine-1-phase-2a.md`
 - R1-C2 design lesson: do NOT put audit tools in `requiredTools` — dispatcher auto-retries on missing required tool, which would duplicate gmail_send
 
-#### Phase 2b — community-manager email reply path (pending)
+#### Phase 2b — community-manager email reply path — **SHIPPED 2026-05-19**
 
-- Retrofit `src/messaging/router.ts` community-manager mailbox reply path (`comunidades@mexiconecesario.org.mx`)
-- Unlike morning_brief: critic IS a true write-gate here. External-facing org reply must not ship un-audited claims about organizational metrics.
-- Must compose with RFC 3834 + persona-injection patterns already shipped (see `feedback_email_channel_arc_2026_05_15`)
+- `src/messaging/community-reply-gate.ts` — free-text critic specialized for org-specific factual claim detection (NOT the typed-evidence contract used by morning_brief)
+- `sendLLMReplyToChannel` extracted from `sendToChannel`; gate fires for email channels NOT in owner-only mode (positive default-deny)
+- On fail/error: reply REPLACED with `COMMUNITY_REPLY_FALLBACK` (true write-gate semantic — unlike morning_brief's observability mode)
+- `gateInflight` Set + `stopAll()` await — shutdown safely drains in-flight gate IIFEs (R1-C1 architectural fix)
+- Prom counter `mc_community_gate_verdict_total{verdict=pass|fail|error}` for false-positive rate monitoring
+- Persona prompt amended with audit-awareness paragraph
+- Audit log: `docs/audit/v7.7-spine-1-phase-2b.md`
+- Composes with RFC 3834 + persona-injection patterns from `feedback_email_channel_arc_2026_05_15` (not re-implemented; new gate is post-LLM, not at the email-protocol layer)
 
 #### Phase 2c — closure-doc convention + validator (likely absorbed into Spine 7)
 

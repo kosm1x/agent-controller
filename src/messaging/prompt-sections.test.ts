@@ -87,8 +87,18 @@ describe("conditional prompt sections", () => {
     const s2 = identitySection();
     expect(s1).toBe(s2); // byte-identical
     expect(s1).toContain("Jarvis");
-    expect(s1).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no dates
+    expect(s1).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no dates (excluding cache-history comment, which is stripped from output)
     expect(s1).not.toMatch(/\d{2}:\d{2}/); // no times
+  });
+
+  it("identitySection community-manager section mentions audit-awareness (v7.7 Spine 1 Phase 2b)", () => {
+    // Regression guard: if a future "this prose is verbose" cleanup removes
+    // this paragraph, the LLM stops being aware of the write-gate and reply
+    // quality degrades (more false-fails as the LLM stops self-policing).
+    // Phase 2b R1-I2 from the audit log.
+    const s = identitySection();
+    expect(s).toMatch(/[Aa]uditoría automática del reply/);
+    expect(s).toMatch(/cuando dudes, defiere al equipo/i);
   });
 
   it("timeContextLine emits the date + time in a compact single-line form", () => {
