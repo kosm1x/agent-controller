@@ -182,7 +182,7 @@ Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (c
 
 ## §6.2 — Phase 4 Bundle 2 + Phase 4 closure (2026-05-19)
 
-**Commit**: `<this commit>` — 3 deferred builtin tools + ToolSource registration. Closes Phase 4.
+**Commit**: `6a456f0` — 3 deferred builtin tools + ToolSource registration. Closes Phase 4.
 
 **Shipped surfaces**:
 
