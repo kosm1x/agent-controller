@@ -20,8 +20,17 @@ vi.mock("../db/task-outcomes.js", () => ({
   queryOutcomes: vi.fn().mockReturnValue([]),
 }));
 
+// v7.7 Spine 3 Phase 3 B2 (R1-W2 fold): enrichment now routes through
+// retrieveSkills (vector + keyword fallback) instead of the direct
+// findSkillsByKeywords call. The old mock was dead code that masked
+// the real test path. Mock the retrieval surface + getSkill lookup.
 vi.mock("../db/skills.js", () => ({
   findSkillsByKeywords: vi.fn().mockReturnValue([]),
+  getSkill: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock("../skills/retrieval.js", () => ({
+  retrieveSkills: vi.fn().mockResolvedValue([]),
 }));
 
 import { enrichContext, clearEnrichmentCache } from "./enrichment.js";
@@ -74,6 +83,40 @@ describe("enrichment", () => {
 
     expect(result.matchedSkillIds).toEqual([]);
     expect(result.confidence).toBe("low");
+  });
+
+  it("propagates retrieveSkills hits to matchedSkillIds (R1-W2 fold)", async () => {
+    const { retrieveSkills } = await import("../skills/retrieval.js");
+    const { getSkill } = await import("../db/skills.js");
+
+    vi.mocked(retrieveSkills).mockResolvedValueOnce([
+      {
+        skillId: "id-1",
+        name: "test-skill",
+        description: "desc",
+        similarity: 0.9,
+        source: "vector",
+      },
+    ]);
+    vi.mocked(getSkill).mockReturnValueOnce({
+      id: 1,
+      skill_id: "id-1",
+      name: "test-skill",
+      description: "Send a follow-up",
+      trigger_text: "follow-up",
+      steps: '["do thing"]',
+      tools: '["whatsapp_send"]',
+      use_count: 5,
+      success_count: 4,
+      source: "manual",
+      active: 1,
+      created_at: "2026-05-19",
+      updated_at: "2026-05-19",
+    });
+
+    const result = await enrichContext("send follow-up", "telegram");
+    expect(result.matchedSkillIds).toEqual(["id-1"]);
+    expect(result.contextBlock).toContain("test-skill");
   });
 
   describe("tool-first guard", () => {

@@ -1187,9 +1187,35 @@ console.log('  total: ' + listFirstPartySkills().length);"
        npx tsx scripts/skills-backfill-embeddings.ts)
       ;;
 
-    # `retrieve` subcommand lands in Phase 3 Bundle 2 alongside
-    # src/skills/retrieval.ts. Intentionally absent in B1 to avoid
-    # operator confusion if invoked between B1 and B2 deploys.
+    retrieve)
+      local query="${1:-}"
+      shift 2>/dev/null || true
+      if [ -z "$query" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl skills retrieve \"<task description>\" [--k=N] [--threshold=F]"
+        return 2
+      fi
+      local k_arg="5" threshold_arg=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --k=*)         k_arg="${1#*=}" ;;
+          --threshold=*) threshold_arg="${1#*=}" ;;
+          *)             echo -e "${RED}Unknown flag:${NC} $1"; return 2 ;;
+        esac
+        shift
+      done
+      [[ "$k_arg" =~ ^[0-9]+$ ]] || { echo -e "${RED}--k must be a positive integer${NC}"; return 2; }
+      [ "$k_arg" -gt 0 ] || { echo -e "${RED}--k must be > 0${NC}"; return 2; }
+      if [ -n "$threshold_arg" ]; then
+        [[ "$threshold_arg" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo -e "${RED}--threshold must be numeric${NC}"; return 2; }
+      fi
+
+      echo -e "${BOLD}=== Retrieving skills for query ===${NC}"
+      echo -e "${DIM}query:${NC} ${query}"
+      echo ""
+      (cd "$PROJECT_DIR" && \
+       QUERY="$query" K="$k_arg" THRESHOLD="$threshold_arg" \
+       npx tsx scripts/skills-retrieve.ts)
+      ;;
 
     ""|help|--help|-h)
       echo "Usage: mc-ctl skills SUBCOMMAND"
@@ -1198,6 +1224,9 @@ console.log('  total: ' + listFirstPartySkills().length);"
       echo "  list                                              (default — first-party catalog + DB skills)"
       echo "  backfill-embeddings [--limit=N] [--sleep-ms=N]"
       echo "      Compute description embeddings for skills missing them."
+      echo "  retrieve \"<task description>\" [--k=N] [--threshold=F]"
+      echo "      Vector-similarity retrieve top-k matching certified+active skills."
+      echo "      Falls back to keyword search when no skills are embedded yet."
       ;;
 
     *)

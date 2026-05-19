@@ -1,11 +1,12 @@
 # V8 Substrate S5 — Implementation Delta vs. Spec
 
-> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 Bundle 1 of 2 ✅; B2 + Phases 4-5 pending.
+> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 ✅ (B1+B2); Phases 4-5 pending.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
 > **Phase 1 commit**: `422d985`
 > **Phase 2 Bundle 1 commit**: `5866f49`
 > **Phase 2 Bundle 2 commit**: `acfbdfd`
 > **Phase 3 Bundle 1 commit**: `0d0bd5c`
+> **Phase 3 Bundle 2 commit**: `<this commit>`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
@@ -32,6 +33,15 @@ Already shipped from earlier work:
 
 - `src/db/skills.ts` — CRUD on `skills` table (67 live rows). Continues to work via DEFAULT values on the new ALTER'd columns; no breaking change.
 - `src/skills/catalog.ts` — v7.6 Spine 5's frozen first-party catalog (HTML compose + SVG diagram = 6 skills). Separate layer from DB skills; not affected by Spine 3.
+
+Shipped in v7.7 Spine 3 Phase 3 Bundle 2 (closes Phase 3):
+
+- `src/skills/retrieval.ts`: `retrieveSkills(taskContext, options)` async — embed query, load `is_certified=1 AND active=1 AND consecutive_failures < 3 AND description_embedding IS NOT NULL`, cosine-rank, threshold-filter (default 0.4), top-k (default 5). Fallback to `findSkillsByKeywords` when zero candidates OR query-embed null OR all candidates dim-mismatched (R1-W1 fold). `fallbackToKeyword: false` opt-out.
+- `src/intelligence/enrichment.ts` wire: `getMatchingSkills` async; routes through `retrieveSkills({k: 3})` + `getSkill(skillId)` for rich-block lookup. Placeholder rendering for new-schema skills with empty `steps`/`tools` (R1-W3 fold) so the prompt block doesn't show confusing empty sections.
+- `scripts/skills-retrieve.ts`: tsx-resolvable CLI bridge with stderr `[retrieval] path=<vector|keyword|empty>` log (R1-W4 fold) so operators can distinguish empty-because-vector-empty from empty-because-API-down.
+- `mc-ctl skills retrieve "<task>" [--k=N] [--threshold=F]`: live operator surface. --k validated as positive int; --threshold accepts negative for explicit no-filter.
+
+Spec §13.3 all 5 tasks complete: migration ✓, backfill ✓ (B1), replace findSkillsByKeywords ✓ (B2 via retrieveSkills + kept as fallback), re-embed hook ✓ (B1), tests ✓ (+32 across B1+B2).
 
 Shipped in v7.7 Spine 3 Phase 3 Bundle 1:
 

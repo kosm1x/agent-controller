@@ -11,7 +11,8 @@
 
 import { getMemoryService } from "../memory/index.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
-import { findSkillsByKeywords, type SkillRow } from "../db/skills.js";
+import { getSkill, type SkillRow } from "../db/skills.js";
+import { retrieveSkills } from "../skills/retrieval.js";
 
 export interface EnrichmentResult {
   contextBlock: string;
@@ -37,7 +38,7 @@ export async function enrichContext(
 
   // Skill matching works on SQLite — no Hindsight required
   try {
-    const skillResult = getMatchingSkills(messageText);
+    const skillResult = await getMatchingSkills(messageText);
     if (skillResult.block) {
       sections.push(skillResult.block);
       matchedSkillIds.push(...skillResult.skillIds);
@@ -317,9 +318,20 @@ interface SkillMatchResult {
   confidence: "high" | "medium" | "low";
 }
 
-function getMatchingSkills(messageText: string): SkillMatchResult {
+async function getMatchingSkills(
+  messageText: string,
+): Promise<SkillMatchResult> {
   try {
-    const matches = findSkillsByKeywords(messageText);
+    // v7.7 Spine 3 Phase 3 B2: route through vector retrieval. With no
+    // certified+embedded skills present, retrieveSkills falls back to
+    // the legacy keyword-LIKE path via findSkillsByKeywords (unchanged
+    // behavior for today's no-vectors state). Once Phase 5 certifies
+    // the first 5 skills and backfill embeds them, vector ranking wins.
+    const ranked = await retrieveSkills(messageText, { k: 3 });
+    const matches: SkillRow[] = ranked
+      .map((r) => getSkill(r.skillId))
+      .filter((r): r is SkillRow => r !== null);
+
     if (matches.length === 0) {
       return { block: null, skillIds: [], confidence: "low" };
     }
@@ -332,11 +344,25 @@ function getMatchingSkills(messageText: string): SkillMatchResult {
           ? Math.round((s.success_count / s.use_count) * 100)
           : 100;
 
+      // R1-W3 fold: new-schema (Phase 1+) skills have `steps`/`tools`
+      // JSON arrays empty — the body lives in `jarvis_files` and gets
+      // loaded on demand via `skill_load` (Phase 4). Render a
+      // placeholder so the operator's prompt doesn't show a confusing
+      // empty "Pasos:" section.
+      const stepsLine =
+        steps.length > 0
+          ? `Pasos:\n${steps.map((st, i) => `${i + 1}. ${st}`).join("\n")}`
+          : `Pasos: (cargar con skill_load ${s.skill_id})`;
+      const toolsLine =
+        tools.length > 0
+          ? `Herramientas: ${tools.join(", ")}`
+          : `Herramientas: (declared in frontmatter; load via skill_load)`;
+
       return (
         `### ${s.name} (usado ${s.use_count} veces, ${successRate}% éxito)\n` +
         `Trigger: ${s.trigger_text}\n` +
-        `Pasos:\n${steps.map((st, i) => `${i + 1}. ${st}`).join("\n")}\n` +
-        `Herramientas: ${tools.join(", ")}`
+        `${stepsLine}\n` +
+        `${toolsLine}`
       );
     });
 
