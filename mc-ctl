@@ -1104,6 +1104,110 @@ SQL
   fi
 }
 
+cmd_skills() {
+  # v7.7 Spine 3 Phase 3 — skill subcommand router.
+  #   mc-ctl skills list                                       (pre-Phase-3 default)
+  #   mc-ctl skills backfill-embeddings [--limit=N] [--sleep-ms=N]
+  #   mc-ctl skills retrieve "<task description>" [--k=N] [--threshold=F]
+  #
+  # The bash front-end forwards to a tsx-evaluated TypeScript helper so
+  # the embedding API + DB access live in one place. mc-ctl stays thin.
+
+  local sub="${1:-list}"
+  shift 2>/dev/null || true
+
+  case "$sub" in
+    list)
+      echo -e "${BOLD}=== Skills ===${NC}"
+      echo ""
+      echo -e "${BOLD}First-party catalog${NC} (src/skills/catalog.ts):"
+      local render_script render_log render_failed=0
+      render_script="import { listFirstPartySkills, groupFirstPartySkillsBySource } from './src/skills/catalog.ts';
+const grouped = groupFirstPartySkillsBySource();
+for (const [src, list] of Object.entries(grouped)) {
+  console.log('  [' + src + ']');
+  for (const s of list) console.log('    ' + s.surface.padEnd(34) + ' — ' + s.label);
+}
+console.log('  ' + '-'.repeat(60));
+console.log('  total: ' + listFirstPartySkills().length);"
+      render_log=$(mktemp)
+      if ! ( cd "$PROJECT_DIR" && npx --no-install tsx -e "$render_script" 2>"$render_log" ); then
+        echo -e "  ${YELLOW}(catalog render failed)${NC}"
+        if [ -s "$render_log" ]; then
+          head -5 "$render_log" | sed "s/^/  /"
+        fi
+        render_failed=1
+      fi
+      rm -f "$render_log"
+      echo ""
+      if [ -f "$DB_PATH" ]; then
+        echo -e "${BOLD}DB-saved skills${NC} (skills table):"
+        local rows
+        rows=$(sql_raw "SELECT COUNT(*) FROM skills;" 2>/dev/null || echo "0")
+        if [ "$rows" = "0" ]; then
+          echo -e "  ${DIM}(none — populate via skill_save tool)${NC}"
+        else
+          sql "SELECT skill_id, name, active, use_count, success_count
+               FROM skills
+               ORDER BY active DESC, use_count DESC
+               LIMIT 50;"
+        fi
+      else
+        echo -e "  ${DIM}(database not found — run service first)${NC}"
+      fi
+      if [ "$render_failed" -ne 0 ]; then
+        exit 1
+      fi
+      ;;
+
+    backfill-embeddings)
+      local limit_arg="" sleep_arg=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --limit=*)    limit_arg="${1#*=}" ;;
+          --sleep-ms=*) sleep_arg="${1#*=}" ;;
+          *)            echo -e "${RED}Unknown flag:${NC} $1"; return 2 ;;
+        esac
+        shift
+      done
+      # R1-W3 fold: reject --limit=0 explicitly — operator typing "0"
+      # expects zero rows, not all rows. Differs from the empty-string
+      # case (omitted) which means no limit.
+      if [ -n "$limit_arg" ]; then
+        [[ "$limit_arg" =~ ^[0-9]+$ ]] || { echo -e "${RED}--limit must be a positive integer${NC}"; return 2; }
+        [ "$limit_arg" -eq 0 ] && { echo -e "${RED}--limit=0 is not a valid cap (use --limit=1 for a single row)${NC}"; return 2; }
+      fi
+      if [ -n "$sleep_arg" ]; then
+        [[ "$sleep_arg" =~ ^[0-9]+$ ]] || { echo -e "${RED}--sleep-ms must be a non-negative integer${NC}"; return 2; }
+      fi
+
+      echo -e "${BOLD}=== Backfilling skill embeddings ===${NC}"
+      (cd "$PROJECT_DIR" && \
+       LIMIT="$limit_arg" SLEEP_MS="$sleep_arg" \
+       npx tsx scripts/skills-backfill-embeddings.ts)
+      ;;
+
+    # `retrieve` subcommand lands in Phase 3 Bundle 2 alongside
+    # src/skills/retrieval.ts. Intentionally absent in B1 to avoid
+    # operator confusion if invoked between B1 and B2 deploys.
+
+    ""|help|--help|-h)
+      echo "Usage: mc-ctl skills SUBCOMMAND"
+      echo ""
+      echo "Subcommands:"
+      echo "  list                                              (default — first-party catalog + DB skills)"
+      echo "  backfill-embeddings [--limit=N] [--sleep-ms=N]"
+      echo "      Compute description embeddings for skills missing them."
+      ;;
+
+    *)
+      echo -e "${RED}Unknown skills subcommand:${NC} $sub"
+      echo "Try: mc-ctl skills help"
+      return 2
+      ;;
+  esac
+}
+
 cmd_hindsight_status() {
   echo -e "${BOLD}=== Hindsight Status ===${NC}"
   echo ""
@@ -1936,64 +2040,10 @@ cmd_mcp_token() {
 # Skills (v7.6 Spine 5)
 # ---------------------------------------------------------------------------
 
-cmd_skills() {
-  local subcmd="${1:-list}"
-  case "$subcmd" in
-    list)
-      echo -e "${BOLD}=== Skills ===${NC}"
-      echo ""
-      echo -e "${BOLD}First-party catalog${NC} (src/skills/catalog.ts):"
-      # Render the catalog from TS via tsx so the CLI never duplicates the
-      # registry. stderr is captured (not suppressed) so a real failure
-      # surfaces actionable diagnostics — round-1 audit M2 fix.
-      local render_script render_err
-      render_script="import { listFirstPartySkills, groupFirstPartySkillsBySource } from './src/skills/catalog.ts';
-const grouped = groupFirstPartySkillsBySource();
-for (const [src, list] of Object.entries(grouped)) {
-  console.log('  [' + src + ']');
-  for (const s of list) console.log('    ' + s.surface.padEnd(34) + ' — ' + s.label);
-}
-console.log('  ' + '-'.repeat(60));
-console.log('  total: ' + listFirstPartySkills().length);"
-      local render_log render_failed=0
-      render_log=$(mktemp)
-      if ! ( cd "$PROJECT_DIR" && npx --no-install tsx -e "$render_script" 2>"$render_log" ); then
-        echo -e "  ${YELLOW}(catalog render failed)${NC}"
-        if [ -s "$render_log" ]; then
-          head -5 "$render_log" | sed "s/^/  /"
-        fi
-        render_failed=1
-      fi
-      rm -f "$render_log"
-      echo ""
-      if [ -f "$DB_PATH" ]; then
-        echo -e "${BOLD}DB-saved skills${NC} (skills table):"
-        local rows
-        rows=$(sql_raw "SELECT COUNT(*) FROM skills;" 2>/dev/null || echo "0")
-        if [ "$rows" = "0" ]; then
-          echo -e "  ${DIM}(none — populate via skill_save tool)${NC}"
-        else
-          sql "SELECT skill_id, name, active, use_count, success_count
-               FROM skills
-               ORDER BY active DESC, use_count DESC
-               LIMIT 50;"
-        fi
-      else
-        echo -e "  ${DIM}(database not found — run service first)${NC}"
-      fi
-      # Round-2 audit H3: propagate non-zero exit when the catalog render
-      # failed so CI/scripts wrapping `mc-ctl skills` can detect breakage.
-      if [ "$render_failed" -ne 0 ]; then
-        exit 1
-      fi
-      ;;
-    *)
-      echo -e "${RED}Unknown skills subcommand:${NC} $subcmd"
-      echo "  Usage: mc-ctl skills [list]"
-      exit 1
-      ;;
-  esac
-}
+# NOTE: the pre-Phase-3 cmd_skills (list-only) has been folded into the
+# Phase 3 router at the top of this file. This empty block intentionally
+# replaces it — bash takes the last definition, and a duplicate would
+# shadow the merged router.
 
 # ---------------------------------------------------------------------------
 # Routing
@@ -2037,6 +2087,7 @@ case "$cmd" in
   drift)             cmd_drift ;;
   audit-claim)       cmd_audit_claim "$@" ;;
   skill-health)      cmd_skill_health "$@" ;;
+  # `skills)` route is declared earlier (line ~2118); duplicate intentionally removed.
 
   budget)            cmd_budget ;;
 

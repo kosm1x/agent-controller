@@ -35,6 +35,7 @@ import {
   SkillCriticOptions,
   SkillCriticResult,
 } from "./critic.js";
+import { embedAndStoreSkill } from "./embedding.js";
 import type { ParsedSkillFile } from "./frontmatter.js";
 import {
   CreatedBy,
@@ -175,6 +176,32 @@ export async function skillSave(
   }
 
   pointSkillAtVersion(skillId, parsed.frontmatter, outcome.versionId);
+
+  // v7.7 Spine 3 Phase 3: re-embed the description on every accepted
+  // save. Best-effort — embed() returns null on API failure; the row
+  // stays unembedded until the next `mc-ctl skills backfill-embeddings`
+  // run or the next save with a working embedder. Anti-mission compliant:
+  // uses operator-supplied description, does NOT synthesize content.
+  // R1-W2 fold: log the null-return case at info level so an operator
+  // reading `mc-ctl skill-health` later can distinguish "never embedded
+  // by design" (operator opt-out) from "every save coincidentally hit
+  // an outage" (operator-actionable).
+  try {
+    const embedded = await embedAndStoreSkill(skillId, parsed.frontmatter);
+    if (!embedded) {
+      console.info(
+        "[skills:lifecycle] embedding skipped (embed returned null — check EMBEDDING_KEY/EMBEDDING_PROVIDER):",
+        { skillId, name: parsed.frontmatter.name },
+      );
+    }
+  } catch (err) {
+    // Defensive — embedAndStoreSkill swallows network errors already,
+    // but any throw must not flip an accepted save into a failure.
+    console.warn(
+      "[skills:lifecycle] embedding update failed (non-fatal):",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 
   return {
     ok: true,

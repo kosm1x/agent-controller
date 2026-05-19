@@ -1,10 +1,11 @@
 # V8 Substrate S5 — Implementation Delta vs. Spec
 
-> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 (B1+B2) ✅; Phases 3-5 pending.
+> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 Bundle 1 of 2 ✅; B2 + Phases 4-5 pending.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
 > **Phase 1 commit**: `422d985`
 > **Phase 2 Bundle 1 commit**: `5866f49`
 > **Phase 2 Bundle 2 commit**: `acfbdfd`
+> **Phase 3 Bundle 1 commit**: `<this commit>`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
@@ -31,6 +32,15 @@ Already shipped from earlier work:
 
 - `src/db/skills.ts` — CRUD on `skills` table (67 live rows). Continues to work via DEFAULT values on the new ALTER'd columns; no breaking change.
 - `src/skills/catalog.ts` — v7.6 Spine 5's frozen first-party catalog (HTML compose + SVG diagram = 6 skills). Separate layer from DB skills; not affected by Spine 3.
+
+Shipped in v7.7 Spine 3 Phase 3 Bundle 1:
+
+- Schema: additive `ALTER TABLE skills ADD COLUMN description_embedding BLOB` (idempotent PRAGMA-check).
+- `src/skills/embedding.ts`: `composeEmbeddingText` (spec §6) + `embedAndStoreSkill` + `loadSkillEmbedding`. Reuses `src/memory/embeddings.ts` primitives — no new dep.
+- `src/skills/lifecycle.ts` wire: after `pointSkillAtVersion`, calls `embedAndStoreSkill`. Null-return info-logged so operator can distinguish API unavailability from "no saves yet" (R1-W2 fold).
+- `src/skills/backfill-embeddings.ts`: operator-triggered idempotent backfill with `{limit?, sleepMs?, onProgress?}` options. Returns `{considered, embedded, skipped, errors[]}`.
+- `scripts/skills-backfill-embeddings.ts`: tsx-resolvable script bridge for the bash wrapper (R1-C2 fold — original `npx tsx -e` inline failed because tsx `-e` doesn't auto-resolve `.js → .ts`).
+- `mc-ctl skills`: dispatcher merged with pre-existing list-only `cmd_skills` (R1-C1 fold). Subcommands: `list` (default) / `backfill-embeddings [--limit=N] [--sleep-ms=N]` / `help`. `--limit=0` explicitly rejected (R1-W3 fold). `retrieve` subcommand deferred to B2 per anti-confusion discipline.
 
 Shipped in v7.7 Spine 3 Phase 2 Bundle 2:
 

@@ -605,6 +605,16 @@ export function initDatabase(dbPath: string): Database.Database {
   if (!skillColNames.has("registry_sha")) {
     _db.exec("ALTER TABLE skills ADD COLUMN registry_sha TEXT");
   }
+  // v7.7 Spine 3 Phase 3: vector retrieval. Per spec §6, description +
+  // trigger_examples concatenated and embedded into the skills row's
+  // BLOB column. JS-based cosine over BLOBs for Phase 3 — sqlite-vec
+  // virtual table deferred (additive future; current scale is 67 rows).
+  // Dim matches `src/memory/embeddings.ts:EMBED_DIMS` (Gemini 1536d
+  // by default). Backfill is operator-triggered via `mc-ctl skills
+  // backfill-embeddings`.
+  if (!skillColNames.has("description_embedding")) {
+    _db.exec("ALTER TABLE skills ADD COLUMN description_embedding BLOB");
+  }
 
   // skill_versions — write-only history. Natural key (skill_id, version).
   // INSERT OR IGNORE on (skill_id, version) collision; body drift on the
