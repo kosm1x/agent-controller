@@ -54,6 +54,9 @@ import {
 } from "./builtin/memory.js";
 // Tools registered by SkillsToolSource.
 import { skillSaveTool, skillListTool } from "./builtin/skills.js";
+import { skillDescribeTool } from "./builtin/skill-describe.js";
+import { skillLoadTool } from "./builtin/skill-load.js";
+import { skillRunTool } from "./builtin/skill-run.js";
 
 function makeTool(name: string, opts?: { deferred?: boolean }): Tool {
   return {
@@ -272,6 +275,10 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // SkillsToolSource — always available
     skillSaveTool,
     skillListTool,
+    // v7.7 Spine 3 Phase 4 B2: dispatch surface (L1/L2/execute trio)
+    skillDescribeTool,
+    skillLoadTool,
+    skillRunTool,
   ];
 
   it("every production tool has all 4 MCP hints explicitly set (no defaults)", () => {
@@ -368,6 +375,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // regex-source guards used in earlier spines.
     // 2026-05-15: 186 → 188 (queue #17 — batch_write + batch_delete added).
     // 2026-05-19: 188 → 189 (v7.7 Spine 1 Phase 2a — submit_report added).
-    expect(ALL_TOOLS.length).toBe(189);
+    // 2026-05-19: 189 → 192 (v7.7 Spine 3 Phase 4 B2 — skill_describe +
+    //                        skill_load + skill_run added per spec §7 L1/L2/exec).
+    expect(ALL_TOOLS.length).toBe(192);
   });
 });

@@ -1,6 +1,6 @@
 # V8 Substrate S5 — Implementation Delta vs. Spec
 
-> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 ✅ (B1+B2); Phases 4-5 pending.
+> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 ✅; Phase 3 ✅ (B1+B2); Phase 4 ✅ (B1+B2); Phase 5 pending.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
 > **Phase 1 commit**: `422d985`
 > **Phase 2 Bundle 1 commit**: `5866f49`
@@ -176,9 +176,61 @@ Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (c
 
 **P3 queue items added** (`docs/planning/next-sessions-queue.md`): S5-P4-B1-W1 (consecutive_failures unbounded auto-archive), S5-P4-B1-W2 (chained-dispatch cycle test for Phase 5), S5-P4-B1-R1 (env-override MAX_SKILL_CALL_DEPTH), S5-P4-B1-R2 (counter-increment regression test), S5-P4-B1-I1 (`resolution='self_recovered'` enum extension — batches with S5-P2-I1 for v8.0 schema reset).
 
-**What's left in Phase 4**:
+**What's left in Phase 4**: nothing — B2 ships next and closes Phase 4 (see §6.2).
 
-- Bundle 2: 3 deferred builtin tools (`skill_describe`/`skill_load`/`skill_run`) + ToolSource registration in `src/tools/sources/skills.ts` — wraps the dispatcher in the LLM-callable surface. Estimated ~1.5h.
+---
+
+## §6.2 — Phase 4 Bundle 2 + Phase 4 closure (2026-05-19)
+
+**Commit**: `<this commit>` — 3 deferred builtin tools + ToolSource registration. Closes Phase 4.
+
+**Shipped surfaces**:
+
+- `src/tools/builtin/skill-describe.ts` — L1 metadata tool. Returns `{ok, skill?: {name, description, version, inputs[], output_type, is_certified, active, use_count, success_count, consecutive_failures, last_test_run_at, last_used}}`. `deferred:true readOnlyHint:true idempotentHint:true`.
+- `src/tools/builtin/skill-load.ts` — L2 view tool. Returns L1 + `{body, trigger_examples[], tools_used[], version_is_current}`. Supports explicit `version` arg with proper version-not-found / dangling-pointer envelopes. C2 audit fold added `version_is_current` so callers can scope `is_certified` correctly. `deferred:true readOnlyHint:true idempotentHint:true`.
+- `src/tools/builtin/skill-run.ts` — thin wrapper over `runSkill` from B1's dispatcher. Validates `name` + `args` envelope; surfaces a uniform JSON envelope: success → `{ok:true, output, durationMs}`, failure → `{ok:false, errorClass, errorDetail, durationMs}`. `deferred:true destructiveHint:true openWorldHint:true riskTier:medium`.
+- `src/tools/sources/skills.ts` — manifest bump to 1.1.0; registers 5 tools (skill_save + skill_list legacy + the new L1/L2/exec trio).
+- `src/tools/registry.test.ts` — ALL_TOOLS production invariant set extended with the 3 new tools; expected count 189 → 192 (audit trail comment added).
+
+**Spec compliance**:
+
+- §7 L1/L2/execute disclosure ladder: ✅ implemented as 3 separate deferred tools
+- §11 Mode 2 callable tools: ✅ all 3 tools `deferred:true` per the spec's prompt-token-budget invariant. Per `feedback_tool_deferral.md`, deferring saves ~52% prompt tokens — load-bearing on a 192-tool registry
+
+**R1 audit folds (in-bundle)**:
+
+- **C1 args strictness clarity**: tool description now explains "unknown keys are rejected; for `inputs: []` skills pass `args: {}`" — regression test added
+- **C2 per-version certification semantics**: `version_is_current` field added to L2 payload; 2 regression tests (explicit current/non-current branches)
+- **W1 description honesty**: dropped "certified" claim from skill_run USE WHEN; matches dispatcher's active-only gate
+- **W3 safeParse signature**: tightened return type from `T | unknown` to `T`; regression test pins fallback
+- **W4 query consolidation**: skill_describe now issues 2 SELECTs instead of 3 (folded inputs_json into extras)
+
+**R1 audit findings rejected (auditor self-corrected)**:
+
+- **W2 idempotentHint=true on describe**: MCP spec says idempotentHint describes the call's side effects, not result stability. describe has no side effects → flag is correct. No fold.
+- **W6 \_callStack escape hatch**: `_callStack` is intentionally NOT in the tool JSON schema. Phase 5 in-process recursion (when a skill body calls another skill) MUST go through `runSkill()` directly, not `skillRunTool.execute()`. The tool surface is LLM-facing only.
+
+**P3 queue items added** (`docs/planning/next-sessions-queue.md`):
+
+- S5-P4-B2-W5 (skill_load body excerpt mode — measure cost first)
+- S5-P4-B2-R2 (version_pointer_dangling test — defensive branch unreachable via lifecycle)
+- S5-P4-B2-R3 (rename internal errorClass strings on public channels — when community-manager scope gets skill_run access)
+
+**Phase 4 cumulative scoreboard**:
+
+| Metric                   | B1     | B2     | Phase 4 total |
+| ------------------------ | ------ | ------ | ------------- |
+| LOC                      | +1450  | +810   | **+2260**     |
+| Tests                    | +37    | +27    | **+64**       |
+| R1 verdict               | PASS-W | PASS-W | —             |
+| Folds in-bundle          | 4      | 5      | **9**         |
+| Queued P3 items          | 5      | 3      | **8**         |
+| Pre-existing-bug catches | 1      | 0      | **1**         |
+| Production regressions   | 0      | 0      | **0**         |
+
+**Live deploy verification**: `[mc] Tool source "skills" initialized (5 tools)` in boot log (2026-05-19 20:53 UTC). All 3 new tools registered alongside skill_save + skill_list.
+
+**What's next**: Phase 5 — operator surface (`mc-ctl skills certify|archive|test`) + the activation gate (≥5 certified skills with green tests in last 7 days). Authoring those 5 production skill bodies is the gating work; the substrate is complete.
 
 ---
 
