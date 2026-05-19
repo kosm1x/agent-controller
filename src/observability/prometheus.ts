@@ -531,6 +531,41 @@ export function recordSkillTestResult(result: string): void {
   skillsTestRunsTotal.inc({ result: bucket });
 }
 
+// v7.7 Spine 3 Phase 4 Bundle 1: skill_run outcomes by skill name + result.
+// `name` is open cardinality (one bucket per distinct skill name); we
+// cap potential explosion via the closed result allowlist + the
+// skill-name length cap from frontmatter (≤64 chars). Operators with
+// >1k distinct skills would need a separate aggregation strategy, but
+// the V8.0 activation gate ceiling is "≥5 certified" — single-digit
+// real-world cardinality through the V8.x horizon.
+const skillsRunsTotal = new client.Counter({
+  name: "mc_skills_run_total",
+  help: "S5 skill_run outcomes by skill name + result class",
+  labelNames: ["name", "result"] as const,
+});
+
+const KNOWN_SKILL_RUN_RESULTS = new Set([
+  "ok",
+  "skill_not_found",
+  "skill_inactive",
+  "no_active_version",
+  "input_validation",
+  "cycle_detected",
+  "tool_unavailable",
+  "wrong_output",
+  "timeout",
+  "other",
+]);
+
+export function recordSkillRun(name: string, result: string): void {
+  const bucket = KNOWN_SKILL_RUN_RESULTS.has(result) ? result : "other";
+  // Defensive: clip absurdly long names to the frontmatter cap so a
+  // dispatcher call with a malformed `name` argument can't leak unbounded
+  // label cardinality into prom-client.
+  const safeName = String(name).slice(0, 64);
+  skillsRunsTotal.inc({ name: safeName, result: bucket });
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {

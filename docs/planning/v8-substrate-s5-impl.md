@@ -151,6 +151,37 @@ Substrate-availability: Phase 2 unblocks `s5_skill_failure_rate` drift signal (c
 
 ---
 
+---
+
+## §6.1 — Phase 4 Bundle 1 closure (2026-05-19)
+
+**Commit**: `<this commit>` — dispatcher + inputs schema + mini-runner extract + cycle detection + Prom counter.
+
+**Shipped surfaces**:
+
+- `src/skills/inputs.ts` — `buildArgsSchema(inputs_json)` builds a runtime Zod schema from the frontmatter inputs[] declaration. 7 supported types (`string|number|integer|boolean|enum|object|array`). `.strict()` rejects unknown args.
+- `src/skills/mini-runner.ts` — shared `runSkillPrompt(body, payload, options)` extracted from Phase 2 B2's `test-runner.ts`. Both the test-runner AND the new dispatcher use this; first-instruction-wins `RUNNER_PREFIX` + JSON-only contract + override-detection clause. C1 audit fold lifted `MiniRunUsage` (promptTokens/completionTokens/model) into the return shape so the dispatcher can write real spend to cost_ledger.
+- `src/skills/dispatcher.ts` — `runSkill(name, args, options): SkillRunResult`. Resolves `current_version_id` → validates args via `validateSkillArgs` → runs mini-runner → updates `skills.use_count|success_count|consecutive_failures|last_used|last_failure_at` → writes `skill_failures` (CHECK-enum mapped) → writes `cost_ledger` (`agent_type='skill:<name>'`, real tokens, UUID taskId fallback) → resolves open failures as recovery → bumps `mc_skills_run_total{name, result}` counter.
+- `src/skills/test-runner.ts` — refactored to use `runSkillPrompt` from the shared module. Mini-runner status → TestRunOutcome mapping (ok/empty/unparseable/timeout/error). 17 test-runner tests still pass post-refactor.
+- `src/observability/prometheus.ts` — `mc_skills_run_total{name, result}` Counter + `recordSkillRun()`. 10 closed-cardinality result classes (`ok | skill_not_found | skill_inactive | no_active_version | input_validation | cycle_detected | tool_unavailable | wrong_output | timeout | other`). Defensive name clip to 64 chars.
+
+**Spec compliance**:
+
+- §7 `skill_run(name, args, options)`: ✅ implemented
+- §10 anti-list write path: ✅ `consecutive_failures` increments on dispatcher-side failure; `skill_failures` row written. **Schema gap**: `resolution='self_recovered'` is in spec but NOT in Phase 1 CHECK enum (`reverted_version | fixed_in_new_version | archived | NULL`). Workaround: `resolved_at` set, `resolution` NULL. Tracked **S5-P4-B1-I1** for v8.0 schema reset.
+- §12 S4 alignment: ✅ `cost_ledger` row with `agent_type='skill:<name>'` written per dispatch. C1 audit fold ensured real prompt_tokens + completion_tokens from `MiniRunUsage` land in the row (not 0/0 as the first draft did).
+- §15 Q4 cycle detection: ✅ `MAX_SKILL_CALL_DEPTH = 3`, `_callStack` reject path; **caveat**: Phase 4 doesn't ship body-side recursion, so the contract isn't externally exercised yet. W2 queued for the Phase 5 contract test.
+
+**R1 audit folds (in-bundle)**: C1 cost-ledger real-tokens regression + UUID taskId; W3 `skill_corrupt` errorClass split (corrupt inputs_json doesn't burn anti-list); W5 `safeJson` keys fallback; S1 test rename. R2 SKIPPED with documented rationale (C1 fold is contained data-flow change pinned by regression).
+
+**P3 queue items added** (`docs/planning/next-sessions-queue.md`): S5-P4-B1-W1 (consecutive_failures unbounded auto-archive), S5-P4-B1-W2 (chained-dispatch cycle test for Phase 5), S5-P4-B1-R1 (env-override MAX_SKILL_CALL_DEPTH), S5-P4-B1-R2 (counter-increment regression test), S5-P4-B1-I1 (`resolution='self_recovered'` enum extension — batches with S5-P2-I1 for v8.0 schema reset).
+
+**What's left in Phase 4**:
+
+- Bundle 2: 3 deferred builtin tools (`skill_describe`/`skill_load`/`skill_run`) + ToolSource registration in `src/tools/sources/skills.ts` — wraps the dispatcher in the LLM-callable surface. Estimated ~1.5h.
+
+---
+
 ## §7 — Cross-references
 
 - Spec: `docs/planning/v8-substrate-s5-spec.md`
