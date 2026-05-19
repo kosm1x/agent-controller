@@ -1,9 +1,10 @@
 # V8 Substrate S5 — Implementation Delta vs. Spec
 
-> **Status**: Active spine (v7.7 Spine 3). Phase 1 of 5 complete; Phase 2 Bundle 1 of 2 complete; Phase 2 Bundle 2 + Phases 3-5 pending.
+> **Status**: Active spine (v7.7 Spine 3). Phase 1 ✅; Phase 2 (B1+B2) ✅; Phases 3-5 pending.
 > **Authored**: 2026-05-19 · **Spec**: `docs/planning/v8-substrate-s5-spec.md`
 > **Phase 1 commit**: `422d985`
 > **Phase 2 Bundle 1 commit**: `5866f49`
+> **Phase 2 Bundle 2 commit**: `<this commit>`
 
 Read this alongside the spec. The spec is _intent_; this is _delivered_. Where they diverge, this document explains _why_. The doc is rewritten on each phase close, accumulating the running ledger.
 
@@ -13,7 +14,7 @@ Read this alongside the spec. The spec is _intent_; this is _delivered_. Where t
 
 | Aspect                      | Spec said                             | Shipped as                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Effort                      | ~10 days across 5 phases              | Phase 1: ~1h (single bundle); Phase 2 Bundle 1: ~2h; Bundle 2 + Phases 3-5 pending                                                                                                                                                                                                                                                                          |
+| Effort                      | ~10 days across 5 phases              | Phase 1: ~1h; Phase 2 B1: ~2h; Phase 2 B2: ~3h (incl. R1 FAIL→fold→R2 PASS); Phases 3-5 pending                                                                                                                                                                                                                                                             |
 | Frontmatter format          | YAML mirror of DATAGEN                | YAML-subset (scalar k/v + string arrays + comments). Complex shapes (`inputs[]`, `tests[]`) JSON-encoded into `*_json` string fields validated via Zod `.refine()`. Real YAML parsers can still read this — we just write a strict subset until/unless `yaml` dep is approved.                                                                              |
 | Schema                      | ALTER skills (10 cols) + 3 new tables | Same (P1) — 10 additive `ALTER TABLE skills ADD COLUMN`, plus `skill_versions` / `skill_test_runs` / `skill_failures`. All additive; safe on 67 existing rows.                                                                                                                                                                                              |
 | Embeddings                  | qwen3-embedding-coder, dim=1024       | Phase 3 work — not shipped in P1                                                                                                                                                                                                                                                                                                                            |
@@ -30,6 +31,13 @@ Already shipped from earlier work:
 
 - `src/db/skills.ts` — CRUD on `skills` table (67 live rows). Continues to work via DEFAULT values on the new ALTER'd columns; no breaking change.
 - `src/skills/catalog.ts` — v7.6 Spine 5's frozen first-party catalog (HTML compose + SVG diagram = 6 skills). Separate layer from DB skills; not affected by Spine 3.
+
+Shipped in v7.7 Spine 3 Phase 2 Bundle 2:
+
+- Test runner (`src/skills/test-runner.ts`): mini-LLM executor that bypasses Phase 4's ToolSource. For each `tests_json` entry, sends `system=RUNNER_PREFIX + body, user=test.input`, parses JSON output, matches against `expect.output_match` (deep partial) OR `expect_error.{class, detail_contains}`. Writes per-test rows to `skill_test_runs`; bumps `mc_skills_test_runs_total{result}`. Flips `skills.is_certified` on aggregate. Caller-abort preserves existing certification (R1-W1).
+- Test sweep (`src/skills/test-sweep.ts`): node-cron `0 2,8,14,20 * * *` Mexico City. Iterates `is_certified=1 AND active=1 AND current_version_id IS NOT NULL`, runs tests, reaffirms or decertifies. Per-skill try/catch keeps the sweep alive on single-skill failures. Boot wire in `src/index.ts` with `JARVIS_SKILLS_TEST_SWEEP_DISABLED` env gate.
+- Prom counter (`src/observability/prometheus.ts`): `mc_skills_test_runs_total{result}` with closed cardinality (pass|fail|error|timeout).
+- Operator surface (`mc-ctl skill-health`): subcommand showing certification state + recent passes/fails + consecutive_failures + override summary + activation gate snapshot (spec §14). Regex-sanitized `--name=` filter against SQL injection (R1-C1).
 
 Shipped in v7.7 Spine 3 Phase 2 Bundle 1:
 

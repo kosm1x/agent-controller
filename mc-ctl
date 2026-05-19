@@ -965,6 +965,145 @@ cmd_audit_claim() {
   return $rc
 }
 
+cmd_skill_health() {
+  # v7.7 Spine 3 Phase 2 Bundle 2 — operator-facing skill catalog health.
+  # Reports: certification state, last test run, recent pass/fail counts,
+  # anti-list status (consecutive_failures), critic override count.
+  #
+  # Usage: mc-ctl skill-health [--window=7d] [--name=NAME] [--include-inactive]
+  #   --window           = freshness window for "recent passes/fails" (default 7d)
+  #   --name             = filter to one skill by name
+  #   --include-inactive = include active=0 rows in output
+
+  local window="7d" name_filter="" include_inactive=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --window=*)          window="${1#*=}" ;;
+      --name=*)            name_filter="${1#*=}" ;;
+      --include-inactive)  include_inactive=1 ;;
+      *)
+        echo -e "${RED}Unknown flag:${NC} $1"
+        echo "  Usage: mc-ctl skill-health [--window=7d] [--name=NAME] [--include-inactive]"
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  # R1-C1 fold: validate --name= against the same regex skill names must
+  # already match (frontmatter.ts NAME_RE: lowercase + hyphens). Prevents
+  # SQL injection through the HEREDOC's literal interpolation below — the
+  # sqlite3 CLI doesn't bind parameters via HEREDOC, so we sanitize at
+  # the entry boundary instead.
+  if [ -n "$name_filter" ]; then
+    # R2-W1 verify-then-revert: the 67 legacy DB skills (pre-Phase-1) have
+    # underscores in names (e.g. `health_check`, `commit_push_y_ejecutar_shell`)
+    # because they predate the frontmatter NAME_RE enforcement. The bash
+    # filter is INTENTIONALLY a superset of frontmatter NAME_RE so the CLI
+    # can inspect legacy skills. The character class is a safe sanitizer
+    # against SQL injection regardless of which subset matches in practice.
+    if [[ ! "$name_filter" =~ ^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$ ]]; then
+      echo -e "${RED}Invalid --name:${NC} must be lowercase + hyphens/underscores (2-64 chars)"
+      return 2
+    fi
+  fi
+
+  # SQLite datetime modifier — accept Nh|Nd|Nm and translate.
+  local sqlite_window
+  case "$window" in
+    *h) sqlite_window="-$((${window%h})) hours" ;;
+    *d) sqlite_window="-${window%d} days" ;;
+    *m) sqlite_window="-${window%m} months" ;;
+    *)
+      echo -e "${RED}Invalid --window:${NC} $window (use Nh|Nd|Nm, e.g. 7d)"
+      return 2
+      ;;
+  esac
+
+  local where="WHERE 1=1"
+  [ $include_inactive -eq 0 ] && where="$where AND s.active = 1"
+  [ -n "$name_filter" ] && where="$where AND s.name = '$name_filter'"
+
+  echo -e "${BOLD}=== Skill Health (window: ${window}) ===${NC}"
+  echo ""
+
+  # Joined query: per-skill aggregate of skill_test_runs in the window.
+  # COALESCE handles skills with zero test runs (never certified).
+  # `-column -header` formats with auto-width; widths capped via substr.
+  sqlite3 -column -header "$DB_PATH" <<SQL
+SELECT
+  substr(s.name, 1, 32) AS name,
+  s.version AS version,
+  CASE WHEN s.is_certified = 1 THEN 'YES' ELSE 'no' END AS certified,
+  COALESCE(stats.recent_total, 0) AS recent,
+  COALESCE(stats.pass_count, 0) AS passes,
+  COALESCE(stats.fail_count, 0) AS fails,
+  s.consecutive_failures AS failstrk
+FROM skills s
+LEFT JOIN (
+  SELECT
+    skill_id,
+    COUNT(*) AS recent_total,
+    SUM(CASE WHEN result = 'pass' THEN 1 ELSE 0 END) AS pass_count,
+    SUM(CASE WHEN result <> 'pass' THEN 1 ELSE 0 END) AS fail_count
+  FROM skill_test_runs
+  WHERE ran_at >= datetime('now', '$sqlite_window')
+  GROUP BY skill_id
+) stats ON stats.skill_id = s.skill_id
+$where
+ORDER BY s.is_certified DESC, COALESCE(stats.fail_count, 0) DESC, s.name ASC
+LIMIT 200;
+SQL
+
+  echo ""
+
+  # Override (operator-bypassed) summary
+  local overrides
+  overrides=$(sqlite3 "$DB_PATH" <<SQL
+SELECT COUNT(*) FROM skill_versions
+WHERE critic_verdict = 'fail_returned_anyway'
+  AND created_at >= datetime('now', '$sqlite_window');
+SQL
+)
+  if [ "${overrides:-0}" -gt 0 ]; then
+    echo -e "${YELLOW}⚠ ${overrides} operator override(s) within ${window}:${NC}"
+    sqlite3 "$DB_PATH" <<SQL
+SELECT
+  '  - ' || s.name || ' v' || v.version ||
+  ' (' || substr(v.critic_critique, 1, 80) || ')' AS line
+FROM skill_versions v
+JOIN skills s ON s.skill_id = v.skill_id
+WHERE v.critic_verdict = 'fail_returned_anyway'
+  AND v.created_at >= datetime('now', '$sqlite_window')
+ORDER BY v.created_at DESC
+LIMIT 10;
+SQL
+    echo ""
+  fi
+
+  # Activation gate snapshot (spec §14).
+  # R1-W3 fold: spec §14 requires `recent_passes >= test_count` per skill
+  # within 7d, not just the is_certified flag. Tighten the count to skills
+  # that also have at least one passing test run in the last 7 days — if
+  # sweep is paused or fails, stale certifications stop counting.
+  local certified_count
+  certified_count=$(sqlite3 "$DB_PATH" \
+    "SELECT COUNT(*) FROM skills s
+     WHERE s.is_certified = 1 AND s.active = 1
+       AND EXISTS (
+         SELECT 1 FROM skill_test_runs r
+         WHERE r.skill_id = s.skill_id
+           AND r.result = 'pass'
+           AND r.ran_at >= datetime('now','-7 days')
+       );")
+  echo -e "${BOLD}Activation gate:${NC} ${certified_count} of ≥5 certified active skills (spec §14)"
+  if [ "${certified_count:-0}" -ge 5 ]; then
+    echo -e "  ${GREEN}✓ Activation gate met${NC}"
+  else
+    echo -e "  ${YELLOW}△ Below activation threshold${NC} ($(( 5 - certified_count )) more needed)"
+  fi
+}
+
 cmd_hindsight_status() {
   echo -e "${BOLD}=== Hindsight Status ===${NC}"
   echo ""
@@ -1897,6 +2036,7 @@ case "$cmd" in
   recall-compare)    cmd_recall_compare "$@" ;;
   drift)             cmd_drift ;;
   audit-claim)       cmd_audit_claim "$@" ;;
+  skill-health)      cmd_skill_health "$@" ;;
 
   budget)            cmd_budget ;;
 

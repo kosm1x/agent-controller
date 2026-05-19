@@ -273,6 +273,25 @@ async function main(): Promise<void> {
       );
     });
 
+  // v7.7 Spine 3 Phase 2 Bundle 2: register skill test sweep cron.
+  // Every 6h re-runs tests against is_certified=1 active skills;
+  // decertifies on any failure. Non-fatal if registration fails.
+  if (process.env.JARVIS_SKILLS_TEST_SWEEP_DISABLED !== "true") {
+    import("./skills/test-sweep.js")
+      .then(({ registerSkillsTestSweepCron }) =>
+        registerSkillsTestSweepCron({
+          info: (msg, fields) => log.info(fields ?? {}, msg),
+          warn: (msg, fields) => log.warn(fields ?? {}, msg),
+        }),
+      )
+      .catch((err) => {
+        log.warn(
+          { err },
+          "[skills] Test sweep cron registration failed (non-fatal)",
+        );
+      });
+  }
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 

@@ -514,6 +514,23 @@ export function recordCommunityGateVerdict(verdict: string): void {
   communityGateVerdictTotal.inc({ verdict: bucket });
 }
 
+// v7.7 Spine 3 Phase 2 Bundle 2: skill test outcomes bucketed by result.
+// One label `result` with closed cardinality (pass | fail | error | timeout).
+// Bumped per skill_test_runs row write by the test-runner. The cron-sweep
+// reads the same delta to detect decertification events.
+const skillsTestRunsTotal = new client.Counter({
+  name: "mc_skills_test_runs_total",
+  help: "S5 skill test outcomes bucketed by result",
+  labelNames: ["result"] as const,
+});
+
+const KNOWN_SKILL_TEST_RESULTS = new Set(["pass", "fail", "error", "timeout"]);
+
+export function recordSkillTestResult(result: string): void {
+  const bucket = KNOWN_SKILL_TEST_RESULTS.has(result) ? result : "error";
+  skillsTestRunsTotal.inc({ result: bucket });
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {
