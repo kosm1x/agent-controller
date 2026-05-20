@@ -15,6 +15,7 @@ import {
   reconcileOrphanedTasks,
 } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
+import { seedReflectionCursors } from "./reflection/cursors.js";
 import { createApp } from "./api/index.js";
 import {
   startRitualScheduler,
@@ -84,6 +85,10 @@ async function main(): Promise<void> {
   // Initialize database
   const db = initDatabase(config.dbPath);
   log.info({ path: config.dbPath }, "database initialized");
+
+  // V8.1 Phase 4: ensure the named reflection cursors exist from boot so the
+  // table is observable before the first reflection pass. Idempotent.
+  seedReflectionCursors();
 
   // Dim-4 R3 fix: reconcile orphaned tasks from prior non-graceful shutdown.
   // Graceful SIGTERM/SIGINT already marks running/pending/queued → failed

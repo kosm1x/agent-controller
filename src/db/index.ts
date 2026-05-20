@@ -815,6 +815,18 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_operator_profile_member ON operator_profile(cohort_member_id)",
   );
 
+  // V8.1 Phase 4 (Proactive Context Engine — reflection runner). Bounded-diff
+  // cursors: each reflection pass reads only events after its cursor, never
+  // "all memory" (Letta pattern). `last_event_id` anchors on `tasks.id`
+  // (INTEGER PK). See docs/planning/v8-capability-1-spec.md §7. The named
+  // cursor rows are seeded idempotently by `seedReflectionCursors()`
+  // (src/reflection/cursors.ts), called at startup.
+  _db.exec(`CREATE TABLE IF NOT EXISTS reflection_cursors (
+    cursor_name   TEXT PRIMARY KEY,
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
