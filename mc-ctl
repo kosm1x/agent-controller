@@ -43,6 +43,16 @@ api_key() {
   grep -oP '(?<=MC_API_KEY=).*' "$env_file" | tr -d '"' | tr -d "'"
 }
 
+# Extract a single value from .env WITHOUT sourcing it. Sourcing .env under
+# this script's `set -u` aborts on any value containing a `$N` token, and
+# would also mangle values with `$`. Non-fatal: prints empty if .env or the
+# key is absent (callers degrade gracefully). Mirrors api_key()'s grep style.
+env_value() {
+  local key="$1" env_file="${PROJECT_DIR}/.env"
+  [ -f "$env_file" ] || return 0
+  grep -oP "(?<=^${key}=).*" "$env_file" 2>/dev/null | head -1 | tr -d '"' | tr -d "'"
+}
+
 api() {
   local method="$1" path="$2"
   shift 2
@@ -2369,12 +2379,15 @@ cmd_events() {
       echo -e "${BOLD}=== Retrieving general events ===${NC}"
       [ -n "$query" ] && echo -e "${DIM}query:${NC} ${query}"
       echo ""
-      # retrieve embeds the query (Gemini) — needs GEMINI_API_KEY from .env.
-      # Source .env only if present; do NOT swallow source errors, so a
-      # malformed .env fails loudly instead of looking like a missing key
-      # (R1-W3 fold).
-      ( cd "$PROJECT_DIR" && { [ -f ./.env ] && { set -a && . ./.env && set +a; }; } ; \
-        MODE=retrieve QUERY="$query" K="$k_arg" npx --no-install tsx scripts/events-ctl.ts )
+      # retrieve embeds the query (Gemini) — needs GEMINI_API_KEY. Extract
+      # the one key via env_value() rather than sourcing .env (R1-W3 fold:
+      # sourcing aborts under `set -u` on .env values containing `$N`). An
+      # empty key degrades gracefully (recency ranking).
+      local gem_key
+      gem_key=$(env_value GEMINI_API_KEY)
+      ( cd "$PROJECT_DIR" && \
+        GEMINI_API_KEY="$gem_key" MODE=retrieve QUERY="$query" K="$k_arg" \
+        npx --no-install tsx scripts/events-ctl.ts )
       ;;
 
     aggregate)
@@ -2406,10 +2419,14 @@ cmd_events() {
         shift
       done
       echo -e "${BOLD}=== Seeding general events (${seed_mode}) ===${NC}"
-      # seed embeds each summary (Gemini) — needs GEMINI_API_KEY. Source
-      # .env only if present; surface a malformed .env loudly (R1-W3 fold).
-      ( cd "$PROJECT_DIR" && { [ -f ./.env ] && { set -a && . ./.env && set +a; }; } ; \
-        MODE="$seed_mode" npx --no-install tsx scripts/general-events-seed.ts )
+      # seed embeds each summary (Gemini) — needs GEMINI_API_KEY. Extract the
+      # one key via env_value() rather than sourcing .env (R1-W3 fold). An
+      # empty key still stores events, just without embeddings.
+      local seed_gem_key
+      seed_gem_key=$(env_value GEMINI_API_KEY)
+      ( cd "$PROJECT_DIR" && \
+        GEMINI_API_KEY="$seed_gem_key" MODE="$seed_mode" \
+        npx --no-install tsx scripts/general-events-seed.ts )
       ;;
 
     ""|help|--help|-h)
