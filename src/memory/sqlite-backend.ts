@@ -17,6 +17,9 @@ import {
 } from "./embeddings.js";
 import { rerankByCoherence } from "./graph-rerank.js";
 import { recordRetainOutcome } from "../observability/prometheus.js";
+import { logRecall } from "./recall-utility.js";
+import { applyOutcomeBias } from "./outcome-bias.js";
+import { resolveRecallMode } from "./recall-mode.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -135,6 +138,27 @@ export function computeDecayWeight(
 export class SqliteMemoryBackend implements MemoryService {
   readonly backend = "sqlite" as const;
 
+  /**
+   * @param instrument When true (the default), `recall()` applies the
+   *   recall-side outcome bias and writes a `recall_audit` row tagged
+   *   `source='sqlite-primary'`. This is correct ONLY when this backend is
+   *   the top-level memory service — i.e. `HINDSIGHT_ENABLED=false`, the
+   *   current default under the queue #15 demote.
+   *
+   *   Pass `false` for nested use where the caller instruments itself or
+   *   wants raw retrieval:
+   *     - `HindsightMemoryBackend.sqliteFallback` — Hindsight applies
+   *       `applyOutcomeBias` + `logRecall` on top; double-doing it here
+   *       would double-log and double-filter.
+   *     - `recall-compare` — an A/B measurement tool; must not pollute
+   *       `recall_audit`, and compares raw retrieval quality.
+   *
+   *   Before this flag (pre-V8.1 Phase A) `logRecall` fired ONLY from
+   *   `HindsightMemoryBackend`, so under the demote `recall_audit` went
+   *   dormant — no rows since 2026-05-09. See `S6-recall-audit-dormant`.
+   */
+  constructor(private readonly instrument = true) {}
+
   async retain(content: string, options: RetainOptions): Promise<void> {
     try {
       const db = getDatabase();
@@ -179,7 +203,48 @@ export class SqliteMemoryBackend implements MemoryService {
     }
   }
 
+  /**
+   * Public recall entry point.
+   *
+   * When `instrument` is set (this backend is the primary memory service),
+   * wraps the hybrid retrieval with the recall-side outcome bias and a
+   * `recall_audit` row. Otherwise returns raw retrieval — the nested caller
+   * (`HindsightMemoryBackend`, `recall-compare`) instruments itself.
+   */
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
+    if (!this.instrument) {
+      return this.recallHybrid(query, options);
+    }
+
+    // Primary-service path (HINDSIGHT_ENABLED=false). Apply the recall-side
+    // outcome bias — dark under the demote until now because it lived only
+    // in HindsightMemoryBackend — and write the recall_audit row that the
+    // V8.1 correspondence audit + `mc-ctl recall-utility` consume.
+    const start = Date.now();
+    const raw = await this.recallHybrid(query, options);
+    const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
+    logRecall({
+      bank: options.bank,
+      query,
+      source: "sqlite-primary",
+      results: kept,
+      latencyMs: Date.now() - start,
+      excludedCount: excluded,
+      outcomeBreakdown: breakdown,
+      mode: resolveRecallMode(options),
+    });
+    if (excluded > 0) {
+      console.log(
+        `[memory] recall(sqlite-primary) bank=${options.bank} filtered ${excluded} outcome-tagged result(s)`,
+      );
+    }
+    return kept;
+  }
+
+  private async recallHybrid(
+    query: string,
+    options: RecallOptions,
+  ): Promise<MemoryItem[]> {
     try {
       const db = getDatabase();
       const limit = options.maxResults ?? 10;

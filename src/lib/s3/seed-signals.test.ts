@@ -25,7 +25,10 @@ describe("SEED_SIGNALS — static invariants", () => {
     );
     expect(sig).toBeDefined();
     expect(sig!.cadence).toBe("weekly");
-    // Disabled-pending: recall_audit is dormant under the Hindsight demote.
+    // Disabled-pending baseline recalibration. The recall_audit dormancy was
+    // fixed by V8.1 Phase A (logRecall wired into SqliteMemoryBackend); the
+    // signal stays enabled=0 until the baseline is recomputed from fresh
+    // sqlite-primary rows. See S6-recall-audit-dormant / Phase A item 2b.
     expect(sig!.enabled).toBe(0);
   });
 

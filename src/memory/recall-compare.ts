@@ -126,7 +126,14 @@ async function runSqlite(
 ): Promise<CompareSideResult> {
   const start = Date.now();
   try {
-    const sqlite = new SqliteMemoryBackend();
+    // instrument=false: an A/B measurement tool must not write recall_audit
+    // rows. It also deliberately compares RAW retrieval — `runHindsight`
+    // calls the bare HindsightClient (also unbiased), so both sides stay
+    // raw-vs-raw, the symmetric basis for a retriever-quality A/B. Note this
+    // diverges from the live primary recall path, which (as of V8.1 Phase A)
+    // applies coherence-mode outcome bias before returning. That divergence
+    // is intentional here: this tool grades retrievers, not the post-filter.
+    const sqlite = new SqliteMemoryBackend(false);
     const result = await withTimeout(
       sqlite.recall(query, { bank, maxResults: topN * 5 }),
       timeoutMs,

@@ -109,7 +109,10 @@ export class HindsightMemoryBackend implements MemoryService {
     probeInFlight: false,
   };
   private readonly initializedBanks = new Set<string>();
-  private readonly sqliteFallback = new SqliteMemoryBackend();
+  // instrument=false: HindsightMemoryBackend applies applyOutcomeBias +
+  // logRecall on top of the fallback's result itself. A self-instrumenting
+  // fallback would double-log to recall_audit and double-filter outcomes.
+  private readonly sqliteFallback = new SqliteMemoryBackend(false);
 
   constructor(baseUrl: string, apiKey?: string) {
     this.client = new HindsightClient(baseUrl, apiKey);

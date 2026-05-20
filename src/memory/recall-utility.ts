@@ -317,6 +317,7 @@ interface LogRecallInput {
     | "sqlite-fallback"
     | "sqlite-fallback-opt-in"
     | "sqlite-only"
+    | "sqlite-primary"
     | "circuit-open"
     | "bank-disabled"
     | "rerank-opt-out";
