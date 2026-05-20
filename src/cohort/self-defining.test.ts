@@ -53,7 +53,7 @@ describe("rollUpCohort — scoring", () => {
   it("derives a cohort from projects and objectives", () => {
     seedProject("p-1", "Alpha project");
     seedActivity("p-1", 3);
-    seedObjective("NorthStar/obj-a.md", "Objective A", 80);
+    seedObjective("NorthStar/objectives/obj-a.md", "Objective A", 80);
 
     const result = rollUpCohort();
     expect(result.candidates).toBe(2);
@@ -78,12 +78,24 @@ describe("rollUpCohort — scoring", () => {
   });
 
   it("scores objectives by priority and recency", () => {
-    seedObjective("NorthStar/fresh-hi.md", "Fresh high-priority", 100, 0);
-    seedObjective("NorthStar/stale-lo.md", "Stale low-priority", 10, 120);
+    seedObjective(
+      "NorthStar/objectives/fresh-hi.md",
+      "Fresh high-priority",
+      100,
+      0,
+    );
+    seedObjective(
+      "NorthStar/objectives/stale-lo.md",
+      "Stale low-priority",
+      10,
+      120,
+    );
 
     rollUpCohort();
     const cohort = getCohort({ kind: "objective" });
-    expect(cohort[0].member_id).toBe("objective:NorthStar/fresh-hi.md");
+    expect(cohort[0].member_id).toBe(
+      "objective:NorthStar/objectives/fresh-hi.md",
+    );
     expect(cohort[0].salience).toBeGreaterThan(cohort[1].salience);
   });
 
@@ -99,7 +111,11 @@ describe("rollUpCohort — scoring", () => {
 
   it("caps the active cohort at COHORT_MAX", () => {
     for (let i = 0; i < COHORT_MAX + 7; i++) {
-      seedObjective(`NorthStar/obj-${i}.md`, `Objective ${i}`, 50 + (i % 40));
+      seedObjective(
+        `NorthStar/objectives/obj-${i}.md`,
+        `Objective ${i}`,
+        50 + (i % 40),
+      );
     }
     const result = rollUpCohort();
     expect(result.candidates).toBe(COHORT_MAX + 7);
@@ -229,9 +245,9 @@ describe("rollUpCohort — edge cases (R1-R3)", () => {
   });
 
   it("clamps recency for an objective with a future updated_at", () => {
-    seedObjective("NorthStar/future.md", "Future-dated", 60, -10);
+    seedObjective("NorthStar/objectives/future.md", "Future-dated", 60, -10);
     rollUpCohort();
-    const member = getCohortMember("objective:NorthStar/future.md")!;
+    const member = getCohortMember("objective:NorthStar/objectives/future.md")!;
     expect(member.salience).toBeGreaterThanOrEqual(0);
     expect(member.salience).toBeLessThanOrEqual(1);
   });
@@ -240,11 +256,13 @@ describe("rollUpCohort — edge cases (R1-R3)", () => {
     getDatabase()
       .prepare(
         `INSERT INTO jarvis_files (id, path, title, content, priority, updated_at)
-         VALUES ('f-bad', 'NorthStar/bad-date.md', 'Bad date', '', 80, 'not-a-date')`,
+         VALUES ('f-bad', 'NorthStar/objectives/bad-date.md', 'Bad date', '', 80, 'not-a-date')`,
       )
       .run();
     rollUpCohort();
-    const member = getCohortMember("objective:NorthStar/bad-date.md")!;
+    const member = getCohortMember(
+      "objective:NorthStar/objectives/bad-date.md",
+    )!;
     // recency 0 → salience = 0.5 * (80/100) = 0.40
     expect(member.salience).toBeCloseTo(0.4, 5);
   });
@@ -253,7 +271,7 @@ describe("rollUpCohort — edge cases (R1-R3)", () => {
 describe("getCohort / getCohortMember", () => {
   it("filters by kind and excludes inactive by default", () => {
     seedProject("p-1", "Alpha");
-    seedObjective("NorthStar/o-1.md", "Obj 1", 60);
+    seedObjective("NorthStar/objectives/o-1.md", "Obj 1", 60);
     rollUpCohort();
 
     expect(getCohort({ kind: "project" })).toHaveLength(1);

@@ -145,7 +145,14 @@ function scoreProjects(db: ReturnType<typeof getDatabase>): Candidate[] {
 }
 
 /**
- * Score NorthStar objectives (`jarvis_files` under the `NorthStar/` prefix).
+ * Score NorthStar objectives. Scoped to the genuine identity layer —
+ * `NorthStar/objectives/`, `NorthStar/goals/`, `NorthStar/visions/`.
+ * Deliberately NOT the whole `NorthStar/` prefix: `tasks/` are tactical
+ * (episodic, not identity-defining) and loose files (CHANGELOG, priority-
+ * snapshot) are namespace metadata — including either pollutes the Conway
+ * Pattern 2 self-defining cohort. The `member_kind='objective'` bucket thus
+ * means "a NorthStar identity item" (objective | goal | vision).
+ *
  * Salience = 0.5 × normalized `priority` + 0.5 × recency, where recency
  * decays linearly from 1 (updated today) to 0 (updated RECENCY_HORIZON_DAYS+
  * ago).
@@ -156,7 +163,9 @@ function scoreObjectives(db: ReturnType<typeof getDatabase>): Candidate[] {
       `SELECT path, title, priority,
               CAST(julianday('now') - julianday(updated_at) AS REAL) AS age_days
          FROM jarvis_files
-        WHERE path LIKE 'NorthStar/%'`,
+        WHERE path LIKE 'NorthStar/objectives/%'
+           OR path LIKE 'NorthStar/goals/%'
+           OR path LIKE 'NorthStar/visions/%'`,
     )
     .all() as Array<{
     path: string;
