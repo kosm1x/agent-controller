@@ -2569,6 +2569,53 @@ cmd_recall_modes() {
 }
 
 # ---------------------------------------------------------------------------
+# Phase-closure continuity tooling (v7.7 Spine 7)
+# ---------------------------------------------------------------------------
+#
+# close-phase / resume / audit-closure forward to scripts/phase-ctl.ts. Per
+# the Spine 7 constraint, NONE of them run a git mutation — close-phase
+# writes *.draft files for operator review; audit-closure only reads.
+
+cmd_close_phase() {
+  local phase="${1:-}"
+  if [ -z "$phase" ]; then
+    echo -e "${RED}Usage:${NC} mc-ctl close-phase <phase>   (e.g. v7.7)"
+    return 2
+  fi
+  if [[ ! "$phase" =~ ^[a-z0-9.]+$ ]]; then
+    echo -e "${RED}Invalid phase:${NC} expected lowercase alphanumerics/dots (e.g. v7.7)"
+    return 2
+  fi
+  ( cd "$PROJECT_DIR" && MODE=close-phase PHASE="$phase" \
+    npx --no-install tsx scripts/phase-ctl.ts )
+}
+
+cmd_resume() {
+  local phase="${1:-}"
+  if [ -z "$phase" ]; then
+    echo -e "${RED}Usage:${NC} mc-ctl resume <phase>   (e.g. v7.7)"
+    return 2
+  fi
+  if [[ ! "$phase" =~ ^[a-z0-9.]+$ ]]; then
+    echo -e "${RED}Invalid phase:${NC} expected lowercase alphanumerics/dots"
+    return 2
+  fi
+  ( cd "$PROJECT_DIR" && MODE=resume PHASE="$phase" \
+    npx --no-install tsx scripts/phase-ctl.ts )
+}
+
+cmd_audit_closure() {
+  local doc="${1:-}"
+  if [ -z "$doc" ]; then
+    echo -e "${RED}Usage:${NC} mc-ctl audit-closure <closure-doc-path>"
+    return 2
+  fi
+  # `doc` is a repo-relative path; phase-ctl.ts resolves + existence-checks it.
+  ( cd "$PROJECT_DIR" && MODE=audit-closure DOC="$doc" \
+    npx --no-install tsx scripts/phase-ctl.ts )
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -2615,6 +2662,10 @@ case "$cmd" in
   events)            cmd_events "$@" ;;
   cohort)            cmd_cohort "$@" ;;
   recall-modes)      cmd_recall_modes ;;
+
+  close-phase)       cmd_close_phase "${1:-}" ;;
+  resume)            cmd_resume "${1:-}" ;;
+  audit-closure)     cmd_audit_closure "${1:-}" ;;
 
   budget)            cmd_budget ;;
 

@@ -24,3 +24,6 @@ logs/
 # Session 101 audit cleanup: runtime-only artifacts
 .playwright-mcp/
 .claude/agent-memory/
+
+# Phase-closure tooling drafts (mc-ctl close-phase) — operator-review artifacts
+*.md.draft
