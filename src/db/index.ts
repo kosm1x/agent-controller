@@ -684,6 +684,67 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_skill_failures_active ON skill_failures(skill_id, resolved_at) WHERE resolved_at IS NULL",
   );
 
+  // v7.7 Spine 4 (Conway Pattern 1 substrate): general-events middle layer.
+  // Two tables: general_events (the middle-layer records) +
+  // general_event_episodic_links (descent edges to episodic sources).
+  // See docs/planning/v8-capability-1-spec.md §5 for the canonical schema.
+  // DEVIATION FROM SPEC §5 (documented in v7.7-spine-4-impl.md):
+  //   - summary_embedding stored as a BLOB column, NOT a `vec0` virtual
+  //     table. The codebase uses BLOB + in-memory cosine everywhere
+  //     (conversation_embeddings, skills.description_embedding); sqlite-vec
+  //     is "a future option when scale > 1000" (src/skills/embedding.ts)
+  //     and general_events is a ~30-50 row cohort. Build-once-use-twice.
+  //   - details_embedding deferred: descent runs through the explicit
+  //     links table, not a second vector probe. Re-addable as an additive
+  //     ALTER TABLE if a later spine wants MIRIX-style 1-row/2-probe.
+  _db.exec(`CREATE TABLE IF NOT EXISTS general_events (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id          TEXT NOT NULL UNIQUE,
+    level             TEXT NOT NULL CHECK (level IN ('lifetime','general','episodic-cluster')),
+    title             TEXT NOT NULL,
+    summary           TEXT NOT NULL,
+    goal_context_id   TEXT,
+    themes            TEXT NOT NULL DEFAULT '[]',
+    start_at          TEXT NOT NULL,
+    end_at            TEXT,
+    episodic_count    INTEGER NOT NULL DEFAULT 0,
+    summary_embedding BLOB,
+    created_by        TEXT NOT NULL DEFAULT 'manual' CHECK (created_by IN ('manual','seed','auto-discovery')),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    superseded_by     INTEGER REFERENCES general_events(id),
+    archived_at       TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_general_events_active ON general_events(end_at) WHERE archived_at IS NULL",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_general_events_goal ON general_events(goal_context_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_general_events_level ON general_events(level) WHERE archived_at IS NULL",
+  );
+
+  _db.exec(`CREATE TABLE IF NOT EXISTS general_event_episodic_links (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id      TEXT NOT NULL REFERENCES general_events(event_id),
+    episodic_kind TEXT NOT NULL CHECK (episodic_kind IN ('task','conversation','memory_item','recall_audit','cost_ledger','report')),
+    episodic_ref  TEXT NOT NULL,
+    linked_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    link_reason   TEXT CHECK (link_reason IS NULL OR link_reason IN ('manual','auto-themed','co-occurrence'))
+  )`);
+  // UNIQUE prevents duplicate descent edges; linkEpisodic relies on it for
+  // INSERT OR IGNORE idempotency.
+  _db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_geel_unique ON general_event_episodic_links(event_id, episodic_kind, episodic_ref)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_geel_event ON general_event_episodic_links(event_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_geel_ref ON general_event_episodic_links(episodic_kind, episodic_ref)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
