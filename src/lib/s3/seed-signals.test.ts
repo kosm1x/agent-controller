@@ -2,7 +2,7 @@
  * v7.7 Spine 2 — seed signals tests.
  *
  * Two concerns:
- *   1. The 13 seed rows are well-formed (count, names, valid JSON columns,
+ *   1. The 14 seed rows are well-formed (count, names, valid JSON columns,
  *      cadence/priority enums match schema CHECK constraints).
  *   2. seedSignalsIdempotent() is idempotent across repeated calls.
  */
@@ -15,8 +15,18 @@ beforeEach(() => initDatabase(":memory:"));
 afterEach(() => closeDatabase());
 
 describe("SEED_SIGNALS — static invariants", () => {
-  it("exactly 13 seed signals (12 from spec + mc_whatsapp_disconnects_total)", () => {
-    expect(SEED_SIGNALS.length).toBe(13);
+  it("exactly 14 seed signals (13 from Spine 2 + recall_coherence_suppression_rate from Spine 6)", () => {
+    expect(SEED_SIGNALS.length).toBe(14);
+  });
+
+  it("includes the Spine 6 Conway Pattern 3 correspondence-audit signal", () => {
+    const sig = SEED_SIGNALS.find(
+      (s) => s.signal_name === "recall_coherence_suppression_rate",
+    );
+    expect(sig).toBeDefined();
+    expect(sig!.cadence).toBe("weekly");
+    // Disabled-pending: recall_audit is dormant under the Hindsight demote.
+    expect(sig!.enabled).toBe(0);
   });
 
   it("every signal name is unique", () => {
@@ -88,14 +98,14 @@ describe("SEED_SIGNALS — static invariants", () => {
 });
 
 describe("seedSignalsIdempotent — DB integration", () => {
-  it("first call inserts all 13, subsequent calls insert 0", () => {
+  it("first call inserts all 14, subsequent calls insert 0", () => {
     const first = seedSignalsIdempotent();
-    expect(first.inserted).toBe(13);
+    expect(first.inserted).toBe(14);
     expect(first.skipped).toBe(0);
 
     const second = seedSignalsIdempotent();
     expect(second.inserted).toBe(0);
-    expect(second.skipped).toBe(13);
+    expect(second.skipped).toBe(14);
   });
 
   it("schema CHECK constraints accept every seed row's enums", () => {
@@ -106,7 +116,7 @@ describe("seedSignalsIdempotent — DB integration", () => {
     const count = getDatabase()
       .prepare("SELECT COUNT(*) AS c FROM drift_signals")
       .get() as { c: number };
-    expect(count.c).toBe(13);
+    expect(count.c).toBe(14);
   });
 
   it("seeded rows can be queried by cadence", () => {

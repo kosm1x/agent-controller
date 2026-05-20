@@ -1,5 +1,7 @@
 /**
- * v7.7 Spine 2 (S3 substrate) — 13 seed signals.
+ * v7.7 Spine 2 (S3 substrate) — 14 seed signals (13 from Spine 2 + 1 added
+ * by Spine 6: `recall_coherence_suppression_rate`, the Conway Pattern 3
+ * correspondence audit composed onto this substrate).
  *
  * The seed registry is the declaration: "these are the watchable invariants
  * v7.7+ cares about." Most signals' source substrates (S2 sycophancy, V8.2
@@ -8,7 +10,7 @@
  * weeks, tune tolerance"), those signals land `enabled: 0` with a `notes`
  * field documenting their activation trigger.
  *
- * Signals with real data sources land enabled by default (3 of 13 — R1-W2):
+ * Signals with real data sources land enabled by default (3 of 14 — R1-W2):
  *   - s1_tool_cache_read_ratio (partial S1 instrumentation in cost_ledger)
  *   - s2_critic_unfixable_rate (reports table from Spine 1 P1)
  *   - cost_per_brief_drift (cost_ledger has data since 2026-04-26 S4 v2)
@@ -39,8 +41,9 @@ const SEED_DATE = "2026-05-19T00:00:00.000Z"; // v7.7 Spine 2 ship date
 const ESTABLISHED_BY = "v7.7-spine-2-seed";
 
 /**
- * 13 seed signals per V7.7-GUIDE Spine 2 (12 from spec §5 + the
- * `mc_whatsapp_disconnects_total` add from V7.7-GUIDE Spine 2 note).
+ * 14 seed signals — 13 per V7.7-GUIDE Spine 2 (12 from spec §5 + the
+ * `mc_whatsapp_disconnects_total` add from V7.7-GUIDE Spine 2 note) + 1 from
+ * v7.7 Spine 6 (`recall_coherence_suppression_rate`, Conway Pattern 3).
  *
  * The baseline_query column convention:
  *   - SQL strings run via getDatabase().prepare(...).get() — must return
@@ -260,6 +263,31 @@ export const SEED_SIGNALS: readonly NewDriftSignal[] = [
     established_by: ESTABLISHED_BY,
     notes:
       "DISABLED at seed time. The underlying Prometheus counter is MONOTONIC (cumulative since process boot); treating its cumulative value as 'disconnects per hour' produces a permanent P0 spam fountain once cumulative crosses 10. Re-enable when EITHER (a) PromQL rate(mc_whatsapp_disconnects_total[1h]) access lands, OR (b) the S3 evaluator stores a prior-tick snapshot and computes delta-per-cadence. Tracked in next-sessions-queue as S3-C1. Activation query when fixed: baseline_query = 'prom:mc_whatsapp_disconnects_total' (rate-mode).",
+  },
+  // 14 — Conway Pattern 3 correspondence audit (v7.7 Spine 6). The weekly
+  // "correspondence audit" IS this drift signal: a rising coherence-mode
+  // suppression rate is exactly Conway's "coherence drift toward
+  // confabulation" trap (V8-VISION §9). DISABLED-pending: recall_audit has
+  // had no new rows since 2026-05-10 — recall routes through
+  // SqliteMemoryBackend (HINDSIGHT_ENABLED=false), which does not call
+  // logRecall. The baseline below is REAL (measured from 1460 historical
+  // rows), not a placeholder.
+  {
+    signal_name: "recall_coherence_suppression_rate",
+    signal_kind: "coherence_drift",
+    source_substrate: "Conway-P3",
+    // `awaiting:` sentinel per the Spine 2 invariant (a disabled signal must
+    // not ship a real query). The real activation query is in `notes`.
+    baseline_query: "awaiting:recall-audit-active",
+    baseline_value_json: '{"value":0.0406}', // measured 2026-05-20 over 1460 historical rows (1449 excluded / 35654 candidates)
+    tolerance_json: '{"kind":"absolute_threshold","op":"gt","value":0.08}',
+    cadence: "weekly",
+    alert_priority: "P2",
+    enabled: 0,
+    established_at: "2026-05-20T00:00:00.000Z",
+    established_by: "v7.7-spine-6-seed",
+    notes:
+      "DISABLED-pending — recall_audit receives no new rows under the current Hindsight-demote routing (recall goes through SqliteMemoryBackend, which does not call logRecall/applyOutcomeBias; only HindsightMemoryBackend does). Baseline 0.0406 is real, measured from 1460 historical rows. Re-enable when recall_audit receives fresh rows: EITHER HINDSIGHT_ENABLED=true, OR a future spine wires logRecall into SqliteMemoryBackend. Trips P2 when the weekly coherence-mode suppression rate exceeds 0.08 (~2x baseline) — Conway's coherence-drift watchpoint. Tracked as S6-recall-audit-dormant. Activation query: \"SELECT CAST(SUM(excluded_count) AS REAL) / NULLIF(SUM(excluded_count + result_count), 0) FROM recall_audit WHERE created_at > datetime('now','-7 days') AND (mode = 'coherence' OR mode IS NULL)\".",
   },
 ] as const;
 

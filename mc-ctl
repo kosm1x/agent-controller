@@ -2540,6 +2540,35 @@ cmd_cohort() {
 }
 
 # ---------------------------------------------------------------------------
+# Recall modes (v7.7 Spine 6 — Conway Pattern 3)
+# ---------------------------------------------------------------------------
+
+cmd_recall_modes() {
+  # Read-only view of the Conway Pattern 3 recall-mode distribution + the
+  # coherence-mode suppression rate (the correspondence-audit metric).
+  need_db
+  echo -e "${BOLD}=== Recall modes (Conway Pattern 3) ===${NC}"
+  echo ""
+  echo -e "${BOLD}recall_audit by mode:${NC}"
+  sql "SELECT COALESCE(mode, '(untagged)') AS mode, COUNT(*) AS recalls,
+              SUM(excluded_count) AS excluded
+       FROM recall_audit GROUP BY mode ORDER BY recalls DESC;"
+  echo ""
+  echo -e "${BOLD}Coherence-mode suppression rate:${NC}"
+  sql "SELECT
+         printf('%.4f', CAST(SUM(excluded_count) AS REAL) /
+           NULLIF(SUM(excluded_count + result_count), 0)) AS rate_7d
+       FROM recall_audit
+       WHERE created_at > datetime('now', '-7 days')
+         AND (mode = 'coherence' OR mode IS NULL);"
+  local recent
+  recent=$(sql_raw "SELECT COALESCE(MAX(created_at), '(never)') FROM recall_audit;" 2>/dev/null || echo "(none)")
+  echo ""
+  echo -e "  ${DIM}most recent recall_audit row: ${recent}${NC}"
+  echo -e "  ${DIM}drift signal: recall_coherence_suppression_rate (see 'mc-ctl drift')${NC}"
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -2585,6 +2614,7 @@ case "$cmd" in
 
   events)            cmd_events "$@" ;;
   cohort)            cmd_cohort "$@" ;;
+  recall-modes)      cmd_recall_modes ;;
 
   budget)            cmd_budget ;;
 
