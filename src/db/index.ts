@@ -853,6 +853,34 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_rb_active ON recurring_blockers(resolved_at) WHERE resolved_at IS NULL",
   );
 
+  // V8.1 Phase 6 (briefing schema + judgment). A constructed morning/alert
+  // briefing, held pending the operator's first interaction. See
+  // docs/planning/v8-capability-1-spec.md §9. The full typed Briefing is
+  // stored as JSON in `briefing_json` (validated by Zod at the boundary);
+  // `s2_report_id` links the S2 critic report. Promote/discard transitions
+  // are driven by Phase 8 (surface delivery); Phase 6 writes 'pending' rows
+  // and supersedes prior pending rows on the same surface.
+  _db.exec(`CREATE TABLE IF NOT EXISTS proposed_briefings (
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    briefing_id               TEXT UNIQUE NOT NULL,
+    surface                   TEXT NOT NULL CHECK (surface IN ('morning','idle_alert','pattern_alert','weekly')),
+    generated_at              TEXT NOT NULL,
+    briefing_json             TEXT NOT NULL,
+    status                    TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','promoted','discarded','superseded','expired')),
+    promoted_at               TEXT,
+    promoted_by_message_id    INTEGER,
+    discarded_at              TEXT,
+    superseded_by_briefing_id TEXT REFERENCES proposed_briefings(briefing_id),
+    expires_at                TEXT NOT NULL,
+    s2_report_id              TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_pb_surface_status ON proposed_briefings(surface, status)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_pb_pending_expires ON proposed_briefings(status, expires_at) WHERE status='pending'",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

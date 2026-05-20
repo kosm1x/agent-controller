@@ -1,0 +1,130 @@
+/**
+ * Judgment prompt renderer tests (V8.1 Phase 6 B2).
+ */
+
+import { describe, it, expect } from "vitest";
+import type { CohortMember } from "../cohort/self-defining.js";
+import type { DetectionSignal } from "../detection/signals.js";
+import {
+  renderJudgmentPrompt,
+  type JudgmentPromptInput,
+} from "./judgment-prompt.js";
+
+function cohortMember(label: string): CohortMember {
+  return {
+    id: 1,
+    member_id: `project:${label}`,
+    member_kind: "project",
+    label,
+    source_ref: `ref/${label}`,
+    salience: 5,
+    signals: {},
+    first_seen_at: "2026-05-01T00:00:00.000Z",
+    last_rolled_at: "2026-05-20T00:00:00.000Z",
+    active: true,
+  };
+}
+
+const stalledSignal: DetectionSignal = {
+  kind: "stalled_task",
+  severity: "at_risk",
+  summary: "Task X stalled 12d",
+  taskId: "t-1",
+  title: "Task X",
+  status: "blocked",
+  priority: "high",
+  daysSinceActivity: 12,
+};
+
+const blockerSignal: DetectionSignal = {
+  kind: "recurring_blocker",
+  severity: "at_risk",
+  summary: "Blocker recurred across 3 tasks",
+  blockerSignature: "abc",
+  taskCount: 3,
+  taskIds: ["t-1", "t-2", "t-3"],
+  firstSeenAt: "2026-05-10T00:00:00.000Z",
+};
+
+function makeInput(
+  overrides: Partial<JudgmentPromptInput> = {},
+): JudgmentPromptInput {
+  return {
+    surface: "morning",
+    activeObjectives: [
+      { id: "NorthStar/objectives/x.md", title: "Obj X", description: "do x" },
+    ],
+    cohort: [cohortMember("EurekaMD")],
+    generalEvents: [
+      { eventId: "evt-1", title: "Sprint", summary: "the beta sprint" },
+    ],
+    episodicSamples: [{ eventId: "evt-1", text: "a chunk" }],
+    detectionSignals: [stalledSignal, blockerSignal],
+    recentlyDiscarded: [],
+    evidenceSources: ["tasks table", "NorthStar objectives", "general_events"],
+    ...overrides,
+  };
+}
+
+describe("renderJudgmentPrompt", () => {
+  it("renders the surface in upper case", () => {
+    expect(renderJudgmentPrompt(makeInput({ surface: "weekly" }))).toContain(
+      "WEEKLY briefing",
+    );
+  });
+
+  it("includes objectives, cohort, general events, and episodic samples", () => {
+    const p = renderJudgmentPrompt(makeInput());
+    expect(p).toContain("Obj X (NorthStar/objectives/x.md): do x");
+    expect(p).toContain("[proyecto] EurekaMD");
+    expect(p).toContain("Sprint: the beta sprint");
+    expect(p).toContain("[evt-1] a chunk");
+  });
+
+  it("groups detection signals under their kind headings", () => {
+    const p = renderJudgmentPrompt(makeInput());
+    const stalledIdx = p.indexOf("Stalled tasks:");
+    const blockerIdx = p.indexOf("Recurring blockers:");
+    expect(p).toContain("Task X stalled 12d");
+    expect(p).toContain("Blocker recurred across 3 tasks");
+    // The stalled summary sits under the Stalled heading, the blocker under its own.
+    expect(p.indexOf("Task X stalled 12d")).toBeGreaterThan(stalledIdx);
+    expect(p.indexOf("Task X stalled 12d")).toBeLessThan(blockerIdx);
+    expect(p.indexOf("Blocker recurred across 3 tasks")).toBeGreaterThan(
+      blockerIdx,
+    );
+  });
+
+  it("renders '(none)' for an empty input section", () => {
+    const p = renderJudgmentPrompt(
+      makeInput({ detectionSignals: [], generalEvents: [] }),
+    );
+    expect(p).toContain("(none)");
+  });
+
+  it("renders the discarded-signals list when populated", () => {
+    const p = renderJudgmentPrompt(
+      makeInput({ recentlyDiscarded: ["t-99 stale deadline"] }),
+    );
+    expect(p).toContain("t-99 stale deadline");
+  });
+
+  it("instructs strict JSON output with the judgment shape", () => {
+    const p = renderJudgmentPrompt(makeInput());
+    expect(p).toContain("Return ONLY a JSON object");
+    expect(p).toContain('"judgments"');
+    expect(p).toContain('"highest_leverage_pick"');
+    expect(p).toContain(
+      'At most one judgment may have posture "highest_leverage"',
+    );
+  });
+
+  it("renders the evidence sources as a numbered list", () => {
+    const p = renderJudgmentPrompt(
+      makeInput({ evidenceSources: ["tasks table", "cohort"] }),
+    );
+    expect(p).toContain("EVIDENCE SOURCES");
+    expect(p).toContain("[0] tasks table");
+    expect(p).toContain("[1] cohort");
+  });
+});
