@@ -62,6 +62,7 @@ import {
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
+import { resolveBriefingOnOperatorReply } from "../briefing/promote.js";
 import {
   getPendingConfirmation,
   clearPendingConfirmation,
@@ -1149,6 +1150,15 @@ export class MessageRouter {
     // Day log: record user message (mechanical, no LLM)
     appendDayLog("USER", msg.text);
 
+    // V8.1 Phase 8: the operator's reply promotes or discards a delivered
+    // briefing (spec §10). Owner channels only — a briefing is operator-
+    // private. The call is self-contained and never throws, so it cannot
+    // disrupt message handling; it is a no-op until a briefing is actually
+    // delivered (delivery is flag-gated off until Phase 9 activation).
+    if (isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+      resolveBriefingOnOperatorReply(msg.text);
+    }
+
     // Prompt enhancer toggle commands
     const toggleResult = checkToggle(msg.text);
     if (toggleResult !== null) {
@@ -2070,6 +2080,49 @@ export class MessageRouter {
     }
 
     await Promise.all(promises);
+  }
+
+  /**
+   * V8.1 Phase 8 — deliver an operator-private briefing to every OWNER
+   * channel: Telegram, WhatsApp, and owner-only email mailboxes. Unlike
+   * `broadcastToAll` (which skips ALL email), owner-only email IS included —
+   * the morning brief is an email-primary surface. Community-manager mailboxes
+   * are excluded by `isOwnerChannel`: a briefing carries operator-private
+   * health/business judgments, same discipline as the cohort-leak fix.
+   *
+   * Single-operator assumption: every owner-only channel resolves to the SAME
+   * operator (Fede). Briefing resolution (`getResolvablePendingBriefing`) is a
+   * global singleton — fine for one operator. A multi-operator deployment
+   * would need per-operator briefing scoping (Phase 9+ concern).
+   *
+   * Returns the per-channel send tally so the caller can tell a total send
+   * failure from a success — each channel send is error-isolated, so this
+   * never rejects.
+   */
+  async sendBriefingToOwner(
+    text: string,
+  ): Promise<{ sent: number; failed: number }> {
+    let sent = 0;
+    let failed = 0;
+    const promises: Promise<void>[] = [];
+    for (const [name, adapter] of this.channels) {
+      if (!isOwnerChannel(name, adapter.mode)) continue;
+      const to = this.getOwnerAddress(name);
+      if (!to) continue;
+      promises.push(
+        adapter
+          .send({ channel: name, to, text })
+          .then(() => {
+            sent++;
+          })
+          .catch((err) => {
+            failed++;
+            console.error(`[router] Briefing send to ${name} failed:`, err);
+          }),
+      );
+    }
+    await Promise.all(promises);
+    return { sent, failed };
   }
 
   async stopAll(): Promise<void> {

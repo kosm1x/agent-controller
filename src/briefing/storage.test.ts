@@ -9,6 +9,11 @@ import {
   insertProposedBriefing,
   getProposedBriefing,
   listPendingBriefings,
+  markBriefingDelivered,
+  getResolvablePendingBriefing,
+  transitionBriefing,
+  getRecentlyDiscardedSubjects,
+  expireStalePendingBriefings,
 } from "./storage.js";
 
 const ISO = "2026-05-20T08:00:00.000Z";
@@ -121,5 +126,95 @@ describe("proposed_briefings storage", () => {
     expect(listPendingBriefings()).toHaveLength(2);
     expect(listPendingBriefings("weekly")).toHaveLength(1);
     expect(listPendingBriefings("weekly")[0]!.surface).toBe("weekly");
+  });
+});
+
+describe("delivery + resolution storage (Phase 8)", () => {
+  it("markBriefingDelivered stamps delivered_at and makes the briefing resolvable", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    // Not resolvable until delivered.
+    expect(getResolvablePendingBriefing()).toBeNull();
+
+    markBriefingDelivered(b.briefing_id);
+    const resolvable = getResolvablePendingBriefing();
+    expect(resolvable).not.toBeNull();
+    expect(resolvable!.briefingId).toBe(b.briefing_id);
+    expect(resolvable!.deliveredAt).not.toBeNull();
+  });
+
+  it("markBriefingDelivered is idempotent — keeps the first timestamp", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    markBriefingDelivered(b.briefing_id);
+    const first = getProposedBriefing(b.briefing_id)!.deliveredAt;
+    markBriefingDelivered(b.briefing_id);
+    expect(getProposedBriefing(b.briefing_id)!.deliveredAt).toBe(first);
+  });
+
+  it("transitionBriefing moves a pending row, and is a no-op once resolved", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    expect(transitionBriefing(b.briefing_id, "promoted")).toBe(true);
+    expect(getProposedBriefing(b.briefing_id)!.status).toBe("promoted");
+    // The row is no longer pending — a second transition is rejected.
+    expect(transitionBriefing(b.briefing_id, "discarded")).toBe(false);
+    expect(getProposedBriefing(b.briefing_id)!.status).toBe("promoted");
+  });
+
+  it("getResolvablePendingBriefing ignores a resolved briefing", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    markBriefingDelivered(b.briefing_id);
+    transitionBriefing(b.briefing_id, "discarded");
+    expect(getResolvablePendingBriefing()).toBeNull();
+  });
+
+  it("getRecentlyDiscardedSubjects collects subjects from discarded briefings", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    expect(getRecentlyDiscardedSubjects()).toEqual([]);
+    transitionBriefing(b.briefing_id, "discarded");
+    expect(getRecentlyDiscardedSubjects()).toEqual(["t-1"]);
+  });
+
+  it("getRecentlyDiscardedSubjects excludes a discard older than the window", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b);
+    transitionBriefing(b.briefing_id, "discarded");
+    // Backdate the discard well outside the 7-day window.
+    getDatabase()
+      .prepare(
+        `UPDATE proposed_briefings SET discarded_at = datetime('now','-30 days')
+          WHERE briefing_id = ?`,
+      )
+      .run(b.briefing_id);
+    expect(getRecentlyDiscardedSubjects()).toEqual([]);
+  });
+
+  it("expireStalePendingBriefings expires a delivered, past-expiry briefing", () => {
+    const b = makeBriefing();
+    insertProposedBriefing(b, { expiresAt: "2020-01-01T00:00:00.000Z" });
+    markBriefingDelivered(b.briefing_id);
+    expect(expireStalePendingBriefings()).toBe(1);
+    expect(getProposedBriefing(b.briefing_id)!.status).toBe("expired");
+  });
+
+  it("expireStalePendingBriefings leaves an un-delivered or un-expired briefing alone", () => {
+    // Un-delivered, past expiry — not delivered, so not swept.
+    const undelivered = makeBriefing();
+    insertProposedBriefing(undelivered, {
+      expiresAt: "2020-01-01T00:00:00.000Z",
+    });
+    // Delivered but not yet expired.
+    const fresh = makeBriefing("weekly");
+    insertProposedBriefing(fresh, { expiresAt: "2099-01-01T00:00:00.000Z" });
+    markBriefingDelivered(fresh.briefing_id);
+
+    expect(expireStalePendingBriefings()).toBe(0);
+    expect(getProposedBriefing(undelivered.briefing_id)!.status).toBe(
+      "pending",
+    );
+    expect(getProposedBriefing(fresh.briefing_id)!.status).toBe("pending");
   });
 });

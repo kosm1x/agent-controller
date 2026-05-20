@@ -6,23 +6,30 @@
  * row with `status='pending'`. `insertProposedBriefing` supersedes any prior
  * pending morning row, so briefings never stack.
  *
- * RECONCILIATION vs spec §6 / entry brief: Phase 7 GENERATES the briefing but
- * does NOT deliver it. Delivery (Telegram + email) and the migration of
- * `rituals/morning.ts` to a thin wrapper are spec §12 Phase 8. Phase 7's
- * trigger ends at a persisted pending briefing — the anti-mission line ("no
- * autopilot: a Phase 7 trigger's job ends at a persisted pending briefing").
- * The existing `morning-briefing` ritual still emails the operator unchanged;
- * the new pipeline runs alongside it until Phase 8.
+ * V8.1 Phase 8: when `V81_BRIEF_DELIVERY_ENABLED=true` the constructed
+ * briefing is also DELIVERED to the operator (`deliverBriefing`). The flag is
+ * off until Phase 9 activation, so by default this trigger still only
+ * generates + persists a `pending` briefing — no operator-facing change.
  *
- * ENTRY GATE (closure-audit W1): an operator-facing brief must not ship on a
- * thin retrieval layer (12 seed `general_events`, auto-discovery not landed).
- * Phase 7 keeps the brief NON-operator-facing, so the gate is honoured by
- * deferral — Phase 8 MUST re-check seed sufficiency before wiring delivery.
- * `constructBriefing` already self-flags a thin window with a `stale_data`
- * producer concern, so a persisted pending row carries the signal forward.
+ * SHADOW-RUN (audit C1): with delivery off, this trigger generates a briefing
+ * daily WHILE the legacy `morning-briefing` ritual still emails the operator.
+ * Two generations/day is intentional — the shadow briefings are what Phase 9
+ * activation curates. When delivery is switched on, `scheduler.ts` skips the
+ * legacy ritual, so there is exactly one delivered brief in every flag state.
+ *
+ * SEED GATE (closure-audit W1): the entry gate said re-check `general_events`
+ * seed sufficiency before operator-facing delivery. Live count is 36 seed
+ * events — within the spec §5 target band (30-50) — so the gate is cleared;
+ * delivery is built behind a flag regardless, and `constructBriefing` still
+ * self-flags a thin retrieval window via a `stale_data` producer concern.
  */
 
 import { constructBriefing } from "../briefing/construct.js";
+import {
+  deliverBriefing,
+  isBriefingDeliveryEnabled,
+} from "../briefing/delivery.js";
+import { expireStalePendingBriefings } from "../briefing/storage.js";
 import { createLogger } from "../lib/logger.js";
 import { recordTriggerRun } from "./throttle.js";
 
@@ -31,27 +38,53 @@ const log = createLogger("triggers:morning-surface");
 export interface MorningSurfaceResult {
   ok: boolean;
   briefingId?: string;
+  /** True when the briefing was also delivered to the operator (flag-gated). */
+  delivered?: boolean;
   failureStage?: string;
   detail?: string;
 }
 
 /**
- * Construct and persist one pending morning briefing. Never throws — a
- * failure is logged, recorded to `trigger_runs`, and returned as `ok:false`.
+ * Construct and persist one pending morning briefing — and, when
+ * `V81_BRIEF_DELIVERY_ENABLED=true`, deliver it to the operator. Never throws:
+ * a failure is logged, recorded to `trigger_runs`, and returned as `ok:false`.
  */
 export async function runMorningSurface(): Promise<MorningSurfaceResult> {
   let result: MorningSurfaceResult;
   try {
+    // Daily sweep: expire delivered briefings the operator never engaged with
+    // (audit W1 — the lazy per-reply expiry in promote.ts misses this case).
+    const expired = expireStalePendingBriefings();
+    if (expired > 0) {
+      log.info({ expired }, "expired stale delivered briefings");
+    }
+
     const construct = await constructBriefing({ surface: "morning" });
     if (construct.ok) {
-      result = { ok: true, briefingId: construct.briefing.briefing_id };
+      const briefingId = construct.briefing.briefing_id;
+      result = { ok: true, briefingId };
+
+      // Phase 8 delivery — flag-gated. Off until Phase 9 activation, so by
+      // default the briefing stays a persisted `pending` row.
+      if (isBriefingDeliveryEnabled()) {
+        const delivery = await deliverBriefing(briefingId);
+        result.delivered = delivery.delivered;
+        if (!delivery.delivered) {
+          log.warn(
+            { briefingId, reason: delivery.reason },
+            "morning briefing constructed but not delivered",
+          );
+        }
+      }
+
       log.info(
         {
-          briefingId: construct.briefing.briefing_id,
+          briefingId,
           verdict: construct.briefing.critic_verdict,
           judgments: construct.briefing.judgments.length,
+          delivered: result.delivered ?? false,
         },
-        "morning briefing constructed and persisted (pending — not delivered)",
+        "morning briefing constructed and persisted",
       );
     } else {
       result = {
@@ -76,7 +109,7 @@ export async function runMorningSurface(): Promise<MorningSurfaceResult> {
     "cron_morning",
     result.ok ? "fired" : "failed",
     result.ok
-      ? `briefing ${result.briefingId}`
+      ? `briefing ${result.briefingId}${result.delivered ? " (delivered)" : ""}`
       : (result.failureStage ?? result.detail ?? "error"),
   );
   return result;

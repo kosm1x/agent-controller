@@ -40,7 +40,10 @@ import {
   validateBriefingInvariants,
   type Briefing,
 } from "./schema.js";
-import { insertProposedBriefing } from "./storage.js";
+import {
+  getRecentlyDiscardedSubjects,
+  insertProposedBriefing,
+} from "./storage.js";
 
 const MS_PER_DAY = 86_400_000;
 const SYSTEM_PROMPT =
@@ -233,7 +236,9 @@ export async function constructBriefing(
     generalEvents,
     episodicSamples,
     detectionSignals: signals,
-    recentlyDiscarded: [], // Phase 8 wires real discarded-history
+    // Phase 8: subjects the operator discarded in the last 7d, so the
+    // reflector does not re-surface a rejected signal (spec §10 rule 6).
+    recentlyDiscarded: getRecentlyDiscardedSubjects(),
     evidenceSources,
   });
 

@@ -190,6 +190,21 @@ export function startRitualScheduler(): void {
   const config = getConfig();
 
   for (const ritual of rituals) {
+    // V8.1 Phase 8: when briefing delivery is activated, the new
+    // morning-surface trigger (src/triggers/morning-surface.ts) replaces the
+    // legacy morning-briefing ritual — skip the old one so the operator does
+    // not receive two morning briefs. Reversible: flag off (the default) →
+    // the legacy ritual runs unchanged.
+    if (
+      ritual.id === "morning-briefing" &&
+      process.env.V81_BRIEF_DELIVERY_ENABLED === "true"
+    ) {
+      console.log(
+        "[rituals] morning-briefing: superseded by V8.1 morning-surface trigger, skipping",
+      );
+      continue;
+    }
+
     // Overnight tuning is gated by TUNING_ENABLED env var, not static config
     const isEnabled =
       ritual.id === "overnight-tuning" ? config.tuningEnabled : ritual.enabled;

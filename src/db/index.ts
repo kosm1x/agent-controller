@@ -872,7 +872,8 @@ export function initDatabase(dbPath: string): Database.Database {
     discarded_at              TEXT,
     superseded_by_briefing_id TEXT REFERENCES proposed_briefings(briefing_id),
     expires_at                TEXT NOT NULL,
-    s2_report_id              TEXT
+    s2_report_id              TEXT,
+    delivered_at              TEXT
   )`);
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_pb_surface_status ON proposed_briefings(surface, status)",
@@ -880,6 +881,35 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_pb_pending_expires ON proposed_briefings(status, expires_at) WHERE status='pending'",
   );
+  // V8.1 Phase 8: `delivered_at` records when a briefing reached the operator.
+  // The promote-on-reply hook resolves ONLY briefings with a non-null
+  // `delivered_at` — so the Phase 7 morning-surface (which persists 'pending'
+  // rows without delivering, while delivery is flag-gated off) cannot have its
+  // un-delivered briefings spuriously promoted by an unrelated operator reply.
+  // Additive ALTER for DBs created before Phase 8 (the CREATE above carries it
+  // for fresh DBs).
+  {
+    const pbCols = _db
+      .prepare("PRAGMA table_info(proposed_briefings)")
+      .all() as Array<{ name: string }>;
+    if (!pbCols.some((c) => c.name === "delivered_at")) {
+      _db.exec("ALTER TABLE proposed_briefings ADD COLUMN delivered_at TEXT");
+    }
+  }
+
+  // V8.1 Phase 8 (triage policy — spec §9, LangChain-ambient port). The
+  // surface-vs-silent decision is a LEARNED policy, not a static threshold.
+  // Phase 8 ships the table + promote/discard counters; the LLM policy-text
+  // rewrite loop is a deferred follow-up, so `policy_text` defaults to '' (no
+  // policy learned yet — honest).
+  _db.exec(`CREATE TABLE IF NOT EXISTS triage_policies (
+    surface       TEXT PRIMARY KEY CHECK (surface IN ('morning','idle_alert','pattern_alert','weekly')),
+    policy_text   TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    promote_count INTEGER NOT NULL DEFAULT 0,
+    discard_count INTEGER NOT NULL DEFAULT 0,
+    last_outcome  TEXT
+  )`);
 
   // V8.1 Phase 7 (triggers — N-turn / cron / idle). Restart-safe ledger of
   // every trigger fire. Two invariants depend on it: per-surface throttling
