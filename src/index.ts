@@ -16,6 +16,7 @@ import {
 } from "./db/index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
+import { startTriggers } from "./triggers/index.js";
 import { createApp } from "./api/index.js";
 import {
   startRitualScheduler,
@@ -251,6 +252,10 @@ async function main(): Promise<void> {
   // Start ritual scheduler if enabled
   if (process.env.RITUALS_ENABLED === "true") {
     startRitualScheduler();
+    // V8.1 Phase 7 — proactive-context triggers (N-turn / cron / idle).
+    // Fire the reflection + briefing pipeline; produces only non-operator-
+    // facing artifacts. Kill switch: V81_TRIGGERS_ENABLED=false.
+    startTriggers();
   }
 
   // Start dynamic (user-defined) scheduled tasks

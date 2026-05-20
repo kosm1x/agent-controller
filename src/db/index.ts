@@ -881,6 +881,28 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_pb_pending_expires ON proposed_briefings(status, expires_at) WHERE status='pending'",
   );
 
+  // V8.1 Phase 7 (triggers — N-turn / cron / idle). Restart-safe ledger of
+  // every trigger fire. Two invariants depend on it: per-surface throttling
+  // (idle-detect: ≤1 fire / 12h) and the §14-Q4 cost ceiling (≤10 reflection
+  // runs / 24h across n-turn + idle-detect). The N-turn *counter* itself is
+  // in-memory (an approximate cadence); only the cost/throttle state — which
+  // must survive a deploy restart — is persisted here. `outcome` is 'fired'
+  // for a real run, 'skipped'/'failed' for observability. See
+  // docs/planning/v8-capability-1-spec.md §6 + §14 Q4.
+  // `outcome` is constrained (not just nullable TEXT): the §14-Q4 ceiling and
+  // the idle throttle both gate on `outcome='fired'`, so a typo'd value would
+  // silently never count. The CHECK mirrors the discipline on `trigger_kind`.
+  _db.exec(`CREATE TABLE IF NOT EXISTS trigger_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('n_turn','cron_morning','idle_detect')),
+    fired_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    outcome      TEXT NOT NULL CHECK (outcome IN ('fired','skipped','failed')),
+    detail       TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_trigger_runs_kind ON trigger_runs(trigger_kind, fired_at)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
