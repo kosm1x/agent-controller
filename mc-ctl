@@ -2448,6 +2448,98 @@ cmd_events() {
 }
 
 # ---------------------------------------------------------------------------
+# Self-defining cohort (v7.7 Spine 5 — Conway Pattern 2)
+# ---------------------------------------------------------------------------
+
+cmd_cohort() {
+  #   mc-ctl cohort list
+  #   mc-ctl cohort show <member_id>
+  #   mc-ctl cohort rollup
+  #
+  # list/show query SQLite directly (read-only). rollup forwards to a tsx
+  # helper so the deterministic roll-up runs through the TS engine.
+
+  local sub="${1:-list}"
+  shift 2>/dev/null || true
+
+  case "$sub" in
+    list)
+      need_db
+      echo -e "${BOLD}=== Self-defining cohort ===${NC}"
+      local rows
+      rows=$(sql_raw "SELECT COUNT(*) FROM self_defining_cohort;" 2>/dev/null || echo "0")
+      if [ "$rows" = "0" ]; then
+        echo -e "  ${DIM}(none — populate via 'mc-ctl cohort rollup')${NC}"
+        return 0
+      fi
+      sql "SELECT member_id, member_kind,
+                  ROUND(salience, 3) AS salience,
+                  CASE WHEN active = 1 THEN '' ELSE 'inactive' END AS state,
+                  last_rolled_at
+           FROM self_defining_cohort
+           ORDER BY active DESC, salience DESC
+           LIMIT 100;"
+      ;;
+
+    show)
+      need_db
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl cohort show <member_id>"
+        return 2
+      fi
+      # member_id is a prefixed id (`project:<uuid>` / `objective:<path>`) —
+      # admits ':' '/' '.' '-'. Reject anything outside that set.
+      if [[ ! "$id" =~ ^[a-z]+:[A-Za-z0-9:/._-]+$ ]]; then
+        echo -e "${RED}Invalid member_id:${NC} expected '<kind>:<ref>'"
+        return 2
+      fi
+      local esc="${id//\'/\'\'}"
+      local exists
+      exists=$(sql_raw "SELECT COUNT(*) FROM self_defining_cohort WHERE member_id='${esc}';" 2>/dev/null || echo "0")
+      if [ "$exists" = "0" ]; then
+        echo -e "${RED}No such cohort member:${NC} ${id}"
+        return 1
+      fi
+      echo -e "${BOLD}=== ${id} ===${NC}"
+      sql "SELECT member_kind, label, source_ref, ROUND(salience,4) AS salience,
+                  signal_json, active, first_seen_at, last_rolled_at
+           FROM self_defining_cohort WHERE member_id='${esc}';"
+      echo ""
+      echo -e "${BOLD}operator_profile attributes:${NC}"
+      local attrs
+      attrs=$(sql_raw "SELECT COUNT(*) FROM operator_profile WHERE cohort_member_id='${esc}';" 2>/dev/null || echo "0")
+      if [ "$attrs" = "0" ]; then
+        echo -e "  ${DIM}(none)${NC}"
+      else
+        sql "SELECT attribute_key, attribute_value, written_by, written_at
+             FROM operator_profile WHERE cohort_member_id='${esc}'
+             ORDER BY attribute_key;"
+      fi
+      ;;
+
+    rollup)
+      echo -e "${BOLD}=== Cohort roll-up ===${NC}"
+      ( cd "$PROJECT_DIR" && MODE=rollup npx --no-install tsx scripts/cohort-ctl.ts )
+      ;;
+
+    ""|help|--help|-h)
+      echo "Usage: mc-ctl cohort <list|show|rollup>"
+      echo ""
+      echo "  list               List cohort members (active first, by salience)"
+      echo "  show <member_id>   Full detail + operator_profile attributes"
+      echo "  rollup             Re-derive the cohort now (deterministic roll-up)"
+      ;;
+
+    *)
+      echo -e "${RED}Unknown cohort subcommand:${NC} $sub"
+      echo "  Usage: mc-ctl cohort <list|show|rollup>"
+      return 2
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -2492,6 +2584,7 @@ case "$cmd" in
   # `skills)` route is declared earlier (line ~2118); duplicate intentionally removed.
 
   events)            cmd_events "$@" ;;
+  cohort)            cmd_cohort "$@" ;;
 
   budget)            cmd_budget ;;
 

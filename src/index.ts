@@ -292,6 +292,25 @@ async function main(): Promise<void> {
       });
   }
 
+  // v7.7 Spine 5 Bundle 2: register the Conway Pattern 2 cohort roll-up
+  // cron. Daily at 05:00 MX re-derives the self-defining cohort (projects +
+  // objectives) ahead of the morning brief. Non-fatal if registration fails.
+  if (process.env.JARVIS_COHORT_ROLLUP_DISABLED !== "true") {
+    import("./cohort/rollup-cron.js")
+      .then(({ registerCohortRollupCron }) =>
+        registerCohortRollupCron({
+          info: (msg, fields) => log.info(fields ?? {}, msg),
+          warn: (msg, fields) => log.warn(fields ?? {}, msg),
+        }),
+      )
+      .catch((err) => {
+        log.warn(
+          { err },
+          "[cohort] Roll-up cron registration failed (non-fatal)",
+        );
+      });
+  }
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 

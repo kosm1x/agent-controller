@@ -590,6 +590,42 @@ export function recordGeneralEventOp(op: string): void {
   generalEventsOpsTotal.inc({ op: bucket });
 }
 
+// v7.7 Spine 5 Bundle 2: Conway Pattern 2 cohort roll-up observability.
+// A counter for roll-up runs (closed cardinality — ok|error) + a gauge for
+// the active cohort size by kind, set after each roll-up. The gauge makes
+// an empty or collapsed cohort visible without a DB query — the morning
+// brief reads the cohort, so a silent collapse would degrade V8.1.
+const cohortRollupTotal = new client.Counter({
+  name: "mc_cohort_rollup_total",
+  help: "Conway Pattern 2 cohort roll-up runs bucketed by result",
+  labelNames: ["result"] as const,
+});
+const cohortSizeGauge = new client.Gauge({
+  name: "mc_cohort_size",
+  help: "Active self-defining cohort size after the most recent roll-up, by kind",
+  labelNames: ["kind"] as const,
+});
+
+// `thread` is intentionally pre-declared though the v7.7 roll-up never
+// produces it (schema headroom — see self-defining.ts). A flat-0
+// `mc_cohort_size{kind="thread"}` series avoids a "no data" gap if a later
+// spine starts populating threads (R1-W3).
+const COHORT_KINDS = ["project", "objective", "thread"] as const;
+
+export function recordCohortRollup(
+  result: "ok" | "error",
+  byKind?: Record<string, number>,
+): void {
+  cohortRollupTotal.inc({ result: result === "ok" ? "ok" : "error" });
+  // Only refresh the gauge on a successful roll-up — a failed run must not
+  // overwrite the last-known-good cohort size with zeros.
+  if (result === "ok" && byKind) {
+    for (const kind of COHORT_KINDS) {
+      cohortSizeGauge.set({ kind }, byKind[kind] ?? 0);
+    }
+  }
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {
