@@ -715,6 +715,12 @@ export function initDatabase(dbPath: string): Database.Database {
     superseded_by     INTEGER REFERENCES general_events(id),
     archived_at       TEXT
   )`);
+  // Partial index on the non-archived cohort. Bundle 2 retrieval walks it
+  // for the `archived_at IS NULL` filter; note its `end_at` key gives no
+  // seek benefit to the window predicate (the `OR end_at IS NULL` disjunct
+  // defeats range use) and `ORDER BY start_at DESC` is a temp B-tree sort.
+  // Both are fine at the ~30-50 row cohort scale; if the cohort grows, a
+  // `(start_at)` partial index would remove the sort (R1-W1, Bundle 2).
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_general_events_active ON general_events(end_at) WHERE archived_at IS NULL",
   );
