@@ -57,6 +57,10 @@ prom_query() {
 
 # --- Check 1: Services alive ---
 for svc in mission-control agentic-crm; do
+  # A masked/disabled unit is intentionally down — don't fight the operator.
+  if ! systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+    continue
+  fi
   if ! systemctl is-active --quiet "$svc"; then
     systemctl restart "$svc"
     sleep 5
@@ -116,8 +120,11 @@ fi
 if ! docker image inspect nanoclaw-agent:latest >/dev/null 2>&1 \
    || ! docker image inspect agentic-crm-agent:latest >/dev/null 2>&1; then
   if (cd /root/claude/crm-azteca && ./crm/container/build.sh) >/tmp/crm-rebuild.log 2>&1; then
-    systemctl restart agentic-crm 2>/dev/null || true
-    alert "CRM agent image(s) missing, rebuilt + service restarted"
+    # Only bounce the service if the operator hasn't masked/disabled it.
+    if systemctl is-enabled --quiet agentic-crm 2>/dev/null; then
+      systemctl restart agentic-crm 2>/dev/null || true
+    fi
+    alert "CRM agent image(s) missing, rebuilt"
   else
     alert "CRM agent image(s) missing, rebuild FAILED — see /tmp/crm-rebuild.log"
   fi
