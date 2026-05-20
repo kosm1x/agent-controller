@@ -2276,6 +2276,161 @@ cmd_mcp_token() {
 # shadow the merged router.
 
 # ---------------------------------------------------------------------------
+# General events (v7.7 Spine 4 — Conway Pattern 1 middle layer)
+# ---------------------------------------------------------------------------
+
+cmd_events() {
+  #   mc-ctl events list
+  #   mc-ctl events show <event_id>
+  #   mc-ctl events retrieve "<query>" [--k=N]
+  #   mc-ctl events aggregate [--by=day|week|project]
+  #   mc-ctl events seed [--dry-run]
+  #
+  # list/show query SQLite directly (read-only). retrieve/aggregate/seed
+  # forward to tsx helpers so the embedding API + write invariants live in
+  # the TypeScript layer. retrieve + seed source .env (embeddings need
+  # GEMINI_API_KEY).
+
+  local sub="${1:-list}"
+  shift 2>/dev/null || true
+
+  case "$sub" in
+    list)
+      need_db
+      echo -e "${BOLD}=== General events ===${NC}"
+      local rows
+      rows=$(sql_raw "SELECT COUNT(*) FROM general_events;" 2>/dev/null || echo "0")
+      if [ "$rows" = "0" ]; then
+        echo -e "  ${DIM}(none — populate via 'mc-ctl events seed')${NC}"
+        return 0
+      fi
+      sql "SELECT event_id, level, episodic_count AS episodic,
+                  COALESCE(end_at,'(ongoing)') AS ended,
+                  CASE WHEN archived_at IS NULL THEN '' ELSE 'archived' END AS state
+           FROM general_events
+           ORDER BY archived_at IS NOT NULL, start_at DESC
+           LIMIT 100;"
+      ;;
+
+    show)
+      need_db
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        echo -e "${RED}Usage:${NC} mc-ctl events show <event_id>"
+        return 2
+      fi
+      if [[ ! "$id" =~ ^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$ ]]; then
+        echo -e "${RED}Invalid event_id:${NC} lowercase kebab-case, 3-64 chars"
+        return 2
+      fi
+      # Single-quote-escape the id for the SQL literal (defensive — the regex
+      # above already excludes quotes, but keep the pattern consistent).
+      local esc="${id//\'/\'\'}"
+      local exists
+      exists=$(sql_raw "SELECT COUNT(*) FROM general_events WHERE event_id='${esc}';" 2>/dev/null || echo "0")
+      if [ "$exists" = "0" ]; then
+        echo -e "${RED}No such event:${NC} ${id}"
+        return 1
+      fi
+      echo -e "${BOLD}=== ${id} ===${NC}"
+      sql "SELECT level, title, goal_context_id, themes, start_at,
+                  COALESCE(end_at,'(ongoing)') AS end_at, episodic_count,
+                  created_by, COALESCE(archived_at,'(active)') AS archived_at
+           FROM general_events WHERE event_id='${esc}';"
+      echo ""
+      echo -e "${BOLD}Summary:${NC}"
+      sql_raw "SELECT summary FROM general_events WHERE event_id='${esc}';" | sed 's/^/  /'
+      echo ""
+      echo -e "${BOLD}Episodic links:${NC}"
+      local links
+      links=$(sql_raw "SELECT COUNT(*) FROM general_event_episodic_links WHERE event_id='${esc}';" 2>/dev/null || echo "0")
+      if [ "$links" = "0" ]; then
+        echo -e "  ${DIM}(none)${NC}"
+      else
+        sql "SELECT episodic_kind, episodic_ref, link_reason, linked_at
+             FROM general_event_episodic_links WHERE event_id='${esc}'
+             ORDER BY linked_at;"
+      fi
+      ;;
+
+    retrieve)
+      local query="${1:-}"
+      shift 2>/dev/null || true
+      local k_arg="8"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --k=*) k_arg="${1#*=}" ;;
+          *)     echo -e "${RED}Unknown flag:${NC} $1"; return 2 ;;
+        esac
+        shift
+      done
+      [[ "$k_arg" =~ ^[0-9]+$ ]] || { echo -e "${RED}--k must be a positive integer${NC}"; return 2; }
+      [ "$k_arg" -gt 0 ] || { echo -e "${RED}--k must be > 0${NC}"; return 2; }
+      echo -e "${BOLD}=== Retrieving general events ===${NC}"
+      [ -n "$query" ] && echo -e "${DIM}query:${NC} ${query}"
+      echo ""
+      # retrieve embeds the query (Gemini) — needs GEMINI_API_KEY from .env.
+      # Source .env only if present; do NOT swallow source errors, so a
+      # malformed .env fails loudly instead of looking like a missing key
+      # (R1-W3 fold).
+      ( cd "$PROJECT_DIR" && { [ -f ./.env ] && { set -a && . ./.env && set +a; }; } ; \
+        MODE=retrieve QUERY="$query" K="$k_arg" npx --no-install tsx scripts/events-ctl.ts )
+      ;;
+
+    aggregate)
+      local by_arg="day"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --by=*) by_arg="${1#*=}" ;;
+          *)      echo -e "${RED}Unknown flag:${NC} $1"; return 2 ;;
+        esac
+        shift
+      done
+      case "$by_arg" in
+        day|week|project) ;;
+        *) echo -e "${RED}--by must be day|week|project${NC}"; return 2 ;;
+      esac
+      # aggregate is intentionally embed-free (listGeneralEvents +
+      # aggregateGeneralEvents only) — no .env sourcing needed, unlike
+      # retrieve/seed (R1-W2).
+      ( cd "$PROJECT_DIR" && MODE=aggregate BY="$by_arg" npx --no-install tsx scripts/events-ctl.ts )
+      ;;
+
+    seed)
+      local seed_mode="apply"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --dry-run) seed_mode="dry-run" ;;
+          *)         echo -e "${RED}Unknown flag:${NC} $1"; return 2 ;;
+        esac
+        shift
+      done
+      echo -e "${BOLD}=== Seeding general events (${seed_mode}) ===${NC}"
+      # seed embeds each summary (Gemini) — needs GEMINI_API_KEY. Source
+      # .env only if present; surface a malformed .env loudly (R1-W3 fold).
+      ( cd "$PROJECT_DIR" && { [ -f ./.env ] && { set -a && . ./.env && set +a; }; } ; \
+        MODE="$seed_mode" npx --no-install tsx scripts/general-events-seed.ts )
+      ;;
+
+    ""|help|--help|-h)
+      echo "Usage: mc-ctl events <list|show|retrieve|aggregate|seed>"
+      echo ""
+      echo "  list                              List general events (newest first)"
+      echo "  show <event_id>                   Full detail + episodic links for one event"
+      echo "  retrieve \"<query>\" [--k=N]         Semantic/recency retrieval (k default 8)"
+      echo "  aggregate [--by=day|week|project] Time-windowed roll-up (default day)"
+      echo "  seed [--dry-run]                  Populate the v7.x substrate-arc cohort"
+      ;;
+
+    *)
+      echo -e "${RED}Unknown events subcommand:${NC} $sub"
+      echo "  Usage: mc-ctl events <list|show|retrieve|aggregate|seed>"
+      return 2
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -2318,6 +2473,8 @@ case "$cmd" in
   audit-claim)       cmd_audit_claim "$@" ;;
   skill-health)      cmd_skill_health "$@" ;;
   # `skills)` route is declared earlier (line ~2118); duplicate intentionally removed.
+
+  events)            cmd_events "$@" ;;
 
   budget)            cmd_budget ;;
 

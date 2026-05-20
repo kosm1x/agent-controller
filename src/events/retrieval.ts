@@ -24,6 +24,7 @@ import {
   deserializeEmbedding,
   embed,
 } from "../memory/embeddings.js";
+import { recordGeneralEventOp } from "../observability/prometheus.js";
 import {
   type EpisodicKind,
   type GeneralEvent,
@@ -184,6 +185,7 @@ export async function retrieveGeneralEvents(
     const event = getGeneralEvent(event_id);
     if (event) out.push({ event, score });
   }
+  if (out.length > 0) recordGeneralEventOp("retrieved");
   return out;
 }
 

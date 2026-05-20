@@ -566,6 +566,30 @@ export function recordSkillRun(name: string, result: string): void {
   skillsRunsTotal.inc({ name: safeName, result: bucket });
 }
 
+// v7.7 Spine 4 Bundle 3: general-events middle-layer activity, bucketed by
+// op. Closed cardinality (4 buckets). `created`/`archived` track write-side
+// growth of the ~30-50 row cohort; `retrieved` tracks how often the layer
+// is queried. Today `retrieved` increments only from `mc-ctl events
+// retrieve` — the V8.1 briefing path that will be its main driver is a
+// later spine and not yet wired.
+const generalEventsOpsTotal = new client.Counter({
+  name: "mc_general_events_ops_total",
+  help: "Conway Pattern 1 general-events operations bucketed by op",
+  labelNames: ["op"] as const,
+});
+
+const KNOWN_GENERAL_EVENT_OPS = new Set([
+  "created",
+  "archived",
+  "retrieved",
+  "other",
+]);
+
+export function recordGeneralEventOp(op: string): void {
+  const bucket = KNOWN_GENERAL_EVENT_OPS.has(op) ? op : "other";
+  generalEventsOpsTotal.inc({ op: bucket });
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {

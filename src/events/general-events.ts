@@ -18,6 +18,7 @@
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import { embed, serializeEmbedding } from "../memory/embeddings.js";
+import { recordGeneralEventOp } from "../observability/prometheus.js";
 
 export type GeneralEventLevel = "lifetime" | "general" | "episodic-cluster";
 export type EpisodicKind =
@@ -230,6 +231,7 @@ export async function createGeneralEvent(
     throw err;
   }
 
+  recordGeneralEventOp("created");
   return getGeneralEvent(eventId)!;
 }
 
@@ -359,6 +361,7 @@ export function archiveGeneralEvent(eventId: string, reason?: string): void {
        WHERE event_id = ?`,
     ).run(themes, eventId);
   });
+  recordGeneralEventOp("archived");
 }
 
 /**
