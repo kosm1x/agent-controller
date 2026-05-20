@@ -827,6 +827,32 @@ export function initDatabase(dbPath: string): Database.Database {
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // V8.1 Phase 5 (detection algorithms — recurring blocker). The clustered
+  // record of a blocker class seen across ≥3 distinct task runs. See
+  // docs/planning/v8-capability-1-spec.md §8.
+  // RECONCILIATION vs spec §8: no separate `task_errors` table — the detector
+  // clusters over the existing `tasks.error` column (§12 item 2 conditionalises
+  // it). `signature_embedding` is kept for the §14-Q3 semantic-clustering
+  // follow-up; Phase 5 clusters by exact `blocker_signature` only.
+  // `blocker_signature` is UNIQUE so the detection pass upserts one row per
+  // signature (the UNIQUE index also serves signature lookups).
+  _db.exec(`CREATE TABLE IF NOT EXISTS recurring_blockers (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    blocker_signature   TEXT NOT NULL UNIQUE,
+    signature_embedding BLOB,
+    first_seen_at       TEXT NOT NULL,
+    last_seen_at        TEXT NOT NULL,
+    task_count          INTEGER NOT NULL,
+    task_ids_json       TEXT NOT NULL,
+    named_at            TEXT,
+    named_by_briefing_id TEXT,
+    resolved_at         TEXT,
+    resolution_signal   TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_rb_active ON recurring_blockers(resolved_at) WHERE resolved_at IS NULL",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
