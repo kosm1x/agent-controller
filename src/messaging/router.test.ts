@@ -69,7 +69,7 @@ vi.mock("../db/index.js", () => ({
   }),
 }));
 
-import { MessageRouter, threadKey } from "./router.js";
+import { MessageRouter, threadKey, isOwnerChannel } from "./router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
   ChannelAdapter,
@@ -730,6 +730,32 @@ describe("MessageRouter", () => {
 
     it("Telegram channel-only key is unchanged", () => {
       expect(threadKey("telegram", "12345")).toBe("telegram");
+    });
+  });
+
+  describe("isOwnerChannel", () => {
+    // Gate for operator-private prompt content (the self-defining cohort).
+    // Fail-safe: owner status must be POSITIVELY established — an ambiguous
+    // email channel must NOT count as owner, or private data leaks publicly.
+
+    it("treats non-email channels as owner (WhatsApp, Telegram)", () => {
+      expect(isOwnerChannel("whatsapp", undefined)).toBe(true);
+      expect(isOwnerChannel("telegram", undefined)).toBe(true);
+    });
+
+    it("treats owner-only email as owner", () => {
+      expect(isOwnerChannel("email:comunidades", "owner-only")).toBe(true);
+    });
+
+    it("treats community-manager email as NOT owner (public)", () => {
+      expect(isOwnerChannel("email:comunidades", "community-manager")).toBe(
+        false,
+      );
+    });
+
+    it("treats email with undefined mode as NOT owner (default-deny)", () => {
+      expect(isOwnerChannel("email:comunidades", undefined)).toBe(false);
+      expect(isOwnerChannel("email", undefined)).toBe(false);
     });
   });
 });

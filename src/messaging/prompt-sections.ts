@@ -5,6 +5,8 @@
  * which sections to include based on scoped tools.
  */
 
+import type { CohortMember } from "../cohort/self-defining.js";
+
 // ---------------------------------------------------------------------------
 // Tool detection helpers
 // ---------------------------------------------------------------------------
@@ -351,6 +353,57 @@ export function correctionMemorySection(): string {
 - Resultados crudos de herramientas (web_search, jarvis_file_read)
 - Datos que ya están en user_facts o projects
 - Observaciones genéricas sin contexto específico`;
+}
+
+/** Spanish kind label for a cohort member. */
+const COHORT_KIND_LABEL: Record<CohortMember["member_kind"], string> = {
+  project: "proyecto",
+  objective: "objetivo",
+  thread: "hilo",
+};
+
+/**
+ * Operator-cohort grounding section (Conway Pattern 2 — v7.7 Spine 5 +
+ * V8.1 Phase A). Surfaces the self-defining cohort — what Fede actually has
+ * live right now — so the model grounds answers in real projects/objectives
+ * instead of inventing them.
+ *
+ * SECURITY — the cohort is operator-PRIVATE data: business names, personal
+ * objectives, health goals. It must NEVER reach a public-facing channel.
+ * `ownerChannel` is a REQUIRED, un-defaulted parameter so every caller must
+ * state the channel's trust explicitly (poka-yoke); when it is false the
+ * section is empty regardless of `members`. The gate lives here, in the pure
+ * function, so it is the single source of truth and is unit-testable. See
+ * the 2026-05-15 community-manager channel audits for the threat class.
+ *
+ * Pure: takes the already-fetched member list (the router calls `getCohort()`
+ * and passes it in). Belongs in the STABLE prompt layer — the cohort is
+ * re-rolled once daily by the cron, so it is byte-stable within a day and
+ * prompt-cache friendly. Returns "" when empty so the section auto-omits
+ * cleanly (mirrors `availableSkillsSection`).
+ *
+ * @param members - active cohort members, salience-DESC (as `getCohort()`
+ *   returns them). Rendered in that order — a flat list keeps the global
+ *   salience signal that grouping by kind would lose.
+ * @param ownerChannel - true ONLY for trusted owner channels (WhatsApp,
+ *   Telegram, owner-only email). False for community-manager / public /
+ *   ambiguous channels — the section is then empty (default-deny).
+ */
+export function cohortSection(
+  members: CohortMember[],
+  ownerChannel: boolean,
+): string {
+  if (!ownerChannel || members.length === 0) return "";
+  const lines = members
+    .map(
+      (m) =>
+        `- [${COHORT_KIND_LABEL[m.member_kind] ?? m.member_kind}] ${m.label}`,
+    )
+    .join("\n");
+  return `## Cohorte activa del operador
+Esto es lo que Fede tiene vivo ahora — sus proyectos, objetivos e hilos abiertos, ordenados por relevancia. Aterriza tus respuestas en lo que de verdad importa hoy. No inventes proyectos ni objetivos fuera de esta lista; si algo no aparece aquí, no asumas que existe.
+
+${lines}`;
 }
 
 export function codingSection(): string {

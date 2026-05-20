@@ -100,8 +100,10 @@ import {
   browserSection,
   researchSection,
   availableSkillsSection,
+  cohortSection,
 } from "./prompt-sections.js";
 import { listSkillsForTools } from "../skills/catalog.js";
+import { getCohort, type CohortMember } from "../cohort/self-defining.js";
 import {
   scopeToolsForMessage as scopeToolsPure,
   detectActiveGroups,
@@ -201,6 +203,10 @@ function buildJarvisSystemPrompt(
   userFactsBlock: string,
   enrichmentBlock: string,
   personaContent: string | null = null,
+  // Operator-private grounding (the self-defining cohort) is emitted ONLY
+  // when this is true. Defaults to false so a caller that forgets to pass it
+  // fails safe — no private data leaks. See `cohortSection`.
+  ownerChannel = false,
 ): { stable: string; variable: string } {
   const flags = detectToolFlags(tools);
 
@@ -229,6 +235,25 @@ function buildJarvisSystemPrompt(
   // tasks without NorthStar tools won't see this either way.
   if (flags.hasNorthStar) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
+  // V8.1 Phase A — Conway Pattern 2 grounding. Surface the self-defining
+  // cohort (what Fede actually has live) in the stable layer so the model
+  // grounds answers in real projects/objectives. getCohort() is one indexed
+  // SELECT on a ≤30-row table; the cohort is re-rolled once daily, so the
+  // section is byte-stable within a day → prompt-cache friendly. The cohort
+  // is operator-PRIVATE — cohortSection() emits it only when ownerChannel.
+  let cohortMembers: CohortMember[] = [];
+  try {
+    cohortMembers = getCohort();
+  } catch (err) {
+    // Table absent in bootstrap/test paths is expected; once it exists in
+    // prod (it does) any throw is an anomaly worth surfacing — not silence.
+    console.warn(
+      "[prompt] getCohort failed — cohort grounding omitted:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+  const cohortBlock = cohortSection(cohortMembers, ownerChannel);
+  if (cohortBlock) p2.push(cohortBlock);
   // personalDataSection instructs the model to call user_fact_set — gate on
   // the tool's availability. Community-manager email scope excludes the tool
   // (the section would otherwise hallucinate calls on stranger-sent data).
@@ -535,6 +560,27 @@ export function threadKey(
  */
 function isEmailChannel(channel: string): boolean {
   return channel === "email" || channel.startsWith("email:");
+}
+
+/**
+ * Whether a channel is a trusted OWNER channel (operator-only), as opposed to
+ * a public-facing community-manager mailbox. Gate for operator-private prompt
+ * content (the self-defining cohort — see `cohortSection`).
+ *
+ * Fail-safe by construction — owner status must be POSITIVELY established:
+ *   - non-email channels (WhatsApp, Telegram) → owner (operator-only by design)
+ *   - email with `mode === "owner-only"`      → owner
+ *   - email with `mode === "community-manager"` → NOT owner (public)
+ *   - email with `mode` undefined/ambiguous   → NOT owner (default-deny)
+ *
+ * The email branch is the exact inverse of the community-manager gate at the
+ * `needsGate` check (`isEmailChannel(channel) && mode !== "owner-only"`).
+ */
+export function isOwnerChannel(
+  channel: string,
+  mode: EmailChannelMode | undefined,
+): boolean {
+  return !isEmailChannel(channel) || mode === "owner-only";
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,12 +1240,14 @@ export class MessageRouter {
         const enrichment = await enrichContext(taskText, msg.channel);
         const mxDate = nowMexDate();
         const mxTime = nowMexTime();
+        const spChannel = this.channels.get(msg.channel);
         const { stable: stableSP, variable: variableSP } =
           buildJarvisSystemPrompt(
             scopedTools,
             "",
             enrichment.contextBlock,
-            this.channels.get(msg.channel)?.personaContent ?? null,
+            spChannel?.personaContent ?? null,
+            isOwnerChannel(msg.channel, spChannel?.mode),
           );
 
         // Worker isolation (OpenClaude InProcessBackend pattern):
@@ -1816,6 +1864,7 @@ export class MessageRouter {
     // The system prompt stays byte-stable across calls (no timestamps) so the
     // Anthropic SDK's prompt cache can hit. Time context is injected into the
     // user message below via `timeContextLine()`.
+    const spChannel = this.channels.get(msg.channel);
     const { stable: stableSP, variable: variableSP } = buildJarvisSystemPrompt(
       tools,
       userFactsBlock,
@@ -1823,7 +1872,9 @@ export class MessageRouter {
       // Per-channel persona — set on email adapters when EMAIL_<ID>_PERSONA_FILE
       // is configured; null elsewhere. The function adds an org-context section
       // to the stable half only when this is non-null.
-      this.channels.get(msg.channel)?.personaContent ?? null,
+      spChannel?.personaContent ?? null,
+      // Operator-private cohort grounding is gated on owner-channel trust.
+      isOwnerChannel(msg.channel, spChannel?.mode),
     );
 
     // Execution pattern memory: inject relevant past lessons. Patterns vary

@@ -16,8 +16,10 @@ import {
   confirmationSection,
   toolFirstSection,
   availableSkillsSection,
+  cohortSection,
 } from "./prompt-sections.js";
 import { listFirstPartySkills, listSkillsForTools } from "../skills/catalog.js";
+import type { CohortMember } from "../cohort/self-defining.js";
 
 // ---------------------------------------------------------------------------
 // detectToolFlags
@@ -259,5 +261,84 @@ describe("availableSkillsSection", () => {
     expect(s).toContain("svg-diagram-palette-dark");
     expect(s).not.toContain("html-compose-skill-gate");
     expect(s).not.toContain("html-compose-house-style");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cohortSection (V8.1 Phase A — Conway Pattern 2 grounding)
+// ---------------------------------------------------------------------------
+
+describe("cohortSection", () => {
+  const member = (
+    kind: CohortMember["member_kind"],
+    label: string,
+    salience: number,
+  ): CohortMember => ({
+    id: salience,
+    member_id: `${kind}:${label}`,
+    member_kind: kind,
+    label,
+    source_ref: `ref/${label}`,
+    salience,
+    signals: {},
+    first_seen_at: "2026-05-01T00:00:00.000Z",
+    last_rolled_at: "2026-05-20T00:00:00.000Z",
+    active: true,
+  });
+
+  it("returns empty string for an empty cohort (cache-stable omission)", () => {
+    expect(cohortSection([], true)).toBe("");
+  });
+
+  it("renders the header + grounding instruction when populated", () => {
+    const s = cohortSection([member("project", "EurekaMD", 9)], true);
+    expect(s).toContain("## Cohorte activa del operador");
+    // The grounding directive is the whole point — must be present.
+    expect(s).toContain("No inventes proyectos");
+  });
+
+  it("maps each member_kind to its Spanish label", () => {
+    const s = cohortSection(
+      [
+        member("project", "EurekaMD", 9),
+        member("objective", "Cerrar piloto CRM", 7),
+        member("thread", "Rotación de claves AV", 3),
+      ],
+      true,
+    );
+    expect(s).toContain("- [proyecto] EurekaMD");
+    expect(s).toContain("- [objetivo] Cerrar piloto CRM");
+    expect(s).toContain("- [hilo] Rotación de claves AV");
+  });
+
+  it("preserves the input order (salience-DESC as getCohort returns it)", () => {
+    const s = cohortSection(
+      [
+        member("project", "Alta", 9),
+        member("objective", "Media", 5),
+        member("thread", "Baja", 1),
+      ],
+      true,
+    );
+    expect(s.indexOf("Alta")).toBeLessThan(s.indexOf("Media"));
+    expect(s.indexOf("Media")).toBeLessThan(s.indexOf("Baja"));
+  });
+
+  // SECURITY GATE — operator-private data must never reach a public channel.
+  it("returns empty string when ownerChannel is false, even with members", () => {
+    const members = [
+      member("project", "Solera Properties", 9),
+      member("objective", "biomarcadores cardiovasculares", 8),
+    ];
+    const s = cohortSection(members, false);
+    expect(s).toBe("");
+    // The private labels must appear nowhere in the output.
+    expect(s).not.toContain("Solera");
+    expect(s).not.toContain("biomarcadores");
+  });
+
+  it("renders the cohort when ownerChannel is true", () => {
+    const s = cohortSection([member("project", "EurekaMD", 9)], true);
+    expect(s).toContain("EurekaMD");
   });
 });
