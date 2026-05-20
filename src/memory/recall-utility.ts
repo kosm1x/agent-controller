@@ -16,6 +16,7 @@
  */
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
+import type { RecallMode } from "./recall-mode.js";
 import type { MemoryItem } from "./types.js";
 import { recordRecallOutcomes } from "../observability/prometheus.js";
 
@@ -343,6 +344,11 @@ interface LogRecallInput {
    * retain history. Only populated on the hindsight path — null elsewhere.
    */
   topKIds?: string[];
+  /**
+   * Conway Pattern 3 named recall mode (v7.7 Spine 6) — persisted to
+   * recall_audit.mode. Omitted → NULL (rows from before the column landed).
+   */
+  mode?: RecallMode;
 }
 
 /**
@@ -431,8 +437,8 @@ export function logRecall(input: LogRecallInput): void {
       db
         .prepare(
           `INSERT INTO recall_audit
-             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown, top_k_ids)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown, top_k_ids, mode)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.bank,
@@ -444,6 +450,7 @@ export function logRecall(input: LogRecallInput): void {
           input.excludedCount ?? 0,
           breakdownJson,
           topKJson,
+          input.mode ?? null,
         ),
     );
   } catch (err) {

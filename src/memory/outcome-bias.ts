@@ -20,8 +20,8 @@
  * it to recall_audit.outcome_breakdown for ratio-based audits.
  */
 
+import { resolveExcludeOutcomes } from "./recall-mode.js";
 import type { MemoryItem, RecallOptions } from "./types.js";
-import { DEFAULT_EXCLUDE_OUTCOMES } from "./types.js";
 
 /** Score adjustments applied per outcome tag. */
 export const OUTCOME_BIAS: Record<string, number> = {
@@ -66,10 +66,10 @@ export function applyOutcomeBias(
   items: MemoryItem[],
   options: RecallOptions,
 ): OutcomeBiasResult {
-  const exclude = options.includeFailed
-    ? []
-    : (options.excludeOutcomes ?? DEFAULT_EXCLUDE_OUTCOMES);
-  const excludeSet = new Set(exclude);
+  // Conway Pattern 3 (v7.7 Spine 6): the exclude set is resolved from the
+  // recall mode + legacy knobs in one place. Behaviour is unchanged for
+  // callers that do not set `recallMode`.
+  const excludeSet = new Set(resolveExcludeOutcomes(options));
   const breakdown: OutcomeBreakdown = {
     success: 0,
     concerns: 0,

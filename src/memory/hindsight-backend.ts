@@ -18,6 +18,7 @@ import { HindsightClient } from "./hindsight-client.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import { logRecall } from "./recall-utility.js";
 import { applyOutcomeBias } from "./outcome-bias.js";
+import { resolveRecallMode } from "./recall-mode.js";
 import type {
   MemoryService,
   MemoryItem,
@@ -165,6 +166,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: Date.now() - start,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
       });
       if (excluded > 0) {
         console.log(
@@ -191,6 +193,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: Date.now() - start,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
       });
       return kept;
     }
@@ -215,6 +218,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: Date.now() - start,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
       });
       if (excluded > 0) {
         console.log(
@@ -239,6 +243,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: Date.now() - start,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
       });
       if (excluded > 0) {
         console.log(
@@ -291,6 +296,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: ms,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
         topKIds: response.results.map((r) => r.id), // queue #8
       });
       return kept;
@@ -327,6 +333,7 @@ export class HindsightMemoryBackend implements MemoryService {
         latencyMs: ms + fbMs,
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
+        mode: resolveRecallMode(options),
       });
       return kept;
     }

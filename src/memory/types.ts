@@ -70,6 +70,21 @@ export interface RecallOptions {
    * priority over caller intent.
    */
   withRerank?: boolean;
+  /**
+   * Conway Pattern 3 named recall mode (v7.7 Spine 6). Additive high-level
+   * intent — `excludeOutcomes`/`includeFailed` above are the low-level
+   * knobs and still take precedence when set.
+   *
+   * - `coherence` (default when unset): drops `outcome:failed` — the
+   *   goal-supportive surface for V8.1 briefs / V8.2 proposals.
+   * - `correspondence`: includes every outcome class — for retrospective
+   *   audits, the S2 critic, post-mortems.
+   * - `unfiltered`: debug / `mc-ctl recall` paths.
+   *
+   * See `src/memory/recall-mode.ts`. The resolved mode is tagged onto
+   * `recall_audit.mode` for the weekly correspondence audit.
+   */
+  recallMode?: "coherence" | "correspondence" | "unfiltered";
 }
 
 /**

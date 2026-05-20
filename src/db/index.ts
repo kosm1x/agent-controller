@@ -154,6 +154,17 @@ export function initDatabase(dbPath: string): Database.Database {
     _db.exec("ALTER TABLE recall_audit ADD COLUMN top_k_ids TEXT");
   }
 
+  // v7.7 Spine 6 (Conway Pattern 3): the named recall mode this recall ran
+  // under — coherence | correspondence | unfiltered. NULL on rows written
+  // before this column landed. The CHECK is permitted on ADD COLUMN
+  // because existing rows take NULL and the predicate admits NULL. The
+  // weekly correspondence-audit drift signal reads this column.
+  if (!recallAuditCols.some((c) => c.name === "mode")) {
+    _db.exec(
+      "ALTER TABLE recall_audit ADD COLUMN mode TEXT CHECK (mode IS NULL OR mode IN ('coherence','correspondence','unfiltered'))",
+    );
+  }
+
   // v4.0 S1: composite indexes for query performance
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_conversations_bank_created ON conversations(bank, created_at DESC)",
