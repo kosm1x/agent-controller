@@ -104,6 +104,65 @@ describe("runReflection", () => {
     expect(readCursor("morning_brief").lastEventId).toBe(4);
   });
 
+  it("records a reflection:<trigger> cost_ledger row when token usage is reported", async () => {
+    insertTasks(4);
+    executeMock.mockResolvedValue({
+      success: true,
+      output: "summary",
+      durationMs: 1,
+      tokenUsage: {
+        promptTokens: 1000,
+        completionTokens: 200,
+        cacheReadTokens: 850,
+        actualCostUsd: 0,
+      },
+    } satisfies RunnerOutput);
+
+    await runReflection({ cursorName: "morning_brief", trigger: "n-turn" });
+
+    const row = getDatabase()
+      .prepare(
+        `SELECT agent_type, prompt_tokens, cache_read_tokens
+           FROM cost_ledger WHERE agent_type = 'reflection:n-turn'`,
+      )
+      .get() as
+      | { agent_type: string; prompt_tokens: number; cache_read_tokens: number }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row!.prompt_tokens).toBe(1000);
+    expect(row!.cache_read_tokens).toBe(850);
+  });
+
+  it("records reflection cost even on a FAILED pass that still ran inference (audit R1)", async () => {
+    insertTasks(4);
+    executeMock.mockResolvedValue({
+      success: false,
+      error: "model omitted the STATUS line",
+      durationMs: 1,
+      tokenUsage: {
+        promptTokens: 500,
+        completionTokens: 50,
+        cacheReadTokens: 400,
+      },
+    } satisfies RunnerOutput);
+
+    const res = await runReflection({
+      cursorName: "morning_brief",
+      trigger: "n-turn",
+    });
+    expect(res.reason).toBe("runner-failed");
+
+    // The failed pass still spent tokens — the §13 ratio must see them.
+    const row = getDatabase()
+      .prepare(
+        `SELECT prompt_tokens FROM cost_ledger
+           WHERE agent_type = 'reflection:n-turn'`,
+      )
+      .get() as { prompt_tokens: number } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.prompt_tokens).toBe(500);
+  });
+
   it("does NOT advance the cursor when the runner fails", async () => {
     insertTasks(4);
     executeMock.mockResolvedValue(fail);

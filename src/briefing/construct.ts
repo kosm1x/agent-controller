@@ -32,6 +32,8 @@ import type { ReflectionTrigger } from "../reflection/scope.js";
 import { runDetection } from "../detection/index.js";
 import { retrieveForBriefing } from "../events/retrieval.js";
 import { infer } from "../inference/adapter.js";
+import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
+import { recordReflectionCost } from "../budget/service.js";
 import { submitReport } from "../audit/submit-report.js";
 import type { DataSourceCitation } from "../audit/report-schema.js";
 import { renderJudgmentPrompt } from "./judgment-prompt.js";
@@ -263,6 +265,20 @@ export async function constructBriefing(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+
+  // §13 instrumentation: tag this briefing's inference cost as
+  // `reflection:<surface>` so the activation gate (cache-read ratio) is
+  // measurable. Best-effort — never blocks briefing construction.
+  recordReflectionCost({
+    surface,
+    taskId: `briefing:${surface}`,
+    model: SONNET_MODEL_ID,
+    promptTokens: response.usage.prompt_tokens,
+    completionTokens: response.usage.completion_tokens,
+    costUsd: response.usage.cost_usd,
+    cacheReadTokens: response.usage.cache_read_tokens,
+    cacheCreationTokens: response.usage.cache_creation_tokens,
+  });
 
   let judgmentPayload: { judgments?: unknown; highest_leverage_pick?: unknown };
   try {

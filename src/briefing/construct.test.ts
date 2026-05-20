@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeDatabase, initDatabase } from "../db/index.js";
+import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 
 const inferMock = vi.fn();
 vi.mock("../inference/adapter.js", () => ({
@@ -79,6 +79,15 @@ describe("constructBriefing", () => {
     const stored = getProposedBriefing(result.briefing.briefing_id);
     expect(stored).not.toBeNull();
     expect(stored!.status).toBe("pending");
+
+    // §13 instrumentation: the briefing's inference cost is tagged
+    // `reflection:morning` so the activation gate can measure cache-read.
+    const cost = getDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM cost_ledger WHERE agent_type = 'reflection:morning'`,
+      )
+      .get() as { c: number };
+    expect(cost.c).toBe(1);
   });
 
   it("carries the S2 verdict onto the briefing", async () => {
@@ -119,6 +128,22 @@ describe("constructBriefing", () => {
     s2Passes();
     const result = await constructBriefing();
     expect(result).toMatchObject({ ok: false, stage: "schema" });
+  });
+
+  it("records inference cost even when the briefing fails validation (§13)", async () => {
+    // Inference SUCCEEDED (tokens spent) but the briefing fails schema — the
+    // §13 cache-read ratio must still count this call. recordReflectionCost
+    // is placed after infer(), before validation, exactly so.
+    inferReturns({ judgments: [] });
+    s2Passes();
+    const result = await constructBriefing();
+    expect(result).toMatchObject({ ok: false, stage: "schema" });
+    const cost = getDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM cost_ledger WHERE agent_type = 'reflection:morning'`,
+      )
+      .get() as { c: number };
+    expect(cost.c).toBe(1);
   });
 
   it("fails at the invariants stage on two highest_leverage judgments", async () => {

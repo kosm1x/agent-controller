@@ -20,6 +20,8 @@
 
 import { fastRunner } from "../runners/fast-runner.js";
 import type { RunnerInput, RunnerOutput } from "../runners/types.js";
+import { recordReflectionCost } from "../budget/service.js";
+import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { advanceCursor, type ReflectionCursorName } from "./cursors.js";
 import {
   buildReflectionScope,
@@ -167,6 +169,27 @@ export async function runReflection(
         durationMs: 0,
       },
     };
+  }
+
+  // §13 instrumentation: tag this pass's inference cost as
+  // `reflection:<trigger>` so the activation gate can measure it.
+  // `fastRunner.execute` ran outside the dispatcher, so the dispatcher's own
+  // recordCost never fired. Recorded for ANY completed inference round-trip —
+  // success OR a non-thrown failure (a failed pass still spent tokens and hit
+  // the cache; the §13 ratio must cover all reflection inference, audit R1).
+  // The thrown-error path above synthesizes an output with no `tokenUsage`,
+  // so it correctly records nothing.
+  if (output.tokenUsage) {
+    recordReflectionCost({
+      surface: opts.trigger,
+      taskId: input.taskId,
+      model: output.tokenUsage.actualModel ?? SONNET_MODEL_ID,
+      promptTokens: output.tokenUsage.promptTokens,
+      completionTokens: output.tokenUsage.completionTokens,
+      costUsd: output.tokenUsage.actualCostUsd,
+      cacheReadTokens: output.tokenUsage.cacheReadTokens,
+      cacheCreationTokens: output.tokenUsage.cacheCreationTokens,
+    });
   }
 
   if (output.success) {

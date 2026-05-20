@@ -1700,6 +1700,7 @@ usage() {
   echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
   echo -e "                          metrics: utility | cache-hit | latency | cost"
+  echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
   echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
@@ -2616,6 +2617,16 @@ cmd_audit_closure() {
 }
 
 # ---------------------------------------------------------------------------
+# V8.1 §13 activation gate (Phase 9)
+# ---------------------------------------------------------------------------
+
+cmd_briefing_gate() {
+  # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
+  # ratio over reflection inference + morning-brief promote-rate). Read-only.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/briefing-gate.ts )
+}
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -2662,6 +2673,7 @@ case "$cmd" in
   events)            cmd_events "$@" ;;
   cohort)            cmd_cohort "$@" ;;
   recall-modes)      cmd_recall_modes ;;
+  briefing-gate)     cmd_briefing_gate ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;
   resume)            cmd_resume "${1:-}" ;;

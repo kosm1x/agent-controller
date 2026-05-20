@@ -5,6 +5,7 @@
  * All queries use the indexed `created_at` column for fast lookups.
  */
 
+import { randomUUID } from "node:crypto";
 import { getDatabase } from "../db/index.js";
 import { getConfig } from "../config.js";
 import { calculateCost } from "./pricing.js";
@@ -80,6 +81,65 @@ export function recordCost(record: CostRecord): void {
     record.cacheReadTokens ?? 0,
     record.cacheCreationTokens ?? 0,
   );
+}
+
+/**
+ * `agent_type` prefix for every V8.1 reflection / briefing inference row.
+ * `recordReflectionCost` writes `${PREFIX}<surface>`; the §13 activation gate
+ * queries `agent_type LIKE '${PREFIX}%'`. Shared so the write and the read
+ * cannot drift (the §13 gate silently reports `insufficient_data` forever if
+ * they do — there is no CHECK on `cost_ledger.agent_type`).
+ */
+export const REFLECTION_AGENT_TYPE_PREFIX = "reflection:";
+
+/**
+ * Record cost for a V8.1 reflection / briefing inference call (spec §13).
+ *
+ * These calls run OUTSIDE the dispatcher — `runReflection` invokes
+ * `fastRunner.execute` directly, `constructBriefing` invokes `infer()`
+ * directly — so the dispatcher's `recordCost` (which fires only on a
+ * dispatched runner completion) never sees them. Without this helper the §13
+ * activation gate (cache-read ratio over `cost_ledger` rows where
+ * `agent_type LIKE 'reflection:%'`) has zero rows to measure.
+ *
+ * `agent_type` is written as `reflection:<surface>` (e.g. `reflection:morning`,
+ * `reflection:n-turn`). Best-effort — a cost-ledger write must never block a
+ * briefing or a reflection pass, so every failure is swallowed + logged.
+ */
+export function recordReflectionCost(input: {
+  /** Surface label — becomes `agent_type='reflection:<surface>'`. */
+  surface: string;
+  taskId: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  /** Provider-reported cost (claude-sdk path); omitted ⇒ pricing-table compute. */
+  costUsd?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}): void {
+  try {
+    recordCost({
+      runId: `reflect-${randomUUID()}`,
+      taskId: input.taskId,
+      agentType: `${REFLECTION_AGENT_TYPE_PREFIX}${input.surface}`,
+      model: input.model,
+      promptTokens: input.promptTokens,
+      completionTokens: input.completionTokens,
+      ...(input.costUsd !== undefined && { costUsdOverride: input.costUsd }),
+      ...(input.cacheReadTokens !== undefined && {
+        cacheReadTokens: input.cacheReadTokens,
+      }),
+      ...(input.cacheCreationTokens !== undefined && {
+        cacheCreationTokens: input.cacheCreationTokens,
+      }),
+    });
+  } catch (err) {
+    console.error(
+      "[budget] recordReflectionCost failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 /** Get total spend in the last 24 hours. */
