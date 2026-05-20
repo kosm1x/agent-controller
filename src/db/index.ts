@@ -751,6 +751,59 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_geel_ref ON general_event_episodic_links(episodic_kind, episodic_ref)",
   );
 
+  // v7.7 Spine 5 (Conway Pattern 2 substrate): self-defining cohort + the
+  // operator-profile skeleton (Q3 carve-out). See
+  // docs/planning/v7.7-spine-5-impl.md for the canonical record.
+  //
+  // self_defining_cohort — the ranked subset of projects / objectives /
+  // threads that constitute the operator's identity cohort. Populated ONLY
+  // by the deterministic roll-up (src/cohort/self-defining.ts) — no LLM.
+  // member_id is a globally-unique prefixed id (`<kind>:<raw-id>`).
+  // member_kind CHECK admits 'thread' as documented forward-compat headroom;
+  // the v7.7 roll-up populates only 'project' + 'objective' (conversation
+  // banks are too coarse a thread signal — see impl-delta §3).
+  _db.exec(`CREATE TABLE IF NOT EXISTS self_defining_cohort (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id      TEXT NOT NULL UNIQUE,
+    member_kind    TEXT NOT NULL CHECK (member_kind IN ('project','objective','thread')),
+    label          TEXT NOT NULL,
+    source_ref     TEXT NOT NULL,
+    salience       REAL NOT NULL DEFAULT 0,
+    signal_json    TEXT NOT NULL DEFAULT '{}',
+    first_seen_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_rolled_at TEXT NOT NULL DEFAULT (datetime('now')),
+    active         INTEGER NOT NULL DEFAULT 1
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_cohort_active ON self_defining_cohort(salience DESC) WHERE active = 1",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_cohort_kind ON self_defining_cohort(member_kind)",
+  );
+
+  // operator_profile — the Q3 carve-out SKELETON. Schema only: an opaque
+  // key/value attribute bag keyed by cohort member. The `written_by` CHECK
+  // admits ONLY 'cohort-rollup' — this is the structural enforcement of the
+  // Q3 contract that nothing but the Conway-Pattern-2 roll-up may populate
+  // it (no inference, no LLM-derived fields). V8.2 owns the semantic layer;
+  // because attribute_key/attribute_value are opaque TEXT, V8.2 can redefine
+  // value-side semantics with zero data migration (anti-mission test).
+  // The FK to self_defining_cohort(member_id) ON DELETE CASCADE keeps the
+  // skeleton from orphaning if a cohort row is ever deleted (R1-W4 fold).
+  _db.exec(`CREATE TABLE IF NOT EXISTS operator_profile (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    cohort_member_id TEXT NOT NULL,
+    attribute_key    TEXT NOT NULL,
+    attribute_value  TEXT NOT NULL,
+    written_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    written_by       TEXT NOT NULL DEFAULT 'cohort-rollup' CHECK (written_by IN ('cohort-rollup')),
+    UNIQUE(cohort_member_id, attribute_key),
+    FOREIGN KEY(cohort_member_id) REFERENCES self_defining_cohort(member_id) ON DELETE CASCADE
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_operator_profile_member ON operator_profile(cohort_member_id)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
