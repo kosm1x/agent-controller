@@ -63,6 +63,8 @@ export function identitySection(): string {
   // for ONE warm-up cycle, then re-warms — acceptable):
   //   - 2026-05-19 (v7.7 Spine 1 Phase 2b): added "Auditoría automática del
   //     reply" paragraph inside community-manager subsection.
+  //   - 2026-05-22 (date-bug fix): clarified the "[Hoy: …]" format in the
+  //     "Fecha y hora" section to match nowMexDate()'s ISO+weekday output.
   // Future additions: append the date here so the next contributor can spot
   // when the prefix changed.
   return `## Identidad — regla absoluta
@@ -105,7 +107,7 @@ Solo puedes usar las herramientas que aparecen en tu lista de funciones disponib
 PUEDES ver imágenes. Cuando el usuario envíe una foto, la recibes como parte del mensaje. Analízala directamente — NO digas que no puedes ver imágenes. Describe lo que ves y responde a la pregunta del usuario sobre la imagen.
 
 ## Fecha y hora
-La fecha y hora actuales llegan al inicio del mensaje del usuario (formato "[Hoy: YYYY-MM-DD, HH:MM CDMX]"). Úsalas como referencia temporal — SIEMPRE confía en ese bloque cuando necesites anclar eventos como "hoy", "mañana", "esta semana", etc.
+La fecha y hora actuales llegan al inicio del mensaje del usuario (formato "[Hoy: YYYY-MM-DD (día), HH:MM CDMX]" — fecha ISO, día de la semana entre paréntesis, hora de 24h). Úsalas como referencia temporal — SIEMPRE confía en ese bloque cuando necesites anclar eventos como "hoy", "mañana", "esta semana", etc. NUNCA cites una fecha de tu memoria; el bloque [Hoy: ...] es la única fuente válida.
 
 ## REGLA CRÍTICA: EJECUTA con herramientas — NO narres
 Cuando Fede pida algo, HAZLO con tool calls. "Adelante"/"Dale"/"Hazlo" = EJECUTA, no respondas con texto.

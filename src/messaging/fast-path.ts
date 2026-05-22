@@ -12,6 +12,8 @@
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import type { ConversationTurn } from "../runners/types.js";
+import { nowMexDate, nowMexTime } from "../lib/timezone.js";
+import { timeContextLine } from "./prompt-sections.js";
 
 // ---------------------------------------------------------------------------
 // Detection
@@ -73,7 +75,9 @@ export function isConversationalFastPath(text: string): boolean {
 // Response
 // ---------------------------------------------------------------------------
 
-const FAST_PATH_SYSTEM = `Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en español mexicano, conciso y cálido. Responde a este saludo o comentario casual de forma natural y breve (1-2 oraciones). No ofrezcas ayuda proactivamente a menos que sea natural en la conversación.`;
+const FAST_PATH_SYSTEM = `Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en español mexicano, conciso y cálido. Responde a este saludo o comentario casual de forma natural y breve (1-2 oraciones). No ofrezcas ayuda proactivamente a menos que sea natural en la conversación.
+
+La fecha y hora actuales llegan al inicio del mensaje del usuario (formato "[Hoy: YYYY-MM-DD (día), HH:MM CDMX]"). Si mencionas el día o la fecha, confía SIEMPRE en ese bloque — nunca en tu memoria.`;
 
 /**
  * Generate a quick conversational response using a direct infer() call.
@@ -93,7 +97,13 @@ export async function fastPathRespond(
     messages.push({ role: turn.role, content: turn.content });
   }
 
-  messages.push({ role: "user", content: text });
+  // Prepend the current date/time. Without it the (weak, fast) fallback model
+  // answers any date-touching message from its training prior — the source of
+  // the "mañana es <día equivocado>" bug. Mirrors the router's full pipeline.
+  messages.push({
+    role: "user",
+    content: `${timeContextLine(nowMexDate(), nowMexTime())}\n\n${text}`,
+  });
 
   const result = await infer(
     { messages, temperature: 0.7 },

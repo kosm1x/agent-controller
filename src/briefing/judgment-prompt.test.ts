@@ -113,10 +113,17 @@ describe("renderJudgmentPrompt", () => {
     const p = renderJudgmentPrompt(makeInput());
     expect(p).toContain("Return ONLY a JSON object");
     expect(p).toContain('"judgments"');
-    expect(p).toContain('"highest_leverage_pick"');
-    expect(p).toContain(
-      'At most one judgment may have posture "highest_leverage"',
-    );
+    expect(p).toContain('posture "highest_leverage"');
+  });
+
+  it("does NOT ask the LLM for signal_id or highest_leverage_pick (A2)", () => {
+    // The model cannot reliably generate UUIDs; constructBriefing assigns
+    // signal_id and derives the pick. Asking the LLM for them produced the
+    // 2026-05-22 morning-briefing schema failure.
+    const p = renderJudgmentPrompt(makeInput());
+    expect(p).not.toContain('"signal_id"');
+    expect(p).not.toContain('"highest_leverage_pick"');
+    expect(p).toContain("the system assigns judgment identity");
   });
 
   it("renders the evidence sources as a numbered list", () => {

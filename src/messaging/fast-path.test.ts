@@ -110,7 +110,26 @@ describe("fastPathRespond", () => {
     expect(messages[0].role).toBe("system");
     expect(messages[1].content).toBe("hola");
     expect(messages[2].content).toBe("¡Hola!");
-    expect(messages[3].content).toBe("qué tal");
+    // The current message carries a prepended date/time block so the fast
+    // (weak) model never answers a date question from its training prior.
+    expect(messages[3].content).toContain("qué tal");
+    expect(messages[3].content).toContain("[Hoy:");
+  });
+
+  it("prepends the current date/time block to the user message", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    const mockInfer = infer as ReturnType<typeof vi.fn>;
+
+    await fastPathRespond("buenos días", []);
+
+    const messages = mockInfer.mock.calls[0][0].messages;
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("user");
+    // [Hoy: YYYY-MM-DD (día), HH:MM CDMX]
+    expect(last.content).toMatch(
+      /\[Hoy: \d{4}-\d{2}-\d{2} \(.+\), \d{2}:\d{2} CDMX\]/,
+    );
+    expect(last.content).toContain("buenos días");
   });
 
   it("uses fallback provider for speed", async () => {

@@ -46,27 +46,53 @@ export function toMexTime(utcTimestamp: string | null | undefined): string {
 }
 
 /**
- * Get the current date-time formatted for Mexico City.
- * Used in system prompts and anywhere "now" is shown to the LLM.
+ * Normalize a UTC timestamp string to strict ISO-8601
+ * (`YYYY-MM-DDTHH:MM:SS.sssZ`).
+ *
+ * SQLite `datetime('now')` yields `"YYYY-MM-DD HH:MM:SS"` — space separator,
+ * no `T`, no `Z` — which Zod's `z.iso.datetime()` rejects. This converts that
+ * (and any already-ISO string) into a value the ISO validator accepts.
+ * Returns null when the input is empty or unparseable, so callers can write
+ * `toIsoUtc(x) ?? fallback`.
+ */
+export function toIsoUtc(
+  utcTimestamp: string | null | undefined,
+): string | null {
+  if (!utcTimestamp) return null;
+  const normalized =
+    utcTimestamp.includes("T") || utcTimestamp.endsWith("Z")
+      ? utcTimestamp
+      : utcTimestamp.replace(" ", "T") + "Z";
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
+ * Current Mexico-City date for the LLM's `[Hoy: …]` block — ISO `YYYY-MM-DD`
+ * plus the Spanish weekday in parens, e.g. "2026-05-22 (viernes)".
+ *
+ * The ISO part is the unambiguous anchor the system prompt tells the model to
+ * expect; the weekday saves the model from computing day-of-week itself (the
+ * frequent source of "mañana es <día equivocado>" errors). Keep the shape in
+ * sync with the `## Fecha y hora` section of `identitySection()`.
  */
 export function nowMexDate(): string {
   const now = new Date();
-  return now.toLocaleDateString("es-MX", {
+  const iso = now.toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+  const weekday = now.toLocaleDateString("es-MX", {
     timeZone: USER_TIMEZONE,
     weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
   });
+  return `${iso} (${weekday})`;
 }
 
+/** Current Mexico-City wall-clock time, 24-hour `HH:MM`. */
 export function nowMexTime(): string {
-  const now = new Date();
-  return now.toLocaleTimeString("es-MX", {
+  return new Date().toLocaleTimeString("en-GB", {
     timeZone: USER_TIMEZONE,
     hour: "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12: false,
   });
 }
 

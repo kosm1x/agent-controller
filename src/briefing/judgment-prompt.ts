@@ -81,9 +81,11 @@ function signalsOf(
 }
 
 /**
- * Render the §10 judgment prompt. The model is asked to return ONLY the
- * judgment payload (`judgments` + optional `highest_leverage_pick`) — the
- * orchestrator fills the briefing wrapper (ids, source_window, the S2
+ * Render the §10 judgment prompt. The model returns ONLY the `judgments`
+ * array — it does NOT emit `signal_id` (it cannot generate reliable UUIDs)
+ * or `highest_leverage_pick`. The orchestrator assigns a UUID per judgment,
+ * derives the pick from the `highest_leverage` judgment, and fills the
+ * briefing wrapper (ids, source_window, the S2
  * `verified_against`/`sample_n`/`concerns`/`critic_verdict` fields).
  */
 export function renderJudgmentPrompt(input: JudgmentPromptInput): string {
@@ -157,7 +159,6 @@ Return ONLY a JSON object, no prose, no code fences:
 {
   "judgments": [
     {
-      "signal_id": "<uuid>",
       "kind": "stalled_task|dormant_objective|implicit_deadline|recurring_blocker|momentum|self_defining_progress",
       "subject": "<task_id, objective path, blocker signature, etc.>",
       "posture": "at_risk|has_momentum|highest_leverage|noted",
@@ -166,8 +167,7 @@ Return ONLY a JSON object, no prose, no code fences:
       "why": "<>=20 chars, one paragraph, references evidence>",
       "evidence_indices": [<0-based indices into the EVIDENCE SOURCES list above>]
     }
-  ],
-  "highest_leverage_pick": "<signal_id of the one highest_leverage judgment, or omit>"
+  ]
 }
-At least 1 and at most 15 judgments. At most one judgment may have posture "highest_leverage".`;
+At least 1 and at most 15 judgments. Do NOT emit id or signal_id fields — the system assigns judgment identity. Give exactly one judgment the posture "highest_leverage" (or none); the system derives the pick from it.`;
 }

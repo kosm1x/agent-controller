@@ -19,10 +19,12 @@ vi.mock("../audit/submit-report.js", () => ({
 import { constructBriefing } from "./construct.js";
 import { getProposedBriefing } from "./storage.js";
 
-/** A schema-valid judgment object. */
+/**
+ * An LLM-shaped judgment object — deliberately WITHOUT `signal_id`: the model
+ * no longer emits it, `constructBriefing` assigns the UUID itself (A2).
+ */
 function judgment(overrides: Record<string, unknown> = {}) {
   return {
-    signal_id: crypto.randomUUID(),
     kind: "stalled_task",
     subject: "t-1",
     posture: "at_risk",
@@ -121,6 +123,68 @@ describe("constructBriefing", () => {
     s2Passes();
     const result = await constructBriefing();
     expect(result.ok).toBe(true);
+  });
+
+  it("normalizes a SQLite-format cursor timestamp into a valid ISO wall_start (A1)", async () => {
+    // Regression: reflection_cursors.updated_at is a SQLite datetime('now')
+    // string ("YYYY-MM-DD HH:MM:SS"), which the schema's z.iso.datetime()
+    // rejected — the 2026-05-22 morning-briefing failure. toIsoUtc() must
+    // normalize it before it reaches BriefingSchema as source_window.wall_start.
+    getDatabase()
+      .prepare(
+        `INSERT INTO reflection_cursors (cursor_name, last_event_id, updated_at)
+         VALUES ('morning_brief', 0, datetime('now'))`,
+      )
+      .run();
+    inferReturns({ judgments: [judgment()] });
+    s2Passes();
+    const result = await constructBriefing();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.detail);
+    expect(result.briefing.source_window.wall_start).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+  });
+
+  it("assigns a unique signal_id to each judgment the LLM omits (A2)", async () => {
+    // The LLM cannot reliably generate UUIDs and DetectionSignal has no id to
+    // cite — the orchestrator owns judgment identity. judgment() emits none.
+    inferReturns({ judgments: [judgment(), judgment()] });
+    s2Passes();
+    const result = await constructBriefing();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.detail);
+    const uuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    for (const j of result.briefing.judgments) {
+      expect(j.signal_id).toMatch(uuid);
+    }
+    const ids = result.briefing.judgments.map((j) => j.signal_id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("derives highest_leverage_pick from the highest_leverage judgment (A2)", async () => {
+    inferReturns({
+      judgments: [judgment(), judgment({ posture: "highest_leverage" })],
+    });
+    s2Passes();
+    const result = await constructBriefing();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.detail);
+    const hl = result.briefing.judgments.find(
+      (j) => j.posture === "highest_leverage",
+    );
+    expect(hl).toBeDefined();
+    expect(result.briefing.highest_leverage_pick).toBe(hl!.signal_id);
+  });
+
+  it("leaves highest_leverage_pick unset when no judgment is highest_leverage", async () => {
+    inferReturns({ judgments: [judgment(), judgment()] });
+    s2Passes();
+    const result = await constructBriefing();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.detail);
+    expect(result.briefing.highest_leverage_pick).toBeUndefined();
   });
 
   it("fails at the schema stage when the LLM returns zero judgments", async () => {

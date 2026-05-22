@@ -25,6 +25,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { getDatabase } from "../db/index.js";
+import { toIsoUtc } from "../lib/timezone.js";
 import { getCohort } from "../cohort/self-defining.js";
 import { buildReflectionScope } from "../reflection/scope.js";
 import type { ReflectionCursorName } from "../reflection/cursors.js";
@@ -106,8 +107,12 @@ async function assembleBriefingInputs(
   const db = getDatabase();
   const scope = buildReflectionScope(cursorName, trigger);
   const wallEnd = startedAt.toISOString();
+  // asOfTimestamp comes from reflection_cursors.updated_at — a SQLite
+  // `datetime('now')` string (`YYYY-MM-DD HH:MM:SS`), which the schema's
+  // `z.iso.datetime()` rejects. Normalize to strict ISO; fall back to a day
+  // ago when the cursor is absent or its timestamp is unparseable.
   const wallStart =
-    scope.priorStateSnapshot.asOfTimestamp ??
+    toIsoUtc(scope.priorStateSnapshot.asOfTimestamp) ??
     new Date(startedAt.getTime() - MS_PER_DAY).toISOString();
 
   const objectives = (
@@ -280,7 +285,7 @@ export async function constructBriefing(
     cacheCreationTokens: response.usage.cache_creation_tokens,
   });
 
-  let judgmentPayload: { judgments?: unknown; highest_leverage_pick?: unknown };
+  let judgmentPayload: { judgments?: unknown };
   try {
     judgmentPayload = parseJudgmentJson(
       response.content,
@@ -292,6 +297,23 @@ export async function constructBriefing(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+
+  // The LLM no longer emits `signal_id` / `highest_leverage_pick`: it cannot
+  // reliably generate UUIDs, and a DetectionSignal carries no id to cite, so
+  // an LLM-invented signal_id failed `z.uuid()` for every judgment (the
+  // 2026-05-22 morning-briefing failure). The orchestrator owns identity
+  // instead — assign a UUID per judgment, then derive the pick from the (at
+  // most one — invariant 3) highest_leverage judgment. A non-array payload
+  // collapses to [] and fails the schema's `.min(1)` next, as before.
+  const rawJudgments = Array.isArray(judgmentPayload.judgments)
+    ? (judgmentPayload.judgments as Record<string, unknown>[])
+    : [];
+  const judgments = rawJudgments.map(
+    (j): Record<string, unknown> => ({ ...j, signal_id: randomUUID() }),
+  );
+  const highestLeveragePick = judgments.find(
+    (j) => j.posture === "highest_leverage",
+  )?.signal_id as string | undefined;
 
   // --- 4. Validate the briefing BEFORE the S2 pass -------------------------
   // Order matters (audit C2/C3): schema + invariants run first, so a
@@ -317,8 +339,8 @@ export async function constructBriefing(
     active_objective_ids: objectives.map((o) => o.id),
     self_defining_grounding: cohort.map((m) => m.member_id),
     general_events_used: generalEvents.map((e) => e.eventId),
-    judgments: judgmentPayload.judgments,
-    highest_leverage_pick: judgmentPayload.highest_leverage_pick,
+    judgments,
+    highest_leverage_pick: highestLeveragePick,
     verified_against: verifiedAgainst,
     sample_n: sampleN,
     concerns: [],
