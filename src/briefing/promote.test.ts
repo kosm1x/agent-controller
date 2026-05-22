@@ -12,7 +12,11 @@ import {
 } from "./storage.js";
 import { resolveBriefingOnOperatorReply } from "./promote.js";
 
-const ISO = "2026-05-20T08:00:00.000Z";
+// Dynamic, not a hardcoded date: insertProposedBriefing() defaults expires_at
+// to generated_at + 24h, so a fixed past date silently rots — every briefing
+// auto-expires once the calendar passes generated_at + 1 day. The EXPIRES test
+// overrides expires_at explicitly, so "now" here keeps every other briefing live.
+const ISO = new Date().toISOString();
 const SHA256 = "a".repeat(64);
 
 function makeBriefing(): Briefing {
