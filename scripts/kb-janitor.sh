@@ -15,7 +15,9 @@ PROJECT_DIR=/root/claude/mission-control
 SERVICE=mission-control
 BACKUP_DIR=/root/backups
 KEEP_BACKUPS=4
-NPX=/usr/bin/npx
+# Call the local tsx binary directly — `npx tsx` can fall through to a network
+# fetch (which can hang) if node_modules is ever pruned. Deterministic here.
+TSX=/root/claude/mission-control/node_modules/.bin/tsx
 
 cd "$PROJECT_DIR" || { echo "FATAL: $PROJECT_DIR missing"; exit 1; }
 echo "=== kb-janitor $(date -Is) ==="
@@ -29,7 +31,12 @@ systemctl stop "$SERVICE"
 
 echo "[2/3] running cleanup-jarvis-kb.ts --apply"
 CLEAN_RC=0
-"$NPX" tsx scripts/cleanup-jarvis-kb.ts --apply || CLEAN_RC=$?
+if [ ! -x "$TSX" ]; then
+  echo "FATAL: tsx not found at $TSX — run 'npm install' in $PROJECT_DIR"
+  CLEAN_RC=127
+else
+  "$TSX" scripts/cleanup-jarvis-kb.ts --apply || CLEAN_RC=$?
+fi
 [ "$CLEAN_RC" -ne 0 ] && echo "WARNING: cleanup exited $CLEAN_RC"
 
 # trap restarts $SERVICE on EXIT

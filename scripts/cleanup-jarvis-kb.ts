@@ -21,16 +21,19 @@
  * Without it, the DB + FTS + disk cleanup still runs correctly and pgvector
  * is reported as SKIPPED (clean it later once creds are present).
  *
- * NOT handled here: the Google Drive mirror (1,100+ rate-limited API calls —
- * a separate follow-up pass). NorthStar/ and directives/ are never touched.
+ * NOT fully handled here: the Google Drive mirror (1,000+ rate-limited calls —
+ * see scripts/reconcile-kb-drive.ts), and a relocated row's NEW-path pgvector
+ * embedding (moveFile's re-embed is fire-and-forget; restored on next edit or
+ * via scripts/backfill-kb-drive.ts). NorthStar/ and directives/ are untouched.
  *
  * Recommended: stop the mission-control service first, so there is no
  * concurrent writer and the hourly kb-reindex ritual cannot race the deletes.
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmdirSync } from "node:fs";
+import { mkdirSync, rmdirSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { syncDeleteFromKbMirror, moveFile } from "../src/db/jarvis-fs.js";
 import { pgDelete, isPgvectorEnabled } from "../src/db/pgvector.js";
@@ -54,11 +57,11 @@ function isProtected(p: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Classification — pure, decided from DB rows only.
+// Classification — pure, decided from DB rows only. Exported for unit tests.
 // ---------------------------------------------------------------------------
 
 /** Noise to DELETE. Returns the reason, or null if the row is a keeper. */
-function deleteReason(r: Row): string | null {
+export function deleteReason(r: Row): string | null {
   if (isProtected(r.path)) return null;
   // workspace/ auto-persist task dumps — by CONTENT marker, never by filename.
   if (r.path.startsWith("workspace/") && r.content.startsWith("[AUTO-PERSIST"))
@@ -78,7 +81,7 @@ function deleteReason(r: Row): string | null {
 }
 
 /** Misplaced real content to MOVE. Returns the new path, or null. */
-function moveTarget(path: string): string | null {
+export function moveTarget(path: string): string | null {
   if (isProtected(path)) return null;
   if (path === "knowledge/execution-patterns/algebra-progress.md")
     return "knowledge/learning/algebra-progress.md";
@@ -127,6 +130,19 @@ function tryRmdir(rel: string): void {
   }
 }
 
+/** True when this file is the process entry point (not imported by a test). */
+function isMainModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(process.argv[1]) ===
+      realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -140,7 +156,7 @@ async function main(): Promise<void> {
     .all() as Row[];
 
   const toDelete: Array<{ path: string; reason: string }> = [];
-  const toMove: Array<{ from: string; to: string }> = [];
+  const rawMoves: Array<{ from: string; to: string }> = [];
   for (const r of rows) {
     const reason = deleteReason(r);
     if (reason) {
@@ -148,7 +164,25 @@ async function main(): Promise<void> {
       continue;
     }
     const target = moveTarget(r.path);
-    if (target) toMove.push({ from: r.path, to: target });
+    if (target) rawMoves.push({ from: r.path, to: target });
+  }
+
+  // ---- move-collision guard ----------------------------------------------
+  // moveFile() DELETEs an existing target before renaming onto it — a silent
+  // overwrite. Drop any move whose target already exists as a row, or that
+  // collides with another move's target; surface it instead of destroying it.
+  const allPaths = new Set(rows.map((r) => r.path));
+  const targetCount = new Map<string, number>();
+  for (const m of rawMoves)
+    targetCount.set(m.to, (targetCount.get(m.to) ?? 0) + 1);
+  const toMove: Array<{ from: string; to: string }> = [];
+  const moveCollisions: Array<{ from: string; to: string; why: string }> = [];
+  for (const m of rawMoves) {
+    if (allPaths.has(m.to))
+      moveCollisions.push({ ...m, why: "target path already exists" });
+    else if ((targetCount.get(m.to) ?? 0) > 1)
+      moveCollisions.push({ ...m, why: "another move targets the same path" });
+    else toMove.push(m);
   }
 
   // ---- report -------------------------------------------------------------
@@ -168,6 +202,13 @@ async function main(): Promise<void> {
 
   console.log(`\nMOVE — ${toMove.length} rows:`);
   for (const m of toMove) console.log(`  ${m.from}  ->  ${m.to}`);
+  if (moveCollisions.length > 0) {
+    console.log(
+      `\nMOVE COLLISIONS — ${moveCollisions.length} SKIPPED (would overwrite a row):`,
+    );
+    for (const m of moveCollisions)
+      console.log(`  ${m.from}  ->  ${m.to}   [${m.why}]`);
+  }
 
   const keep = rows.length - toDelete.length;
   console.log(
@@ -219,11 +260,20 @@ async function main(): Promise<void> {
   // pgvector deletes — awaited, concurrency-limited, so they finish before exit
   if (isPgvectorEnabled()) {
     let pg = 0;
+    let pgFailed = 0;
     await mapPool(toDelete, 8, async (d) => {
-      await pgDelete(d.path);
-      pg++;
+      // pgDelete returns false (never throws) on any failure — count it,
+      // because the SQLite row is already gone and a re-run will NOT retry.
+      if (await pgDelete(d.path)) pg++;
+      else pgFailed++;
     });
     console.log(`[delete] ${pg} pgvector embeddings removed.`);
+    if (pgFailed > 0)
+      console.log(
+        `[delete] WARNING: ${pgFailed} pgvector delete(s) FAILED — those ` +
+          `embeddings are now orphaned (their SQLite rows are already gone). ` +
+          `Inspect kb_entries for paths absent from jarvis_files.`,
+      );
   } else {
     console.log(
       `[delete] pgvector SKIPPED — ${deleted} embeddings remain. ` +
@@ -270,8 +320,13 @@ async function main(): Promise<void> {
   );
   console.log(
     `Drive mirror: ${driveOrphans} orphaned files left in drive_file_map ` +
-      `(follow-up: a Drive reconcile pass).`,
+      `(follow-up: scripts/reconcile-kb-drive.ts).`,
   );
+  if (moveCollisions.length > 0)
+    console.log(
+      `Move collisions: ${moveCollisions.length} relocation(s) skipped — ` +
+        `resolve by hand (see MOVE COLLISIONS above).`,
+    );
   console.log(
     `Restore if needed: cp ${dbBackup} ${DB_PATH}  (with the service stopped).`,
   );
@@ -279,7 +334,11 @@ async function main(): Promise<void> {
   closeDatabase();
 }
 
-main().catch((err) => {
-  console.error("[cleanup-jarvis-kb] FAILED:", err);
-  process.exitCode = 1;
-});
+// Only auto-run when invoked as a script — importing for unit tests must not
+// trigger a real cleanup.
+if (isMainModule()) {
+  main().catch((err) => {
+    console.error("[cleanup-jarvis-kb] FAILED:", err);
+    process.exitCode = 1;
+  });
+}
