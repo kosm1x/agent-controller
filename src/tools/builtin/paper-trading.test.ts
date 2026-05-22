@@ -22,9 +22,13 @@ vi.mock("../../db/index.js", () => ({
 
 // Stub data-layer so the tool uses a fixed price without hitting AV.
 vi.mock("../../finance/data-layer.js", async () => {
+  // The bar timestamp must stay fresh: PaperEquityAdapter rejects quotes
+  // older than PAPER_QUOTE_STALE_MS (35d) as `stale_price`. A hardcoded date
+  // rots — once >35d old every buy order is rejected and the rebalance lands
+  // zero fills. Anchor it to "now" so the fixture never ages out.
   const fakeBar = (symbol: string, close: number) => ({
     symbol,
-    timestamp: "2026-04-17T16:00:00-04:00",
+    timestamp: new Date().toISOString(),
     open: close,
     high: close,
     low: close,
