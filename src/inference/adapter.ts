@@ -1193,6 +1193,70 @@ function normalizeArgAliases(args: Record<string, unknown>): void {
  * Build a condensed conversation for wrap-up calls.
  * Keeps system + first user message + last few tool exchanges (truncated) + wrap-up instruction.
  */
+/**
+ * Trim a single recent message for the wrap-up context window. Three payload
+ * classes shrink: oversized `role:"tool"` content, oversized assistant
+ * `content`, and oversized assistant `tool_calls[].function.arguments`.
+ * Returns the original reference unchanged when no truncation is needed.
+ *
+ * Replaced-arguments stay valid JSON (a `{_truncated_for_wrapup, original_length}`
+ * marker) so the historical tool_use block doesn't make the wrap-up payload
+ * malformed — the wrap-up infer() runs with NO tools, so arguments are pure
+ * context, never re-executed.
+ *
+ * Exported for direct unit-testing — `buildWrapUpContext` itself is internal.
+ */
+export function truncateMessageForWrapup(
+  m: ChatMessage,
+  maxChars: number,
+): ChatMessage {
+  // Tool result text — original behavior, kept inside the unified helper.
+  if (
+    m.role === "tool" &&
+    typeof m.content === "string" &&
+    m.content.length > maxChars
+  ) {
+    return {
+      ...m,
+      content: m.content.slice(0, maxChars) + "\n...(truncated for wrap-up)",
+    };
+  }
+  if (m.role === "assistant") {
+    let next: ChatMessage | null = null;
+    if (typeof m.content === "string" && m.content.length > maxChars) {
+      next = {
+        ...m,
+        content: m.content.slice(0, maxChars) + "\n...(truncated for wrap-up)",
+      };
+    }
+    if (m.tool_calls && m.tool_calls.length > 0) {
+      let trimmedAny = false;
+      const trimmedCalls = m.tool_calls.map((tc) => {
+        const args = tc.function?.arguments;
+        if (typeof args === "string" && args.length > maxChars) {
+          trimmedAny = true;
+          return {
+            ...tc,
+            function: {
+              ...tc.function,
+              arguments: JSON.stringify({
+                _truncated_for_wrapup: true,
+                original_length: args.length,
+              }),
+            },
+          };
+        }
+        return tc;
+      });
+      if (trimmedAny) {
+        next = { ...(next ?? m), tool_calls: trimmedCalls };
+      }
+    }
+    if (next) return next;
+  }
+  return m;
+}
+
 function buildWrapUpContext(
   conversation: ChatMessage[],
   instruction: string,
@@ -1217,22 +1281,16 @@ function buildWrapUpContext(
     lastUserBeforeTools = conversation.find((m) => m.role === "user");
   }
 
-  // Take last 6 messages (3 tool exchanges) and aggressively truncate tool results
-  const recentMessages = conversation.slice(-6).map((m) => {
-    if (
-      m.role === "tool" &&
-      typeof m.content === "string" &&
-      m.content.length > WRAPUP_TOOL_RESULT_CHARS
-    ) {
-      return {
-        ...m,
-        content:
-          m.content.slice(0, WRAPUP_TOOL_RESULT_CHARS) +
-          "\n...(truncated for wrap-up)",
-      };
-    }
-    return m;
-  });
+  // Take last 6 messages (3 tool exchanges) and aggressively truncate any
+  // oversized payloads — tool result text, assistant `content`, and assistant
+  // `tool_calls[].function.arguments` JSON. The wrap-up infer() runs on this
+  // lean context, so an oversized message here is the difference between a
+  // successful summary reply and a wrap-up 413 that falls through to
+  // `wrapup_failed`. HERMES-W3 (2026-05-22) — the `compaction_exhausted` exit
+  // newly exposes the oversized-assistant case.
+  const recentMessages = conversation
+    .slice(-6)
+    .map((m) => truncateMessageForWrapup(m, WRAPUP_TOOL_RESULT_CHARS));
 
   const condensed: ChatMessage[] = [];
   if (system) condensed.push(system);

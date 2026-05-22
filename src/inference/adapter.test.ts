@@ -51,7 +51,9 @@ import {
   stripThinkBlocks,
   salvageTruncatedContent,
   compactionGuardStep,
+  truncateMessageForWrapup,
 } from "./adapter.js";
+import type { ChatMessage } from "./adapter.js";
 
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
@@ -771,5 +773,127 @@ describe("compactionGuardStep", () => {
     );
     expect(r.noProgressCompactions).toBe(0);
     expect(r.has413Retried).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateMessageForWrapup — HERMES-W3. Adds assistant content + tool_calls
+// argument truncation alongside the original tool-result truncation, so the
+// post-`compaction_exhausted` wrap-up infer() doesn't itself 413 on an
+// oversized assistant tail message.
+// ---------------------------------------------------------------------------
+
+describe("truncateMessageForWrapup", () => {
+  const MAX = 100;
+
+  it("truncates an oversized tool result and marks it", () => {
+    const m: ChatMessage = {
+      role: "tool",
+      content: "x".repeat(500),
+      tool_call_id: "c1",
+    } as ChatMessage;
+    const out = truncateMessageForWrapup(m, MAX);
+    expect(typeof out.content).toBe("string");
+    expect((out.content as string).length).toBeLessThanOrEqual(
+      MAX + "\n...(truncated for wrap-up)".length,
+    );
+    expect(out.content as string).toContain("...(truncated for wrap-up)");
+  });
+
+  it("returns the original ref for tool results under the threshold", () => {
+    const m: ChatMessage = {
+      role: "tool",
+      content: "short",
+      tool_call_id: "c1",
+    } as ChatMessage;
+    expect(truncateMessageForWrapup(m, MAX)).toBe(m);
+  });
+
+  it("truncates oversized assistant content (HERMES-W3)", () => {
+    // The case the `compaction_exhausted` exit newly exposes: a huge assistant
+    // message (e.g. a long structured answer) in the last-6 slice would 413
+    // the wrap-up infer() without this.
+    const m: ChatMessage = {
+      role: "assistant",
+      content: "y".repeat(500),
+    } as ChatMessage;
+    const out = truncateMessageForWrapup(m, MAX);
+    expect(out).not.toBe(m);
+    expect(out.content as string).toContain("...(truncated for wrap-up)");
+    expect((out.content as string).length).toBeLessThan(
+      (m.content as string).length,
+    );
+  });
+
+  it("replaces oversized tool_calls.arguments with valid JSON marker (HERMES-W3)", () => {
+    // file_write / wp_publish with huge content arg is the realistic shape.
+    // Naive truncation would yield invalid JSON which the API rejects; the
+    // marker is small, valid, and preserves the call's identity.
+    const hugeArgs = JSON.stringify({ content: "z".repeat(500) });
+    const m: ChatMessage = {
+      role: "assistant",
+      content: "calling file_write",
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "file_write", arguments: hugeArgs },
+        },
+      ],
+    } as ChatMessage;
+    const out = truncateMessageForWrapup(m, MAX);
+    expect(out).not.toBe(m);
+    const newArgs = out.tool_calls![0].function.arguments;
+    // Must parse as JSON (the API rejects invalid tool_use input blocks).
+    const parsed = JSON.parse(newArgs);
+    expect(parsed._truncated_for_wrapup).toBe(true);
+    expect(parsed.original_length).toBe(hugeArgs.length);
+    // Call identity preserved.
+    expect(out.tool_calls![0].id).toBe("c1");
+    expect(out.tool_calls![0].function.name).toBe("file_write");
+  });
+
+  it("returns the original ref for assistant messages with no oversized payload", () => {
+    const m: ChatMessage = {
+      role: "assistant",
+      content: "small",
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "f", arguments: "{}" },
+        },
+      ],
+    } as ChatMessage;
+    expect(truncateMessageForWrapup(m, MAX)).toBe(m);
+  });
+
+  it("passes user messages through unchanged", () => {
+    const m: ChatMessage = {
+      role: "user",
+      content: "u".repeat(500),
+    } as ChatMessage;
+    expect(truncateMessageForWrapup(m, MAX)).toBe(m);
+  });
+
+  it("trims BOTH content and tool_calls when both are oversized", () => {
+    const hugeArgs = JSON.stringify({ x: "z".repeat(500) });
+    const m: ChatMessage = {
+      role: "assistant",
+      content: "y".repeat(500),
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "f", arguments: hugeArgs },
+        },
+      ],
+    } as ChatMessage;
+    const out = truncateMessageForWrapup(m, MAX);
+    expect(out).not.toBe(m);
+    expect(out.content as string).toContain("...(truncated for wrap-up)");
+    expect(
+      JSON.parse(out.tool_calls![0].function.arguments)._truncated_for_wrapup,
+    ).toBe(true);
   });
 });
