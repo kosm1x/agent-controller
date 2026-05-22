@@ -50,6 +50,7 @@ import {
   stripStaleSignals,
   stripThinkBlocks,
   salvageTruncatedContent,
+  compactionGuardStep,
 } from "./adapter.js";
 
 beforeEach(() => {
@@ -685,5 +686,90 @@ describe("salvageTruncatedContent", () => {
     const result = salvageTruncatedContent(raw);
     expect(result).not.toBeNull();
     expect(result!).toContain("Email body content here");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compactionGuardStep — HERMES-W4 audit follow-up. The inferWithTools round
+// loop calls infer() same-module and is genuinely unmockable, so the loop's
+// post-compaction guard logic was extracted here to be tested directly.
+// ---------------------------------------------------------------------------
+
+describe("compactionGuardStep", () => {
+  it("under-threshold result clears BOTH latches and does not break (audit a+c)", () => {
+    // A compaction that got back under threshold means the oversized payload
+    // is gone — a future 413 is a fresh state and the 413 latch must clear
+    // (Hermes v0.11 "reset retry counters after compression").
+    const r = compactionGuardStep(
+      { noProgressCompactions: 1, has413Retried: true },
+      false,
+    );
+    expect(r).toEqual({
+      noProgressCompactions: 0,
+      has413Retried: false,
+      shouldBreak: false,
+    });
+  });
+
+  it("one over-threshold compaction does NOT break (k=2 stability)", () => {
+    const r = compactionGuardStep(
+      { noProgressCompactions: 0, has413Retried: false },
+      true,
+    );
+    expect(r.noProgressCompactions).toBe(1);
+    expect(r.shouldBreak).toBe(false);
+  });
+
+  it("two consecutive over-threshold compactions DO break (audit b)", () => {
+    // Round 1: counter 0 → 1, no break.
+    const r1 = compactionGuardStep(
+      { noProgressCompactions: 0, has413Retried: false },
+      true,
+    );
+    expect(r1.shouldBreak).toBe(false);
+    // Round 2: counter 1 → 2, break fires.
+    const r2 = compactionGuardStep(
+      { noProgressCompactions: r1.noProgressCompactions, has413Retried: false },
+      true,
+    );
+    expect(r2.noProgressCompactions).toBe(2);
+    expect(r2.shouldBreak).toBe(true);
+  });
+
+  it("preserves has413Retried while still over threshold (latch stays armed)", () => {
+    // While the conversation remains over threshold, the oversized payload is
+    // NOT gone — the 413 latch must stay set so the 413 path doesn't loop.
+    const r = compactionGuardStep(
+      { noProgressCompactions: 0, has413Retried: true },
+      true,
+    );
+    expect(r.has413Retried).toBe(true);
+    expect(r.shouldBreak).toBe(false);
+  });
+
+  it("respects a custom k threshold", () => {
+    // k=4: three over-threshold passes do not break; the fourth does.
+    const r3 = compactionGuardStep(
+      { noProgressCompactions: 2, has413Retried: false },
+      true,
+      4,
+    );
+    expect(r3.shouldBreak).toBe(false);
+    const r4 = compactionGuardStep(
+      { noProgressCompactions: 3, has413Retried: false },
+      true,
+      4,
+    );
+    expect(r4.shouldBreak).toBe(true);
+  });
+
+  it("a healthy under-threshold pass after a streak resets the counter", () => {
+    // Simulates: over → over (counter at 1, not yet break) → under (reset).
+    const r = compactionGuardStep(
+      { noProgressCompactions: 1, has413Retried: true },
+      false,
+    );
+    expect(r.noProgressCompactions).toBe(0);
+    expect(r.has413Retried).toBe(false);
   });
 });

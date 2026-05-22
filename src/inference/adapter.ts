@@ -1312,6 +1312,60 @@ export function salvageTruncatedContent(rawArgs: string): string | null {
   return null;
 }
 
+/**
+ * Pure step function for the post-compaction guard inside the inferWithTools
+ * round loop. Extracted from the inline guard so the audit-required behaviors
+ * can be unit-tested directly (HERMES-W4 follow-up from the 2026-05-22 Hermes
+ * v0.11 adoption — the loop itself is unmockable from a test, the logic in
+ * here is not).
+ *
+ * Inputs:
+ *   - `state`: current `{noProgressCompactions, has413Retried}` latches.
+ *   - `stillOverThreshold`: `shouldCompress(conversation, …)` evaluated AFTER
+ *     a compaction pass — `true` means we landed on the deterministic L3 floor
+ *     (the tail alone exceeds budget) and another compaction next round will
+ *     produce the identical result: a thrash loop.
+ *   - `k`: consecutive-no-progress break threshold (default 2 — the replan
+ *     stability rule from autoreason Table 23, shared with `checkReplan`).
+ *
+ * Returns the next state plus `shouldBreak`. The caller is responsible for
+ * setting `exitReason="compaction_exhausted"` and breaking when `shouldBreak`.
+ *
+ * Cases this encodes:
+ *  - stillOver + `next < k`     → counter increments, no break, `has413Retried`
+ *                                  preserved (we are still over budget — the
+ *                                  payload that triggered any prior 413 is NOT
+ *                                  gone, so the latch must stay armed).
+ *  - stillOver + `next >= k`    → break to wrap-up.
+ *  - !stillOver                  → both latches reset (a compaction that got
+ *                                  us back under threshold means the oversized
+ *                                  payload is gone — Hermes v0.11 "reset retry
+ *                                  counters after compression").
+ */
+export function compactionGuardStep(
+  state: { noProgressCompactions: number; has413Retried: boolean },
+  stillOverThreshold: boolean,
+  k = 2,
+): {
+  noProgressCompactions: number;
+  has413Retried: boolean;
+  shouldBreak: boolean;
+} {
+  if (stillOverThreshold) {
+    const next = state.noProgressCompactions + 1;
+    return {
+      noProgressCompactions: next,
+      has413Retried: state.has413Retried,
+      shouldBreak: next >= k,
+    };
+  }
+  return {
+    noProgressCompactions: 0,
+    has413Retried: false,
+    shouldBreak: false,
+  };
+}
+
 export async function inferWithTools(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -1488,34 +1542,25 @@ export async function inferWithTools(
             )
           : 1;
 
-      // Compaction-exhaustion guard (Hermes v0.11 "break compression-exhaustion
-      // loops"). After the L0→L3 cascade the conversation should be under
-      // threshold. If it is NOT, we are at the deterministic L3 floor — the
-      // tail alone exceeds the budget — and re-running compaction next round
-      // yields the identical result: a thrash loop. Break to wrap-up after two
-      // consecutive no-progress passes (k=2, the replan stability rule).
-      if (
+      // Compaction-exhaustion guard. Pure step lives in `compactionGuardStep`
+      // so the audit-required behaviors are unit-testable directly; here we
+      // just thread state in/out and react to `shouldBreak`.
+      const guardResult = compactionGuardStep(
+        { noProgressCompactions, has413Retried },
         shouldCompress(
           conversation,
           config.inferenceContextLimit,
           config.compressionThreshold,
-        )
-      ) {
-        noProgressCompactions++;
-        if (noProgressCompactions >= 2) {
-          console.warn(
-            `[inference] Compaction exhausted at round ${round}: conversation still over threshold at the L3 floor — forcing wrap-up.`,
-          );
-          exitReason = "compaction_exhausted";
-          break;
-        }
-      } else {
-        // A compaction that got back under threshold clears the latches: the
-        // oversized payload that triggered any prior 413 is gone, so a future
-        // 413 is a fresh state deserving its own one-shot recompress (Hermes
-        // v0.11 "reset retry counters after compression").
-        noProgressCompactions = 0;
-        has413Retried = false;
+        ),
+      );
+      noProgressCompactions = guardResult.noProgressCompactions;
+      has413Retried = guardResult.has413Retried;
+      if (guardResult.shouldBreak) {
+        console.warn(
+          `[inference] Compaction exhausted at round ${round}: conversation still over threshold at the L3 floor — forcing wrap-up.`,
+        );
+        exitReason = "compaction_exhausted";
+        break;
       }
     } else {
       // No compaction ran this round — the run is not thrashing. Reset the
