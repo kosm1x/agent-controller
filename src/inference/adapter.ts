@@ -1375,6 +1375,9 @@ export async function inferWithTools(
   let totalCompletion = 0;
   let exitReason = "max_rounds";
   let has413Retried = false;
+  // Consecutive main-loop compactions that left the conversation still over
+  // threshold — the compaction-exhaustion guard below breaks the loop at k=2.
+  let noProgressCompactions = 0;
   let lastToolSig = "";
   let consecutiveRepeats = 0;
   let consecutiveSmallResults = 0;
@@ -1484,6 +1487,41 @@ export async function inferWithTools(
               1,
             )
           : 1;
+
+      // Compaction-exhaustion guard (Hermes v0.11 "break compression-exhaustion
+      // loops"). After the L0→L3 cascade the conversation should be under
+      // threshold. If it is NOT, we are at the deterministic L3 floor — the
+      // tail alone exceeds the budget — and re-running compaction next round
+      // yields the identical result: a thrash loop. Break to wrap-up after two
+      // consecutive no-progress passes (k=2, the replan stability rule).
+      if (
+        shouldCompress(
+          conversation,
+          config.inferenceContextLimit,
+          config.compressionThreshold,
+        )
+      ) {
+        noProgressCompactions++;
+        if (noProgressCompactions >= 2) {
+          console.warn(
+            `[inference] Compaction exhausted at round ${round}: conversation still over threshold at the L3 floor — forcing wrap-up.`,
+          );
+          exitReason = "compaction_exhausted";
+          break;
+        }
+      } else {
+        // A compaction that got back under threshold clears the latches: the
+        // oversized payload that triggered any prior 413 is gone, so a future
+        // 413 is a fresh state deserving its own one-shot recompress (Hermes
+        // v0.11 "reset retry counters after compression").
+        noProgressCompactions = 0;
+        has413Retried = false;
+      }
+    } else {
+      // No compaction ran this round — the run is not thrashing. Reset the
+      // streak so the k=2 guard counts only CONSECUTIVE no-progress rounds,
+      // never two over-threshold compactions separated by healthy rounds.
+      noProgressCompactions = 0;
     }
 
     // Check abort before each round

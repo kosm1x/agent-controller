@@ -1,6 +1,27 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compactL0, compactL1, compactL3 } from "./compaction-pipeline.js";
+import {
+  compactL0,
+  compactL1,
+  compactL3,
+  compactConversation,
+} from "./compaction-pipeline.js";
 import type { ChatMessage } from "../inference/adapter.js";
+
+// Stub only shouldCompress + compress; keep the real sanitizeToolPairs so the
+// compactL1/compactL3 unit tests below are unaffected.
+const { shouldCompressMock, compressMock } = vi.hoisted(() => ({
+  shouldCompressMock: vi.fn(),
+  compressMock: vi.fn(),
+}));
+vi.mock("./context-compressor.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./context-compressor.js")>();
+  return {
+    ...actual,
+    shouldCompress: (...a: unknown[]) => shouldCompressMock(...a),
+    compress: (...a: unknown[]) => compressMock(...a),
+  };
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -108,6 +129,62 @@ describe("compactL1", () => {
     const { messages: result, removedPairs } = compactL1(messages, 2, 1, 3);
     expect(removedPairs).toBe(0);
     expect(result).toBe(messages);
+  });
+});
+
+describe("compactConversation", () => {
+  function bigConversation(): ChatMessage[] {
+    return [
+      msg("system", "system prompt"),
+      msg("user", "go"),
+      msg("assistant", "ok"),
+      assistantWithCalls("s1", [{ id: "c1", name: "web_search" }]),
+      toolResult("c1", "r1"),
+      assistantWithCalls("s2", [{ id: "c2", name: "web_read" }]),
+      toolResult("c2", "r2"),
+      msg("user", "q"),
+      assistantWithCalls("s3", [{ id: "c3", name: "a" }]),
+      toolResult("c3", "r3"),
+      msg("assistant", "done"),
+    ];
+  }
+
+  it("escalates to L3 when L2 compression is still over threshold", async () => {
+    // shouldCompress fires after L0, after L1, and (new) after L2. true/true
+    // means L0+L1 didn't suffice; the 3rd true means the L2 summary is STILL
+    // over threshold → must fall through to the deterministic L3 floor rather
+    // than return an L2 result that would thrash the caller's compaction loop.
+    shouldCompressMock
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    compressMock.mockResolvedValue([
+      msg("system", "system prompt"),
+      msg("assistant", "still-huge summary"),
+    ]);
+    const result = await compactConversation(bigConversation(), 1000, 0.8);
+    expect(result.level).toBe("L3");
+    expect(compressMock).toHaveBeenCalledOnce();
+  });
+
+  it("returns L2 when compression brings it under threshold", async () => {
+    shouldCompressMock
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false); // L2 result is under threshold
+    compressMock.mockResolvedValue([
+      msg("system", "system prompt"),
+      msg("assistant", "summary"),
+    ]);
+    const result = await compactConversation(bigConversation(), 1000, 0.8);
+    expect(result.level).toBe("L2");
+  });
+
+  it("escalates to L3 when L2 throws (all providers down)", async () => {
+    shouldCompressMock.mockReturnValueOnce(true).mockReturnValueOnce(true);
+    compressMock.mockRejectedValue(new Error("all providers down"));
+    const result = await compactConversation(bigConversation(), 1000, 0.8);
+    expect(result.level).toBe("L3");
   });
 });
 

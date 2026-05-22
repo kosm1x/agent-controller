@@ -222,16 +222,28 @@ export async function compactConversation(
       keepTail,
       contextInjection,
     );
-    return {
-      messages: l2messages,
-      level: "L2",
-      removedCount: messages.length - l2messages.length,
-    };
+    // L2 can succeed yet still leave the conversation over threshold — e.g. a
+    // single oversized tool result the summary had to preserve. Returning it
+    // anyway lets the caller re-enter compaction every round with nothing new
+    // to remove: a thrash loop. Only return L2 when it actually got under
+    // threshold; otherwise fall through to the deterministic L3 floor.
+    if (!shouldCompress(l2messages, contextLimit, threshold)) {
+      return {
+        messages: l2messages,
+        level: "L2",
+        removedCount: messages.length - l2messages.length,
+      };
+    }
   } catch {
     // L2 failed (all providers down) — fall through to L3
   }
 
-  // L3: emergency deterministic truncation
+  // L3: emergency deterministic truncation — the irreducible floor. It bounds
+  // message COUNT (system + tail), not token SIZE: if a single tail message
+  // exceeds the budget, the L3 result can itself still be over threshold.
+  // `compactConversation` therefore does NOT guarantee an under-threshold
+  // return — the caller (inferWithTools) carries a compaction-exhaustion guard
+  // for exactly that residual case.
   const l3 = compactL3(l1.messages, keepTail);
   return {
     messages: l3.messages,
