@@ -267,6 +267,24 @@ These are non-blocking findings the round-3 audit surfaced after round-2 fixes v
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | S6-recall-audit-dormant | **`recall_audit` receives no new rows since 2026-05-10** — recall routes through `SqliteMemoryBackend`, which does not call `logRecall`/`applyOutcomeBias`; only `HindsightMemoryBackend` does, and `HINDSIGHT_ENABLED=false`. So recall-mode tagging + the coherence outcome filter + the `recall_coherence_suppression_rate` drift signal are all dormant. Fix: EITHER set `HINDSIGHT_ENABLED=true`, OR wire `logRecall` (instrumentation) — and decide whether to also wire `applyOutcomeBias` (the filter — a live recall-results change) — into `SqliteMemoryBackend.recall()`. Then flip the drift signal to `enabled=1` (swap `baseline_query` from the `awaiting:` sentinel to the activation SQL in its `notes`). | P2       | 2-3 h    | **A decision on recall-backend routing** (revisit the Hindsight demote) OR V8.1 morning-brief needs live recall instrumentation. |
 
+## Cross-task prompt cache miss (heavy task, $754/mo `fast` Sonnet line)
+
+**Status (2026-05-22 late):** ROOT CAUSE LOCATED, fix deferred to next session. `cache_diag` log (`f219340`) collected 10 samples across two PID generations. Two consecutive heavy-task calls (toolsHash `392a4296`, toolsN 50, ownerChannel=true, same day, 28 min apart, no cohort cron in between) hash DIFFERENTLY: `fd3936d8cb9e` (71921 chars) vs `10a9164b41d1` (71300 chars). 621-char drift in the "stable" half rules out hypothesis (a) cross-`query()` SDK gap and confirms hypothesis (b) hidden per-task variation.
+
+**Architectural cause:** `src/inference/claude-sdk.ts:698` `flattenMessagesForSdk` concatenates EVERY `role: "system"` message into one `systemPrompt` string passed to the Claude Agent SDK, which sets ONE `cache_control` marker at the block end. The fast-runner painstakingly splits content into stableSP, stableKB, variableSP, variableKB, precedent, deferredCatalog as separate system messages (router.ts:1878, fast-runner.ts:750-788) — but `flattenMessagesForSdk` collapses all of them into a single cache block. Any byte change anywhere (e.g., the README size shift 10294→9988 chars seen in tonight's samples) → full cache miss on the entire 71K block.
+
+The wrap memory's "byte-stable identitySection prefix not landing cross-task" intuition was right; the deeper cause is that the careful stable/variable split done by buildJarvisSystemPrompt + buildKnowledgeBaseSections is LOST at the SDK boundary. Cache-control granularity = 1 block, not the 4-6 we believe we have.
+
+**Fix options (pick one in next session):**
+
+1. Route ONLY the genuinely-stable prefix (stableSP + stableKB) into the SDK's `systemPrompt`. Push variableSP + variableKB + precedent + deferredCatalog into the user message (prepended). Smallest delta, single concat-site change in `flattenMessagesForSdk` if it can branch on a marker. Estimated savings: ~30K cache_read tokens per heavy task (full stable block becomes cacheable).
+2. If `@anthropic-ai/claude-agent-sdk` exposes multi-block system content with per-block `cache_control`, use it (4 breakpoints available). Cleaner but depends on SDK surface area.
+3. Treat `flattenMessagesForSdk` as the seam; pass a `{ stableSystem, variableSystem, userPrompt }` shape from runners → SDK shim → API. Largest delta, most correct long-term.
+
+Verification after fix: run `cache_diag` again; same scope/ownerChannel should yield byte-identical `systemPromptHash` across calls. `cost_ledger.cache_creation_tokens` for `fast` should drop ~30-40K per task on average.
+
+**Prereq:** before designing the fix, confirm the Anthropic Agent SDK's exact `cache_control` placement (read SDK source or run a 1-call experiment with a known-stable prompt, check API response usage block). Don't refactor on the assumption "one block at the end" without confirming.
+
 ## Hermes v0.11 adoption deferreds — CLOSED 2026-05-22
 
 From the qa-audit of the compaction-thrash fix (`d4511c8`; Tier-1 #1+#2 from `feedback_prometheus_upstream`). Both audit deferreds resolved same session.
