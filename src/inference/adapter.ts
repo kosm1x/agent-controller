@@ -26,6 +26,11 @@ import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
 import { sanitizeToolResult } from "./guards.js";
+import {
+  HttpError,
+  parseRateLimitHeaders,
+  formatRateLimitLog,
+} from "./http-error.js";
 import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
 import type { RoundData } from "./doom-loop.js";
 import {
@@ -494,7 +499,11 @@ async function callAnthropicProvider(
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+      throw new HttpError(
+        response.status,
+        text.slice(0, 200),
+        parseRateLimitHeaders(response.headers),
+      );
     }
 
     let result: InferenceResponse;
@@ -609,7 +618,11 @@ async function callOpenAIProvider(
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+      throw new HttpError(
+        response.status,
+        text.slice(0, 200),
+        parseRateLimitHeaders(response.headers),
+      );
     }
 
     let result: InferenceResponse;
@@ -950,14 +963,32 @@ export async function infer(
         return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        const statusMatch = lastError.message.match(/HTTP (\d+)/);
-        const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+        // HttpError carries status + rate-limit headers structurally; for any
+        // other error we fall back to parsing the message string the way we
+        // always did (some catch sites still throw plain Error).
+        const httpErr = err instanceof HttpError ? err : null;
+        const status =
+          httpErr?.status ??
+          (lastError.message.match(/HTTP (\d+)/)
+            ? parseInt(lastError.message.match(/HTTP (\d+)/)![1], 10)
+            : 0);
         const isAbort =
           lastError.name === "AbortError" ||
           lastError.message.includes("aborted");
         console.warn(
           `[inference] ${provider.name} attempt ${attempt + 1} failed: ${lastError.message}${isAbort ? " (timeout)" : ""} status=${status}`,
         );
+
+        // Structured rate-limit telemetry (Hermes April Tier-1 #1). Log-only —
+        // we DO NOT honor `retry-after` over our exp-backoff curve yet; that
+        // is a separate behavioral change. The log lets us grep
+        // `rate_limit_hit` from journalctl and see per-provider remaining
+        // budgets + retry-after hints during a storm.
+        if (httpErr && status === 429) {
+          console.warn(
+            formatRateLimitLog(provider.name, status, httpErr.rateLimit),
+          );
+        }
 
         // Record failure on circuit breaker + provider metrics
         breaker.recordFailure();
