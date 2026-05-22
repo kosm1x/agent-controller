@@ -6,26 +6,57 @@
  */
 
 import { MessageRouter } from "./router.js";
+import { withTimeout } from "../lib/with-timeout.js";
 
 let router: MessageRouter | null = null;
+
+/** Per-channel init window. A channel's start() must not exceed this. */
+const CHANNEL_START_TIMEOUT_MS = 20_000;
 
 export async function initMessaging(): Promise<MessageRouter | null> {
   router = new MessageRouter();
 
+  // Channel init is ISOLATED: a channel whose start() throws — or HANGS — must
+  // not take down the others. WhatsApp's start() resolves only on a successful
+  // connection open, so an invalid session (401) that closes instead leaves
+  // start() pending forever; unbounded + uncaught, that hung the whole
+  // messaging layer (Telegram + email never initialized). Bound and catch each.
   if (process.env.WHATSAPP_ENABLED === "true") {
-    const { WhatsAppAdapter } = await import("./channels/whatsapp.js");
-    const wa = new WhatsAppAdapter();
-    await wa.start();
-    router.registerChannel(wa);
-    console.log("[messaging] WhatsApp channel active");
+    try {
+      const { WhatsAppAdapter } = await import("./channels/whatsapp.js");
+      const wa = new WhatsAppAdapter();
+      await withTimeout(
+        wa.start(),
+        CHANNEL_START_TIMEOUT_MS,
+        "WhatsApp start()",
+      );
+      router.registerChannel(wa);
+      console.log("[messaging] WhatsApp channel active");
+    } catch (err) {
+      console.error(
+        "[messaging] WhatsApp channel FAILED — skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   if (process.env.TELEGRAM_ENABLED === "true") {
-    const { TelegramAdapter } = await import("./channels/telegram.js");
-    const tg = new TelegramAdapter();
-    await tg.start();
-    router.registerChannel(tg);
-    console.log("[messaging] Telegram channel active");
+    try {
+      const { TelegramAdapter } = await import("./channels/telegram.js");
+      const tg = new TelegramAdapter();
+      await withTimeout(
+        tg.start(),
+        CHANNEL_START_TIMEOUT_MS,
+        "Telegram start()",
+      );
+      router.registerChannel(tg);
+      console.log("[messaging] Telegram channel active");
+    } catch (err) {
+      console.error(
+        "[messaging] Telegram channel FAILED — skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   if (process.env.EMAIL_ENABLED === "true") {
