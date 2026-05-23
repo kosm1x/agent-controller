@@ -108,13 +108,24 @@ vi.mock("../observability/prometheus.js", () => ({
   recordFastRetryOutcome: vi.fn(),
 }));
 
+// Precedent: mock for the bytes-stable test (R-3) which exercises the
+// chat path with conversationHistory.length > 1. Returns deterministic ""
+// so any non-determinism elsewhere is the failure surface.
+vi.mock("../messaging/precedent.js", () => ({
+  buildPrecedentBlock: vi.fn(() => ""),
+}));
+
 // KB / essentials / precedent: skip injection in non-chat path. The chat
 // path is gated by `input.conversationHistory` — tests omit it, so the
 // non-chat path (simpler system + user message) is taken regardless of
 // what these return.
 vi.mock("../messaging/kb-injection.js", () => ({
   buildKnowledgeBaseSection: vi.fn(() => ""),
-  buildKnowledgeBaseSections: vi.fn(() => ""),
+  // Audit W2: return the documented contract shape `{stable, variable}` rather
+  // than a bare string. The R-3 discriminated union spreads this — empty
+  // string would silently degrade to `{kind:"split"}` with no fields, bypassing
+  // the stable/variable code paths the test should exercise.
+  buildKnowledgeBaseSections: vi.fn(() => ({ stable: null, variable: null })),
   conditionMatches: vi.fn(() => false),
 }));
 
@@ -433,6 +444,101 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       // Mechanical replacement still fires (hallucinated content + no retry)
       expect(result.status).toBe("DONE_WITH_CONCERNS");
       expect(mockRecordRetry).toHaveBeenCalledWith("skipped");
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // R-3 — bytes-stable prefix lint
+  // ────────────────────────────────────────────────────────────────────
+  describe("bytes-stable system prefix (R-3 lint)", () => {
+    it("entire message array is byte-identical across N=5 runs with identical inputs, AND taskId does NOT leak into any message content", async () => {
+      // Drives the CHAT path (conversationHistory.length=2 to exercise the
+      // precedent path too — audit W4) and asserts:
+      //
+      //   (a) Every message in the array is byte-identical across runs.
+      //       Audit W1: previously only checked messages[0] (effectively
+      //       tautological given identical input.description). Now scans
+      //       the full array — covers stable prefix + essentials + KB +
+      //       precedent + deferred catalog + history. Surfaces any
+      //       non-determinism in those builders (Date.now() / Map / Set
+      //       iteration / hidden side-effects).
+      //
+      //   (b) taskId does NOT appear in any message content. Audit W5:
+      //       taskId varies across runs (`task-stable-${i}`); it goes into
+      //       logs and telemetry, NOT messages. Pins that boundary.
+
+      const N = 5;
+      const messageArrays: ChatMessage[][] = [];
+
+      for (let i = 0; i < N; i++) {
+        mockInferWithTools.mockResolvedValueOnce(
+          makeInferResult({
+            content: "STATUS: DONE\nready",
+          }),
+        );
+
+        await fastRunner.execute({
+          taskId: `task-stable-${i}`, // varies — must not leak into prompt
+          runId: `run-stable-${i}`,
+          title: "Test task",
+          description: "Identity preamble###CACHE_BREAK###variable suffix",
+          // length=2 → triggers `needsPrecedent` at fast-runner.ts:739
+          // and exercises the precedent leg of the Promise.all
+          conversationHistory: [
+            { role: "user", content: "first turn" },
+            { role: "user", content: "second turn" },
+          ],
+        });
+
+        const messagesArg = mockInferWithTools.mock.calls[i]?.[0];
+        if (!messagesArg) {
+          throw new Error(`run ${i}: no messages captured`);
+        }
+        messageArrays.push(messagesArg);
+      }
+
+      // (a) Full-array byte equality
+      const serialize = (arr: ChatMessage[]): string =>
+        JSON.stringify(arr.map((m) => ({ role: m.role, content: m.content })));
+      const serialized = messageArrays.map(serialize);
+      const allEqual = serialized.every((s) => s === serialized[0]);
+
+      if (!allEqual) {
+        // Diagnostic: show which run diverges and at which message index
+        const lengths = serialized.map((s) => s.length);
+        const baseline = messageArrays[0];
+        const drift = messageArrays
+          .map((arr, runIdx) => {
+            for (let msgIdx = 0; msgIdx < baseline.length; msgIdx++) {
+              const baseContent = JSON.stringify(baseline[msgIdx]?.content);
+              const thisContent = JSON.stringify(arr[msgIdx]?.content);
+              if (baseContent !== thisContent) {
+                return {
+                  run: runIdx,
+                  msgIdx,
+                  baseRole: baseline[msgIdx]?.role,
+                };
+              }
+            }
+            return null;
+          })
+          .filter(Boolean);
+        throw new Error(
+          `Bytes-stable lint failed. Lengths per run: ${JSON.stringify(lengths)}. First drift per run: ${JSON.stringify(drift)}`,
+        );
+      }
+
+      expect(allEqual).toBe(true);
+
+      // (b) taskId leak check — substring scan of every string content
+      for (let i = 0; i < N; i++) {
+        const taskIdMarker = `task-stable-${i}`;
+        for (const msg of messageArrays[i]) {
+          if (typeof msg.content === "string") {
+            expect(msg.content).not.toContain(taskIdMarker);
+          }
+        }
+      }
     });
   });
 });

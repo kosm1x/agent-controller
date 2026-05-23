@@ -725,13 +725,6 @@ export const fastRunner: Runner = {
         content: stableDescPart + STATUS_SUFFIX,
       });
 
-      // 2. STABLE: v6.5 M2 Essential facts — compact identity/context (~150-200 tokens).
-      const { getEssentialFacts } = await import("../memory/essentials.js");
-      const essentials = getEssentialFacts("mc-jarvis");
-      if (essentials) {
-        messages.push({ role: "system", content: essentials });
-      }
-
       // omitKB pattern (OpenClaude): read-only subagents skip KB to save
       // tokens. If ALL scoped tools are read-only, the task is pure
       // research/observation — KB sections add tokens that won't be acted on.
@@ -743,44 +736,100 @@ export const fastRunner: Runner = {
       const lastUserMsg = input.conversationHistory
         ?.filter((t) => t.role === "user")
         .pop()?.content;
+      const needsPrecedent = input.conversationHistory.length > 1;
+      const assemblyStart = Date.now();
 
-      if (isReadOnlyTask) {
-        // Read-only: only enforce KB (kept as a single combined section via
-        // the legacy enforce-only path; preserves prior behavior).
-        const kb = buildKnowledgeBaseSection(
-          scopedTools,
-          true,
-          lastUserMsg,
-          "fast-runner",
-        );
-        if (kb) messages.push({ role: "system", content: kb });
+      // Sprint 1 R-3 (2026-05-23): parallel pre-fetch of independent reads.
+      // The two TRULY parallel legs are essentials (dynamic import +
+      // getEssentialFacts DB read) and precedent (dynamic import +
+      // buildPrecedentBlock computation). The KB leg runs SYNCHRONOUSLY
+      // inline during array-literal evaluation (buildKnowledgeBaseSection(s)
+      // are statically imported and synchronous) — wrapping it in
+      // Promise.resolve only normalizes the Promise.all shape, it does not
+      // add concurrency for KB. Net wall-clock ≈ KB sync time +
+      // max(essentials, precedent). Audit R-3 W3 acknowledged.
+      //
+      // Ordering of `messages.push(...)` is preserved below; only the I/O
+      // is parallelized.
+      const [essentials, kbResult, precedent] = await Promise.all([
+        (async () => {
+          const { getEssentialFacts } = await import("../memory/essentials.js");
+          return getEssentialFacts("mc-jarvis");
+        })(),
+        // KB read is synchronous after import (kb-injection is statically
+        // imported at the top of the file); wrap in Promise.resolve to
+        // include in the Promise.all. The branch selects between the
+        // legacy single-section path (read-only tasks) and the v8 S1
+        // stable/variable split.
+        Promise.resolve(
+          isReadOnlyTask
+            ? {
+                kind: "single" as const,
+                kb: buildKnowledgeBaseSection(
+                  scopedTools,
+                  true,
+                  lastUserMsg,
+                  "fast-runner",
+                ),
+              }
+            : {
+                kind: "split" as const,
+                ...buildKnowledgeBaseSections(
+                  scopedTools,
+                  lastUserMsg,
+                  "fast-runner",
+                ),
+              },
+        ),
+        needsPrecedent
+          ? (async () => {
+              const { buildPrecedentBlock } =
+                await import("../messaging/precedent.js");
+              return buildPrecedentBlock(input.conversationHistory!);
+            })()
+          : Promise.resolve(null),
+      ]);
+
+      // R-3 metric: assembly-phase wall-clock. Only emit when the parallel
+      // pre-fetch ran (i.e., the chat path). Operator can `journalctl |
+      // grep assembly_ms` to validate the parallel win post-deploy.
+      console.log(
+        `[fast-runner] assembly_ms=${Date.now() - assemblyStart} taskId=${input.taskId}`,
+      );
+
+      // 2. STABLE: v6.5 M2 Essential facts — compact identity/context (~150-200 tokens).
+      if (essentials) {
+        messages.push({ role: "system", content: essentials });
+      }
+
+      // 3. STABLE / KB sections — branching ordering preserved per v8 S1
+      // cache-friendly construction.
+      if (kbResult.kind === "single") {
+        // Read-only: enforce-only KB as a single combined section.
+        if (kbResult.kb) {
+          messages.push({ role: "system", content: kbResult.kb });
+        }
       } else {
         // 3. STABLE: enforce + always-read KB rows.
-        const { stable: stableKB, variable: variableKB } =
-          buildKnowledgeBaseSections(scopedTools, lastUserMsg, "fast-runner");
-        if (stableKB) {
-          messages.push({ role: "system", content: stableKB });
+        if (kbResult.stable) {
+          messages.push({ role: "system", content: kbResult.stable });
         }
-        // 4. VARIABLE: variable persona + per-call extras (pattern, checkpoint,
-        // userFacts, enrichment) come right after the cache boundary.
+        // 4. VARIABLE: variable persona + per-call extras (pattern,
+        // checkpoint, userFacts, enrichment) come right after the cache
+        // boundary.
         if (variableDescPart) {
           messages.push({ role: "system", content: variableDescPart });
         }
         // 5. VARIABLE: conditional KB rows + project README.
-        if (variableKB) {
-          messages.push({ role: "system", content: variableKB });
+        if (kbResult.variable) {
+          messages.push({ role: "system", content: kbResult.variable });
         }
       }
 
       // v6.4 CL1.2: Precedent resolution — inject recent entities so the LLM
       // can resolve "it", "that", "the file", "continue" from conversation.
-      if (input.conversationHistory.length > 1) {
-        const { buildPrecedentBlock } =
-          await import("../messaging/precedent.js");
-        const precedent = buildPrecedentBlock(input.conversationHistory);
-        if (precedent) {
-          messages.push({ role: "system", content: precedent });
-        }
+      if (precedent) {
+        messages.push({ role: "system", content: precedent });
       }
 
       // Inject deferred tool catalog (names + descriptions only, no schemas)
