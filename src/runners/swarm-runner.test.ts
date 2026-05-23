@@ -4,11 +4,45 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-// Mock dispatcher before importing swarm-runner (it auto-registers)
+// Mock dispatcher before importing swarm-runner (it auto-registers).
+// getRunToolCalls added 2026-05-23 (queue #231) for the retry-policy taint check.
 vi.mock("../dispatch/dispatcher.js", () => ({
   registerRunner: vi.fn(),
   submitTask: vi.fn(),
   getTask: vi.fn(),
+  getRunToolCalls: vi.fn(() => []),
+}));
+
+// queue #231: swarm-retry-policy reads tool annotations via toolRegistry to
+// veto retries with side-effect taint. Default mock: any name → undefined →
+// classifier vetoes (returns null only when the toolCalls array is empty).
+vi.mock("../tools/registry.js", () => ({
+  toolRegistry: {
+    get: (name: string) => {
+      // Tests can override by setting `toolAnnotations.set(name, hints)`.
+      const ann = toolAnnotations.get(name);
+      if (!ann) return undefined;
+      return { name, ...ann };
+    },
+  },
+}));
+
+const toolAnnotations = new Map<
+  string,
+  {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+  }
+>();
+
+// queue #231: the swarm-runner records a Prometheus counter on every
+// classifier decision. Mock the counter so the assertion targets here are
+// the recorded labels, not the prom-client internals.
+const recordSwarmSubtaskRetryMock = vi.fn();
+vi.mock("../observability/prometheus.js", () => ({
+  recordSwarmSubtaskRetry: (input: unknown) =>
+    recordSwarmSubtaskRetryMock(input),
 }));
 
 vi.mock("../lib/event-bus.js", () => ({
@@ -31,8 +65,14 @@ import {
 } from "./swarm-runner.js";
 import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
-import { getTask } from "../dispatch/dispatcher.js";
+import {
+  getTask,
+  submitTask,
+  getRunToolCalls,
+} from "../dispatch/dispatcher.js";
 const mockGetTask = vi.mocked(getTask);
+const mockSubmitTask = vi.mocked(submitTask);
+const mockGetRunToolCalls = vi.mocked(getRunToolCalls);
 
 interface Tracker {
   goalId: string;
@@ -313,5 +353,286 @@ describe("syncSubTaskStatuses — Hermes v0.13 zombie/terminal-status audit", ()
     // overwrite a terminal entry. (getTask might not even get called, but
     // we don't assert that — only that the tracker is untouched.)
     expect(trackers.get("g-1")!.output).toBe("PRIOR-VALUE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// queue #231 — per-sub-task retry policy integration
+// Tests the failed-branch wiring of syncSubTaskStatuses. The classifier
+// itself is unit-tested in swarm-retry-policy.test.ts; these tests pin
+// the swarm-runner-level contract: (a) shadow mode logs the would-decision
+// but never respawns, (b) enabled mode respawns and rewires goalTaskMap,
+// (c) the side-effect-taint / budget / terminal-class branches are
+// surfaced through the recorded counter labels.
+// ---------------------------------------------------------------------------
+
+describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    toolAnnotations.clear();
+    delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    recordSwarmSubtaskRetryMock.mockClear();
+  });
+
+  function setupFailed(opts: {
+    error?: string | null;
+    retryCount?: number;
+    toolCalls?: string[];
+  }): {
+    graph: GoalGraph;
+    trackers: Map<string, Tracker>;
+    goalTaskMap: Map<string, string>;
+    goalsById: Map<string, { id: string; description: string }>;
+  } {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Test goal" });
+    graph.updateStatus("g-1", GoalStatus.IN_PROGRESS);
+
+    const trackers = new Map<string, Tracker>();
+    trackers.set("g-1", {
+      goalId: "g-1",
+      taskId: "task-1",
+      status: "running",
+    });
+
+    const goalTaskMap = new Map<string, string>();
+    goalTaskMap.set("g-1", "task-1");
+
+    mockGetTask.mockReturnValue({
+      task_id: "task-1",
+      status: "failed",
+      error: opts.error ?? null,
+      retry_count: opts.retryCount ?? 0,
+    } as any);
+    mockGetRunToolCalls.mockReturnValue(opts.toolCalls ?? []);
+
+    // Match the shape buildSubTaskDescription expects (Goal interface):
+    // completionCriteria + dependsOn are required fields, default empty.
+    const goalsById = new Map([
+      [
+        "g-1",
+        {
+          id: "g-1",
+          description: "Test goal",
+          completionCriteria: [],
+          dependsOn: [],
+        },
+      ],
+    ]);
+    return { graph, trackers, goalTaskMap, goalsById };
+  }
+
+  function retryCtx(goalsById: Map<string, any>) {
+    return {
+      parentTaskId: "parent-1",
+      tools: undefined,
+      goalsById,
+    };
+  }
+
+  it("absent retryContext → preserves legacy behavior (mark goal FAILED, no counter)", () => {
+    const { graph, trackers, goalTaskMap } = setupFailed({
+      error: "Provider 429",
+      retryCount: 0,
+    });
+
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.status).toBe("failed");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.FAILED);
+    expect(recordSwarmSubtaskRetryMock).not.toHaveBeenCalled();
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+  });
+
+  it("shadow mode (flag off) on a retryable class → counter shadow_skipped + still marks FAILED", () => {
+    // Default state. SWARM_SUBTASK_RETRY_ENABLED unset.
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "Provider 429 rate limit",
+      retryCount: 0,
+    });
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock).toHaveBeenCalledTimes(1);
+    const labels = recordSwarmSubtaskRetryMock.mock.calls[0][0];
+    expect(labels.decision).toBe("shadow_skipped");
+    expect(labels.reason).toBe("provider_transient");
+    // qa-audit W3 fold: recoveryMode is preserved in shadow rows so the
+    // operator can see WHAT mode would have fired. Only collapsed to
+    // "none" when the classifier itself said skipped_* (terminal class,
+    // budget, taint) — not when the env flag suppressed an otherwise-
+    // retryable decision.
+    expect(labels.recoveryMode).toBe("plain");
+    // No respawn fired
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    // Goal still marked failed (shadow mode preserves current behavior)
+    expect(trackers.get("g-1")!.status).toBe("failed");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.FAILED);
+  });
+
+  it("enabled mode + retryable → respawn fires, tracker reset to pending, NO goal FAILED", () => {
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "Provider 503",
+      retryCount: 0,
+    });
+    mockSubmitTask.mockResolvedValue({
+      taskId: "task-2",
+      agentType: "fast",
+    } as any);
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    // Counter recorded as retried (not shadow_skipped)
+    expect(recordSwarmSubtaskRetryMock).toHaveBeenCalledTimes(1);
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0]).toEqual({
+      decision: "retried",
+      reason: "provider_transient",
+      recoveryMode: "plain",
+    });
+    // submitTask called with retry_count = 1 (predecessor's + 1)
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const submission = mockSubmitTask.mock.calls[0][0];
+    expect(submission.retryCount).toBe(1);
+    expect(submission.parentTaskId).toBe("parent-1");
+    expect(submission.spawnType).toBe("subtask");
+    // Plain re-spawn: description does NOT contain the hallucination addendum
+    expect(submission.description).not.toContain("⚠️ IMPORTANT");
+    // Tracker reset to pending — NOT marked failed
+    expect(trackers.get("g-1")!.status).toBe("pending");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.IN_PROGRESS);
+  });
+
+  it("hallucination recovery prepends the sterner addendum to the retry description", async () => {
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "[hallucination guard] LLM narrated tool calls",
+      retryCount: 0,
+    });
+    mockSubmitTask.mockResolvedValue({
+      taskId: "task-2",
+      agentType: "fast",
+    } as any);
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0]).toEqual({
+      decision: "retried",
+      reason: "hallucination",
+      recoveryMode: "hallucination",
+    });
+    const submission = mockSubmitTask.mock.calls[0][0];
+    expect(submission.description).toContain("⚠️ IMPORTANT");
+    expect(submission.description).toContain("MUST call the tools");
+  });
+
+  it("budget cap (retry_count >= 1) → skipped_budget, no respawn even with flag on", () => {
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "Provider 429",
+      retryCount: 1, // already at cap
+    });
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0].decision).toBe(
+      "skipped_budget",
+    );
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(trackers.get("g-1")!.status).toBe("failed");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.FAILED);
+  });
+
+  it("side-effect taint (destructive non-idempotent tool called) → skipped_side_effect, no respawn", () => {
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+    toolAnnotations.set("gmail_send", {
+      destructiveHint: true,
+      idempotentHint: false,
+      readOnlyHint: false,
+    });
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "Provider 429",
+      retryCount: 0,
+      toolCalls: ["gmail_send"],
+    });
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0].decision).toBe(
+      "skipped_side_effect",
+    );
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(trackers.get("g-1")!.status).toBe("failed");
+  });
+
+  it("terminal class (max_rounds) → skipped_terminal, no respawn", () => {
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "max_rounds exceeded after 30 turns",
+      retryCount: 0,
+    });
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0]).toEqual({
+      decision: "skipped_terminal",
+      reason: "max_rounds",
+      recoveryMode: "none",
+    });
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+  });
+
+  it("env flag string MUST be literal 'true' — other values stay in shadow", () => {
+    // Defensive: env-var parsing should not loosely accept '1' / 'yes' /
+    // 'TRUE' (case-insensitive variants). Same pattern as
+    // `heavyRunnerContainerized`. Pin this so a future "be lenient" pass
+    // doesn't silently widen the gate.
+    process.env.SWARM_SUBTASK_RETRY_ENABLED = "1";
+    const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+      error: "Provider 429",
+      retryCount: 0,
+    });
+
+    syncSubTaskStatuses(
+      goalTaskMap,
+      graph,
+      trackers as Map<string, any>,
+      retryCtx(goalsById) as any,
+    );
+
+    expect(recordSwarmSubtaskRetryMock.mock.calls[0][0].decision).toBe(
+      "shadow_skipped",
+    );
+    expect(mockSubmitTask).not.toHaveBeenCalled();
   });
 });

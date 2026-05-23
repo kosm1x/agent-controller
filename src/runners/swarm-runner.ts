@@ -8,7 +8,11 @@
  */
 
 import { registerRunner } from "../dispatch/dispatcher.js";
-import { submitTask, getTask } from "../dispatch/dispatcher.js";
+import {
+  submitTask,
+  getTask,
+  getRunToolCalls,
+} from "../dispatch/dispatcher.js";
 import type { TaskRow } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { plan } from "../prometheus/planner.js";
@@ -18,6 +22,12 @@ import { GoalStatus } from "../prometheus/types.js";
 import type { Goal, ExecutionResult, GoalResult } from "../prometheus/types.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import {
+  classifyRetry,
+  buildRetryDescription,
+  MAX_RETRIES_PER_GOAL,
+} from "./swarm-retry-policy.js";
+import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -133,10 +143,151 @@ export function buildSubTaskDescription(
  * Pre-running statuses (`pending`, `classifying`, `queued`) intentionally
  * stay un-mapped — the tracker keeps its prior state and `countActive` waits.
  */
+/**
+ * Classify a failed sub-task via the retry-policy module + record telemetry +
+ * (when env flag is on) re-spawn the work as a fresh task. Returns true iff
+ * a respawn fired (tracker has been rewired to the new task_id and reset to
+ * "pending"); false iff the caller should proceed with the existing FAILED
+ * bookkeeping. Always emits exactly one Prometheus counter increment + one
+ * structured `[swarm-retry]` log line per call.
+ *
+ * queue #231 design: docs/planning/swarm-retry.md.
+ */
+function attemptSubtaskRetry(
+  goalId: string,
+  failedTask: TaskRow,
+  goalTaskMap: GoalTaskMap,
+  graph: GoalGraph,
+  trackers: Map<string, SubTaskTracker>,
+  retryContext: SwarmRetryContext,
+): boolean {
+  const toolCalls = getRunToolCalls(failedTask.task_id);
+  const decision = classifyRetry({
+    error: failedTask.error,
+    toolCalls,
+    retryCount: failedTask.retry_count,
+  });
+
+  // Default: not retried unless env flag is on AND decision says retry.
+  const envFlagOn = process.env.SWARM_SUBTASK_RETRY_ENABLED === "true";
+  const willRespawn = decision.decision === "retried" && envFlagOn;
+  const finalDecision =
+    decision.decision === "retried" && !envFlagOn
+      ? "shadow_skipped"
+      : decision.decision;
+
+  // qa-audit W3 fold 2026-05-23: preserve recoveryMode in shadow rows so
+  // the operator can see WHAT mode would have fired (plain vs hallucination).
+  // The `decision` axis already encodes "did/didn't happen"; recovery_mode
+  // is the orthogonal "what mode" axis and shouldn't collapse to "none"
+  // just because the env flag is off. Only collapse to "none" when the
+  // classifier itself returned a non-retry decision (skipped_* paths) —
+  // those legitimately have no recovery mode to record.
+  const telemetryRecoveryMode =
+    decision.decision === "retried" ? decision.recoveryMode : "none";
+  recordSwarmSubtaskRetry({
+    decision: finalDecision,
+    reason: decision.reason,
+    recoveryMode: telemetryRecoveryMode,
+  });
+  console.log(
+    `[swarm-retry] goal=${goalId} task=${failedTask.task_id} ` +
+      `decision=${finalDecision} reason=${decision.reason} ` +
+      `recovery=${willRespawn ? decision.recoveryMode : "none"} ` +
+      `retry_count=${failedTask.retry_count}/${MAX_RETRIES_PER_GOAL} ` +
+      `tools_called=${toolCalls.length} ` +
+      `flag=${envFlagOn ? "on" : "off"} ` +
+      `rationale="${decision.rationale}"`,
+  );
+
+  if (!willRespawn) return false;
+
+  // Re-build the sub-task description from the original goal, applying the
+  // hallucination addendum when needed. Then submit as a NEW task with
+  // retry_count bumped so the budget cap holds.
+  const goal = retryContext.goalsById.get(goalId);
+  if (!goal) {
+    console.warn(
+      `[swarm-retry] goal=${goalId} not in goalsById — respawn aborted, falling through to FAILED`,
+    );
+    return false;
+  }
+  const baseDescription = buildSubTaskDescription(goal, graph, trackers);
+  const retryDescription = buildRetryDescription(
+    baseDescription,
+    decision.recoveryMode,
+  );
+
+  // submitTask is async; fire-and-forget here matches the existing
+  // dispatcher pattern at dispatcher.ts:471 (_isRequiredToolRetry path).
+  // The tracker rewire happens synchronously below so the next poll sees
+  // the new state.
+  submitTask({
+    title: `[Swarm-retry] ${goal.description.slice(0, 100)}`,
+    description: retryDescription,
+    parentTaskId: retryContext.parentTaskId,
+    spawnType: "subtask",
+    tools: retryContext.tools,
+    retryCount: failedTask.retry_count + 1,
+  })
+    .then((result) => {
+      goalTaskMap.set(goalId, result.taskId);
+      console.log(
+        `[swarm-retry] respawned goal=${goalId}: ` +
+          `${failedTask.task_id} (retry_count=${failedTask.retry_count}) → ` +
+          `${result.taskId} (retry_count=${failedTask.retry_count + 1}) ` +
+          `agent=${result.agentType}`,
+      );
+    })
+    .catch((err) => {
+      console.error(
+        `[swarm-retry] respawn submitTask failed goal=${goalId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      // Couldn't submit the retry — mark the goal FAILED now so the
+      // parent doesn't hang waiting. Best-effort; if the tracker has
+      // already moved on this is a no-op.
+      const t = trackers.get(goalId);
+      if (t && t.status === "pending") {
+        t.status = "failed";
+        t.error = `Sub-task retry submission failed: ${err instanceof Error ? err.message : String(err)}`;
+        graph.updateStatus(goalId, GoalStatus.FAILED);
+      }
+    });
+
+  // Reset tracker to pending. The next poll cycle will see the new
+  // task via goalTaskMap (once submitTask resolves above). In the
+  // interval the goal stays IN_PROGRESS (no graph.updateStatus call).
+  const tracker = trackers.get(goalId);
+  if (tracker) {
+    tracker.status = "pending";
+    tracker.error = undefined;
+  }
+  return true;
+}
+
+/**
+ * Per-sub-task retry context passed by `swarm-runner.execute` to
+ * `syncSubTaskStatuses`. When provided, the `failed` branch consults the
+ * retry-policy classifier and may re-spawn the sub-task instead of marking
+ * the goal FAILED (queue #231).
+ *
+ * Undefined in tests / non-swarm callers — preserves the legacy behavior
+ * of "any failed sub-task → goal failed". The 3-arg call signature still
+ * works for existing tests.
+ */
+export interface SwarmRetryContext {
+  parentTaskId: string;
+  tools: string[] | undefined;
+  /** goalId → Goal lookup for re-building the retry submission description. */
+  goalsById: Map<string, Goal>;
+}
+
 export function syncSubTaskStatuses(
   goalTaskMap: GoalTaskMap,
   graph: GoalGraph,
   trackers: Map<string, SubTaskTracker>,
+  retryContext?: SwarmRetryContext,
 ): void {
   for (const [goalId, taskId] of goalTaskMap) {
     const tracker = trackers.get(goalId);
@@ -167,6 +318,31 @@ export function syncSubTaskStatuses(
       tracker.output = task.output ?? undefined;
       graph.updateStatus(goalId, GoalStatus.COMPLETED);
     } else if (task.status === "failed") {
+      // queue #231: when the swarm provides a retryContext, consult the
+      // per-sub-task retry-policy classifier before marking the goal
+      // terminal. If the failure is retry-eligible AND the env flag
+      // SWARM_SUBTASK_RETRY_ENABLED is "true" AND the predecessor's
+      // retry_count is under MAX_RETRIES_PER_GOAL, respawn the work
+      // under a NEW task_id and rewire goalTaskMap. Otherwise (shadow
+      // mode, side-effect taint, terminal failure class, budget cap):
+      // log the would-decision via Prometheus + structured log, then
+      // mark the goal FAILED as today.
+      if (retryContext) {
+        const respawned = attemptSubtaskRetry(
+          goalId,
+          task,
+          goalTaskMap,
+          graph,
+          trackers,
+          retryContext,
+        );
+        if (respawned) {
+          // tracker has been reset to "pending" with the new taskId;
+          // next poll cycle picks up the new task. Skip the FAILED
+          // bookkeeping for this iteration.
+          continue;
+        }
+      }
       tracker.status = "failed";
       tracker.error = task.error ?? "Sub-task failed";
       graph.updateStatus(goalId, GoalStatus.FAILED);
@@ -329,12 +505,28 @@ export const swarmRunner: Runner = {
     const trackers = new Map<string, SubTaskTracker>();
     const pollStart = Date.now();
 
+    // queue #231: build goalsById lookup ONCE per poll iteration for the
+    // retry-policy respawn path. graph.getAll() is O(n); fine for swarm
+    // sizes (planner caps at ~10 goals) but no reason to rebuild it inside
+    // the inner failure branch.
+    const buildGoalsById = (): Map<string, Goal> => {
+      const m = new Map<string, Goal>();
+      for (const g of graph.getAll()) m.set(g.id, g);
+      return m;
+    };
+
     while (Date.now() - pollStart < MAX_POLL_DURATION_MS) {
       // Update blocked statuses
       graph.getBlocked();
 
-      // Sync existing sub-task statuses from DB
-      syncSubTaskStatuses(goalTaskMap, graph, trackers);
+      // Sync existing sub-task statuses from DB. Pass retry context so the
+      // failure branch can classify + respawn under the queue-#231 policy
+      // (env-gated by SWARM_SUBTASK_RETRY_ENABLED; shadow mode logs only).
+      syncSubTaskStatuses(goalTaskMap, graph, trackers, {
+        parentTaskId: input.taskId,
+        tools: input.tools,
+        goalsById: buildGoalsById(),
+      });
 
       const ready = graph.getReady();
       const summary = graph.summary();

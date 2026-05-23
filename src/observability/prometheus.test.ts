@@ -8,7 +8,11 @@
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import client from "prom-client";
-import { recordRecallOutcomes, recordRetainOutcome } from "./prometheus.js";
+import {
+  recordRecallOutcomes,
+  recordRetainOutcome,
+  recordSwarmSubtaskRetry,
+} from "./prometheus.js";
 
 // W3-R2 audit fix (round-2 2026-05-07): protect the prom-client registry
 // from cross-test leakage. If a parallel test file imports prometheus.ts
@@ -160,5 +164,109 @@ describe("recordRecallOutcomes", () => {
         }),
       ).toBe(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recordSwarmSubtaskRetry — queue #231 + qa-audit W1 fold (2026-05-23)
+// W1 caught that unknown labels collapsed to a real bucket (`skipped_terminal`
+// for unknown decisions) which silently masked call-site typos. The fix
+// promotes unknown labels to a distinguished `unknown_label` sentinel that
+// no legitimate caller produces — so a future typo shows up in dashboards
+// as its own bucket instead of mixing with a real one. These tests pin it.
+// ---------------------------------------------------------------------------
+
+describe("recordSwarmSubtaskRetry", () => {
+  beforeEach(() => {
+    const m = client.register.getSingleMetric("mc_swarm_subtask_retry_total");
+    if (m) (m as client.Counter).reset();
+  });
+
+  it("records known labels verbatim", () => {
+    recordSwarmSubtaskRetry({
+      decision: "retried",
+      reason: "provider_transient",
+      recoveryMode: "plain",
+    });
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "retried",
+        reason: "provider_transient",
+        recovery_mode: "plain",
+      }),
+    ).toBe(1);
+  });
+
+  it("records shadow_skipped + hallucination labels (preserved per W3 fold)", () => {
+    recordSwarmSubtaskRetry({
+      decision: "shadow_skipped",
+      reason: "hallucination",
+      recoveryMode: "hallucination",
+    });
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "shadow_skipped",
+        reason: "hallucination",
+        recovery_mode: "hallucination",
+      }),
+    ).toBe(1);
+  });
+
+  it("collapses an UNKNOWN decision label to 'unknown_label' (NOT a real bucket like 'skipped_terminal')", () => {
+    // W1 pin: a future typo at the call site (e.g. "skipped_taint" instead
+    // of "skipped_side_effect") must land in its own bucket so the bug is
+    // visible, not silently mixed with real skipped_terminal events.
+    recordSwarmSubtaskRetry({
+      decision: "skipped_taint", // typo — not in KNOWN_RETRY_DECISIONS
+      reason: "provider_transient",
+      recoveryMode: "none",
+    });
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "unknown_label",
+        reason: "provider_transient",
+        recovery_mode: "none",
+      }),
+    ).toBe(1);
+    // And the real 'skipped_terminal' bucket stays empty.
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "skipped_terminal",
+        reason: "provider_transient",
+        recovery_mode: "none",
+      }),
+    ).toBe(0);
+  });
+
+  it("collapses an UNKNOWN reason to 'unknown_label' (NOT 'unknown_failure')", () => {
+    // unknown_failure is a real classifier output for empty/unparseable
+    // errors. Conflating dashboard typos with that bucket would mask both.
+    recordSwarmSubtaskRetry({
+      decision: "retried",
+      reason: "providr_trnsient", // typo
+      recoveryMode: "plain",
+    });
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "retried",
+        reason: "unknown_label",
+        recovery_mode: "plain",
+      }),
+    ).toBe(1);
+  });
+
+  it("collapses an UNKNOWN recoveryMode to 'unknown_label' (NOT 'none')", () => {
+    recordSwarmSubtaskRetry({
+      decision: "retried",
+      reason: "provider_transient",
+      recoveryMode: "fancy_new_mode", // typo / forward-ref
+    });
+    expect(
+      getCounterValue("mc_swarm_subtask_retry_total", {
+        decision: "retried",
+        reason: "provider_transient",
+        recovery_mode: "unknown_label",
+      }),
+    ).toBe(1);
   });
 });

@@ -20,7 +20,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at     TEXT DEFAULT (datetime('now')),
   updated_at     TEXT DEFAULT (datetime('now')),
   started_at     TEXT,
-  completed_at   TEXT
+  completed_at   TEXT,
+  -- 2026-05-23 (queue #231): per-sub-task retry counter. Set to 0 on the
+  -- original task; incremented when the dispatcher re-submits the same work
+  -- as a fresh task (either via _isRequiredToolRetry at dispatcher.ts:466
+  -- or via swarm-runner's per-sub-task retry policy when
+  -- SWARM_SUBTASK_RETRY_ENABLED=true). The retry-policy classifier caps at
+  -- MAX_RETRIES_PER_GOAL=1, so any task with retry_count>=1 is the LAST
+  -- attempt — no further retries fire even if its failure class is retryable.
+  retry_count    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -43,6 +51,12 @@ CREATE TABLE IF NOT EXISTS runs (
   token_usage    TEXT,
   duration_ms    INTEGER,
   runner_status  TEXT,
+  -- 2026-05-23 (queue #231): JSON array of bare tool names invoked during
+  -- the run. Persisted at completion-time from result.toolCalls. Used by
+  -- the swarm-retry-policy classifier to veto retry of side-effect-tainted
+  -- sub-tasks (any non-idempotent destructive tool call → no retry).
+  -- Read via getRunToolCalls(taskId). NULL on legacy rows pre-migration.
+  tool_calls     TEXT,
   container_id   TEXT,
   created_at     TEXT DEFAULT (datetime('now')),
   completed_at   TEXT

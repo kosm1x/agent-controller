@@ -51,6 +51,14 @@ export interface TaskSubmission {
   interactive?: boolean;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
+  /**
+   * @internal Set on a retry submission so the new task's `retry_count`
+   * column starts at the predecessor's value + 1. Used by both the
+   * dispatcher's _isRequiredToolRetry path AND the swarm-retry-policy
+   * to enforce the shared per-sub-task retry budget (queue #231).
+   * Defaults to 0 for fresh submissions.
+   */
+  retryCount?: number;
 }
 
 export interface TaskRow {
@@ -74,6 +82,7 @@ export interface TaskRow {
   updated_at: string;
   started_at: string | null;
   completed_at: string | null;
+  retry_count: number;
 }
 
 interface RunRow {
@@ -212,11 +221,14 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     agentType: submission.agentType,
   });
 
-  // Insert task
+  // Insert task. retry_count defaults to 0 for fresh submissions; the
+  // _isRequiredToolRetry path at line ~471 and the swarm-retry-policy
+  // pass retryCount=predecessor.retry_count+1 to budget the per-sub-task
+  // retry window (queue #231).
   db.prepare(
     `
-    INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata)
-    VALUES (@taskId, @parentTaskId, @spawnType, @title, @description, @priority, 'queued', @agentType, @classification, @input, @metadata)
+    INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata, retry_count)
+    VALUES (@taskId, @parentTaskId, @spawnType, @title, @description, @priority, 'queued', @agentType, @classification, @input, @metadata, @retryCount)
   `,
   ).run({
     taskId,
@@ -231,6 +243,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     metadata: submission.tags
       ? JSON.stringify({ tags: submission.tags, tools: submission.tools })
       : null,
+    retryCount: submission.retryCount ?? 0,
   });
 
   // Emit event
@@ -397,6 +410,7 @@ async function dispatchWithSlot(
         token_usage = @tokenUsage,
         goal_graph = @goalGraph,
         trace = @trace,
+        tool_calls = @toolCalls,
         duration_ms = @durationMs,
         completed_at = datetime('now')
       WHERE run_id = @runId
@@ -410,6 +424,10 @@ async function dispatchWithSlot(
       tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
       goalGraph: result.goalGraph ? JSON.stringify(result.goalGraph) : null,
       trace: result.trace ? JSON.stringify(result.trace) : null,
+      // queue #231: persist bare tool names for the swarm-retry classifier.
+      // Defensive JSON-encode of an empty array if toolCalls is missing —
+      // null distinguishes "no run completed" from "ran but called no tools".
+      toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
       durationMs,
     });
 
@@ -467,6 +485,11 @@ async function dispatchWithSlot(
           ...submission,
           description: `${submission.description}\n\nCRITICAL: You MUST call the following tools before completing this task: ${missing.join(", ")}. The previous attempt completed without calling them. Do not skip these tools.`,
           _isRequiredToolRetry: true,
+          // queue #231: shared retry budget with swarm-retry-policy. The
+          // resubmitted task gets retry_count=1; if swarm-retry-policy then
+          // tries to retry this same lineage on a downstream failure, it
+          // sees retry_count>=MAX_RETRIES_PER_GOAL(=1) and gives up.
+          retryCount: 1,
         };
         submitTask(retrySubmission).catch((err) => {
           log.error({ err, taskId }, "required-tool retry failed");
@@ -662,6 +685,30 @@ export function getTask(taskId: string): TaskRow | null {
       .prepare("SELECT * FROM tasks WHERE task_id = ?")
       .get(taskId) as TaskRow) ?? null
   );
+}
+
+/**
+ * Read the bare tool names from the most-recent run for a task. Used by
+ * the swarm-retry-policy classifier to compute side-effect taint
+ * (queue #231). Returns [] when the task has no completed run yet or the
+ * tool_calls column is NULL (legacy rows pre-migration). Safe to call on
+ * any task_id; legitimately empty array means "ran but called no tools".
+ */
+export function getRunToolCalls(taskId: string): string[] {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      "SELECT tool_calls FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .get(taskId) as { tool_calls: string | null } | undefined;
+  if (!row || !row.tool_calls) return [];
+  try {
+    const parsed = JSON.parse(row.tool_calls) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    return [];
+  }
 }
 
 export function listTasks(filters: {

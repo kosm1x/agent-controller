@@ -497,6 +497,66 @@ export function recordS3PushError(channel: string): void {
   s3PushErrorsTotal.inc({ channel: c });
 }
 
+// queue #231 (2026-05-23): swarm-runner per-sub-task retry policy.
+// One row PER classifier decision (one per failed swarm sub-task) regardless
+// of whether the retry actually fired — shadow-mode skipped decisions are
+// labelled `shadow_skipped` so the operator can see the would-have-done rate
+// during the 1-week shadow window before flipping SWARM_SUBTASK_RETRY_ENABLED.
+// Closed cardinality:
+//   decision ∈ {retried | shadow_skipped | skipped_side_effect | skipped_budget | skipped_terminal}
+//   reason   ∈ {provider_transient | hallucination | tool_error | max_rounds | needs_context | cancelled | unknown_failure}
+//   recovery_mode ∈ {plain | hallucination | none}
+const swarmSubtaskRetryTotal = new client.Counter({
+  name: "mc_swarm_subtask_retry_total",
+  help: "Swarm per-sub-task retry classifier decisions (queue #231). 'shadow_skipped' counts what WOULD have retried under SWARM_SUBTASK_RETRY_ENABLED=true.",
+  labelNames: ["decision", "reason", "recovery_mode"] as const,
+});
+
+const KNOWN_RETRY_DECISIONS = new Set([
+  "retried",
+  "shadow_skipped",
+  "skipped_side_effect",
+  "skipped_budget",
+  "skipped_terminal",
+]);
+const KNOWN_RETRY_REASONS = new Set([
+  "provider_transient",
+  "hallucination",
+  "tool_error",
+  "max_rounds",
+  "needs_context",
+  "cancelled",
+  "unknown_failure",
+]);
+const KNOWN_RECOVERY_MODES = new Set(["plain", "hallucination", "none"]);
+
+/**
+ * Unknown labels collapse to a DISTINGUISHED sentinel (`"unknown_label"`)
+ * that no legitimate call site can produce — so a typo at the caller
+ * surfaces in the dashboard as its own bucket instead of silently mixing
+ * with a real label like `skipped_terminal` (which would hide the bug).
+ * qa-audit W1 fold 2026-05-23.
+ */
+const UNKNOWN_LABEL_SENTINEL = "unknown_label";
+
+export function recordSwarmSubtaskRetry(input: {
+  decision: string;
+  reason: string;
+  recoveryMode: string;
+}): void {
+  swarmSubtaskRetryTotal.inc({
+    decision: KNOWN_RETRY_DECISIONS.has(input.decision)
+      ? input.decision
+      : UNKNOWN_LABEL_SENTINEL,
+    reason: KNOWN_RETRY_REASONS.has(input.reason)
+      ? input.reason
+      : UNKNOWN_LABEL_SENTINEL,
+    recovery_mode: KNOWN_RECOVERY_MODES.has(input.recoveryMode)
+      ? input.recoveryMode
+      : UNKNOWN_LABEL_SENTINEL,
+  });
+}
+
 // v7.7 Spine 1 Phase 2b: community-reply write-gate verdicts.
 // One label `verdict` with closed cardinality (pass | fail | error). Used to
 // monitor false-positive rate (fail % of non-error replies) and infra health
