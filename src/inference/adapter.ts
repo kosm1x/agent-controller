@@ -87,6 +87,30 @@ export interface ChatMessage {
   content: ChatContent;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  /**
+   * Cache-aware routing hint for the claude-sdk path (no effect on the openai
+   * HTTP path — qwen/llama have no equivalent cache primitive).
+   *
+   * Only meaningful on `role: "system"` messages. The Claude Agent SDK accepts
+   * `systemPrompt` as a single string and places ONE `cache_control` marker at
+   * its end (verified against `@anthropic-ai/claude-agent-sdk` `sdk.d.ts:1472`:
+   * `systemPrompt?: string | { type: 'preset', ... }` — no multi-block surface).
+   * Any byte-drift in the concatenated systemPrompt invalidates the cached
+   * prefix for the entire ~70K block.
+   *
+   * - undefined or true (default): joined into `systemPrompt`. Cross-call
+   *   cacheable iff byte-stable.
+   * - false: routed to a prefix on the first user message so byte-drift here
+   *   does NOT invalidate the cached system prefix. Use for per-task variable
+   *   content (task description, precedent, dynamic facts) that the fast-runner
+   *   splits out from the stable essentials/KB/tool catalog.
+   *
+   * Surfaced 2026-05-22 (cache_diag, commit f219340): the SDK collapses every
+   * `role:"system"` message into one cache marker, erasing the fast-runner's
+   * careful 6-section stable/variable split. See
+   * `feedback_sdk_systemprompt_single_cache_block.md`.
+   */
+  cacheable?: boolean;
 }
 
 export interface InferenceRequest {

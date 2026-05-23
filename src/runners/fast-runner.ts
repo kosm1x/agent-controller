@@ -35,6 +35,33 @@ import { getConfig } from "../config.js";
 export { conditionMatches };
 
 /**
+ * Split system messages into the cache-aware (stable) and cache-bypass
+ * (variable) buckets per the `ChatMessage.cacheable` hint. Stable parts are
+ * destined for the SDK's `systemPrompt` (single `cache_control` marker at
+ * end); variable parts are routed to the head of the user-message blob so
+ * per-task byte-drift doesn't invalidate the cached systemPrompt prefix.
+ *
+ * Extracted 2026-05-23 (qa-audit C1 fold) so the fast-runner direct path
+ * (`fast-runner.ts:1108`) shares one tested implementation with
+ * `flattenMessagesForSdk`. Both call sites apply the same routing rules.
+ */
+export function splitSystemMessagesByCache(messages: ChatMessage[]): {
+  stable: string[];
+  variable: string[];
+} {
+  const stable: string[] = [];
+  const variable: string[] = [];
+  for (const m of messages) {
+    if (m.role !== "system") continue;
+    const text = typeof m.content === "string" ? m.content : "";
+    if (!text) continue;
+    if (m.cacheable === false) variable.push(text);
+    else stable.push(text);
+  }
+  return { stable, variable };
+}
+
+/**
  * Pick which DENUE high-stakes guard message variant to inject. When neither
  * `shell_exec` nor `http_fetch` are scoped, the long routing recipe is useless
  * and Jarvis thrashes via browser/web_read alternatives that can't pass auth
@@ -816,20 +843,38 @@ export const fastRunner: Runner = {
         }
         // 4. VARIABLE: variable persona + per-call extras (pattern,
         // checkpoint, userFacts, enrichment) come right after the cache
-        // boundary.
+        // boundary. Tagged `cacheable: false` so the claude-sdk shim routes
+        // it to a user-message prefix; without this, per-task byte-drift
+        // here invalidates the entire systemPrompt cache prefix (the SDK
+        // collapses every system message into ONE cache_control marker —
+        // verified against `@anthropic-ai/claude-agent-sdk` sdk.d.ts:1472).
         if (variableDescPart) {
-          messages.push({ role: "system", content: variableDescPart });
+          messages.push({
+            role: "system",
+            content: variableDescPart,
+            cacheable: false,
+          });
         }
         // 5. VARIABLE: conditional KB rows + project README.
         if (kbResult.variable) {
-          messages.push({ role: "system", content: kbResult.variable });
+          messages.push({
+            role: "system",
+            content: kbResult.variable,
+            cacheable: false,
+          });
         }
       }
 
       // v6.4 CL1.2: Precedent resolution — inject recent entities so the LLM
       // can resolve "it", "that", "the file", "continue" from conversation.
+      // Variable per task (recent entities change every conversation turn);
+      // tagged `cacheable: false` for the same reason as variableDescPart.
       if (precedent) {
-        messages.push({ role: "system", content: precedent });
+        messages.push({
+          role: "system",
+          content: precedent,
+          cacheable: false,
+        });
       }
 
       // Inject deferred tool catalog (names + descriptions only, no schemas)
@@ -1086,17 +1131,24 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         type ClaudeSdkImage =
           import("../inference/claude-sdk.js").ClaudeSdkImage;
 
-        // Extract system prompt (all system messages concatenated)
-        const systemPrompt = messages
-          .filter((m) => m.role === "system")
-          .map((m) => (typeof m.content === "string" ? m.content : ""))
-          .join("\n\n");
+        // Route `cacheable:false` system messages to the user-prompt prefix
+        // so per-task byte-drift doesn't invalidate the cached systemPrompt.
+        // Shares one implementation with `flattenMessagesForSdk` via the
+        // exported helper (qa-audit C1 fold 2026-05-23). Variable text lands
+        // FIRST in userParts below so the model still sees it before the
+        // user turn.
+        const { stable: stableSystemParts, variable: variableSystemParts } =
+          splitSystemMessagesByCache(messages);
+        const systemPrompt = stableSystemParts.join("\n\n");
 
         // Extract user prompt + any vision payloads. Multimodal user messages
         // contain an array of {type:"text"|"image_url"} blocks; we pull text
         // into the prompt string and convert image data URLs to the SDK's
         // base64 image format so the model actually sees the pixels.
-        const userParts: string[] = [];
+        // Variable system content (from the cacheable:false routing above)
+        // lands FIRST so the model still sees it before the user turn but
+        // its byte-drift doesn't touch the cached systemPrompt.
+        const userParts: string[] = [...variableSystemParts];
         const sdkImages: ClaudeSdkImage[] = [];
         for (const m of messages) {
           if (m.role === "system") continue;
@@ -1218,7 +1270,16 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             cacheReadTokens: sdkResult.usage.cacheReadTokens,
             cacheCreationTokens: sdkResult.usage.cacheCreationTokens,
             actualModel: sdkResult.model,
-            actualCostUsd: sdkResult.costUsd,
+            // qa-audit C2 fold (2026-05-23): gate on costAuthoritative so the
+            // abort/timeout path (where costUsd stayed at its initial 0) does
+            // NOT override the dispatcher's calculateCost() fallback. Without
+            // this gate, dispatcher.ts:505's optional-spread sees `0 !==
+            // undefined` and writes a phantom-$0 row to cost_ledger over the
+            // accumulated per-turn tokens we just preserved (see #225 fix in
+            // claude-sdk.ts).
+            ...(sdkResult.costAuthoritative && {
+              actualCostUsd: sdkResult.costUsd,
+            }),
           },
           durationMs: sdkResult.durationMs || Date.now() - start,
         };

@@ -233,6 +233,18 @@ export interface ClaudeSdkResult {
   /** Actual model ID reported by the SDK (e.g. "claude-sonnet-4-6"). */
   model: string;
   costUsd: number;
+  /**
+   * True iff `costUsd` came from an SDK terminal `result` message (success
+   * or error subtype). False on the abort/timeout catch path where no
+   * result message fires and `costUsd` stays at its initial 0 — the dispatcher
+   * must NOT treat that 0 as authoritative (it would override calculateCost()
+   * via the costUsdOverride spread, writing a phantom-$0 row to cost_ledger).
+   *
+   * A legitimate $0 under Max-plan auth still has costAuthoritative=true.
+   * Surfaced 2026-05-23 (5 phantom-$0 rows over 14d on fast Sonnet); see
+   * feedback_sdk_phantom_zero_cost_2026_05_23.md.
+   */
+  costAuthoritative: boolean;
   durationMs: number;
 }
 
@@ -422,6 +434,10 @@ export async function queryClaudeSdk(opts: {
     cacheCreationTokens: 0,
   };
   let costUsd = 0;
+  // True once a terminal `result` message (success or error subtype) fires.
+  // The catch block at line ~580 (abort/timeout) leaves this false so the
+  // adapter knows costUsd=0 there is a "no-data" sentinel, not Max-plan $0.
+  let costAuthoritative = false;
   let durationMs = 0;
   let actualModel: string = SONNET_MODEL_ID;
 
@@ -439,6 +455,36 @@ export async function queryClaudeSdk(opts: {
     for await (const message of q) {
       if (message.type === "assistant") {
         assistantTurns++;
+        // Accumulate per-turn usage so abort/timeout paths capture partial
+        // spend instead of writing $0/0-tokens to cost_ledger. The `result`
+        // message at end carries the SDK's authoritative cumulative total
+        // and REPLACES this value (success branch at line ~498, error branch
+        // at line ~538) — this accumulator is only the fallback for queries
+        // that never reach a result message (catch block at ~569).
+        //
+        // Each Anthropic Message's `usage` block is per-call (per-turn),
+        // not cumulative; summing across turns matches `result.usage`.
+        // Surfaced 2026-05-23 from 5 phantom-$0 rows over 14d on fast Sonnet
+        // (all aborts/timeouts) — see feedback memory same date.
+        const turnUsage = (
+          message.message as {
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+              cache_creation_input_tokens?: number;
+              cache_read_input_tokens?: number;
+            };
+          }
+        )?.usage;
+        if (turnUsage) {
+          const turnInput = turnUsage.input_tokens ?? 0;
+          const turnCacheCreation = turnUsage.cache_creation_input_tokens ?? 0;
+          const turnCacheRead = turnUsage.cache_read_input_tokens ?? 0;
+          usage.promptTokens += turnInput + turnCacheCreation + turnCacheRead;
+          usage.completionTokens += turnUsage.output_tokens ?? 0;
+          usage.cacheReadTokens += turnCacheRead;
+          usage.cacheCreationTokens += turnCacheCreation;
+        }
         // Capture streaming assistant text and tool names. MCP tools arrive
         // with the `mcp__jarvis__` prefix — strip so downstream code sees
         // bare names that match the registry.
@@ -502,6 +548,7 @@ export async function queryClaudeSdk(opts: {
             cacheCreationTokens: cacheCreation,
           };
           costUsd = success.total_cost_usd ?? 0;
+          costAuthoritative = true;
           durationMs = success.duration_ms ?? 0;
           // modelUsage keys are the exact model IDs the SDK invoked. First
           // key is the primary model; keep as a readable attribution string.
@@ -544,6 +591,10 @@ export async function queryClaudeSdk(opts: {
           costUsd =
             (error as unknown as { total_cost_usd?: number }).total_cost_usd ??
             0;
+          // Error subtype reached terminal `result`; cost+usage are SDK-reported
+          // (may legitimately be 0 under Max-plan auth). Marks the override
+          // path active for the dispatcher.
+          costAuthoritative = true;
           durationMs =
             (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
           if (streamingText) {
@@ -633,6 +684,7 @@ export async function queryClaudeSdk(opts: {
     usage,
     model: actualModel,
     costUsd,
+    costAuthoritative,
     durationMs,
   };
 }
@@ -695,11 +747,38 @@ function normalizeContent(content: unknown): string {
   return "";
 }
 
-function flattenMessagesForSdk(messages: ChatMessage[]): {
+/**
+ * Flattens a ChatMessage[] history into the (systemPrompt, userPrompt) shape
+ * the Claude Agent SDK accepts. Used by `queryClaudeSdkAsInfer` (openai-path
+ * planner/reflector callers); the fast-runner direct path inlines the same
+ * logic at fast-runner.ts:1108-1126 because it also needs to extract image
+ * payloads in the same pass.
+ *
+ * **Precondition (cacheable:false ordering)**: when `cacheable: false` is set
+ * on a system message, that text is routed to the START of `userPrompt`
+ * (before any user/assistant/tool block in the original array). For inputs
+ * where all system messages precede all non-system messages (the fast-runner
+ * + Prometheus convention), this preserves the original ordering as
+ * `stable_sys, variable_sys, user_blocks...`. For inputs that interleave
+ * variable-system content mid-conversation, the relative position is LOST —
+ * variable system content always lands at the head of userPrompt regardless
+ * of where it sat in the input array. Callers that need mid-conversation
+ * variable injection should expose the desired position explicitly (e.g.
+ * by emitting the content as a `role: "user"` message instead).
+ * Surfaced 2026-05-23 (qa-audit W2). Intentional for the current call sites.
+ */
+export function flattenMessagesForSdk(messages: ChatMessage[]): {
   systemPrompt: string;
   userPrompt: string;
 } {
   let systemPrompt = "";
+  // Variable system content goes to a USER-message prefix so byte-drift here
+  // doesn't invalidate the cached systemPrompt (the SDK places one
+  // cache_control marker at the end of the systemPrompt string — see the
+  // ChatMessage.cacheable JSDoc). Collected separately so the order
+  // [variableSystem...] + [userBlocks...] is preserved.
+  // Surfaced 2026-05-22; fix shipped 2026-05-23.
+  const variableSystemBlocks: string[] = [];
   const blocks: string[] = [];
 
   for (const m of messages) {
@@ -707,7 +786,14 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
       // Concatenate system messages — planner/reflector/executor never emit
       // more than one, but fast-runner composition can produce several.
       const text = normalizeContent(m.content);
-      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${text}` : text;
+      if (m.cacheable === false) {
+        // Variable per-task content (task description, precedent, dynamic
+        // facts). Route to user-message prefix to preserve systemPrompt
+        // cacheability.
+        if (text) variableSystemBlocks.push(text);
+      } else {
+        systemPrompt = systemPrompt ? `${systemPrompt}\n\n${text}` : text;
+      }
     } else if (m.role === "user") {
       blocks.push(normalizeContent(m.content));
     } else if (m.role === "assistant") {
@@ -733,9 +819,14 @@ function flattenMessagesForSdk(messages: ChatMessage[]): {
     }
   }
 
+  // Variable system content prepended to user blocks (in order); no cache
+  // marker so per-task byte-drift here stays local instead of invalidating
+  // the cached systemPrompt prefix.
+  const allUserBlocks = [...variableSystemBlocks, ...blocks];
+
   return {
     systemPrompt: systemPrompt || "You are a helpful assistant.",
-    userPrompt: blocks.join("\n\n"),
+    userPrompt: allUserBlocks.join("\n\n"),
   };
 }
 
@@ -779,10 +870,14 @@ export async function queryClaudeSdkAsInfer(
         cache_creation_tokens: result.usage.cacheCreationTokens,
       }),
       // Surface SDK-reported total_cost_usd so Prometheus can roll it up.
-      // Always emit (including 0) so an SDK-routed call with $0 billing
-      // (Max plan) is distinguishable from an openai-path call where cost
-      // is unknown and the dispatcher fallback to calculateCost() applies.
-      cost_usd: result.costUsd,
+      // Emit 0 (Max-plan legitimate $0) only when costAuthoritative=true.
+      // Abort/timeout paths (catch block) leave costAuthoritative=false and
+      // we OMIT cost_usd so the dispatcher's optional-spread skips and
+      // recordCost falls back to calculateCost() over the now-non-zero
+      // accumulated token usage. Without this distinction, abort paths
+      // wrote phantom $0 rows into cost_ledger (5 such rows over 14d on
+      // fast Sonnet observed 2026-05-23).
+      ...(result.costAuthoritative && { cost_usd: result.costUsd }),
     },
     provider: "claude-sdk",
     latency_ms: result.durationMs || Date.now() - start,
@@ -926,6 +1021,9 @@ export async function queryClaudeSdkAsInferWithTools(
     roundsCompleted: result.numTurns,
     contextPressure: 0,
     model: result.model,
-    costUsd: result.costUsd,
+    // Same costAuthoritative pattern as the infer() path: omit costUsd on
+    // abort/timeout so the dispatcher's optional-spread falls back to
+    // calculateCost() over the accumulated tokens instead of writing $0.
+    ...(result.costAuthoritative && { costUsd: result.costUsd }),
   };
 }

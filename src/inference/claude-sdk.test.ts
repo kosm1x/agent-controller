@@ -6,6 +6,11 @@ const mockMessages: { value: MockMessage[] } = { value: [] };
 const lastQueryArgs: { value: { prompt: unknown; options: unknown } | null } = {
   value: null,
 };
+// Opt-in: when set, the mock iterator throws this error AFTER yielding the
+// fixtures. Lets us exercise the real `catch (err)` branch in queryClaudeSdk
+// (line ~620) — natural-exit and thrown-abort are different code paths.
+// Added 2026-05-23 (qa-audit W1 fold) so #225's catch-branch coverage is real.
+const mockThrowAfterYield: { value: Error | null } = { value: null };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: (name: string, desc: string, shape: unknown, handler: unknown) => ({
@@ -18,8 +23,10 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: (args: { prompt: unknown; options: unknown }) => {
     lastQueryArgs.value = args;
     const messages = mockMessages.value;
+    const throwAfter = mockThrowAfterYield.value;
     return (async function* () {
       for (const m of messages) yield m;
+      if (throwAfter) throw throwAfter;
     })();
   },
 }));
@@ -45,6 +52,7 @@ import type { ChatMessage, ToolDefinition } from "./adapter.js";
 beforeEach(() => {
   mockMessages.value = [];
   lastQueryArgs.value = null;
+  mockThrowAfterYield.value = null;
 });
 
 describe("queryClaudeSdk error_max_turns handling", () => {
@@ -1206,5 +1214,371 @@ describe("model selection threading (2026-05-10 cutover)", () => {
     expect(circuitRegistry.get("claude-sdk").getStatus().failures).toBe(0);
 
     circuitRegistry.reset();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-05-23 fixes
+//   (1) flattenMessagesForSdk respects ChatMessage.cacheable (#224)
+//   (2) abort/timeout paths preserve per-turn token usage AND omit costUsd
+//       so the dispatcher does not write phantom-$0 rows (#225)
+// ---------------------------------------------------------------------------
+
+describe("flattenMessagesForSdk respects cacheable hint (#224)", () => {
+  it("default (cacheable undefined) keeps system content in systemPrompt", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    await queryClaudeSdkAsInfer([
+      { role: "system", content: "Stable identity prefix" },
+      { role: "user", content: "hi" },
+    ]);
+
+    const opts = lastQueryArgs.value?.options as { systemPrompt: string };
+    expect(opts.systemPrompt).toBe("Stable identity prefix");
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt).toBe("hi");
+  });
+
+  it("cacheable:false routes a system message into the user-prompt prefix", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    // Mimics fast-runner's stable/variable split: essentials is stable,
+    // variableDescPart varies per task and must not invalidate the
+    // cached systemPrompt prefix.
+    await queryClaudeSdkAsInfer([
+      { role: "system", content: "STABLE essentials" },
+      {
+        role: "system",
+        content: "VARIABLE per-task description",
+        cacheable: false,
+      },
+      { role: "user", content: "actual user question" },
+    ]);
+
+    const opts = lastQueryArgs.value?.options as { systemPrompt: string };
+    // systemPrompt holds ONLY the stable portion — the byte-stable cache
+    // prefix the SDK will place its one cache_control marker on.
+    expect(opts.systemPrompt).toBe("STABLE essentials");
+    expect(opts.systemPrompt).not.toContain("VARIABLE");
+
+    // The variable portion is prepended to user blocks IN ORDER so the
+    // model still sees it before the user turn.
+    const prompt = lastQueryArgs.value?.prompt as string;
+    expect(prompt.indexOf("VARIABLE per-task description")).toBeLessThan(
+      prompt.indexOf("actual user question"),
+    );
+  });
+
+  it("byte-stable systemPrompt across two calls with different variable content (the actual cache-hit property)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    await queryClaudeSdkAsInfer([
+      { role: "system", content: "STABLE essentials" },
+      {
+        role: "system",
+        content: "task A description (varies every task)",
+        cacheable: false,
+      },
+      { role: "user", content: "q1" },
+    ]);
+    const firstSystem = (
+      lastQueryArgs.value?.options as { systemPrompt: string }
+    ).systemPrompt;
+
+    // Reset SDK output stub for the second call.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    await queryClaudeSdkAsInfer([
+      { role: "system", content: "STABLE essentials" },
+      {
+        role: "system",
+        content: "task B description (completely different bytes)",
+        cacheable: false,
+      },
+      { role: "user", content: "q2" },
+    ]);
+    const secondSystem = (
+      lastQueryArgs.value?.options as { systemPrompt: string }
+    ).systemPrompt;
+
+    // The whole point of the fix: variable byte-drift does NOT touch the
+    // systemPrompt the SDK will hash for cache lookup.
+    expect(firstSystem).toBe(secondSystem);
+  });
+
+  it("multiple stable system messages still concatenate into systemPrompt", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    await queryClaudeSdkAsInfer([
+      { role: "system", content: "section-A" },
+      { role: "system", content: "section-B" },
+      { role: "system", content: "section-C", cacheable: true },
+      { role: "user", content: "go" },
+    ]);
+
+    const opts = lastQueryArgs.value?.options as { systemPrompt: string };
+    expect(opts.systemPrompt).toBe("section-A\n\nsection-B\n\nsection-C");
+  });
+});
+
+describe("queryClaudeSdk abort/timeout preserves usage + omits authoritative cost (#225)", () => {
+  it("accumulates per-turn usage from assistant messages so abort writes non-zero tokens", async () => {
+    // Three assistant turns with per-turn usage but NO terminal `result`
+    // message — simulates the SDK aborting mid-stream (timeout / external
+    // signal). Before the fix, usage stayed at zeros and cost_ledger
+    // received a phantom-$0 row.
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "step 1" }],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 8000,
+          },
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "step 2" }],
+          usage: {
+            input_tokens: 200,
+            output_tokens: 75,
+            cache_creation_input_tokens: 50,
+            cache_read_input_tokens: 9000,
+          },
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "step 3 (last before abort)" }],
+          usage: {
+            input_tokens: 30,
+            output_tokens: 40,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 9500,
+          },
+        },
+      },
+      // No `result` message — the SDK aborts here. The catch block fires.
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    // promptTokens = sum across turns of (input + cache_creation + cache_read).
+    // (100+0+8000) + (200+50+9000) + (30+0+9500) = 26,880.
+    expect(result.usage.promptTokens).toBe(26_880);
+    expect(result.usage.completionTokens).toBe(165); // 50+75+40
+    expect(result.usage.cacheReadTokens).toBe(26_500); // 8000+9000+9500
+    expect(result.usage.cacheCreationTokens).toBe(50);
+  });
+
+  it("flags costAuthoritative=false on abort path so adapter omits cost_usd", async () => {
+    // Same shape: assistant turns without a terminal result message.
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "partial" }],
+          usage: { input_tokens: 500, output_tokens: 100 },
+        },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    // The SDK never reported cost — costAuthoritative MUST be false so
+    // downstream consumers (queryClaudeSdkAsInfer, queryClaudeSdkAsInferWithTools)
+    // strip `cost_usd` from the response and the dispatcher falls back to
+    // calculateCost() over the now-non-zero token totals.
+    expect(result.costAuthoritative).toBe(false);
+    expect(result.usage.promptTokens).toBe(500);
+    expect(result.usage.completionTokens).toBe(100);
+  });
+
+  it("queryClaudeSdkAsInfer omits cost_usd when costAuthoritative=false (catch path)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "partial" }],
+          usage: { input_tokens: 1000, output_tokens: 200 },
+        },
+      },
+    ];
+
+    const response = await queryClaudeSdkAsInfer([
+      { role: "user", content: "go" },
+    ]);
+
+    // Token columns preserved — they came from the per-turn accumulator.
+    expect(response.usage.prompt_tokens).toBe(1000);
+    expect(response.usage.completion_tokens).toBe(200);
+    // cost_usd MUST be undefined so dispatcher.recordCost falls back to
+    // calculateCost(). A literal 0 here would override and write phantom-$0.
+    expect(response.usage.cost_usd).toBeUndefined();
+  });
+
+  it("success path keeps costAuthoritative=true (Max-plan $0 stays attributable)", async () => {
+    // Max-plan billing legitimately reports $0 — that's authoritative data,
+    // not a sentinel. Must be distinguishable from the abort path.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 100, output_tokens: 50 },
+        total_cost_usd: 0,
+        duration_ms: 200,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.costAuthoritative).toBe(true);
+    expect(result.costUsd).toBe(0);
+
+    // ... and the adapter SHOULD emit cost_usd: 0 in this case.
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 100, output_tokens: 50 },
+        total_cost_usd: 0,
+        duration_ms: 200,
+      },
+    ];
+    const response = await queryClaudeSdkAsInfer([
+      { role: "user", content: "go" },
+    ]);
+    expect(response.usage.cost_usd).toBe(0);
+  });
+
+  it("real catch branch (thrown abort mid-stream) preserves accumulator AND keeps costAuthoritative=false (qa-audit W1)", async () => {
+    // W1 fold: the prior tests in this block exercised the natural-exit path
+    // (generator returns cleanly without a result message). This one actually
+    // throws inside the iterator AFTER one assistant turn, hitting the
+    // `catch (err)` block at claude-sdk.ts:620. Verifies that:
+    //   (a) the per-turn accumulator survives the throw (token counts non-zero)
+    //   (b) costAuthoritative stays false (no result message ever fired)
+    //   (c) streamingText is recovered as the result text
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "partial before abort" }],
+          usage: { input_tokens: 750, output_tokens: 250 },
+        },
+      },
+    ];
+    mockThrowAfterYield.value = new Error("AbortError: signal aborted");
+
+    const result = await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    // (a) accumulator survived
+    expect(result.usage.promptTokens).toBe(750);
+    expect(result.usage.completionTokens).toBe(250);
+    // (b) no terminal result message ever fired
+    expect(result.costAuthoritative).toBe(false);
+    // (c) streamingText recovered
+    expect(result.text).toContain("partial before abort");
+  });
+
+  it("error_max_turns branch (terminal result with usage) also sets costAuthoritative=true", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "partial" }],
+          usage: { input_tokens: 1, output_tokens: 1 }, // would accumulate
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        errors: ["Reached maximum number of turns (20)"],
+        num_turns: 20,
+        usage: { input_tokens: 1000, output_tokens: 500 },
+        total_cost_usd: 0.05,
+        duration_ms: 12345,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    // Error subtype reached terminal — cost IS authoritative.
+    expect(result.costAuthoritative).toBe(true);
+    expect(result.costUsd).toBe(0.05);
+    // Error branch's `usage = { ... }` REPLACES the per-turn accumulator;
+    // we must see the SDK-reported authoritative total, not the sum.
+    expect(result.usage.promptTokens).toBe(1000);
+    expect(result.usage.completionTokens).toBe(500);
   });
 });

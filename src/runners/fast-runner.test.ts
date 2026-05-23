@@ -5,7 +5,9 @@ import {
   classifyToolError,
   WRITE_TOOLS,
   highStakesGuardVariant,
+  splitSystemMessagesByCache,
 } from "./fast-runner.js";
+import type { ChatMessage } from "../inference/adapter.js";
 
 describe("detectsHallucinatedExecution", () => {
   // --- Layer 1: Full hallucination (zero tools) ---
@@ -1257,5 +1259,110 @@ describe("highStakesGuardVariant (Fix D — DENUE no-tools advisory)", () => {
 
   it("returns 'full' when both shell_exec and http_fetch are present", () => {
     expect(highStakesGuardVariant(["shell_exec", "http_fetch"])).toBe("full");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitSystemMessagesByCache — qa-audit C1 fold (2026-05-23)
+// The fast-runner direct claude-sdk call path inlined a manual systemPrompt
+// extraction that ignored ChatMessage.cacheable. The variable system messages
+// the fast-runner tags `cacheable: false` (variableDescPart, kbResult.variable,
+// precedent) were being concatenated into systemPrompt, so the SDK's single
+// cache_control marker landed AFTER per-task variable content and the cached
+// prefix was invalidated on every call. These tests pin the routing contract.
+// ---------------------------------------------------------------------------
+
+describe("splitSystemMessagesByCache (cache-aware routing helper)", () => {
+  it("returns empty buckets when there are no system messages", () => {
+    const result = splitSystemMessagesByCache([
+      { role: "user", content: "hi" },
+    ]);
+    expect(result.stable).toEqual([]);
+    expect(result.variable).toEqual([]);
+  });
+
+  it("default (undefined cacheable) routes to stable bucket", () => {
+    const result = splitSystemMessagesByCache([
+      { role: "system", content: "stable section A" },
+      { role: "system", content: "stable section B" },
+      { role: "user", content: "ignored" },
+    ]);
+    expect(result.stable).toEqual(["stable section A", "stable section B"]);
+    expect(result.variable).toEqual([]);
+  });
+
+  it("cacheable:false routes to variable bucket, preserving emission order", () => {
+    const result = splitSystemMessagesByCache([
+      { role: "system", content: "essentials" },
+      {
+        role: "system",
+        content: "task description (varies)",
+        cacheable: false,
+      },
+      { role: "system", content: "deferred tool catalog" },
+      { role: "system", content: "precedent (varies)", cacheable: false },
+    ]);
+    // Stable: essentials + deferred tool catalog (joined later as systemPrompt)
+    expect(result.stable).toEqual(["essentials", "deferred tool catalog"]);
+    // Variable: task description + precedent (prepended later to userPrompt)
+    expect(result.variable).toEqual([
+      "task description (varies)",
+      "precedent (varies)",
+    ]);
+  });
+
+  it("cacheable:true (explicit) still routes to stable bucket", () => {
+    const result = splitSystemMessagesByCache([
+      { role: "system", content: "explicit-stable", cacheable: true },
+    ]);
+    expect(result.stable).toEqual(["explicit-stable"]);
+    expect(result.variable).toEqual([]);
+  });
+
+  it("ignores non-system messages and empty content", () => {
+    const result = splitSystemMessagesByCache([
+      { role: "user", content: "user msg" },
+      { role: "system", content: "" }, // empty — skipped
+      { role: "system", content: "ok" },
+      { role: "assistant", content: "asst msg" },
+    ]);
+    expect(result.stable).toEqual(["ok"]);
+    expect(result.variable).toEqual([]);
+  });
+
+  it("byte-stable across two calls with different variable content (cache-hit property)", () => {
+    // The fix's whole point: two task invocations with the same stable
+    // sections but different variable content must produce identical
+    // `stable` buckets (which become the cached systemPrompt prefix).
+    const taskA = splitSystemMessagesByCache([
+      { role: "system", content: "essentials" },
+      { role: "system", content: "TASK A: write a poem", cacheable: false },
+    ]);
+    const taskB = splitSystemMessagesByCache([
+      { role: "system", content: "essentials" },
+      {
+        role: "system",
+        content: "TASK B: summarize a CSV (different bytes)",
+        cacheable: false,
+      },
+    ]);
+    expect(taskA.stable).toEqual(taskB.stable);
+    expect(taskA.variable).not.toEqual(taskB.variable);
+  });
+
+  it("array-shaped content (vision blocks) is treated as empty by this helper", () => {
+    // splitSystemMessagesByCache only routes string content. Array-shaped
+    // content (vision pre-normalized messages) doesn't apply to system
+    // messages in current fast-runner flows; the helper is conservative.
+    const result = splitSystemMessagesByCache([
+      {
+        role: "system",
+        content: [
+          { type: "text", text: "vision blocks" },
+        ] as unknown as ChatMessage["content"],
+      },
+    ]);
+    expect(result.stable).toEqual([]);
+    expect(result.variable).toEqual([]);
   });
 });
