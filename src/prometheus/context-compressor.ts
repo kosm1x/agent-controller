@@ -150,20 +150,62 @@ export async function compress(
 
   if (middle.length === 0) return messages;
 
-  // PRESERVE+ADD: extract existing summary from middle if present
+  // PRESERVE+ADD: extract existing summary from middle if present.
+  // Hermes v0.11 anti-thrashing #1 — defensive multi-summary collapse:
+  // previously only the FIRST SUMMARY_PREFIX match was captured and any
+  // later one was treated as raw text → summary-of-summary fidelity loss.
+  // Now we take the LATEST as the best heuristic — under the normal
+  // PRESERVE+ADD pipeline each successive summary already absorbed prior
+  // facts via the update prompt, so the most recent is canonical. The
+  // edge case where two summaries are siblings (no parent-child relation,
+  // e.g. snapshot replay or interrupted/retried compaction) will lose the
+  // older one's facts; the warn below is the escape hatch for that case.
   let existingSummary: string | null = null;
+  let summaryBlockCount = 0;
   const newMiddle: ChatMessage[] = [];
   for (const m of middle) {
     if (
-      !existingSummary &&
       m.role === "system" &&
       typeof m.content === "string" &&
       m.content.startsWith(SUMMARY_PREFIX)
     ) {
+      summaryBlockCount++;
       existingSummary = m.content.slice(SUMMARY_PREFIX.length).trim();
     } else {
       newMiddle.push(m);
     }
+  }
+  if (summaryBlockCount > 1) {
+    console.warn(
+      `[compressor] ${summaryBlockCount} SUMMARY_PREFIX blocks in middle slice; using the latest (defensive collapse). Unexpected — investigate upstream.`,
+    );
+  }
+
+  // Hermes v0.11 anti-thrashing #2 — short-circuit a no-op LLM round.
+  // If middle had ONLY the prior summary (no new turns to fold in), the
+  // update prompt would land with an empty `New messages:` slot — Sonnet
+  // would either echo back the summary verbatim (best case, still costs
+  // ~$0.01 + 2-5s) or hallucinate updates (worst case). Skip it: return
+  // the preserved summary in the same shape the regular path produces.
+  //
+  // We intentionally do NOT re-call `upsertFile` here (audit W1/W2). The
+  // summary was already persisted on the cycle that created it; writing a
+  // fresh `compaction/${ts}.md` per no-op tick would turn a stall-compress
+  // loop into a `jarvis_files` write storm — which is the very class of
+  // thrash this guard exists to stop. Trade-off: an analytics scan that
+  // filters compaction files by freshness will miss long-idle threads.
+  // Accept that: thread-idleness is a separate signal, not this guard's
+  // job to emit.
+  if (existingSummary !== null && newMiddle.length === 0) {
+    let preservedContent = `${SUMMARY_PREFIX} ${existingSummary}`;
+    if (contextInjection) {
+      preservedContent += `\n\n---\n[ACTIVE CONTEXT]\n${contextInjection}`;
+    }
+    return [
+      ...head,
+      { role: "system", content: preservedContent },
+      ...sanitizeToolPairs([...tail]),
+    ];
   }
 
   // Build text from non-summary middle messages

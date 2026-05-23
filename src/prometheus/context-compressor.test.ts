@@ -24,6 +24,15 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// File-scope spy restore. The two warn-spy tests in the anti-thrashing
+// describe call mockRestore() explicitly, but if either throws between
+// mockImplementation and the explicit restore, the spy would leak to
+// subsequent tests. Audit W6 — `feedback_testing.md` rule: always
+// `vi.restoreAllMocks()` in afterEach, not beforeEach.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("estimateTokens", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -393,5 +402,189 @@ describe("compress — language directive (Hermes v0.11 fix)", () => {
     expect(prompt).toContain("`## Intent`");
     // PRESERVE+ADD continuity addendum — W1 fix
     expect(prompt).toContain("existing summary's language");
+  });
+});
+
+describe("compress — anti-thrashing guards (Hermes v0.11 fix)", () => {
+  // Hermes May Tier-2 #9. Two distinct thrashing surfaces previously
+  // existed: (1) only the FIRST SUMMARY_PREFIX block was detected — later
+  // ones were treated as raw text → summary-of-summary fidelity loss; and
+  // (2) a no-new-messages compress still LLM-called the update prompt
+  // with an empty New messages slot, wasting ~$0.01 + 2-5s every cycle.
+
+  it("short-circuits the LLM call when middle has ONLY the existing summary", async () => {
+    // No mockInfer setup — if compress() calls infer(), the test fails
+    // because the mock has no queued response.
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" }, // head[0]
+      { role: "user", content: "hola" }, // head[1]
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} Resumen previo de la conversación`,
+      }, // middle — only the summary, no new turns
+      { role: "user", content: "recent1" }, // tail[0]
+      { role: "assistant", content: "recent2" }, // tail[1]
+    ];
+
+    const result = await compress(messages, 2, 2);
+
+    // Zero LLM calls — that is the point of the guard
+    expect(mockInfer).not.toHaveBeenCalled();
+    // Result shape mirrors the regular path: head + summary + tail = 5
+    expect(result.length).toBe(5);
+    expect(result[0].content).toBe("sys");
+    expect(result[1].content).toBe("hola");
+    expect(result[2].role).toBe("system");
+    expect(result[2].content).toContain(SUMMARY_PREFIX);
+    expect(result[2].content).toContain("Resumen previo de la conversación");
+    expect(result[3].content).toBe("recent1");
+    expect(result[4].content).toBe("recent2");
+  });
+
+  it("preserves contextInjection AND sanitizes orphan tool pairs in tail on the short-circuit", async () => {
+    // The early-return path must mirror the full path's behavior for
+    // contextInjection — otherwise an active goal would silently drop on
+    // no-op cycles. It must also run sanitizeToolPairs on the tail — if a
+    // future refactor drops that, orphan tool messages slip through and
+    // the API rejects the next round. Audit W5 fix.
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hola" },
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} Resumen previo`,
+      },
+      // Tail: orphan tool result (its assistant tool_call was compressed
+      // away). sanitizeToolPairs must convert it to "[Result compressed]".
+      {
+        role: "tool",
+        tool_call_id: "tc-orphan",
+        content: "raw orphan tool result",
+      },
+      { role: "assistant", content: "recent2" },
+    ];
+
+    const result = await compress(messages, 2, 2, "active goal: pay bills");
+
+    expect(mockInfer).not.toHaveBeenCalled();
+    // contextInjection preserved
+    expect(result[2].content).toContain("[ACTIVE CONTEXT]");
+    expect(result[2].content).toContain("active goal: pay bills");
+    // Orphan tool RESULT (no matching assistant tool_call in scope) is
+    // REMOVED by sanitizeToolPairs — same behavior as the regular path.
+    // Result length drops from 5 (raw) to 4 (orphan stripped).
+    expect(result.length).toBe(4);
+    expect(result.some((m) => m.role === "tool")).toBe(false);
+  });
+
+  it("collapses multiple summary blocks defensively — uses the latest", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen actualizado",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 },
+      provider: "test",
+      latency_ms: 50,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" }, // head[0]
+      { role: "user", content: "hola" }, // head[1]
+      // Two summaries in middle — anomalous but possible (snapshot replay,
+      // manual injection, future bug). The LATER one is canonical because
+      // each update absorbs prior facts.
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} OLD summary (should be dropped)`,
+      },
+      { role: "user", content: "msg between summaries" },
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} NEW summary (canonical)`,
+      },
+      { role: "user", content: "post-summary new question" },
+      { role: "user", content: "recent1" }, // tail[0]
+      { role: "assistant", content: "recent2" }, // tail[1]
+    ];
+
+    await compress(messages, 2, 2);
+
+    // Warn fires on the collapse
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnMsg = warnSpy.mock.calls[0][0] as string;
+    expect(warnMsg).toContain("2 SUMMARY_PREFIX blocks");
+    expect(warnMsg).toContain("defensive collapse");
+
+    // Update prompt receives the LATEST summary in the "Existing summary:"
+    // slot — NOT the earliest. (The pre-fix code would have used the first
+    // and folded the second into "New messages:" as raw text.)
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    expect(prompt).toContain("NEW summary (canonical)");
+    expect(prompt).not.toContain("OLD summary (should be dropped)");
+
+    warnSpy.mockRestore();
+  });
+
+  it("handles 3+ summary blocks (audit W7) — still uses the latest", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen actualizado",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 },
+      provider: "test",
+      latency_ms: 50,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hola" },
+      { role: "system", content: `${SUMMARY_PREFIX} v1 oldest` },
+      { role: "user", content: "interleaved msg" },
+      { role: "system", content: `${SUMMARY_PREFIX} v2 middle` },
+      { role: "system", content: `${SUMMARY_PREFIX} v3 newest (canonical)` },
+      { role: "user", content: "post-summaries msg" },
+      { role: "user", content: "recent1" },
+      { role: "assistant", content: "recent2" },
+    ];
+
+    await compress(messages, 2, 2);
+
+    // Warn fires with count=3
+    const warnMsg = warnSpy.mock.calls[0][0] as string;
+    expect(warnMsg).toContain("3 SUMMARY_PREFIX blocks");
+
+    // Update prompt receives ONLY the newest (v3), drops v1 and v2
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    expect(prompt).toContain("v3 newest (canonical)");
+    expect(prompt).not.toContain("v1 oldest");
+    expect(prompt).not.toContain("v2 middle");
+
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT warn when there is exactly one summary block (the normal case)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen actualizado",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 },
+      provider: "test",
+      latency_ms: 50,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hola" },
+      { role: "system", content: `${SUMMARY_PREFIX} Solo un resumen` },
+      { role: "user", content: "una pregunta nueva" },
+      { role: "user", content: "recent1" },
+      { role: "assistant", content: "recent2" },
+    ];
+
+    await compress(messages, 2, 2);
+
+    // Single-summary case — no defensive-collapse warning
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
