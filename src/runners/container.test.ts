@@ -61,6 +61,18 @@ describe("parsePayload", () => {
     expect(result.output).toBeUndefined();
   });
 
+  it("treats type:'progress' as progress even when elapsedMs is absent (qa-r2 W3 fold)", () => {
+    // The discriminator is `type === "progress"` alone — payload SHAPE
+    // beyond that is advisory. A future heartbeat variant that omits
+    // elapsedMs (or any other field) must still be recognized so it
+    // resets the activity timer rather than being treated as a final
+    // result. Without this assertion, a worker change that drops the
+    // field could silently flip behavior at the closure level.
+    const result = parsePayload(JSON.stringify({ type: "progress" }));
+    expect(result.kind).toBe("progress");
+    expect(result.output).toBeUndefined();
+  });
+
   it("returns result kind with success output for type:'result' payload", () => {
     const result = parsePayload(
       JSON.stringify({
