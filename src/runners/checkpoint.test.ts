@@ -17,6 +17,7 @@ import {
   writeCheckpoint,
   findRecentCheckpoint,
   clearCheckpoint,
+  pruneExpiredCheckpoints,
 } from "./checkpoint.js";
 
 beforeEach(() => {
@@ -154,6 +155,112 @@ describe("clearCheckpoint", () => {
     clearCheckpoint("task-abc");
     expect(mockDeleteFile).toHaveBeenCalledWith(
       "workspace/checkpoints/task-abc.md",
+    );
+  });
+});
+
+describe("pruneExpiredCheckpoints", () => {
+  it("returns 0 when no checkpoints exist", () => {
+    mockListFiles.mockReturnValueOnce([]);
+    expect(pruneExpiredCheckpoints()).toBe(0);
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+  });
+
+  it("deletes expired checkpoints and leaves fresh ones alone", () => {
+    const now = Date.now();
+    // jarvis_files stores SQLite-style local datetimes (no trailing Z); the
+    // production listFiles emits the same. Test fixtures should match.
+    const isoLocal = (ms: number) =>
+      new Date(ms)
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d{3}Z$/, "");
+    mockListFiles.mockReturnValueOnce([
+      {
+        path: "workspace/checkpoints/fresh.md",
+        title: "fresh",
+        tags: [],
+        qualifier: "workspace",
+        priority: 0,
+        size: 100,
+        updated_at: isoLocal(now - 5 * 60_000), // 5 min ago — fresh
+      },
+      {
+        path: "workspace/checkpoints/stale.md",
+        title: "stale",
+        tags: [],
+        qualifier: "workspace",
+        priority: 0,
+        size: 100,
+        updated_at: isoLocal(now - 60 * 60_000), // 1 h ago — stale (>30 min)
+      },
+    ]);
+
+    const deleted = pruneExpiredCheckpoints();
+    expect(deleted).toBe(1);
+    expect(mockDeleteFile).toHaveBeenCalledTimes(1);
+    expect(mockDeleteFile).toHaveBeenCalledWith(
+      "workspace/checkpoints/stale.md",
+    );
+  });
+
+  it("counts only successful deletes when one delete throws", () => {
+    const stale = (path: string) => ({
+      path,
+      title: path,
+      tags: [],
+      qualifier: "workspace",
+      priority: 0,
+      size: 100,
+      updated_at: new Date(Date.now() - 60 * 60_000)
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d{3}Z$/, ""),
+    });
+    mockListFiles.mockReturnValueOnce([
+      stale("workspace/checkpoints/ok.md"),
+      stale("workspace/checkpoints/boom.md"),
+    ]);
+    mockDeleteFile.mockImplementationOnce(() => true); // ok
+    mockDeleteFile.mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+
+    const deleted = pruneExpiredCheckpoints();
+    expect(deleted).toBe(1);
+    expect(mockDeleteFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("survives a listFiles throw and returns 0", () => {
+    mockListFiles.mockImplementationOnce(() => {
+      throw new Error("db lock");
+    });
+    expect(pruneExpiredCheckpoints()).toBe(0);
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+  });
+
+  it("honours a custom TTL override", () => {
+    const now = Date.now();
+    const isoLocal = (ms: number) =>
+      new Date(ms)
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d{3}Z$/, "");
+    mockListFiles.mockReturnValueOnce([
+      {
+        path: "workspace/checkpoints/recent.md",
+        title: "recent",
+        tags: [],
+        qualifier: "workspace",
+        priority: 0,
+        size: 100,
+        updated_at: isoLocal(now - 2 * 60_000), // 2 min ago
+      },
+    ]);
+    // Sub-second TTL — even the 2-min-old row is past it
+    expect(pruneExpiredCheckpoints(1000)).toBe(1);
+    expect(mockDeleteFile).toHaveBeenCalledWith(
+      "workspace/checkpoints/recent.md",
     );
   });
 });

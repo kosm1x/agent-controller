@@ -129,6 +129,48 @@ export function loadSnapshot(taskId: string): PrometheusSnapshot | null {
 }
 
 /**
+ * Bulk-delete snapshots whose `created_at` is older than the TTL. Returns
+ * the row count deleted (0 if none).
+ *
+ * Why: `loadSnapshot` enforces TTL lazily (only when someone tries to
+ * resume). If a task times out and is then abandoned by the user, its
+ * snapshot stays in the table forever. A Prometheus crash storm could
+ * accumulate rows. This is the active sweep the lazy path leaves on the
+ * floor. Cron-driven from `runners/checkpoint-prune-cron.ts`.
+ *
+ * Idempotent and side-effect-free apart from the DELETE. Best-effort:
+ * swallows DB exceptions so a transient lock can't crash the cron.
+ *
+ * @param ttlMs optional override (defaults to SNAPSHOT_TTL_MS = 1h). Lower
+ *   values are convenient in tests.
+ */
+export function pruneExpiredSnapshots(ttlMs: number = SNAPSHOT_TTL_MS): number {
+  try {
+    const db = getDatabase();
+    // SQLite stores `created_at` as the local datetime string from the
+    // `DEFAULT (datetime('now'))` clause — same convention used in
+    // `loadSnapshot`. We compute the cutoff in seconds-since-epoch and
+    // compare via `strftime('%s', ...)` so the unit math matches whether
+    // `ttlMs` is one hour or one millisecond (test-friendly).
+    const cutoffSec = Math.floor((Date.now() - ttlMs) / 1000);
+    const result = writeWithRetry(() =>
+      db
+        .prepare(
+          `DELETE FROM prometheus_snapshots
+           WHERE strftime('%s', created_at) < ?`,
+        )
+        .run(String(cutoffSec)),
+    ) as { changes: number } | undefined;
+    return result?.changes ?? 0;
+  } catch (err) {
+    console.warn(
+      `[snapshot] pruneExpiredSnapshots failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return 0;
+  }
+}
+
+/**
  * Delete all snapshots for a task (after successful resume or cleanup).
  */
 export function clearSnapshot(taskId: string): void {

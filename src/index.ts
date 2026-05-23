@@ -321,6 +321,23 @@ async function main(): Promise<void> {
       });
   }
 
+  // Hourly prune for both checkpoint stores. Closes the lazy-only-TTL gap
+  // (Hermes v0.13 "Checkpoints v2 real pruning"). Non-fatal if registration
+  // fails — the lazy paths still enforce TTL on every load.
+  import("./runners/checkpoint-prune-cron.js")
+    .then(({ registerCheckpointPruneCron }) =>
+      registerCheckpointPruneCron({
+        info: (msg, fields) => log.info(fields ?? {}, msg),
+        warn: (msg, fields) => log.warn(fields ?? {}, msg),
+      }),
+    )
+    .catch((err) => {
+      log.warn(
+        { err },
+        "[checkpoint] prune cron registration failed (non-fatal)",
+      );
+    });
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 

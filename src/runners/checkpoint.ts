@@ -10,6 +10,18 @@ import { upsertFile, deleteFile, listFiles, getFile } from "../db/jarvis-fs.js";
 const CHECKPOINT_PREFIX = "workspace/checkpoints/";
 const CHECKPOINT_TTL_MS = 30 * 60_000; // 30 minutes
 
+/**
+ * Parse a timestamp string from SQLite (`datetime('now')` → naïve UTC like
+ * `"2026-05-23 00:12:30"`) or from JS (`toISOString()` → `"...Z"`) into ms
+ * since epoch. Idempotent: appends `Z` only when no timezone marker is
+ * present. Prevents the production `TZ=America/Mexico_City` parsing drift
+ * that turned a 30-min TTL into a 6.5h TTL on the lazy path (audit C1).
+ */
+function parseUtcTimestamp(s: string): number {
+  const hasOffset = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s);
+  return new Date(hasOffset ? s : s + "Z").getTime();
+}
+
 export interface Checkpoint {
   taskId: string;
   title: string;
@@ -95,15 +107,16 @@ export function findRecentCheckpoint(): Checkpoint | null {
     });
     if (files.length === 0) return null;
 
-    // Find most recent
+    // Find most recent. `parseUtcTimestamp` (module-level) is the audit
+    // C1 fix — see the helper's docstring.
     const sorted = files.sort(
       (a, b) =>
-        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        parseUtcTimestamp(b.updated_at) - parseUtcTimestamp(a.updated_at),
     );
     const latest = sorted[0];
 
     // Check TTL
-    const age = Date.now() - new Date(latest.updated_at).getTime();
+    const age = Date.now() - parseUtcTimestamp(latest.updated_at);
     if (age > CHECKPOINT_TTL_MS) {
       // Expired — clean up
       deleteFile(latest.path);
@@ -117,6 +130,52 @@ export function findRecentCheckpoint(): Checkpoint | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Bulk-delete checkpoints whose `updated_at` is older than the TTL. Returns
+ * the count deleted. Companion to `pruneExpiredSnapshots` in
+ * `prometheus/snapshot.ts`; both are driven from
+ * `runners/checkpoint-prune-cron.ts`.
+ *
+ * Why: `findRecentCheckpoint` enforces TTL lazily (only when picking up a
+ * "continúa"). If the user never says continúa, the file lingers in
+ * `jarvis_files` AND on the FS mirror AND in pgvector. `deleteFile`
+ * propagates to all three, so this prune cleans every layer.
+ *
+ * Best-effort: per-file delete failures are logged and counted but do not
+ * abort the sweep.
+ *
+ * @param ttlMs optional override (defaults to CHECKPOINT_TTL_MS = 30 min).
+ */
+export function pruneExpiredCheckpoints(
+  ttlMs: number = CHECKPOINT_TTL_MS,
+): number {
+  let deleted = 0;
+  try {
+    const files = listFiles({
+      prefix: CHECKPOINT_PREFIX,
+      qualifier: "workspace",
+    });
+    const cutoffMs = Date.now() - ttlMs;
+    for (const f of files) {
+      const updatedMs = parseUtcTimestamp(f.updated_at);
+      if (!Number.isFinite(updatedMs) || updatedMs > cutoffMs) continue;
+      try {
+        deleteFile(f.path);
+        deleted++;
+      } catch (err) {
+        console.warn(
+          `[checkpoint] prune failed for ${f.path}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[checkpoint] pruneExpiredCheckpoints listFiles failed: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  return deleted;
 }
 
 /**

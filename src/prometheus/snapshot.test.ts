@@ -32,6 +32,7 @@ import {
   saveSnapshot,
   loadSnapshot,
   clearSnapshot,
+  pruneExpiredSnapshots,
   type PrometheusSnapshot,
 } from "./snapshot.js";
 
@@ -164,5 +165,77 @@ describe("PrometheusSnapshot", () => {
     const loaded = loadSnapshot("test-task-1");
     expect(loaded!.goalGraph.goals["g-1"].status).toBe("completed");
     expect(loaded!.goalGraph.goals["g-2"].status).toBe("failed");
+  });
+});
+
+describe("pruneExpiredSnapshots", () => {
+  beforeEach(() => {
+    // Each test starts from a clean table
+    mockDb.exec("DELETE FROM prometheus_snapshots");
+  });
+
+  it("returns 0 when the table is empty", () => {
+    expect(pruneExpiredSnapshots()).toBe(0);
+  });
+
+  it("deletes rows older than the TTL and leaves fresh rows alone", () => {
+    saveSnapshot(makeSnapshot({ taskId: "fresh-task" }));
+    saveSnapshot(makeSnapshot({ taskId: "stale-task" }));
+    // Backdate the stale row to 2 hours ago (older than 1h TTL)
+    mockDb
+      .prepare(
+        "UPDATE prometheus_snapshots SET created_at = datetime('now', '-2 hours') WHERE task_id = 'stale-task'",
+      )
+      .run();
+
+    const deleted = pruneExpiredSnapshots();
+    expect(deleted).toBe(1);
+
+    const remaining = mockDb
+      .prepare("SELECT task_id FROM prometheus_snapshots")
+      .all() as Array<{ task_id: string }>;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].task_id).toBe("fresh-task");
+  });
+
+  it("honours a custom TTL override (sub-second TTL deletes everything)", () => {
+    saveSnapshot(makeSnapshot({ taskId: "task-a" }));
+    saveSnapshot(makeSnapshot({ taskId: "task-b" }));
+    // Backdate both 2 seconds so a 1-second-TTL sweep catches them
+    mockDb
+      .prepare(
+        "UPDATE prometheus_snapshots SET created_at = datetime('now', '-2 seconds')",
+      )
+      .run();
+
+    const deleted = pruneExpiredSnapshots(1000);
+    expect(deleted).toBe(2);
+
+    const remaining = mockDb
+      .prepare("SELECT COUNT(*) as n FROM prometheus_snapshots")
+      .get() as { n: number };
+    expect(remaining.n).toBe(0);
+  });
+
+  it("pins strict-< boundary: row 1 second under the TTL survives", () => {
+    // Audit W4: the previous version of this test asserted
+    // `deleted + remaining === 1`, which is a tautology (the row either
+    // got deleted or it didn't, no third outcome). Real assertion: a row
+    // backdated by `(TTL - 1s)` must NEVER be deleted by a default-TTL
+    // prune. Otherwise a sweep that fires near the TTL boundary could
+    // delete a snapshot a resume call is about to load.
+    saveSnapshot(makeSnapshot({ taskId: "edge-task" }));
+    // 1 hour TTL minus 1 second → 59:59 old → must survive
+    mockDb
+      .prepare(
+        "UPDATE prometheus_snapshots SET created_at = datetime('now', '-59 minutes', '-59 seconds')",
+      )
+      .run();
+
+    expect(pruneExpiredSnapshots()).toBe(0);
+    const remaining = mockDb
+      .prepare("SELECT COUNT(*) as n FROM prometheus_snapshots")
+      .get() as { n: number };
+    expect(remaining.n).toBe(1);
   });
 });
