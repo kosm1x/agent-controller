@@ -379,4 +379,193 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     //                        skill_load + skill_run added per spec §7 L1/L2/exec).
     expect(ALL_TOOLS.length).toBe(192);
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // Sprint 1 R-2 — Tool description length guardrail
+  // ──────────────────────────────────────────────────────────────────
+  //
+  // Smaller tool descriptions = smaller prompts on every fast turn = faster
+  // TTFT. T-02 baseline showed mean 50.7 tools loaded per fast task; if mean
+  // description is 1500 chars (~375 tokens), catalog is ~19K tokens/task.
+  // The guardrail forces any tool above DESC_THRESHOLD to be either trimmed
+  // OR explicitly exempted with a reason — same forcing-function as the
+  // count invariant above. Bulk trimming of currently-exempted tools is
+  // queued for Sprint 2 (see TOOL_DESC_EXCEPTIONS entries below).
+  //
+  // Threshold of 1500 chars is the current conservative bar — high enough
+  // that none of today's truly-load-bearing tool descriptions need surgery.
+  // Sprint 2 can lower it once exceptions are trimmed.
+
+  const DESC_THRESHOLD = 1500;
+  // Sprint 2 target: lower DESC_THRESHOLD to 1200 once the exception list is
+  // trimmed. The current 1500 produces a manageable list (15 outliers); 1200
+  // would surface 11 additional tools that are reasonable trim candidates.
+
+  // Exceptions: tool names that legitimately exceed DESC_THRESHOLD. Each
+  // entry has a `maxLen` (per-tool ceiling) AND `reason`. The per-tool
+  // ceiling closes a one-sided guardrail: without it, an already-exempted
+  // tool could grow without bound (audit W1). `maxLen` is the current
+  // length + a small slack; growth past it requires either a deliberate
+  // raise or a trim — same forcing function as the exact-count test above.
+  const TOOL_DESC_EXCEPTIONS: Record<
+    string,
+    { maxLen: number; reason: string }
+  > = {
+    // 15 outliers as of 2026-05-23 (Sprint 1 R-2 ship). Each retains its
+    // detailed description because it encodes load-bearing routing/safety
+    // semantics the LLM consults turn-by-turn (permanent-vs-transient error
+    // policy, safety aborts, parent-FK resolution, batch caps, idempotency,
+    // confirmation flows, etc.).
+    //
+    // Sprint 2 first targets the >2500-char outliers — halving those three
+    // alone trims ~5400 chars from the catalog. maxLen = current_len + 50
+    // slack (lets minor edits pass without re-tripping the test).
+    video_html_compose: {
+      maxLen: 5328,
+      reason: "HTML/CSS composition rules + render policy",
+    },
+    northstar_sync: {
+      maxLen: 2978,
+      reason:
+        "4-phase sync architecture + LWW + safety abort (2026-05-12 incident)",
+    },
+    infographic_generate: {
+      maxLen: 2601,
+      reason: "chart taxonomy + spec validation + format constraints",
+    },
+    google_workspace_cli: {
+      maxLen: 2644,
+      reason: "dispatch routing across Google Workspace APIs",
+    },
+    submit_report: {
+      maxLen: 2174,
+      reason: "quality-gate ritual instructions for report drafts",
+    },
+    wp_publish: {
+      maxLen: 2107,
+      reason: "WordPress publish policy + idempotency rules",
+    },
+    hf_generate: {
+      maxLen: 2067,
+      reason: "HuggingFace task taxonomy + model selection guidance",
+    },
+    user_fact_set: {
+      maxLen: 1977,
+      reason: "fact-persistence policy + conflict-resolution rules",
+    },
+    gdrive_download: {
+      maxLen: 1839,
+      reason: "binary-vs-export disambiguation + size limits",
+    },
+    skill_run: {
+      maxLen: 1795,
+      reason: "skill invocation contract + arg-validation rules",
+    },
+    jarvis_file_write: {
+      maxLen: 1989,
+      reason: "KB write policy + tag conventions + path rules",
+    },
+    jarvis_file_read: {
+      maxLen: 1630,
+      reason: "KB read modes (by path vs by tags) + result shape",
+    },
+    jarvis_files_batch_write: {
+      maxLen: 1668,
+      reason: "batch write contract + cap + partial-error policy",
+    },
+    jarvis_files_batch_delete: {
+      maxLen: 1648,
+      reason: "batch delete contract + confirmation + precious-path scan",
+    },
+    gemini_research: {
+      maxLen: 1597,
+      reason: "Gemini Q&A research mode + document reference shape",
+    },
+  };
+
+  it("every production tool has description ≤ DESC_THRESHOLD chars OR is documented in TOOL_DESC_EXCEPTIONS", () => {
+    const violations: Array<{ name: string; len: number }> = [];
+    for (const tool of ALL_TOOLS) {
+      const desc = tool.definition.function.description ?? "";
+      const name = tool.definition.function.name;
+      if (desc.length > DESC_THRESHOLD && !(name in TOOL_DESC_EXCEPTIONS)) {
+        violations.push({ name, len: desc.length });
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        `${violations.length} tool description(s) exceed ${DESC_THRESHOLD} chars without exception:\n  ` +
+          violations
+            .sort((a, b) => b.len - a.len)
+            .map((v) => `${v.name} (${v.len} chars)`)
+            .join("\n  ") +
+          `\n\nEither trim the description, or add an entry to TOOL_DESC_EXCEPTIONS with { maxLen, reason }.`,
+      );
+    }
+  });
+
+  it("documented exceptions are still valid (each references a tool in ALL_TOOLS)", () => {
+    const allToolNames = new Set(
+      ALL_TOOLS.map((t) => t.definition.function.name),
+    );
+    const stale = Object.keys(TOOL_DESC_EXCEPTIONS).filter(
+      (n) => !allToolNames.has(n),
+    );
+    if (stale.length > 0) {
+      throw new Error(
+        `Stale entries in TOOL_DESC_EXCEPTIONS (no matching tool):\n  ` +
+          stale.join("\n  ") +
+          `\n\nRemove these entries from the exception list.`,
+      );
+    }
+  });
+
+  it("exempted tools must actually exceed DESC_THRESHOLD (no stale 'safety net' entries)", () => {
+    // Catches the dual case: a tool was exempted, later trimmed below
+    // threshold, but the exception was forgotten. Forces clean-up.
+    const tooSmall: Array<{ name: string; len: number }> = [];
+    for (const tool of ALL_TOOLS) {
+      const name = tool.definition.function.name;
+      if (name in TOOL_DESC_EXCEPTIONS) {
+        const desc = tool.definition.function.description ?? "";
+        if (desc.length <= DESC_THRESHOLD) {
+          tooSmall.push({ name, len: desc.length });
+        }
+      }
+    }
+    if (tooSmall.length > 0) {
+      throw new Error(
+        `Exempted tools no longer exceed ${DESC_THRESHOLD} chars (exception is stale):\n  ` +
+          tooSmall.map((v) => `${v.name} (${v.len} chars)`).join("\n  ") +
+          `\n\nRemove these tools from TOOL_DESC_EXCEPTIONS.`,
+      );
+    }
+  });
+
+  it("exempted tools must not exceed their per-entry maxLen (drift cap — audit W1)", () => {
+    // Closes the one-sided guardrail: without this, an already-exempted
+    // tool's description could grow without bound while the other three
+    // tests still pass. Per-entry maxLen forces a deliberate raise (and
+    // implicit re-review) any time a long description gets longer.
+    const overgrown: Array<{ name: string; len: number; maxLen: number }> = [];
+    for (const tool of ALL_TOOLS) {
+      const name = tool.definition.function.name;
+      const entry = TOOL_DESC_EXCEPTIONS[name];
+      if (entry) {
+        const desc = tool.definition.function.description ?? "";
+        if (desc.length > entry.maxLen) {
+          overgrown.push({ name, len: desc.length, maxLen: entry.maxLen });
+        }
+      }
+    }
+    if (overgrown.length > 0) {
+      throw new Error(
+        `Exempted tool description(s) grew past their per-entry maxLen:\n  ` +
+          overgrown
+            .map((v) => `${v.name}: ${v.len} chars (cap ${v.maxLen})`)
+            .join("\n  ") +
+          `\n\nEither trim back below maxLen, or deliberately raise maxLen in TOOL_DESC_EXCEPTIONS.`,
+      );
+    }
+  });
 });
