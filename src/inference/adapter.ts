@@ -1891,7 +1891,12 @@ export async function inferWithTools(
       tool_calls: response.tool_calls,
     });
 
-    // Execute tool calls in parallel
+    // Execute tool calls in parallel.
+    // T-04 (Sprint 1) — when N ≥ 2 tools fire, log wall-clock so future
+    // audits can verify parallelism is real (vs accidental serialization
+    // creeping in). The Anthropic Sonnet 4.x family ships parallel tool
+    // use default-on and we never set `disable_parallel_tool_use`.
+    const parallelStart = Date.now();
     const toolResults = await Promise.all(
       response.tool_calls.map(async (toolCall) => {
         let result: string;
@@ -2060,6 +2065,16 @@ export async function inferWithTools(
       }),
     );
     conversation.push(...toolResults);
+
+    // T-04 instrumentation: only emit when ≥2 calls fired so single-tool
+    // turns don't pollute the log. Wall-clock here is the max(individual
+    // tool latency), not the sum — that IS the parallelism evidence.
+    if (response.tool_calls.length >= 2) {
+      const parallelWallclockMs = Date.now() - parallelStart;
+      console.log(
+        `[inference] parallel_tool_exec n=${response.tool_calls.length} wallclock_ms=${parallelWallclockMs} taskId=${options?.taskId ?? "n/a"}`,
+      );
+    }
 
     // Loop detection: break if the same tool calls repeat consecutively
     // Track all tools called across rounds for the paralysis guard
