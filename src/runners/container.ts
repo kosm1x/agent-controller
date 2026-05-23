@@ -5,7 +5,7 @@
  * with sentinel-delimited output parsing, and activity-aware timeouts.
  */
 
-import { spawn, execSync } from "child_process";
+import { spawn, execSync, execFileSync } from "child_process";
 import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
 
@@ -67,6 +67,33 @@ export function generateContainerName(prefix = "task"): string {
     .replace(/-+/g, "-")
     .slice(0, 30);
   return `mc-${sanitized}-${Date.now()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Image pre-flight
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a Docker image exists on the local daemon.
+ *
+ * Pre-flight guard for runners that spawn from a named image. Without this,
+ * a missing image surfaces only as `Container exited with code 125: Unable
+ * to find image '...' locally\ndocker: Error response from daemon: pull
+ * access denied for ...` after docker attempts a registry pull — opaque to
+ * operators and easy to mistake for a container runtime failure. Returns
+ * `false` on any inspect error (image absent, daemon down, permission
+ * denied) so callers can fail loud with a rebuild instruction.
+ *
+ * Uses execFileSync (NOT execSync) to avoid shell interpretation of the
+ * image name. Local-only, ~50ms typical.
+ */
+export function imageExistsLocally(image: string): boolean {
+  try {
+    execFileSync("docker", ["image", "inspect", image], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

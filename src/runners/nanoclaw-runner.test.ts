@@ -18,6 +18,9 @@ vi.mock("./container.js", () => ({
   spawnContainer: vi.fn(),
   killContainer: vi.fn(),
   generateContainerName: vi.fn(() => "mc-nanoclaw-test-123"),
+  // Default to TRUE so existing tests continue to exercise the spawn path.
+  // Individual pre-flight tests override with mockReturnValueOnce(false).
+  imageExistsLocally: vi.fn(() => true),
   OUTPUT_START_MARKER: "---NANOCLAW_OUTPUT_START---",
   OUTPUT_END_MARKER: "---NANOCLAW_OUTPUT_END---",
 }));
@@ -28,13 +31,24 @@ vi.mock("../lib/event-bus.js", () => ({
   })),
 }));
 
+vi.mock("../observability/prometheus.js", () => ({
+  recordNanoclawImageMissing: vi.fn(),
+}));
+
 import { nanoclawRunner } from "./nanoclaw-runner.js";
 import { getConfig } from "../config.js";
-import { spawnContainer, killContainer } from "./container.js";
+import {
+  spawnContainer,
+  killContainer,
+  imageExistsLocally,
+} from "./container.js";
+import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
 const mockKillContainer = vi.mocked(killContainer);
+const mockImageExistsLocally = vi.mocked(imageExistsLocally);
+const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 
 function makeConfig() {
   return {
@@ -50,6 +64,8 @@ function makeConfig() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetConfig.mockReturnValue(makeConfig() as ReturnType<typeof getConfig>);
+  // Default: pre-flight passes (image exists). Override in specific tests.
+  mockImageExistsLocally.mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -275,6 +291,63 @@ describe("nanoclawRunner", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Orchestration crashed");
+  });
+
+  // -----------------------------------------------------------------------
+  // Pre-flight image check (2026-05-23 — fix for recurring image-pruned blocker)
+  // -----------------------------------------------------------------------
+
+  describe("pre-flight image check", () => {
+    it("returns clear error + records metric when image missing, never spawns", async () => {
+      mockImageExistsLocally.mockReturnValueOnce(false);
+
+      const result = await nanoclawRunner.execute({
+        taskId: "task-missing-image",
+        runId: "run-missing-image",
+        title: "Skill evolution — 2026-05-23",
+        description: "Routine auto-improvement task",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(
+        "Docker image 'mission-control:latest' not found locally",
+      );
+      // Rebuild instruction must be in the error for operator clarity.
+      expect(result.error).toContain("scripts/build-mc-image.sh");
+      expect(mockRecordNanoclawImageMissing).toHaveBeenCalledTimes(1);
+      // Critical: must NOT have attempted container spawn.
+      expect(mockSpawnContainer).not.toHaveBeenCalled();
+      // durationMs is computed and non-negative even on early return.
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("proceeds to container spawn when pre-flight passes", async () => {
+      mockImageExistsLocally.mockReturnValueOnce(true);
+
+      const containerOutput: ContainerOutput = {
+        status: "success",
+        result: JSON.stringify({ success: true, content: "ok" }),
+      };
+      mockSpawnContainer.mockReturnValue({
+        name: "mc-nanoclaw-test-123",
+        process: {} as ContainerHandle["process"],
+        result: Promise.resolve(containerOutput),
+        kill: vi.fn(),
+      });
+
+      await nanoclawRunner.execute({
+        taskId: "task-image-present",
+        runId: "run-image-present",
+        title: "Happy path",
+        description: "Image present, should spawn",
+      });
+
+      expect(mockImageExistsLocally).toHaveBeenCalledWith(
+        "mission-control:latest",
+      );
+      expect(mockSpawnContainer).toHaveBeenCalledTimes(1);
+      expect(mockRecordNanoclawImageMissing).not.toHaveBeenCalled();
+    });
   });
 
   it("kills container on unexpected exception", async () => {

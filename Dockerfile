@@ -40,6 +40,13 @@ COPY public/ ./public/
 
 ENV NODE_ENV=production
 
+# Prune protection — /etc/cron.d/docker-image-prune skips images with this label.
+# Without it, the daily 00:47 UTC prune removes mission-control:latest after 24h
+# of no container references (mc API runs in-process via systemd, not a container),
+# silently breaking nanoclaw-runner.ts which spawns containers from this image.
+# Recurrence cause documented in feedback_nanoclaw_image_recurrence_2026_05_23.md.
+LABEL keep=true
+
 EXPOSE 8080
 
 CMD ["node", "dist/index.js"]

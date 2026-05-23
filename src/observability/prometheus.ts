@@ -660,6 +660,23 @@ export function recordFastRetryOutcome(
   fastHallucinationRetryOutcomeTotal.inc({ result: safe });
 }
 
+// --- NanoClaw image pre-flight ---
+//
+// Fires when nanoclaw-runner detects `config.heavyRunnerImage` is missing on
+// the local docker daemon. Pairs with the `LABEL keep=true` + cron `--filter
+// "label!=keep=true"` fix that prevents the daily 00:47 UTC prune from
+// removing the production runner image. A non-zero count after the fix lands
+// signals the prevention layer leaked — operator should rebuild the image
+// AND audit /etc/cron.d/docker-image-prune for unexpected drift.
+const nanoclawImageMissingTotal = new client.Counter({
+  name: "mc_nanoclaw_image_missing_total",
+  help: "Times nanoclaw-runner pre-flight detected a missing runner image. Non-zero after the prune-filter fix means the prevention layer regressed.",
+});
+
+export function recordNanoclawImageMissing(): void {
+  nanoclawImageMissingTotal.inc();
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {

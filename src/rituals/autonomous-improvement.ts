@@ -46,6 +46,68 @@ function canCreatePR(): boolean {
 }
 
 /**
+ * Circuit-breaker: detect a self-cancelling fix loop.
+ *
+ * When `mission-control:latest` is pruned, every nanoclaw task fails with
+ * `Container exited with code 125: Unable to find image ...`. The
+ * autonomous-improvement loop then spawns ANOTHER nanoclaw task to fix the
+ * "recurring failure" — which itself fails the same way. 2026-05-14 incident:
+ * 3 auto-improvement tasks fired the same hour, all failed identically, no
+ * forward progress for ~9 days until operator intervened.
+ *
+ * Rule: if the last 3 nanoclaw tasks in 24h all failed with image-not-found
+ * error class, open the circuit. A successful nanoclaw task (or fewer than 3
+ * recent ones) closes it. Fail-open on DB errors (don't make a query failure
+ * itself become the new blocker).
+ */
+function isNanoclawCircuitOpen(): { open: boolean; reason?: string } {
+  try {
+    const db = getDatabase();
+    const recent = db
+      .prepare(
+        `SELECT status, COALESCE(error, '') as error
+         FROM tasks
+         WHERE agent_type = 'nanoclaw'
+           AND created_at > datetime('now', '-24 hours')
+         ORDER BY created_at DESC
+         LIMIT 3`,
+      )
+      .all() as { status: string; error: string }[];
+
+    if (recent.length < 3) return { open: false };
+
+    // Match the actual error template from container.ts:221
+    // (`Container exited with code ${code}`). The original draft of this
+    // function used "exit code 125" which never matched any production row
+    // — confirmed against live mc.db (qa-audit C1, 2026-05-23).
+    const allImageMissing = recent.every(
+      (r) =>
+        r.status === "failed" &&
+        (r.error.includes("Unable to find image") ||
+          r.error.includes("exited with code 125")),
+    );
+
+    if (allImageMissing) {
+      return {
+        open: true,
+        reason:
+          "Last 3 nanoclaw tasks (24h) all failed image-not-found. " +
+          "Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh. " +
+          "A single successful nanoclaw task closes the circuit.",
+      };
+    }
+    return { open: false };
+  } catch {
+    // Fail-open: a broken query is not itself a reason to halt the ritual.
+    // Operationally moot — detectImprovements() and canCreatePR() also query
+    // the same DB downstream, so a broken DB still halts the ritual seconds
+    // later. Documented here so a future contributor doesn't reverse the
+    // decision under a "fail-closed seems safer" intuition (qa-audit W5).
+    return { open: false };
+  }
+}
+
+/**
  * Create the autonomous improvement task submission.
  * Returns null if no improvements detected or safety gates block.
  */
@@ -61,6 +123,15 @@ export function createImprovementTask(): TaskSubmission | null {
   // Safety gate: PR cap
   if (!canCreatePR()) {
     console.log("[autonomous-improvement] Daily PR cap reached, skipping");
+    return null;
+  }
+
+  // Safety gate: nanoclaw circuit-breaker (2026-05-23 recurrence fix)
+  const circuit = isNanoclawCircuitOpen();
+  if (circuit.open) {
+    console.warn(
+      `[autonomous-improvement] Nanoclaw circuit OPEN — skipping. ${circuit.reason}`,
+    );
     return null;
   }
 

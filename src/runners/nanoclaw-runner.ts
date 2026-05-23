@@ -18,8 +18,10 @@ import {
   spawnContainer,
   killContainer,
   generateContainerName,
+  imageExistsLocally,
 } from "./container.js";
 import type { ContainerHandle } from "./container.js";
+import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
 const CONTAINER_TIMEOUT_MS = 300_000; // 5 minutes
 
@@ -32,6 +34,33 @@ export const nanoclawRunner: Runner = {
     let handle: ContainerHandle | null = null;
 
     try {
+      // Pre-flight: confirm the runner image actually exists locally.
+      // The /etc/cron.d/docker-image-prune cron fires daily at 00:47 UTC and
+      // removes images with no running container references — and mc API
+      // runs in-process via systemd, so `mission-control:latest` has no live
+      // reference. Without this guard, a pruned image surfaces only as the
+      // opaque `Container exited with code 125: Unable to find image ...
+      // docker: Error response from daemon: pull access denied for ...`
+      // chain mid-task. Failing loud here gives the operator a rebuild
+      // instruction. A race window exists between this check and
+      // spawnContainer (~ms); if the cron fires mid-task, the resulting
+      // exit-125 propagates and the circuit-breaker in
+      // autonomous-improvement.ts catches the pattern on the next run.
+      // Recurrence cause + fix: feedback_nanoclaw_image_recurrence_2026_05_23.md.
+      if (!imageExistsLocally(config.heavyRunnerImage)) {
+        recordNanoclawImageMissing();
+        const errMsg =
+          `Docker image '${config.heavyRunnerImage}' not found locally. ` +
+          `Pre-flight failed before container spawn. ` +
+          `Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh`;
+        console.error(`[nanoclaw-runner] FATAL: ${errMsg}`);
+        return {
+          success: false,
+          error: errMsg,
+          durationMs: Date.now() - start,
+        };
+      }
+
       // Build container input — include tools so the worker knows what to register
       // v8 S1: strip cache-break marker (nanoclaw uses description as a single
       // prompt blob; only fast-runner chat splits for cache-friendly emission).

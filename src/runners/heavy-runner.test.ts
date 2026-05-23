@@ -23,19 +23,33 @@ vi.mock("./container.js", () => ({
   spawnContainer: vi.fn(),
   killContainer: vi.fn(),
   generateContainerName: vi.fn(() => "mc-heavy-test-123"),
+  // Default to TRUE so existing tests continue to exercise the spawn path.
+  // Pre-flight tests override with mockReturnValueOnce(false).
+  imageExistsLocally: vi.fn(() => true),
   OUTPUT_START_MARKER: "---NANOCLAW_OUTPUT_START---",
   OUTPUT_END_MARKER: "---NANOCLAW_OUTPUT_END---",
+}));
+
+vi.mock("../observability/prometheus.js", () => ({
+  recordNanoclawImageMissing: vi.fn(),
 }));
 
 import { heavyRunner } from "./heavy-runner.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
 import { getConfig } from "../config.js";
-import { spawnContainer, killContainer } from "./container.js";
+import {
+  spawnContainer,
+  killContainer,
+  imageExistsLocally,
+} from "./container.js";
+import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
 const mockOrchestrate = vi.mocked(orchestrate);
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
 const mockKillContainer = vi.mocked(killContainer);
+const mockImageExistsLocally = vi.mocked(imageExistsLocally);
+const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 
 function makeConfig(containerized = false) {
   return {
@@ -393,5 +407,42 @@ describe("heavyRunner container mode", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe("Docker daemon unreachable");
     expect(mockKillContainer).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pre-flight image check (qa-audit W2, 2026-05-23)
+//
+// Containerized path mirrors the nanoclaw-runner fix. Dormant under
+// HEAVY_RUNNER_CONTAINERIZED=false but covered here so flipping the flag
+// can't silently re-open the prune-recurrence blocker on the heavy path.
+// ---------------------------------------------------------------------------
+
+describe("heavyRunner container mode — pre-flight image check", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(
+      makeConfig(true) as unknown as ReturnType<typeof getConfig>,
+    );
+    mockImageExistsLocally.mockReturnValue(true);
+  });
+
+  it("returns clear error + records metric when image missing, never spawns", async () => {
+    mockImageExistsLocally.mockReturnValueOnce(false);
+
+    const result = await heavyRunner.execute({
+      taskId: "task-heavy-missing-image",
+      runId: "run-heavy-missing-image",
+      title: "Heavy under prune",
+      description: "Image absent — pre-flight should catch",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(
+      "Docker image 'mission-control:latest' not found locally",
+    );
+    expect(result.error).toContain("heavy path");
+    expect(result.error).toContain("scripts/build-mc-image.sh");
+    expect(mockRecordNanoclawImageMissing).toHaveBeenCalledTimes(1);
+    expect(mockSpawnContainer).not.toHaveBeenCalled();
   });
 });

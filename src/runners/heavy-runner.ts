@@ -14,8 +14,10 @@ import {
   spawnContainer,
   killContainer,
   generateContainerName,
+  imageExistsLocally,
 } from "./container.js";
 import type { ContainerHandle } from "./container.js";
+import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
@@ -105,6 +107,26 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
   let handle: ContainerHandle | undefined;
 
   try {
+    // Pre-flight: same `mission-control:latest` image used by nanoclaw-runner.
+    // Currently dormant under `HEAVY_RUNNER_CONTAINERIZED=false` (default) per
+    // feedback_heavy_runner_containerized_not_perf.md, but flipping that flag
+    // without this guard would re-open the prune-recurrence blocker on the
+    // heavy path. Counter reused with the nanoclaw bucket — both feed the
+    // same image-prevention dashboard. qa-audit W2 (2026-05-23).
+    if (!imageExistsLocally(config.heavyRunnerImage)) {
+      recordNanoclawImageMissing();
+      const errMsg =
+        `Docker image '${config.heavyRunnerImage}' not found locally. ` +
+        `Pre-flight failed before container spawn (heavy path). ` +
+        `Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh`;
+      console.error(`[heavy-runner] FATAL: ${errMsg}`);
+      return {
+        success: false,
+        error: errMsg,
+        durationMs: Date.now() - start,
+      };
+    }
+
     const isClaudeSdk = config.inferencePrimaryProvider === "claude-sdk";
     const envVars: Record<string, string> = {
       INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
