@@ -58,6 +58,7 @@ function makeConfig() {
     inferencePrimaryKey: "sk-test",
     inferencePrimaryModel: "qwen-test",
     heavyRunnerImage: "mission-control:latest",
+    nanoclawTimeoutMs: 900_000,
   };
 }
 

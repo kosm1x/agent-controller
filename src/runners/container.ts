@@ -97,6 +97,70 @@ export function imageExistsLocally(image: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Sentinel payload parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of parsing one sentinel-wrapped payload from worker stdout.
+ *
+ * `kind: "progress"` — heartbeat from a long-running worker. The host
+ * should reset its activity timer but NOT update `lastOutput` (otherwise
+ * the close handler would resolve with the heartbeat as if it were the
+ * final result). `output` is undefined for this kind.
+ *
+ * `kind: "result"` — terminal payload from the worker (either the
+ * success result or a thrown-error envelope). The host updates
+ * `lastOutput` with `output` and the eventual close handler resolves
+ * with it.
+ */
+export interface ParsedPayload {
+  kind: "progress" | "result";
+  output?: ContainerOutput;
+}
+
+/**
+ * Pure host-side parser for one sentinel-delimited JSON payload.
+ *
+ * Extracted from the inline closure inside spawnContainer() so the
+ * progress/result discrimination can be unit-tested without standing up
+ * a docker subprocess. The closure delegates to this and applies the
+ * imperative state updates (resetTimer, lastOutput). 2026-05-23.
+ */
+export function parsePayload(jsonStr: string): ParsedPayload {
+  try {
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+
+    // Heartbeat: worker emits these every 60s during long orchestrate()
+    // runs so the host-side activity timer resets mid-task.
+    if (parsed.type === "progress") {
+      return { kind: "progress" };
+    }
+
+    const err = parsed.error;
+    return {
+      kind: "result",
+      output: {
+        status: err ? "error" : "success",
+        result: (parsed.result ?? parsed.output ?? JSON.stringify(parsed)) as
+          | string
+          | null,
+        ...(typeof err === "string" ? { error: err } : {}),
+      },
+    };
+  } catch {
+    // Malformed JSON — preserve the original raw-string fallback the
+    // closure had before extraction.
+    return {
+      kind: "result",
+      output: {
+        status: "success",
+        result: jsonStr,
+      },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Container spawning
 // ---------------------------------------------------------------------------
 
@@ -254,21 +318,17 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
         // Advance past this marker pair
         stdout = stdout.slice(endIdx + OUTPUT_END_MARKER.length);
 
-        try {
-          const parsed = JSON.parse(jsonStr);
-          lastOutput = {
-            status: parsed.error ? "error" : "success",
-            result: parsed.result ?? parsed.output ?? JSON.stringify(parsed),
-            error: parsed.error,
-          };
-          resetTimer(); // Activity detected — reset timeout
-        } catch {
-          lastOutput = {
-            status: "success",
-            result: jsonStr,
-          };
+        // Delegate to pure parsePayload (unit-tested) — closure only
+        // applies the imperative side effects (resetTimer, lastOutput).
+        const parsed = parsePayload(jsonStr);
+        if (parsed.kind === "progress") {
           resetTimer();
+          continue;
         }
+        if (parsed.output) {
+          lastOutput = parsed.output;
+        }
+        resetTimer();
       }
     }
   });

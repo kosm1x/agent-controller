@@ -73,6 +73,26 @@ async function main(): Promise<void> {
   }
 
   const start = Date.now();
+
+  // Activity-heartbeat: emit a sentinel-wrapped progress payload every 60s
+  // so the host-side parsePayload() in container.ts resets the activity
+  // timer mid-task. Without this, the "activity-aware timeout" comment in
+  // container.ts is misleading — the timer only resets on a COMPLETE
+  // sentinel pair, and we used to only emit one of those at the end.
+  // 2026-05-14 incident: 5 nanoclaw tasks timed out at 300s because
+  // orchestrate() was making real progress but emitting no interim signal.
+  // heartbeat.unref() so the interval doesn't keep the worker alive after
+  // main() returns.
+  const heartbeat = setInterval(() => {
+    process.stdout.write(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({
+        type: "progress",
+        elapsedMs: Date.now() - start,
+      })}\n${OUTPUT_END_MARKER}\n`,
+    );
+  }, 60_000);
+  heartbeat.unref();
+
   try {
     const result = await orchestrate(
       input.taskId ?? "container-task",
@@ -81,7 +101,10 @@ async function main(): Promise<void> {
       input.tools,
     );
 
+    clearInterval(heartbeat);
+
     const output = {
+      type: "result",
       success: result.success,
       content: result.reflection.summary,
       score: result.reflection.score,
@@ -97,7 +120,9 @@ async function main(): Promise<void> {
       `${OUTPUT_START_MARKER}\n${JSON.stringify(output)}\n${OUTPUT_END_MARKER}\n`,
     );
   } catch (err) {
+    clearInterval(heartbeat);
     const output = {
+      type: "result",
       error: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - start,
     };

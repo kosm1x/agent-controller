@@ -329,3 +329,27 @@ From the qa-audit of the compaction-thrash fix (`d4511c8`; Tier-1 #1+#2 from `fe
 
 - _HERMES-W4 (`d72dc12`) — `compactionGuardStep` extracted as a pure helper + 6 unit tests covering audit-required behaviors (a)/(b)/(c) plus k-stability and custom-k. `inferWithTools` is genuinely unmockable from a test (calls `infer()` same-module), so testing the pure logic + obvious 1-line wiring was the proportionate fix._
 - _HERMES-W3 (commit pending) — `buildWrapUpContext` per-message truncation extracted as `truncateMessageForWrapup` and extended to handle oversized assistant `content` and replace oversized `tool_calls[].function.arguments` with a valid-JSON `{_truncated_for_wrapup, original_length}` marker (raw truncation would yield invalid JSON the API rejects). The wrap-up infer() now stays under budget when reached from a `compaction_exhausted` exit. 7 unit tests on the helper._
+
+## SDK cost-ledger phantom-turns anomaly — OPEN, surfaced 2026-05-23
+
+Surfaced during the /diagnose phase of today's nanoclaw timeout fix. **Unrelated to that fix — separate subsystem** (claude-sdk metric pipeline, not the container runner). Filed here so it doesn't fall through.
+
+**Symptom** (single live observation, 2026-05-23 07:41 UTC):
+
+```
+[claude-sdk] progress: 51 turns, 35 tool calls, 2351 chars
+[claude-sdk] Query timed out after 900s — aborting
+[claude-sdk] Completed: 51 turns, 35 tool calls, $0.0000, 0ms, tokens=0 (cache 0%: 0 read, 0 created) [TIMED OUT]
+```
+
+51 turns + 35 tool calls reported by `progress` lines (real work done), but the `Completed [TIMED OUT]` line writes `$0.0000 / 0ms / tokens=0`. Cost ledger gets $0.00 for an SDK query that actually consumed inference. Recurrence unknown — needs a sweep of `cost_ledger` rows joined with task durations to find other phantom-$0 entries.
+
+**Open questions**:
+
+1. Is `[TIMED OUT]` always the trigger, or does any abort path also zero out usage?
+2. Is the SDK returning zero usage on timeout (an upstream bug), or are we discarding partial usage in our handler?
+3. What's the actual spend over the 9-day image-missing window — were any retries / Sonnet warmup calls writing $0 silently?
+
+**First step when picked up**: grep `mc.db` cost_ledger for `cost_usd=0 AND completion_tokens=0 AND duration_ms>60000` over the last 14d. If the count is non-trivial, this is a budget visibility gap. The 2026-05-23 daily-spend cap exceedance ($40+ on $30 cap) is a candidate side-effect of unreported real spend going through the budget tracker as $0.
+
+Files of interest: `src/inference/claude-sdk.ts` (the `Completed:` log + cost emission), `src/inference/adapter.ts` (cost_ledger write site). Source-verify before assuming the SDK is the bug — the partial-usage path through our handler may be what's dropping the data.

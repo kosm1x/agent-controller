@@ -39,6 +39,22 @@ async function main(): Promise<void> {
   toolRegistry.register(fileWriteTool);
 
   const start = Date.now();
+
+  // Activity-heartbeat: see nanoclaw-worker.ts for the full rationale.
+  // Heavy runs the same orchestrate() loop and shares the same
+  // host-side timer; symmetry matters even though HEAVY_RUNNER_CONTAINERIZED
+  // is false by default — flipping the flag should not silently re-open
+  // the timeout-without-progress failure mode.
+  const heartbeat = setInterval(() => {
+    process.stdout.write(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({
+        type: "progress",
+        elapsedMs: Date.now() - start,
+      })}\n${OUTPUT_END_MARKER}\n`,
+    );
+  }, 60_000);
+  heartbeat.unref();
+
   try {
     const result = await orchestrate(
       input.taskId ?? "container-task",
@@ -47,7 +63,10 @@ async function main(): Promise<void> {
       input.tools,
     );
 
+    clearInterval(heartbeat);
+
     const output = {
+      type: "result",
       success: result.success,
       content: result.reflection.summary,
       score: result.reflection.score,
@@ -62,7 +81,9 @@ async function main(): Promise<void> {
       `${OUTPUT_START_MARKER}\n${JSON.stringify(output)}\n${OUTPUT_END_MARKER}\n`,
     );
   } catch (err) {
+    clearInterval(heartbeat);
     const output = {
+      type: "result",
       error: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - start,
     };

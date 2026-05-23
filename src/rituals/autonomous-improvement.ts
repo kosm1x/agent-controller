@@ -76,23 +76,31 @@ function isNanoclawCircuitOpen(): { open: boolean; reason?: string } {
 
     if (recent.length < 3) return { open: false };
 
-    // Match the actual error template from container.ts:221
-    // (`Container exited with code ${code}`). The original draft of this
-    // function used "exit code 125" which never matched any production row
-    // — confirmed against live mc.db (qa-audit C1, 2026-05-23).
-    const allImageMissing = recent.every(
+    // Match the actual error templates from container.ts:
+    //   image-missing: `Container exited with code 125: Unable to find image ...`
+    //   timeout:       `Container timed out after ${timeoutMs}ms`
+    // The original draft used "exit code 125" which matched zero production
+    // rows (qa-audit C1, 2026-05-23 AM). The timeout class was added
+    // 2026-05-23 PM after the morning ritual flagged the 2026-05-14
+    // cluster — that failure mode was masked for 9 days by the
+    // image-missing blocker and would have re-surfaced today otherwise.
+    // Either class indicates the substrate is broken in a way the loop
+    // cannot self-recover from.
+    const allSubstrateFailures = recent.every(
       (r) =>
         r.status === "failed" &&
         (r.error.includes("Unable to find image") ||
-          r.error.includes("exited with code 125")),
+          r.error.includes("exited with code 125") ||
+          r.error.includes("Container timed out after")),
     );
 
-    if (allImageMissing) {
+    if (allSubstrateFailures) {
       return {
         open: true,
         reason:
-          "Last 3 nanoclaw tasks (24h) all failed image-not-found. " +
-          "Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh. " +
+          "Last 3 nanoclaw tasks (24h) all failed on substrate " +
+          "(image-missing OR timeout). Rebuild image with " +
+          "scripts/build-mc-image.sh AND/OR raise NANOCLAW_TIMEOUT_MS. " +
           "A single successful nanoclaw task closes the circuit.",
       };
     }

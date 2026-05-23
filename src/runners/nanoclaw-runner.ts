@@ -23,8 +23,6 @@ import {
 import type { ContainerHandle } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
-const CONTAINER_TIMEOUT_MS = 300_000; // 5 minutes
-
 export const nanoclawRunner: Runner = {
   type: "nanoclaw",
 
@@ -106,7 +104,13 @@ export const nanoclawRunner: Runner = {
         input: containerInput,
         envVars,
         volumes,
-        timeoutMs: CONTAINER_TIMEOUT_MS,
+        // 2026-05-23 fix: was hardcoded 300_000 (5min), undersized vs the
+        // orchestrate() workload nanoclaw-worker.ts runs — heavy on the
+        // same workload uses 900s and routinely completes at 400-870s.
+        // Now config-driven (NANOCLAW_TIMEOUT_MS, default 900_000).
+        // Worker emits 60s heartbeat sentinels so this acts as inactivity
+        // guard, not wall-clock cap.
+        timeoutMs: config.nanoclawTimeoutMs,
       });
 
       // Emit progress

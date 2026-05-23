@@ -125,6 +125,70 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
     expect(result).toBeNull();
   });
 
+  it("opens circuit when last 3 nanoclaw tasks all timed out (substrate class, 2026-05-14 cluster)", () => {
+    // Matches the actual container.ts:161 template
+    // `Container timed out after ${timeoutMs}ms`. Without this branch,
+    // when timeouts re-surfaced post image-missing fix, the
+    // autonomous-improvement loop would have spawned another
+    // timeout-investigation task that itself times out — exactly the
+    // 3-task self-referential pattern observed on 2026-05-14.
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({
+        nanoclawRecent: [
+          { status: "failed", error: "Container timed out after 900000ms" },
+          { status: "failed", error: "Container timed out after 900000ms" },
+          { status: "failed", error: "Container timed out after 900000ms" },
+        ],
+      }) as unknown as ReturnType<typeof getDatabase>,
+    );
+
+    const result = createImprovementTask();
+    expect(result).toBeNull();
+  });
+
+  it("opens circuit on mixed substrate failures (image-missing + timeout)", () => {
+    // The breaker should fire when ANY combination of substrate-class
+    // failures fills the last 3 — operator shouldn't have to fix all
+    // classes simultaneously to clear it.
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({
+        nanoclawRecent: [
+          { status: "failed", error: "Container timed out after 900000ms" },
+          {
+            status: "failed",
+            error:
+              "Container exited with code 125: Unable to find image 'mission-control:latest' locally",
+          },
+          { status: "failed", error: "Container timed out after 900000ms" },
+        ],
+      }) as unknown as ReturnType<typeof getDatabase>,
+    );
+
+    const result = createImprovementTask();
+    expect(result).toBeNull();
+  });
+
+  it("does NOT open on near-miss timeout text — substring must be exact (qa-audit W3)", () => {
+    // Boundary case: future code that emits "Container request timed out
+    // after X" or "Inference timed out after Y" must NOT trip the breaker,
+    // which is scoped to container-level timeouts only. The exact
+    // substring `"Container timed out after"` (the container.ts template)
+    // is what we match.
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({
+        nanoclawRecent: [
+          { status: "failed", error: "Inference timed out after 30000ms" },
+          { status: "failed", error: "IMAP poll timed out after 30000ms" },
+          { status: "failed", error: "Container request hung 60000ms" },
+        ],
+      }) as unknown as ReturnType<typeof getDatabase>,
+    );
+
+    const result = createImprovementTask();
+    // None of these match the container-template — ritual proceeds normally.
+    expect(result).not.toBeNull();
+  });
+
   it("circuit stays closed when one of the recent 3 tasks succeeded", () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({

@@ -65,6 +65,16 @@ export interface Config {
   heavyRunnerImage: string;
   /** Timeout for containerized heavy runner in milliseconds. */
   heavyRunnerTimeoutMs: number;
+  /**
+   * Timeout for nanoclaw containerized runner in milliseconds.
+   *
+   * Sized to match heavy (900s default) because nanoclaw runs the SAME
+   * orchestrate() loop — historically misconfigured to 300s, causing
+   * 5 timeouts on 2026-05-14 when complex tasks took 5+ minutes. The
+   * worker emits 60s heartbeat sentinels so the host-side activity-aware
+   * timer resets mid-task; this ceiling is the hard inactivity guard.
+   */
+  nanoclawTimeoutMs: number;
 
   /** Path to MCP servers config file (optional). */
   mcpConfigPath?: string;
@@ -183,6 +193,7 @@ export function loadConfig(): Config {
     ),
 
     nanoclawImage: process.env.NANOCLAW_IMAGE ?? "nanoclaw-agent:latest",
+    nanoclawTimeoutMs: int("NANOCLAW_TIMEOUT_MS", 900_000),
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),
 
     heavyRunnerContainerized: process.env.HEAVY_RUNNER_CONTAINERIZED === "true",
