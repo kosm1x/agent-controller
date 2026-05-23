@@ -277,6 +277,19 @@ These are non-blocking findings the round-3 audit surfaced after round-2 fixes v
 
 **Tracking:** `feedback_prometheus_upstream` April Tier-1 #1 "Rate-limit header capture" is ✅ done; this is its behavioral follow-up.
 
+## Per-sub-task retry in swarm (deferred feature gap from Hermes v0.13)
+
+**Triggered by:** Hermes v0.13 May Tier-2 #5 audit (2026-05-23). The audit closed the zombie-status gap (`syncSubTaskStatuses` recognizes 3 more terminal statuses), but Hermes also ships per-sub-task retry + hallucination recovery — neither of which we have. A failed sub-task in our swarm is final; the goal-graph cascades FAILED to dependents and the parent reflector picks up the partial state.
+
+**Four concrete design questions to resolve before shipping:**
+
+1. **Where does retry policy live?** Swarm-level (sub-task fails → swarm decides to retry the same goal with a new task) or dispatcher-level (any failed task gets one retry)? Swarm-level matches Hermes's framing; dispatcher-level reaches all task-types but composes strangely with non-swarm runners.
+2. **Idempotency contract for tools** the failed sub-task already called. If a sub-task wrote to a DB / posted a message / called an external API before failing, the retry could double-effect. Need either (a) per-tool idempotency tags (not yet a thing in our `Tool` interface), (b) a snapshot-and-rollback boundary, or (c) an explicit "retries forbidden after side-effect" annotation.
+3. **Composition with existing `_isRequiredToolRetry` one-shot retry** in `dispatcher.ts:469`. That retry is for "required tool not called yet" recovery within a single task. A new sub-task retry would compose strangely — could double the budget consumed by a single goal.
+4. **Infinite-retry guard / max-retries-per-goal counter location**. Counter on the goal? On the parent task? On the swarm-runner state? The counter must survive process restarts (swarm tasks persist across `mc-ctl restart`), implying it lives on the goal-row in `prometheus_snapshots` or a dedicated column on `tasks`.
+
+**Acceptance:** before shipping, write a 1-page design note resolving 1-4. Then implement with `maxRetriesPerGoal=1` default, side-effect gating, and `tasks.retry_count` column.
+
 ## Haiku downshift for aux LLM calls (deferred cost optimization)
 
 **Triggered by:** Hermes v0.11 May Tier-2 #8 audit (2026-05-23, see `feedback_prometheus_upstream`). The audit confirmed no silent-cheap-default bug — every `infer()` caller (~35 sites) routes through `inferViaClaudeSdk` which hardcodes Sonnet. That's the OPPOSITE of Hermes's complaint, but the cost lever is real: aux tasks that fire frequently (scope-classifier on EVERY incoming message; prompt-enhancer twice on enhance flows) use Sonnet when Haiku-grade quality would likely suffice.

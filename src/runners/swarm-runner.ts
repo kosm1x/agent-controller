@@ -116,9 +116,24 @@ export function buildSubTaskDescription(
 }
 
 /**
+ * @internal Exported for testing.
+ *
  * Poll task status from the database and update tracker + graph accordingly.
+ *
+ * Hermes v0.13 May Tier-2 #5 audit (2026-05-23): added recognition of three
+ * additional terminal/quasi-terminal task statuses the dispatcher writes but
+ * this sync previously ignored. Before the fix, a sub-task in any of these
+ * states would leave the tracker stuck non-terminal until MAX_POLL_DURATION_MS
+ * (10 min) — and for `completed_with_concerns` specifically that meant a
+ * SUCCESSFUL sub-task was treated as not-ok by the reflector. Now:
+ *   - `completed_with_concerns` → tracker `completed` (output IS available).
+ *   - `needs_context`           → tracker `failed` (paused for user; won't auto-resume).
+ *   - `blocked`                 → tracker `failed` (task-level block, distinct
+ *                                 from goal-graph BLOCKED; won't auto-resume).
+ * Pre-running statuses (`pending`, `classifying`, `queued`) intentionally
+ * stay un-mapped — the tracker keeps its prior state and `countActive` waits.
  */
-function syncSubTaskStatuses(
+export function syncSubTaskStatuses(
   goalTaskMap: GoalTaskMap,
   graph: GoalGraph,
   trackers: Map<string, SubTaskTracker>,
@@ -143,6 +158,14 @@ function syncSubTaskStatuses(
       tracker.status = "completed";
       tracker.output = task.output ?? undefined;
       graph.updateStatus(goalId, GoalStatus.COMPLETED);
+    } else if (task.status === "completed_with_concerns") {
+      // Terminal-with-warning. Output IS set by the dispatcher; the
+      // reflector reads it. Map to tracker.completed so the parent stops
+      // waiting and treats the work as done. The concerns are encoded
+      // inside the output text (Jarvis convention).
+      tracker.status = "completed";
+      tracker.output = task.output ?? undefined;
+      graph.updateStatus(goalId, GoalStatus.COMPLETED);
     } else if (task.status === "failed") {
       tracker.status = "failed";
       tracker.error = task.error ?? "Sub-task failed";
@@ -150,6 +173,18 @@ function syncSubTaskStatuses(
     } else if (task.status === "cancelled") {
       tracker.status = "cancelled";
       tracker.error = "Sub-task cancelled";
+      graph.updateStatus(goalId, GoalStatus.FAILED);
+    } else if (task.status === "needs_context") {
+      // Runner paused for user input. Will not auto-resume from the
+      // sub-task side; treat as failed so the swarm stops waiting.
+      tracker.status = "failed";
+      tracker.error = task.error ?? "Sub-task needs additional user context";
+      graph.updateStatus(goalId, GoalStatus.FAILED);
+    } else if (task.status === "blocked") {
+      // Task-level blocked (distinct from goal-graph BLOCKED — that one
+      // describes dependency state). Treat as failed for swarm purposes.
+      tracker.status = "failed";
+      tracker.error = task.error ?? "Sub-task blocked";
       graph.updateStatus(goalId, GoalStatus.FAILED);
     } else if (task.status === "running") {
       tracker.status = "running";

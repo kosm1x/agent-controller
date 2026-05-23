@@ -2,7 +2,7 @@
  * Tests for swarm runner sibling context injection.
  */
 
-import { describe, it, expect, vi , afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 // Mock dispatcher before importing swarm-runner (it auto-registers)
 vi.mock("../dispatch/dispatcher.js", () => ({
@@ -25,9 +25,14 @@ vi.mock("../prometheus/reflector.js", () => ({
   reflect: vi.fn(),
 }));
 
-import { buildSubTaskDescription } from "./swarm-runner.js";
+import {
+  buildSubTaskDescription,
+  syncSubTaskStatuses,
+} from "./swarm-runner.js";
 import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
+import { getTask } from "../dispatch/dispatcher.js";
+const mockGetTask = vi.mocked(getTask);
 
 interface Tracker {
   goalId: string;
@@ -50,7 +55,9 @@ function makeGraph(): GoalGraph {
 }
 
 describe("buildSubTaskDescription — sibling context", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("includes sibling goals with their status", () => {
     const graph = makeGraph();
     const trackers = new Map<string, Tracker>([
@@ -167,5 +174,144 @@ describe("buildSubTaskDescription — sibling context", () => {
 
     expect(desc).toContain("Build API layer [completed]");
     expect(desc).not.toContain("Result:");
+  });
+});
+
+describe("syncSubTaskStatuses — Hermes v0.13 zombie/terminal-status audit", () => {
+  // Each test seeds the graph + one tracker, mocks getTask to return a
+  // specific task.status, calls sync, and asserts the tracker and graph
+  // both transitioned (or stayed put) correctly. The 3 new mappings are
+  // the focus: completed_with_concerns, needs_context, blocked.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function setup(taskStatus: string, taskOutput?: string, taskError?: string) {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Test goal" });
+    graph.updateStatus("g-1", GoalStatus.IN_PROGRESS);
+
+    const trackers = new Map<string, Tracker>();
+    trackers.set("g-1", {
+      goalId: "g-1",
+      taskId: "task-1",
+      status: "running",
+    });
+
+    const goalTaskMap = new Map<string, string>();
+    goalTaskMap.set("g-1", "task-1");
+
+    mockGetTask.mockReturnValue({
+      task_id: "task-1",
+      status: taskStatus,
+      output: taskOutput,
+      error: taskError,
+    } as any);
+
+    return { graph, trackers, goalTaskMap };
+  }
+
+  it("maps task `completed` → tracker.completed + graph.COMPLETED (baseline)", () => {
+    const { graph, trackers, goalTaskMap } = setup("completed", "all done");
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.status).toBe("completed");
+    expect(trackers.get("g-1")!.output).toBe("all done");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.COMPLETED);
+  });
+
+  it("maps task `completed_with_concerns` → tracker.completed + preserves output (audit fix)", () => {
+    // Pre-fix bug: this status was ignored. Tracker stayed non-terminal,
+    // swarm waited up to 10 min, then `buildExecutionResults` marked the
+    // successful sub-task as `ok: false`. Double penalty.
+    const { graph, trackers, goalTaskMap } = setup(
+      "completed_with_concerns",
+      "partial result with note",
+    );
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.status).toBe("completed");
+    expect(trackers.get("g-1")!.output).toBe("partial result with note");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.COMPLETED);
+  });
+
+  it("maps task `needs_context` → tracker.failed (won't auto-resume)", () => {
+    const { graph, trackers, goalTaskMap } = setup(
+      "needs_context",
+      undefined,
+      "needs the user",
+    );
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.status).toBe("failed");
+    expect(trackers.get("g-1")!.error).toBe("needs the user");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.FAILED);
+  });
+
+  it("maps task `blocked` → tracker.failed (task-level block ≠ goal-graph BLOCKED)", () => {
+    const { graph, trackers, goalTaskMap } = setup(
+      "blocked",
+      undefined,
+      "external dep down",
+    );
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.status).toBe("failed");
+    expect(trackers.get("g-1")!.error).toBe("external dep down");
+    expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.FAILED);
+  });
+
+  it("falls back to a sensible error message when task.error is null", () => {
+    // Defensive: the dispatcher SHOULD set task.error on needs_context /
+    // blocked, but if it ever doesn't, we synthesize a placeholder so the
+    // reflector and downstream callers always see a non-empty error.
+    const { graph, trackers, goalTaskMap } = setup("needs_context", undefined);
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    expect(trackers.get("g-1")!.error).toMatch(/needs additional user context/);
+  });
+
+  it("leaves pre-running statuses unchanged (pending/classifying/queued) — realistic first-poll scenario", () => {
+    // Realistic first-poll after submit: tracker is "pending" (line 384
+    // of swarm-runner.ts) and the task is still routing — pending, then
+    // classifying, then queued. None of these are terminal; the function
+    // must leave the tracker alone so `countActive` correctly keeps it
+    // counted as active and the swarm waits for the eventual "running".
+    // Audit W2/R2 — previous version of this test seeded tracker as
+    // "running" which never observes the realistic seed state.
+    for (const status of ["pending", "classifying", "queued"]) {
+      const { graph, trackers, goalTaskMap } = setup(status);
+      // Pre-set tracker to the realistic post-submit seed
+      trackers.get("g-1")!.status = "pending";
+      syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+      expect(trackers.get("g-1")!.status).toBe("pending");
+      expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.IN_PROGRESS);
+    }
+  });
+
+  it("advances tracker from pending → running on the first `running` task observation", () => {
+    // The transition the prior test couldn't cover: tracker starts
+    // "pending" (post-submit), task becomes "running", sync flips tracker
+    // to "running". Pins the existing `else if (task.status === "running")`
+    // branch.
+    const { graph, trackers, goalTaskMap } = setup("running");
+    trackers.get("g-1")!.status = "pending";
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+    expect(trackers.get("g-1")!.status).toBe("running");
+  });
+
+  it("does not re-process already-terminal trackers (idempotent)", () => {
+    const { graph, trackers, goalTaskMap } = setup("completed", "x");
+    // Pre-set tracker to a terminal state — function should skip even if
+    // the DB row says otherwise.
+    trackers.get("g-1")!.status = "completed";
+    trackers.get("g-1")!.output = "PRIOR-VALUE";
+    syncSubTaskStatuses(goalTaskMap, graph, trackers as Map<string, any>);
+
+    // Prior tracker output preserved; the function should not re-read or
+    // overwrite a terminal entry. (getTask might not even get called, but
+    // we don't assert that — only that the tracker is untouched.)
+    expect(trackers.get("g-1")!.output).toBe("PRIOR-VALUE");
   });
 });
