@@ -269,31 +269,27 @@ export const SEED_SIGNALS: readonly NewDriftSignal[] = [
   // suppression rate is exactly Conway's "coherence drift toward
   // confabulation" trap (V8-VISION §9).
   //
-  // STILL DISABLED-pending, but the dormancy is FIXED: V8.1 Phase A
+  // ACTIVATED 2026-05-23 (S6-recall-audit-dormant closure). V8.1 Phase A
   // (bundle V8.1-PA-recall-logging) wired logRecall + applyOutcomeBias into
-  // SqliteMemoryBackend's primary path, so recall_audit now receives fresh
-  // `source='sqlite-primary'` rows again. The signal stays enabled=0 for one
-  // more step: the baseline 0.0406 was measured over Hindsight-era rows, and
-  // the standalone-SQLite exclusion rate may differ structurally. Re-enable
-  // (Phase A item 2b) after ~7d of fresh rows — recompute the baseline from
-  // them, then flip enabled=1. The baseline below is REAL (measured from
-  // 1460 historical rows), not a placeholder.
+  // SqliteMemoryBackend, and after 14d of fresh `source='sqlite-primary'`
+  // rows we recomputed the baseline at 0.0 (0 excluded / 980 results across
+  // 213 mode='coherence' rows over 7d). Trip threshold 0.08 absolute stays.
+  // The real activation query (below) replaces the prior `awaiting:` sentinel.
   {
     signal_name: "recall_coherence_suppression_rate",
     signal_kind: "coherence_drift",
     source_substrate: "Conway-P3",
-    // `awaiting:` sentinel per the Spine 2 invariant (a disabled signal must
-    // not ship a real query). The real activation query is in `notes`.
-    baseline_query: "awaiting:recall-audit-active",
-    baseline_value_json: '{"value":0.0406}', // measured 2026-05-20 over 1460 historical rows (1449 excluded / 35654 candidates)
+    baseline_query:
+      "SELECT CAST(SUM(excluded_count) AS REAL) / NULLIF(SUM(excluded_count + result_count), 0) FROM recall_audit WHERE created_at > datetime('now','-7 days') AND (mode = 'coherence' OR mode IS NULL)",
+    baseline_value_json: '{"value":0.0}', // recomputed 2026-05-23 from 213 sqlite-primary rows over 7d (0 excluded / 980 results, all mode='coherence')
     tolerance_json: '{"kind":"absolute_threshold","op":"gt","value":0.08}',
     cadence: "weekly",
     alert_priority: "P2",
-    enabled: 0,
+    enabled: 1,
     established_at: "2026-05-20T00:00:00.000Z",
     established_by: "v7.7-spine-6-seed",
     notes:
-      "DISABLED-pending baseline recalibration. The dormancy is FIXED — V8.1 Phase A bundle V8.1-PA-recall-logging wired logRecall + applyOutcomeBias into SqliteMemoryBackend's primary path, so recall_audit now receives fresh rows (source='sqlite-primary') under the Hindsight demote. Baseline 0.0406 is real but measured from 1460 Hindsight-era rows; the standalone-SQLite exclusion rate may differ. Re-enable (Phase A item 2b): after ~7d of fresh rows, recompute the baseline via the activation query below, set baseline_value_json + baseline_query to it, then flip enabled=1. Trips P2 when the weekly coherence-mode suppression rate exceeds 0.08 (~2x the old baseline) — Conway's coherence-drift watchpoint. Tracked as S6-recall-audit-dormant. Activation query: \"SELECT CAST(SUM(excluded_count) AS REAL) / NULLIF(SUM(excluded_count + result_count), 0) FROM recall_audit WHERE created_at > datetime('now','-7 days') AND (mode = 'coherence' OR mode IS NULL)\".",
+      "ACTIVATED 2026-05-23 — V8.1 Phase A wired logRecall + applyOutcomeBias into SqliteMemoryBackend, so recall_audit receives fresh rows under the Hindsight demote (source='sqlite-primary', mode='coherence'). 7d baseline recomputed at 0.0 (0 excluded / 980 results over 213 rows). Trips P2 if weekly coherence-mode suppression rate exceeds the absolute 0.08 threshold — Conway's coherence-drift watchpoint. Closes queue item S6-recall-audit-dormant.",
   },
 ] as const;
 

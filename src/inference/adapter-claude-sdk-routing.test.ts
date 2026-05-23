@@ -187,3 +187,113 @@ describe("inferWithTools() with claude-sdk primary", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 2026-05-23 — queue #228 — InferenceRequest.model plumbing
+// Aux callers (scope-classifier, prompt-enhancer) can opt into Haiku for
+// cost savings. Plumbing is on by default; the env-flag gate at the call
+// site decides whether to populate the field. These tests pin the adapter
+// contract: when present, `request.model` takes precedence over the
+// hardcoded Sonnet default; when absent, behavior is unchanged.
+// ---------------------------------------------------------------------------
+
+describe("infer() with request.model override (queue #228)", () => {
+  it("uses request.model as the primary leg instead of Sonnet", async () => {
+    const r = await infer({
+      messages: [{ role: "user", content: "hi" }],
+      model: "claude-haiku-4-5-20251001",
+    });
+    // Primary attempt should be Haiku, not Sonnet.
+    expect(r.content).toBe("routed via claude-haiku-4-5-20251001");
+    expect(sdkCalls).toEqual([
+      { fn: "infer", model: "claude-haiku-4-5-20251001", attempt: 1 },
+    ]);
+  });
+
+  it("still falls back to Haiku on retry even when primary was already Haiku (provider-level transient)", async () => {
+    // When the caller opted into Haiku and Haiku itself failed on the first
+    // attempt, the retry leg also uses Haiku (no upgrade to Sonnet — the
+    // caller's downshift intent is preserved). The retry MAY transiently
+    // succeed if the failure was rate-limit or network-blip; that's the
+    // semantic the wrapper preserves.
+    sonnetShouldThrow = false; // Sonnet is irrelevant on this path
+    let haikuCalls = 0;
+    haikuShouldThrow = false;
+    // Override the mock to throw on the FIRST Haiku attempt only.
+    const sdkMock = await import("./claude-sdk.js");
+    const originalImpl = (
+      sdkMock.queryClaudeSdkAsInfer as unknown as {
+        getMockImplementation: () => (...args: unknown[]) => unknown;
+      }
+    ).getMockImplementation();
+    (
+      sdkMock.queryClaudeSdkAsInfer as unknown as {
+        mockImplementation: (impl: unknown) => void;
+      }
+    ).mockImplementation(async (_msgs: unknown, opts: { model?: string }) => {
+      const model = opts?.model ?? "claude-sonnet-4-6";
+      sdkCalls.push({ fn: "infer", model, attempt: sdkCalls.length + 1 });
+      if (model === "claude-haiku-4-5-20251001") {
+        haikuCalls++;
+        if (haikuCalls === 1) throw new Error("haiku-first-transient");
+      }
+      return {
+        content: `routed via ${model}`,
+        usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+        provider: "claude-sdk",
+        latency_ms: 1,
+      };
+    });
+    try {
+      const r = await infer({
+        messages: [{ role: "user", content: "hi" }],
+        model: "claude-haiku-4-5-20251001",
+      });
+      // Two attempts, BOTH Haiku — no Sonnet escalation.
+      expect(sdkCalls.map((c) => c.model)).toEqual([
+        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5-20251001",
+      ]);
+      expect(r.content).toBe("routed via claude-haiku-4-5-20251001");
+    } finally {
+      (
+        sdkMock.queryClaudeSdkAsInfer as unknown as {
+          mockImplementation: (impl: unknown) => void;
+        }
+      ).mockImplementation(originalImpl);
+    }
+  });
+
+  it("undefined request.model preserves the prior Sonnet default (back-compat)", async () => {
+    // Critical for the ~33 existing callers that never set `model`.
+    const r = await infer({ messages: [{ role: "user", content: "hi" }] });
+    expect(r.content).toBe("routed via claude-sonnet-4-6");
+    expect(sdkCalls[0].model).toBe("claude-sonnet-4-6");
+  });
+});
+
+describe("inferWithTools() with options.model override (queue #228 symmetry)", () => {
+  it("honors options.model on the primary leg", async () => {
+    const r = await inferWithTools(
+      [{ role: "user", content: "hi" }],
+      [],
+      async () => "",
+      { model: "claude-haiku-4-5-20251001" },
+    );
+    expect(r.content).toBe("tool-route via claude-haiku-4-5-20251001");
+    expect(sdkCalls[0]).toEqual({
+      fn: "inferWithTools",
+      model: "claude-haiku-4-5-20251001",
+      attempt: 1,
+    });
+  });
+
+  it("undefined options.model keeps Sonnet primary", async () => {
+    const r = await inferWithTools(
+      [{ role: "user", content: "hi" }],
+      [],
+      async () => "",
+    );
+    expect(r.content).toBe("tool-route via claude-sonnet-4-6");
+  });
+});

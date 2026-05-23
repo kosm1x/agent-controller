@@ -25,11 +25,13 @@ describe("SEED_SIGNALS — static invariants", () => {
     );
     expect(sig).toBeDefined();
     expect(sig!.cadence).toBe("weekly");
-    // Disabled-pending baseline recalibration. The recall_audit dormancy was
-    // fixed by V8.1 Phase A (logRecall wired into SqliteMemoryBackend); the
-    // signal stays enabled=0 until the baseline is recomputed from fresh
-    // sqlite-primary rows. See S6-recall-audit-dormant / Phase A item 2b.
-    expect(sig!.enabled).toBe(0);
+    // ACTIVATED 2026-05-23 — V8.1 Phase A wired logRecall + applyOutcomeBias
+    // into SqliteMemoryBackend (giving us 213 fresh sqlite-primary rows over
+    // 7d) so we recomputed the baseline at 0.0 and flipped enabled=1. Closes
+    // queue item S6-recall-audit-dormant. See also the activation
+    // baseline_query test below in the substrate-enabled block.
+    expect(sig!.enabled).toBe(1);
+    expect(sig!.baseline_query).toMatch(/FROM recall_audit/);
   });
 
   it("every signal name is unique", () => {

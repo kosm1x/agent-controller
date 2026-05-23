@@ -122,6 +122,20 @@ export interface InferenceRequest {
   taskId?: string;
   /** Anthropic effort parameter — "low" for synthesis/wrap-up, "high" default. */
   effort?: "low" | "medium" | "high" | "max";
+  /**
+   * Model override for SDK-routed inference. When set, takes precedence over
+   * the hardcoded `SONNET_MODEL_ID` default in `inferViaClaudeSdk` /
+   * `inferWithToolsViaClaudeSdk`. Used by aux callers (scope-classifier,
+   * prompt-enhancer) to opt into Haiku for cost savings when
+   * `process.env.AUX_HAIKU_ENABLED === "true"`. **No effect under the
+   * openai-path** (each provider sets its own model from per-provider config).
+   *
+   * Sonnet → Haiku fallback chain still applies on transient failure:
+   * if `request.model = HAIKU_MODEL_ID` is set and Haiku itself fails,
+   * the retry leg still routes to Haiku (no "secondary fallback to Sonnet"
+   * — the caller opted in deliberately). Added 2026-05-23 (queue #228).
+   */
+  model?: string;
 }
 
 export interface InferenceResponse {
@@ -799,23 +813,33 @@ async function parseSSEStream(
  * Per-model circuit breaker keys ('claude-sdk', 'claude-sdk-haiku') prevent
  * Sonnet failures from poisoning the Haiku fallback.
  *
- * MODEL SELECTION (Hermes May Tier-2 #8 audit, 2026-05-23):
- *   - `request.model` is NOT honored on the SDK path: `InferenceRequest` has
- *     no `model` field, and this function hardcodes `SONNET_MODEL_ID`
- *     regardless. **Every** `infer()` caller in the codebase (~35 sites:
- *     compression, scope-classifier, prompt-enhancer ×2, briefing
- *     constructor, Prometheus planner/executor/provenance/context-compressor,
- *     skills mini-runner/critic, several tools/builtin/* LLM helpers,
- *     teaching/grade, intelligence/execution-patterns) therefore uses Sonnet
- *     under the current production config.
- *   - That is the OPPOSITE of the Hermes-warned "silent cheap default" — we
- *     err toward main-model quality. The cost trade-off (Sonnet for what
- *     could be Haiku-grade aux tasks) is tracked as a deferred follow-up;
- *     needs `model` field plumbing + quality measurement before adoption.
+ * MODEL SELECTION:
+ *   - `request.model` IS honored as of 2026-05-23 (queue #228 plumbing).
+ *     Callers can opt into Haiku for cost savings (~5-8× cheaper than Sonnet
+ *     on aux lines). When `request.model` is undefined the default stays
+ *     `SONNET_MODEL_ID` — every caller in the codebase that doesn't
+ *     explicitly opt in continues to use Sonnet. Currently only
+ *     scope-classifier.ts and prompt-enhancer.ts pass `model: HAIKU_MODEL_ID`,
+ *     and only when `process.env.AUX_HAIKU_ENABLED === "true"` (default off).
+ *     The flag is operator-flipped after manual validation — there is no
+ *     automated shadow-A/B harness in the codebase today; the comparison is
+ *     done by reading scope-classifier output (Set<string> of group names)
+ *     and prompt-enhancer output (CIRICD JSON / PASS) under both models on
+ *     the same inputs. Related: `feedback_prometheus_upstream` #8
+ *     [[aux-model-routing-audit]]; a shadow harness is queued for future work.
+ *   - Pre-2026-05-23 the function hardcoded SONNET_MODEL_ID for every caller.
+ *     That was the OPPOSITE of the Hermes-warned "silent cheap default" — we
+ *     erred toward main-model quality. The plumbing lets us downshift
+ *     selectively without changing the default.
+ *   - Fallback chain semantics (preserved): the retry leg uses HAIKU_MODEL_ID
+ *     by default. If the caller set `request.model = HAIKU_MODEL_ID` and the
+ *     Sonnet leg is skipped, both attempts run on Haiku (no escalation to
+ *     Sonnet — the caller opted in deliberately and a circuit-breaker open
+ *     on Sonnet shouldn't pull a Haiku caller into a forbidden upgrade).
  *   - Under the legacy `INFERENCE_PRIMARY_PROVIDER=openai` path (dormant
  *     since 2026-05-10 cutover), execution falls through to `loadProviders()`
- *     and each provider sets `model` from its own config — NOT this
- *     hardcode. This JSDoc applies only to the SDK branch above.
+ *     and each provider sets `model` from its own config — `request.model`
+ *     has NO effect there.
  *   - Vision is independent — see `inference/vision.ts` (explicit env).
  */
 async function inferViaClaudeSdk(
@@ -824,17 +848,21 @@ async function inferViaClaudeSdk(
 ): Promise<InferenceResponse> {
   const { queryClaudeSdkAsInfer, SONNET_MODEL_ID, HAIKU_MODEL_ID } =
     await import("./claude-sdk.js");
+  const primaryModel = request.model ?? SONNET_MODEL_ID;
   try {
     return await queryClaudeSdkAsInfer(request.messages, {
       signal: options?.signal,
-      model: SONNET_MODEL_ID,
+      model: primaryModel,
     });
   } catch (err) {
     console.warn(
-      `[inference] claude-sdk Sonnet failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+      `[inference] claude-sdk ${primaryModel} failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
     );
     return await queryClaudeSdkAsInfer(request.messages, {
       signal: options?.signal,
+      // Retry leg uses Haiku regardless of primary — Haiku is the cheaper
+      // last-line provider. If primaryModel WAS already Haiku we're just
+      // retrying it (provider-level transient).
       model: HAIKU_MODEL_ID,
     });
   }
@@ -883,14 +911,17 @@ async function inferWithToolsViaClaudeSdk(
     compressionContext: options?.compressionContext,
     providerName: options?.providerName,
   };
+  // Honor `options.model` (added 2026-05-23, queue #228); no override → Sonnet.
+  // No production caller opts in yet; field is here for symmetry with infer().
+  const primaryModel = options?.model ?? SONNET_MODEL_ID;
   try {
     return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
       ...passthrough,
-      model: SONNET_MODEL_ID,
+      model: primaryModel,
     });
   } catch (err) {
     console.warn(
-      `[inference] claude-sdk Sonnet (with tools) failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+      `[inference] claude-sdk ${primaryModel} (with tools) failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
     );
     return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
       ...passthrough,
@@ -1426,6 +1457,15 @@ export interface InferWithToolsOptions {
    * (v6.4 OH1.5)
    */
   taskId?: string;
+  /**
+   * Model override for SDK-routed inference. Same semantics as
+   * `InferenceRequest.model` (added 2026-05-23, queue #228) — `undefined`
+   * keeps the existing Sonnet default, otherwise the override takes
+   * precedence. No effect on the openai-path. Currently no tool-calling
+   * caller opts in; the field is here for symmetry with `infer()` so a
+   * future Haiku-grade tool-calling aux flow can downshift.
+   */
+  model?: string;
   /**
    * If true, skip the first-round tool-skip nudge. Used for short
    * conversational messages (reactions, thanks) that don't need tool calls.

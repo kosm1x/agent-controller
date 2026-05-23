@@ -98,6 +98,16 @@ export async function classifyScopeGroups(
       ? `Recent context:\n${recentContext}\n\nUser message:\n${message}`
       : `User message:\n${message}`;
 
+    // Opt into Haiku via the queue-#228 plumbing when the operator flips the
+    // env flag after a quality A/B (1-day shadow pass clearing ≥95%
+    // scope-match). Default off — Sonnet stays primary. Direct env read
+    // (not getConfig()) so this code path doesn't pull in the config
+    // singleton's initialization in test contexts where MC_API_KEY isn't set.
+    // Same `process.env.X === "true"` pattern as `heavyRunnerContainerized`.
+    const auxHaiku = process.env.AUX_HAIKU_ENABLED === "true";
+    const { HAIKU_MODEL_ID } = auxHaiku
+      ? await import("../inference/claude-sdk.js")
+      : { HAIKU_MODEL_ID: undefined };
     const result = await withTimeout(
       infer({
         messages: [
@@ -105,6 +115,7 @@ export async function classifyScopeGroups(
           { role: "user", content: userContent },
         ],
         max_tokens: 80,
+        ...(HAIKU_MODEL_ID !== undefined && { model: HAIKU_MODEL_ID }),
       }),
       SCOPE_CLASSIFIER_TIMEOUT_MS,
       "scope classifier",

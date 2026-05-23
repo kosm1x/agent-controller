@@ -258,6 +258,14 @@ export async function analyzePrompt(
   try {
     const { infer } = await import("../inference/adapter.js");
     const { withTimeout } = await import("../lib/with-timeout.js");
+    // Opt into Haiku via queue-#228 plumbing. Same env-flag gate as
+    // scope-classifier; default off. Direct env read to avoid pulling
+    // getConfig() init into test contexts (see scope-classifier.ts for the
+    // shared rationale).
+    const auxHaiku = process.env.AUX_HAIKU_ENABLED === "true";
+    const { HAIKU_MODEL_ID } = auxHaiku
+      ? await import("../inference/claude-sdk.js")
+      : { HAIKU_MODEL_ID: undefined };
     const result = await withTimeout(
       infer({
         messages: [
@@ -270,6 +278,7 @@ export async function analyzePrompt(
           },
         ],
         max_tokens: 250,
+        ...(HAIKU_MODEL_ID !== undefined && { model: HAIKU_MODEL_ID }),
       }),
       10_000,
       "enhancer",
@@ -394,6 +403,11 @@ export async function buildEnhancedPrompt(
   try {
     const { infer } = await import("../inference/adapter.js");
     const { withTimeout } = await import("../lib/with-timeout.js");
+    // Same env-flag opt-in as the analyzePrompt() flow above (queue #228).
+    const auxHaiku = process.env.AUX_HAIKU_ENABLED === "true";
+    const { HAIKU_MODEL_ID } = auxHaiku
+      ? await import("../inference/claude-sdk.js")
+      : { HAIKU_MODEL_ID: undefined };
 
     const contextBlock = recentContext
       ? `CONVERSACIÓN RECIENTE (últimos 2 turnos):\n${recentContext}\n\n`
@@ -409,6 +423,7 @@ export async function buildEnhancedPrompt(
           },
         ],
         max_tokens: 500,
+        ...(HAIKU_MODEL_ID !== undefined && { model: HAIKU_MODEL_ID }),
       }),
       15_000,
       "builder",
