@@ -1442,17 +1442,57 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               ? scopedWriteTools.join(", ")
               : "file_write, file_edit";
 
+          // Sprint 1 R-5 (2026-05-23): pre-classified per-tool retry message.
+          // Previously the message asked the LLM to classify the error itself
+          // ("if the error is permanent, ..."). We already classified each
+          // error in Step 2 via `classifyToolError` — passing the result
+          // directly removes a source of LLM variance and tells the model
+          // EXACTLY which tool to retry vs which to skip.
+          //
+          // Scope: openai-compat path only. The SDK production-default path
+          // (INFERENCE_PRIMARY_PROVIDER=claude-sdk) never enters this block
+          // — the SDK manages tool execution server-side and our retry
+          // protocol does not apply. R-1 audit W1 documents the divergence.
           let retryContent: string;
           if (isReadHallucination) {
             retryContent =
               "ALTO: Narraste una verificación sin llamar herramientas. DEBES llamar wp_read_post o file_read para leer el contenido REAL del artículo antes de reportar si contiene enlaces o no. NO inventes resultados.";
           } else if (hasToolErrors) {
-            retryContent =
-              `ALTO: Las siguientes herramientas FALLARON con errores reales:\n${failedErrorContext}\n\n` +
-              `Si el error es permanente (token expirado, permiso denegado, recurso no encontrado), ` +
-              `NO reintentes — reporta el error al usuario. ` +
-              `Si el error es transitorio (timeout, rate limit), intenta de nuevo. ` +
-              `Herramientas disponibles: [${writeToolHint}].`;
+            const breakdown = failedWriteTools.map((t) => {
+              const err = failedToolCalls.get(t) ?? "(unknown error)";
+              return { tool: t, error: err, cls: classifyToolError(err) };
+            });
+            const permanentLines = breakdown
+              .filter((b) => b.cls === "permanent")
+              .map(
+                (b) =>
+                  `  - ${b.tool}: ${b.error.slice(0, 150)} (PERMANENTE — no reintentar la misma llamada)`,
+              );
+            const transientLines = breakdown
+              .filter((b) => b.cls !== "permanent")
+              .map(
+                (b) =>
+                  `  - ${b.tool}: ${b.error.slice(0, 150)} (TRANSITORIO — reintentar con mismos argumentos)`,
+              );
+            const parts: string[] = [
+              "ALTO: Las siguientes herramientas FALLARON.",
+            ];
+            if (permanentLines.length > 0) {
+              parts.push(
+                "",
+                "ERRORES PERMANENTES — NO reintentes la misma llamada. Usa una alternativa o reporta al usuario:",
+                ...permanentLines,
+              );
+            }
+            if (transientLines.length > 0) {
+              parts.push(
+                "",
+                "ERRORES TRANSITORIOS — reintenta UNA VEZ con los MISMOS argumentos:",
+                ...transientLines,
+              );
+            }
+            parts.push("", `Herramientas disponibles: [${writeToolHint}].`);
+            retryContent = parts.join("\n");
           } else {
             retryContent = `ALTO: Narraste acciones de escritura sin llamar las herramientas correctas. Solo llamaste: [${toolsCalled.join(", ")}]. Herramientas de escritura disponibles: [${writeToolHint}]. Llama a la correcta AHORA. NO narres — EJECUTA.`;
           }

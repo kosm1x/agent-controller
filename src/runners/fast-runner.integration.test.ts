@@ -541,4 +541,166 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       }
     });
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // R-5 — pre-classified hallucination retry message
+  // ────────────────────────────────────────────────────────────────────
+  describe("hallucination retry message — per-class structure (R-5)", () => {
+    // R-5 improvement: previously the retry message asked the LLM to classify
+    // each error itself ("if the error is permanent, ..."). Now the runner
+    // pre-classifies via classifyToolError() and tells the LLM EXACTLY which
+    // tool to retry vs which to skip. Removes one source of LLM variance on
+    // the retry. SCOPE: openai-compat path only (SDK path doesn't run retry
+    // protocol — see R-1 audit W1).
+
+    /** Build the assistant + tool messages that drive a hallucinated retry. */
+    function buildHallucMessages(
+      toolCalls: Array<{ id: string; name: string; errorMsg: string }>,
+    ): ChatMessage[] {
+      const msgs: ChatMessage[] = [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: "{}" },
+          })),
+        },
+      ];
+      for (const tc of toolCalls) {
+        msgs.push({
+          role: "tool",
+          content: `{"error":"${tc.errorMsg}"}`,
+          tool_call_id: tc.id,
+        });
+      }
+      return msgs;
+    }
+
+    /** Capture the retry user message that was pushed for inferWithTools call #2. */
+    function getRetryMessage(): string {
+      const retryMessagesArg = mockInferWithTools.mock.calls[1]?.[0];
+      if (!retryMessagesArg) {
+        throw new Error("no retry call captured");
+      }
+      // Retry message is the LAST user message in the array (pushed after
+      // filtering out trailing narration assistant).
+      const last = retryMessagesArg[retryMessagesArg.length - 1];
+      if (last.role !== "user" || typeof last.content !== "string") {
+        throw new Error("last message is not a user-role string");
+      }
+      return last.content;
+    }
+
+    it("transient-only errors → retry message has ERRORES TRANSITORIOS section, NO PERMANENTES section", async () => {
+      // First call: file_write fails with a transient error (timeout)
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "✅ Escribí el archivo.",
+          messages: buildHallucMessages([
+            { id: "c1", name: "file_write", errorMsg: "timeout after 30s" },
+          ]),
+        }),
+      );
+      // Retry: still claims success without calling tools — terminates path
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "✅ Hecho.",
+          messages: [],
+        }),
+      );
+
+      await fastRunner.execute({
+        taskId: "task-R5-transient",
+        runId: "run-R5-transient",
+        title: "Write a file",
+        description: "Escribe el archivo",
+      });
+
+      const retryMsg = getRetryMessage();
+      expect(retryMsg).toContain("ERRORES TRANSITORIOS");
+      expect(retryMsg).toContain("file_write");
+      expect(retryMsg).toContain("timeout"); // error text propagated
+      expect(retryMsg).toContain("TRANSITORIO");
+      // Crucial: no PERMANENTES section when all errors are transient
+      expect(retryMsg).not.toContain("ERRORES PERMANENTES");
+      // Crucial: no "if the error is permanent ..." prose — pre-classification means
+      // the runner asserts, doesn't ask
+      expect(retryMsg).not.toContain("Si el error es permanente");
+    });
+
+    it("mixed errors (transient + permanent) → retry message has BOTH sections", async () => {
+      // The runner only enters the retry block when shouldRetry=true, which
+      // requires NOT all-permanent. Mixed (1 permanent + 1 transient) hits
+      // the !allPermanent gate and triggers the retry.
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "✅ Escribí ambos archivos.",
+          messages: buildHallucMessages([
+            { id: "c1", name: "file_write", errorMsg: "timeout after 30s" },
+            // "401 Unauthorized" → classifyToolError() → "permanent"
+            {
+              id: "c2",
+              name: "shell_exec",
+              errorMsg: "401 Unauthorized: token expired",
+            },
+          ]),
+        }),
+      );
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "✅ Hecho.", messages: [] }),
+      );
+
+      await fastRunner.execute({
+        taskId: "task-R5-mixed",
+        runId: "run-R5-mixed",
+        title: "Two ops",
+        description: "Haz dos operaciones",
+      });
+
+      const retryMsg = getRetryMessage();
+      // Both sections present
+      expect(retryMsg).toContain("ERRORES PERMANENTES");
+      expect(retryMsg).toContain("ERRORES TRANSITORIOS");
+      // Each tool tagged with its classification
+      expect(retryMsg).toMatch(/file_write.*TRANSITORIO/s);
+      expect(retryMsg).toMatch(/shell_exec.*PERMANENTE/s);
+      // No "you classify" prose
+      expect(retryMsg).not.toContain("Si el error es permanente");
+    });
+
+    it("error text is truncated to 150 chars to prevent unbounded retry-message bloat", async () => {
+      const longError = "TIMEOUT: " + "x".repeat(500);
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "✅ Escribí.",
+          messages: buildHallucMessages([
+            { id: "c1", name: "file_write", errorMsg: longError },
+          ]),
+        }),
+      );
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "✅ Hecho.", messages: [] }),
+      );
+
+      await fastRunner.execute({
+        taskId: "task-R5-long",
+        runId: "run-R5-long",
+        title: "Write",
+        description: "Escribe",
+      });
+
+      const retryMsg = getRetryMessage();
+      // The truncation is at .slice(0, 150) per fast-runner.ts:1462. The
+      // retry message should contain at most 150 chars of the error text
+      // plus the classification suffix.
+      expect(retryMsg).toContain("TIMEOUT");
+      // Audit W1 fix: tight bind to the 150-char contract. The surviving
+      // x-run after both truncations (200 at line 1302 → 150 at line 1469)
+      // is ≤141 chars. Any cut looser than slice(0, 160) would have ≥151
+      // x's and fail this assertion.
+      expect(retryMsg).not.toContain("x".repeat(151));
+    });
+  });
 });
