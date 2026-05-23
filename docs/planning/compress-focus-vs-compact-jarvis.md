@@ -59,7 +59,7 @@ NOT missing:
 
 **Don't ship `/compress <focus>` as an operator command.** The interaction mode it serves (operator interactively steering a live session) doesn't exist in our stack. Our compaction is per-task and automatic; the operator-driven manual trigger would have no surface to fire from in normal use.
 
-**Already queued (no new action this commit):** add an optional `focusTopic` parameter to `compress()` directly, per [[pluggable-context-engine-design]] §7 cherry-pick. This borrows the _interesting bit_ of Hermes's `/compress` (focus-targeted summarization) at the auto-compaction layer where we actually use it.
+**Implemented 2026-05-23 (Tier-A ship):** the `focusTopic` parameter on `compress()` has shipped, per [[pluggable-context-engine-design]] §7 cherry-pick #1. Borrows the _interesting bit_ of Hermes's `/compress` (focus-targeted summarization) at the auto-compaction layer where we actually use it. **Path divergence**: openai-path only — SDK path delegates context to the SDK, field is a documented no-op under `INFERENCE_PRIMARY_PROVIDER=claude-sdk`. **Runner-side scope→focus auto-wiring NOT shipped this commit** — primitive only; policy lands in a follow-up.
 
 ## 6. Re-evaluation triggers
 

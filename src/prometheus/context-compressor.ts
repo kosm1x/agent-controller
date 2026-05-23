@@ -49,6 +49,23 @@ const LANGUAGE_RULE =
 const UPDATE_LANGUAGE_ADDENDUM =
   "When updating an existing summary, prefer the existing summary's language for CONTENT for continuity. Switch only if the new user messages clearly indicate a language change.";
 
+// Tier-A cherry-pick (Hermes April Tier-2 #1 §7) — focus-topic posture for L2.
+// Adopts the *interesting bit* of Hermes's `/compress [focus topic]` at the
+// auto-compaction layer where we actually use it, without importing their
+// plugin-slot scaffolding. Additive to LANGUAGE_RULE / STRUCTURED_COMPACT_PROMPT
+// — instructs the LLM to BIAS preservation toward the topic, never to drop
+// prior facts. Floor-preserve invariant stays intact in the PRESERVE+ADD path.
+//
+// Defensive clamp: 200 chars, single line. Long prose blobs would bloat the
+// prompt (we already pay the L2 LLM call). Operators set the topic from a
+// scope label or short string, not a paragraph.
+const FOCUS_TOPIC_MAX_CHARS = 200;
+function focusTopicAddendum(focusTopic: string): string {
+  // ALSO/bias phrasing — additive, not override. LANGUAGE_RULE's verbatim-quote
+  // exception still wins where they appear to conflict.
+  return `ALSO prioritize preserving content related to: ${focusTopic}. This biases summarization posture — it does NOT permit dropping facts unrelated to the topic, especially in the PRESERVE+ADD update path where prior summary contents are floor-preserved.`;
+}
+
 const STRUCTURED_COMPACT_PROMPT = `Compress the following conversation into a structured summary. Use ONLY these sections (skip empty ones). Be concise but preserve ALL key facts.
 
 <analysis>
@@ -134,12 +151,20 @@ export function shouldCompress(
  *
  * @param contextInjection Optional context appended to the summary (e.g. active goal).
  *                         Keeps the compressor generic — callers define what to preserve.
+ * @param focusTopic Optional short topic that BIASES summarization posture toward
+ *                   content relevant to it (e.g. `"coding artifacts (file paths,
+ *                   diffs, errors)"` when active scope is `coding`). Additive to
+ *                   LANGUAGE_RULE / structured prompt; never drops prior facts.
+ *                   Clamped to {@link FOCUS_TOPIC_MAX_CHARS}. Tier-A cherry-pick
+ *                   from Hermes April Tier-2 #1 §7 — `/compress <focus>` posture
+ *                   at the auto-compaction layer where we actually use it.
  */
 export async function compress(
   messages: ChatMessage[],
   keepHead = 3,
   keepTail = 4,
   contextInjection?: string,
+  focusTopic?: string,
 ): Promise<ChatMessage[]> {
   const total = messages.length;
   if (total <= keepHead + keepTail) return messages;
@@ -220,13 +245,41 @@ export async function compress(
     })
     .join("\n");
 
+  // Clamp the focus topic defensively — prevents an oversized blob from
+  // bloating the L2 prompt budget (we already pay the LLM call). Single-line
+  // assertion: collapse internal newlines before slicing so the addendum
+  // remains a single bullet in the prompt body.
+  const cleanFocusTopic =
+    typeof focusTopic === "string" && focusTopic.trim().length > 0
+      ? focusTopic.replace(/\s+/g, " ").trim().slice(0, FOCUS_TOPIC_MAX_CHARS)
+      : null;
+  if (
+    cleanFocusTopic &&
+    focusTopic &&
+    focusTopic.length > FOCUS_TOPIC_MAX_CHARS
+  ) {
+    console.warn(
+      `[compressor] focusTopic clamped from ${focusTopic.length} → ${FOCUS_TOPIC_MAX_CHARS} chars. Pass a shorter topic.`,
+    );
+  }
+
   // Try to summarize (or update existing summary) using structured 9-section format.
   // Inspired by OpenClaude's compact format: structured sections preserve intent
   // and key facts better than freeform summaries during multi-cycle compression.
   let summaryContent: string;
   try {
+    // FOCUS posture lands BEFORE both the structural prompt and LANGUAGE_RULE
+    // — sets the bias up front, leaves LANGUAGE_RULE as the final instruction
+    // on both paths (most-recent-wins heuristic). The addendum's own phrasing
+    // ("does NOT permit dropping facts") protects the floor regardless of
+    // ordering, but consistent ordering across paths keeps prompt-shape drift
+    // detectable in tests.
+    const focusPreamble = cleanFocusTopic
+      ? `${focusTopicAddendum(cleanFocusTopic)}\n\n`
+      : "";
+
     const prompt = existingSummary
-      ? `Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions. Keep the same structured section format.
+      ? `${focusPreamble}Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions. Keep the same structured section format.
 
 ${LANGUAGE_RULE}
 ${UPDATE_LANGUAGE_ADDENDUM}
@@ -236,7 +289,7 @@ ${existingSummary}
 
 New messages:
 ${middleText}`
-      : `${STRUCTURED_COMPACT_PROMPT}
+      : `${focusPreamble}${STRUCTURED_COMPACT_PROMPT}
 
 Messages to compress:
 ${middleText}`;
@@ -268,13 +321,21 @@ ${middleText}`;
     summaryContent = `[Earlier conversation compressed — ${middle.length} messages removed]`;
   }
 
-  // Persist summary to jarvis_files for cross-session retrieval
+  // Persist summary to jarvis_files for cross-session retrieval. Prepend a
+  // one-line `[FOCUS: …]` marker so an operator scanning a long compaction
+  // history can attribute summary posture to the topic that drove it.
+  // Marker is on the persisted body only — it does NOT enter the in-memory
+  // [CONTEXT SUMMARY] block (which feeds back into the LLM on next L2 cycle
+  // and would re-anchor the next compress unhelpfully).
   try {
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const persisted = cleanFocusTopic
+      ? `[FOCUS: ${cleanFocusTopic}]\n\n${summaryContent}`
+      : summaryContent;
     upsertFile(
       `compaction/${ts}.md`,
       `Compaction summary ${ts}`,
-      summaryContent,
+      persisted,
       ["compaction", "summary"],
       "workspace",
       90,

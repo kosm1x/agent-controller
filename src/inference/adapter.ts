@@ -1372,6 +1372,25 @@ export interface InferWithToolsOptions {
    */
   compressionContext?: string;
   /**
+   * Optional posture for the L2 LLM summarization step. Biases the summary
+   * toward preserving content relevant to the topic (e.g. `"file paths,
+   * diffs, error messages"` for a coding task; `"cvegeo/scian codes,
+   * lat/lon"` for a DENUE research task). Additive — never drops prior
+   * facts in the PRESERVE+ADD path. Clamped to 200 chars in `compress()`.
+   *
+   * **Path divergence (openai-path only).** Honored only on
+   * `inferWithToolsViaOpenAi`, which runs OUR L0-L3 compaction cascade.
+   * The Claude Agent SDK path delegates context management to the SDK
+   * itself — `compress()` never fires there — so this field is a no-op
+   * under `INFERENCE_PRIMARY_PROVIDER=claude-sdk` (the current default
+   * since 2026-05-10). Documented divergence, not a silent drop: passing
+   * it under the SDK provider is harmless but ineffective.
+   *
+   * Tier-A cherry-pick from Hermes April Tier-2 #1 §7 — see
+   * `docs/planning/pluggable-context-engine-design.md` §7.
+   */
+  compressionFocusTopic?: string;
+  /**
    * If true, exempt this task from the analysis_paralysis guard.
    * Research-then-send workflows (scheduled reports) legitimately do many
    * read-only rounds (web_search) before calling gmail_send. (v6.4 ST1)
@@ -1632,6 +1651,7 @@ export async function inferWithTools(
         config.inferenceContextLimit,
         config.compressionThreshold,
         options?.compressionContext,
+        options?.compressionFocusTopic,
       );
       console.log(
         `[inference] Compaction ${compactionResult.level} at round ${round} (${conversation.length} → ${compactionResult.messages.length} messages, removed ${compactionResult.removedCount})`,
@@ -1724,6 +1744,7 @@ export async function inferWithTools(
           config.inferenceContextLimit,
           0.5, // aggressive threshold for 413
           options?.compressionContext,
+          options?.compressionFocusTopic,
         );
         conversation = c413.messages;
         continue;

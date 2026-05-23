@@ -168,11 +168,11 @@ export function getContextEngine(): ContextEngine {
 
 **Not adopted:** Hermes's `update_from_response` / `update_model` state-on-engine pattern. Our `infer()` already returns usage; the runner can track running totals if needed. Engine-as-state-holder doesn't fit our stateless-function discipline.
 
-## 7. Cherry-pick candidates (not in this commit)
+## 7. Cherry-pick candidates
 
 Independent of the plugin slot, two compressor improvements stand on their own:
 
-- **`focusTopic` parameter on `compress()` directly.** No interface change needed; adds one optional argument to the existing function. Pairs naturally with Tier-2 #3 `/compress <focus>` if we ever ship it.
-- **`update_from_response` state tracker** — useful for the cross-task cache miss investigation already queued (see queue entry at `next-sessions-queue.md`). A `CompressionTelemetry` singleton that aggregates token counts and compaction events would help diagnose when L2 actually saves bytes vs. when it's a wash.
+- **`focusTopic` parameter on `compress()` directly.** ✅ **SHIPPED 2026-05-23** (Tier-A no-gate). Added optional 5th positional arg to `compress()` + plumbed through `compactConversation` + `InferWithToolsOptions.compressionFocusTopic`. Additive prompt addendum on both initial-compress and PRESERVE+ADD update paths; 200-char defensive clamp; `[FOCUS: ...]` annotation on persisted `compaction/${ts}.md` body for operator visibility; no-op short-circuit untouched. **Path divergence documented**: openai-path only — SDK path delegates context to the SDK, field is a no-op under `INFERENCE_PRIMARY_PROVIDER=claude-sdk`. **Runner-side scope→focus auto-wiring NOT in this commit** — primitive only; policy lands in a follow-up after live L2 cycles validate the prompt addendum.
+- **`update_from_response` state tracker** — still queued. Useful for the cross-task cache miss investigation already queued (see queue entry at `next-sessions-queue.md`). A `CompressionTelemetry` singleton that aggregates token counts and compaction events would help diagnose when L2 actually saves bytes vs. when it's a wash.
 
 Memory pointer: `feedback_pluggable_context_engine_design.md` (created in same ship).

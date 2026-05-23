@@ -184,12 +184,15 @@ export function compactL3(
  * @param contextLimit Model context window size in tokens
  * @param threshold Fraction of context window that triggers compression (0-1)
  * @param contextInjection Optional context to preserve through L2 compression
+ * @param focusTopic Optional posture for the L2 LLM step — see
+ *                   {@link compress}. L0/L1/L3 ignore it (deterministic).
  */
 export async function compactConversation(
   messages: ChatMessage[],
   contextLimit: number,
   threshold: number,
   contextInjection?: string,
+  focusTopic?: string,
 ): Promise<CompactionResult> {
   const keepHead = 3;
   const keepTail = 4;
@@ -221,6 +224,7 @@ export async function compactConversation(
       keepHead,
       keepTail,
       contextInjection,
+      focusTopic,
     );
     // L2 can succeed yet still leave the conversation over threshold — e.g. a
     // single oversized tool result the summary had to preserve. Returning it

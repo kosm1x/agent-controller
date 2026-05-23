@@ -588,3 +588,177 @@ describe("compress — anti-thrashing guards (Hermes v0.11 fix)", () => {
     warnSpy.mockRestore();
   });
 });
+
+describe("compress — focusTopic posture (Tier-A cherry-pick)", () => {
+  // Hermes April Tier-2 #1 §7 cherry-pick. Optional `focusTopic` biases the
+  // L2 summarization prompt toward preserving topic-relevant content; never
+  // drops prior facts. Tests pin the prompt addendum on both paths + the
+  // clamp + the regression guard (no addendum when omitted).
+
+  const baseMessages: ChatMessage[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "hola" },
+    { role: "assistant", content: "respuesta 1" },
+    { role: "user", content: "edita src/foo.ts" },
+    { role: "assistant", content: "respuesta 2" },
+    { role: "user", content: "reciente 1" },
+    { role: "assistant", content: "reciente 2" },
+  ];
+
+  it("appends the focusTopic addendum to the initial-compress prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    await compress(
+      baseMessages,
+      2,
+      2,
+      undefined,
+      "coding artifacts (file paths, diffs, errors)",
+    );
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // Addendum present
+    expect(prompt).toContain("ALSO prioritize preserving content related to:");
+    expect(prompt).toContain("coding artifacts (file paths, diffs, errors)");
+    // Floor-preserve invariant must still be in the prompt body — additive,
+    // never override
+    expect(prompt).toContain("does NOT permit dropping facts");
+    // Ordering invariant: focus addendum FIRST (sets bias up front), then
+    // LANGUAGE_RULE LAST (most-recent-wins heuristic). Mirrors the update
+    // path — consistent ordering keeps prompt-shape drift detectable.
+    const focusIdx = prompt.indexOf("ALSO prioritize");
+    const langIdx = prompt.indexOf("language used by the USER");
+    expect(focusIdx).toBeGreaterThan(-1);
+    expect(focusIdx).toBeLessThan(langIdx);
+  });
+
+  it("appends the focusTopic addendum to the PRESERVE+ADD update prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen actualizado",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const messagesWithPrior: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hola" },
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} Resumen previo en español`,
+      },
+      { role: "assistant", content: "nueva respuesta" },
+      { role: "user", content: "edita el archivo" },
+      { role: "user", content: "reciente 1" },
+      { role: "assistant", content: "reciente 2" },
+    ];
+
+    await compress(messagesWithPrior, 2, 2, undefined, "file paths and diffs");
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // Update path still selected (existing summary detected)
+    expect(prompt).toContain("Update this existing summary");
+    // Focus addendum landed on this path too
+    expect(prompt).toContain("ALSO prioritize preserving content related to:");
+    expect(prompt).toContain("file paths and diffs");
+    // PRESERVE+ADD continuity addendum still present (W1)
+    expect(prompt).toContain("existing summary's language");
+    // Ordering invariant must hold on the UPDATE path too (audit W2). Future
+    // copy-edits that swap LANGUAGE_RULE above focusPreamble on either path
+    // get caught here, not only on the initial-compress path.
+    const focusIdx = prompt.indexOf("ALSO prioritize");
+    const langIdx = prompt.indexOf("language used by the USER");
+    expect(focusIdx).toBeGreaterThan(-1);
+    expect(focusIdx).toBeLessThan(langIdx);
+  });
+
+  it("omits the focusTopic addendum when no topic is passed (backward compat)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    await compress(baseMessages, 2, 2);
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    expect(prompt).not.toContain("ALSO prioritize preserving");
+    // Sanity: the structural prompt is still there
+    expect(prompt).toContain("`## Intent`");
+  });
+
+  it("clamps focusTopic to 200 chars and warns on overflow", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // 300-char topic: 100 chars of "A" + 100 of "B" + 100 of "C"
+    const longTopic = "A".repeat(100) + "B".repeat(100) + "C".repeat(100);
+    await compress(baseMessages, 2, 2, undefined, longTopic);
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // First 200 chars survive
+    expect(prompt).toContain("A".repeat(100) + "B".repeat(100));
+    // Last 100 chars dropped
+    expect(prompt).not.toContain("C".repeat(50));
+
+    // Warn fired
+    const warnMsg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(warnMsg).toContain("focusTopic clamped");
+    expect(warnMsg).toContain("300");
+    warnSpy.mockRestore();
+  });
+
+  it("treats whitespace-only / empty focusTopic as absent", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    await compress(baseMessages, 2, 2, undefined, "   \n  \t  ");
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // No addendum from whitespace input
+    expect(prompt).not.toContain("ALSO prioritize preserving");
+  });
+
+  it("skips the focusTopic LLM round on the no-op short-circuit (existingSummary + empty newMiddle)", async () => {
+    // If compress() invokes infer(), the test fails — no mock queued.
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" }, // head[0]
+      { role: "user", content: "hola" }, // head[1]
+      { role: "system", content: `${SUMMARY_PREFIX} Resumen previo` }, // middle (only)
+      { role: "user", content: "reciente 1" }, // tail[0]
+      { role: "assistant", content: "reciente 2" }, // tail[1]
+    ];
+
+    const result = await compress(messages, 2, 2, undefined, "coding");
+
+    // Short-circuit triggered (no infer call)
+    expect(mockInfer).not.toHaveBeenCalled();
+    // Preserved summary is the middle of the result
+    const middle = result[2];
+    expect(middle.role).toBe("system");
+    expect((middle.content as string).startsWith(SUMMARY_PREFIX)).toBe(true);
+    expect(middle.content as string).toContain("Resumen previo");
+    // No FOCUS marker leaks into the in-memory [CONTEXT SUMMARY] block
+    expect(middle.content as string).not.toContain("[FOCUS:");
+  });
+});

@@ -186,6 +186,50 @@ describe("compactConversation", () => {
     const result = await compactConversation(bigConversation(), 1000, 0.8);
     expect(result.level).toBe("L3");
   });
+
+  it("passes focusTopic through to compress() at L2", async () => {
+    // Tier-A cherry-pick plumbing: the pipeline must forward focusTopic
+    // to compress() so the topic-biased summarization actually fires.
+    // L0/L1/L3 are deterministic and ignore it.
+    shouldCompressMock
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    compressMock.mockResolvedValue([
+      msg("system", "system prompt"),
+      msg("assistant", "summary"),
+    ]);
+
+    await compactConversation(
+      bigConversation(),
+      1000,
+      0.8,
+      "active goal: refactor router",
+      "coding artifacts (file paths, diffs)",
+    );
+
+    // compress(messages, keepHead, keepTail, contextInjection, focusTopic)
+    const call = compressMock.mock.calls[0];
+    expect(call[3]).toBe("active goal: refactor router");
+    expect(call[4]).toBe("coding artifacts (file paths, diffs)");
+  });
+
+  it("passes undefined focusTopic when caller omits it (regression guard)", async () => {
+    shouldCompressMock
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    compressMock.mockResolvedValue([
+      msg("system", "system prompt"),
+      msg("assistant", "summary"),
+    ]);
+
+    await compactConversation(bigConversation(), 1000, 0.8);
+
+    const call = compressMock.mock.calls[0];
+    expect(call[3]).toBeUndefined();
+    expect(call[4]).toBeUndefined();
+  });
 });
 
 describe("compactL3", () => {
