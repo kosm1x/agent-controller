@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   conditionMatches,
   detectProjectInMessage,
+  detectRumiRequest,
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
 } from "./kb-injection.js";
@@ -378,5 +379,128 @@ describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () 
       stable: null,
       variable: null,
     });
+  });
+});
+
+describe("detectRumiRequest", () => {
+  // --- positive cases (should return true) ---
+  it.each([
+    "regálame un poema de rumi",
+    "Dame un poema de Rumi",
+    "recítame un poema de Rumi",
+    "un verso de Rumi por favor",
+    "What poem by Rumi should I read?",
+    "jalal al-din rumi wrote...",
+    "jalaluddin rumi quote",
+    "comparte algo de Rumi",
+  ])("returns true for: %s", (text) => {
+    expect(detectRumiRequest(text)).toBe(true);
+  });
+
+  // --- negative cases (should return false) ---
+  it.each([
+    "what time is it",
+    "regálame un chiste",
+    "poema de Neruda",
+    "qué proyectos tengo activos",
+    "status del servidor",
+    "poema de amor",
+  ])("returns false for: %s", (text) => {
+    expect(detectRumiRequest(text)).toBe(false);
+  });
+});
+
+describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFile).mockReset();
+  });
+
+  it("injects Rumi Index + SOP into variable layer on rumi poem request", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) => {
+      if (quals.includes("conditional")) return [];
+      return [
+        {
+          path: "enforce.md",
+          title: "Enforce",
+          content: "MUST",
+          qualifier: "enforce",
+          condition: null,
+          priority: 100,
+        },
+      ];
+    });
+
+    const rumiIndex = {
+      id: "ri",
+      path: "knowledge/Rumi/INDEX.md",
+      title: "Índice de Poemas — Rumi",
+      content: "| 1 | El poema del cañaveral |",
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      created_at: "",
+      updated_at: "",
+      user_edit_time: null,
+    };
+    const rumiSop = {
+      id: "rs",
+      path: "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
+      title: "SOP Verificación Rumi",
+      content: "Consultar Index antes de entregar",
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      created_at: "",
+      updated_at: "",
+      user_edit_time: null,
+    };
+
+    vi.mocked(getFile).mockImplementation((path: string) => {
+      if (path === "knowledge/Rumi/INDEX.md") return rumiIndex;
+      if (path.includes("sop-verificacion")) return rumiSop;
+      return undefined;
+    });
+
+    const { variable } = buildKnowledgeBaseSections(
+      [],
+      "regálame un poema de Rumi",
+    );
+
+    expect(variable).toContain("Índice de Poemas — Rumi");
+    expect(variable).toContain("El poema del cañaveral");
+    expect(variable).toContain("SOP Verificación Rumi");
+    expect(variable).toContain("Consultar Index antes de entregar");
+  });
+
+  it("does NOT inject Rumi files for a non-Rumi message", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) => {
+      if (quals.includes("conditional")) return [];
+      return [
+        {
+          path: "enforce.md",
+          title: "Enforce",
+          content: "MUST",
+          qualifier: "enforce",
+          condition: null,
+          priority: 100,
+        },
+      ];
+    });
+    vi.mocked(getFile).mockReturnValue(undefined);
+
+    const { variable } = buildKnowledgeBaseSections(
+      [],
+      "qué proyectos tengo activos",
+    );
+
+    // getFile should not have been called for Rumi paths
+    const calls = vi.mocked(getFile).mock.calls.map((c) => c[0]);
+    expect(calls).not.toContain("knowledge/Rumi/INDEX.md");
+    expect(variable).toBeNull();
   });
 });

@@ -61,6 +61,30 @@ export function conditionMatches(
   );
 }
 
+/**
+ * Detect Rumi / creative-poetry requests in message text.
+ *
+ * Returns true when the message is asking for a Rumi poem by Rumi.
+ * When true, `buildKnowledgeBaseSections` force-injects into the variable layer:
+ *   - `knowledge/Rumi/INDEX.md`  (which poems have already been delivered)
+ *   - `knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md`
+ *
+ * This is the structural guardrail that prevents the fast runner from skipping
+ * the SOP and serving a duplicate poem straight from training memory.
+ * Root cause (2026-05-23): detectRumiRequest() did not exist; the SOP lived as a
+ * "reference" qualifier file — invisible until explicitly fetched, which never
+ * happened on creative requests because the LLM answered from training data first.
+ */
+export function detectRumiRequest(text: string): boolean {
+  // Any mention of rumi (with or without accent, common typos, Arabic script)
+  const hasRumi = /\brumi\b|jalal|jalaluddin|جلال/i.test(text);
+  // Explicit poem/creative request verbs
+  const hasPoem =
+    /poema|poem|recítame|regálame|comparte|versos|verso|poetry/i.test(text);
+  // Fire on bare "rumi" mention OR poem-request-with-rumi context
+  return hasRumi || (hasPoem && hasRumi);
+}
+
 /** Known project slugs for README auto-injection. */
 const PROJECT_SLUGS = [
   "agent-controller",
@@ -249,6 +273,34 @@ export function buildKnowledgeBaseSections(
           }
         } catch {
           // non-fatal
+        }
+      }
+
+      // Rumi SOP guardrail: force-inject Index + SOP on any Rumi/poem request.
+      // Without this, the LLM answers from training memory and bypasses the SOP,
+      // causing duplicate poems to be served (3 documented incidents: 2026-04-06,
+      // 2026-05-19, 2026-05-23).
+      if (detectRumiRequest(messageText)) {
+        const rumiPaths = [
+          "knowledge/Rumi/INDEX.md",
+          "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
+        ];
+        for (const rumiPath of rumiPaths) {
+          try {
+            const rumiFile = getFile(rumiPath);
+            if (rumiFile) {
+              const section = `### ${rumiFile.title}\n${rumiFile.content}`;
+              // Bypasses budget — these are mandatory context for correctness
+              variableSections.push(section);
+              variableChars += section.length;
+              console.log(
+                `[${logTag}] Rumi SOP guardrail: injected ${rumiPath} (${rumiFile.content.length} chars)`,
+              );
+            }
+          } catch {
+            // non-fatal — log and continue
+            console.warn(`[${logTag}] Rumi SOP guardrail: could not inject ${rumiPath}`);
+          }
         }
       }
     }
