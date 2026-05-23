@@ -774,6 +774,25 @@ async function parseSSEStream(
  *
  * Per-model circuit breaker keys ('claude-sdk', 'claude-sdk-haiku') prevent
  * Sonnet failures from poisoning the Haiku fallback.
+ *
+ * MODEL SELECTION (Hermes May Tier-2 #8 audit, 2026-05-23):
+ *   - `request.model` is NOT honored on the SDK path: `InferenceRequest` has
+ *     no `model` field, and this function hardcodes `SONNET_MODEL_ID`
+ *     regardless. **Every** `infer()` caller in the codebase (~35 sites:
+ *     compression, scope-classifier, prompt-enhancer ×2, briefing
+ *     constructor, Prometheus planner/executor/provenance/context-compressor,
+ *     skills mini-runner/critic, several tools/builtin/* LLM helpers,
+ *     teaching/grade, intelligence/execution-patterns) therefore uses Sonnet
+ *     under the current production config.
+ *   - That is the OPPOSITE of the Hermes-warned "silent cheap default" — we
+ *     err toward main-model quality. The cost trade-off (Sonnet for what
+ *     could be Haiku-grade aux tasks) is tracked as a deferred follow-up;
+ *     needs `model` field plumbing + quality measurement before adoption.
+ *   - Under the legacy `INFERENCE_PRIMARY_PROVIDER=openai` path (dormant
+ *     since 2026-05-10 cutover), execution falls through to `loadProviders()`
+ *     and each provider sets `model` from its own config — NOT this
+ *     hardcode. This JSDoc applies only to the SDK branch above.
+ *   - Vision is independent — see `inference/vision.ts` (explicit env).
  */
 async function inferViaClaudeSdk(
   request: InferenceRequest,

@@ -277,6 +277,21 @@ These are non-blocking findings the round-3 audit surfaced after round-2 fixes v
 
 **Tracking:** `feedback_prometheus_upstream` April Tier-1 #1 "Rate-limit header capture" is ✅ done; this is its behavioral follow-up.
 
+## Haiku downshift for aux LLM calls (deferred cost optimization)
+
+**Triggered by:** Hermes v0.11 May Tier-2 #8 audit (2026-05-23, see `feedback_prometheus_upstream`). The audit confirmed no silent-cheap-default bug — every `infer()` caller (~35 sites) routes through `inferViaClaudeSdk` which hardcodes Sonnet. That's the OPPOSITE of Hermes's complaint, but the cost lever is real: aux tasks that fire frequently (scope-classifier on EVERY incoming message; prompt-enhancer twice on enhance flows) use Sonnet when Haiku-grade quality would likely suffice.
+
+**Why deferred:** the change is multi-step and needs measurement first.
+
+1. Add `model?: string` field to `InferenceRequest` (`adapter.ts:92-101` currently has no `model` field — callers cannot opt-in).
+2. Plumb through `inferViaClaudeSdk` to honor `request.model ?? SONNET_MODEL_ID`.
+3. Annotate aux callers (`scope-classifier.ts:102`, `prompt-enhancer.ts:262, 403`) with `model: HAIKU_MODEL_ID`.
+4. **Quality measurement** before any rollout: run a one-day shadow pass (compute both Sonnet and Haiku scope-classifier output on the same incoming messages, log disagreements). If Haiku matches Sonnet ≥95% on the scope-classifier output, ship the downshift. If lower, design a confidence-aware fallback (Haiku first; on low-confidence output, retry with Sonnet).
+
+**Expected savings:** scope-classifier fires once per incoming message + enhancer fires once-or-twice per enhance flow. Per-task aux Sonnet-vs-Haiku saves ~5-8x on those lines (Sonnet $3/M in vs Haiku ~$0.40/M in). Unclear absolute $/mo until plumbing measures the per-aux line in `cost_ledger`.
+
+**Tracking:** companion to the already-audited [[aux-model-routing-audit]] in `feedback_prometheus_upstream` #8.
+
 ## Cross-task prompt cache miss (heavy task, $754/mo `fast` Sonnet line)
 
 **Status (2026-05-22 late):** ROOT CAUSE LOCATED, fix deferred to next session. `cache_diag` log (`f219340`) collected 10 samples across two PID generations. Two consecutive heavy-task calls (toolsHash `392a4296`, toolsN 50, ownerChannel=true, same day, 28 min apart, no cohort cron in between) hash DIFFERENTLY: `fd3936d8cb9e` (71921 chars) vs `10a9164b41d1` (71300 chars). 621-char drift in the "stable" half rules out hypothesis (a) cross-`query()` SDK gap and confirms hypothesis (b) hidden per-task variation.

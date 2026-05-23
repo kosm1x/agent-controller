@@ -15,11 +15,29 @@ const DEFAULT_PROMPT =
  * Derive the vision-language model name from the primary model.
  * Each provider family has its own VL model naming convention.
  */
-function resolveVisionModel(): string {
+/**
+ * @internal Exported for direct unit testing only. Production callers
+ * should use {@link describeImage} — calling this directly bypasses the
+ * URL/key resolution and HTTP layer.
+ */
+export function resolveVisionModel(): string {
   const override = process.env.INFERENCE_VISION_MODEL;
   if (override) return override;
 
   const primary = getConfig().inferencePrimaryModel;
+
+  // Hermes May Tier-2 #8 audit foot-gun guard (2026-05-23): under the
+  // claude-sdk routing (current production), `inferencePrimaryModel` is
+  // EMPTY STRING. None of the prefix checks below match, and the bottom
+  // `return "qwen-vl-max"` would silently switch vision to a different
+  // vendor + key combination. Fail loud instead so the operator sees the
+  // misconfiguration immediately on the next vision call.
+  if (!primary) {
+    throw new Error(
+      "Vision model unresolved: INFERENCE_VISION_MODEL env var must be set when INFERENCE_PRIMARY_PROVIDER=claude-sdk (the SDK path leaves inferencePrimaryModel empty, so the prefix-derivation fallback below has no signal). " +
+        "Recommended config: `INFERENCE_VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct` plus `INFERENCE_VISION_URL` and `INFERENCE_VISION_KEY` pointing at a vision-capable provider (e.g., Groq) — without the URL/KEY pair the call would fall back to the SDK creds, which is not a vision endpoint.",
+    );
+  }
 
   // Zhipu/BigModel (glm-5, glm-4, etc.)
   if (primary.startsWith("glm-")) return "glm-4v-plus";
