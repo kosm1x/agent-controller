@@ -19,6 +19,7 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
+import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { isReadOnlyTool } from "../inference/guards.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import {
@@ -1135,8 +1136,19 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // required. Without this, scope_telemetry.tools_called is always
         // "[]" for Sonnet-routed tasks, and deferred-tool activation
         // yield metrics (audit probe E3) are unmeasurable.
+        //
+        // Sprint 1 R-1 (2026-05-23): supply fallback context so tasks
+        // that bypassed `router.ts` (scheduled / ritual / direct-API) get
+        // a synthetic scope_telemetry row inserted. T-02 baseline showed
+        // 27% of fast tasks were silently missing from telemetry. The
+        // fallback INSERTs `active_groups=[]` for these, which is itself
+        // a signal worth tracking ("unscoped" dispatch).
         try {
-          recordToolExecution(input.taskId, sdkResult.toolCalls, []);
+          recordToolExecution(input.taskId, sdkResult.toolCalls, [], {
+            message: input.description,
+            activeGroups: [],
+            toolsInScope: allToolNames,
+          });
         } catch {
           // Non-fatal — telemetry never blocks execution
         }
@@ -1252,11 +1264,21 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         );
       }
 
-      // Scope telemetry — record tool execution + repairs
+      // Scope telemetry — record tool execution + repairs.
+      // Sprint 1 R-1: same fallback context as the SDK path so direct-API
+      // and scheduled tasks that route through the openai-compat path also
+      // get a synthetic row when no `recordScopeDecision` insert preceded.
       try {
-        recordToolExecution(input.taskId, toolsCalled, [
-          ...failedToolCalls.keys(),
-        ]);
+        recordToolExecution(
+          input.taskId,
+          toolsCalled,
+          [...failedToolCalls.keys()],
+          {
+            message: input.description,
+            activeGroups: [],
+            toolsInScope: definitions.map((d) => d.function.name),
+          },
+        );
         if (result.toolRepairs.length > 0) {
           recordToolRepairs(input.taskId, result.toolRepairs);
         }
@@ -1452,8 +1474,19 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             failedWriteTools,
           )
         ) {
-          // Retry fixed it — skip replacement
+          // Retry fixed it — skip replacement.
+          // Sprint 1 R-1: record retry outcome counter for R-5's measurement.
+          // Only count "success" when we actually ran the retry (not when no
+          // hallucination existed in the first place — that path is excluded
+          // by the outer `if (detectsHallucinatedExecution)` at line 1338).
+          if (shouldRetry) {
+            recordFastRetryOutcome("success");
+          }
         } else {
+          // Sprint 1 R-1: record retry outcome. "fail" means a retry ran but
+          // still hallucinated; "skipped" means we decided against retry
+          // entirely (permanent errors or no token headroom).
+          recordFastRetryOutcome(shouldRetry ? "fail" : "skipped");
           // Step 4 — Honest replacement with diagnosis
           const reason = allPermanent
             ? "permanent tool errors (retry skipped)"

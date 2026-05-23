@@ -108,11 +108,34 @@ export function recordToolRepairs(
 // Record tool execution results (called from fast-runner)
 // ---------------------------------------------------------------------------
 
+/**
+ * Fallback context passed by callers that may need to create the row on the
+ * fly. Tasks that originated from the messaging router already have a row
+ * inserted by {@link recordScopeDecision}; scheduled tasks, rituals, and any
+ * other dispatch path that bypasses `router.ts` do NOT — for those, the
+ * UPDATE below silently affects zero rows and the task disappears from
+ * scope_telemetry.
+ *
+ * Sprint 1 R-1 fix (2026-05-23): when the UPDATE finds no row AND fallback
+ * context is supplied, INSERT a fresh row so coverage is structural rather
+ * than dependent on call-path.
+ */
+export interface ToolExecutionFallbackContext {
+  /** User-visible message or task description; truncated to 500 chars. */
+  message: string;
+  /** Scope groups that activated; `[]` for unscoped (e.g. scheduled) tasks. */
+  activeGroups: string[];
+  /** Names of tools loaded into the LLM's prompt at execution time. */
+  toolsInScope: string[];
+}
+
 export function recordToolExecution(
   taskId: string,
   toolsCalled: string[],
   toolsFailed: string[],
+  fallback?: ToolExecutionFallbackContext,
 ): void {
+  ensureTable();
   const db = getDatabase();
   // Build tool_chain: ordered, deduplicated sequence of tools called
   const seen = new Set<string>();
@@ -124,14 +147,35 @@ export function recordToolExecution(
     }
   }
   const toolChain = chain.join("→");
-  db.prepare(
-    `UPDATE scope_telemetry SET tools_called = ?, tools_failed = ?, tool_chain = ? WHERE task_id = ?`,
-  ).run(
-    JSON.stringify(toolsCalled),
-    JSON.stringify(toolsFailed),
-    toolChain,
-    taskId,
-  );
+  const result = db
+    .prepare(
+      `UPDATE scope_telemetry SET tools_called = ?, tools_failed = ?, tool_chain = ? WHERE task_id = ?`,
+    )
+    .run(
+      JSON.stringify(toolsCalled),
+      JSON.stringify(toolsFailed),
+      toolChain,
+      taskId,
+    );
+  if (result.changes === 0 && fallback) {
+    // No prior row — this task bypassed `router.ts`/`recordScopeDecision`.
+    // INSERT a synthetic row so the task is observable. activeGroups is
+    // typically `[]` for these (scheduled / ritual / direct-API dispatch),
+    // which is itself a signal worth tracking.
+    db.prepare(
+      `INSERT INTO scope_telemetry
+         (task_id, message, active_groups, tools_in_scope, tools_called, tools_failed, tool_chain)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      taskId,
+      fallback.message.slice(0, 500),
+      JSON.stringify(fallback.activeGroups),
+      JSON.stringify(fallback.toolsInScope),
+      JSON.stringify(toolsCalled),
+      JSON.stringify(toolsFailed),
+      toolChain,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

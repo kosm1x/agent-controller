@@ -626,6 +626,40 @@ export function recordCohortRollup(
   }
 }
 
+// Sprint 1 R-1 (2026-05-23): per-task retry outcome on the fast runner's
+// hallucination-detect → 1-retry protocol (CCP4 in `fast-runner.ts`). R-5
+// improves the retry message specificity; this counter measures the lift.
+//
+// PATH SCOPE (R-1 audit W1): this counter ONLY fires on the openai-compat
+// branch of fast-runner. The Claude SDK branch (production default since
+// 2026-05-10 per `INFERENCE_PRIMARY_PROVIDER=claude-sdk`) does NOT run
+// our hallucination-detect / retry protocol — the SDK manages tool execution
+// server-side, so the "model claims it called X without calling X" failure
+// mode doesn't apply the same way. Under the production default, this
+// counter measures the FALLBACK path only. R-5's lift claim is scoped
+// accordingly.
+//
+// Labels:
+//   result="success" — retry produced a clean tool call (no further hallucination)
+//   result="fail"    — retry still hallucinated → mechanical replacement fired
+//   result="skipped" — retry was decided against (e.g. all errors permanent, budget exhausted)
+// `result="none"` is intentionally NOT a label — turns with no hallucination
+// don't increment this counter (the denominator lives in `tasks` table).
+const fastHallucinationRetryOutcomeTotal = new client.Counter({
+  name: "mc_fast_hallucination_retry_outcome_total",
+  help: "Fast-runner hallucination retry outcomes (success/fail/skipped). openai-compat path only — SDK path has no in-runner retry.",
+  labelNames: ["result"] as const,
+});
+
+const KNOWN_RETRY_RESULTS = new Set(["success", "fail", "skipped"]);
+
+export function recordFastRetryOutcome(
+  result: "success" | "fail" | "skipped",
+): void {
+  const safe = KNOWN_RETRY_RESULTS.has(result) ? result : "skipped";
+  fastHallucinationRetryOutcomeTotal.inc({ result: safe });
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {
