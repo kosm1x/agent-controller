@@ -25,6 +25,30 @@ export const SUMMARY_PREFIX = "[CONTEXT SUMMARY]";
  * The structured sections prevent information loss that occurs with freeform
  * "summarize this" prompts, especially for multi-step tool conversations.
  */
+// Shared language directive — appended to both the initial-compress prompt and
+// the PRESERVE+ADD update prompt. Jarvis's primary user converses in
+// Spanish-MX (`identitySection`: "Habla en español mexicano") but the compress
+// path was English-only, producing English `[CONTEXT SUMMARY]` blocks that
+// poisoned otherwise-Spanish conversations on every compaction cycle. Hermes
+// v0.11 May Tier-2 #7 fix.
+//
+// Anchored on USER-role turns (the operator has a stable language preference;
+// tool/error/code text is the noise that drove the prior ambiguity). Quotes
+// under `## User Messages` are exempt from translation — they must stay
+// verbatim per that section's own rule, which would otherwise conflict.
+// Header names stay English so the structure is stable across summaries;
+// nothing in the codebase parses these headers (only `SUMMARY_PREFIX` is
+// checked at line 136), but stable structure is friendlier when an operator
+// inspects a long thread.
+const LANGUAGE_RULE =
+  "Write the summary CONTENT in the language used by the USER in the messages being compressed (look at user-role turns only; ignore code blocks, error text, file paths, tool outputs). Tie-break under heavy code-switching: use the most recent user message's language. Keep the section HEADER names exactly as written (`## Intent`, `## Key Facts`, etc.) — they are structural markers. EXCEPTION: verbatim quotes under `## User Messages` stay in their original language regardless of the summary language.";
+
+// Update-path addendum — the PRESERVE+ADD prompt sees BOTH the prior summary
+// (which has its own language) AND new messages (which may have switched).
+// Audit W1: prefer continuity, switch only on a clear signal from new turns.
+const UPDATE_LANGUAGE_ADDENDUM =
+  "When updating an existing summary, prefer the existing summary's language for CONTENT for continuity. Switch only if the new user messages clearly indicate a language change.";
+
 const STRUCTURED_COMPACT_PROMPT = `Compress the following conversation into a structured summary. Use ONLY these sections (skip empty ones). Be concise but preserve ALL key facts.
 
 <analysis>
@@ -62,7 +86,8 @@ RULES:
 - Strip the <analysis> block from your final output.
 - Keep total output under 600 words.
 - Preserve file paths, error messages, and IDs verbatim.
-- If the user gave corrections or preferences, quote them exactly.`;
+- If the user gave corrections or preferences, quote them exactly.
+- ${LANGUAGE_RULE}`;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -160,6 +185,9 @@ export async function compress(
   try {
     const prompt = existingSummary
       ? `Update this existing summary with information from the new messages below. Preserve all prior facts, add new results and decisions. Keep the same structured section format.
+
+${LANGUAGE_RULE}
+${UPDATE_LANGUAGE_ADDENDUM}
 
 Existing summary:
 ${existingSummary}

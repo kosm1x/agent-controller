@@ -323,3 +323,75 @@ describe("sanitizeToolPairs", () => {
     expect(result[1].content).toBe("[Result compressed]");
   });
 });
+
+describe("compress — language directive (Hermes v0.11 fix)", () => {
+  // Hermes May Tier-2 #7. Before the fix, both prompt paths were
+  // English-only, so Spanish-MX conversations got English summaries that
+  // poisoned subsequent context. These tests pin the directive on both
+  // paths so a future copy-edit can't silently regress.
+  const messages: ChatMessage[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "hola" },
+    { role: "assistant", content: "respuesta 1" },
+    { role: "user", content: "otra pregunta" },
+    { role: "assistant", content: "respuesta 2" },
+    { role: "user", content: "reciente 1" },
+    { role: "assistant", content: "reciente 2" },
+  ];
+
+  it("includes the conversation-language directive in the initial-compress prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    await compress(messages, 2, 2);
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // Anchor on the user-language rule (W5: avoid pinning flavor text like
+    // "Spanish" that would falsely fail on benign rewording).
+    expect(prompt).toContain("language used by the USER");
+    // Header names must still be advertised so structure stays stable
+    expect(prompt).toContain("`## Intent`");
+    // User-quote exception must survive — guards W3 latent conflict
+    expect(prompt).toContain("verbatim quotes");
+  });
+
+  it("includes the language directive in the PRESERVE+ADD update prompt", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: "Resumen actualizado",
+      tool_calls: undefined,
+      usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 },
+      provider: "test",
+      latency_ms: 50,
+    });
+
+    const messagesWithPrior: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hola" },
+      {
+        role: "system",
+        content: `${SUMMARY_PREFIX} Resumen previo en español`,
+      },
+      { role: "assistant", content: "nueva respuesta" },
+      { role: "user", content: "nueva pregunta" },
+      { role: "user", content: "reciente 1" },
+      { role: "assistant", content: "reciente 2" },
+    ];
+
+    await compress(messagesWithPrior, 2, 2);
+
+    const prompt = mockInfer.mock.calls[0][0].messages[1].content as string;
+    // Must use the update prompt (existing summary detected)
+    expect(prompt).toContain("Update this existing summary");
+    // AND must carry the language directive on this path too
+    expect(prompt).toContain("language used by the USER");
+    // Header-stability invariant on the path most likely to drift (W5)
+    expect(prompt).toContain("`## Intent`");
+    // PRESERVE+ADD continuity addendum — W1 fix
+    expect(prompt).toContain("existing summary's language");
+  });
+});
