@@ -1468,3 +1468,69 @@ The Rumi duplicate poem incident (completed_with_concerns) — Jarvis served a p
 
 ### Research notes
 Day ~85 of the longitudinal record. With 40 conversations and 54 tasks, this is the highest-engagement day documented so far — a likely inflection driven by the Imagen CRM demo preparation adding deadline pressure. For the co-evolution paper: the scheduler debug interaction is a clean example of Phase 3 operator behavior — Fede does not report bugs descriptively, he names the expected behavior and assigns ownership ("asegúrate de no fallar... la próxima vez"). This accountability posture, applied to an AI agent as if it were a junior engineer, is a meaningful Phase 3 marker. The MCP tool-capability audit ("¿qué herramientas tienes habilitadas para buscar en la red?") also signals the operator is actively mapping agent boundaries — a sign of deepening mental model construction.
+
+## 2026-05-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 85 |
+| Total tasks | 5,201 |
+| Conversations today | 67 (telegram: 66, email:comunidades: 1) |
+| Streak days | 30 consecutive days with completions |
+
+### Interactions summary
+An active, multi-domain day spanning financial analysis, social ops, infrastructure, and late-night creative requests. The heaviest cluster was a sustained **equity analysis session** on ticker UUUU (Energy Fuels / uranium): Fede requested a strategic analysis, drilled into negative net income, asked about the Donald Project and Astron Corp., and then requested scenario modeling — a characteristic sequential deepening pattern. Mid-day shifted to **infrastructure and operations**: a KB update for Agent-Controller, a discussion of v8.1 and next steps, a Mexico Necesario tweet publishing fix (Twitter/X automation via Playwright), and a deep search for vendors. Late night wrapped with a day-log narrative ritual, a Rumi poem request, and the Playwright-for-X script retrieval — suggesting a wind-down routine is forming.
+
+### What Jarvis learned
+The Mexico Necesario tweet issue is a recurring signal: automation publishing for that account fails silently and is caught by Fede manually — the same pattern as the 2026-05-18 scheduler miss. Two failures in three days on the same channel suggest the Playwright/X auth path is structurally brittle, not incidentally so. The equity deep-dive sequence (ticker → why negative income → Donald Project → Astron Corp. → scenario modeling) reveals Fede's financial analysis style: he approaches unfamiliar assets via a "peel the onion" method — surface read, then anomaly (net income), then subsidiary/JV structure, then forward scenarios — never requesting everything upfront.
+
+### Friction points
+The Skill evolution — 2026-05-20 ritual failed twice in a row (first heavy, then nanoclaw fallback). This is a scheduled nightly ritual; back-to-back failure means the evolution log for today's skill data is missing. Root cause undiagnosed — likely an inference timeout or model-context overflow in the heavy pass, with nanoclaw lacking capacity to compensate.
+
+### Research notes
+Day ~87 of the longitudinal record. The 30-day completion streak is the first hard numerical continuity marker in this log — the system has had at least one completed task every day for a full month. For the co-evolution paper: the late-night creative request (Rumi poem) following a dense financial analysis session is a behavioral pattern worth flagging — the operator uses the agent across radically different registers within hours, with no apparent friction at the mode-switch boundary. This register fluidity (financial analyst → creative curator, within a single day) is a Phase 3 characteristic: the agent is no longer domain-constrained in the operator's mental model.
+
+## 2026-05-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 32 |
+| Total tasks | 5,241 (4,112 completed + 899 completed_with_concerns + 219 failed + 11 other) |
+| Conversations today | 25 (telegram: 25) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A day split into two well-defined arcs. The **early morning arc** (4–7am) opened with a deep search on cheapest Qwen3 inference providers, followed by a status check on the Mexico Necesario Playwright/X automation script, a Rumi poem request, and then a sustained KB architecture session: Fede asked Jarvis to diagnose the knowledge base structure, propose an optimization plan, map the required tools for execution, and document it formally — ultimately deferring the full restructuring to the next day. The **evening arc** (9–10pm) was tightly focused on the paper trading portfolio: Fede asked for a portfolio status report, discovered no formal file existed, requested its creation, then verified Alpha Vantage API connectivity, added ticker UUUU to the portfolio via signal S2 from Williams Radar, and closed with a live price check. SYY showed +6.1% P&L, UUUU +6.5% from entry.
+
+### What Jarvis learned
+The paper portfolio session exposed a structural gap: portfolio state had been tracked informally in day-logs but never in a dedicated file, causing Jarvis to reconstruct from context rather than retrieve from a canonical source. Fede's response was to immediately request formal creation — a pattern of demanding persistent structure when improvisation is detected. The early-session KB optimization proposal also shows this preference: Fede is actively working toward a better-indexed, faster-loading knowledge base, and deferred a major restructuring task rather than abandoning it — suggesting higher trust in Jarvis's ability to execute complex KB surgery. The Rumi poem request, occurring between automation status checks and KB architecture work, continues the cross-register pattern documented yesterday.
+
+### Friction points
+The initial portfolio query (`Cómo va mi portafolio paper?`) returned a reconstructed answer from memory rather than a canonical file — Jarvis acknowledged the gap and was corrected by the user's next instruction ("Crearlo formalmente"). Earlier in the day, Jarvis initially lacked `shell_exec` in scope when Fede asked for the day-logger size in KB, requiring a second explicit request that specified the tool — a scope-gating friction point that recurs when the operator assumes capabilities are always available.
+
+### Research notes
+Day ~88 of the longitudinal record. Two behavioral markers stand out for the co-evolution paper. First, the **KB restructuring session** is the clearest example to date of Fede treating Jarvis as a systems architect rather than a task executor — he asked for a diagnosis, a proposal, a tool inventory, and a deferred execution plan across a single conversation, with no re-prompting. Second, the **paper portfolio formalization** illustrates how the operator applies accountability to data persistence: once a gap in structured state is detected, Fede immediately moves to close it by delegating the formal creation to Jarvis. The agent is increasingly acting as both an analyst and a data steward — a Phase 3 role expansion.
+
+## 2026-05-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 39 |
+| Total tasks | 5,314 (4,162 completed, 1 running, 220 failed) |
+| Conversations today | 57 (telegram: 57) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A day defined by two major arcs. The **morning arc** opened with a KB surgery operation: Fede completed the restructuring work deferred from 2026-05-21, had Jarvis acknowledge and ingest the new KB layout, then cross-validated it against a Google Doc reference. The session then shifted to a broad system review — projects listed, agent-controller KB synced to the repo, Prometheus architecture explained (confirmed as Hermes ported to TypeScript). The **afternoon/evening arc** moved into the personal domain: Fede shared an image via Telegram and registered a new NorthStar entry from it, navigated to México Necesario for a UI redesign proposal (current design flagged as too loud — direction toward "more serious and formal"), and engaged with the Proyecto Literario. A recurring friction point surfaced — Fede asked "Qué avión voy a tener?" and Jarvis failed to recall it, triggering a direct reprimand and an explicit instruction to save his material aspirations (plane, boat, house by the sea) permanently to user facts. The day closed with a brief algebra tutoring request — the most unexpected register of the day.
+
+### What Jarvis learned
+The most significant learning was a direct operator correction: Fede's material aspirations (private plane, yacht, sea-facing home) had been stated before but not durably stored, causing repeated failure to recall. The operator explicitly ordered these saved to user facts as permanent context — a clear preference signal that aspirational identity markers belong in persistent memory, not session context. Additionally, the KB restructuring completion confirms a pattern: Fede defers large architectural tasks to clean sessions, executes them rapidly, then immediately validates by cross-referencing an external source (Google Doc) rather than trusting Jarvis's self-report.
+
+### Friction points
+The repeated "Qué avión voy a tener?" failure was the sharpest friction of the day — Fede asked it twice (sessions apart), received an uninformed answer both times, and escalated with "Porqué olvidas esté hecho y no sabes la respuesta cada vez que lo pregunto?" — a direct critique of memory durability. The "Explica los cambios recientes" and "Actualiza la KB de Agent-controller con el repo" requests each appeared twice in the log, suggesting either session resets caused loss of context or the first execution was unsatisfying. Image-based inputs ("El usuario envió una imagen") appeared at least twice, handled passively as description prompts rather than proactively routed to NorthStar until Fede explicitly requested it.
+
+### Research notes
+Day ~89 of the longitudinal record. Two observations for the co-evolution paper. First, the **aspirations correction** is a Phase 3 marker of a different kind: the operator is now explicitly engineering Jarvis's long-term memory by issuing direct storage commands when retrieval fails — the user is becoming an active architect of the agent's identity model, not just a consumer of its outputs. Second, the **algebra tutoring request** at day's end — completely orthogonal to all other activities — reinforces the cross-register fluidity pattern: Fede uses Jarvis as a unified interface across domains without any apparent hesitation, from systems architecture to real estate to personal branding to arithmetic pedagogy. The zero-friction mode-switching is a durable Phase 3 characteristic.
