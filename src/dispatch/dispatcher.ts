@@ -21,6 +21,7 @@ import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
+import { ritualContext } from "../tools/flailing-guard.js";
 
 const log = createLogger("dispatch");
 
@@ -59,6 +60,18 @@ export interface TaskSubmission {
    * Defaults to 0 for fresh submissions.
    */
   retryCount?: number;
+  /**
+   * Ritual identifier (e.g. "evolution-log", "morning-briefing"). Set by the
+   * scheduler for scheduled-ritual tasks. When present, dispatchWithSlot
+   * wraps `runner.execute()` in `ritualContext.run({ ritualId })` so the
+   * flailing-guard short-circuits across the runner's tool-call loop. Any
+   * sub-task spawned by this runner inherits the exemption via ALS — see
+   * the head comment in flailing-guard.ts for the rationale. See P1+P2 in
+   * the 2026-05-24 /diagnose run: ritual SELECT/curl chains were tripping
+   * FLAILING strikes and steering Jarvis to write "API unreachable" in
+   * EVOLUTION-LOG.md even when the API was healthy.
+   */
+  ritualId?: string;
 }
 
 export interface TaskRow {
@@ -396,7 +409,14 @@ async function dispatchWithSlot(
   taskStarted(agentType);
   try {
     const start = Date.now();
-    const result = await runner.execute(input);
+    // Ritual tasks: wrap the runner's entire async execution in ritualContext
+    // so the flailing-guard short-circuits across all shell_exec calls inside
+    // the LLM loop. Non-ritual submissions skip the wrap entirely, preserving
+    // the original process-global guard behavior for normal traffic.
+    const ritualId = submission.ritualId;
+    const result = await (ritualId
+      ? ritualContext.run({ ritualId }, () => runner.execute(input))
+      : runner.execute(input));
     const durationMs = Date.now() - start;
 
     // Update run

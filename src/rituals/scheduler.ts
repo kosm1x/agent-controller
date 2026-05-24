@@ -168,6 +168,10 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
 
   const template = getTaskTemplate(ritual);
   template.interactive = false; // Rituals have no interactive user
+  // Tag the submission so dispatcher.ts wraps runner.execute() in
+  // ritualContext, exempting the ritual's legitimate SELECT/curl chains from
+  // the flailing-guard. See P1+P2 in feedback_evolution_log_misattribution.
+  template.ritualId = ritual.id;
 
   try {
     const result = await submitTask(template);

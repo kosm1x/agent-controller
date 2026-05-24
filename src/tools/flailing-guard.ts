@@ -23,7 +23,41 @@
  *   does false-positive, the runner's escalation message is still actionable
  *   (operator sees what was attempted), so the failure mode is "stops slightly
  *   early" not "ships bad code."
+ *
+ * Ritual exemption (2026-05-24, P1+P2 evolution-log diagnosis)
+ *   The evolution-log ritual legitimately runs ~15 sequential `mc-ctl db
+ *   "SELECT ..."` calls and ~3 sequential `curl http://localhost:8080/api/...`
+ *   calls to assemble the daily entry. Token extraction collides on "select"
+ *   and "localhost", tripping FLAILING strikes mid-ritual. Each blocked call
+ *   then steered Jarvis toward writing "API unreachable" in the log even though
+ *   the loopback was healthy. Per-task ALS is the right plumbing here despite
+ *   the comment above: the cost is a single wrap at the dispatcher's
+ *   runner.execute() seam (not per-tool), and rituals are the one class of
+ *   task where the legitimate signal/strike-noise ratio inverts.
+ *
+ *   Sub-task inheritance: if a ritual ever spawns a sub-task (swarm/batch
+ *   dispatch from inside the runner's tool loop), that sub-task INHERITS the
+ *   exemption because ALS stores propagate down the async chain. This is
+ *   intentional for the current ritual set (all `fast` agent type, no sub-task
+ *   spawn). If a future ritual is changed to spawn a swarm whose sub-tasks
+ *   legitimately need flailing protection, wrap each dispatchWithSlot in
+ *   `ritualContext.run({ ritualId: '' }, ...)` for non-ritual children and
+ *   gate `isInRitualContext()` on non-empty ritualId.
  */
+
+import { AsyncLocalStorage } from "async_hooks";
+
+/** Set by the dispatcher around `runner.execute()` for ritual-tagged
+ *  submissions. When a store exists, the guard is fully bypassed: no strikes
+ *  checked, no calls recorded. Recording must also be skipped so the ritual's
+ *  legitimate-but-repeating SELECT/curl chain doesn't poison the buffer for
+ *  the next non-ritual task that runs within the 5-min window. */
+export const ritualContext = new AsyncLocalStorage<{ ritualId: string }>();
+
+/** Returns true when the current async context is inside a ritual task. */
+export function isInRitualContext(): boolean {
+  return ritualContext.getStore() !== undefined;
+}
 
 interface CallRecord {
   command: string;
@@ -197,6 +231,7 @@ export function checkFlailing(
   command: string,
   now: number = Date.now(),
 ): { token: string; strikes: number } | null {
+  if (isInRitualContext()) return null;
   prune(now);
   const tokens = extractTokens(command);
   if (tokens.size === 0) return null;
@@ -221,6 +256,7 @@ export function recordCall(
   exitCode: number,
   now: number = Date.now(),
 ): void {
+  if (isInRitualContext()) return;
   prune(now);
   history.push({
     command,

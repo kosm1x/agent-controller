@@ -71,6 +71,16 @@ export function createEvolutionLogEntry(dateLabel: string): TaskSubmission {
 3. Call memory_search with query "user interactions" in bank "jarvis" to recall today's interactions.
 4. Call memory_reflect with query "What patterns emerged in today's conversations? What did the user care about? What went well and what caused friction?" in bank "jarvis".
 
+## How to describe data-collection problems in the entry
+
+Be precise. The log is a longitudinal research record — sloppy language about infrastructure compounds across days. Distinguish three states and describe each accurately:
+
+- **Healthy + non-empty**: data returned. Use it.
+- **Healthy + empty**: the API responded successfully but had nothing for today (low-friction day, low recall coverage, etc.). Write: "No new patterns surfaced via memory_reflect today" — NOT "API unreachable", NOT "data inaccessible".
+- **Actually unreachable**: the HTTP loopback failed (timeout, connection refused, non-2xx). Before writing any "unreachable" or "API down" language, you MUST verify by running: \`curl -sS -m 5 -o /dev/null -w "%{http_code}\\n" http://localhost:8080/health\`. If that returns 200, the API is healthy and any thin recall result is state (b), not state (c). Only if the curl itself fails (non-2xx or timeout) may you write "API unreachable" in the log.
+
+This rule exists because the 2026-05-22 and 2026-05-23 entries wrote "API unreachable at log-writing time" when the API was in fact healthy and just returned empty recall — misattributing recall coverage to network state.
+
 ## What to write
 
 Based on the data above, compose a daily log entry in this EXACT format (in English):
