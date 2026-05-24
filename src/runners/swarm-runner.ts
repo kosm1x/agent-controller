@@ -222,11 +222,21 @@ function attemptSubtaskRetry(
   // dispatcher pattern at dispatcher.ts:471 (_isRequiredToolRetry path).
   // The tracker rewire happens synchronously below so the next poll sees
   // the new state.
+  //
+  // Forward `failedTask.agent_type` so the classifier honors the original
+  // explicit pick (sibling fix to the reactions-manager forwarding —
+  // commit `ef5b04e` follow-on). Without this, swarm sub-task retries
+  // re-classify and can land on the wrong runner the same way ritual
+  // retries did (the skill-evolution heavy → nanoclaw cascade). Note: this
+  // path does NOT forward `ritualId` — sub-tasks aren't currently tagged
+  // with the parent's ritualId in this codebase. If a future swarm-class
+  // ritual is added, plumb ritualId through SwarmRetryContext.
   submitTask({
     title: `[Swarm-retry] ${goal.description.slice(0, 100)}`,
     description: retryDescription,
     parentTaskId: retryContext.parentTaskId,
     spawnType: "subtask",
+    agentType: failedTask.agent_type ?? undefined,
     tools: retryContext.tools,
     retryCount: failedTask.retry_count + 1,
   })

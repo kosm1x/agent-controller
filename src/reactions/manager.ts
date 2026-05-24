@@ -29,6 +29,28 @@ const STUCK_CHECK_INTERVAL_MS = 60_000; // 1 minute
 const STUCK_THRESHOLD_MINUTES = 15;
 const COOLDOWN_MS = 30_000; // 30 seconds between reactions for same task
 
+/**
+ * Parse `tasks.metadata` JSON for retry forwarding. Returns `{}` on null or
+ * parse error, logging the parse failure at warn level so corrupted metadata
+ * surfaces in journalctl (ritual retries that silently lose their
+ * agentType/tools/ritualId would otherwise cascade right back to the failure
+ * mode this forwarding exists to prevent — see commit `ef5b04e` follow-on).
+ */
+function parseTaskMeta(
+  taskId: string,
+  metadata: string | null,
+): { tags?: string[]; tools?: string[]; ritualId?: string } {
+  if (!metadata) return {};
+  try {
+    return JSON.parse(metadata);
+  } catch (err) {
+    console.warn(
+      `[reactions] task ${taskId} has malformed metadata, retry forwarding skipped: ${err instanceof Error ? err.message : err}`,
+    );
+    return {};
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -153,11 +175,15 @@ export class ReactionManager {
     try {
       switch (decision.action) {
         case "retry": {
+          const meta = parseTaskMeta(taskId, task.metadata);
           const result = await submitTask({
             title: task.title,
             description: task.description,
             priority: task.priority as "critical" | "high" | "medium" | "low",
-            tags: task.metadata ? JSON.parse(task.metadata).tags : undefined,
+            tags: meta.tags,
+            tools: meta.tools,
+            agentType: task.agent_type ?? undefined,
+            ritualId: meta.ritualId,
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",
@@ -181,12 +207,16 @@ export class ReactionManager {
         }
 
         case "retry_adjusted": {
+          const meta = parseTaskMeta(taskId, task.metadata);
           const adjustedDesc = `[Auto-retry] Previous attempt failed: ${error}\nAdjust your approach.\n\n${task.description}`;
           const result = await submitTask({
             title: task.title,
             description: adjustedDesc,
             priority: task.priority as "critical" | "high" | "medium" | "low",
-            tags: task.metadata ? JSON.parse(task.metadata).tags : undefined,
+            tags: meta.tags,
+            tools: meta.tools,
+            agentType: task.agent_type ?? undefined,
+            ritualId: meta.ritualId,
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",

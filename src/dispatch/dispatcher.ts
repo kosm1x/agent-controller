@@ -253,9 +253,22 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     agentType: classification.agentType,
     classification: JSON.stringify(classification),
     input: submission.input ? JSON.stringify(submission.input) : null,
-    metadata: submission.tags
-      ? JSON.stringify({ tags: submission.tags, tools: submission.tools })
-      : null,
+    // Persist metadata when ANY of tags/tools/ritualId is set. The earlier
+    // `tags ? {tags, tools} : null` shape silently dropped `tools` for
+    // submissions that had tools but no tags (e.g. ritual factories like
+    // createEvolutionRitual). On retry, the reactions manager couldn't
+    // recover the original tool subset because it was never persisted —
+    // the retry then went through the classifier with no hints and landed
+    // on the wrong runner. ritualId is also persisted so reaction-retried
+    // rituals inherit the flailing-guard exemption (yesterday's Fix 1).
+    metadata:
+      submission.tags || submission.tools || submission.ritualId
+        ? JSON.stringify({
+            ...(submission.tags && { tags: submission.tags }),
+            ...(submission.tools && { tools: submission.tools }),
+            ...(submission.ritualId && { ritualId: submission.ritualId }),
+          })
+        : null,
     retryCount: submission.retryCount ?? 0,
   });
 
@@ -496,7 +509,12 @@ async function dispatchWithSlot(
           return;
         }
 
-        // First attempt — auto-retry once with explicit instruction
+        // First attempt — auto-retry once with explicit instruction.
+        // The `...submission` spread preserves agentType, tools, ritualId,
+        // and every other field automatically — if this block is ever
+        // refactored to explicit field forwarding, remember to include
+        // ritualId so reaction-retried rituals keep the flailing-guard
+        // exemption (commit `ef5b04e`).
         log.warn(
           { taskId, missingTools: missing },
           "required tools missing, auto-retrying once",

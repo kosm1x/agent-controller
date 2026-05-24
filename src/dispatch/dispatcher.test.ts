@@ -123,6 +123,48 @@ describe("submitTask", () => {
     const args = mockRun.mock.calls[0][0];
     expect(args.priority).toBe("medium");
   });
+
+  it("persists tools in metadata even when tags is absent (P3 cascade fix)", async () => {
+    // Before the fix, metadata was only written when `tags` was truthy, so a
+    // ritual submission with tools but no tags lost the tools list on retry.
+    await submitTask({
+      title: "Tools without tags",
+      description: "Ritual-style submission",
+      tools: ["evolution_get_data", "memory_store"],
+    });
+
+    const args = mockRun.mock.calls[0][0];
+    expect(args.metadata).not.toBeNull();
+    const parsed = JSON.parse(args.metadata as string);
+    expect(parsed.tools).toEqual(["evolution_get_data", "memory_store"]);
+    expect(parsed.tags).toBeUndefined();
+    expect(parsed.ritualId).toBeUndefined();
+  });
+
+  it("persists ritualId in metadata for reaction-retry inheritance", async () => {
+    await submitTask({
+      title: "Skill evolution — 2026-05-24",
+      description: "Ritual submission",
+      agentType: "heavy",
+      tools: ["evolution_get_data"],
+      ritualId: "skill-evolution",
+    });
+
+    const args = mockRun.mock.calls[0][0];
+    const parsed = JSON.parse(args.metadata as string);
+    expect(parsed.ritualId).toBe("skill-evolution");
+    expect(parsed.tools).toEqual(["evolution_get_data"]);
+  });
+
+  it("leaves metadata null when none of tags/tools/ritualId are set", async () => {
+    await submitTask({
+      title: "Bare submission",
+      description: "Nothing extra",
+    });
+
+    const args = mockRun.mock.calls[0][0];
+    expect(args.metadata).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

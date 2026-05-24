@@ -46,7 +46,35 @@ vi.mock("../dispatch/dispatcher.js", () => ({
         status: "failed",
         error: "Failed",
         classification: null,
+        agent_type: null,
         metadata: null,
+      };
+    }
+    // Skill-evolution-style ritual task: explicit agentType=heavy, curated
+    // tools list, ritualId tag. Used to verify retry forwarding (queue P3).
+    if (taskId === "task-ritual") {
+      return {
+        task_id: "task-ritual",
+        spawn_type: "root",
+        title: "Skill evolution — 2026-05-24",
+        description: "Ritual description",
+        priority: "medium",
+        status: "failed",
+        error: "Planning failed: LLM plan response missing 'goals' array",
+        classification: JSON.stringify({
+          agentType: "heavy",
+          score: -1,
+          explicit: true,
+        }),
+        agent_type: "heavy",
+        metadata: JSON.stringify({
+          tools: [
+            "evolution_get_data",
+            "evolution_deactivate_skill",
+            "memory_store",
+          ],
+          ritualId: "skill-evolution",
+        }),
       };
     }
     return {
@@ -58,6 +86,7 @@ vi.mock("../dispatch/dispatcher.js", () => ({
       status: "failed",
       error: "Something went wrong",
       classification: JSON.stringify({ agentType: "fast" }),
+      agent_type: "fast",
       metadata: null,
     };
   }),
@@ -205,6 +234,50 @@ describe("ReactionManager", () => {
     expect(reactions).toHaveLength(1);
     expect(reactions[0].action).toBe("suppress");
     expect(reactions[0].status).toBe("suppressed");
+  });
+
+  it("retry forwards agent_type + tools + ritualId from the failed ritual task (P3 cascade fix)", async () => {
+    // task-ritual is the failed Skill-evolution-style mock with explicit
+    // agentType=heavy, curated tools, ritualId. Before this fix the retry
+    // submission dropped these and the classifier re-routed to nanoclaw
+    // (which can't handle the workload). Verify all three are forwarded.
+    await triggerTaskFailed("task-ritual", "Request timeout after 30s");
+
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const call = mockSubmitTask.mock.calls[0][0];
+    expect(call.agentType).toBe("heavy");
+    expect(call.tools).toEqual([
+      "evolution_get_data",
+      "evolution_deactivate_skill",
+      "memory_store",
+    ]);
+    expect(call.ritualId).toBe("skill-evolution");
+  });
+
+  it("retry_adjusted forwards agent_type + tools + ritualId from the failed ritual task", async () => {
+    await triggerTaskFailed("task-ritual", "Tool xyz not found");
+
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const call = mockSubmitTask.mock.calls[0][0];
+    expect(call.description).toContain("[Auto-retry]");
+    expect(call.agentType).toBe("heavy");
+    expect(call.tools).toEqual([
+      "evolution_get_data",
+      "evolution_deactivate_skill",
+      "memory_store",
+    ]);
+    expect(call.ritualId).toBe("skill-evolution");
+  });
+
+  it("retry of a non-ritual task with null metadata still forwards agent_type (no crash on missing tools/ritualId)", async () => {
+    // task-1 mock has metadata=null. Forwarding logic must default safely.
+    await triggerTaskFailed("task-1", "Request timeout after 30s");
+
+    const call = mockSubmitTask.mock.calls[0][0];
+    expect(call.agentType).toBe("fast");
+    expect(call.tools).toBeUndefined();
+    expect(call.ritualId).toBeUndefined();
+    expect(call.tags).toBeUndefined();
   });
 
   it("skips subtask failures (managed by swarm runner)", async () => {
