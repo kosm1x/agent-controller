@@ -84,8 +84,25 @@ export interface Config {
   /** A2A agent base URL for discovery card (optional). */
   a2aUrl?: string;
 
-  /** Enable budget enforcement (default: false). */
+  /**
+   * Enable the budget gate (default: false). When true, the dispatcher
+   * evaluates the three-window status (hourly/daily/monthly) on each
+   * dispatch and logs a warn line (rate-limited per window) when any
+   * window is over. Whether to BLOCK the task is a separate toggle
+   * (`budgetEnforce`). Cost recording itself happens regardless of this
+   * flag — only the dispatch-time check is gated. Set false to silence
+   * the gate entirely (no warn, no block).
+   */
   budgetEnabled: boolean;
+  /**
+   * Enforce the budget gate by blocking tasks when a window is exceeded
+   * (default: false — soft-cap mode). Requires `budgetEnabled` to be true;
+   * if `budgetEnabled` is false, this has no effect. The soft-cap default
+   * matches operator preference: track spend, surface breaches in the log
+   * and at /health, but never block a task. Flip to true to revert to hard
+   * enforcement (the pre-2026-05-24 behavior).
+   */
+  budgetEnforce: boolean;
   /** Daily spend limit in USD (default: 10.0). */
   budgetDailyLimitUsd: number;
   /** Hourly spend limit in USD (default: 2.0). */
@@ -207,6 +224,9 @@ export function loadConfig(): Config {
     a2aUrl: optional("A2A_AGENT_URL"),
 
     budgetEnabled: process.env.BUDGET_ENABLED === "true",
+    // Soft-cap mode by default: gate logs + emits when exceeded but does
+    // NOT block tasks. Flip to "true" to restore hard enforcement.
+    budgetEnforce: process.env.BUDGET_ENFORCE === "true",
     budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 10.0),
     budgetHourlyLimitUsd: float("BUDGET_HOURLY_LIMIT_USD", 2.0),
     budgetMonthlyLimitUsd: float("BUDGET_MONTHLY_LIMIT_USD", 400.0),

@@ -23,6 +23,13 @@ import { stripCacheMarker } from "../messaging/router.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";
 
+// Per-window soft-cap warn timestamps. Rate-limits the warn log so an
+// operator over budget for the rest of the month doesn't get 60+ warn
+// lines/hour burying other warnings in journalctl. One warn per window
+// per WARN_INTERVAL_MS, separately tracked for hourly/daily/monthly.
+const SOFT_CAP_WARN_INTERVAL_MS = 60_000;
+const lastSoftCapWarnAt: Record<string, number> = {};
+
 const log = createLogger("dispatch");
 
 // ---------------------------------------------------------------------------
@@ -322,23 +329,65 @@ async function dispatchTask(
     return;
   }
 
-  // Budget enforcement — block new tasks if any spending window exceeded
+  // Budget gate. Soft-cap mode by default (log + emit but don't block);
+  // hard-enforce when config.budgetEnforce is true. Either way, requires
+  // config.budgetEnabled to fire at all — if disabled, no warn, no block.
+  // See P6 from 2026-05-24 /diagnose: operator chose soft-cap so spend
+  // is observable without surprising task-blocking.
   const config = getConfig();
   if (config.budgetEnabled && isAnyWindowExceeded()) {
     const windows = getThreeWindowStatus();
-    const exceeded = windows.hourly.exceeded
-      ? `hourly ($${windows.hourly.limit.toFixed(2)})`
+    const exceededWindow = windows.hourly.exceeded
+      ? {
+          name: "hourly",
+          spend: windows.hourly.spend,
+          limit: windows.hourly.limit,
+        }
       : windows.daily.exceeded
-        ? `daily ($${windows.daily.limit.toFixed(2)})`
-        : `monthly ($${windows.monthly.limit.toFixed(2)})`;
-    log.info({ taskId, exceeded }, "task blocked: budget exceeded");
-    updateTaskStatus(
-      taskId,
-      "blocked",
-      undefined,
-      `Budget exceeded: ${exceeded} limit reached`,
-    );
-    return;
+        ? {
+            name: "daily",
+            spend: windows.daily.spend,
+            limit: windows.daily.limit,
+          }
+        : {
+            name: "monthly",
+            spend: windows.monthly.spend,
+            limit: windows.monthly.limit,
+          };
+    const exceededLabel = `${exceededWindow.name} ($${exceededWindow.spend.toFixed(2)} / $${exceededWindow.limit.toFixed(2)})`;
+
+    if (config.budgetEnforce) {
+      log.info(
+        { taskId, exceeded: exceededLabel, enforce: true },
+        "task blocked: budget exceeded",
+      );
+      updateTaskStatus(
+        taskId,
+        "blocked",
+        undefined,
+        `Budget exceeded: ${exceededWindow.name} limit reached`,
+      );
+      return;
+    }
+
+    // Soft-cap: log warn (rate-limited per window) so the breach is
+    // visible in journalctl without burying every other warning when
+    // the operator is over budget for the rest of the month. The
+    // /health endpoint exposes the live per-window state for dashboards.
+    const now = Date.now();
+    const lastWarnAt = lastSoftCapWarnAt[exceededWindow.name] ?? 0;
+    if (now - lastWarnAt >= SOFT_CAP_WARN_INTERVAL_MS) {
+      log.warn(
+        {
+          taskId,
+          exceeded: exceededLabel,
+          enforce: false,
+        },
+        "budget soft-cap exceeded (tracking only, task proceeds)",
+      );
+      lastSoftCapWarnAt[exceededWindow.name] = now;
+    }
+    // Fall through to dispatch.
   }
 
   // Container concurrency check

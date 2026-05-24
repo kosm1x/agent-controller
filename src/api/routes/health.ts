@@ -83,6 +83,7 @@ health.get("/health", async (c) => {
 
   const providers = providerMetrics.getAllStats();
   const budget = getBudgetStatus();
+  const budgetCfg = getConfig();
   const kbStats = await getKbHealthStats().catch(() => null);
 
   return c.json(
@@ -98,6 +99,18 @@ health.get("/health", async (c) => {
         dailyLimit: budget.dailyLimit,
         remaining: +budget.remaining.toFixed(4),
         threeWindow: getThreeWindowStatus(),
+        // P6 (2026-05-24): expose the gate mode so operators can tell at a
+        // glance whether breaches will block or only warn. `enforce` is
+        // normalized to the effective value — `BUDGET_ENFORCE=true` with
+        // `BUDGET_ENABLED=false` reports `enforce: false` since the gate
+        // can't actually fire, matching the `mode: "disabled"` semantic.
+        enabled: budgetCfg.budgetEnabled,
+        enforce: budgetCfg.budgetEnabled && budgetCfg.budgetEnforce,
+        mode: budgetCfg.budgetEnabled
+          ? budgetCfg.budgetEnforce
+            ? "enforce"
+            : "soft-cap"
+          : "disabled",
       },
       tools: toolMetrics.getSummary(),
       commitEvents: eventMetrics.getSummary(),
