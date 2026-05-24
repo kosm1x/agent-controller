@@ -34,6 +34,16 @@ const WINDOW_DAYS = 14;
 const MIN_TASKS = 3;
 /** Defensive cap on the failed-task scan. */
 const MAX_FAILED_TASKS = 2000;
+/**
+ * A cluster with no new failure in this many days is auto-resolved and
+ * stops surfacing. Longer than the longest nanoclaw daily-cron interval
+ * (so a daily failure doesn't keep flipping), short enough that a fixed
+ * blocker drops off the briefing within ~one session.
+ * 2026-05-24: introduced after the morning ritual confidently recommended
+ * a docker rebuild for clusters whose last failure was 1–10 days old and
+ * whose fixes had already shipped (`d9f4d15` / `6020c61`).
+ */
+const STALE_AFTER_DAYS = 3;
 
 /** Lowercase + whitespace-collapse — the spec §8 `error_text_normalized`. */
 function normalizeError(text: string): string {
@@ -107,7 +117,7 @@ export function detectRecurringBlockers(
     }
   }
 
-  const surfaced = [...clusters.values()].filter(
+  const meetingMinTasks = [...clusters.values()].filter(
     (c) => c.taskIds.size >= minTasks,
   );
 
@@ -117,9 +127,25 @@ export function detectRecurringBlockers(
          (blocker_signature, first_seen_at, last_seen_at, task_count, task_ids_json)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(blocker_signature) DO UPDATE SET
-         last_seen_at  = excluded.last_seen_at,
-         task_count    = excluded.task_count,
-         task_ids_json = excluded.task_ids_json`,
+         last_seen_at      = excluded.last_seen_at,
+         task_count        = excluded.task_count,
+         task_ids_json     = excluded.task_ids_json,
+         resolved_at       = NULL,
+         resolution_signal = NULL`,
+    );
+    // Auto-resolve any cluster whose newest failure is older than the
+    // staleness window. Hits (1) clusters re-upserted this run with stale
+    // lastSeen, (2) prior rows that received no new failure (their
+    // last_seen_at sticks at the old value), and re-resolves a previously-
+    // resolved cluster whose new last_seen_at is STILL stale — the upsert
+    // above unconditionally clears resolved_at so a genuine recurrence
+    // re-surfaces (audit C1).
+    const autoResolve = db.prepare(
+      `UPDATE recurring_blockers
+          SET resolved_at = datetime('now'),
+              resolution_signal = 'auto-stale'
+        WHERE resolved_at IS NULL
+          AND last_seen_at < datetime('now', ?)`,
     );
     const tx = db.transaction((cs: Cluster[]) => {
       for (const c of cs) {
@@ -131,36 +157,58 @@ export function detectRecurringBlockers(
           JSON.stringify([...c.taskIds]),
         );
       }
+      autoResolve.run(`-${STALE_AFTER_DAYS} days`);
     });
-    tx(surfaced);
+    tx(meetingMinTasks);
   });
 
-  // Read first_seen_at back from the rows: on an upsert CONFLICT the column
-  // is intentionally NOT updated, so a blocker first seen before this
-  // window keeps its true age — the in-window `c.firstSeen` would understate
-  // it (audit W3).
-  const trueFirstSeen = new Map<string, string>();
-  for (const c of surfaced) {
-    const row = db
-      .prepare(
-        "SELECT first_seen_at FROM recurring_blockers WHERE blocker_signature = ?",
-      )
-      .get(c.signature) as { first_seen_at: string } | undefined;
-    if (row) trueFirstSeen.set(c.signature, row.first_seen_at);
+  // Read first_seen_at + resolved_at back from the rows. first_seen_at: on
+  // an upsert CONFLICT the column is intentionally NOT updated, so a
+  // blocker first seen before this window keeps its true age — the in-window
+  // `c.firstSeen` would understate it (audit W3). resolved_at: the just-run
+  // auto-resolve UPDATE may have flipped this cluster to resolved; we filter
+  // those out of the surface so the briefing doesn't recommend fixes for
+  // blockers that have already gone quiet.
+  const persistedRow = db.prepare(
+    "SELECT first_seen_at, resolved_at FROM recurring_blockers WHERE blocker_signature = ?",
+  );
+  const surfaced: Array<{ cluster: Cluster; trueFirstSeen: string }> = [];
+  for (const c of meetingMinTasks) {
+    const row = persistedRow.get(c.signature) as
+      | { first_seen_at: string; resolved_at: string | null }
+      | undefined;
+    if (!row) continue;
+    if (row.resolved_at !== null) continue;
+    surfaced.push({ cluster: c, trueFirstSeen: row.first_seen_at });
   }
 
-  return surfaced.map((c) => {
+  return surfaced.map(({ cluster: c, trueFirstSeen }) => {
     const taskIds = [...c.taskIds];
+    const daysAgo = daysSince(c.lastSeen);
+    const recency =
+      daysAgo === 0 ? "today" : daysAgo === 1 ? "1d ago" : `${daysAgo}d ago`;
     return {
       kind: "recurring_blocker",
       severity: "at_risk",
       summary:
-        `Blocker recurred across ${taskIds.length} tasks: ` +
+        `Blocker recurred across ${taskIds.length} tasks (last seen ${recency}): ` +
         `"${c.sampleText.slice(0, 80).replace(/\s+/g, " ").trim()}"`,
       blockerSignature: c.signature,
       taskCount: taskIds.length,
       taskIds,
-      firstSeenAt: trueFirstSeen.get(c.signature) ?? c.firstSeen,
+      firstSeenAt: trueFirstSeen,
+      lastSeenAt: c.lastSeen,
     };
   });
+}
+
+/** Whole days between a UTC timestamp string and now. Accepts both the SQLite
+ * `datetime('now')` format ("YYYY-MM-DD HH:MM:SS", naive UTC) and an ISO 8601
+ * string ending in "Z". Returns 0 for unparseable inputs (better to under-
+ * report staleness than to mis-parse and silently lie). */
+function daysSince(ts: string): number {
+  const normalized = /Z$/i.test(ts) ? ts : ts.replace(" ", "T") + "Z";
+  const ms = Date.parse(normalized);
+  if (Number.isNaN(ms)) return 0;
+  return Math.max(0, Math.floor((Date.now() - ms) / 86_400_000));
 }

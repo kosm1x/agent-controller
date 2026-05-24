@@ -66,6 +66,10 @@ export interface RecurringBlockerSignal extends BaseSignal {
   taskCount: number;
   taskIds: string[];
   firstSeenAt: string;
+  /** Last time a failure with this signature was seen — needed so the
+   * judgment prompt can downweight clusters whose fix has already shipped
+   * (the staleness gate in `detectRecurringBlockers` is belt; this is suspenders). */
+  lastSeenAt: string;
 }
 
 export type DetectionSignal =

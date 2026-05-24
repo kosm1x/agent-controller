@@ -44,6 +44,7 @@ const blockerSignal: DetectionSignal = {
   taskCount: 3,
   taskIds: ["t-1", "t-2", "t-3"],
   firstSeenAt: "2026-05-10T00:00:00.000Z",
+  lastSeenAt: "2026-05-23T00:00:00.000Z",
 };
 
 function makeInput(

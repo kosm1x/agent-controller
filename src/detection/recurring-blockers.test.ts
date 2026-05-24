@@ -45,6 +45,8 @@ describe("detectRecurringBlockers", () => {
     expect(signals[0]!.kind).toBe("recurring_blocker");
     expect(signals[0]!.taskCount).toBe(3);
     expect(signals[0]!.taskIds).toHaveLength(3);
+    expect(signals[0]!.lastSeenAt).toBeTruthy();
+    expect(signals[0]!.summary).toContain("(last seen today)");
     expect(rbCount()).toBe(1);
   });
 
@@ -101,5 +103,77 @@ describe("detectRecurringBlockers", () => {
     insertFailed({ error: "twice" });
     insertFailed({ error: "twice" });
     expect(detectRecurringBlockers({ minTasks: 2 })).toHaveLength(1);
+  });
+
+  it("auto-resolves a cluster whose newest failure is older than 3 days", () => {
+    for (let i = 0; i < 3; i++)
+      insertFailed({ error: "fixed-since", ageDays: 5 });
+    const signals = detectRecurringBlockers();
+    expect(signals).toEqual([]);
+    const row = getDatabase()
+      .prepare("SELECT resolved_at, resolution_signal FROM recurring_blockers")
+      .get() as {
+      resolved_at: string | null;
+      resolution_signal: string | null;
+    };
+    expect(row.resolved_at).not.toBeNull();
+    expect(row.resolution_signal).toBe("auto-stale");
+  });
+
+  it("does NOT auto-resolve a cluster with a recent failure (last_seen < 3d)", () => {
+    // Two old + one fresh — cluster's last_seen is today, NOT stale.
+    insertFailed({ error: "still-live", ageDays: 5 });
+    insertFailed({ error: "still-live", ageDays: 5 });
+    insertFailed({ error: "still-live", ageDays: 0 });
+    const signals = detectRecurringBlockers();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]!.taskCount).toBe(3);
+    const row = getDatabase()
+      .prepare("SELECT resolved_at FROM recurring_blockers")
+      .get() as { resolved_at: string | null };
+    expect(row.resolved_at).toBeNull();
+  });
+
+  it("does not re-surface a previously-resolved cluster on subsequent runs", () => {
+    // First run: all old → auto-resolved.
+    for (let i = 0; i < 3; i++)
+      insertFailed({ error: "gone-quiet", ageDays: 5 });
+    expect(detectRecurringBlockers()).toEqual([]);
+    // Second run with no new failures: still resolved, still not surfaced.
+    const signals = detectRecurringBlockers();
+    expect(signals).toEqual([]);
+  });
+
+  it("RE-surfaces a previously-resolved cluster when a NEW failure arrives", () => {
+    // Audit C1 regression guard: once a cluster has been auto-resolved, a
+    // genuine recurrence must re-surface. Without the `resolved_at = NULL`
+    // clause on the upsert, the cluster would stay resolved forever and the
+    // operator would never hear about the relapse.
+    for (let i = 0; i < 3; i++)
+      insertFailed({ error: "comes-back", ageDays: 5 });
+    expect(detectRecurringBlockers()).toEqual([]);
+    let row = getDatabase()
+      .prepare("SELECT resolved_at FROM recurring_blockers")
+      .get() as { resolved_at: string | null };
+    expect(row.resolved_at).not.toBeNull();
+
+    insertFailed({ error: "comes-back", ageDays: 0 });
+    const signals = detectRecurringBlockers();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]!.taskCount).toBe(4);
+    expect(signals[0]!.summary).toContain("(last seen today)");
+    row = getDatabase()
+      .prepare("SELECT resolved_at FROM recurring_blockers")
+      .get() as { resolved_at: string | null };
+    expect(row.resolved_at).toBeNull();
+  });
+
+  it("includes a days-ago hint in the summary for the LLM judge", () => {
+    // Mix of 2-day-old failures; last_seen will be 2d, not stale yet.
+    for (let i = 0; i < 3; i++)
+      insertFailed({ error: "warm but cooling", ageDays: 2 });
+    const signals = detectRecurringBlockers();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]!.summary).toContain("(last seen 2d ago)");
   });
 });
