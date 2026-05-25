@@ -18,7 +18,6 @@ let testKbDir: string;
 
 const SILENT: BackfillLog = {
   info: () => {},
-  warn: () => {},
 };
 
 function seedSkill(name: string, description: string): void {

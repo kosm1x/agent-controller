@@ -17,7 +17,10 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { createLogger } from "../lib/logger.js";
 import { embedAndStoreSkill } from "./embedding.js";
+
+const moduleLog = createLogger("skills:backfill");
 
 export interface BackfillResult {
   considered: number;
@@ -37,12 +40,14 @@ export interface BackfillOptions {
 
 export interface BackfillLog {
   info(msg: string, fields?: Record<string, unknown>): void;
-  warn(msg: string, fields?: Record<string, unknown>): void;
 }
 
+// BackfillLog signature is `info(msg, fields)` (caller-friendly,
+// console-style). Pino's native shape is the inverse: `info(fields, msg)`.
+// This default translates between the two. Test callers (SILENT)
+// implement the interface directly and skip the translation.
 const DEFAULT_LOG: BackfillLog = {
-  info: (msg, fields) => console.log("[skills:backfill]", msg, fields ?? ""),
-  warn: (msg, fields) => console.warn("[skills:backfill]", msg, fields ?? ""),
+  info: (msg, fields) => moduleLog.info(fields ?? {}, msg),
 };
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));

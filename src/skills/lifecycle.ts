@@ -30,6 +30,7 @@
  * helper may wrap this in a retry loop.
  */
 
+import { createLogger } from "../lib/logger.js";
 import {
   runSkillCritic,
   SkillCriticOptions,
@@ -44,6 +45,8 @@ import {
   pointSkillAtVersion,
   recordVersion,
 } from "./storage.js";
+
+const log = createLogger("skills:lifecycle");
 
 export interface SkillSaveOptions {
   /**
@@ -189,17 +192,17 @@ export async function skillSave(
   try {
     const embedded = await embedAndStoreSkill(skillId, parsed.frontmatter);
     if (!embedded) {
-      console.info(
-        "[skills:lifecycle] embedding skipped (embed returned null — check EMBEDDING_KEY/EMBEDDING_PROVIDER):",
+      log.info(
         { skillId, name: parsed.frontmatter.name },
+        "embedding skipped (embed returned null — check EMBEDDING_KEY/EMBEDDING_PROVIDER)",
       );
     }
   } catch (err) {
     // Defensive — embedAndStoreSkill swallows network errors already,
     // but any throw must not flip an accepted save into a failure.
-    console.warn(
-      "[skills:lifecycle] embedding update failed (non-fatal):",
-      err instanceof Error ? err.message : String(err),
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "embedding update failed (non-fatal)",
     );
   }
 

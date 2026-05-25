@@ -260,6 +260,13 @@ cmd_task() {
   local id="$1"
   [ -n "$id" ] || die "Usage: mc-ctl task <task_id>"
 
+  # Queue #233 S4-B3-R2: guard ${id} before SQL interpolation. Same shape
+  # as cmd_cancel — task_ids are UUIDs from crypto.randomUUID; the guard
+  # blocks SQL injection in the sql_raw path below.
+  if [[ ! "$id" =~ ^[a-zA-Z0-9_-]{4,64}$ ]]; then
+    die "Invalid task_id format: '${id}' (expected alphanumeric+dash+underscore, 4-64 chars)"
+  fi
+
   echo -e "${BOLD}=== Task Detail ===${NC}"
   echo ""
   sql "SELECT task_id, title, status, priority, agent_type, classification,
@@ -435,6 +442,13 @@ cmd_schedules() {
 cmd_schedule_delete() {
   local id="$1"
   [ -n "$id" ] || die "Usage: mc-ctl schedule-delete <schedule_id>"
+
+  # Queue #233 S4-B3-R2: guard ${id} before SQL interpolation. Schedule
+  # ids are UUIDs (crypto.randomUUID); guard mirrors cmd_cancel's shape
+  # and blocks injection in the sql_raw DELETE below.
+  if [[ ! "$id" =~ ^[a-zA-Z0-9_-]{4,64}$ ]]; then
+    die "Invalid schedule_id format: '${id}' (expected alphanumeric+dash+underscore, 4-64 chars)"
+  fi
 
   need_db
   local changes

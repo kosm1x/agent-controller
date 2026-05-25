@@ -18,6 +18,7 @@
 
 import cron, { type ScheduledTask } from "node-cron";
 import { getDatabase } from "../db/index.js";
+import { createLogger } from "../lib/logger.js";
 import { runSkillTests } from "./test-runner.js";
 
 const SWEEP_TIMEZONE = "America/Mexico_City";
@@ -32,9 +33,13 @@ export interface SweepLog {
   warn(msg: string, fields?: Record<string, unknown>): void;
 }
 
+// DEFAULT_LOG bridges callers' (msg, fields) console-style signature to
+// pino's (fields, msg) order. Tests pass `SILENT` directly; only the
+// default path translates.
+const moduleLog = createLogger("skills:sweep");
 const DEFAULT_LOG: SweepLog = {
-  info: (msg, fields) => console.log("[skills:sweep]", msg, fields ?? ""),
-  warn: (msg, fields) => console.warn("[skills:sweep]", msg, fields ?? ""),
+  info: (msg, fields) => moduleLog.info(fields ?? {}, msg),
+  warn: (msg, fields) => moduleLog.warn(fields ?? {}, msg),
 };
 
 /**

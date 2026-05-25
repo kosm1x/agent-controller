@@ -25,7 +25,10 @@
 import { randomUUID } from "crypto";
 import { getDatabase } from "../db/index.js";
 import { recordCost } from "../budget/service.js";
+import { createLogger } from "../lib/logger.js";
 import { recordSkillRun } from "../observability/prometheus.js";
+
+const log = createLogger("skills:dispatcher");
 import { runSkillPrompt, type MiniRunUsage } from "./mini-runner.js";
 import { validateSkillArgs } from "./inputs.js";
 
@@ -33,8 +36,21 @@ import { validateSkillArgs } from "./inputs.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Spec §15 Q4: depth bound 3. */
-export const MAX_SKILL_CALL_DEPTH = 3;
+/**
+ * Spec §15 Q4: depth bound 3 by default. Override via
+ * `MC_MAX_SKILL_CALL_DEPTH` env var (positive integer, capped at
+ * `MAX_REASONABLE_SKILL_CALL_DEPTH`). Invalid values silently fall back
+ * to the default to avoid boot failure on typos.
+ */
+const MAX_REASONABLE_SKILL_CALL_DEPTH = 20;
+function readMaxSkillCallDepth(): number {
+  const raw = process.env.MC_MAX_SKILL_CALL_DEPTH;
+  if (raw === undefined || raw === "") return 3;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return 3;
+  return Math.min(parsed, MAX_REASONABLE_SKILL_CALL_DEPTH);
+}
+export const MAX_SKILL_CALL_DEPTH = readMaxSkillCallDepth();
 
 /** Default model recorded into cost_ledger when the adapter doesn't surface one. */
 const COST_LEDGER_FALLBACK_MODEL = "skill-runner";
@@ -536,9 +552,9 @@ function writeCostLedger(ctx: CostCtx): void {
     });
   } catch (err) {
     // Cost ledger failure must not abort the skill run.
-    console.warn(
-      "[skills:dispatcher] cost_ledger write failed:",
-      err instanceof Error ? err.message : String(err),
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "cost_ledger write failed",
     );
   }
 }
@@ -550,9 +566,9 @@ function bumpRunCounter(name: string, result: string): void {
   void Promise.resolve()
     .then(() => recordSkillRun(name, result))
     .catch((err) => {
-      console.warn(
-        "[skills:dispatcher] counter bump failed:",
-        err instanceof Error ? err.message : String(err),
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "counter bump failed",
       );
     });
 }

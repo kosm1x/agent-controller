@@ -11,6 +11,7 @@ import client from "prom-client";
 import {
   recordRecallOutcomes,
   recordRetainOutcome,
+  recordSkillRun,
   recordSwarmSubtaskRetry,
 } from "./prometheus.js";
 
@@ -267,6 +268,78 @@ describe("recordSwarmSubtaskRetry", () => {
         reason: "provider_transient",
         recovery_mode: "unknown_label",
       }),
+    ).toBe(1);
+  });
+});
+
+// Queue #233 S5-P4-B1-R2: counter-increment regression for
+// `mc_skills_run_total`. The counter has shipped live since v7.7 Spine 3
+// Phase 4 but no test pinned the contract that recordSkillRun() actually
+// bumps it. Without this, a future refactor (e.g. swapping in a typed
+// wrapper, dropping prom-client, renaming the metric) could silently
+// break the observation pipeline that mc-ctl + Grafana depend on.
+describe("recordSkillRun", () => {
+  beforeEach(() => {
+    const m = client.register.getSingleMetric("mc_skills_run_total");
+    if (m) (m as client.Counter).reset();
+  });
+
+  it("increments mc_skills_run_total{name, result='ok'} on a successful run", () => {
+    recordSkillRun("my-skill", "ok");
+    expect(
+      getCounterValue("mc_skills_run_total", {
+        name: "my-skill",
+        result: "ok",
+      }),
+    ).toBe(1);
+  });
+
+  it("partitions by result class — repeated names with different results", () => {
+    recordSkillRun("my-skill", "ok");
+    recordSkillRun("my-skill", "ok");
+    recordSkillRun("my-skill", "timeout");
+    expect(
+      getCounterValue("mc_skills_run_total", {
+        name: "my-skill",
+        result: "ok",
+      }),
+    ).toBe(2);
+    expect(
+      getCounterValue("mc_skills_run_total", {
+        name: "my-skill",
+        result: "timeout",
+      }),
+    ).toBe(1);
+  });
+
+  it("collapses an unknown result class into 'other'", () => {
+    recordSkillRun("my-skill", "fancy_new_failure_mode");
+    expect(
+      getCounterValue("mc_skills_run_total", {
+        name: "my-skill",
+        result: "other",
+      }),
+    ).toBe(1);
+  });
+
+  it("clips absurdly long skill names to 64 chars (cardinality guard)", () => {
+    const longName = "x".repeat(200);
+    recordSkillRun(longName, "ok");
+    expect(
+      getCounterValue("mc_skills_run_total", {
+        name: "x".repeat(64),
+        result: "ok",
+      }),
+    ).toBe(1);
+  });
+
+  // Defensive: dispatcher never calls with "" (NAME_RE enforces ≥1 char
+  // in frontmatter), but pinning the cardinality-guard contract for
+  // future call sites that may bypass NAME_RE.
+  it("does not crash on empty-string name (cardinality guard)", () => {
+    recordSkillRun("", "ok");
+    expect(
+      getCounterValue("mc_skills_run_total", { name: "", result: "ok" }),
     ).toBe(1);
   });
 });

@@ -29,7 +29,10 @@
 
 import { z } from "zod";
 import { getDatabase } from "../db/index.js";
+import { createLogger } from "../lib/logger.js";
 import { runSkillPrompt } from "./mini-runner.js";
+
+const log = createLogger("skills:test-runner");
 
 // ---------------------------------------------------------------------------
 // Test schema — validates a single tests_json entry
@@ -451,9 +454,9 @@ function writeTestRun(
   void import("../observability/prometheus.js")
     .then(({ recordSkillTestResult }) => recordSkillTestResult(outcome.result))
     .catch((err) => {
-      console.warn(
-        "[skills:test-runner] counter import failed (counter not incremented):",
-        err instanceof Error ? err.message : String(err),
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "counter import failed (counter not incremented)",
       );
     });
 }
