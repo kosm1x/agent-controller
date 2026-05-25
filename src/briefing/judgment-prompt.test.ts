@@ -135,4 +135,71 @@ describe("renderJudgmentPrompt", () => {
     expect(p).toContain("[0] tasks table");
     expect(p).toContain("[1] cohort");
   });
+
+  // 2026-05-25: the morning briefing rendered 6 tasks across May 14/19/22/23
+  // and the LLM judge wrote "23-24 mayo consecutivos". The fix surfaces the
+  // temporal spread so the LLM has the ground truth to reason about.
+  describe("recurring_blocker temporal-spread rendering", () => {
+    it("includes first_seen, last_seen, and span_days for blocker signals", () => {
+      const p = renderJudgmentPrompt(makeInput());
+      // blockerSignal: 2026-05-10 → 2026-05-23 = 13 whole days = "spanning 14 days"
+      expect(p).toContain("first_seen=2026-05-10T00:00:00.000Z");
+      expect(p).toContain("last_seen=2026-05-23T00:00:00.000Z");
+      expect(p).toContain("spanning 14 days");
+    });
+
+    it("renders 'same day' when first_seen == last_seen", () => {
+      const sameDay: DetectionSignal = {
+        ...blockerSignal,
+        firstSeenAt: "2026-05-23T00:00:00.000Z",
+        lastSeenAt: "2026-05-23T03:00:00.000Z",
+      };
+      const p = renderJudgmentPrompt(
+        makeInput({ detectionSignals: [sameDay] }),
+      );
+      expect(p).toContain("same day");
+    });
+
+    it("renders 'spanning 2 days' when first_seen is 1 day before last_seen", () => {
+      const twoDays: DetectionSignal = {
+        ...blockerSignal,
+        firstSeenAt: "2026-05-22T00:00:00.000Z",
+        lastSeenAt: "2026-05-23T00:00:00.000Z",
+      };
+      const p = renderJudgmentPrompt(
+        makeInput({ detectionSignals: [twoDays] }),
+      );
+      expect(p).toContain("spanning 2 days");
+    });
+
+    it("falls back to 'same day' when a timestamp is unparseable (R3 audit fold)", () => {
+      const garbage: DetectionSignal = {
+        ...blockerSignal,
+        firstSeenAt: "not-a-date",
+        lastSeenAt: "2026-05-23T00:00:00.000Z",
+      };
+      const p = renderJudgmentPrompt(
+        makeInput({ detectionSignals: [garbage] }),
+      );
+      // Under-reports rather than mis-parses: the failure mode is visible
+      // because the bracket still renders with the literal strings.
+      expect(p).toContain("first_seen=not-a-date");
+      expect(p).toContain("same day");
+    });
+
+    it("accepts SQLite naive-UTC timestamps (no 'Z' suffix)", () => {
+      const sqliteTs: DetectionSignal = {
+        ...blockerSignal,
+        firstSeenAt: "2026-05-15 03:23:32",
+        lastSeenAt: "2026-05-23 14:12:05",
+      };
+      const p = renderJudgmentPrompt(
+        makeInput({ detectionSignals: [sqliteTs] }),
+      );
+      expect(p).toContain("first_seen=2026-05-15 03:23:32");
+      expect(p).toContain("last_seen=2026-05-23 14:12:05");
+      // 8d 10h gap → floor = 8 whole days → "spanning 9 days"
+      expect(p).toContain("spanning 9 days");
+    });
+  });
 });

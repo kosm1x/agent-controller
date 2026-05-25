@@ -7,6 +7,7 @@
 import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
+import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
 import { getConfig } from "./config.js";
 import {
   initDatabase,
@@ -380,20 +381,24 @@ async function main(): Promise<void> {
     // 4. Teardown MCP + tool sources
     await sourceManager.teardownAll();
 
-    // 5. Grace period — wait up to 10s for in-flight tasks to complete
+    // 5. Grace period — wait up to MC_SHUTDOWN_GRACE_MS (default 30s) for
+    // in-flight tasks to complete. Tripled from the original 10s after the
+    // 2026-05-25 morning briefing surfaced the recurring `Service shutdown`
+    // blocker (6 chat tasks killed across 8 days); fast-runner chats often
+    // need 15-25s, so 10s cut too aggressively.
     try {
       const db = getDatabase();
       const running = db
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM tasks WHERE status IN ('running')`,
-        )
+        .prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE status = 'running'`)
         .get() as { cnt: number } | undefined;
       const inFlight = running?.cnt ?? 0;
       if (inFlight > 0) {
+        const graceMs = readShutdownGraceMs();
         log.info(
-          `waiting up to 10s for ${inFlight} in-flight task(s) to complete...`,
+          { inFlight, graceMs },
+          "waiting for in-flight task(s) to complete before shutdown",
         );
-        const deadline = Date.now() + 10_000;
+        const deadline = Date.now() + graceMs;
         while (Date.now() < deadline) {
           const still = db
             .prepare(
@@ -401,8 +406,18 @@ async function main(): Promise<void> {
             )
             .get() as { cnt: number } | undefined;
           if ((still?.cnt ?? 0) === 0) break;
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+          // W3 audit fold: shutdown handler is already async, use a proper
+          // promise sleep instead of the Atomics.wait+SharedArrayBuffer idiom.
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
+        const final = db
+          .prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE status = 'running'`)
+          .get() as { cnt: number } | undefined;
+        const completed = inFlight - (final?.cnt ?? 0);
+        log.info(
+          { drained: completed, stillRunning: final?.cnt ?? 0, graceMs },
+          "shutdown grace period elapsed",
+        );
       }
     } catch {
       // Non-fatal

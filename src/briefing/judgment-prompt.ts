@@ -70,14 +70,48 @@ function list(lines: string[]): string {
   return lines.length > 0 ? lines.join("\n") : "(none)";
 }
 
-/** Filter the detection signals to one kind and render them as lines. */
+/** Filter the detection signals to one kind and render them as lines.
+ * Recurring-blocker signals get a richer rendering that includes the temporal
+ * spread (first_seen, last_seen, span_days) so the LLM judge doesn't call an
+ * 8-day cluster "consecutive days" — see the 2026-05-25 morning-briefing
+ * post-mortem where 6 tasks across May 14/19/22/23 were rendered as
+ * "23-24 mayo consecutivos" by the LLM. */
 function signalsOf(
   signals: DetectionSignal[],
   kind: DetectionSignal["kind"],
 ): string {
-  return list(
-    signals.filter((s) => s.kind === kind).map((s) => `  - ${s.summary}`),
-  );
+  const filtered = signals.filter((s) => s.kind === kind);
+  if (kind === "recurring_blocker") {
+    return list(
+      filtered.map((s) => {
+        const b = s as Extract<DetectionSignal, { kind: "recurring_blocker" }>;
+        const span = spanDays(b.firstSeenAt, b.lastSeenAt);
+        const spanLabel =
+          span <= 0
+            ? "same day"
+            : span === 1
+              ? "spanning 2 days"
+              : `spanning ${span + 1} days`;
+        return `  - ${b.summary} [first_seen=${b.firstSeenAt}, last_seen=${b.lastSeenAt}, ${spanLabel}]`;
+      }),
+    );
+  }
+  return list(filtered.map((s) => `  - ${s.summary}`));
+}
+
+/** Whole days between two timestamp strings. Accepts both SQLite
+ * `datetime('now')` ("YYYY-MM-DD HH:MM:SS", naive UTC) and ISO 8601 with "Z".
+ * Returns 0 on parse failure (under-reports rather than mis-parses). */
+function spanDays(firstSeen: string, lastSeen: string): number {
+  const a = parseTs(firstSeen);
+  const b = parseTs(lastSeen);
+  if (a === null || b === null) return 0;
+  return Math.max(0, Math.floor((b - a) / 86_400_000));
+}
+function parseTs(ts: string): number | null {
+  const normalized = /Z$/i.test(ts) ? ts : ts.replace(" ", "T") + "Z";
+  const ms = Date.parse(normalized);
+  return Number.isNaN(ms) ? null : ms;
 }
 
 /**
