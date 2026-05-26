@@ -181,8 +181,10 @@ CREATE TRIGGER IF NOT EXISTS conversations_au AFTER UPDATE ON conversations BEGI
 END;
 
 -- Embedding vectors for semantic search (1536-dim float32 as BLOB)
+-- ON DELETE CASCADE required so the memory-consolidation ritual can prune
+-- duplicate/stale conversations (the embedding follows the parent row).
 CREATE TABLE IF NOT EXISTS conversation_embeddings (
-  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id),
+  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   embedding       BLOB NOT NULL
 );
 
