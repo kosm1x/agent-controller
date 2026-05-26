@@ -211,6 +211,12 @@ export interface ClaudeSdkResult {
   text: string;
   /** Bare tool names called during the run (mcp__jarvis__ prefix stripped). */
   toolCalls: string[];
+  /** Same calls as `toolCalls` but with the SDK's `input` payload preserved.
+   * Optional / additive — old consumers still read `toolCalls`. Added 2026-05-26
+   * so the Prometheus selfAssess judge can verify criteria that reference tool
+   * arguments (e.g. "memory_store called with bank='operational'"); previously
+   * the synthesized assistant turn shipped `arguments: "{}"` for every call. */
+  toolCallsWithArgs?: Array<{ name: string; input: unknown }>;
   numTurns: number;
   /**
    * Token usage from the SDK's terminal `result` message.
@@ -425,6 +431,10 @@ export async function queryClaudeSdk(opts: {
    *  arrives — prevents data loss on long multi-tool runs. */
   let streamingText = "";
   const toolCallNames: string[] = [];
+  // Parallel array to toolCallNames with the SDK's `input` payload preserved.
+  // Populated alongside the name push so indices line up. Surfaced via
+  // `toolCallsWithArgs` for downstream consumers (Prometheus selfAssess).
+  const toolCallsWithArgs: Array<{ name: string; input: unknown }> = [];
   let numTurns = 0;
   let assistantTurns = 0;
   let usage = {
@@ -504,6 +514,11 @@ export async function queryClaudeSdk(opts: {
             ) {
               const bareName = block.name.replace(/^mcp__jarvis__/, "");
               toolCallNames.push(bareName);
+              // SDK tool_use blocks carry `input` as the args object. Capture
+              // it so downstream consumers (selfAssess) can verify criteria
+              // referencing call args, not just call names.
+              const input = "input" in block ? block.input : undefined;
+              toolCallsWithArgs.push({ name: bareName, input });
             }
           }
         }
@@ -680,6 +695,7 @@ export async function queryClaudeSdk(opts: {
   return {
     text: resultText,
     toolCalls: toolCallNames,
+    toolCallsWithArgs,
     numTurns: numTurns || assistantTurns,
     usage,
     model: actualModel,
@@ -973,11 +989,30 @@ export async function queryClaudeSdkAsInferWithTools(
     content: result.text,
     ...(result.toolCalls.length > 0
       ? {
-          tool_calls: result.toolCalls.map((name, i) => ({
-            id: `sdk_call_${nonce}_${i}`,
-            type: "function" as const,
-            function: { name, arguments: "{}" },
-          })),
+          // Prefer toolCallsWithArgs (carries the SDK's `input` payload) so
+          // downstream consumers reading messages[].tool_calls[].function.arguments
+          // see real args, not the legacy "{}" placeholder. Fall back to the
+          // name-only list when the structured field isn't present.
+          tool_calls: (result.toolCallsWithArgs ?? result.toolCalls).map(
+            (entry, i) => {
+              const name = typeof entry === "string" ? entry : entry.name;
+              const args =
+                typeof entry === "string"
+                  ? "{}"
+                  : (() => {
+                      try {
+                        return JSON.stringify(entry.input ?? {});
+                      } catch {
+                        return "{}";
+                      }
+                    })();
+              return {
+                id: `sdk_call_${nonce}_${i}`,
+                type: "function" as const,
+                function: { name, arguments: args },
+              };
+            },
+          ),
         }
       : {}),
   } as ChatMessage;

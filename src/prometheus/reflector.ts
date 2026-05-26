@@ -207,7 +207,43 @@ export async function reflect(
   }
 
   // Heuristic override: if LLM score diverges > 0.3 from goal completion ratio
-  const heuristicScore = computeHeuristicScore(graph);
+  let heuristicScore = computeHeuristicScore(graph);
+
+  // Track whether the score was overridden away from the LLM's number. If
+  // so, the per-dimension critiques describe the LLM's view and may now
+  // contradict the kept score — drop them rather than ship contradictions
+  // (audit W1). Declared up here so the best-effort discount block below
+  // can flip it before the override comparison runs.
+  let scoreOverridden = false;
+
+  // Best-effort discount: goals where selfAssess never verified criteria
+  // (criteriaMet=false) shouldn't count as fully complete in EITHER score.
+  // Pre-fix: heuristic counted them 1.0 while LLM judge saw the gap and
+  // scored lower — the score-vs-heuristic gap then tripped the override,
+  // restoring 1.0 and auto-succeeding tasks whose stated criteria were
+  // never satisfied. Discount both sides by the same amount so the gap
+  // stays small (override holds) AND the final score honestly reflects
+  // best-effort goals (success gate at 0.8 sees the truth).
+  const bestEffortGoals = Object.values(executionResults.goalResults).filter(
+    (gr) => gr.criteriaMet === false,
+  );
+  if (bestEffortGoals.length > 0) {
+    const total = Object.keys(executionResults.goalResults).length || 1;
+    // Each best-effort goal counts as 0.5 instead of 1.0 → discount = 0.5/total per goal.
+    const discount = (0.5 * Math.min(bestEffortGoals.length, total)) / total;
+    heuristicScore = Math.max(0, heuristicScore - discount);
+    assessment.score = Math.max(0, assessment.score - discount);
+    // The LLM may have reported success=true with score 0.75-1.0. After the
+    // discount knocks the score below 0.8 the success flag has to follow,
+    // or the orchestrator's success gate will accept a task whose stated
+    // criteria were never verified. Match the override block's formula.
+    const hasFailedGoals = graph.getByStatus(GoalStatus.FAILED).length > 0;
+    assessment.success = assessment.score >= 0.8 && !hasFailedGoals;
+    scoreOverridden = true;
+    console.log(
+      `[reflector] Best-effort discount: -${discount.toFixed(2)} (${bestEffortGoals.length}/${total} goal(s) with unverified criteria)`,
+    );
+  }
 
   // Autoreason Phase 1: log generation-evaluation gap telemetry. Captures the
   // RAW LLM score (pre-override) vs the heuristic. Non-fatal, write-only.
@@ -223,12 +259,6 @@ export async function reflect(
       goalsFailed: summary.failed,
     });
   }
-
-  // Track whether the score was overridden away from the LLM's number. If
-  // so, the per-dimension critiques describe the LLM's view and may now
-  // contradict the kept score — drop them rather than ship contradictions
-  // (audit W1).
-  let scoreOverridden = false;
 
   if (Math.abs(assessment.score - heuristicScore) > 0.3) {
     console.log(

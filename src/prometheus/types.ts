@@ -95,6 +95,17 @@ export interface GoalResult {
   tokenUsage: TokenUsage;
   /** Number of self-assessment reflection rounds used (0 = passed first try). */
   selfAssessRounds?: number;
+  /** Whether the goal's completion criteria were ultimately satisfied.
+   * - true: selfAssess returned met=true on some round (or threw — selfAssess's
+   *   catch path defaults to a met=true assessment to avoid spurious failure
+   *   when the judge LLM itself is unavailable).
+   * - false: every selfAssess round through MAX_SELF_ASSESS returned met=false;
+   *   the goal still returns ok=true (best-effort) but the reflector reads
+   *   this so the orchestrator's success gate sees the truth instead of the
+   *   "4/4 completed" heuristic masking it.
+   * - undefined: not assessed — the goal had no completionCriteria (nothing
+   *   to verify). */
+  criteriaMet?: boolean;
   toolRepairs?: Array<{ original: string; repaired: string }>;
   /** Provenance records extracted from this goal's research tool calls. */
   provenanceRecords?: Array<{

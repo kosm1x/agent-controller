@@ -88,9 +88,14 @@ function classifyError(
 const SELF_ASSESS_SYSTEM = `You evaluate whether a goal's output satisfies its completion criteria.
 
 Think step by step before deciding. For each criterion, write one short sentence answering:
-1. What concrete evidence in the output addresses this specific criterion?
+1. What concrete evidence in the output OR the tool-call audit addresses this specific criterion?
 2. Is the evidence direct and verifiable, or is the criterion only partially or vaguely addressed?
 3. Would a strict reviewer accept this as "met" or flag it as incomplete?
+
+You will receive THREE sources of evidence:
+- ## Goal Output — the final text the agent produced (may be elided in the middle for long outputs; treat \`[…N chars elided…]\` as content you cannot see but which the agent did produce).
+- ## Tool calls made — names + truncated arguments for every tool the agent invoked, in order. Use this to verify criteria that reference tool calls (e.g. "memory_store called with bank='operational' and tags including 'evolution'"): the criterion is MET if the audit shows the call with matching args, even if the output text does not restate it.
+- The completion criteria themselves.
 
 After the reasoning, emit EXACTLY ONE JSON object as the FINAL content of your response:
 {
@@ -100,11 +105,69 @@ After the reasoning, emit EXACTLY ONE JSON object as the FINAL content of your r
 }
 
 Rules:
-- met = true only if ALL criteria are satisfied by the output.
+- met = true only if ALL criteria are satisfied by the output OR the tool-call audit.
 - unmetCriteria = list of criteria strings that were NOT satisfied.
-- Be strict: vague or partial satisfaction counts as not met.
+- Be strict but fair: if a criterion names a tool call and the audit shows it with the required args, accept it — do NOT require the output text to also mention it.
+- BUT: if a criterion explicitly requires the OUTPUT to contain a section / piece of content (e.g. "report includes a recommendations section"), the output text — not the audit — must satisfy it.
+- Tool-call args under SDK mode may render as \`{}\` when arguments weren't captured. In that case match on the call NAME (and order/count) alone.
 - The reasoning above can be any prose. Only the final JSON object is consumed.
 - Do NOT wrap the JSON in markdown fences. Emit it bare at the end of your response.`;
+
+/** Tool-call audit record passed to selfAssess. */
+interface ToolCallAudit {
+  name: string;
+  /** JSON-stringified args, truncated to ~400 chars per call. */
+  args: string;
+}
+
+/** Head + ellipsis + tail when text exceeds 5000 chars; full text otherwise.
+ * 2000-char prefix-only truncation dropped mid-section content like
+ * "Skills deactivated" and "Recommendations" in skill-evolution reports,
+ * leading the judge to mark complete reports as criteria-not-met. The
+ * head+tail window preserves the structural boundaries the judge usually
+ * keys on (intro + final recommendations) while keeping prompt size sane. */
+function windowOutputForAssess(text: string): string {
+  const MAX = 5000;
+  if (text.length <= MAX) return text;
+  const HEAD = 3000;
+  const TAIL = 2000;
+  const elided = text.length - HEAD - TAIL;
+  return (
+    text.slice(0, HEAD) +
+    `\n\n[…${elided} chars elided…]\n\n` +
+    text.slice(-TAIL)
+  );
+}
+
+/** Lightweight redaction for JSON-stringified tool args before they hit the
+ * judge prompt. Defensive against tools that accept secrets in args
+ * (api_key, bearer, password fields). Replaces values of suspect keys with
+ * "<redacted>" before the truncation pass. Conservative key match — names
+ * are case-insensitive substrings. */
+function redactSecretsInArgs(args: string): string {
+  return args.replace(
+    /("(?:[^"\\]|\\.)*?(?:api[_-]?key|bearer|password|secret|token|access[_-]?token|refresh[_-]?token|authorization)(?:[^"\\]|\\.)*?"\s*:\s*)"(?:[^"\\]|\\.)*?"/gi,
+    '$1"<redacted>"',
+  );
+}
+
+/** Render the tool-call audit for selfAssess. Empty string when no calls were
+ * made — selfAssess's user content omits the section in that case rather than
+ * including an empty header. Each call's args are JSON-stringified and capped
+ * at 400 chars so a single large call (e.g. a long memory_store payload) can't
+ * blow up the prompt. Secrets in args are redacted before the cap.
+ * `roundBoundary` (1-indexed retry round) — when > 0, prepend a marker so the
+ * judge can tell appended calls came from a retry. */
+function renderToolCallAudit(audit: readonly ToolCallAudit[]): string {
+  if (audit.length === 0) return "";
+  const lines = audit.map((tc, i) => {
+    const redacted = redactSecretsInArgs(tc.args);
+    const args =
+      redacted.length > 400 ? redacted.slice(0, 400) + "…" : redacted;
+    return `${i + 1}. ${tc.name}(${args})`;
+  });
+  return `\n\n## Tool calls made\n${lines.join("\n")}`;
+}
 
 interface SelfAssessment {
   met: boolean;
@@ -125,6 +188,7 @@ interface SelfAssessResult {
 export async function selfAssess(
   goal: Goal,
   resultText: string,
+  toolCallAudit: readonly ToolCallAudit[] = [],
 ): Promise<SelfAssessResult> {
   if (goal.completionCriteria.length === 0) {
     return {
@@ -136,7 +200,8 @@ export async function selfAssess(
   const userContent =
     `## Goal\n${goal.description}\n\n` +
     `## Completion Criteria\n${goal.completionCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")}\n\n` +
-    `## Goal Output\n${resultText.length > 2000 ? resultText.slice(0, 2000) + "..." : resultText}`;
+    `## Goal Output\n${windowOutputForAssess(resultText)}` +
+    renderToolCallAudit(toolCallAudit);
 
   try {
     const selfAssessMessages: ChatMessage[] = [
@@ -383,12 +448,19 @@ export async function executeGoal(
       // Collect tool repairs from inference
       const allRepairs = [...result.toolRepairs];
 
-      // Extract tool call names and count from the conversation
+      // Extract tool call names and count from the conversation.
+      // tcAudit also keeps args so selfAssess can verify criteria that
+      // reference tool calls (e.g. "memory_store called with bank='...'").
       const tcNames: string[] = [];
+      const tcAudit: ToolCallAudit[] = [];
       for (const m of result.messages) {
         if (m.role === "assistant" && m.tool_calls) {
           for (const tc of m.tool_calls) {
             tcNames.push(tc.function.name);
+            tcAudit.push({
+              name: tc.function.name,
+              args: tc.function.arguments ?? "",
+            });
           }
         }
       }
@@ -415,10 +487,16 @@ export async function executeGoal(
       // reported one (openai path) so dispatcher falls back to calculateCost.
       let totalCostUsd: number | undefined = result.costUsd;
 
+      // criteriaMet tracks the loop's verdict. Stays null (= "not assessed")
+      // until selfAssess yields a verdict. When the loop exhausts MAX_SELF_ASSESS
+      // without met=true, criteriaMet ends up `false` — the goal still returns
+      // ok=true (best-effort) but the reflector reads this field to penalize.
+      let criteriaMet: boolean | null = null;
       for (let round = 0; round < MAX_SELF_ASSESS; round++) {
         const { assessment, usage: assessUsage } = await selfAssess(
           goal,
           finalContent,
+          tcAudit,
         );
         totalPrompt += assessUsage.promptTokens;
         totalCompletion += assessUsage.completionTokens;
@@ -432,8 +510,15 @@ export async function executeGoal(
         if (assessUsage.actualCostUsd !== undefined) {
           totalCostUsd = (totalCostUsd ?? 0) + assessUsage.actualCostUsd;
         }
-        // null = no criteria to check, met = passed
-        if (!assessment || assessment.met) break;
+        // null = no criteria to check (leave criteriaMet undefined so the
+        // reflector treats it as "not assessed", not "verified met" — only
+        // explicit met=true should claim verification). met = passed.
+        if (!assessment) break;
+        if (assessment.met) {
+          criteriaMet = true;
+          break;
+        }
+        criteriaMet = false; // verdict so far — loop continues to retry
 
         selfAssessRounds++;
         console.log(
@@ -492,20 +577,47 @@ export async function executeGoal(
         }
         allRepairs.push(...retryResult.toolRepairs);
 
-        // Collect additional tool calls from retry
+        // Collect additional tool calls from retry — both for the count
+        // surfaced to the reflector and for the audit fed to the next
+        // selfAssess round so a tool call made on retry can satisfy a
+        // criterion the first round missed. Audit marker delimits round
+        // boundaries so the judge can attribute calls if needed (W3 fold).
+        const retryHadAnyCall = retryResult.messages.some(
+          (m) => m.role === "assistant" && m.tool_calls?.length,
+        );
+        if (retryHadAnyCall) {
+          tcAudit.push({
+            name: `--- retry round ${selfAssessRounds} ---`,
+            args: "",
+          });
+        }
         for (const m of retryResult.messages) {
           if (m.role === "assistant" && m.tool_calls) {
             for (const tc of m.tool_calls) {
               tcNames.push(tc.function.name);
+              tcAudit.push({
+                name: tc.function.name,
+                args: tc.function.arguments ?? "",
+              });
             }
           }
         }
       }
 
+      // Truthful log: "completed" only when selfAssess actually returned met.
+      // The pre-fix message fired whenever selfAssessRounds > 0 regardless of
+      // outcome — which is how the 2026-05-25 skill-evolution runs read as
+      // "completed after 2 rounds" when both rounds had reported criteria-not-met.
       if (selfAssessRounds > 0) {
-        console.log(
-          `[executor] Goal ${goal.id} completed after ${selfAssessRounds} self-assessment round(s)`,
-        );
+        if (criteriaMet === true) {
+          console.log(
+            `[executor] Goal ${goal.id} completed after ${selfAssessRounds} self-assessment round(s)`,
+          );
+        } else {
+          console.log(
+            `[executor] Goal ${goal.id} best-effort after ${selfAssessRounds} self-assessment round(s) — criteria still unmet`,
+          );
+        }
       }
 
       // --- Provenance extraction (S5c) ---
@@ -554,6 +666,11 @@ export async function executeGoal(
         toolNames: tcNames,
         toolFailures: 0,
         selfAssessRounds,
+        // Best-effort distinction: ok=true for backwards compat, but
+        // criteriaMet=false signals the reflector that the goal's stated
+        // criteria weren't verified — preventing the heuristic-vs-LLM
+        // divergence that auto-fails a "4/4 completed" task.
+        ...(criteriaMet !== null && { criteriaMet }),
         toolRepairs: allRepairs,
         provenanceRecords,
         provenanceSummary,

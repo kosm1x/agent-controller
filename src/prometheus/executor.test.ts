@@ -590,5 +590,206 @@ describe("executeGoal self-assessment integration", () => {
     expect(result.selfAssessRounds).toBe(2); // Capped at MAX_SELF_ASSESS
     // 1 initial + 2 retry rounds = 3 inferWithTools calls
     expect(mockInferWithTools).toHaveBeenCalledTimes(3);
+    // 2026-05-26 fix: best-effort goals now carry criteriaMet=false so the
+    // reflector can discount their contribution to the score. Pre-fix they
+    // were indistinguishable from criteria-verified goals.
+    expect(result.criteriaMet).toBe(false);
+  });
+
+  it("propagates criteriaMet=true when selfAssess accepts the first try", async () => {
+    mockInferWithTools.mockResolvedValueOnce({
+      content: "Done",
+      messages: [{ role: "assistant", content: "Done" }],
+      toolRepairs: [],
+      totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
+    });
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        met: true,
+        unmetCriteria: [],
+        reasoning: "Criterion satisfied",
+      }),
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+    const goal = makeGoal({ completionCriteria: ["must do X"] });
+    const result = await executeGoal(goal, "");
+    expect(result.ok).toBe(true);
+    expect(result.selfAssessRounds).toBe(0);
+    expect(result.criteriaMet).toBe(true);
+  });
+
+  it("omits criteriaMet when the goal has no completionCriteria", async () => {
+    mockInferWithTools.mockResolvedValueOnce({
+      content: "Done",
+      messages: [{ role: "assistant", content: "Done" }],
+      toolRepairs: [],
+      totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
+    });
+    const goal = makeGoal({ completionCriteria: [] });
+    const result = await executeGoal(goal, "");
+    expect(result.ok).toBe(true);
+    // No criteria → nothing to assess → criteriaMet stays undefined.
+    expect(result.criteriaMet).toBeUndefined();
+  });
+});
+
+describe("selfAssess — tool-call audit + truncation window (2026-05-26)", () => {
+  it("includes a ## Tool calls made section with names + args in the user prompt", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      // Grab the user message so we can assert on its shape.
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "",
+        }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    const goal = makeGoal({
+      completionCriteria: [
+        "memory_store called with bank='operational' and tags ⊃ {'evolution'}",
+      ],
+    });
+    const { assessment } = await selfAssess(goal, "Final output", [
+      {
+        name: "memory_store",
+        args: JSON.stringify({
+          bank: "operational",
+          tags: ["evolution", "ritual"],
+        }),
+      },
+    ]);
+    expect(assessment).not.toBeNull();
+    expect(capturedUserContent).toContain("## Tool calls made");
+    expect(capturedUserContent).toContain("memory_store");
+    expect(capturedUserContent).toContain("operational");
+    expect(capturedUserContent).toContain("evolution");
+  });
+
+  it("omits the Tool calls section when no calls were made", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "",
+        }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    const goal = makeGoal({ completionCriteria: ["c1"] });
+    await selfAssess(goal, "output", []);
+    expect(capturedUserContent).not.toContain("## Tool calls made");
+  });
+
+  it("uses head+tail elision for outputs over 5000 chars and preserves the tail", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "",
+        }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    // 8000-char output with a distinctive marker near the END that the
+    // pre-fix 2000-char prefix-only truncation would have dropped.
+    const head = "HEAD-MARKER" + "a".repeat(2989); // 3000 chars
+    const middle = "m".repeat(2989); // squeezed by elision
+    const tail = "x".repeat(1989) + "TAIL-MARKER"; // 2000 chars
+    const longOutput = head + middle + tail;
+    expect(longOutput.length).toBeGreaterThan(5000);
+    const goal = makeGoal({ completionCriteria: ["c1"] });
+    await selfAssess(goal, longOutput, []);
+    expect(capturedUserContent).toContain("HEAD-MARKER");
+    expect(capturedUserContent).toContain("TAIL-MARKER");
+    expect(capturedUserContent).toMatch(/\[…\d+ chars elided…\]/);
+  });
+
+  it("redacts secret-looking keys in tool-call args before they reach the judge prompt (W4 fold)", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "",
+        }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    const goal = makeGoal({ completionCriteria: ["c1"] });
+    await selfAssess(goal, "output", [
+      {
+        name: "http_request",
+        args: JSON.stringify({
+          url: "https://api.example.com",
+          api_key: "sk-thisismysecret123",
+          headers: { Authorization: "Bearer abc.def.ghi" },
+        }),
+      },
+    ]);
+    expect(capturedUserContent).toContain("http_request");
+    expect(capturedUserContent).toContain("example.com");
+    // Secrets must not appear in the prompt.
+    expect(capturedUserContent).not.toContain("sk-thisismysecret123");
+    expect(capturedUserContent).not.toContain("abc.def.ghi");
+    expect(capturedUserContent).toContain("<redacted>");
+  });
+
+  it("does not truncate outputs at or below 5000 chars", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({
+          met: true,
+          unmetCriteria: [],
+          reasoning: "",
+        }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    const fullOutput = "z".repeat(4500);
+    const goal = makeGoal({ completionCriteria: ["c1"] });
+    await selfAssess(goal, fullOutput, []);
+    expect(capturedUserContent).toContain(fullOutput);
+    expect(capturedUserContent).not.toContain("elided");
   });
 });

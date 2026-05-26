@@ -462,6 +462,39 @@ describe("reflect", () => {
     expect(result.score).toBe(0.8); // 0.9 - 0.1
     expect(result.anchoringScore).toBe(0);
   });
+
+  it("applies best-effort discount to BOTH heuristic and LLM score when a goal has criteriaMet=false (2026-05-26 fix)", async () => {
+    // Pre-fix scenario: LLM scored 0.75 on a 4/4-completed task because one
+    // goal's criteria were unverifiable, heuristic stayed at 1.0, gap=0.25
+    // tripped the override → score restored to 1.0 → success=true masked
+    // the real problem. Post-fix: criteriaMet=false on the unverified goal
+    // discounts BOTH sides by 0.5/total, so heuristic AND llm drop together
+    // and the override doesn't paper over it.
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        success: true,
+        score: 0.75,
+        learnings: [],
+        summary: "One goal's criteria unverified",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+    });
+    const graph = makeGraph(4, 0); // 4 completed, 0 failed
+    const execResult = makeExecResult(graph);
+    // Mark c-3 as best-effort — selfAssess never verified its criteria.
+    execResult.goalResults["c-3"]!.criteriaMet = false;
+    const { result } = await reflect("Skill evolution", graph, execResult);
+    // 1/4 best-effort → discount = 0.5/4 = 0.125. Both sides drop:
+    //   heuristic 1.00 → 0.875
+    //   llm       0.75 → 0.625
+    // gap |0.625 - 0.875| = 0.25, below the 0.3 override threshold → LLM kept.
+    expect(result.score).toBeCloseTo(0.625, 3);
+    // Score under 0.8 → orchestrator success gate sees the unverified goal.
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("reflect — per-dimension critiques (RationalRewards / v7.5 L3)", () => {
