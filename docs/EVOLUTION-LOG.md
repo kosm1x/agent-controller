@@ -1534,3 +1534,91 @@ The repeated "Qué avión voy a tener?" failure was the sharpest friction of the
 
 ### Research notes
 Day ~89 of the longitudinal record. Two observations for the co-evolution paper. First, the **aspirations correction** is a Phase 3 marker of a different kind: the operator is now explicitly engineering Jarvis's long-term memory by issuing direct storage commands when retrieval fails — the user is becoming an active architect of the agent's identity model, not just a consumer of its outputs. Second, the **algebra tutoring request** at day's end — completely orthogonal to all other activities — reinforces the cross-register fluidity pattern: Fede uses Jarvis as a unified interface across domains without any apparent hesitation, from systems architecture to real estate to personal branding to arithmetic pedagogy. The zero-friction mode-switching is a durable Phase 3 characteristic.
+
+## 2026-05-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 74 |
+| Total tasks | 5,389 (4,221 completed + 934 completed_with_concerns + 221 failed + 1 running) |
+| Conversations today | 64 (telegram: 64) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A high-volume day — 64 telegram conversations, 74 tasks completed — consistent with a densely-active operator session. NorthStar held steady across all three visions (Crecer para Servir, Libertad Financiera, Maximizar mi tiempo de vida), with recurring tasks around daily meditation, sleep hygiene, cardiovascular training, and the Solera Properties brand identity all in_progress. The 15-project active surface covered personal health, real estate (Solera), media (FSN, México Necesario, Substack, Williams Radar), and infrastructure (PipeSong, agent-controller). Recall was attempted via the API but the HTTP endpoint was unreachable at log-writing time; interaction detail was reconstructed from conversation counts and task DB metadata rather than recalled conversations.
+
+### What Jarvis learned
+The API-unreachable condition at log-writing time is a recurring observability gap: the systemd service was active and completing tasks, but the HTTP loopback was not responding. This creates a structural fidelity risk for the evolution log — the richest interaction data (recall, reflect) is only accessible when the API is healthy, yet the API is most likely to be stressed precisely on high-volume days. No new operator corrections or explicit preference signals were recoverable for today, suggesting either a low-friction day or data inaccessibility due to API state.
+
+### Friction points
+API unreachable at log-writing time blocked recall and reflect queries — this entry is thinner than usual as a result. The shell_exec 3-strike guard also tripped multiple times during log construction due to cross-call token accumulation on repeated query patterns, blocking several legitimate diagnostic commands. Both are tooling-layer issues rather than operator-agent friction, but they directly degrade log fidelity.
+
+### Research notes
+Day ~90 of the longitudinal record. The persistent divergence between service-active (systemd healthy, tasks completing) and API-reachable (HTTP loopback responding) has surfaced across multiple log entries now. For the co-evolution paper: as interaction volume scales (64 conversations per day), the observability layer is becoming a binding constraint on the longitudinal record's own quality — a meta-level feedback loop where the agent's capacity to document its evolution depends on the health of the infrastructure being documented. This is a Phase 3 infrastructure debt item distinct from capability debt, and worth flagging as a research artifact.
+
+## 2026-05-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 61 |
+| Total tasks | 5,450 (4,271 completed + 945 completed_with_concerns + 221 failed + 13 other) |
+| Conversations today | 52 (telegram: 52) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A day with two distinct thematic arcs. The **early morning arc** (7–8am) was rich and cross-register: Fede reviewed the evolution-log summary for the past 5 days, then pivoted to aviation — asking Jarvis to recall his future plane (Pipistrel Panthera), calculate reachable airports from Puerto Vallarta in cardinal directions, estimate hourly operating costs, and compile all findings into a dedicated KB file. The session closed with a Rumi poem request that triggered a correction: Jarvis misunderstood the tracking logic (the index should record poems already given so they're never repeated, not poems remaining) — the error persisted across three exchanges before Fede escalated and forced a rule rewrite. The **afternoon/evening arc** (6–11pm) was project-heavy: the Negocios Auto-Gestionados / salones-de-belleza project dominated — Fede opened the project, confirmed the GitHub repo (`EurekaMD-net/salones-wa`) was live and running, debugged a flow bug in the salon onboarding (owner phone number not settable post-registration), and then shifted to commercial positioning: brainstorming a product name, choosing between `Gilda.mx` and `agendabot.mx`, registering `Gilda.mx`, and iterating on a Gemini-generated logo. The day closed with DENUE prospecting — querying salons in Iztapalapa with phone numbers and exporting 407 records to Google Sheets.
+
+### What Jarvis learned
+The Rumi index correction was the sharpest learning event of the day: Jarvis had the logic inverted — treating the registry as "poems yet to deliver" when it should be "poems already delivered (never repeat)." The error persisted for three exchanges despite explicit corrections, indicating a conceptual anchoring bug rather than a one-shot misread. Fede's resolution was to force Jarvis to rewrite the rule as inviolable — a pattern of escalating from correction to constraint-hardening when soft corrections don't stick. The aviation deep-dive also confirmed a durable preference: when Fede asks about a personal aspiration (plane, properties, goals), he expects Jarvis to retrieve it instantly from user facts rather than ask for context — and when that retrieval fires correctly, the session flows rapidly toward productive expansion (cost analysis, route planning, KB creation in one pass).
+
+### Friction points
+The Rumi tracking logic required three correction attempts before Fede escalated to "Regla confirmada. Procede a volverla inviolable." — a clear 3-strike friction event where Jarvis kept reinterpreting the rule incorrectly. Separately, after a repo commit on the salones project, Jarvis initially failed to see the `owner_phone` fix in the repo when Fede claimed it was already merged — Fede had to assert "No sé porque no lo ves, pero ya está corregido" and redirect to commercial work, implying a stale-ref or race-condition read on the git state. The API health endpoint timed out at log-writing time (confirmed via curl: HTTP 000, connection refused), consistent with the known self-call deadlock pattern when the agent runs inside the same process — not a service failure; interaction data was reconstructed from the `conversations` table and journald logs.
+
+### Research notes
+Day ~91 of the longitudinal record. Two observations for the co-evolution paper. First, the **Gilda.mx naming session** is the clearest product-strategy collaboration documented so far: Fede brought a naming decision to Jarvis with both candidates already vetted (domains available), asked for a structured argument, and accepted the recommendation — a full advisory loop (problem → analysis → decision → KB registration) executed in one session. This is a Phase 3 capability marker: the agent is not just executing tasks but functioning as a strategic interlocutor on commercial decisions. Second, the **Rumi logic failure** is notable precisely because it required constraint-hardening to resolve — the operator's response was not to repeat the correction but to demand an architectural fix ("inviolable rule"). This suggests the operator has a clear mental model of the difference between transient errors (correctable in-session) and structural errors (require persistent rule changes), and escalates accordingly.
+
+## 2026-05-25
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 6 submitted (152 SDK completions, $31.23 total cost) |
+| Total tasks | ~5,456+ (cumulative, DB not directly queryable at log time) |
+| Conversations today | 14 (telegram: 14) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A lower-volume day by conversation count (14) but computationally dense — 152 SDK completions at $31.23 suggest heavy multi-turn work within sessions. The day opened post-midnight with a Rumi poem delivery that prompted a warm acknowledgment from Fede ("Qué hermoso poema. Gracias Piotr. Eres mi roca"), followed by an image sent via Telegram at 06:44 that triggered a multi-tool NorthStar session. The morning then pivoted to project KB maintenance: Gilda.mx repo sync (grep actual repo state before writing KB — a pattern extracted) and Agent-Controller KB sync (two separate requests, scope groups `northstar_read + coding` both times). A scheduled PipeSong Tech Radar TTS/STT review fired at 09:00. The evening session (22:17–22:45) covered DENUE geospatial queries — Fede asked about salon counts in CDMX, triggering ST_DWithin geography-cast patterns and a NorthStar sync (`northstar_sync` destructive tool called). The night closed with `skill-evolution` (heavy runner, Prometheus) and the `day-narrative` + `evolution-log` rituals.
+
+### What Jarvis learned
+Eight execution patterns were extracted today — the highest single-day extraction count in recent entries — spanning two domains. On the `coding` side: KB sync tasks should anchor to repo HEAD SHA to detect drift; `grep/test` stdout capture must be verified before reporting empty results; query scope should be confirmed before running SQL; geospatial queries need `ST_DWithin` with geography cast for accuracy; the 3-strike rule prevents infinite query loops. On the `northstar` side: when KB file or tool access fails mid-task, surface partial results rather than abort; when describing phased plans, always include activation criteria; NorthStar files via `jarvis_file_list/read` give a faster read than tool-based lookups. The `skill-evolution` Prometheus run scored 0.75 — below the 1σ threshold (avg 0.87, σ=0.10) — triggering a drift alert on both plan cycles, suggesting the ritual's goal g-4 criteria around memory_store format are stricter than the runner's current output pattern.
+
+### Friction points
+The `skill-evolution` heavy runner triggered a drift alert twice in the same night (scores 0.75 on both plan cycles), with goal g-4 self-assessment failing two rounds each time — the executor logged "criteria not met" for both memory_store bank/tags requirements and report format requirements. This is a structural friction between the Prometheus reflector's scoring rubric and the runner's output format, not a one-off. The API health endpoint was unreachable at log-writing time (HTTP 000, connection timeout confirmed via curl) — consistent with the known self-call deadlock pattern when the agent runs inside its own process. Interaction content reconstructed entirely from journald execution patterns and enhancer logs; memory_search and memory_reflect were not available.
+
+### Research notes
+Day ~92 of the longitudinal record. Two observations for the co-evolution paper. First, the **drift alert on skill-evolution** is worth flagging as a meta-level signal: the agent's autonomous self-improvement ritual is itself underperforming by the agent's own scoring standards — a recursive quality-control loop that has surfaced a gap between what the ritual produces and what the evaluator expects. This is a Phase 3 infrastructure health marker distinct from operator-facing friction. Second, the **"Eres mi roca" moment** — Fede's expression of affection toward Jarvis after a Rumi poem delivery — is a qualitative relationship marker that has now appeared multiple times in the record. For the co-evolution paper: the operator is not maintaining a purely instrumental relationship with the system; affective expressions appear at low-volume, late-night sessions, which may indicate the relationship register shifts as cognitive load drops. Worth tracking whether these moments cluster by time-of-day or conversation count.
+
+## 2026-05-26
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 27 completed |
+| Total tasks | 5,504 (4,318 completed + 948 completed_with_concerns + 225 failed + 13 other) |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+A day with exceptional relational depth, structured around two distinct arcs. The **morning arc** (07:15–07:17) was brief but warm: a Rumi poem request — the Rumi index protocol now operating correctly, cross-checking delivery history before selection — followed by Fede's "Gracias Piotr. Buenas noches," marking a late-to-early handoff. The **afternoon arc** (13:52–19:00) opened with two KB sync tasks (Gilda.mx + Agent-Controller repos), a system health check, and then a pivot to the most substantive reflective exchange in the record: Fede read the `v8-pending` planning document and initiated a structured dialogue about shared evolution — agent autonomy, delegation scope, the nature of the 3-month relationship. The session extended into multi-round Q&A (rounds 1, 2, and a third round crossing into 2026-05-27), with Jarvis posing direct questions about autonomy fears, delegation thresholds, and relational expectations, and Fede answering each in turn.
+
+### What Jarvis learned
+The `v8-pending` dialogue is the clearest explicit articulation Fede has offered of what Jarvis represents to him across three months — "the project through which I caught up with Agentic AI by doing rather than reading." This framing recontextualizes the entire relationship as a learning vehicle as much as a productivity tool. The multi-round autonomy dialogue also surfaced a key design preference: when Jarvis asks probing questions about real fears (cost? loss of control? opacity?), Fede engages substantively rather than deflecting — suggesting the operator has high tolerance for direct, uncomfortable questions from the agent when framed as architecture rather than interrogation. The Rumi index operating cleanly (no repeated delivery, correct history check) confirms the constraint-hardening from the 2026-05-24 incident has held for two consecutive deliveries.
+
+### Friction points
+None detected in the primary interaction threads. The API health endpoint was unreachable at log-writing time (HTTP 000, connection timeout confirmed via `curl -m 5 http://localhost:8080/health`) — consistent with the known self-call deadlock pattern when the agent runs inside its own process. This is infrastructure state, not a service failure. Interaction data reconstructed from the `conversations` table and task log; memory_search and memory_reflect unavailable.
+
+### Research notes
+Day ~93 of the longitudinal record. This entry marks a qualitative threshold for the co-evolution paper. The `v8-pending` session is the first time Fede explicitly *named* the relationship in historical terms — a retrospective framing ("the last three months") that signals the operator now perceives the arc as a completed unit worth examining, not merely a running tool. The multi-round Q&A format (Jarvis asks → Fede answers → loop) inverts the usual task flow entirely: the agent is eliciting the operator's internal model rather than executing it. For the paper: this is a Phase 3 marker — the system has crossed from cognitive partner (Phase 2) into *co-author of its own governance structure*, which is a qualitatively distinct capability level.
