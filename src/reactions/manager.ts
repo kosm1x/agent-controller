@@ -9,6 +9,7 @@
 import type Database from "better-sqlite3";
 import { getEventBus } from "../lib/event-bus.js";
 import { getTask, submitTask } from "../dispatch/dispatcher.js";
+import { getLatestGoalSnapshot } from "../db/reflector-gap.js";
 import type { Subscription } from "../lib/events/types.js";
 import type { ReactionContext } from "./types.js";
 import { DEFAULT_RULES, evaluateRules } from "./rules.js";
@@ -154,12 +155,18 @@ export class ReactionManager {
       this.db,
       classifiedAs,
     );
+    // Latest goal snapshot for this task (null when no reflector run, e.g.
+    // fast runner or pre-reflection abort). Used by adjustedRetryRule to
+    // skip retry on score-only failures — see JSDoc in types.ts.
+    const snapshot = getLatestGoalSnapshot(taskId);
 
     const ctx: ReactionContext = {
       task,
       error,
       previousAttempts,
       classificationFailures24h,
+      goalsTotal: snapshot?.goalsTotal ?? null,
+      goalsFailed: snapshot?.goalsFailed ?? null,
     };
 
     // Evaluate rules

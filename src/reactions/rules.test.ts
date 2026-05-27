@@ -43,6 +43,8 @@ function makeContext(
     error: "Something went wrong",
     previousAttempts: 0,
     classificationFailures24h: 0,
+    goalsTotal: null,
+    goalsFailed: null,
     ...overrides,
   };
 }
@@ -134,6 +136,61 @@ describe("reaction rules", () => {
         previousAttempts: 0,
       });
       expect(adjustedRetryRule.evaluate(ctx)).toBeNull();
+    });
+
+    // Score-only failure gate (S3, [[deterministic-retry-gate]]). Two skill-
+    // evolution burn loops (2026-05-25 confabulation, 2026-05-27 honest
+    // criteriaMet=false) both fired adjusted_retry on heavy runs where every
+    // goal reached COMPLETED but the criteriaMet discount dropped the score
+    // below 0.80. Same prompt → same outcome → ~1.7M tokens wasted.
+    it("does NOT trigger when goalsFailed === 0 AND goalsTotal > 0 (score-only failure is deterministic)", () => {
+      const ctx = makeContext({
+        error: null,
+        previousAttempts: 0,
+        goalsTotal: 4,
+        goalsFailed: 0,
+      });
+      expect(adjustedRetryRule.evaluate(ctx)).toBeNull();
+    });
+
+    it("DOES trigger when goalsFailed > 0 (real goal failure may benefit from error context)", () => {
+      const ctx = makeContext({
+        error: "Tool xyz not found",
+        previousAttempts: 0,
+        goalsTotal: 4,
+        goalsFailed: 1,
+      });
+      const result = adjustedRetryRule.evaluate(ctx);
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("retry_adjusted");
+    });
+
+    it("DOES trigger when goalsFailed === null (no reflector data — preserve legacy behavior for fast runner)", () => {
+      const ctx = makeContext({
+        error: "Tool xyz not found",
+        previousAttempts: 0,
+        goalsTotal: null,
+        goalsFailed: null,
+      });
+      const result = adjustedRetryRule.evaluate(ctx);
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("retry_adjusted");
+    });
+
+    // Audit W2 fold: empty-graph reflection (planner returned no goals, or
+    // pre-execution crash that still wrote a stub reflector_gap_log row)
+    // produces goals_failed=0 AND goals_total=0. Without the goalsTotal > 0
+    // gate this would suppress a legitimate retry. Verify the narrower gate.
+    it("DOES trigger when goalsTotal === 0 (empty graph — gate requires goals_total > 0)", () => {
+      const ctx = makeContext({
+        error: "Planner failed to produce goals",
+        previousAttempts: 0,
+        goalsTotal: 0,
+        goalsFailed: 0,
+      });
+      const result = adjustedRetryRule.evaluate(ctx);
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("retry_adjusted");
     });
   });
 

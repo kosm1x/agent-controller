@@ -50,3 +50,50 @@ export function logReflectorGap(record: ReflectorGapRecord): void {
     // Telemetry must never block execution.
   }
 }
+
+/**
+ * Read the most recent {goals_total, goals_failed} for a task. Returns null
+ * when no reflector_gap_log row exists — fast runner, or heavy run that
+ * failed before reflection ran. Caller treats null as "unknown, preserve
+ * legacy behavior".
+ *
+ * Used by reactions-manager to gate `adjusted_retry`. The gate fires only on
+ * `goals_failed === 0 && goals_total > 0` — both must be known and goals_total
+ * > 0 to distinguish "real run, zero active failures" from "pre-execution
+ * crash with empty graph that happens to write goals_failed=0".
+ *
+ * **Failure mode is intentional but logged.** Any DB error → return null →
+ * legacy retry behavior. A silent null here that masks a schema drift would
+ * recreate the burn loop the gate exists to prevent (W1 audit fold). Log so
+ * the failure surfaces in journalctl.
+ */
+export interface ReflectorGoalSnapshot {
+  goalsTotal: number;
+  goalsFailed: number;
+}
+
+export function getLatestGoalSnapshot(
+  taskId: string,
+): ReflectorGoalSnapshot | null {
+  try {
+    const db = getDatabase();
+    const row = db
+      .prepare(
+        `SELECT goals_total, goals_failed FROM reflector_gap_log
+         WHERE task_id = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(taskId) as
+      | { goals_total: number | null; goals_failed: number | null }
+      | undefined;
+    if (!row) return null;
+    return {
+      goalsTotal: row.goals_total ?? 0,
+      goalsFailed: row.goals_failed ?? 0,
+    };
+  } catch (err) {
+    console.warn(
+      `[reflector-gap] getLatestGoalSnapshot(${taskId}) failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
+}

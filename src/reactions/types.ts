@@ -51,6 +51,24 @@ export interface ReactionContext {
   previousAttempts: number;
   /** Number of failures with the same classified_as value in the last 24 hours. */
   classificationFailures24h: number;
+  /**
+   * Total goals in the most recent reflector run for this task. `null` when
+   * no reflector_gap_log row exists. Pairs with goalsFailed for the gate to
+   * distinguish "real run with 0 active failures" from "pre-execution crash
+   * with empty graph". Gate fires only when goalsTotal > 0.
+   */
+  goalsTotal: number | null;
+  /**
+   * Number of goals with status=FAILED in the most recent reflector run for
+   * this task. `null` when no reflector_gap_log row exists (fast runner, or
+   * heavy run that failed before reflection). Used by adjustedRetryRule to
+   * skip retry on score-only failures (criteriaMet=false discount drops the
+   * score below threshold but no goal actively failed → retrying the same
+   * prompt is deterministic). The gate is narrow: ONLY
+   * `goalsFailed === 0 && goalsTotal > 0` blocks retry. `null` and `>0` both
+   * preserve legacy retry behavior.
+   */
+  goalsFailed: number | null;
 }
 
 export interface ReactionDecision {

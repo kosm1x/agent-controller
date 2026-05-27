@@ -61,12 +61,38 @@ export const transientRetryRule: ReactionRule = {
   },
 };
 
-/** First non-transient failure → retry with error context injected. */
+/**
+ * First non-transient failure → retry with error context injected.
+ *
+ * Score-only failure gate (2026-05-27, S3, [[deterministic-retry-gate]]):
+ * when reflector data says zero goals actively failed but the task is marked
+ * `failed`, the failure came from criteriaMet=false discounts dropping the
+ * aggregate score below the success threshold. Retrying produces the same
+ * goals → same discount → same score → same outcome, and burns ~1.7M tokens
+ * per round (skill-evolution burn loops on 2026-05-25 and 2026-05-27).
+ *
+ * Gate is narrow on purpose:
+ *   - `goalsFailed === 0 && goalsTotal > 0` → skip retry (deterministic)
+ *   - `goalsFailed === null` (no reflector_gap_log row — fast runner or
+ *     pre-reflection abort) → legacy retry behavior
+ *   - `goalsFailed > 0` → legacy retry behavior (error-context injection
+ *     may genuinely help on a real goal failure)
+ *   - `goalsTotal === 0` (empty graph — planner returned no goals) → legacy
+ *     retry behavior (audit W2 fold: distinguishes pre-execution crash from
+ *     "real run with 0 active failures")
+ */
 export const adjustedRetryRule: ReactionRule = {
   name: "adjusted_retry",
   evaluate(ctx: ReactionContext): ReactionDecision | null {
     if (ctx.previousAttempts > 0) return null; // Only on first failure
     if (ctx.error && TRANSIENT_ERROR_PATTERN.test(ctx.error)) return null;
+    if (
+      ctx.goalsFailed === 0 &&
+      ctx.goalsTotal !== null &&
+      ctx.goalsTotal > 0
+    ) {
+      return null; // deterministic score-only failure
+    }
     return {
       action: "retry_adjusted",
       reason: `First non-transient failure — retrying with error context`,

@@ -34,6 +34,14 @@ const mockSubmitTask = vi.fn().mockResolvedValue({
   classification: { score: 1, reason: "auto", explicit: false },
 });
 
+// Mock the reflector-gap reader so we can inject the goal snapshot per test.
+// Default: no reflector data → preserves legacy retry behavior. Override per
+// test via mockGoalSnapshot.mockReturnValueOnce(...).
+const mockGoalSnapshot = vi.fn();
+vi.mock("../db/reflector-gap.js", () => ({
+  getLatestGoalSnapshot: (...args: unknown[]) => mockGoalSnapshot(...args),
+}));
+
 vi.mock("../dispatch/dispatcher.js", () => ({
   getTask: vi.fn((taskId: string) => {
     if (taskId === "task-subtask") {
@@ -145,6 +153,8 @@ describe("ReactionManager", () => {
     `);
 
     mockSubmitTask.mockClear();
+    mockGoalSnapshot.mockReset();
+    mockGoalSnapshot.mockReturnValue(null); // default: no reflector data
     manager = new ReactionManager(db);
     manager.start();
   });
@@ -195,6 +205,30 @@ describe("ReactionManager", () => {
 
     const reactions = getReactionsBySourceTask(db, "task-1");
     expect(reactions).toHaveLength(1);
+    expect(reactions[0].action).toBe("retry_adjusted");
+  });
+
+  // S3 deterministic-retry-gate: when the reflector recorded goals_failed=0
+  // AND goals_total>0 for a real heavy run, adjusted_retry must NOT fire —
+  // the failure is score-only (criteriaMet=false discount) and retrying
+  // burns tokens on a deterministic same-prompt rerun. Live source of this
+  // test: 2026-05-27 23:00 MX skill-evolution burn loop (tasks 9ea36c4f +
+  // e4a60c0f, both 4/4 goals completed, 0 failed, score 0.72, retried).
+  it("does NOT retry when reflector snapshot is {goalsTotal>0, goalsFailed=0} (score-only failure)", async () => {
+    mockGoalSnapshot.mockReturnValue({ goalsTotal: 4, goalsFailed: 0 });
+    await triggerTaskFailed("task-1", "criteriaMet=false on g-4");
+
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    const reactions = getReactionsBySourceTask(db, "task-1");
+    expect(reactions).toHaveLength(0);
+  });
+
+  it("DOES retry when reflector snapshot is {goalsTotal>0, goalsFailed>0} (real goal failure)", async () => {
+    mockGoalSnapshot.mockReturnValue({ goalsTotal: 4, goalsFailed: 2 });
+    await triggerTaskFailed("task-1", "Tool xyz not found");
+
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const reactions = getReactionsBySourceTask(db, "task-1");
     expect(reactions[0].action).toBe("retry_adjusted");
   });
 
