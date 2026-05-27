@@ -2,7 +2,7 @@
  * mc-ctl briefing-gate — V8.1 §13 activation-gate report.
  *
  * Invoked by `mc-ctl briefing-gate`. Evaluates the §13 activation gate
- * (cache-read ratio over reflection inference + morning-brief promote-rate)
+ * (cache-read ratio over cacheable inference + morning-brief promote-rate)
  * and prints an operator-readable report. Read-only — no writes.
  */
 
@@ -34,12 +34,12 @@ function main(): number {
   console.log(VERDICT_LABEL[g.verdict]);
   console.log("");
 
-  console.log("Cache-read ratio (reflection inference, last 24h):");
+  console.log("Cache-read ratio (cacheable inference, last 24h):");
   console.log(
     `  ${g.checks.cacheRead.pass ? "✓" : "✗"} ${g.checks.cacheRead.detail}`,
   );
   console.log(
-    `  reflection runs: ${g.reflectionRuns}   reflection cost: $${g.reflectionCostUsd}`,
+    `  cacheable runs: ${g.cacheableRuns}   cacheable cost: $${g.cacheableCostUsd}`,
   );
   console.log("");
 
