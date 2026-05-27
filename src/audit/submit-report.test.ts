@@ -3,20 +3,32 @@
  *
  * Uses a real in-memory SQLite via initDatabase(":memory:") so the SQL is
  * exercised (CHECK constraint on critic_verdict, UNIQUE on report_id, the
- * ON CONFLICT DO NOTHING idempotency). `infer` is mocked.
+ * ON CONFLICT DO NOTHING idempotency).
+ *
+ * 2026-05-27 refactor: runCritic now calls `queryClaudeSdk` directly with
+ * an inline `submit_verdict` tool (see audit/critic.ts header). These tests
+ * mock at that layer — the verdict flows through the tool handler's closure
+ * sink, not through free-text JSON parsing. `mockPass()` and `mockFail()`
+ * synthesize the SDK's tool-invocation lifecycle.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { initDatabase, closeDatabase, getDatabase } from "../db/index.js";
 import { submitReport, CRITIC_SKIP_FOR } from "./submit-report.js";
-import { infer } from "../inference/adapter.js";
+import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import type { ReportDraft, ReportSurface } from "./report-schema.js";
 
-vi.mock("../inference/adapter.js", () => ({
-  infer: vi.fn(),
-}));
+vi.mock("../inference/claude-sdk.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../inference/claude-sdk.js")
+  >("../inference/claude-sdk.js");
+  return {
+    ...actual,
+    queryClaudeSdk: vi.fn(),
+  };
+});
 
-const mockInfer = vi.mocked(infer);
+const mockQuery = vi.mocked(queryClaudeSdk);
 
 const T0 = "2026-05-19T00:00:00.000Z";
 const T1 = "2026-05-19T01:00:00.000Z";
@@ -47,32 +59,42 @@ function validDraft(overrides: Partial<ReportDraft> = {}): ReportDraft {
   };
 }
 
-function mockPass() {
-  mockInfer.mockResolvedValueOnce({
-    content: '{"verdict":"pass","critique":""}',
-    usage: {
-      prompt_tokens: 100,
-      completion_tokens: 10,
-      total_tokens: 110,
-      cost_usd: 0.0005,
-    },
-    provider: "test",
-    latency_ms: 20,
+/**
+ * Synthesize the SDK invoking `submit_verdict` with the given verdict +
+ * critique. Mirrors the real SDK's tool-call lifecycle that runCritic depends
+ * on (closure sink captures, query() resolves with empty text + toolCalls).
+ */
+function simulateVerdict(verdict: "pass" | "fail", critique: string) {
+  mockQuery.mockImplementationOnce(async (opts) => {
+    const submitVerdict = opts.extraTools?.[0];
+    if (submitVerdict) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (submitVerdict as any).handler({ verdict, critique }, {});
+    }
+    return {
+      text: "",
+      toolCalls: ["submit_verdict"],
+      numTurns: 1,
+      usage: {
+        promptTokens: 100,
+        completionTokens: 20,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+      costUsd: 0.0005,
+      costAuthoritative: true,
+      durationMs: 20,
+      model: "claude-sonnet-4-6",
+    };
   });
 }
 
+function mockPass() {
+  simulateVerdict("pass", "");
+}
+
 function mockFail(critique = "headline n=5 not in concerns") {
-  mockInfer.mockResolvedValueOnce({
-    content: JSON.stringify({ verdict: "fail", critique }),
-    usage: {
-      prompt_tokens: 100,
-      completion_tokens: 20,
-      total_tokens: 120,
-      cost_usd: 0.0008,
-    },
-    provider: "test",
-    latency_ms: 25,
-  });
+  simulateVerdict("fail", critique);
 }
 
 beforeEach(() => {
@@ -95,7 +117,7 @@ describe("submitReport — schema gate", () => {
       expect(r.kind).toBe("schema");
       expect(r.issues.length).toBeGreaterThan(0);
     }
-    expect(mockInfer).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("rejects empty verified_against", async () => {
@@ -115,7 +137,7 @@ describe("submitReport — invariant gate", () => {
       expect(r.kind).toBe("invariants");
       expect(r.issues.some((i) => i.includes("stale"))).toBe(true);
     }
-    expect(mockInfer).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("rejects evidence_index out of bounds", async () => {
@@ -162,7 +184,7 @@ describe("submitReport — retry path", () => {
       expect(r.report.retry_count).toBe(1);
     }
     expect(reviseFn).toHaveBeenCalledOnce();
-    expect(mockInfer).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
   it("exhausts retries → returns with fail_returned_anyway + audit_failed concern", async () => {
@@ -186,7 +208,7 @@ describe("submitReport — retry path", () => {
       expect(r.report.critic_critique).toBe("c4");
     }
     expect(reviseFn).toHaveBeenCalledTimes(3);
-    expect(mockInfer).toHaveBeenCalledTimes(4);
+    expect(mockQuery).toHaveBeenCalledTimes(4);
   });
 
   it("returns fail_returned_anyway when no reviseFn provided", async () => {
@@ -197,18 +219,28 @@ describe("submitReport — retry path", () => {
       expect(r.report.critic_verdict).toBe("fail_returned_anyway");
       expect(r.report.retry_count).toBe(0);
     }
-    expect(mockInfer).toHaveBeenCalledOnce();
+    expect(mockQuery).toHaveBeenCalledOnce();
   });
 });
 
 describe("submitReport — critic infra failure", () => {
   it("on critic error → folds into audit_failed concern and returns immediately", async () => {
-    // Empty response = infra error per critic.ts
-    mockInfer.mockResolvedValueOnce({
-      content: "",
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      provider: "test",
-      latency_ms: 1,
+    // Model returned text-only (no submit_verdict tool call) = audit_failed
+    // per critic.ts C1 contract.
+    mockQuery.mockResolvedValueOnce({
+      text: "",
+      toolCalls: [],
+      numTurns: 0,
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+      costUsd: 0,
+      costAuthoritative: true,
+      durationMs: 1,
+      model: "claude-sonnet-4-6",
     });
     const reviseFn = vi.fn();
     const r = await submitReport(validDraft(), { reviseFn });
@@ -256,7 +288,7 @@ describe("submitReport — allowlist", () => {
         expect(r.report.critic_verdict).toBe("skipped_allowlist");
         expect(r.report.retry_count).toBe(0);
       }
-      expect(mockInfer).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalled();
     });
   });
 
@@ -394,15 +426,15 @@ describe("submitReport — abort/signal hygiene", () => {
         ),
       ).toBe(true);
     }
-    expect(mockInfer).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("timeoutMs fires before caller signal → cleans up both cleanup paths", async () => {
     const ac = new AbortController();
-    mockInfer.mockImplementationOnce(
-      (_req, opts) =>
+    mockQuery.mockImplementationOnce(
+      (opts) =>
         new Promise((_resolve, reject) => {
-          opts?.signal?.addEventListener("abort", () =>
+          opts.abortSignal?.addEventListener("abort", () =>
             reject(new Error("aborted")),
           );
         }),

@@ -21,6 +21,7 @@ import type {
   SDKResultSuccess,
   SDKResultError,
   SDKUserMessage,
+  SdkMcpToolDefinition,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
@@ -125,8 +126,41 @@ function wrapTool(t: Tool) {
 // MCP server builder
 // ---------------------------------------------------------------------------
 
-export function buildMcpServer(toolNames: string[]) {
-  const tools = toolNames
+/**
+ * Inline SDK tool — already wrapped via the SDK's `tool()` factory, ready to
+ * register without going through `toolRegistry`. Used by callers that need a
+ * one-shot tool scoped to a single query (e.g. the S2 critic's `submit_verdict`
+ * pattern from 2026-05-27 — forced structured-output without polluting the
+ * global tool registry).
+ *
+ * Generic-widened: the SDK's `tool()` factory infers a specific Zod-shape
+ * generic per call, but `buildMcpServer` accepts the union via
+ * `SdkMcpToolDefinition<any>` (matching the SDK's own `createSdkMcpServer`
+ * signature). Callers stay strongly-typed at the `sdkTool(...)` call site;
+ * we only erase the schema generic at the registry boundary.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type InlineSdkTool = SdkMcpToolDefinition<any>;
+
+export function buildMcpServer(
+  toolNames: string[],
+  extraTools: InlineSdkTool[] = [],
+) {
+  // Audit-R2: guard against inline tools whose name collides with a
+  // registry tool. The SDK's `createSdkMcpServer` accepts duplicate names
+  // with undefined merge behavior (last-wins, first-wins, or runtime
+  // error depending on SDK version). Surface the collision loudly here so
+  // a future caller that re-uses a registry name gets a clear error
+  // instead of a silent override of (e.g.) `shell_exec`.
+  for (const t of extraTools) {
+    if (toolRegistry.get(t.name) !== undefined) {
+      throw new Error(
+        `inline tool name '${t.name}' collides with a registry tool — pick a distinct name`,
+      );
+    }
+  }
+
+  const registryTools = toolNames
     .map((n) => toolRegistry.get(n))
     .filter((t): t is Tool => t !== undefined)
     .map(wrapTool);
@@ -134,7 +168,7 @@ export function buildMcpServer(toolNames: string[]) {
   return createSdkMcpServer({
     name: "jarvis",
     version: "1.0.0",
-    tools,
+    tools: [...registryTools, ...extraTools],
   });
 }
 
@@ -302,6 +336,15 @@ export async function queryClaudeSdk(opts: {
    *  actually sees the pixels. Without this, callers that stuff images into
    *  `prompt` will silently lose them — the SDK takes only a string there. */
   images?: ClaudeSdkImage[];
+  /**
+   * Inline SDK tools registered alongside `toolNames`-resolved registry
+   * tools. Each must already be wrapped via `sdkTool(...)`. Their names are
+   * auto-added to `allowedTools` (no need to spell them in `toolNames`).
+   * Use case: one-shot forced-structured-output tools that should NOT
+   * pollute the global toolRegistry — e.g. `submit_verdict` in the S2
+   * critic (2026-05-27 `fail_returned_anyway` fix).
+   */
+  extraTools?: InlineSdkTool[];
 }): Promise<ClaudeSdkResult> {
   // Dim-4 R2 fix: claude-sdk path was unguarded since the 2026-04-22 Sonnet
   // primary flip. The shared circuitRegistry (adapter.ts:770) only protected
@@ -333,9 +376,13 @@ export async function queryClaudeSdk(opts: {
     );
   }
 
-  const mcpServer = buildMcpServer(opts.toolNames);
+  const extraTools = opts.extraTools ?? [];
+  const mcpServer = buildMcpServer(opts.toolNames, extraTools);
 
-  const allowedTools = opts.toolNames.map((n) => `mcp__jarvis__${n}`);
+  const allowedTools = [
+    ...opts.toolNames.map((n) => `mcp__jarvis__${n}`),
+    ...extraTools.map((t) => `mcp__jarvis__${t.name}`),
+  ];
 
   const abortController = new AbortController();
   if (opts.abortSignal) {

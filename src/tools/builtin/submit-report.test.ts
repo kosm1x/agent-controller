@@ -1,21 +1,30 @@
 /**
  * v7.7 Spine 1 Phase 2a — submit_report tool boundary tests.
  *
- * Mocks `infer` for the critic; uses :memory: DB for real persistence so
- * the per-task cap query exercises real SQL.
+ * 2026-05-27: runCritic now calls `queryClaudeSdk` directly with an inline
+ * `submit_verdict` MCP tool (see audit/critic.ts header for rationale).
+ * Mocks at that layer; helpers synthesize the SDK's tool-invocation
+ * lifecycle. :memory: DB for real persistence so the per-task cap query
+ * exercises real SQL.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { submitReportTool } from "./submit-report.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
-import { infer } from "../../inference/adapter.js";
+import { queryClaudeSdk } from "../../inference/claude-sdk.js";
 import type { ReportDraft } from "../../audit/report-schema.js";
 
-vi.mock("../../inference/adapter.js", () => ({
-  infer: vi.fn(),
-}));
+vi.mock("../../inference/claude-sdk.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../inference/claude-sdk.js")
+  >("../../inference/claude-sdk.js");
+  return {
+    ...actual,
+    queryClaudeSdk: vi.fn(),
+  };
+});
 
-const mockInfer = vi.mocked(infer);
+const mockQuery = vi.mocked(queryClaudeSdk);
 const T0 = "2026-05-19T00:00:00.000Z";
 const T1 = "2026-05-19T01:00:00.000Z";
 const SHA256 = "a".repeat(64);
@@ -47,32 +56,43 @@ function validArgs(
   };
 }
 
-function mockPass() {
-  mockInfer.mockResolvedValueOnce({
-    content: '{"verdict":"pass","critique":""}',
-    usage: {
-      prompt_tokens: 100,
-      completion_tokens: 10,
-      total_tokens: 110,
-      cost_usd: 0.0005,
-    },
-    provider: "test",
-    latency_ms: 20,
+/**
+ * Synthesize the SDK invoking `submit_verdict` with the given verdict +
+ * critique. Mirrors the real SDK's tool-call lifecycle that runCritic
+ * depends on (closure sink captures, query() resolves with empty text +
+ * toolCalls). See critic.ts header for the forced-tool contract.
+ */
+function simulateVerdict(verdict: "pass" | "fail", critique: string) {
+  mockQuery.mockImplementationOnce(async (opts) => {
+    const submitVerdict = opts.extraTools?.[0];
+    if (submitVerdict) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (submitVerdict as any).handler({ verdict, critique }, {});
+    }
+    return {
+      text: "",
+      toolCalls: ["submit_verdict"],
+      numTurns: 1,
+      usage: {
+        promptTokens: 100,
+        completionTokens: 20,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+      costUsd: 0.0005,
+      costAuthoritative: true,
+      durationMs: 20,
+      model: "claude-sonnet-4-6",
+    };
   });
 }
 
+function mockPass() {
+  simulateVerdict("pass", "");
+}
+
 function mockFail(critique = "sample_n=5 not flagged") {
-  mockInfer.mockResolvedValueOnce({
-    content: JSON.stringify({ verdict: "fail", critique }),
-    usage: {
-      prompt_tokens: 100,
-      completion_tokens: 20,
-      total_tokens: 120,
-      cost_usd: 0.0008,
-    },
-    provider: "test",
-    latency_ms: 25,
-  });
+  simulateVerdict("fail", critique);
 }
 
 beforeEach(() => {
@@ -156,7 +176,7 @@ describe("submit_report — error paths", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.kind).toBe("schema");
     expect(Array.isArray(parsed.issues)).toBe(true);
-    expect(mockInfer).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("returns ok:false kind:invariants on stale citation", async () => {
@@ -167,7 +187,7 @@ describe("submit_report — error paths", () => {
     const parsed = JSON.parse(out);
     expect(parsed.ok).toBe(false);
     expect(parsed.kind).toBe("invariants");
-    expect(mockInfer).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
 
@@ -193,7 +213,7 @@ describe("submit_report — per-task call cap", () => {
     expect(parsed4.ok).toBe(false);
     expect(parsed4.kind).toBe("cap_exceeded");
     expect(parsed4.message).toContain("PROCEED to delivery");
-    expect(mockInfer).toHaveBeenCalledTimes(3); // 4th never reached critic
+    expect(mockQuery).toHaveBeenCalledTimes(3); // 4th never reached critic
 
     // Separate task_id with all passes — cap never fires regardless of count
     const taskIdPasses = "task-all-passes";
@@ -206,7 +226,7 @@ describe("submit_report — per-task call cap", () => {
       expect(JSON.parse(out).critic_verdict).toBe("pass");
     }
     // 5 more critic calls happened, no cap
-    expect(mockInfer).toHaveBeenCalledTimes(8);
+    expect(mockQuery).toHaveBeenCalledTimes(8);
   });
 
   it("calls without task_id are NOT capped (each is a separate report)", async () => {
@@ -217,7 +237,7 @@ describe("submit_report — per-task call cap", () => {
       const parsed = JSON.parse(out);
       expect(parsed.ok).toBe(true);
     }
-    expect(mockInfer).toHaveBeenCalledTimes(5);
+    expect(mockQuery).toHaveBeenCalledTimes(5);
   });
 
   it("cap is per task_id — different task IDs do not share the count", async () => {
@@ -236,7 +256,7 @@ describe("submit_report — per-task call cap", () => {
     const parsed = JSON.parse(out);
     expect(parsed.ok).toBe(true);
     expect(parsed.critic_verdict).toBe("pass");
-    expect(mockInfer).toHaveBeenCalledTimes(4);
+    expect(mockQuery).toHaveBeenCalledTimes(4);
   });
 });
 
