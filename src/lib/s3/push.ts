@@ -22,6 +22,7 @@
  */
 
 import { getDatabase } from "../../db/index.js";
+import { formatRelativeTime } from "./delivery.js";
 
 export interface PushAlertRow {
   id: number;
@@ -111,7 +112,7 @@ function composeSingleMessage(a: PushAlertRow): PushMessage {
   const signal = a.signal_name ?? `<deleted signal ${a.id}>`;
   const substrate = a.source_substrate ?? "<unknown>";
   return {
-    text: `[S3 P0] ${signal} (${substrate}) — ${a.deviation_kind}, observado: ${observed}\n  triggered ${a.triggered_at}\n  ack: POST /api/admin/alerts/${a.id}/suppress`,
+    text: `[S3 P0] ${signal} (${substrate}) — ${a.deviation_kind}, observado: ${observed}\n  disparado ${formatRelativeTime(a.triggered_at)}\n  ack: POST /api/admin/alerts/${a.id}/suppress`,
     alertId: a.id,
     isBundle: false,
   };

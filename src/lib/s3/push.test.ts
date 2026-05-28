@@ -164,6 +164,17 @@ describe("composePushMessages — single alerts (no bundle)", () => {
     expect(msgs[0].text).toContain("<deleted signal 42>");
     expect(msgs[0].text).toContain("<unknown>");
   });
+
+  it("renders triggered_at as Spanish relative-time, not raw ISO UTC", () => {
+    // S3-B3-I2 — push surface should match morning-brief locale.
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    const msgs = composePushMessages([
+      mkRow({ id: 1, triggered_at: tenMinAgo }),
+    ]);
+    expect(msgs[0].text).toContain("disparado hace");
+    // Must NOT contain the raw ISO string (e.g. "2026-..." or "T..Z")
+    expect(msgs[0].text).not.toMatch(/disparado \d{4}-\d{2}-\d{2}T/);
+  });
 });
 
 describe("composePushMessages — burst bundle dedup", () => {

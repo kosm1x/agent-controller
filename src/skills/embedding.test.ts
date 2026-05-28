@@ -164,4 +164,39 @@ describe("loadSkillEmbedding", () => {
   it("returns null for non-existent skill_id", () => {
     expect(loadSkillEmbedding("does-not-exist")).toBeNull();
   });
+
+  it("returns null when BLOB is length-correct but contains NaN values", () => {
+    const db = getDatabase();
+    // Length-correct BLOB filled with NaN bytes — simulates a corrupt write
+    // that escaped the dimension check. Cosine over NaN poisons retrieval.
+    const buf = Buffer.alloc(1536 * 4);
+    const view = new Float32Array(
+      buf.buffer,
+      buf.byteOffset,
+      buf.byteLength / 4,
+    );
+    view.fill(Number.NaN);
+    db.prepare(
+      "UPDATE skills SET description_embedding = ? WHERE skill_id = ?",
+    ).run(buf, SKILL_ID);
+
+    expect(loadSkillEmbedding(SKILL_ID)).toBeNull();
+  });
+
+  it("returns null when BLOB contains Infinity values", () => {
+    const db = getDatabase();
+    const buf = Buffer.alloc(1536 * 4);
+    const view = new Float32Array(
+      buf.buffer,
+      buf.byteOffset,
+      buf.byteLength / 4,
+    );
+    view.fill(0);
+    view[42] = Number.POSITIVE_INFINITY;
+    db.prepare(
+      "UPDATE skills SET description_embedding = ? WHERE skill_id = ?",
+    ).run(buf, SKILL_ID);
+
+    expect(loadSkillEmbedding(SKILL_ID)).toBeNull();
+  });
 });

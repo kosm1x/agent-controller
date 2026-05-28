@@ -81,7 +81,22 @@ export function loadSkillEmbedding(skillId: string): Float32Array | null {
   // dimension. Dimension mismatch usually means the deployment EMBED_DIMS
   // changed and stale rows need a backfill.
   if (row.blob.byteLength !== EMBED_DIMS * 4) return null;
-  return deserializeEmbedding(row.blob);
+  const vec = deserializeEmbedding(row.blob);
+  // Shape check: reject NaN/Infinity values that would poison cosine ranking.
+  // A length-correct but NaN-filled BLOB (corrupt write, partial flush) silently
+  // propagates NaN through retrieval; we'd rather drop the row and degrade to
+  // keyword fallback.
+  //
+  // Scope note: today's production retrieval (`src/skills/retrieval.ts`) reads
+  // the BLOB inline rather than via this helper and already coerces NaN scores
+  // to 0 (`Number.isFinite(sim) ? sim : 0`). This guard is defense-in-depth for
+  // future callers of `loadSkillEmbedding` — e.g., an evaluator that surfaces
+  // similarity scores directly without the inline-coerce gate.
+  if (vec.length !== EMBED_DIMS) return null;
+  for (let i = 0; i < vec.length; i++) {
+    if (!Number.isFinite(vec[i])) return null;
+  }
+  return vec;
 }
 
 /**

@@ -106,6 +106,36 @@ describe("POST /admin/alerts/:id/suppress", () => {
     expect(status).toBe(400);
   });
 
+  it("400 on reason exceeding max length (S3-B3-I1)", async () => {
+    const app = createTestApp();
+    const alertId = seedAlert();
+    const oversized = "x".repeat(1025);
+    const { status, json } = await suppressReq(app, alertId, {
+      reason: oversized,
+    });
+    expect(status).toBe(400);
+    expect(json.error).toMatch(/reason.*max length/i);
+  });
+
+  it("400 on acknowledged_by exceeding max length (S3-B3-I1)", async () => {
+    const app = createTestApp();
+    const alertId = seedAlert();
+    const { status, json } = await suppressReq(app, alertId, {
+      reason: "ok",
+      acknowledged_by: "x".repeat(257),
+    });
+    expect(status).toBe(400);
+    expect(json.error).toMatch(/acknowledged_by.*max length/i);
+  });
+
+  it("200 with reason at the 1024-char boundary (S3-B3-I1)", async () => {
+    const app = createTestApp();
+    const alertId = seedAlert();
+    const exact = "x".repeat(1024);
+    const { status } = await suppressReq(app, alertId, { reason: exact });
+    expect(status).toBe(200);
+  });
+
   it("400 on invalid until ISO datetime", async () => {
     const app = createTestApp();
     const alertId = seedAlert();

@@ -179,6 +179,25 @@ describe("skill_load builtin", () => {
     const raw = await skillLoadTool.execute({ name: "orphan-skill" });
     expect(JSON.parse(raw).reason).toBe("no_active_version");
   });
+
+  it("returns version_pointer_dangling when current_version_id points to a deleted skill_versions row", async () => {
+    // Defensive branch — current_version_id should always satisfy the FK,
+    // but if the row gets deleted out from under the pointer (e.g. manual
+    // SQL cleanup, partial rollback), we surface a typed reason instead of
+    // crashing on a null versionRow. Without an FK CASCADE this can happen.
+    seedSkill({ name: "echo-skill" });
+    const db = getDatabase();
+    // Repoint to a non-existent version row.
+    db.prepare(
+      "UPDATE skills SET current_version_id = 999999 WHERE name = ?",
+    ).run("echo-skill");
+
+    const raw = await skillLoadTool.execute({ name: "echo-skill" });
+    const parsed = JSON.parse(raw);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe("version_pointer_dangling");
+    expect(parsed.currentVersionId).toBe(999999);
+  });
 });
 
 describe("skill_run builtin", () => {

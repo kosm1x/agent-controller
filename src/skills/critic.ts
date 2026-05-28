@@ -64,6 +64,17 @@ export interface SkillCriticResult {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+const DEFAULT_BODY_EXCERPT_CAP = 8_000;
+const MAX_BODY_EXCERPT_CAP = 32_000;
+
+function resolveBodyExcerptCap(): number {
+  const raw = process.env.MC_CRITIC_BODY_CAP;
+  if (raw === undefined || raw === "") return DEFAULT_BODY_EXCERPT_CAP;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BODY_EXCERPT_CAP;
+  return Math.min(parsed, MAX_BODY_EXCERPT_CAP);
+}
+
 /**
  * Run the critic against a parsed skill file. The critic sees the
  * frontmatter JSON + the body markdown — NOT the producer's full task
@@ -100,7 +111,7 @@ export async function runSkillCritic(
   try {
     const payload = {
       frontmatter: parsed.frontmatter,
-      body_excerpt: parsed.body.slice(0, 8000), // cap body to bound cost
+      body_excerpt: parsed.body.slice(0, resolveBodyExcerptCap()), // cap body to bound cost; MC_CRITIC_BODY_CAP overrides (max 32000)
     };
     const response = await infer(
       {

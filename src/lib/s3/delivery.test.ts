@@ -11,6 +11,7 @@ import {
   loadActiveAlertsForBrief,
   formatAlertSection,
   isSundayInMxTime,
+  composeMorningBriefDriftSection,
   ALERT_SECTION_CAP,
   type BriefAlertRow,
   type BriefAlertSet,
@@ -320,6 +321,95 @@ describe("formatAlertSection — populated", () => {
     const set: BriefAlertSet = { p0: [], p1: exactly, p2_digest: [] };
     const out = formatAlertSection(set);
     expect(out).not.toMatch(/Más alertas activas/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeMorningBriefDriftSection — Sunday-aging branch (S3-B3-I4)
+// ---------------------------------------------------------------------------
+
+describe("composeMorningBriefDriftSection — Sunday aging branch", () => {
+  const SUNDAY_MX_NOON = new Date("2026-05-17T18:00:00Z"); // 12:00 MX, Sunday
+  const MONDAY_MX_NOON = new Date("2026-05-18T18:00:00Z"); // 12:00 MX, Monday
+
+  it("Mon-Sat: omits the aging baselines hygiene section entirely", () => {
+    // No alerts, no aging — empty DB on a Monday → empty section.
+    const out = composeMorningBriefDriftSection(MONDAY_MX_NOON);
+    expect(out).toBe("");
+    expect(out).not.toContain("Higiene de baselines");
+  });
+
+  it("Sun + no alerts + no aging-eligible baselines: still empty", () => {
+    // Sunday with an empty DB → both branches return empty → composite empty.
+    const out = composeMorningBriefDriftSection(SUNDAY_MX_NOON);
+    expect(out).toBe("");
+  });
+
+  it("Sun + aging-eligible baseline (>90d): emits hygiene section under green heading", () => {
+    // Seed a signal whose established_at is >90d before SUNDAY_MX_NOON so the
+    // aging loader picks it up. Use raw insert to control established_at.
+    getDatabase()
+      .prepare(
+        `INSERT INTO drift_signals
+           (signal_name, signal_kind, source_substrate, baseline_query,
+            baseline_value_json, tolerance_json, cadence, alert_priority,
+            established_at, established_by, enabled)
+         VALUES ('stale_baseline_sig', 'test', 'test', 'SELECT 1',
+                 '{}', '{}', 'nightly', 'P1',
+                 '2026-02-01T00:00:00Z', 'test', 1)`,
+      )
+      .run();
+
+    const out = composeMorningBriefDriftSection(SUNDAY_MX_NOON);
+    expect(out).toContain("🟢 Higiene de baselines");
+    // Must NOT use the alarm heading when ONLY aging is present.
+    expect(out).not.toContain("🚨 Alertas de deriva");
+  });
+
+  it("Mon: same aging-eligible baseline does NOT trigger the Sunday-only hygiene path", () => {
+    getDatabase()
+      .prepare(
+        `INSERT INTO drift_signals
+           (signal_name, signal_kind, source_substrate, baseline_query,
+            baseline_value_json, tolerance_json, cadence, alert_priority,
+            established_at, established_by, enabled)
+         VALUES ('stale_baseline_sig', 'test', 'test', 'SELECT 1',
+                 '{}', '{}', 'nightly', 'P1',
+                 '2026-02-01T00:00:00Z', 'test', 1)`,
+      )
+      .run();
+
+    const out = composeMorningBriefDriftSection(MONDAY_MX_NOON);
+    expect(out).toBe("");
+  });
+
+  it("Sun + P0 alert + aging baseline: alerts heading wins, aging appended after", () => {
+    const signalId = seedSignal("p0_signal", "test", "P0");
+    insertAlert(signalId, "P0");
+    getDatabase()
+      .prepare(
+        `INSERT INTO drift_signals
+           (signal_name, signal_kind, source_substrate, baseline_query,
+            baseline_value_json, tolerance_json, cadence, alert_priority,
+            established_at, established_by, enabled)
+         VALUES ('stale_baseline_sig', 'test', 'test', 'SELECT 1',
+                 '{}', '{}', 'nightly', 'P1',
+                 '2026-02-01T00:00:00Z', 'test', 1)`,
+      )
+      .run();
+
+    const out = composeMorningBriefDriftSection(SUNDAY_MX_NOON);
+    expect(out).toContain("🚨 Alertas de deriva");
+    // When BOTH alerts and aging are present, the aging block keeps its own
+    // sub-heading ("Baselines envejecidos") and the green "Higiene de
+    // baselines" wrapper is NOT added (that wrapper is only used for the
+    // aging-only Sunday case to avoid the alarm-bell heading).
+    expect(out).toContain("Baselines envejecidos");
+    expect(out).not.toContain("🟢 Higiene de baselines");
+    // Alerts heading must precede the aging block (ordering invariant).
+    expect(out.indexOf("🚨 Alertas")).toBeLessThan(
+      out.indexOf("Baselines envejecidos"),
+    );
   });
 });
 

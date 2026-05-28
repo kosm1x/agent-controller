@@ -222,18 +222,30 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
   };
 }
 
-function noticeError(cadence: Cadence, err: unknown): void {
+// Exported + async so tests can await the dynamic-import + counter bump.
+// Production callsite (registerS3CronJobs:73) is the void-prefixed chain
+// `void runCadenceTick(c).catch((err) => noticeError(c, err))` — the cron
+// callback chain is void-prefixed end-to-end; noticeError's returned promise
+// is fire-and-forget at the cron-callback boundary.
+export async function noticeError(
+  cadence: Cadence,
+  err: unknown,
+): Promise<void> {
   console.error(
     `[s3] cron tick threw (${cadence}):`,
     err instanceof Error ? err.message : err,
   );
   // S3-I2 fold: tick-level failures (the cron callback itself, outside
   // per-signal isolation) also bump the Prom counter so Grafana sees them.
-  void import("../../observability/prometheus.js")
-    .then(({ recordS3EvaluatorError }) =>
-      recordS3EvaluatorError(cadence, "tick"),
-    )
-    .catch(() => {
-      /* counter registration shouldn't ever block the cron tick */
-    });
+  // CRITICAL: do not remove this try/catch. The production cron callback
+  // relies on it to absorb any rejection from the dynamic import; without
+  // it, a failed observability load would leak as an unhandled rejection on
+  // every cron tick that already had an upstream failure.
+  try {
+    const { recordS3EvaluatorError } =
+      await import("../../observability/prometheus.js");
+    recordS3EvaluatorError(cadence, "tick");
+  } catch {
+    /* counter registration shouldn't ever block the cron tick */
+  }
 }

@@ -257,7 +257,7 @@ function extractObserved(json: string): string {
  * "hace 3 horas", "hace 2 días", "hoy a las 14:30". Best-effort; falls back
  * to the raw ISO string on parse failure.
  */
-function formatRelativeTime(iso: string): string {
+export function formatRelativeTime(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   const ageMs = Date.now() - t;

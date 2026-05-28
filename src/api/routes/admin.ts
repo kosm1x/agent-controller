@@ -211,6 +211,29 @@ admin.post("/alerts/:id/suppress", async (c) => {
   if (typeof params.reason !== "string" || params.reason.trim().length === 0) {
     return c.json({ error: "reason is required (non-empty string)" }, 400);
   }
+  // S3-B3-I1 — hardening-in-depth caps. Primary defense is the X-Api-Key gate
+  // upstream; this prevents an authenticated-but-misbehaving client from
+  // landing a 10 MB body in resolution_notes. Bound aligns with what a sane
+  // operator note actually requires.
+  const MAX_REASON_LEN = 1024;
+  const MAX_ACK_BY_LEN = 256;
+  if (params.reason.length > MAX_REASON_LEN) {
+    return c.json(
+      { error: `reason exceeds max length (${MAX_REASON_LEN} chars)` },
+      400,
+    );
+  }
+  if (
+    typeof params.acknowledged_by === "string" &&
+    params.acknowledged_by.length > MAX_ACK_BY_LEN
+  ) {
+    return c.json(
+      {
+        error: `acknowledged_by exceeds max length (${MAX_ACK_BY_LEN} chars)`,
+      },
+      400,
+    );
+  }
   const until =
     typeof params.until === "string" && params.until.length > 0
       ? params.until
