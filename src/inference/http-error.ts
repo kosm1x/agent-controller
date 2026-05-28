@@ -4,11 +4,17 @@
  * sites so the retry/circuit-breaker layer can log structured 429 telemetry
  * (`feedback_prometheus_upstream` April Tier-1 #1).
  *
- * **Log-only at the moment.** The catch block records `retry-after` and
- * `x-ratelimit-*` for visibility but does NOT change retry timing — our
- * exponential backoff is unchanged. Honoring `retry-after` over the exp
- * curve is a separate behavioral change that needs its own justification
- * (server hints can be very long; interactive tasks would feel it).
+ * Behavioral wiring (queue #232, 2026-05-28): the retry-delay path in
+ * `adapter.ts` honors `Retry-After` via `resolveRetryDelay()` below — the
+ * server's hint wins over the exp-backoff curve, capped at
+ * `MC_RETRY_AFTER_MAX_MS` (default 30s) to avoid stalls on storm-pessimistic
+ * provider hints (some emit `Retry-After: 3600`).
+ *
+ * **Scope**: this behavior applies to the OpenAI-compatible fallback path in
+ * `adapter.ts` and to direct Anthropic Messages API hits. The Claude Agent
+ * SDK path (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`, current prod default
+ * since 2026-05-10) short-circuits before this retry loop — the SDK has its
+ * own internal retry policy. Queue #232 covers the non-SDK paths.
  */
 export interface RateLimitInfo {
   /** `Retry-After` parsed to milliseconds. Seconds-int and HTTP-date both supported. */
@@ -167,4 +173,58 @@ export function formatRateLimitLog(
   if (info.resetTokensMs !== undefined)
     parts.push(`resetTokMs=${info.resetTokensMs}`);
   return parts.join(" ");
+}
+
+/**
+ * Default ceiling on a server-supplied `Retry-After` hint. Rate-limit storms
+ * sometimes return `Retry-After: 3600` (one full hour) which would stall
+ * every retry path. 30s is generous enough that the server's hint is
+ * usually honored verbatim while bounding worst-case retry latency. Override
+ * via `MC_RETRY_AFTER_MAX_MS`.
+ */
+export const DEFAULT_MAX_RETRY_AFTER_MS = 30_000;
+const ABSOLUTE_MAX_RETRY_AFTER_MS = 600_000; // 10min — guard against typos / DoS
+
+/** Read + validate `MC_RETRY_AFTER_MAX_MS`. Invalid/missing → default. */
+function resolveMaxRetryAfterMs(): number {
+  const raw = process.env.MC_RETRY_AFTER_MAX_MS;
+  if (raw === undefined || raw === "") return DEFAULT_MAX_RETRY_AFTER_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0)
+    return DEFAULT_MAX_RETRY_AFTER_MS;
+  return Math.min(parsed, ABSOLUTE_MAX_RETRY_AFTER_MS);
+}
+
+/**
+ * Decide the wait-before-retry delay for a 429/5xx response.
+ *
+ * If the response carries a `Retry-After` (or equivalent) hint and the value
+ * is within the configured ceiling, honor it verbatim — the server told us
+ * how long it actually needs. Otherwise fall back to the caller-provided
+ * exponential-backoff curve. A non-finite or negative hint is treated as
+ * absent (parser already clamps to ≥0, but be defensive in case the parser
+ * changes).
+ *
+ * The ceiling matters because some providers emit huge `Retry-After` values
+ * during sustained outages; honoring them blindly would freeze the retry
+ * loop. When the hint exceeds the ceiling we cap it at the ceiling rather
+ * than reverting to exp-backoff — the server's hint is still more
+ * informative than `1000 * 2^attempt`, just bounded.
+ *
+ * @param info - parsed rate-limit headers from the response
+ * @param expBackoffMs - the fallback delay the caller would have used
+ * @returns { delayMs, source } — `source` is "retry-after" when the server
+ *   hint was used, "exp-backoff" when the fallback was used. The source is
+ *   exposed for telemetry / log-line tagging.
+ */
+export function resolveRetryDelay(
+  info: RateLimitInfo,
+  expBackoffMs: number,
+): { delayMs: number; source: "retry-after" | "exp-backoff" } {
+  const hint = info.retryAfterMs;
+  if (hint !== undefined && Number.isFinite(hint) && hint >= 0) {
+    const cap = resolveMaxRetryAfterMs();
+    return { delayMs: Math.min(hint, cap), source: "retry-after" };
+  }
+  return { delayMs: expBackoffMs, source: "exp-backoff" };
 }

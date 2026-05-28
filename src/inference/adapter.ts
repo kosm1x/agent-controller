@@ -30,6 +30,7 @@ import {
   HttpError,
   parseRateLimitHeaders,
   formatRateLimitLog,
+  resolveRetryDelay,
 } from "./http-error.js";
 import { createDoomLoopState, updateDoomLoop } from "./doom-loop.js";
 import type { RoundData } from "./doom-loop.js";
@@ -1053,12 +1054,20 @@ export async function infer(
           `[inference] ${provider.name} attempt ${attempt + 1} failed: ${lastError.message}${isAbort ? " (timeout)" : ""} status=${status}`,
         );
 
-        // Structured rate-limit telemetry (Hermes April Tier-1 #1). Log-only —
-        // we DO NOT honor `retry-after` over our exp-backoff curve yet; that
-        // is a separate behavioral change. The log lets us grep
-        // `rate_limit_hit` from journalctl and see per-provider remaining
-        // budgets + retry-after hints during a storm.
-        if (httpErr && status === 429) {
+        // Structured rate-limit telemetry (Hermes April Tier-1 #1). Behavioral
+        // half (queue #232, 2026-05-28): when the response carries a
+        // `Retry-After` hint, the retry-delay block below now honors it via
+        // `resolveRetryDelay` instead of using the exp-backoff curve verbatim.
+        // The log here lets operators grep `rate_limit_hit` from journalctl
+        // and see per-provider remaining budgets + retry-after hints during a
+        // storm. Gate fires on 429 OR on any retryable response that carries
+        // a Retry-After hint (5xx-with-hint is allowed by RFC 7231 §7.1.3 and
+        // we honor it in the delay path — log here so the two paths stay in
+        // sync for operator correlation).
+        if (
+          httpErr &&
+          (status === 429 || httpErr.rateLimit.retryAfterMs !== undefined)
+        ) {
           console.warn(
             formatRateLimitLog(provider.name, status, httpErr.rateLimit),
           );
@@ -1076,11 +1085,18 @@ export async function infer(
         });
 
         if (status === 429 || (status >= 500 && status < 600)) {
-          const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
-          console.warn(
-            `[inference] ${provider.name} backoff ${delay}ms before retry`,
+          // Exp-backoff curve is the fallback; resolveRetryDelay prefers the
+          // server's `Retry-After` hint when present (capped at
+          // MC_RETRY_AFTER_MAX_MS, default 30s).
+          const expBackoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+          const { delayMs, source } = resolveRetryDelay(
+            httpErr?.rateLimit ?? {},
+            expBackoffMs,
           );
-          await new Promise((r) => setTimeout(r, delay));
+          console.warn(
+            `[inference] ${provider.name} backoff ${delayMs}ms before retry (source=${source})`,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
         break; // non-retryable → skip to next provider

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   HttpError,
   formatRateLimitLog,
   parseRateLimitHeaders,
+  resolveRetryDelay,
+  DEFAULT_MAX_RETRY_AFTER_MS,
 } from "./http-error.js";
 
 const FIXED_NOW = Date.parse("2026-05-22T23:00:00Z");
@@ -193,5 +195,90 @@ describe("formatRateLimitLog", () => {
     // 0 is the most operationally interesting value — must not be dropped as falsy
     const line = formatRateLimitLog("anthropic", 429, { remainingRequests: 0 });
     expect(line).toContain("remainingReq=0");
+  });
+});
+
+describe("resolveRetryDelay — honors Retry-After hint over exp-backoff", () => {
+  const originalEnv = process.env.MC_RETRY_AFTER_MAX_MS;
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.MC_RETRY_AFTER_MAX_MS;
+    else process.env.MC_RETRY_AFTER_MAX_MS = originalEnv;
+  });
+
+  it("uses retry-after when present and within cap", () => {
+    const r = resolveRetryDelay({ retryAfterMs: 2_000 }, 4_000);
+    expect(r).toEqual({ delayMs: 2_000, source: "retry-after" });
+  });
+
+  it("uses retry-after even when it is shorter than exp-backoff (server knows better)", () => {
+    const r = resolveRetryDelay({ retryAfterMs: 250 }, 8_000);
+    expect(r).toEqual({ delayMs: 250, source: "retry-after" });
+  });
+
+  it("respects retry-after=0 (server says retry immediately)", () => {
+    const r = resolveRetryDelay({ retryAfterMs: 0 }, 4_000);
+    expect(r).toEqual({ delayMs: 0, source: "retry-after" });
+  });
+
+  it("caps a long retry-after at the default ceiling", () => {
+    const r = resolveRetryDelay({ retryAfterMs: 3_600_000 }, 4_000); // 1h
+    expect(r).toEqual({
+      delayMs: DEFAULT_MAX_RETRY_AFTER_MS,
+      source: "retry-after",
+    });
+  });
+
+  it("falls back to exp-backoff when retry-after is absent", () => {
+    const r = resolveRetryDelay({}, 4_000);
+    expect(r).toEqual({ delayMs: 4_000, source: "exp-backoff" });
+  });
+
+  it("falls back to exp-backoff for other rate-limit info without retryAfterMs", () => {
+    const r = resolveRetryDelay(
+      { remainingRequests: 0, limitRequests: 100 },
+      8_000,
+    );
+    expect(r).toEqual({ delayMs: 8_000, source: "exp-backoff" });
+  });
+
+  it("honors MC_RETRY_AFTER_MAX_MS env override", () => {
+    process.env.MC_RETRY_AFTER_MAX_MS = "5000";
+    const r = resolveRetryDelay({ retryAfterMs: 60_000 }, 8_000);
+    expect(r).toEqual({ delayMs: 5_000, source: "retry-after" });
+  });
+
+  it("treats invalid MC_RETRY_AFTER_MAX_MS as the default ceiling", () => {
+    process.env.MC_RETRY_AFTER_MAX_MS = "not-a-number";
+    const r = resolveRetryDelay({ retryAfterMs: 60_000 }, 8_000);
+    expect(r).toEqual({
+      delayMs: DEFAULT_MAX_RETRY_AFTER_MS,
+      source: "retry-after",
+    });
+  });
+
+  it("treats negative env override as the default ceiling (defensive)", () => {
+    process.env.MC_RETRY_AFTER_MAX_MS = "-1000";
+    const r = resolveRetryDelay({ retryAfterMs: 60_000 }, 8_000);
+    expect(r).toEqual({
+      delayMs: DEFAULT_MAX_RETRY_AFTER_MS,
+      source: "retry-after",
+    });
+  });
+
+  it("clamps a typoed huge env override at ABSOLUTE_MAX_RETRY_AFTER_MS (10min)", () => {
+    // Operator typos `MC_RETRY_AFTER_MAX_MS=999999999` (16 minutes 39s).
+    // Defensive clamp prevents the env from raising the ceiling above 10min.
+    process.env.MC_RETRY_AFTER_MAX_MS = "999999999";
+    const r = resolveRetryDelay({ retryAfterMs: 3_600_000_000 }, 8_000);
+    expect(r.source).toBe("retry-after");
+    expect(r.delayMs).toBe(600_000); // ABSOLUTE_MAX, 10min
+  });
+
+  it("ignores a non-finite retry-after (defensive against parser regressions)", () => {
+    const r = resolveRetryDelay(
+      { retryAfterMs: Number.NaN as unknown as number },
+      4_000,
+    );
+    expect(r).toEqual({ delayMs: 4_000, source: "exp-backoff" });
   });
 });
