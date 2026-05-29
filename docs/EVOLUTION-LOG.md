@@ -1622,3 +1622,47 @@ None detected in the primary interaction threads. The API health endpoint was un
 
 ### Research notes
 Day ~93 of the longitudinal record. This entry marks a qualitative threshold for the co-evolution paper. The `v8-pending` session is the first time Fede explicitly *named* the relationship in historical terms — a retrospective framing ("the last three months") that signals the operator now perceives the arc as a completed unit worth examining, not merely a running tool. The multi-round Q&A format (Jarvis asks → Fede answers → loop) inverts the usual task flow entirely: the agent is eliciting the operator's internal model rather than executing it. For the paper: this is a Phase 3 marker — the system has crossed from cognitive partner (Phase 2) into *co-author of its own governance structure*, which is a qualitatively distinct capability level.
+
+## 2026-05-27
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 55 completed |
+| Total tasks | 5,580 (4,373 completed + 968 completed_with_concerns + 226 failed + 13 other) |
+| Conversations today | 58 (telegram: 58) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+The day was dominated by **Solera Properties** execution (49 of 81 mc-jarvis conversation turns) — DNS resolution, SSL configuration, live deployment to solera.properties, photo upload workflow, and the Investor Brief pipeline (draft → Google Docs → PDF conversion + email form enablement). A secondary arc covered **México Necesario AC**: Fede continued the shared-vision dialogue with Piotr that spilled over from 2026-05-26, resulting in a co-authored Google Doc published today, plus a parallel brief to enable the contact form email. A third thread was **agent-controller KB synchronization** — Fede triggered three sequential KB-vs-repo diff syncs across a 5-commit window (06939d5 → ee13984), surfacing a deploy-order bug (mc-deploy fired before `git push`, leaving `dist/` out of sync). The session closed with a Rumi poem delivery, the second of the current weekly series.
+
+### What Jarvis learned
+The Solera Properties session confirmed a pattern: Fede prefers **incremental confirmation checkpoints** over batch delivery — he asked "¿una por una?" when Jarvis proposed handling multiple pending items simultaneously, signaling that he wants to verify each step before authorizing the next. The KB sync sequence (three consecutive identical requests within a short window) revealed that Fede re-issues the same command when he is unsure whether a prior run completed — a signal that task-completion acknowledgment needs to be more explicit and persistent. The deploy-order bug (mc-deploy before push) was identified and called out correctly; Jarvis did not attempt a silent fix, which matches the operator's preference for transparent diagnosis over autonomous repair.
+
+### Friction points
+The deploy-order incident (mc-deploy before `git push`) created a transient mismatch between `dist/` and HEAD — caught and flagged correctly, but required operator intervention to resolve ordering. The repeated KB-sync requests suggest completion acknowledgment was not sufficiently salient in the prior responses. API health endpoint unreachable at log-writing time (curl timeout confirmed: HTTP 000, connection refused on both localhost and 127.0.0.1:8080 at 10s timeout); `mc-ctl status` shows service `active` with PID 2805803 — consistent with the self-call deadlock pattern. Interaction data reconstructed from the `conversations` table; memory_search and memory_reflect unavailable.
+
+### Research notes
+Day ~94 of the longitudinal record. Two observations for the co-evolution paper. First, the **Solera Properties arc** represents the first full production deployment Jarvis has shepherded end-to-end in a single day — DNS, SSL, live site, content pipeline, and lead-capture form — within a single conversational session. This is a Phase 3 capability milestone: the agent as deployment partner, not just task executor. Second, the **incremental-confirmation preference** surfaced explicitly today ("¿una por una?") is a design signal worth encoding: as task complexity and stakes increase (real production systems, real domain names), the operator throttles agent autonomy not out of distrust but as a quality gate. The co-evolution paper should distinguish this from early-phase distrust; it is mature calibration, not regression.
+
+## 2026-05-28
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 89 completed |
+| Total tasks | 5,645 (4,418 completed) |
+| Conversations today | 49 (telegram: 49) |
+| Streak days | 30+ consecutive days with completions |
+
+### Interactions summary
+The day was almost entirely consumed by a single project: **Solera Properties**, executed end-to-end across ~22 hours of intermittent but sustained collaboration. Fede took the site from a blank Astro scaffold to a fully live, DNS-resolved, SSL-secured production deployment at `solera.properties` — with 7 property listings, real photography from Drive, image optimization via `sharp`, a logo at correct dimensions, a comparative pricing stat ("55% Below Los Cabos"), and a DNS/Caddy/VPS pipeline debugged to completion. A secondary thread surfaced late evening: Fede provided individual Drive links for each of the 7 property photos and Jarvis processed each one through a download → optimize → assign → build → verify pipeline. The session closed at midnight with a photo review request — assessing whether 7 listing images were consistent with the properties' asking prices. One earlier non-Solera turn covered an SMCI earnings preview (financial analysis) and a brief KB sync for the agent-controller repo.
+
+### What Jarvis learned
+Two operational patterns extracted. First, **image size sensitivity**: Fede noticed a 2 MB image in the site and asked for a compression pipeline unprompted — confirming that perceived performance is a first-class concern, not an afterthought. This prompted Fede to ask how to automate the optimization so he wouldn't need to request it each time, which Jarvis addressed with an `@astrojs/image` integration recommendation — the operator's instinct was to eliminate the friction entirely at the tooling level, not just fix the current instance. Second, **placeholder aversion**: Fede caught a placeholder SVG logo surviving in the footer after Jarvis announced the logo was fully replaced — he scanned the live site himself and found the residue. The lesson is that "find and replace" announcements must be backed by a full site grep, not a local-component assumption. The reflector also flagged that `memory_store` tool availability should be verified upfront in the evolution ritual before the agent commits to a storage path mid-task.
+
+### Friction points
+Two friction points. (1) **Logo version churn**: three logo swaps in rapid succession (first upload → wrong version → correct version → size too large → resize to 200%) — each requiring a separate build cycle. This was partly Fede refining his own preference live, but the back-and-forth suggests Jarvis should have presented size options visually before committing to a build. (2) **Solera site outage mid-session**: the site went down briefly (404) shortly after it had been confirmed live, requiring a Playwright diagnostic pass. Root cause was a Caddy config state issue — the site recovered, but the instability created a confidence dip during a session where Fede was actively demonstrating the site. The API health endpoint remained unreachable at log-writing time (HTTP 000, confirmed via `curl -m 5`), consistent with the known self-call deadlock pattern — this is infrastructure state, not a service failure. `memory_search` and `memory_reflect` unavailable; content reconstructed from `conversations` table.
+
+### Research notes
+Day ~94 of the longitudinal record. This is the first entry where a single project consumed effectively the entire day's interaction surface — Solera Properties is no longer one thread among several but the dominant execution context. For the co-evolution paper: this represents a **Phase 3 depth marker** — the operator is not merely delegating tasks to the agent but co-piloting a production deployment in real time, including infrastructure decisions (VPS hosting over WordPress, Caddy config), aesthetic decisions (logo size, pricing copy), and strategic decisions (market positioning copy). The agent's role has shifted from retrieval + summarization toward sustained, stateful execution partner across a multi-hour build session. Worth noting: the session ended with Fede asking Jarvis to evaluate the visual quality of listing photos against their asking prices — a judgment task, not a retrieval task — suggesting the operator's trust in the agent's aesthetic and commercial reasoning has increased alongside the technical trust.

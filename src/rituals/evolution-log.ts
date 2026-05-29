@@ -73,13 +73,16 @@ export function createEvolutionLogEntry(dateLabel: string): TaskSubmission {
 
 ## How to describe data-collection problems in the entry
 
-Be precise. The log is a longitudinal research record — sloppy language about infrastructure compounds across days. Distinguish three states and describe each accurately:
+Be precise. The log is a longitudinal research record — sloppy language about infrastructure compounds across days. Distinguish two states and describe each accurately:
 
-- **Healthy + non-empty**: data returned. Use it.
-- **Healthy + empty**: the API responded successfully but had nothing for today (low-friction day, low recall coverage, etc.). Write: "No new patterns surfaced via memory_reflect today" — NOT "API unreachable", NOT "data inaccessible".
-- **Actually unreachable**: the HTTP loopback failed (timeout, connection refused, non-2xx). Before writing any "unreachable" or "API down" language, you MUST verify by running: \`curl -sS -m 5 -o /dev/null -w "%{http_code}\\n" http://localhost:8080/health\`. If that returns 200, the API is healthy and any thin recall result is state (b), not state (c). Only if the curl itself fails (non-2xx or timeout) may you write "API unreachable" in the log.
+- **Recall returned data**: use it.
+- **Recall returned nothing**: the memory tools succeeded but had nothing for today (low-friction day, low recall coverage, etc.). Write: "No new patterns surfaced via memory_reflect today" — NOT "API unreachable", NOT "data inaccessible".
 
-This rule exists because the 2026-05-22 and 2026-05-23 entries wrote "API unreachable at log-writing time" when the API was in fact healthy and just returned empty recall — misattributing recall coverage to network state.
+**Do NOT curl http://localhost:8080 (or any loopback API port) as a health check, and do NOT write "API unreachable" / "API timing out" / "self-call deadlock" / "HTTP 000" in the entry.** Health probing is not your job here and adds no signal: this ritual reaches its tools through the in-process runner, not the HTTP API, so an HTTP result tells you nothing about whether your data collection worked. The API serves external callers normally. Do not copy any "self-call deadlock" / "HTTP 000" / "API unreachable" language forward from earlier entries — those entries were wrong.
+
+If a memory tool returns empty, that is the "recall returned nothing" state above. It is never grounds for an "API unreachable" or "API timing out" statement in the log.
+
+This rule exists because entries from 2026-05-22 onward repeatedly wrote "API unreachable at log-writing time" — first by misattributing empty recall to network state, then by citing an in-process loopback curl that returned HTTP 000. The API was healthy every time; the 000 was an artifact of the self-call, not an outage.
 
 ## What to write
 
@@ -109,7 +112,7 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 [1-2 sentences: observations relevant to the agent-user co-evolution paper. What phase are we in? Any milestone crossed?]
 \`\`\`
 
-4. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md.
+5. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md.
    Use shell_exec with: echo '<entry>' >> /root/claude/mission-control/docs/EVOLUTION-LOG.md
    Or use file_write (read full file first, append entry, write back).
    Both tools are available and authorized for this file.

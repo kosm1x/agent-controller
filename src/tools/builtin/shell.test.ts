@@ -538,3 +538,57 @@ describe("shellTool flailing guard integration", () => {
     expect(parsed.exit_code).toBe(0);
   });
 });
+
+// Direct coverage of the exec contract (execSync → promisify(exec) conversion).
+// These exercise the exact lines that changed: success shape, stderr capture,
+// non-zero exit code from `error.code`, output truncation, and the timeout kill.
+describe("shellTool exec contract", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("returns stdout and exit_code 0 on success", async () => {
+    const parsed = JSON.parse(await shellTool.execute({ command: "echo hi" }));
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.stdout).toBe("hi\n");
+    // No stderr field when the command wrote nothing to stderr.
+    expect(parsed.stderr).toBeUndefined();
+  });
+
+  it("surfaces non-empty stderr even on a zero-exit command", async () => {
+    const parsed = JSON.parse(
+      await shellTool.execute({ command: "echo diag >&2" }),
+    );
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.stderr).toContain("diag");
+  });
+
+  it("reports the real non-zero exit code (from error.code, not status)", async () => {
+    const parsed = JSON.parse(
+      await shellTool.execute({
+        command: "sh -c 'echo out; echo err >&2; exit 3'",
+      }),
+    );
+    expect(parsed.exit_code).toBe(3);
+    expect(parsed.stdout).toContain("out");
+    expect(parsed.stderr).toContain("err");
+  });
+
+  it("truncates stdout beyond MAX_OUTPUT with a marker", async () => {
+    // `seq 1 20000` prints one number per line — well over MAX_OUTPUT (10000
+    // chars). No command substitution (the guard blocks `$()`).
+    const parsed = JSON.parse(
+      await shellTool.execute({ command: "seq 1 20000" }),
+    );
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.stdout).toContain("truncated");
+  });
+
+  it("flags a timed-out command distinctly (exit_code -2), not as a generic failure", async () => {
+    const parsed = JSON.parse(
+      await shellTool.execute({ command: "sleep 2", timeout_ms: 100 }),
+    );
+    expect(parsed.exit_code).toBe(-2);
+    expect(parsed.stderr).toContain("timed out");
+  });
+});

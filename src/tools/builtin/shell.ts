@@ -5,7 +5,8 @@
  * The guard prevents accidental destructive commands — not an adversarial sandbox.
  */
 
-import { execSync, execFileSync } from "child_process";
+import { exec, execFileSync } from "child_process";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
@@ -14,6 +15,15 @@ import {
   checkFlailing,
   recordCall,
 } from "../flailing-guard.js";
+
+/**
+ * Async command runner. Uses child_process.exec (not execSync) so it does NOT
+ * block the Node event loop while a command runs. Critical for in-process
+ * runners (fast/ritual): a synchronous exec would freeze the loopback HTTP
+ * server for the command's full duration — which historically made any
+ * in-process `curl http://localhost:8080/...` self-deadlock and return HTTP 000.
+ */
+const execAsync = promisify(exec);
 
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds
@@ -455,34 +465,61 @@ RESTRICTIONS:
     );
 
     try {
-      const output = execSync(command, {
+      const { stdout, stderr } = await execAsync(command, {
         timeout,
         maxBuffer: 1024 * 1024, // 1MB
         encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
       });
 
       const trimmed =
-        output.length > MAX_OUTPUT
-          ? output.slice(0, MAX_OUTPUT) +
-            `\n... (truncated, ${output.length} total chars)`
-          : output;
+        stdout.length > MAX_OUTPUT
+          ? stdout.slice(0, MAX_OUTPUT) +
+            `\n... (truncated, ${stdout.length} total chars)`
+          : stdout;
 
       recordCall(command, 0);
-      return JSON.stringify({ stdout: trimmed, exit_code: 0 });
+      const result: { stdout: string; exit_code: number; stderr?: string } = {
+        stdout: trimmed,
+        exit_code: 0,
+      };
+      // Surface non-empty stderr even on success — many tools (npm, tsc, git,
+      // curl -v) write progress/diagnostics there. Dropping it blinds the agent.
+      if (stderr) result.stderr = stderr.slice(0, MAX_OUTPUT);
+      return JSON.stringify(result);
     } catch (err: unknown) {
+      // promisify(exec) rejects with the exit code on `code` (number) — unlike
+      // execSync, which used `status`. Non-numeric `code` (e.g. "ETIMEDOUT",
+      // spawn errors) falls back to 1.
       const error = err as {
+        code?: number | string;
         status?: number;
+        killed?: boolean;
+        signal?: string;
         stdout?: string;
         stderr?: string;
         message?: string;
       };
-      const exitCode = error.status ?? 1;
+
+      // Distinguish a timeout kill from an ordinary non-zero exit. exec kills
+      // on timeout with killed=true and no numeric exit code; collapsing that
+      // to a generic exit_code:1 makes timeouts masquerade as command failures
+      // in the longitudinal log. Surface it as exit_code:-2 with a clear note.
+      const timedOut = error.killed === true && typeof error.code !== "number";
+      const exitCode = timedOut
+        ? -2
+        : typeof error.code === "number"
+          ? error.code
+          : (error.status ?? 1);
       recordCall(command, exitCode);
+
+      const baseStderr = error.stderr ?? error.message ?? "";
+      const stderr = timedOut
+        ? `command timed out after ${timeout}ms (signal ${error.signal ?? "SIGTERM"})\n${baseStderr}`
+        : baseStderr;
       return JSON.stringify({
         exit_code: exitCode,
         stdout: (error.stdout ?? "").slice(0, MAX_OUTPUT),
-        stderr: (error.stderr ?? error.message ?? "").slice(0, MAX_OUTPUT),
+        stderr: stderr.slice(0, MAX_OUTPUT),
       });
     }
   },
