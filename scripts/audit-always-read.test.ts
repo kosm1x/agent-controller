@@ -1,10 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  utimesSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   extractCommitHashes,
   extractHeadClaimHashes,
   claimsMcDeployPending,
   claimsMcDeployOk,
   decideLevel,
+  newestSrcFileMtimeMs,
 } from "./audit-always-read.js";
 
 describe("extractCommitHashes", () => {
@@ -202,5 +212,70 @@ describe("decideLevel", () => {
     expect(decideLevel([{ level: "stale" }])).toBe("stale");
     expect(decideLevel([{ level: "warn" }, { level: "stale" }])).toBe("stale");
     expect(decideLevel([{ level: "stale" }, { level: "warn" }])).toBe("stale");
+  });
+});
+
+describe("newestSrcFileMtimeMs (deploy-state ground truth)", () => {
+  const tmpDirs: string[] = [];
+
+  function fixtureRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), "audit-src-"));
+    tmpDirs.push(root);
+    mkdirSync(join(root, "src", "nested"), { recursive: true });
+    return root;
+  }
+
+  function writeAt(path: string, mtimeMs: number): void {
+    writeFileSync(path, "// fixture\n");
+    const t = mtimeMs / 1000;
+    utimesSync(path, t, t);
+  }
+
+  afterEach(() => {
+    while (tmpDirs.length > 0) {
+      rmSync(tmpDirs.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the newest non-test source-file mtime, recursing into subdirs", () => {
+    const root = fixtureRepo();
+    writeAt(join(root, "src", "a.ts"), 1_000_000_000_000);
+    writeAt(join(root, "src", "nested", "b.ts"), 1_700_000_000_000); // newest non-test
+    expect(newestSrcFileMtimeMs(root)).toBe(1_700_000_000_000);
+  });
+
+  it("ignores *.test.ts even when it is the newest file (deploy.sh does not ship tests)", () => {
+    const root = fixtureRepo();
+    writeAt(join(root, "src", "shell.ts"), 1_500_000_000_000);
+    writeAt(join(root, "src", "shell.test.ts"), 1_900_000_000_000); // newer, but a test
+    expect(newestSrcFileMtimeMs(root)).toBe(1_500_000_000_000);
+  });
+
+  it("ignores non-.ts files", () => {
+    const root = fixtureRepo();
+    writeAt(join(root, "src", "keep.ts"), 1_200_000_000_000);
+    writeAt(join(root, "src", "README.md"), 1_900_000_000_000);
+    writeAt(join(root, "src", "data.json"), 1_900_000_000_000);
+    expect(newestSrcFileMtimeMs(root)).toBe(1_200_000_000_000);
+  });
+
+  it("returns null when src/ is absent", () => {
+    const root = mkdtempSync(join(tmpdir(), "audit-nosrc-"));
+    tmpDirs.push(root);
+    expect(newestSrcFileMtimeMs(root)).toBeNull();
+  });
+
+  it("deploy-then-commit regression: a build newer than every src file reads as deployed", () => {
+    // Mirrors the 2026-05-30 incident: the src files were saved (and built)
+    // BEFORE the git commit timestamp. The mtime signal must reflect the file
+    // edit time, not the later commit — so a dist built after these mtimes
+    // covers all source.
+    const root = fixtureRepo();
+    writeAt(join(root, "src", "shell.ts"), 1_780_035_974_000); // 06:26:14Z
+    writeAt(join(root, "src", "nested", "ritual.ts"), 1_780_036_008_000); // 06:26:48Z
+    const distMs = 1_780_036_373_000; // 06:32:53Z build
+    const newest = newestSrcFileMtimeMs(root);
+    expect(newest).toBe(1_780_036_008_000);
+    expect(distMs >= (newest as number)).toBe(true); // build covers all source
   });
 });

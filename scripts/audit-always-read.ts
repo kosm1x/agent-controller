@@ -14,9 +14,15 @@
  *   3. Embedded commit hashes — for each unique hex token 7-40 chars that
  *      resolves to a real commit: how many commits behind HEAD is it, and how
  *      many of those touch `src/**`?
- *   4. `mc-deploy ... pendiente` / `pendiente ... mc-deploy` text co-located
- *      with reality check: `dist/index.js` mtime vs the last `src/**` commit
- *      author-timestamp. If dist is newer, the PENDIENTE claim is false.
+ *   4. `mc-deploy ... pendiente` / `... al día` text co-located with reality
+ *      check: `dist/index.js` mtime vs the newest non-test `src/**` *file*
+ *      mtime. If dist is newer-or-equal, the build includes all source, so a
+ *      PENDIENTE claim is false; if a src file is newer than dist, an AL DÍA
+ *      claim is false. We compare file mtimes, NOT git commit timestamps:
+ *      `deploy.sh` builds the working tree and routinely runs BEFORE the
+ *      `git commit` that records the change (deploy-then-commit), so a
+ *      commit-timestamp check reports phantom-pending in both directions
+ *      (incident 2026-05-30 — flipped a correct AL DÍA snapshot to STALE).
  *
  * Output: markdown to stdout. Exits 1 if any STALE row found (>=1 stale),
  * 0 if only WARN or all OK. Read-only — no DB mutations, no FS writes.
@@ -32,7 +38,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { statSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import {
+  statSync,
+  readFileSync,
+  existsSync,
+  realpathSync,
+  readdirSync,
+} from "node:fs";
+import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -155,6 +168,50 @@ function tryGit(args: string[]): string | null {
   }
 }
 
+/**
+ * Newest mtime (ms) among non-test source files under `src/`. This is the
+ * deploy-state ground truth: `deploy.sh` runs `tsc` over the *working tree*,
+ * so any `src` file whose mtime postdates the last build was edited after the
+ * build and is NOT in the running `dist/`. We deliberately compare FILE mtimes,
+ * not git commit timestamps — `deploy.sh` frequently runs BEFORE the `git
+ * commit` that records the change (deploy-then-commit), which made the old
+ * commit-`%ct`-vs-dist heuristic report phantom-pending in both directions
+ * (incident 2026-05-30). Residual edge case: a `git checkout`/`pull` that
+ * rewrites file mtimes without changing content can momentarily read as pending
+ * until the next deploy — acceptable, since a checkout here is followed by one.
+ */
+export function newestSrcFileMtimeMs(
+  repoRoot: string = REPO_ROOT,
+): number | null {
+  const srcRoot = join(repoRoot, "src");
+  if (!existsSync(srcRoot)) return null;
+  let newest = 0;
+  const stack: string[] = [srcRoot];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        stack.push(full);
+      } else if (
+        e.isFile() &&
+        e.name.endsWith(".ts") &&
+        !e.name.endsWith(".test.ts")
+      ) {
+        const m = statSync(full).mtimeMs;
+        if (m > newest) newest = m;
+      }
+    }
+  }
+  return newest > 0 ? newest : null;
+}
+
 function classify(row: Row): Finding {
   const findings: { level: Level; text: string }[] = [];
 
@@ -228,25 +285,21 @@ function classify(row: Row): Finding {
     const distPath = join(REPO_ROOT, "dist/index.js");
     if (existsSync(distPath)) {
       const distMs = statSync(distPath).mtime.getTime();
-      const lastSrcCommitTs = tryGit([
-        "log",
-        "-1",
-        "--format=%ct",
-        "--",
-        "src",
-      ]);
-      if (lastSrcCommitTs) {
-        const lastSrcMs = Number(lastSrcCommitTs) * 1000;
-        if (pendingClaim && distMs > lastSrcMs) {
+      const newestSrcMs = newestSrcFileMtimeMs();
+      if (newestSrcMs !== null) {
+        // Build covers all source iff dist is newer-or-equal to every src file.
+        // FILE mtime — not commit timestamp — because deploy.sh builds the
+        // working tree and may run before the commit (deploy-then-commit).
+        if (pendingClaim && distMs >= newestSrcMs) {
           findings.push({
             level: "stale",
-            text: `claims \`mc-deploy PENDIENTE\` but \`dist/index.js\` mtime ${new Date(distMs).toISOString()} > last \`src/\` commit ${new Date(lastSrcMs).toISOString()}`,
+            text: `claims \`mc-deploy PENDIENTE\` but \`dist/index.js\` mtime ${new Date(distMs).toISOString()} >= newest \`src/\` file mtime ${new Date(newestSrcMs).toISOString()} — the build already includes all source`,
           });
         }
-        if (okClaim && distMs < lastSrcMs) {
+        if (okClaim && distMs < newestSrcMs) {
           findings.push({
             level: "stale",
-            text: `claims \`mc-deploy AL DÍA\` but \`dist/index.js\` mtime ${new Date(distMs).toISOString()} < last \`src/\` commit ${new Date(lastSrcMs).toISOString()} — a redeploy is actually pending`,
+            text: `claims \`mc-deploy AL DÍA\` but newest \`src/\` file mtime ${new Date(newestSrcMs).toISOString()} > \`dist/index.js\` mtime ${new Date(distMs).toISOString()} — a redeploy is actually pending`,
           });
         }
       }
