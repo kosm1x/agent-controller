@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { tmpdir } from "node:os";
+import { basename, dirname } from "node:path";
 
 // Mock the PDF extraction lib
 const mockExtractFromUrl = vi.fn();
@@ -89,7 +91,11 @@ describe("pdf_read tool", () => {
     );
 
     expect(result.file).toBeDefined();
-    expect(result.file).toMatch(/^\/tmp\/pdf-/);
+    // Path is `join(os.tmpdir(), "pdf-<ts>-<rand>.md")`. Assert against the
+    // real tmpdir (honors TMPDIR overrides) rather than a hardcoded `/tmp`,
+    // which broke under the harness's TMPDIR=/tmp/claude-0.
+    expect(dirname(result.file)).toBe(tmpdir());
+    expect(basename(result.file)).toMatch(/^pdf-\d+-[a-z0-9]+\.md$/);
     expect(result.chars).toBeGreaterThan(10_000);
     expect(result.content.length).toBeLessThanOrEqual(2_100); // preview ~2K
     expect(result.note).toContain("file_read");
