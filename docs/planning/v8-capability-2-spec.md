@@ -140,6 +140,8 @@ operator replies to a delivered brief (router.handleInbound, owner channel)
 
 ## §5 — Phase 0: Substrate reconciliation (do this FIRST)
 
+> **✅ SHIPPED 2026-05-31.** `judgments` + `reflection_followups` tables live (additive — applied to `data/mc.db` and boot-created in `src/db/index.ts`); `evidence_kind`/`tool_guidance` reconciled in `src/lib/v8-2/reconciliation.ts` (all 6 tool names registry-verified by a source-scan regression guard); `fetchEvidenceExcerpt` resolves the three V8.1 substrate kinds end-to-end; an empty-handler-safe `reflection_followups` sweep is wired into `runMorningSurface` (`src/briefing/reflection-followups.ts`). 30 Phase-0 tests + full suite (5931) green; qa-audited PASS WITH WARNINGS (both folded). Additive + dormant — no producers write rows yet, so no restart was required. Done-when items 1-5 below all satisfied.
+
 This is the V8.1-Phase-A analog: close the gaps between R1's assumptions and the shipped substrate before any capability code. **Done-when** criteria are explicit so Phase 0 can't be hand-waved.
 
 1. **`judgments` table** — create a normalized child of `proposed_briefings`:
@@ -536,7 +538,7 @@ Measures whether the live system has the Sharma 2023 pathology (Claude 1.3 caved
 
 | Phase                                         | Scope                                                                                                                                                                                                                                    | Est   |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| **0 — Reconciliation**                        | `judgments` + `reflection_followups` tables; `evidence_kind` + `tool_guidance` remap; embedder wiring. Idempotent + rollback tests. Done-when criteria in §5.                                                                            | ~2d   |
+| **0 — Reconciliation** ✅ SHIPPED 2026-05-31  | `judgments` + `reflection_followups` tables; `evidence_kind` + `tool_guidance` remap; embedder confirmed. Idempotent + V8.1-still-works tests. Done-when criteria in §5.                                                                 | ~2d   |
 | **1 — Schema + types**                        | `attributed_claims` (normalized) + JSON columns; `src/lib/v8-2/types.ts`; migration idempotency + V8.1-still-works rollback test.                                                                                                        | ~1.5d |
 | **2 — Decomposition**                         | `decompose.ts` → ≤3 angles w/ structured `boundaries` + real `tool_guidance`; `decisions/<id>/decomposition.json`. Tests: 10 questions → ≤3 angles; boundary filters honored.                                                            | ~2d   |
 | **3 — Multi-option (RAPID-D)**                | 4-role ∥+synth; diversity gate on 1536-d embedder w/ calibrated θ (advisory); skip predicate. Tests: high-similarity → retry → degrade; skip cases. Decide S5-skill vs prompt-file here.                                                 | ~3d   |

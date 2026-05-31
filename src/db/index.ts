@@ -933,6 +933,67 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_trigger_runs_kind ON trigger_runs(trigger_kind, fired_at)",
   );
 
+  // ── V8.2 Phase 0 — substrate reconciliation (spec §5) ──────────────────────
+  // V8.2 (Strategic Initiative Layer) makes briefs opinionated, cited, and
+  // multi-option. R1 assumed an `ALTER TABLE judgments`, but V8.1 shipped
+  // `proposed_briefings` with judgment content INSIDE the briefing JSON — there
+  // was no `judgments` base table. Phase 0 creates it as a normalized child of
+  // `proposed_briefings` (ON DELETE CASCADE), additive and forward-only:
+  // `constructBriefing` keeps writing its briefing JSON unchanged (legacy render
+  // path); the V8.2 pipeline ADDITIONALLY writes one row per judgment here.
+  // The V8.2 additive columns (evidence_refs/options/concession/etc.) are created
+  // inline — no separate ALTER. See docs/planning/v8-capability-2-spec.md §5/§6.
+  //
+  // NOTE (posture enum divergence — flagged for Phase 2): the spec's canonical
+  // V8.2 posture vocabulary is 'momentum' (not V8.1 JudgmentSchema's
+  // 'has_momentum'). The Phase 2 judgment pass that maps a V8.1 signal into a
+  // `judgments` row MUST normalize 'has_momentum' → 'momentum' or the CHECK
+  // below rejects the insert. Kept per spec to avoid silently widening the enum.
+  _db.exec(`CREATE TABLE IF NOT EXISTS judgments (
+    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+    briefing_id                   TEXT NOT NULL REFERENCES proposed_briefings(briefing_id) ON DELETE CASCADE,
+    subject                       TEXT NOT NULL,
+    posture                       TEXT NOT NULL CHECK (posture IN ('at_risk','momentum','highest_leverage','noted')),
+    prose                         TEXT NOT NULL,
+    confidence                    TEXT CHECK (confidence IN ('green','yellow','red')),
+    signal_kind                   TEXT,
+    signal_last_seen_at           TEXT,
+    created_at                    TEXT NOT NULL,
+    evidence_refs_json            TEXT,
+    proposed_options_json         TEXT,
+    strategic_voice_principle_id  TEXT,
+    concession_kind               TEXT CHECK (concession_kind IN
+      ('held_position','updated_with_evidence','conceded_without_evidence') OR concession_kind IS NULL),
+    triggering_evidence_text      TEXT,
+    confidence_basis_json         TEXT,
+    critic_trail_json             TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_judgments_briefing ON judgments(briefing_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_judgments_created ON judgments(created_at)",
+  );
+
+  // `reflection_followups` — the self-recheck ledger V8.1 deferred (V8.1 §10.5)
+  // and both V8.2 §13 (concession self-recheck) and V8.3 §12 depend on. A sweep
+  // in the morning-surface trigger fires due rows; `context_ref` carries a typed
+  // prefix ('judgment:<id>' for V8.2, 'decision:<id>' for V8.3) so the sweep can
+  // dispatch by producer. The partial index supports the due-row query
+  // (`WHERE fired_at IS NULL`). No producer writes rows yet in Phase 0 — the
+  // table + sweep are wired and tested ahead of the consumers.
+  _db.exec(`CREATE TABLE IF NOT EXISTS reflection_followups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fire_after      TEXT NOT NULL,
+    checkpoint_kind TEXT NOT NULL CHECK (checkpoint_kind IN ('verify_resolution','verify_prediction')),
+    context_ref     TEXT NOT NULL,
+    fired_at        TEXT,
+    created_at      TEXT NOT NULL
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_reflection_followups_due ON reflection_followups(fire_after) WHERE fired_at IS NULL",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 

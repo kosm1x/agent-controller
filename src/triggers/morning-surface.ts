@@ -30,6 +30,7 @@ import {
   isBriefingDeliveryEnabled,
 } from "../briefing/delivery.js";
 import { expireStalePendingBriefings } from "../briefing/storage.js";
+import { sweepDueReflectionFollowups } from "../briefing/reflection-followups.js";
 import { createLogger } from "../lib/logger.js";
 import { recordTriggerRun } from "./throttle.js";
 
@@ -57,6 +58,16 @@ export async function runMorningSurface(): Promise<MorningSurfaceResult> {
     const expired = expireStalePendingBriefings();
     if (expired > 0) {
       log.info({ expired }, "expired stale delivered briefings");
+    }
+
+    // Daily sweep: fire any due self-recheck followups (V8.2 §13 / V8.3 §12).
+    // Isolated in its own try/catch — a followup-ledger hiccup must never sink
+    // the primary morning briefing. No producers write rows yet (Phase 0), so
+    // this is a no-op until those consumers land.
+    try {
+      await sweepDueReflectionFollowups();
+    } catch (err) {
+      log.error({ err }, "reflection followup sweep failed (non-fatal)");
     }
 
     const construct = await constructBriefing({ surface: "morning" });
