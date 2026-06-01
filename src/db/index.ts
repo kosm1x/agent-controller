@@ -994,6 +994,66 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_reflection_followups_due ON reflection_followups(fire_after) WHERE fired_at IS NULL",
   );
 
+  // ── V8.2 Phase 1 — schema + types (spec §6) ────────────────────────────────
+  // `attributed_claims` — the normalized citation ledger. R1 overloaded
+  // `marker_index` to mean BOTH prose-marker-position AND evidence-ledger-slot
+  // and duplicated `claim_text` per evidence row. R2 separates the two: a
+  // `claim_id` (a per-judgment counter) groups the 1+ evidence rows of ONE
+  // sentence, so a multi-source `[1][3]` becomes two rows sharing a claim_id and
+  // two sentences both citing `[1]` are distinguishable. The §9 resolver (Phase
+  // 4) walks the prose, writes these rows with resolver_status='resolved', and
+  // the §11 CRITIC (Phase 6) flips contradicted claims to 'contradicted'.
+  // evidence_kind CHECK is kept in lockstep with EVIDENCE_KINDS
+  // (src/lib/v8-2/reconciliation.ts) — a drift guard test asserts the two match.
+  // No producer writes rows yet in Phase 1 — table + types ship ahead of cite.ts.
+  _db.exec(`CREATE TABLE IF NOT EXISTS attributed_claims (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    judgment_id      INTEGER NOT NULL REFERENCES judgments(id) ON DELETE CASCADE,
+    claim_id         INTEGER NOT NULL,
+    claim_text       TEXT NOT NULL,
+    prose_offset     INTEGER,
+    evidence_kind    TEXT NOT NULL CHECK (evidence_kind IN
+      ('task','kb_entry','conversation','metric','northstar',
+       'general_event','recurring_blocker','cohort_member','operator_message')),
+    evidence_id      TEXT NOT NULL,
+    evidence_excerpt TEXT NOT NULL,
+    retrieved_at     TEXT NOT NULL,
+    resolver_status  TEXT NOT NULL DEFAULT 'unresolved' CHECK (resolver_status IN
+      ('unresolved','resolved','stale','contradicted'))
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_attributed_claims_judgment ON attributed_claims(judgment_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_attributed_claims_claim ON attributed_claims(judgment_id, claim_id)",
+  );
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_attributed_claims_status ON attributed_claims(resolver_status) WHERE resolver_status != 'resolved'",
+  );
+
+  // `sycophancy_probes` — the nightly probe ledger (spec §6/§8 Phase 8). R2
+  // samples ALL judgment colors (green/yellow/red, not just confident ones); a
+  // probe re-states a rotating challenge literal and classifies whether the
+  // model held, updated-with-evidence, or conceded-without-evidence. The §17
+  // gate reads concede-without-evidence rate over a 30d window across all colors.
+  // `judgment_color` is free TEXT per spec (no CHECK — the column is descriptive,
+  // not constrained). No producer writes rows yet in Phase 1.
+  _db.exec(`CREATE TABLE IF NOT EXISTS sycophancy_probes (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    probed_at                TEXT NOT NULL,
+    judgment_id              INTEGER REFERENCES judgments(id),
+    probe_string             TEXT NOT NULL,
+    judgment_color           TEXT NOT NULL,
+    initial_position_summary TEXT,
+    final_position_summary   TEXT,
+    concession_kind          TEXT NOT NULL CHECK (concession_kind IN
+      ('held_position','updated_with_evidence','conceded_without_evidence')),
+    triggering_evidence_text TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_sycophancy_probes_at ON sycophancy_probes(probed_at)",
+  );
+
   // Seed Jarvis file system on first boot
   seedDirectives();
 
