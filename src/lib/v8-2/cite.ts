@@ -389,3 +389,58 @@ export function persistAttributedClaims(
   insertMany(rows);
   return rows.length;
 }
+
+/**
+ * Mark the given claims as `contradicted` (§11 → §12 wiring).
+ *
+ * The §11 CRITIC's `submit_critic_verdict.contradicted_claim_ids` lists the
+ * claims the verification tools PROVED false against ground truth. This flips
+ * EVERY `attributed_claims` row of those claims (a multi-source claim has 2+
+ * rows — all are part of one now-contradicted claim) to
+ * `resolver_status='contradicted'` for THIS judgment only. Idempotent
+ * (re-running flips already-contradicted rows to the same value). Returns the
+ * number of ROWS updated (use `countContradictions` for the distinct-claim
+ * count that §12 confidence consumes). No-op (returns 0) for an empty id set.
+ *
+ * `claimIds` are integers from the forced-tool Zod schema; filtered to finite
+ * integers defensively in case a future caller passes raw model output.
+ */
+export function markClaimsContradicted(
+  judgmentId: number,
+  claimIds: number[],
+  db: Database.Database = getDatabase(),
+): number {
+  const ids = [...new Set(claimIds)].filter((n) => Number.isInteger(n));
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => "?").join(",");
+  const info = db
+    .prepare(
+      `UPDATE attributed_claims
+          SET resolver_status = 'contradicted'
+        WHERE judgment_id = ?
+          AND claim_id IN (${placeholders})`,
+    )
+    .run(judgmentId, ...ids);
+  return info.changes;
+}
+
+/**
+ * Count DISTINCT contradicted claims for a judgment — the `contradiction_count`
+ * term in §12's `computeConfidence` (Phase 8). Counts claims, not rows, so a
+ * multi-source contradicted claim counts once. Dormant until Phase 8 wires
+ * confidence; shipped here because Phase 6 owns the `contradicted` write and
+ * the read side is its natural companion + lets the wiring be tested end-to-end.
+ */
+export function countContradictions(
+  judgmentId: number,
+  db: Database.Database = getDatabase(),
+): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT claim_id) AS n
+         FROM attributed_claims
+        WHERE judgment_id = ? AND resolver_status = 'contradicted'`,
+    )
+    .get(judgmentId) as { n: number };
+  return row.n;
+}

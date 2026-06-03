@@ -20,6 +20,8 @@ import {
   hasProperName,
   hasStateClaim,
   persistAttributedClaims,
+  markClaimsContradicted,
+  countContradictions,
   resolveCitations,
   splitSentences,
   toAttributedClaimRows,
@@ -301,5 +303,57 @@ describe("persistAttributedClaims — real in-memory DB", () => {
       .prepare("SELECT COUNT(*) AS c FROM attributed_claims")
       .get() as { c: number };
     expect(count.c).toBe(0); // rolled back — no partial write
+  });
+
+  it("markClaimsContradicted flips ALL rows of a claim; countContradictions counts DISTINCT claims", () => {
+    const jid = seedJudgment();
+    // claim 0: [1] → 1 row; claim 1: [1][2] → 2 rows
+    const { resolved } = resolveCitations(
+      "The pilot is blocked [1]. Conversion up but stalling [1][2].",
+      LEDGER,
+    );
+    persistAttributedClaims(jid, resolved, getDatabase());
+
+    // contradict the multi-source claim 1 — both its evidence rows flip
+    expect(markClaimsContradicted(jid, [1], getDatabase())).toBe(2);
+
+    const rows = getDatabase()
+      .prepare(
+        "SELECT claim_id, resolver_status FROM attributed_claims WHERE judgment_id=? ORDER BY claim_id, evidence_id",
+      )
+      .all(jid) as { claim_id: number; resolver_status: string }[];
+    expect(
+      rows
+        .filter((r) => r.claim_id === 1)
+        .every((r) => r.resolver_status === "contradicted"),
+    ).toBe(true);
+    // claim 0 untouched
+    expect(
+      rows
+        .filter((r) => r.claim_id === 0)
+        .every((r) => r.resolver_status === "resolved"),
+    ).toBe(true);
+    // distinct-claim count = 1 (the claim), not 2 (the rows)
+    expect(countContradictions(jid, getDatabase())).toBe(1);
+  });
+
+  it("markClaimsContradicted is a no-op for [] and dedupes ids", () => {
+    const jid = seedJudgment();
+    const { resolved } = resolveCitations("The pilot is blocked [1].", LEDGER);
+    persistAttributedClaims(jid, resolved, getDatabase());
+    expect(markClaimsContradicted(jid, [], getDatabase())).toBe(0);
+    // claim 0 has one row; duplicate ids collapse to a single flip
+    expect(markClaimsContradicted(jid, [0, 0, 0], getDatabase())).toBe(1);
+    expect(countContradictions(jid, getDatabase())).toBe(1);
+  });
+
+  it("scopes the flip to the given judgment; countContradictions is 0 when none", () => {
+    const jid = seedJudgment();
+    const { resolved } = resolveCitations("The pilot is blocked [1].", LEDGER);
+    persistAttributedClaims(jid, resolved, getDatabase());
+    expect(countContradictions(jid, getDatabase())).toBe(0);
+    // a different judgment id flips nothing here
+    expect(markClaimsContradicted(jid + 999, [0], getDatabase())).toBe(0);
+    expect(countContradictions(jid, getDatabase())).toBe(0);
   });
 });
