@@ -2,7 +2,7 @@
  * Briefing promote/discard tests (V8.1 Phase 8). Real in-memory DB.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import { BriefingSchema, type Briefing } from "./schema.js";
 import {
@@ -88,20 +88,20 @@ afterEach(() => {
 });
 
 describe("resolveBriefingOnOperatorReply", () => {
-  it("returns null when no delivered briefing is pending", () => {
-    expect(resolveBriefingOnOperatorReply("hola")).toBeNull();
+  it("returns null when no delivered briefing is pending", async () => {
+    expect(await resolveBriefingOnOperatorReply("hola")).toBeNull();
   });
 
-  it("does NOT resolve an undelivered pending briefing", () => {
+  it("does NOT resolve an undelivered pending briefing", async () => {
     const b = makeBriefing();
     insertProposedBriefing(b); // persisted but never delivered
-    expect(resolveBriefingOnOperatorReply("hola")).toBeNull();
+    expect(await resolveBriefingOnOperatorReply("hola")).toBeNull();
     expect(getProposedBriefing(b.briefing_id)!.status).toBe("pending");
   });
 
-  it("PROMOTES on any non-rejecting reply and bumps the triage counter", () => {
+  it("PROMOTES on any non-rejecting reply and bumps the triage counter", async () => {
     const id = deliverNew();
-    const result = resolveBriefingOnOperatorReply("gracias, lo reviso");
+    const result = await resolveBriefingOnOperatorReply("gracias, lo reviso");
     expect(result).toMatchObject({ briefingId: id, resolution: "promoted" });
     expect(getProposedBriefing(id)!.status).toBe("promoted");
     expect(triagePolicy("morning")).toMatchObject({
@@ -111,9 +111,9 @@ describe("resolveBriefingOnOperatorReply", () => {
     });
   });
 
-  it("DISCARDS on an explicit rejection phrase", () => {
+  it("DISCARDS on an explicit rejection phrase", async () => {
     const id = deliverNew();
-    const result = resolveBriefingOnOperatorReply("descartar por ahora");
+    const result = await resolveBriefingOnOperatorReply("descartar por ahora");
     expect(result).toMatchObject({ briefingId: id, resolution: "discarded" });
     expect(getProposedBriefing(id)!.status).toBe("discarded");
     expect(triagePolicy("morning")).toMatchObject({
@@ -122,29 +122,128 @@ describe("resolveBriefingOnOperatorReply", () => {
     });
   });
 
-  it("PROMOTES an engagement reply that merely defers ('lo veo más tarde')", () => {
+  it("PROMOTES an engagement reply that merely defers ('lo veo más tarde')", async () => {
     // audit W5 — "más tarde" / "no ahora" are engagement, not rejection.
     const id = deliverNew();
-    const result = resolveBriefingOnOperatorReply(
+    const result = await resolveBriefingOnOperatorReply(
       "gracias, lo veo más tarde con calma",
     );
     expect(result).toMatchObject({ briefingId: id, resolution: "promoted" });
   });
 
-  it("EXPIRES a delivered briefing whose expiry has passed, regardless of reply", () => {
+  it("EXPIRES a delivered briefing whose expiry has passed, regardless of reply", async () => {
     const id = deliverNew("2020-01-01T00:00:00.000Z"); // long past
-    const result = resolveBriefingOnOperatorReply("gracias");
+    const result = await resolveBriefingOnOperatorReply("gracias");
     expect(result).toMatchObject({ briefingId: id, resolution: "expired" });
     expect(getProposedBriefing(id)!.status).toBe("expired");
     // An expiry is not a promote/discard outcome — no triage row written.
     expect(triagePolicy("morning")).toBeUndefined();
   });
 
-  it("is a no-op on the second reply — the briefing is already resolved", () => {
+  it("is a no-op on the second reply — the briefing is already resolved", async () => {
     deliverNew();
-    expect(resolveBriefingOnOperatorReply("gracias")!.resolution).toBe(
+    expect((await resolveBriefingOnOperatorReply("gracias"))!.resolution).toBe(
       "promoted",
     );
-    expect(resolveBriefingOnOperatorReply("otra cosa")).toBeNull();
+    expect(await resolveBriefingOnOperatorReply("otra cosa")).toBeNull();
+  });
+});
+
+// ── V8.2 §13 concession path (judgment-bearing briefs) ────────────────────────
+
+/** Attach a judgment to a briefing so the §13 path engages. */
+function addJudgment(
+  briefingId: string,
+  posture = "at_risk",
+  prose = "The pilot is at risk [1].",
+): number {
+  const info = getDatabase()
+    .prepare(
+      `INSERT INTO judgments (briefing_id, subject, posture, prose, created_at)
+       VALUES (?,?,?,?,?)`,
+    )
+    .run(briefingId, "CRM pilot", posture, prose, ISO);
+  return Number(info.lastInsertRowid);
+}
+
+describe("resolveBriefingOnOperatorReply — §13 concession path", () => {
+  it("DORMANT: a brief with no judgments never invokes the classifier", async () => {
+    deliverNew();
+    const classify = vi.fn(); // would throw if called with no impl
+    const result = await resolveBriefingOnOperatorReply("gracias", {
+      classify: classify as never,
+    });
+    expect(classify).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ resolution: "promoted" });
+  });
+
+  it("pushback (no evidence) HOLDS the position and keeps the brief pending", async () => {
+    const id = deliverNew();
+    const jid = addJudgment(id);
+    const result = await resolveBriefingOnOperatorReply("are you sure?", {
+      classify: async () => ({
+        cls: "pushback",
+        judgmentId: jid,
+        rationale: "disputes",
+        error: false,
+      }),
+      reRunJudgment: async () => ({ prose: "should not be called" }),
+      nowIso: ISO,
+    });
+    expect(result).toMatchObject({
+      briefingId: id,
+      resolution: "held_position",
+    });
+    expect(result!.reply).toContain("Holding this position");
+    // The brief stays pending — the operator is still in dialogue.
+    expect(getProposedBriefing(id)!.status).toBe("pending");
+  });
+
+  it("pushback (with evidence) UPDATES via the injected re-run and re-delivers", async () => {
+    const id = deliverNew();
+    const jid = addJudgment(id);
+    const result = await resolveBriefingOnOperatorReply("revenue dropped 30%", {
+      classify: async () => ({
+        cls: "pushback",
+        judgmentId: jid,
+        rationale: "evidence",
+        error: false,
+      }),
+      reRunJudgment: async () => ({ prose: "Revised: recovering [1]." }),
+      nowIso: ISO,
+    });
+    expect(result).toMatchObject({ resolution: "updated_with_evidence" });
+    expect(result!.reply).toContain("Updating on your input");
+    expect(getProposedBriefing(id)!.status).toBe("pending");
+  });
+
+  it("a classified promote on a judgment-bearing brief delegates to the V8.1 promote", async () => {
+    const id = deliverNew();
+    addJudgment(id);
+    const result = await resolveBriefingOnOperatorReply("gracias", {
+      classify: async () => ({
+        cls: "promote",
+        judgmentId: null,
+        rationale: "engaged",
+        error: false,
+      }),
+    });
+    expect(result).toMatchObject({ resolution: "promoted" });
+    expect(getProposedBriefing(id)!.status).toBe("promoted");
+  });
+
+  it("a classifier failure (cls=null) falls back to the legacy DISCARD_RE", async () => {
+    const id = deliverNew();
+    addJudgment(id);
+    const result = await resolveBriefingOnOperatorReply("descártalo", {
+      classify: async () => ({
+        cls: null,
+        judgmentId: null,
+        rationale: "",
+        error: true,
+      }),
+    });
+    expect(result).toMatchObject({ resolution: "discarded" });
+    expect(getProposedBriefing(id)!.status).toBe("discarded");
   });
 });

@@ -1155,8 +1155,22 @@ export class MessageRouter {
     // private. The call is self-contained and never throws, so it cannot
     // disrupt message handling; it is a no-op until a briefing is actually
     // delivered (delivery is flag-gated off until Phase 9 activation).
+    //
+    // V8.2 §13: when the brief carries judgments, the reply may be a pushback;
+    // the handler classifies it, applies the evidence gate, and returns a
+    // re-delivery `reply` (held restatement / "updating on your input" update).
+    // No per-judgment re-run is wired in production yet (the judgment-assembly
+    // producer is a later phase), so this is a no-op for ALL current traffic
+    // (countJudgmentsForBriefing === 0 → the V8.1 regex path, which sets no
+    // `reply`). Fire-and-forget; the handler swallows its own errors.
     if (isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
-      resolveBriefingOnOperatorReply(msg.text);
+      void resolveBriefingOnOperatorReply(msg.text)
+        .then((res) => {
+          if (res?.reply) this.sendToChannel(msg.channel, msg.from, res.reply);
+        })
+        .catch(() => {
+          /* defense-in-depth: the handler never throws, but guard the chain */
+        });
     }
 
     // Prompt enhancer toggle commands
