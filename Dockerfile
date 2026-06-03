@@ -37,6 +37,10 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist/ ./dist/
 COPY src/db/schema.sql ./dist/db/schema.sql
 COPY public/ ./public/
+# V8.2 §10: strategic-voice prompt module is a runtime asset (NOT compiled into
+# dist/); the loader reads it cwd-relative (resolve("prompt_modules")). Without
+# this, a containerized runner that exercises a V8.2 call path fails loud.
+COPY prompt_modules/ ./prompt_modules/
 
 ENV NODE_ENV=production
 

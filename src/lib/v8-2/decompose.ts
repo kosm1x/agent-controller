@@ -36,6 +36,10 @@ import {
   type InlineSdkTool,
 } from "../../inference/claude-sdk.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
+import {
+  strategicVoiceSystemPrompt,
+  composeV82UserPrompt,
+} from "./strategic-voice.js";
 import { getDatabase } from "../../db/index.js";
 import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
@@ -60,6 +64,14 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Max angles per §7 — also enforced by the tool schema below. */
 export const MAX_ANGLES = 3;
 
+/**
+ * Decomposition task instructions. Phase 5: these now lead the USER prompt (via
+ * `composeV82UserPrompt`); the SDK `systemPrompt` is the shared strategic-voice
+ * block (`strategicVoiceSystemPrompt()`) so all V8.2 calls share one cache
+ * prefix (§10). The name is retained for call-site/test stability; despite
+ * "SYSTEM" it is delivered in the user turn under the SDK single-cache-block
+ * constraint ([[sdk_systemprompt_single_cache_block]]).
+ */
 export const DECOMPOSE_SYSTEM_PROMPT = `You break ONE strategic question into at most ${MAX_ANGLES} retrieval ANGLES — angles, not answers. You do NOT answer the question; you decompose it into the specific sub-questions whose evidence a later step will gather and judge.
 
 Each angle has:
@@ -164,8 +176,11 @@ export async function decomposeQuestion(
 
   try {
     await queryClaudeSdk({
-      prompt: `Strategic question:\n${question}\n\nContext summary (not full rows):\n${contextSummary}`,
-      systemPrompt: DECOMPOSE_SYSTEM_PROMPT,
+      prompt: composeV82UserPrompt(
+        DECOMPOSE_SYSTEM_PROMPT,
+        `Strategic question:\n${question}\n\nContext summary (not full rows):\n${contextSummary}`,
+      ),
+      systemPrompt: strategicVoiceSystemPrompt(),
       toolNames: [],
       extraTools: [submitDecomposition],
       maxTurns: 2,

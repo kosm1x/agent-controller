@@ -27,7 +27,9 @@ import {
   saveDecomposition,
   MAX_ANGLE_LIMIT,
   DEFAULT_ANGLE_LIMIT,
+  DECOMPOSE_SYSTEM_PROMPT,
 } from "./decompose.js";
+import { strategicVoiceSystemPrompt } from "./strategic-voice.js";
 import type { Decomposition, DecompositionAngle } from "./types.js";
 
 vi.mock("../../inference/claude-sdk.js", async () => {
@@ -129,6 +131,31 @@ describe("decomposeQuestion — forced tool", () => {
       decomposeQuestion("q?", "ctx", { signal: ac.signal }),
     ).rejects.toThrow(DecompositionError);
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("uses the strategic-voice block as systemPrompt; task text + question lead the user prompt (§10 cache prefix)", async () => {
+    let captured: { system: string; prompt: string } | null = null;
+    mockQuery.mockImplementationOnce(async (opts) => {
+      captured = { system: opts.systemPrompt, prompt: opts.prompt };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = opts.extraTools?.[0] as any;
+      if (t) await t.handler({ angles: [angle()] }, {});
+      return SDK_RESULT;
+    });
+
+    await decomposeQuestion("ship the pilot?", "pilot ctx", { nowIso: NOW });
+
+    expect(captured).not.toBeNull();
+    const c = captured!;
+    // systemPrompt is the shared identity block — byte-identical to every other
+    // V8.2 call — not the decomposition task text.
+    expect(c.system).toBe(strategicVoiceSystemPrompt());
+    expect(c.system).toContain("Strategic-voice principles");
+    expect(c.system).not.toContain("retrieval ANGLES");
+    // Decomposition instructions + the question/context now lead the user turn.
+    expect(c.prompt).toContain(DECOMPOSE_SYSTEM_PROMPT);
+    expect(c.prompt).toContain("ship the pilot?");
+    expect(c.prompt).toContain("pilot ctx");
   });
 });
 

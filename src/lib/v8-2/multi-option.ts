@@ -51,6 +51,10 @@ import {
   type InlineSdkTool,
 } from "../../inference/claude-sdk.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
+import {
+  strategicVoiceSystemPrompt,
+  composeV82UserPrompt,
+} from "./strategic-voice.js";
 import { cosineSimilarity, embed } from "../../memory/embeddings.js";
 import { createLogger } from "../logger.js";
 import {
@@ -379,8 +383,14 @@ async function runPerspective(
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     const res = await queryClaudeSdk({
-      prompt: buildPerspectivePrompt(input, digest),
-      systemPrompt: PERSPECTIVE_PROMPTS_V1[role],
+      // Phase 5 (§10): systemPrompt is the shared strategic-voice block (one
+      // cache prefix across all V8.2 calls); the role instructions lead the
+      // user turn so per-role text never fragments that prefix.
+      prompt: composeV82UserPrompt(
+        PERSPECTIVE_PROMPTS_V1[role],
+        buildPerspectivePrompt(input, digest),
+      ),
+      systemPrompt: strategicVoiceSystemPrompt(),
       toolNames: [],
       maxTurns: 2,
       model: opts.model,
@@ -422,8 +432,13 @@ async function runSynthesizer(
 
   try {
     await queryClaudeSdk({
-      prompt: buildSynthesizerPrompt(input, digest, perspectives, nudge),
-      systemPrompt: SYNTHESIZER_SYSTEM_PROMPT_V1,
+      // Phase 5 (§10): shared strategic-voice systemPrompt; the synthesizer
+      // instructions + diversity-retry nudge lead the user turn.
+      prompt: composeV82UserPrompt(
+        SYNTHESIZER_SYSTEM_PROMPT_V1,
+        buildSynthesizerPrompt(input, digest, perspectives, nudge),
+      ),
+      systemPrompt: strategicVoiceSystemPrompt(),
       toolNames: [],
       extraTools: [submit],
       maxTurns: 2,

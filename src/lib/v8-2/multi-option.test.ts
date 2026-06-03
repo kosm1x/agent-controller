@@ -5,7 +5,9 @@
  * carrying `extraTools` is the forced-tool Synthesizer (we invoke its
  * `submit_options` handler with scripted options); any other call is a
  * free-text perspective, routed to a canned answer by the role marker in its
- * systemPrompt. This is robust to the parallel perspective fan-out. The
+ * USER prompt (Phase 5 moved the role text from systemPrompt → user turn so the
+ * systemPrompt is the shared strategic-voice cache prefix). This is robust to
+ * the parallel perspective fan-out. The
  * embedder is injected via `embedFn` so the diversity gate is deterministic
  * without real embeddings.
  */
@@ -26,6 +28,7 @@ import {
   type RapidDInput,
 } from "./multi-option.js";
 import type { EvidenceRef } from "./types.js";
+import { strategicVoiceSystemPrompt } from "./strategic-voice.js";
 
 vi.mock("../../inference/claude-sdk.js", async () => {
   const actual = await vi.importActual<
@@ -91,9 +94,9 @@ const nullEmbed = (): Promise<Float32Array | null> => Promise.resolve(null);
 
 type SynthStep = RawOpt[] | "no_tool" | "throw";
 
-function detectRole(systemPrompt: string): PerspectiveRole {
-  if (systemPrompt.includes("DEVIL")) return "devils_advocate";
-  if (systemPrompt.includes("SEEKER")) return "seeker";
+function detectRole(userPrompt: string): PerspectiveRole {
+  if (userPrompt.includes("DEVIL")) return "devils_advocate";
+  if (userPrompt.includes("SEEKER")) return "seeker";
   return "analyst";
 }
 
@@ -116,7 +119,7 @@ function installSdk(cfg: {
       await opts.extraTools[0].handler({ options: step }, {});
       return { ...SDK_RESULT, toolCalls: ["submit_options"] };
     }
-    const role = detectRole(opts.systemPrompt);
+    const role = detectRole(opts.prompt);
     const override = cfg.perspectives?.[role];
     if (override === null) throw new Error(`perspective ${role} failed`);
     return { ...SDK_RESULT, text: override ?? `${role} perspective text` };
@@ -153,6 +156,41 @@ describe("runMultiOption — happy path", () => {
     );
     // §8 invariant: proposed_options length ∈ {0,3}
     expect([0, 3]).toContain(r.options.length);
+  });
+});
+
+describe("runMultiOption — strategic-voice cache prefix (§10)", () => {
+  it("passes the byte-identical strategic-voice block as systemPrompt for EVERY call, with role text in the user prompt", async () => {
+    const seen: { system: string; prompt: string }[] = [];
+    mockQuery.mockImplementation(async (o) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const opts = o as any;
+      seen.push({ system: opts.systemPrompt, prompt: opts.prompt });
+      if ((opts.extraTools?.length ?? 0) > 0) {
+        await opts.extraTools[0].handler({ options: diverseSet() }, {});
+        return { ...SDK_RESULT, toolCalls: ["submit_options"] };
+      }
+      return { ...SDK_RESULT, text: "perspective" };
+    });
+
+    await runMultiOption(INPUT, { embedFn: controlledEmbed });
+
+    const sv = strategicVoiceSystemPrompt();
+    // 3 perspectives + 1 synthesizer = ≥4 calls; all share ONE cache prefix.
+    expect(seen.length).toBeGreaterThanOrEqual(4);
+    for (const c of seen) expect(c.system).toBe(sv);
+    // The systemPrompt is the identity block, never the role text.
+    expect(sv).toContain("Strategic-voice principles");
+    for (const c of seen) {
+      expect(c.system).not.toContain("ANALYST");
+      expect(c.system).not.toContain("SYNTHESIZER");
+    }
+    // Role/task instructions still reach the model — now leading the user turn.
+    const prompts = seen.map((c) => c.prompt).join("\n");
+    expect(prompts).toContain("ANALYST");
+    expect(prompts).toContain("SEEKER");
+    expect(prompts).toContain("DEVIL");
+    expect(prompts).toContain("SYNTHESIZER");
   });
 });
 
