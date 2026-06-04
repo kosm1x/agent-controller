@@ -140,11 +140,17 @@ export function detectRecurringBlockers(
     // resolved cluster whose new last_seen_at is STILL stale — the upsert
     // above unconditionally clears resolved_at so a genuine recurrence
     // re-surfaces (audit C1).
+    // Scope to DETECTION-owned rows only (qa-W2): other producers write their
+    // own `recurring_blockers` rows with their own resolution logic — e.g. the
+    // V8.2 §14 `v8-2-sycophancy-drift` blocker, refreshed on the probe cadence.
+    // A signature-blind auto-stale would silently resolve a stalled-cron drift
+    // blocker on the next morning brief, masking the very failure §14 surfaces.
     const autoResolve = db.prepare(
       `UPDATE recurring_blockers
           SET resolved_at = datetime('now'),
               resolution_signal = 'auto-stale'
         WHERE resolved_at IS NULL
+          AND blocker_signature NOT LIKE 'v8-2-%'
           AND last_seen_at < datetime('now', ?)`,
     );
     const tx = db.transaction((cs: Cluster[]) => {
