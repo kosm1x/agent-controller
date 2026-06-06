@@ -506,6 +506,17 @@ export const CONVERSATIONAL_PATTERN =
   /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;
 
 /** Keyword patterns that activate tool groups. Scans current + recent messages. */
+// Journal/editorial authoring intent (the Williams Radar Journal). Verb-gated:
+// an authoring verb (agrega/escribe/publica/edita…) FOLLOWED (within 3 words)
+// by a JOURNAL-SPECIFIC noun. Bare "journal" is deliberately NOT a noun here —
+// it over-fires on personal/gratitude/bullet journals ("journal de gratitud"),
+// which would grant the heavy coding scope (shell_exec/file_write/file_delete)
+// to diary messages (qa-C1 2026-06-06). Single source of truth, referenced by
+// BOTH the DEFAULT_SCOPE_PATTERNS rule (regex-fallback path) and the coding
+// safety net (semantic path) so they cannot drift.
+const JOURNAL_AUTHORING_RE =
+  /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i;
+
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
@@ -664,8 +675,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // podcast", "agrega un comentario a la tarea" must NOT pull coding (qa-W2
     // 2026-06-06). The LLM classifier (scope-classifier.ts) is the primary,
     // smarter path; this regex is the fallback.
-    pattern:
-      /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:journal\b|comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i,
+    pattern: JOURNAL_AUTHORING_RE,
     group: "coding",
   },
   {
@@ -1147,11 +1157,13 @@ export function scopeToolsForMessage(
       // never coding — leaving Jarvis with KB-write but no real-FS file_write
       // (2026-06-06, task 5905: he had to be told "activa shell_exec" to force
       // it). Force-add coding when an authoring verb precedes a journal-specific
-      // noun. KEEP IN SYNC with the journal rule in DEFAULT_SCOPE_PATTERNS.
-      const codingJournalRe =
-        /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:journal\b|comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i;
+      // noun. Uses the shared JOURNAL_AUTHORING_RE (one source of truth with the
+      // DEFAULT_SCOPE_PATTERNS rule — bare "journal" excluded to avoid granting
+      // coding to personal/gratitude journals, qa-C1).
       const codingHit = (s: string) =>
-        codingNounRe.test(s) || codingVerbRe.test(s) || codingJournalRe.test(s);
+        codingNounRe.test(s) ||
+        codingVerbRe.test(s) ||
+        JOURNAL_AUTHORING_RE.test(s);
       // Topic carryover: a follow-up like "Cómo están distribuidas?" has no
       // domain signal of its own, but the prior turn was a DENUE query — the
       // operator is drilling down on the same topic. Scan prior user messages

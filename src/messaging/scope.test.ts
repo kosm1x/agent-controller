@@ -134,6 +134,23 @@ describe("scope pattern matching", () => {
       new Set(["northstar_journal"]),
     );
     expect(diary).not.toContain("file_write");
+    // qa-C1 (2026-06-06): personal/gratitude/bullet journals must NOT pull
+    // coding via the net — bare "journal" is excluded from JOURNAL_AUTHORING_RE.
+    for (const m of [
+      "completa la tarea del journal de gratitud",
+      "escribe mi journal de gratitud de hoy",
+      "actualiza el journal de bullet de hoy",
+    ]) {
+      expect(
+        scopeToolsForMessage(
+          m,
+          [],
+          DEFAULT_SCOPE_PATTERNS,
+          ALL_ON,
+          new Set(["northstar_journal"]),
+        ),
+      ).not.toContain("file_write");
+    }
   });
 
   it("projects scope loads project_get/project_update on reactivate verb", () => {
