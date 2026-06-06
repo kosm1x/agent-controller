@@ -110,6 +110,32 @@ describe("scope pattern matching", () => {
     );
   });
 
+  it("coding safety-net rescues Journal authoring when the classifier said northstar_journal (2026-06-06 misroute)", () => {
+    // "Journal" collides with the northstar_journal (diary) group, so the
+    // semantic classifier routes journal commentary there, never coding —
+    // leaving Jarvis with KB-write but no real-FS file_write. The safety net
+    // must force-add coding regardless of the classifier's verdict.
+    const tools = scopeToolsForMessage(
+      "Agrega el comentario editorial y de análisis a la W23 del Journal",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["northstar_journal", "google"]),
+    );
+    expect(tools).toContain("file_write");
+    expect(tools).toContain("shell_exec");
+    // Sanity: an actual diary entry ("escribe en mi diario…") must NOT pull
+    // coding via this net — the journal noun-anchor keeps it narrow.
+    const diary = scopeToolsForMessage(
+      "escribe en mi diario que hoy fue un buen día",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["northstar_journal"]),
+    );
+    expect(diary).not.toContain("file_write");
+  });
+
   it("projects scope loads project_get/project_update on reactivate verb", () => {
     const tools = scope("Reactiva el proyecto williams-entry-radar");
     expect(tools).toContain("project_update");

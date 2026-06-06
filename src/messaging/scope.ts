@@ -1141,8 +1141,17 @@ export function scopeToolsForMessage(
         /\b(?:sql|psql|querie?s?|database|supabase|postgres|denue|shell_exec|file_write|file_edit|file_delete|docker\s+exec)\b|jarvis_file_(?:read|write|update|delete|move|search|list)/i;
       const codingVerbRe =
         /\b(?:ejecuta|corre|c[oó]rre|run|launch|lanza)\w*\s+(?:\S+\s+){0,3}(?:query|queries|consulta|consultas|script|scripts|sql|c[oó]digo|comando|migration|migrations?|stored\s+proc(?:edure)?|scoring)/i;
+      // Journal/editorial authoring → coding. "Journal" (the Williams Radar
+      // Journal) collides with the northstar_journal (diary) group, so the
+      // classifier routes journal commentary to northstar_journal+google and
+      // never coding — leaving Jarvis with KB-write but no real-FS file_write
+      // (2026-06-06, task 5905: he had to be told "activa shell_exec" to force
+      // it). Force-add coding when an authoring verb precedes a journal-specific
+      // noun. KEEP IN SYNC with the journal rule in DEFAULT_SCOPE_PATTERNS.
+      const codingJournalRe =
+        /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:journal\b|comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i;
       const codingHit = (s: string) =>
-        codingNounRe.test(s) || codingVerbRe.test(s);
+        codingNounRe.test(s) || codingVerbRe.test(s) || codingJournalRe.test(s);
       // Topic carryover: a follow-up like "Cómo están distribuidas?" has no
       // domain signal of its own, but the prior turn was a DENUE query — the
       // operator is drilling down on the same topic. Scan prior user messages
