@@ -75,6 +75,41 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
+  it("coding activates on Journal/editorial authoring (2026-06-06 commentary incident)", () => {
+    // Regression for task 5902: "agrega el comentario editorial al Journal"
+    // routed to a KB-only write scope (jarvis_file_write) with no real-FS write
+    // → error_max_turns(30), commentary written but unsaveable. Journal
+    // commentary must pull file_write/file_edit (real FS) + shell_exec (git push).
+    expect(
+      scope("Revisa la W23 del Journal y agrega el comentario editorial"),
+    ).toContain("file_write");
+    expect(scope("escribe el deep dive del Radar para la W23")).toContain(
+      "file_edit",
+    );
+    expect(scope("completa el manager note de la edición")).toContain(
+      "file_edit",
+    );
+    expect(scope("publica la edición W23 del journal")).toContain("shell_exec");
+    expect(scope("rellena el ticker of the week")).toContain("file_write");
+  });
+
+  it("Journal-authoring rule does NOT over-fire on reads / non-journal authoring (qa-W2)", () => {
+    // Verb-gated + journal-anchored noun: bare nouns, reads, deletes, and
+    // non-journal objects must NOT pull the heavy coding scope.
+    expect(scope("resúmeme el journal de la W22")).not.toContain("file_write");
+    expect(scope("dame los resultados de la W23")).not.toContain("shell_exec");
+    expect(scope("qué dice el comentario de esta semana?")).not.toContain(
+      "file_write",
+    );
+    expect(scope("dame un deep dive de ventas Q2")).not.toContain("file_write");
+    expect(scope("borra el comentario editorial")).not.toContain("file_write");
+    expect(scope("qué dice el manager note?")).not.toContain("file_write");
+    expect(scope("publica la edición del podcast")).not.toContain("file_write");
+    expect(scope("agrega un comentario a la tarea")).not.toContain(
+      "file_write",
+    );
+  });
+
   it("projects scope loads project_get/project_update on reactivate verb", () => {
     const tools = scope("Reactiva el proyecto williams-entry-radar");
     expect(tools).toContain("project_update");

@@ -646,6 +646,29 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "browser",
   },
   {
+    // Journal / editorial authoring → coding scope. The Williams Radar Journal
+    // (and similar editorial pages) are .md files in project repos served by
+    // very-light-cms; writing analyst commentary, deep dives, or manager notes
+    // and publishing an edition needs file_write/file_edit + shell_exec (git
+    // push) — tools only the `coding` scope carries. 2026-06-06 incident: task
+    // 5902 "Revisa la W23 del Journal y agrega el comentario editorial" routed
+    // to a content/KB scope (jarvis_file_write — KB-only, no real-FS write) and
+    // hit error_max_turns(30) with the commentary written but unsaveable.
+    // Verb-gated: require an AUTHORING VERB followed (within 3 words) by a
+    // journal-specific noun — a section name (deep dive, manager note,
+    // number/ticker of the week), "comentario editorial" / "comentario del
+    // analista", "análisis editorial/del journal", a journal-anchored "edición"
+    // (edición W## / edición del journal|radar|williams), or bare "journal".
+    // Bare standalone nouns are deliberately NOT matched: "dame un deep dive de
+    // ventas", "borra el comentario editorial", "publica la edición del
+    // podcast", "agrega un comentario a la tarea" must NOT pull coding (qa-W2
+    // 2026-06-06). The LLM classifier (scope-classifier.ts) is the primary,
+    // smarter path; this regex is the fallback.
+    pattern:
+      /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:journal\b|comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i,
+    group: "coding",
+  },
+  {
     // Bug fix 2026-05-05 (DENUE pharmacy-scoring incident): coding regex previously
     // missed three classes of legitimate coding intent → 6 consecutive max_turns
     // failures while the model thrashed looking for shell_exec:
