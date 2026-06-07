@@ -237,6 +237,7 @@ export function startRitualScheduler(): void {
   scheduleMemoryConsolidation();
   scheduleStaleArtifactPrune();
   scheduleHindsightCostPull();
+  schedulePrometheusAlertPoller();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -667,6 +668,48 @@ function scheduleHindsightCostPull(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] hindsight-cost-pull: scheduled (*/5 * * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * Prometheus alert notifier (queue: salones-wa alert-delivery follow-up).
+ *
+ * mc-prometheus evaluates alert rules but has no Alertmanager/Grafana wired, so
+ * firing alerts only show in its UI. Every 2 min this polls /api/v1/alerts and
+ * pushes newly firing + newly resolved alerts to the operator via WhatsApp /
+ * Telegram (notify-once). Default OFF — set ALERT_NOTIFY_ENABLED=true to arm.
+ */
+function schedulePrometheusAlertPoller(): void {
+  if (process.env.ALERT_NOTIFY_ENABLED !== "true") {
+    console.log(
+      "[rituals] prometheus-alert-notifier: disabled (set ALERT_NOTIFY_ENABLED=true)",
+    );
+    return;
+  }
+  const job = cron.schedule(
+    "*/2 * * * *",
+    async () => {
+      try {
+        const { runPrometheusAlertPoll } =
+          await import("./prometheus-alert-poller.js");
+        const summary = await runPrometheusAlertPoll();
+        if (summary.sent) {
+          console.log(
+            `[rituals] prometheus-alert-notifier: firing=${summary.firing} newly=${summary.newlyFiring} resolved=${summary.resolved} → notified operator`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[rituals] prometheus-alert-notifier failed: ${err instanceof Error ? err.message : err}`,
+        );
+        recordRitualFailure("prometheus-alert-notifier", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] prometheus-alert-notifier: scheduled (*/2 * * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

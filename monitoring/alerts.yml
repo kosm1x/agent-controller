@@ -206,3 +206,40 @@ groups:
         annotations:
           summary: "Hindsight scrape target unreachable"
           description: "mc-prometheus cannot reach Hindsight at host.docker.internal:8888 — cost telemetry blind."
+
+  - name: salones-wa
+    rules:
+      # A salon's WhatsApp session has been LOGGED OUT (session invalidated).
+      # The self-heal watchdog deliberately does NOT auto-reconnect this state —
+      # it needs a manual re-link. Fire fast (1h) because nothing recovers it.
+      - alert: SalonWhatsAppLoggedOut
+        expr: salones_wa_baileys_state{state="logged_out"} == 1
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "Salón {{ $labels.salon_id }} WhatsApp LOGGED OUT"
+          description: "Session invalidated — needs a manual re-link (RUNBOOK §5). The watchdog will not auto-recover a logged_out salon."
+
+      # A salon has been not-connected for 24h. The 60s watchdog heals stuck
+      # sockets in minutes, so a full 24h down means the watchdog exhausted its
+      # strikes / the salon is genuinely unrecoverable without intervention.
+      - alert: SalonWhatsAppDisconnected
+        expr: salones_wa_baileys_state{state="connected"} == 0
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Salón {{ $labels.salon_id }} WhatsApp down >24h"
+          description: "Baileys not connected for 24h despite the self-heal watchdog. Likely needs a manual re-link (RUNBOOK §5)."
+
+      # Prometheus can't scrape salones-wa /metrics — wrong token, service down,
+      # or Caddy down. Telemetry blind for the whole bot.
+      - alert: SalonesWaScrapeDown
+        expr: up{job="salones-wa"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "salones-wa /metrics unreachable"
+          description: "mc-prometheus can't scrape salones-wa — ADMIN_TOKEN wrong, salones-wa down, or Caddy issue."
