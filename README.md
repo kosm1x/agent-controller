@@ -197,7 +197,7 @@ All endpoints require `X-Api-Key` header except health check.
 | `POST` | `/api/agents/heartbeat`   | Agent heartbeat                             |
 | `GET`  | `/api/agents`             | List agents                                 |
 | `GET`  | `/api/events/stream`      | SSE real-time event stream                  |
-| `GET`  | `/health`                 | Health check (no auth)                      |
+| `GET`  | `/health`                 | Liveness public; detail needs key/private peer |
 | `GET`  | `/dashboard/`             | Web dashboard (no auth, JS handles API key) |
 | `GET`  | `/.well-known/agent.json` | A2A agent card (no auth)                    |
 | `POST` | `/a2a`                    | A2A JSON-RPC endpoint                       |
@@ -289,7 +289,7 @@ agent-controller/
       config.ts              # Load mcp-servers.json
       bridge.ts              # MCP tool → MC Tool adapter
       manager.ts             # Connect servers, discover tools, register
-      index.ts               # initMcp(), shutdownMcp()
+                             # (lifecycle owned by tools/sources/mcp.ts)
 
     a2a/                     # A2A agent interoperability (v2)
       types.ts               # A2A protocol types, JSON-RPC, status mapping
