@@ -436,7 +436,7 @@ export async function queryClaudeSdk(opts: {
   );
 
   const options: SdkOptions = {
-    model: opts.model ?? "claude-sonnet-4-6",
+    model: opts.model ?? SONNET_MODEL_ID,
     systemPrompt: safeSystemPromptText,
     mcpServers: { jarvis: mcpServer },
     allowedTools,

@@ -135,6 +135,41 @@ export function computeDecayWeight(
   return base * Math.pow(0.5, ageDays / halfLife);
 }
 
+/**
+ * Deserialized-embedding cache for the hybrid recall hot path. Every recall
+ * loads up to 500 BLOBs (~3 MB) and turned each into a fresh Float32Array —
+ * per inbound message. Embedding rows are append-only and keyed by
+ * conversation id, so a vector never changes once written; cache the
+ * Float32Array per id and only new ids pay deserialization. Bounded at 1000
+ * entries (~6 MB ceiling), insertion-order eviction.
+ */
+const VECTOR_CACHE_MAX = 1000;
+const vectorCache = new Map<number, Float32Array>();
+
+/**
+ * Invalidate the vector cache. MUST be called after any conversation-delete
+ * batch (consolidation/pruning): `conversations.id` is INTEGER PRIMARY KEY
+ * without AUTOINCREMENT, so SQLite can reuse a deleted max-rowid — a cached
+ * vector under a reused id would silently return wrong cosine scores.
+ * Wholesale clear is fine; the cache re-warms in one recall.
+ */
+export function clearVectorCache(): void {
+  vectorCache.clear();
+}
+
+function getCachedVector(id: number, blob: Buffer): Float32Array {
+  const hit = vectorCache.get(id);
+  if (hit) return hit;
+  const vec = deserializeEmbedding(blob);
+  vectorCache.set(id, vec);
+  while (vectorCache.size > VECTOR_CACHE_MAX) {
+    const oldest = vectorCache.keys().next().value;
+    if (oldest === undefined) break;
+    vectorCache.delete(oldest);
+  }
+  return vec;
+}
+
 export class SqliteMemoryBackend implements MemoryService {
   readonly backend = "sqlite" as const;
 
@@ -363,7 +398,7 @@ export class SqliteMemoryBackend implements MemoryService {
           }>;
 
           for (const row of rows) {
-            const vec = deserializeEmbedding(row.embedding);
+            const vec = getCachedVector(row.id, row.embedding);
             const sim = cosineSimilarity(queryVec, vec);
             if (sim > 0.3) {
               // Only include above threshold

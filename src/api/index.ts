@@ -7,7 +7,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { apiKeyAuth } from "./auth.js";
+import { apiKeyAuth, privateOrApiKeyAuth } from "./auth.js";
 import { apiRateLimit } from "./rate-limit.js";
 import { health } from "./routes/health.js";
 import dashboardRoute from "./routes/dashboard.js";
@@ -34,7 +34,11 @@ export function createApp(): Hono {
 
   // Dashboard serving — no auth (self-contained HTML)
   app.route("/dashboard", dashboardRoute);
-  app.get("/metrics", async (c) => {
+  // Internal-state disclosure guard: port 8080 is UFW-open, so an unauthed
+  // /metrics hands the internet tool-call counts, provider/cost signals and
+  // circuit-breaker state. Private peers (mc-prometheus via the Docker
+  // bridge, localhost tooling) pass keyless; everyone else needs the API key.
+  app.get("/metrics", privateOrApiKeyAuth, async (c) => {
     const text = await getMetricsText();
     return c.text(text, 200, { "Content-Type": metricsContentType });
   });

@@ -337,9 +337,27 @@ async function checkAndExecuteSchedules(): Promise<void> {
       // Watch for result to verify delivery and broadcast
       watchScheduledTask(result.taskId, schedule);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `[schedules] Failed to submit "${schedule.name}": ${err instanceof Error ? err.message : err}`,
+        `[schedules] Failed to submit "${schedule.name}": ${message}`,
       );
+      // markExecuted already ran, so this day's slot is consumed with no
+      // retry until the next cron match — at minimum the failure must be
+      // observable by the reaction rules that watch schedule.run_failed
+      // (previously this was a log-only dead end).
+      try {
+        const { getEventBus } = await import("../lib/event-bus.js");
+        getEventBus().emitEvent("schedule.run_failed", {
+          ritual_id: schedule.schedule_id,
+          error: message.slice(0, 1000),
+          phase: "submit",
+        });
+      } catch (busErr) {
+        console.error(
+          `[schedules] run_failed event emit failed:`,
+          busErr instanceof Error ? busErr.message : busErr,
+        );
+      }
     }
   }
 }

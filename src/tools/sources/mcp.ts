@@ -21,6 +21,19 @@ export class McpToolSource implements ToolSource {
 
   private manager: McpManager | null = null;
   private config: McpConfig | null = null;
+  private alertFn: ((msg: string) => void) | null = null;
+
+  /**
+   * Wire MCP degradation/recovery alerts to a broadcast function (e.g. the
+   * messaging router). This is the LIVE manager — the old src/mcp/index.ts
+   * barrel held a separate `_manager` that was never initialized, so alert
+   * wiring through it was a permanent no-op (alerts fell back to
+   * console.warn only). Safe to call before or after registerTools.
+   */
+  setAlertFn(fn: (msg: string) => void): void {
+    this.alertFn = fn;
+    this.manager?.setAlertFn(fn);
+  }
 
   async initialize(): Promise<void> {
     this.config = loadMcpConfig();
@@ -35,6 +48,7 @@ export class McpToolSource implements ToolSource {
 
     const beforeTools = new Set(registry.list());
     this.manager = new McpManager();
+    if (this.alertFn) this.manager.setAlertFn(this.alertFn);
     await this.manager.init(this.config, registry);
     const afterTools = registry.list();
 

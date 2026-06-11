@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
+-- Composite for the hot "latest run for task" pattern (router delivery path):
+-- WHERE task_id = ? ORDER BY created_at DESC LIMIT 1 — without it SQLite
+-- falls back to a temp B-tree sort on every task-completion delivery.
+CREATE INDEX IF NOT EXISTS idx_runs_task_created ON runs(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 
 CREATE TABLE IF NOT EXISTS agents (

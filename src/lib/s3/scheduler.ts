@@ -26,8 +26,11 @@ import {
 } from "./burst.js";
 import { loadEnabledSignalsByCadence, type Cadence } from "./registry.js";
 import { seedSignalsIdempotent } from "./seed-signals.js";
+import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 
-const S3_TIMEZONE = "America/Mexico_City";
+// Derive from the env-overridable canonical value — a hardcoded literal here
+// would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
+const S3_TIMEZONE = RITUALS_TIMEZONE;
 
 const CRON_BY_CADENCE: Record<Exclude<Cadence, "on_event">, string> = {
   // Top of hour. Matches spec §7 "hourly: top of hour".

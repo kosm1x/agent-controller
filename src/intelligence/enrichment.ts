@@ -36,21 +36,28 @@ export async function enrichContext(
   const matchedSkillIds: string[] = [];
   let confidence: "high" | "medium" | "low" = "low";
 
-  // Skill matching works on SQLite — no Hindsight required
-  try {
-    const skillResult = await getMatchingSkills(messageText);
-    if (skillResult.block) {
-      sections.push(skillResult.block);
-      matchedSkillIds.push(...skillResult.skillIds);
-      confidence = skillResult.confidence;
-    }
-  } catch {
-    // Non-fatal
-  }
-
   // Recall context + tool hints IN PARALLEL (saves 100-300ms)
   const memory = getMemoryService();
   const recallPromises: Promise<void>[] = [];
+
+  // Skill matching works on SQLite — no Hindsight required. Joined to the
+  // parallel batch below: its embed round-trip was previously awaited to
+  // completion before any recall started, serializing two network calls.
+  // The block is captured separately (not pushed inline) so it keeps its
+  // first-section priority under the MAX_ENRICHMENT_CHARS truncation
+  // regardless of which parallel promise settles first.
+  let skillBlock: string | null = null;
+  recallPromises.push(
+    getMatchingSkills(messageText)
+      .then((skillResult) => {
+        if (skillResult.block) {
+          skillBlock = skillResult.block;
+          matchedSkillIds.push(...skillResult.skillIds);
+          confidence = skillResult.confidence;
+        }
+      })
+      .catch(() => {}),
+  );
 
   // User context recall (async)
   recallPromises.push(
@@ -189,6 +196,12 @@ export async function enrichContext(
 
   // Wait for ALL recalls (Hindsight + pgvector) to complete in parallel
   await Promise.all(recallPromises);
+
+  // Skill block leads — it carries known procedures, the highest-value
+  // enrichment under the char cap.
+  if (skillBlock) {
+    sections.unshift(skillBlock);
+  }
 
   // Memory drift verification (OpenClaude pattern): recalled memories that
   // name specific file paths may be stale. Verify referenced paths exist

@@ -21,7 +21,10 @@ const BLOCKED_IP_PATTERNS = [
   // v7.6.2 C2: IPv6 unspecified address — routes to loopback on Linux.
   // Previously missed by `::1` pattern. Covers ::, ::0, ::00, etc.
   /^::0*$/,
-  /^fc00:/i, // IPv6 unique local
+  // IPv6 unique local — the whole fc00::/7 block. The previous /^fc00:/
+  // missed fd00::/8, the half of ULA space actually used in practice, which
+  // would have defeated the DNS-rebinding check for fd-addressed targets.
+  /^f[cd][0-9a-f]{0,2}:/i,
   /^fe80:/i, // IPv6 link-local
 ];
 
@@ -101,6 +104,70 @@ export function validateOutboundUrl(url: string): string | null {
   }
 
   return null; // Safe
+}
+
+/** Is the (bracket-stripped) hostname an IP literal rather than a DNS name? */
+function isIpLiteral(hostname: string): boolean {
+  return /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":");
+}
+
+/** Check one resolved address against the private/reserved blocklist. */
+function isBlockedAddress(addr: string): boolean {
+  let check = addr.toLowerCase();
+  const dottedV4 = check.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (dottedV4) check = dottedV4[1];
+  return BLOCKED_IP_PATTERNS.some((p) => p.test(check));
+}
+
+/**
+ * DNS-resolving variant of `validateOutboundUrl` for async callers that
+ * actually open a local connection (http_fetch). The string/regex check
+ * alone is bypassable by a public DNS name whose A/AAAA record points at
+ * 127.0.0.1 / 10.x / 169.254.169.254 (DNS rebinding): validation passes on
+ * the name, fetch() connects to the internal target. Here we resolve the
+ * hostname and re-check every returned address.
+ *
+ * Residual TOCTOU: the record can change between this lookup and fetch()'s
+ * own lookup. Closing that fully needs a connect-time socket guard; this
+ * removes the trivial static-record bypass.
+ *
+ * Fail-closed on resolution errors EXCEPT for names that don't resolve at
+ * all (fetch would fail anyway with its own error).
+ */
+export async function validateOutboundUrlResolved(
+  url: string,
+): Promise<string | null> {
+  const syncErr = validateOutboundUrl(url);
+  if (syncErr) return syncErr;
+
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.+$/, "");
+  } catch {
+    return "Invalid URL";
+  }
+
+  // IP literals were already fully checked by the sync path.
+  if (isIpLiteral(hostname)) return null;
+
+  try {
+    const { lookup } = await import("node:dns/promises");
+    const addrs = await lookup(hostname, { all: true, verbatim: true });
+    for (const { address } of addrs) {
+      if (isBlockedAddress(address)) {
+        return `Blocked: ${hostname} resolves to private/reserved address ${address}`;
+      }
+    }
+  } catch {
+    // NXDOMAIN / resolver failure — fetch() will fail with its own error;
+    // nothing internal is reachable through an unresolvable name.
+    return null;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

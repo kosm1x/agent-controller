@@ -15,6 +15,7 @@
  */
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
+import { clearVectorCache } from "./sqlite-backend.js";
 
 /** Age thresholds for pruning by trust tier (days). */
 const PRUNE_AGE: Record<number, number> = {
@@ -177,6 +178,12 @@ export async function runConsolidation(): Promise<ConsolidationReport> {
 
   // Phase 4: Prune
   const pruned = pruneStale();
+
+  // Deleted conversation ids can be reused by SQLite (no AUTOINCREMENT) —
+  // drop the recall vector cache so a reused id can't serve a stale vector.
+  if (duplicatesRemoved + pruned > 0) {
+    clearVectorCache();
+  }
 
   // VACUUM to reclaim space
   if (duplicatesRemoved + pruned > 0) {

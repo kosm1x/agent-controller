@@ -21,8 +21,11 @@ import cron, { type ScheduledTask } from "node-cron";
 
 import { pruneExpiredSnapshots } from "../prometheus/snapshot.js";
 import { pruneExpiredCheckpoints } from "./checkpoint.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
-const PRUNE_TIMEZONE = "America/Mexico_City";
+// Derive from the env-overridable canonical value — a hardcoded literal here
+// would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
+const PRUNE_TIMEZONE = RITUALS_TIMEZONE;
 // On the hour, every hour. Bounded staleness ~1h beyond TTL.
 const PRUNE_CRON = "0 * * * *";
 

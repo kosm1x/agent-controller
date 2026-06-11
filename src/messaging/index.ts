@@ -22,9 +22,10 @@ export async function initMessaging(): Promise<MessageRouter | null> {
   // start() pending forever; unbounded + uncaught, that hung the whole
   // messaging layer (Telegram + email never initialized). Bound and catch each.
   if (process.env.WHATSAPP_ENABLED === "true") {
+    let wa: import("./channels/whatsapp.js").WhatsAppAdapter | null = null;
     try {
       const { WhatsAppAdapter } = await import("./channels/whatsapp.js");
-      const wa = new WhatsAppAdapter();
+      wa = new WhatsAppAdapter();
       await withTimeout(
         wa.start(),
         CHANNEL_START_TIMEOUT_MS,
@@ -33,6 +34,11 @@ export async function initMessaging(): Promise<MessageRouter | null> {
       router.registerChannel(wa);
       console.log("[messaging] WhatsApp channel active");
     } catch (err) {
+      // The withTimeout rejection does NOT stop connectInternal(): without an
+      // explicit stop(), the orphaned Baileys socket can connect later, hold
+      // the WA session, and drop inbound messages into a null handler for the
+      // life of the process.
+      await wa?.stop().catch(() => {});
       console.error(
         "[messaging] WhatsApp channel FAILED — skipped:",
         err instanceof Error ? err.message : err,
@@ -60,23 +66,48 @@ export async function initMessaging(): Promise<MessageRouter | null> {
   }
 
   if (process.env.EMAIL_ENABLED === "true") {
-    const { EmailAdapter, parseEmailAccounts } =
-      await import("./channels/email.js");
-    // parseEmailAccounts() throws on a misconfigured .env — fail fast at boot
-    // rather than silently running zero mailboxes. One adapter per account,
-    // each registered under its own `email:<id>` channel name.
-    const accounts = parseEmailAccounts();
-    for (const account of accounts) {
-      const email = new EmailAdapter(account);
-      // Register before start(): start() runs an initial poll, and the adapter
-      // must already hold the router's onMessage handler — otherwise unseen
-      // owner mail present at boot is marked \Seen and silently dropped.
-      router.registerChannel(email);
-      await email.start();
+    // Same isolation contract as WhatsApp/Telegram: a broken email config or
+    // a hanging mailbox must not crash main() (→ systemd crash-loop taking
+    // down already-healthy channels). parseEmailAccounts() throwing on a
+    // misconfigured .env is still loud — logged as FAILED — but non-fatal.
+    try {
+      const { EmailAdapter, parseEmailAccounts } =
+        await import("./channels/email.js");
+      // One adapter per account, each registered under its own `email:<id>`
+      // channel name.
+      const accounts = parseEmailAccounts();
+      let active = 0;
+      for (const account of accounts) {
+        const email = new EmailAdapter(account);
+        try {
+          // Register before start(): start() runs an initial poll, and the
+          // adapter must already hold the router's onMessage handler —
+          // otherwise unseen owner mail present at boot is marked \Seen and
+          // silently dropped.
+          router.registerChannel(email);
+          await withTimeout(
+            email.start(),
+            CHANNEL_START_TIMEOUT_MS,
+            `Email start() [${account.id}]`,
+          );
+          active++;
+        } catch (err) {
+          router.unregisterChannel(email.name);
+          console.error(
+            `[messaging] Email mailbox ${account.id} FAILED — skipped:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+      console.log(
+        `[messaging] Email channel active — ${active}/${accounts.length} mailbox(es)`,
+      );
+    } catch (err) {
+      console.error(
+        "[messaging] Email channel FAILED — skipped:",
+        err instanceof Error ? err.message : err,
+      );
     }
-    console.log(
-      `[messaging] Email channel active — ${accounts.length} mailbox(es)`,
-    );
   }
 
   if (router.channelCount === 0) {

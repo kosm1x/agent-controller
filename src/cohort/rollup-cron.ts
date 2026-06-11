@@ -13,8 +13,11 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { recordCohortRollup } from "../observability/prometheus.js";
 import { type RollUpResult, rollUpCohort } from "./self-defining.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
-const ROLLUP_TIMEZONE = "America/Mexico_City";
+// Derive from the env-overridable canonical value — a hardcoded literal here
+// would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
+const ROLLUP_TIMEZONE = RITUALS_TIMEZONE;
 // 05:00 Mexico City daily — ahead of the morning brief, offset from the
 // skill test sweep (02/08/14/20) to spread CPU load.
 const ROLLUP_CRON = "0 5 * * *";

@@ -27,7 +27,11 @@ const DEFAULT_TIMEOUT_MS = 5000;
 // NaN/zero/negative guard: parseInt("abc") → NaN; setTimeout(..., NaN) fires
 // immediately and would silently abort every recall. Fall back to default
 // instead so a typo'd env var degrades gracefully.
-const DEFAULT_RECALL_TIMEOUT_MS = 3000;
+// 2026-06-11: default raised 3000 → 8000 to match the session-123 Path-1
+// tune that drift.ts declares as the invariant (expected env "8000").
+// Deleting the env var used to silently drop the live timeout back into the
+// 3000ms timeout-jitter regime the 2026-04-28 note documents.
+const DEFAULT_RECALL_TIMEOUT_MS = 8000;
 const RECALL_TIMEOUT_MS = (() => {
   const parsed = parseInt(
     process.env.HINDSIGHT_RECALL_TIMEOUT_MS ??

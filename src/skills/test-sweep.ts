@@ -20,8 +20,11 @@ import cron, { type ScheduledTask } from "node-cron";
 import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import { runSkillTests } from "./test-runner.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
-const SWEEP_TIMEZONE = "America/Mexico_City";
+// Derive from the env-overridable canonical value — a hardcoded literal here
+// would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
+const SWEEP_TIMEZONE = RITUALS_TIMEZONE;
 // Every 6 hours starting at 02:00, 08:00, 14:00, 20:00 Mexico City.
 // Offset from cost-ledger pulls / morning brief windows to spread CPU load.
 const SWEEP_CRON = "0 2,8,14,20 * * *";

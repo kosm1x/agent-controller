@@ -7,6 +7,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { clearVectorCache } from "./sqlite-backend.js";
 import { cosineSimilarity, deserializeEmbedding } from "./embeddings.js";
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,9 @@ export function consolidateLearnings(
     });
 
     deleteAll(deletedIds);
+    // Deleted ids can be reused by SQLite (no AUTOINCREMENT) — drop the
+    // recall vector cache so a reused id can't serve a stale vector.
+    clearVectorCache();
 
     console.log(
       `[consolidate] Merged ${deletedIds.length} duplicate learnings from ${groups.length} groups (bank=${bank})`,

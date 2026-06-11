@@ -5,7 +5,7 @@
  */
 
 import type { Tool } from "../types.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
@@ -73,8 +73,11 @@ BOUNDARIES:
       return JSON.stringify({ error: "url is required" });
     }
 
-    // SSRF protection — block private IPs, metadata endpoints, non-HTTP schemes
-    const urlError = validateOutboundUrl(url);
+    // SSRF protection — block private IPs, metadata endpoints, non-HTTP
+    // schemes, AND names that resolve to private addresses (DNS rebinding):
+    // this tool opens a local connection, so the string-level check alone is
+    // bypassable via an attacker-controlled A record pointing at 127.0.0.1.
+    const urlError = await validateOutboundUrlResolved(url);
     if (urlError) {
       return JSON.stringify({ error: urlError, url });
     }

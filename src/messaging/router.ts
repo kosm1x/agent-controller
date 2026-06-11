@@ -735,6 +735,10 @@ function pushToThread(
   const thread = conversationThreads.get(channel)!;
   thread.push({ text: exchange, imageUrl });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
+  // Keys created here that never pass through getThreadTurns (e.g. the
+  // background-agent spawn path) would otherwise have no lastAccess entry
+  // and never be TTL-evicted.
+  threadLastAccess.set(channel, Date.now());
 }
 
 /**
@@ -813,6 +817,11 @@ function getThreadTurns(channel: string): ConversationTurn[] {
         conversationThreads.delete(ch);
         threadLastAccess.delete(ch);
         hydratedChannels.delete(ch);
+        // Same lifecycle as the thread buffer — keys are per-sender for
+        // groups/community email, so without eviction every stranger adds
+        // permanent entries to a long-lived daemon.
+        previousScopeGroups.delete(ch);
+        previousMessages.delete(ch);
       }
     }
   }
@@ -1045,6 +1054,16 @@ export class MessageRouter {
         );
       });
     });
+  }
+
+  /**
+   * Remove a channel whose start() failed AFTER registerChannel (channels must
+   * register before start so the boot-time poll has an onMessage handler).
+   * Leaving a dead adapter registered would route broadcasts into a channel
+   * that can never deliver.
+   */
+  unregisterChannel(name: ChannelName): void {
+    this.channels.delete(name);
   }
 
   /** Start listening for task completion/failure events. */
@@ -1766,17 +1785,6 @@ export class MessageRouter {
       ...(msg.imageUrl && { imageUrl: msg.imageUrl }),
     });
 
-    // Recall semantic memories + enrich context IN PARALLEL
-    const enrichment = await enrichContext(msg.text, msg.channel);
-
-    // User profile facts + projects — always injected so the LLM never forgets context
-    let userFactsBlock = "";
-    try {
-      userFactsBlock = formatUserFactsBlock(msg.text) + formatProjectsBlock();
-    } catch {
-      // Non-fatal — DB may not have the tables yet
-    }
-
     // v6.4 CL1.5: Normalize input for better matching (typo correction)
     const normalizedText = normalizeForMatching(msg.text);
     if (wasNormalized(msg.text, normalizedText)) {
@@ -1791,10 +1799,23 @@ export class MessageRouter {
       .slice(-2)
       .map((t) => `${t.role}: ${t.content.slice(0, 150)}`)
       .join("\n");
-    const semanticGroups = await classifyScopeGroups(
-      normalizedText,
-      recentContext || undefined,
-    );
+
+    // Context enrichment (embedding + recall) and scope classification (LLM
+    // call) are independent — neither consumes the other's output. Awaiting
+    // them sequentially added the classifier's full latency (up to its 3s
+    // timeout) on top of enrichment on EVERY non-fast-path message.
+    const [enrichment, semanticGroups] = await Promise.all([
+      enrichContext(msg.text, msg.channel),
+      classifyScopeGroups(normalizedText, recentContext || undefined),
+    ]);
+
+    // User profile facts + projects — always injected so the LLM never forgets context
+    let userFactsBlock = "";
+    try {
+      userFactsBlock = formatUserFactsBlock(msg.text) + formatProjectsBlock();
+    } catch {
+      // Non-fatal — DB may not have the tables yet
+    }
 
     // Dynamic tool scoping — uses semantic groups if available, regex fallback.
     // Pass normalizedText so regex fallback benefits from typo corrections.

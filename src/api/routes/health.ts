@@ -1,5 +1,6 @@
 /**
- * Health check endpoint. No authentication required.
+ * Health check endpoint. Liveness is public; the detailed payload requires a
+ * private/loopback peer or a valid X-Api-Key.
  */
 
 import { statSync } from "node:fs";
@@ -16,6 +17,7 @@ import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
 import { getKbHealthStats } from "../../memory/lesson-decay.js";
 import { getMessagingStatus } from "../../messaging/index.js";
+import { hasValidApiKey, isPrivatePeer } from "../auth.js";
 
 const health = new Hono();
 
@@ -80,6 +82,14 @@ health.get("/health", async (c) => {
 
   const status = dbOk ? "healthy" : "degraded";
   const code = dbOk ? 200 : 503;
+
+  // Public peers on the UFW-open port get liveness only. The detailed
+  // payload (provider metrics, budget windows, circuit-breaker state,
+  // messaging status, KB stats) is internal state — private/loopback peers
+  // and key-holders only.
+  if (!isPrivatePeer(c) && !hasValidApiKey(c)) {
+    return c.json({ status, timestamp: new Date().toISOString() }, code);
+  }
 
   const providers = providerMetrics.getAllStats();
   const budget = getBudgetStatus();

@@ -33,7 +33,6 @@ import {
   stopDynamicScheduler,
 } from "./rituals/dynamic.js";
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
-import { setMcpAlertFn } from "./mcp/index.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
 import { seedMentalModels } from "./intelligence/mental-models.js";
@@ -202,7 +201,10 @@ async function main(): Promise<void> {
   // Initialize tool sources (plugin system)
   const sourceManager = new ToolSourceManager();
   sourceManager.addSource(new BuiltinToolSource());
-  sourceManager.addSource(new McpToolSource());
+  // Instance kept for alert wiring after messaging is up — this source owns
+  // the LIVE McpManager (the src/mcp/index.ts barrel's was never initialized).
+  const mcpSource = new McpToolSource();
+  sourceManager.addSource(mcpSource);
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN) {
     sourceManager.addSource(new GoogleToolSource());
   }
@@ -347,13 +349,22 @@ async function main(): Promise<void> {
 
   // Wire MCP alerts + intel alerts to Telegram (after messaging is ready)
   if (router) {
-    setMcpAlertFn((msg: string) => router.broadcastToAll(msg));
+    mcpSource.setAlertFn((msg: string) => router.broadcastToAll(msg));
     setIntelBroadcast((msg: string) => router.broadcastToAll(msg));
     startProactiveScheduler(router);
   }
 
   // Graceful shutdown — ordered teardown to prevent requests hitting torn-down state
+  let shuttingDown = false;
   const shutdown = async () => {
+    // Re-entry guard: a second SIGTERM/SIGINT during the grace drain would run
+    // the whole teardown concurrently (double stopAll, closeDatabase under the
+    // first run's feet → SQLITE_MISUSE).
+    if (shuttingDown) {
+      log.warn("shutdown already in progress — ignoring repeated signal");
+      return;
+    }
+    shuttingDown = true;
     log.info("shutting down...");
 
     // 1. Stop accepting new requests
@@ -375,17 +386,15 @@ async function main(): Promise<void> {
       log.warn({ err }, "stopS3CronJobs failed (non-fatal)");
     }
 
-    // 3. Flush messaging channels
-    await shutdownMessaging();
-
-    // 4. Teardown MCP + tool sources
-    await sourceManager.teardownAll();
-
-    // 5. Grace period — wait up to MC_SHUTDOWN_GRACE_MS (default 30s) for
+    // 3. Grace period — wait up to MC_SHUTDOWN_GRACE_MS (default 30s) for
     // in-flight tasks to complete. Tripled from the original 10s after the
     // 2026-05-25 morning briefing surfaced the recurring `Service shutdown`
     // blocker (6 chat tasks killed across 8 days); fast-runner chats often
     // need 15-25s, so 10s cut too aggressively.
+    // Ordering matters: drain BEFORE tearing down messaging + tool sources —
+    // a task that survives the grace window still needs its MCP tools to
+    // finish and its messaging channel to deliver the result. The previous
+    // teardown-first order made the grace period defeat its own purpose.
     try {
       const db = getDatabase();
       const running = db
@@ -422,6 +431,12 @@ async function main(): Promise<void> {
     } catch {
       // Non-fatal
     }
+
+    // 4. Flush messaging channels
+    await shutdownMessaging();
+
+    // 5. Teardown MCP + tool sources
+    await sourceManager.teardownAll();
 
     // 6. Mark remaining running tasks as failed
     try {

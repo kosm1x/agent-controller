@@ -221,9 +221,20 @@ export function startRitualScheduler(): void {
     // Allow per-ritual timezone override (F9 market rituals use
     // America/New_York so 8:00 AM / 4:30 PM align with NYSE hours across DST).
     const tz = ritual.timezone ?? RITUALS_TIMEZONE;
-    const job = cron.schedule(ritual.cron, () => void executeRitual(ritual), {
-      timezone: tz,
-    });
+    // Catch at the cron boundary: throws BEFORE the submitTask try/catch
+    // inside executeRitual (alreadyRanToday DB read hitting SQLITE_BUSY,
+    // unknown template id, trading-day check) otherwise escape as unhandled
+    // rejections and bypass recordRitualFailure — the reaction rules built to
+    // catch systemic ritual outages miss exactly this class.
+    const job = cron.schedule(
+      ritual.cron,
+      () =>
+        void executeRitual(ritual).catch((err) => {
+          console.error(`[rituals] ${ritual.id}: execute failed —`, err);
+          recordRitualFailure(ritual.id, err, "execute");
+        }),
+      { timezone: tz },
+    );
 
     scheduledJobs.push(job);
     console.log(`[rituals] ${ritual.id}: scheduled (${ritual.cron}, tz=${tz})`);

@@ -40,17 +40,35 @@ const GROUP_JIDS = new Set(
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly name = "whatsapp" as const;
 
+  /** Max queued outbound messages while disconnected — drop-oldest beyond. */
+  private static readonly QUEUE_CAP = 100;
+  /** Queued messages older than this are stale on reconnect — discard. */
+  private static readonly QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  /** Inter-message delay while flushing the queue (ban-averse pacing). */
+  private static readonly FLUSH_PACE_MS = 2_000;
+
   private sock: WASocket | null = null;
   private connected = false;
+  private stopped = false;
   private messageHandler: ((msg: IncomingMessage) => void) | null = null;
 
   isConnected(): boolean {
     return this.connected;
   }
-  private outgoingQueue: Array<{ to: string; text: string }> = [];
+  private outgoingQueue: Array<{ to: string; text: string; queuedAt: number }> =
+    [];
+  private droppedFromQueue = 0;
   private flushing = false;
-  /** Active typing indicators — cleared on send. */
-  private typingTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Active typing indicators — interval + 5-min safety timeout per chat. */
+  private typingTimers = new Map<
+    string,
+    {
+      interval: ReturnType<typeof setInterval>;
+      safety: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   /** Start "composing" presence for a chat. Refreshes every 5s until stopped. */
   private startTyping(jid: string): void {
@@ -60,16 +78,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
     };
     send(); // immediate
     const interval = setInterval(send, 5_000);
-    this.typingTimers.set(jid, interval);
     // Safety: auto-stop after 5 min to prevent leaks if send() is never called
-    setTimeout(() => this.stopTyping(jid), 300_000);
+    const safety = setTimeout(() => this.stopTyping(jid), 300_000);
+    this.typingTimers.set(jid, { interval, safety });
   }
 
   /** Stop typing indicator for a chat. */
   private stopTyping(jid: string): void {
-    const timer = this.typingTimers.get(jid);
-    if (timer) {
-      clearInterval(timer);
+    const timers = this.typingTimers.get(jid);
+    if (timers) {
+      clearInterval(timers.interval);
+      clearTimeout(timers.safety);
       this.typingTimers.delete(jid);
     }
     this.sock?.sendPresenceUpdate("paused", jid).catch(() => {});
@@ -133,8 +152,24 @@ export class WhatsAppAdapter implements ChannelAdapter {
           `[whatsapp] Connection closed (reason: ${reason}, reconnect: ${shouldReconnect})`,
         );
 
-        if (shouldReconnect) {
-          setTimeout(() => {
+        if (shouldReconnect && !this.stopped) {
+          // Exponential backoff + jitter (3s → 60s cap), reset on a successful
+          // open. A flat 3s cadence during a sustained outage is a reconnect
+          // storm — full Baileys handshake + WA-web version fetch every 3s —
+          // and a fixed-cadence retry fingerprint is a ban-risk amplifier on
+          // top of the documented temp-ban history for this number.
+          const backoffMs = Math.min(
+            3_000 * 2 ** this.reconnectAttempts,
+            60_000,
+          );
+          const jitterMs = Math.floor(Math.random() * 1_000);
+          this.reconnectAttempts++;
+          console.log(
+            `[whatsapp] Reconnecting in ${backoffMs + jitterMs}ms (attempt ${this.reconnectAttempts})`,
+          );
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            if (this.stopped) return;
             this.connectInternal().catch((err) => {
               // Reconnect throwing means the session is degrading faster
               // than the original "close" counter increment suggests
@@ -142,7 +177,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
               recordWhatsappDisconnect("reconnect_failed");
               console.error("[whatsapp] Reconnect failed:", err);
             });
-          }, 3000);
+          }, backoffMs + jitterMs);
         } else {
           console.log(
             "[whatsapp] Logged out. Delete ./data/whatsapp-session and restart to re-auth.",
@@ -150,6 +185,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         }
       } else if (connection === "open") {
         this.connected = true;
+        this.reconnectAttempts = 0;
         console.log("[whatsapp] Connected");
 
         this.flushOutgoingQueue().catch((err) =>
@@ -325,9 +361,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
     const text = formatForWhatsApp(msg.text);
 
     if (!this.connected || !this.sock) {
-      this.outgoingQueue.push({ to: msg.to, text });
+      this.enqueueOutgoing(msg.to, text);
       console.log(
-        `[whatsapp] Disconnected, message queued (${this.outgoingQueue.length} in queue)`,
+        `[whatsapp] Disconnected, message queued (${this.outgoingQueue.length} in queue, ${this.droppedFromQueue} dropped so far)`,
       );
       return "queued";
     }
@@ -336,9 +372,23 @@ export class WhatsAppAdapter implements ChannelAdapter {
       const result = await this.sock.sendMessage(msg.to, { text });
       return result?.key?.id ?? "sent";
     } catch (err) {
-      this.outgoingQueue.push({ to: msg.to, text });
+      this.enqueueOutgoing(msg.to, text);
       console.error("[whatsapp] Send failed, queued:", err);
       return "queued";
+    }
+  }
+
+  /**
+   * Queue an outbound message for delivery on reconnect. Bounded: WhatsApp has
+   * been logged out for weeks at a time on this box while briefings/alerts
+   * keep calling send() — an unbounded queue is both a slow heap leak and a
+   * stale-message flood on re-link. Drop-oldest beyond the cap.
+   */
+  private enqueueOutgoing(to: string, text: string): void {
+    this.outgoingQueue.push({ to, text, queuedAt: Date.now() });
+    while (this.outgoingQueue.length > WhatsAppAdapter.QUEUE_CAP) {
+      this.outgoingQueue.shift();
+      this.droppedFromQueue++;
     }
   }
 
@@ -347,10 +397,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    // `stopped` halts the reconnect loop: sock.end() below fires a "close"
+    // event, which would otherwise schedule a fresh connectInternal() and
+    // resurrect the socket after stop().
+    this.stopped = true;
     this.connected = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     // Clear all typing timers to prevent leaks
-    for (const [, timer] of this.typingTimers) {
-      clearInterval(timer);
+    for (const [, timers] of this.typingTimers) {
+      clearInterval(timers.interval);
+      clearTimeout(timers.safety);
     }
     this.typingTimers.clear();
     if (this.sock) {
@@ -364,13 +423,49 @@ export class WhatsAppAdapter implements ChannelAdapter {
     this.flushing = true;
 
     try {
+      // Discard stale entries first — a message queued >24h ago (multi-day
+      // logout) is noise or actively misleading by the time we reconnect.
+      const cutoff = Date.now() - WhatsAppAdapter.QUEUE_MAX_AGE_MS;
+      const stale = this.outgoingQueue.filter((m) => m.queuedAt < cutoff);
+      if (stale.length > 0) {
+        this.outgoingQueue = this.outgoingQueue.filter(
+          (m) => m.queuedAt >= cutoff,
+        );
+        console.log(
+          `[whatsapp] Discarded ${stale.length} stale queued message(s) (>24h old)`,
+        );
+      }
+      if (this.droppedFromQueue > 0) {
+        console.warn(
+          `[whatsapp] ${this.droppedFromQueue} message(s) were dropped while disconnected (queue cap)`,
+        );
+        this.droppedFromQueue = 0;
+      }
       console.log(
         `[whatsapp] Flushing ${this.outgoingQueue.length} queued messages`,
       );
-      while (this.outgoingQueue.length > 0) {
-        const item = this.outgoingQueue.shift()!;
+      // Peek-send-shift: shift only AFTER a successful send, so a mid-flush
+      // failure keeps the message queued for the next reconnect instead of
+      // losing it. Paced between sends — a burst-flush after a reconnect is
+      // exactly the wrong shape for a ban-averse number.
+      while (this.outgoingQueue.length > 0 && this.sock && !this.stopped) {
+        const item = this.outgoingQueue[0];
         await this.sock.sendMessage(item.to, { text: item.text });
+        this.outgoingQueue.shift();
+        if (this.outgoingQueue.length > 0) {
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              WhatsAppAdapter.FLUSH_PACE_MS + Math.random() * 1_000,
+            ),
+          );
+        }
       }
+    } catch (err) {
+      console.error(
+        `[whatsapp] Flush interrupted (${this.outgoingQueue.length} message(s) retained for next reconnect):`,
+        err,
+      );
     } finally {
       this.flushing = false;
     }

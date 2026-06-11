@@ -59,11 +59,18 @@ export function startTriggers(): void {
     `[triggers] morning-surface: scheduled (${morningExpr}, tz=${RITUALS_TIMEZONE})`,
   );
 
-  // Trigger 3 — idle-detect.
+  // Trigger 3 — idle-detect. Catch at the cron boundary: the check's DB
+  // reads (detectStalledTasks/isThrottled) run outside any try inside, so a
+  // throw was an unhandled rejection and a silently-skipped check.
   jobs.push(
-    cron.schedule(IDLE_DETECT_CRON, () => void runIdleDetectCheck(), {
-      timezone: RITUALS_TIMEZONE,
-    }),
+    cron.schedule(
+      IDLE_DETECT_CRON,
+      () =>
+        void runIdleDetectCheck().catch((err) => {
+          console.error("[triggers] idle-detect check failed:", err);
+        }),
+      { timezone: RITUALS_TIMEZONE },
+    ),
   );
   console.log(
     `[triggers] idle-detect: scheduled (${IDLE_DETECT_CRON}, tz=${RITUALS_TIMEZONE})`,

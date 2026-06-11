@@ -64,14 +64,53 @@ function getEmbeddingConfig(): EmbeddingConfig {
 // ---------------------------------------------------------------------------
 
 /**
+ * Single-text embedding dedupe cache. One inbound message embeds the SAME
+ * text 2-3x (skill retrieval, hybrid recall, pgvector search) — and since
+ * those consumers run in parallel, the cache stores the in-flight PROMISE so
+ * concurrent duplicates share one API round-trip instead of racing past a
+ * completed-result cache. Bounded: 64 entries (~1 MB ceiling), 5-min TTL,
+ * insertion-order eviction. Failures (null) are evicted immediately so a
+ * transient API error isn't pinned for the TTL.
+ */
+const EMBED_CACHE_MAX = 64;
+const EMBED_CACHE_TTL_MS = 5 * 60_000;
+const embedCache = new Map<
+  string,
+  { promise: Promise<number[] | null>; at: number }
+>();
+
+/**
  * Generate an embedding vector for a single text.
  * Returns null on failure (never throws).
  */
 export async function generateEmbedding(
   text: string,
 ): Promise<number[] | null> {
-  const result = await generateEmbeddings([text]);
-  return result.length > 0 && result[0].length > 0 ? result[0] : null;
+  const hit = embedCache.get(text);
+  if (hit && Date.now() - hit.at < EMBED_CACHE_TTL_MS) {
+    return hit.promise;
+  }
+  const promise = (async () => {
+    const result = await generateEmbeddings([text]);
+    return result.length > 0 && result[0].length > 0 ? result[0] : null;
+  })();
+  embedCache.set(text, { promise, at: Date.now() });
+  promise
+    .then((v) => {
+      if (v === null) embedCache.delete(text);
+    })
+    .catch(() => embedCache.delete(text));
+  while (embedCache.size > EMBED_CACHE_MAX) {
+    const oldest = embedCache.keys().next().value;
+    if (oldest === undefined) break;
+    embedCache.delete(oldest);
+  }
+  return promise;
+}
+
+/** Clear the single-text embedding cache (for testing). */
+export function clearEmbeddingCache(): void {
+  embedCache.clear();
 }
 
 /**

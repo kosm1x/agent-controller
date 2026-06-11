@@ -14,6 +14,7 @@
  */
 
 import { getConfig } from "../config.js";
+import { calculateCost } from "../budget/pricing.js";
 import { evictToFile, hasEvictedPath } from "../lib/eviction.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
 import { toolRegistry } from "../tools/registry.js";
@@ -247,34 +248,12 @@ const HEALTH_WINDOW_MS = 600_000;
 const DEGRADATION_WINDOW_MS = 180_000; // 3 min
 const DEGRADATION_ERROR_THRESHOLD = 0.25; // 25%
 
-// ---------------------------------------------------------------------------
-// Per-model pricing (USD per 1M tokens) — update as prices change
-// ---------------------------------------------------------------------------
-
-const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  // DashScope
-  "qwen3.5-plus": { input: 0.8, output: 2.0 },
-  "qwen3-coder-plus": { input: 0.8, output: 2.0 },
-  "kimi-k2.5": { input: 1.0, output: 3.0 },
-  "glm-5": { input: 0.5, output: 1.5 },
-  // Groq
-  "llama-3.3-70b-versatile": { input: 0.59, output: 0.79 },
-  "meta-llama/llama-4-scout-17b-16e-instruct": { input: 0.04, output: 0.15 },
-  // Default for unknown models
-  _default: { input: 1.0, output: 3.0 },
-};
-
-function estimateCost(
-  model: string,
-  promptTokens: number,
-  completionTokens: number,
-): number {
-  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING._default;
-  return (
-    (promptTokens / 1_000_000) * pricing.input +
-    (completionTokens / 1_000_000) * pricing.output
-  );
-}
+// Pricing is delegated to src/budget/pricing.ts (calculateCost) — the
+// adapter used to carry its own per-1M table, which had already drifted
+// from the budget ledger in both coverage (missing every post-2026-05-06
+// Fireworks alias) and values, so the provider-health dashboard reported
+// costs that disagreed with the budget and ignored BUDGET_PRICING_JSON.
+// One pricing source of truth now.
 
 function classifyHealth(
   avgLatencyMs: number,
@@ -340,7 +319,7 @@ class ProviderMetrics {
       p95LatencyMs: latencies[p95Idx],
       successRate: successes / data.length,
       health: classifyHealth(avgLatencyMs, errorRate, data.length),
-      costUsd: estimateCost(model, totalPrompt, totalCompletion),
+      costUsd: calculateCost(model, totalPrompt, totalCompletion),
       totalTokens: totalPrompt + totalCompletion,
     };
   }

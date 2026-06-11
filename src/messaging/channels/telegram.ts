@@ -522,8 +522,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async send(msg: OutgoingMessage): Promise<string> {
     if (!this.bot) {
-      console.warn("[telegram] Bot not initialized");
-      return "not_initialized";
+      // Throw, don't return a sentinel: broadcastToAll/sendBriefingToOwner
+      // count any resolved send() as delivered, so a sentinel string here
+      // silently drops messages and never increments the push-failure
+      // counters (same class the email adapter fixed for SMTP failures).
+      throw new Error(
+        "Telegram bot not initialized (polling gave up or never started)",
+      );
     }
 
     const chunks = formatForTelegram(msg.text);
