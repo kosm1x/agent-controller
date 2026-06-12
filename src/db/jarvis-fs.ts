@@ -341,7 +341,7 @@ export function moveFile(oldPath: string, newPath: string): boolean {
     newPath,
     existing.title,
     existing.content,
-    JSON.parse(existing.tags ?? "[]"),
+    parseTagsSafe(existing.tags),
     existing.qualifier,
     existing.priority,
   );
@@ -353,6 +353,24 @@ export function moveFile(oldPath: string, newPath: string): boolean {
 }
 
 /** List all files, optionally filtered. */
+/**
+ * Parse a stored `tags` JSON value, degrading to [] on null/corrupt input.
+ *
+ * `tags` is written as JSON.stringify(string[]), but a row corrupted by an
+ * accidental binary/NUL paste — the same class that produced a BLOB-content row
+ * and broke the nightly kb-backup for 3+ days — can hold non-JSON. An unguarded
+ * `JSON.parse` threw and aborted EVERY listFiles caller (kb-backup included) on
+ * a single bad row, so treat unparseable tags as empty rather than fatal.
+ */
+function parseTagsSafe(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function listFiles(filters?: {
   prefix?: string;
   qualifier?: string;
@@ -399,18 +417,14 @@ export function listFiles(filters?: {
   if (filters?.tags && filters.tags.length > 0) {
     const searchTags = filters.tags;
     results = results.filter((f) => {
-      try {
-        const fileTags = JSON.parse(f.tags) as string[];
-        return searchTags.some((t) => fileTags.includes(t));
-      } catch {
-        return false;
-      }
+      const fileTags = parseTagsSafe(f.tags);
+      return searchTags.some((t) => fileTags.includes(t));
     });
   }
 
   return results.map((r) => ({
     ...r,
-    tags: JSON.parse(r.tags) as string[],
+    tags: parseTagsSafe(r.tags),
   }));
 }
 

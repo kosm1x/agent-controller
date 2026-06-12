@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initDatabase, closeDatabase } from "./index.js";
+import { initDatabase, closeDatabase, getDatabase } from "./index.js";
 import {
   upsertFile,
   searchFiles,
   deleteFile,
   syncDeleteFromKbMirror,
+  listFiles,
 } from "./jarvis-fs.js";
 import { existsSync, writeFileSync } from "node:fs";
 
@@ -167,5 +168,42 @@ describe("searchFiles — FTS5 tokenized search", () => {
     upsertFile("knowledge/trigger-test.md", "Updated", "delta echo foxtrot");
     expect(searchFiles("bravo", 10)).toEqual([]);
     expect(searchFiles("foxtrot", 10).length).toBe(1);
+  });
+});
+
+// 2026-06-09→11 kb-backup abort incident: an unguarded JSON.parse(tags) in
+// listFiles threw on a single corrupt row (same binary/NUL-paste class that
+// produced a BLOB-content row) and aborted EVERY caller, including the nightly
+// backup. listFiles must degrade a corrupt-tags row to [] rather than throw.
+describe("listFiles — corrupt tags resilience", () => {
+  it("degrades a row with non-JSON tags to [] instead of aborting the whole listing", () => {
+    upsertFile("knowledge/good.md", "Good", "body", ["a", "b"]);
+    upsertFile("knowledge/bad.md", "Bad", "body", ["c"]);
+    // Simulate the corruption directly: a row whose tags column is not valid
+    // JSON (upsertFile always writes valid JSON, so we mutate post-write).
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET tags = ? WHERE path = ?")
+      .run("not-json{", "knowledge/bad.md");
+
+    let files: ReturnType<typeof listFiles>;
+    expect(() => {
+      files = listFiles({});
+    }).not.toThrow();
+
+    const bad = files!.find((f) => f.path === "knowledge/bad.md");
+    const good = files!.find((f) => f.path === "knowledge/good.md");
+    expect(bad?.tags).toEqual([]); // corrupt → empty, not fatal
+    expect(good?.tags).toEqual(["a", "b"]); // healthy row unaffected
+  });
+
+  it("a corrupt-tags row no longer blocks a tag-filtered query from returning healthy matches", () => {
+    upsertFile("knowledge/match.md", "Match", "body", ["target"]);
+    upsertFile("knowledge/corrupt.md", "Corrupt", "body", ["target"]);
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET tags = ? WHERE path = ?")
+      .run("\x01binary", "knowledge/corrupt.md");
+
+    const filtered = listFiles({ tags: ["target"] });
+    expect(filtered.map((f) => f.path)).toContain("knowledge/match.md");
   });
 });
