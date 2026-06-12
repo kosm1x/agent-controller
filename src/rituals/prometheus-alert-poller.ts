@@ -16,9 +16,18 @@
  * alert re-announces once after a restart, which is acceptable (and never emits
  * a false "resolved", because a failed fetch leaves the state untouched).
  *
+ * Re-alert cadence (2026-06-12): pure notify-once let a single missed ping become
+ * a multi-day silent outage (the salones-wa 525640501088 logout — one 23:00-MX
+ * notification, then ~22h of silence). So a still-firing CRITICAL alert is
+ * re-announced every ALERT_RENOTIFY_HOURS (default 6h) as a reminder, resetting
+ * its per-fingerprint clock on each send. Only `critical` re-nags — warnings stay
+ * notify-once to keep the channel from becoming noise. Set ALERT_RENOTIFY_HOURS=0
+ * to disable reminders (back to pure notify-once).
+ *
  * Env:
  *   ALERT_NOTIFY_ENABLED   gate (default off; set "true" to enable)
  *   ALERT_NOTIFY_PROM_URL  Prometheus base URL (default http://127.0.0.1:9090)
+ *   ALERT_RENOTIFY_HOURS   re-alert interval for still-firing criticals (default 6; 0 disables)
  *
  * Delivery reuses router.broadcastToAll → WHATSAPP_OWNER_JID /
  * TELEGRAM_OWNER_CHAT_ID (whichever are configured). See queue: salones-wa
@@ -28,6 +37,25 @@ import { getRouter } from "../messaging/index.js";
 
 const DEFAULT_PROM_URL = "http://127.0.0.1:9090";
 const QUERY_TIMEOUT_MS = 10_000;
+
+/** Default re-alert interval (hours) for still-firing CRITICAL alerts. */
+const DEFAULT_RENOTIFY_HOURS = 6;
+/** Severities that re-nag past the interval; everything else is notify-once. */
+const RENOTIFY_SEVERITIES = new Set(["critical"]);
+
+/**
+ * Env → re-alert interval in ms. Unset → default 6h; an explicit `<= 0` disables
+ * reminders (pure notify-once); a non-numeric typo falls back to the default
+ * rather than silently disabling (a silently-off reminder loop is the exact
+ * failure class this feature exists to prevent).
+ */
+function resolveReNotifyMs(): number {
+  const raw = process.env.ALERT_RENOTIFY_HOURS;
+  const hours =
+    raw == null || raw.trim() === "" ? DEFAULT_RENOTIFY_HOURS : Number(raw);
+  const eff = Number.isFinite(hours) ? hours : DEFAULT_RENOTIFY_HOURS;
+  return eff > 0 ? eff * 3_600_000 : 0;
+}
 
 export interface PromAlert {
   labels: Record<string, string>;
@@ -48,6 +76,12 @@ export interface NotifiedAlert {
   name: string;
   severity: string;
   summary: string;
+  /**
+   * Epoch ms when this alert was last ANNOUNCED (initial firing or a reminder).
+   * Drives the re-alert cadence: a still-firing critical re-nags once
+   * `now - notifiedAt >= reNotifyMs`, and each send resets this to `now`.
+   */
+  notifiedAt: number;
 }
 
 const SEVERITY_EMOJI: Record<string, string> = {
@@ -65,7 +99,7 @@ export function alertFingerprint(alert: PromAlert): string {
     .join(",");
 }
 
-function toNotified(alert: PromAlert): NotifiedAlert {
+function toNotified(alert: PromAlert, now: number): NotifiedAlert {
   const labels = alert.labels ?? {};
   const ann = alert.annotations ?? {};
   return {
@@ -73,40 +107,79 @@ function toNotified(alert: PromAlert): NotifiedAlert {
     name: labels.alertname ?? "alert",
     severity: labels.severity ?? "none",
     summary: ann.summary ?? ann.description ?? labels.alertname ?? "alert",
+    notifiedAt: now,
   };
 }
 
 export interface AlertPlan {
   /** Alerts that just started firing (announce). */
   newlyFiring: NotifiedAlert[];
+  /** Still-firing CRITICAL alerts past the re-alert interval (re-announce). */
+  reminders: NotifiedAlert[];
   /** Alerts that were firing last tick and no longer are (announce resolved). */
   resolved: NotifiedAlert[];
   /** The announced-set to COMMIT after a successful send (= current firing). */
   nextNotified: Map<string, NotifiedAlert>;
 }
 
+export interface PlanOptions {
+  /** Current epoch ms (injected for tests). Defaults to `Date.now()`. */
+  now?: number;
+  /** Re-alert interval in ms for still-firing criticals. `0` disables reminders. */
+  reNotifyMs?: number;
+}
+
 /**
  * Pure: diff the currently-firing alerts against the already-announced map.
- * Returns what to announce now plus the next announced-map to commit ONLY after
- * a successful send. Does not mutate `notified`. The next map is exactly the
- * current firing set, so resolved alerts drop out and steady ones persist.
+ * Returns what to announce now — newly-firing, plus CRITICAL `reminders` whose
+ * per-fingerprint clock has passed `reNotifyMs` — and the next announced-map to
+ * commit ONLY after a successful send. Does not mutate `notified`.
+ *
+ * `nextNotified` is the current firing set: `notifiedAt = now` for anything
+ * announced this tick (new or reminder), and the prior `notifiedAt` carried
+ * forward for steady alerts — so reminders fire on a fixed cadence, not every
+ * tick, and resolved alerts drop out.
  */
 export function planAlertNotifications(
   firing: PromAlert[],
   notified: Map<string, NotifiedAlert>,
+  opts: PlanOptions = {},
 ): AlertPlan {
-  const firingByFp = new Map<string, NotifiedAlert>();
+  const now = opts.now ?? Date.now();
+  const reNotifyMs = opts.reNotifyMs ?? 0;
+
+  const newlyFiring: NotifiedAlert[] = [];
+  const reminders: NotifiedAlert[] = [];
+  const nextNotified = new Map<string, NotifiedAlert>();
+
   for (const a of firing) {
-    const n = toNotified(a);
-    firingByFp.set(n.fingerprint, n);
+    const fresh = toNotified(a, now);
+    const prior = notified.get(fresh.fingerprint);
+    if (!prior) {
+      newlyFiring.push(fresh);
+      nextNotified.set(fresh.fingerprint, fresh); // notifiedAt = now
+      continue;
+    }
+    const due =
+      reNotifyMs > 0 &&
+      RENOTIFY_SEVERITIES.has(fresh.severity) &&
+      now - prior.notifiedAt >= reNotifyMs;
+    if (due) {
+      reminders.push(fresh);
+      nextNotified.set(fresh.fingerprint, fresh); // reset the clock to now
+    } else {
+      // steady: keep the ORIGINAL clock so the cadence is fixed, not per-tick
+      nextNotified.set(fresh.fingerprint, {
+        ...fresh,
+        notifiedAt: prior.notifiedAt,
+      });
+    }
   }
-  const newlyFiring = [...firingByFp.values()].filter(
-    (n) => !notified.has(n.fingerprint),
-  );
+
   const resolved = [...notified.values()].filter(
-    (n) => !firingByFp.has(n.fingerprint),
+    (n) => !nextNotified.has(n.fingerprint),
   );
-  return { newlyFiring, resolved, nextNotified: firingByFp };
+  return { newlyFiring, reminders, resolved, nextNotified };
 }
 
 /** Max alert lines rendered per section before collapsing to "…and N more". */
@@ -118,6 +191,7 @@ const MAX_LINES_PER_SECTION = 20;
 export function formatAlertMessage(
   newlyFiring: NotifiedAlert[],
   resolved: NotifiedAlert[],
+  reminders: NotifiedAlert[] = [],
 ): string {
   const lines: string[] = [];
   if (newlyFiring.length > 0) {
@@ -127,6 +201,16 @@ export function formatAlertMessage(
     }
     if (newlyFiring.length > MAX_LINES_PER_SECTION) {
       lines.push(`…and ${newlyFiring.length - MAX_LINES_PER_SECTION} more`);
+    }
+  }
+  if (reminders.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`⏰ ${reminders.length} still firing (reminder):`);
+    for (const a of reminders.slice(0, MAX_LINES_PER_SECTION)) {
+      lines.push(`${SEVERITY_EMOJI[a.severity] ?? "⚪"} ${a.summary}`);
+    }
+    if (reminders.length > MAX_LINES_PER_SECTION) {
+      lines.push(`…and ${reminders.length - MAX_LINES_PER_SECTION} more`);
     }
   }
   if (resolved.length > 0) {
@@ -147,11 +231,14 @@ export interface AlertPollDeps {
   fetchAlerts?: () => Promise<PromAlert[]>;
   /** Delivers one message to the operator. Injected in tests. */
   send?: (text: string) => Promise<void>;
+  /** Current-time source (injected in tests for the re-alert clock). */
+  now?: () => number;
 }
 
 export interface AlertPollSummary {
   firing: number;
   newlyFiring: number;
+  reminders: number;
   resolved: number;
   sent: boolean;
 }
@@ -210,13 +297,23 @@ export async function runPrometheusAlertPoll(
 ): Promise<AlertPollSummary> {
   const fetchAlerts = deps.fetchAlerts ?? defaultFetchAlerts;
   const send = deps.send ?? defaultSend;
+  const now = deps.now?.() ?? Date.now();
+  const reNotifyMs = resolveReNotifyMs();
 
   const firing = await fetchAlerts();
-  const plan = planAlertNotifications(firing, notifiedState);
-  const hasChanges = plan.newlyFiring.length > 0 || plan.resolved.length > 0;
+  const plan = planAlertNotifications(firing, notifiedState, {
+    now,
+    reNotifyMs,
+  });
+  const hasChanges =
+    plan.newlyFiring.length > 0 ||
+    plan.reminders.length > 0 ||
+    plan.resolved.length > 0;
 
   if (hasChanges) {
-    await send(formatAlertMessage(plan.newlyFiring, plan.resolved));
+    await send(
+      formatAlertMessage(plan.newlyFiring, plan.resolved, plan.reminders),
+    );
   }
   // Reached only if send did not throw → safe to commit the announced-set.
   notifiedState = plan.nextNotified;
@@ -224,6 +321,7 @@ export async function runPrometheusAlertPoll(
   return {
     firing: firing.length,
     newlyFiring: plan.newlyFiring.length,
+    reminders: plan.reminders.length,
     resolved: plan.resolved.length,
     sent: hasChanges,
   };

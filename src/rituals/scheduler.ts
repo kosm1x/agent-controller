@@ -706,7 +706,7 @@ function schedulePrometheusAlertPoller(): void {
         const summary = await runPrometheusAlertPoll();
         if (summary.sent) {
           console.log(
-            `[rituals] prometheus-alert-notifier: firing=${summary.firing} newly=${summary.newlyFiring} resolved=${summary.resolved} → notified operator`,
+            `[rituals] prometheus-alert-notifier: firing=${summary.firing} newly=${summary.newlyFiring} reminders=${summary.reminders} resolved=${summary.resolved} → notified operator`,
           );
         }
       } catch (err) {

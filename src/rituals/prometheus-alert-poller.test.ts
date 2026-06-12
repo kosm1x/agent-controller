@@ -2,7 +2,7 @@
  * Prometheus alert notifier — pure diff/format + the runPoll state machine.
  * No network / router: fetch + send are injected.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock the messaging singleton so the default send path (router.sendBriefingToOwner)
 // is exercisable without a live router. vi.hoisted per project testing convention.
@@ -36,7 +36,10 @@ function alert(
   };
 }
 
-function notifiedMap(...alerts: PromAlert[]): Map<string, NotifiedAlert> {
+function notifiedMapAt(
+  notifiedAt: number,
+  ...alerts: PromAlert[]
+): Map<string, NotifiedAlert> {
   const m = new Map<string, NotifiedAlert>();
   for (const a of alerts) {
     const fp = alertFingerprint(a);
@@ -45,9 +48,14 @@ function notifiedMap(...alerts: PromAlert[]): Map<string, NotifiedAlert> {
       name: a.labels.alertname!,
       severity: a.labels.severity!,
       summary: a.annotations.summary!,
+      notifiedAt,
     });
   }
   return m;
+}
+
+function notifiedMap(...alerts: PromAlert[]): Map<string, NotifiedAlert> {
+  return notifiedMapAt(0, ...alerts);
 }
 
 describe("alertFingerprint", () => {
@@ -111,12 +119,81 @@ describe("planAlertNotifications", () => {
   });
 });
 
+describe("planAlertNotifications — re-alert cadence", () => {
+  const SIX_H = 6 * 3_600_000;
+  const T0 = 1_000_000_000_000;
+
+  it("re-announces a still-firing CRITICAL once the interval elapses, resetting its clock", () => {
+    const a = alert("SalonWhatsAppLoggedOut", "critical", { salon_id: "x" });
+    const fp = alertFingerprint(a);
+
+    // before the interval → no reminder, clock carried forward unchanged
+    const early = planAlertNotifications([a], notifiedMapAt(T0, a), {
+      now: T0 + SIX_H - 1,
+      reNotifyMs: SIX_H,
+    });
+    expect(early.reminders).toEqual([]);
+    expect(early.newlyFiring).toEqual([]);
+    expect(early.nextNotified.get(fp)!.notifiedAt).toBe(T0);
+
+    // at the interval → reminder fires, clock reset to now
+    const due = planAlertNotifications([a], notifiedMapAt(T0, a), {
+      now: T0 + SIX_H,
+      reNotifyMs: SIX_H,
+    });
+    expect(due.reminders.map((n) => n.name)).toEqual([
+      "SalonWhatsAppLoggedOut",
+    ]);
+    expect(due.newlyFiring).toEqual([]);
+    expect(due.nextNotified.get(fp)!.notifiedAt).toBe(T0 + SIX_H);
+  });
+
+  it("does NOT re-announce a still-firing WARNING (only criticals re-nag)", () => {
+    const a = alert("SalonWhatsAppDisconnected", "warning", { salon_id: "x" });
+    const plan = planAlertNotifications([a], notifiedMapAt(T0, a), {
+      now: T0 + 100 * SIX_H, // way past any interval
+      reNotifyMs: SIX_H,
+    });
+    expect(plan.reminders).toEqual([]);
+    // a warning's clock is never reset — it stays notify-once
+    expect(plan.nextNotified.get(alertFingerprint(a))!.notifiedAt).toBe(T0);
+  });
+
+  it("reNotifyMs=0 disables reminders entirely (pure notify-once)", () => {
+    const a = alert("Crit", "critical");
+    const plan = planAlertNotifications([a], notifiedMapAt(T0, a), {
+      now: T0 + 100 * SIX_H,
+      reNotifyMs: 0,
+    });
+    expect(plan.reminders).toEqual([]);
+  });
+
+  it("does not re-fire every tick — the clock only advances on an actual reminder", () => {
+    const a = alert("Crit", "critical");
+    const fp = alertFingerprint(a);
+    // tick at T0+6h → reminder, clock → T0+6h
+    const p1 = planAlertNotifications([a], notifiedMapAt(T0, a), {
+      now: T0 + SIX_H,
+      reNotifyMs: SIX_H,
+    });
+    expect(p1.reminders.length).toBe(1);
+    // a minute later, feeding p1's committed map → not due again
+    const p2 = planAlertNotifications([a], p1.nextNotified, {
+      now: T0 + SIX_H + 60_000,
+      reNotifyMs: SIX_H,
+    });
+    expect(p2.reminders).toEqual([]);
+    expect(p2.nextNotified.get(fp)!.notifiedAt).toBe(T0 + SIX_H);
+  });
+});
+
 describe("formatAlertMessage", () => {
   const fire = (name: string, sev: string, summary: string): NotifiedAlert => ({
     fingerprint: name,
     name,
     severity: sev,
     summary,
+    notifiedAt: 0,
   });
 
   it("renders firing with a severity emoji + summary", () => {
@@ -266,5 +343,116 @@ describe("runPrometheusAlertPoll", () => {
     });
     expect(r).toMatchObject({ newlyFiring: 0, resolved: 0, sent: false });
     expect(send).toHaveBeenCalledTimes(1); // only the original firing announce
+  });
+});
+
+describe("formatAlertMessage — reminder section", () => {
+  const fire = (name: string, sev: string, summary: string): NotifiedAlert => ({
+    fingerprint: name,
+    name,
+    severity: sev,
+    summary,
+    notifiedAt: 0,
+  });
+
+  it("renders a reminder section distinctly from newly-firing", () => {
+    const msg = formatAlertMessage(
+      [],
+      [],
+      [fire("SalonWhatsAppLoggedOut", "critical", "Salón x LOGGED OUT")],
+    );
+    expect(msg).toContain("⏰ 1 still firing (reminder):");
+    expect(msg).toContain("🔴 Salón x LOGGED OUT");
+    expect(msg).not.toContain("🚨"); // not mislabeled as newly-firing
+  });
+});
+
+describe("runPrometheusAlertPoll — re-alert cadence (env + injected clock)", () => {
+  const OLD_ENV = process.env.ALERT_RENOTIFY_HOURS;
+  beforeEach(() => _resetAlertNotifierState());
+  afterEach(() => {
+    if (OLD_ENV == null) delete process.env.ALERT_RENOTIFY_HOURS;
+    else process.env.ALERT_RENOTIFY_HOURS = OLD_ENV;
+  });
+
+  it("re-sends a still-firing critical after ALERT_RENOTIFY_HOURS, as a reminder", async () => {
+    process.env.ALERT_RENOTIFY_HOURS = "6";
+    const a = alert(
+      "SalonWhatsAppLoggedOut",
+      "critical",
+      { salon_id: "x" },
+      "Salón x LOGGED OUT",
+    );
+    const send = vi.fn(async (_t: string) => {});
+    const T0 = 1_000_000_000_000;
+    let now = T0;
+
+    const r1 = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    expect(r1).toMatchObject({ newlyFiring: 1, reminders: 0, sent: true });
+
+    now = T0 + 2 * 60_000; // 2 min later → steady, no re-send
+    const r2 = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    expect(r2).toMatchObject({ reminders: 0, sent: false });
+
+    now = T0 + 6 * 3_600_000; // 6h later → reminder
+    const r3 = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    expect(r3).toMatchObject({ reminders: 1, sent: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1]![0]).toContain("still firing (reminder)");
+    expect(send.mock.calls[1]![0]).toContain("Salón x LOGGED OUT");
+  });
+
+  it("ALERT_RENOTIFY_HOURS=0 keeps pure notify-once across a long gap", async () => {
+    process.env.ALERT_RENOTIFY_HOURS = "0";
+    const a = alert("Crit", "critical");
+    const send = vi.fn(async (_t: string) => {});
+    let now = 1_000_000_000_000;
+
+    await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    now += 100 * 3_600_000; // 100h later
+    const r = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    expect(r.sent).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-numeric ALERT_RENOTIFY_HOURS falls back to the 6h default (does not silently disable)", async () => {
+    process.env.ALERT_RENOTIFY_HOURS = "not-a-number";
+    const a = alert("Crit", "critical", {}, "crit fires");
+    const send = vi.fn(async (_t: string) => {});
+    const T0 = 1_000_000_000_000;
+    let now = T0;
+
+    await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    now = T0 + 6 * 3_600_000; // 6h → default interval still re-nags
+    const r = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [a],
+      send,
+      now: () => now,
+    });
+    expect(r).toMatchObject({ reminders: 1, sent: true });
   });
 });
