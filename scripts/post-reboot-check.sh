@@ -24,13 +24,13 @@ KERNEL=$(uname -r)
 echo "Kernel: $KERNEL" >> "$LOG"
 [ "$KERNEL" = "6.8.0-110-generic" ] || FAILED+=("kernel:$KERNEL!=6.8.0-110-generic")
 
-for svc in mission-control agentic-crm caddy docker; do
+for svc in mission-control caddy docker; do
   state=$(systemctl is-active "$svc" 2>/dev/null || echo unknown)
   echo "service $svc: $state" >> "$LOG"
   [ "$state" = "active" ] || FAILED+=("svc:$svc=$state")
 done
 
-EXPECTED="supabase-db supabase-kong supabase-auth supabase-rest supabase-meta supabase-studio supabase-functions crm-hindsight mc-prometheus mc-node-exporter postgres-exporter"
+EXPECTED="supabase-db supabase-kong supabase-auth supabase-rest supabase-meta supabase-studio supabase-functions mc-prometheus mc-node-exporter postgres-exporter"
 for c in $EXPECTED; do
   status=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo missing)
   echo "container $c: $status" >> "$LOG"
@@ -45,23 +45,10 @@ check_endpoint() {
   [ "$rc" = "200" ] || FAILED+=("ep:$tag=$rc")
 }
 check_endpoint MC http://localhost:8080/health
-check_endpoint hindsight http://localhost:8888/health
 check_endpoint prom http://localhost:9090/-/healthy
 
-if docker network inspect crm-net >/dev/null 2>&1; then
-  echo "crm-net: present" >> "$LOG"
-else
-  echo "crm-net: missing" >> "$LOG"
-  FAILED+=("crm-net:missing")
-fi
-for img in nanoclaw-agent:latest agentic-crm-agent:latest; do
-  if docker image inspect "$img" >/dev/null 2>&1; then
-    echo "image $img: present" >> "$LOG"
-  else
-    echo "image $img: missing" >> "$LOG"
-    FAILED+=("img:$img=missing")
-  fi
-done
+# CRM checks (agentic-crm svc, crm-hindsight endpoint, crm-net, agent images)
+# REMOVED 2026-06-15 — CRM undeployed in the Azteca-Aura clean-start.
 
 ZOMBIES=$(ps -eo state 2>/dev/null | awk '$1=="Z"' | wc -l)
 echo "zombies: $ZOMBIES" >> "$LOG"
@@ -70,7 +57,7 @@ UPSEC=$(awk '{print int($1)}' /proc/uptime)
 echo "uptime: ${UPSEC}s" >> "$LOG"
 
 if [ ${#FAILED[@]} -eq 0 ]; then
-  MSG="Post-reboot check: ALL GREEN. Kernel ${KERNEL}, 4 services up, 11 containers running, MC + hindsight + prometheus healthy, CRM prereqs ready, ${ZOMBIES} zombies."
+  MSG="Post-reboot check: ALL GREEN. Kernel ${KERNEL}, 3 services up, 10 containers running, MC + prometheus healthy, ${ZOMBIES} zombies."
   echo "" >> "$LOG"
   echo "RESULT: ALL GREEN" >> "$LOG"
 else

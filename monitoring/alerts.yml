@@ -156,56 +156,12 @@ groups:
           summary: "Retain concerns ratio above 25% for 24h+"
           description: 'concerns / total = {{ $value | printf "%.2f" }}. High concerns ratio means failure narratives are entering memory faster than success. Run mc-ctl outcome-distribution 7d.'
 
-  - name: hindsight
-    rules:
-      # Token-rate spike: 5min rate > 3x the 24h rate, sustained for 10 min.
-      # Catches retry storms (cf. 2026-05-06 qwen3p6-plus $12 burn).
-      # W1 audit fix (2026-05-07): gate on Hindsight container uptime > 24h
-      # so the alert doesn't fire during cold-start when the 24h baseline is
-      # mostly-empty samples. Also require non-trivial baseline activity so
-      # a 10-token spike on an idle day doesn't trip a 3x threshold.
-      - alert: HindsightTokenRateSpike
-        expr: |
-          (
-            sum(rate(hindsight_llm_tokens_input_tokens_total[5m]))
-            >
-            3 * sum(rate(hindsight_llm_tokens_input_tokens_total[24h]))
-          )
-          and on() (time() - min(process_start_time_seconds{job="crm-hindsight"})) > 86400
-          and sum(rate(hindsight_llm_tokens_input_tokens_total[24h])) > 1
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Hindsight input-token rate is 3x its 24h baseline"
-          description: '5-min rate: {{ $value | printf "%.0f" }} tok/s. Possible retry storm or runaway tenant.'
-
-      # Failure-rate alert: success=false rate > 10% over 10 min.
-      # Catches provider degradation, deprecated alias re-emergence, or
-      # circuit-breaker flapping inside Hindsight.
-      - alert: HindsightCircuitErrorRate
-        expr: |
-          sum(rate(hindsight_llm_calls_total{success="false"}[10m]))
-          /
-          sum(rate(hindsight_llm_calls_total[10m]))
-          > 0.10
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Hindsight LLM error rate above 10%"
-          description: 'Error ratio: {{ $value | printf "%.2f" }}. Check provider status + Hindsight logs.'
-
-      # Scrape target down: catches host.docker.internal:8888 unreachable
-      # (Hindsight container stopped, port reassigned, network bridge issue).
-      - alert: HindsightTargetDown
-        expr: up{job="crm-hindsight"} == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Hindsight scrape target unreachable"
-          description: "mc-prometheus cannot reach Hindsight at host.docker.internal:8888 — cost telemetry blind."
+  # --- "hindsight" alert group REMOVED 2026-06-15 ---
+  # The crm-hindsight scrape job was removed from prometheus.yml in the
+  # Azteca-Aura clean-start (container torn down). All 3 rules here referenced
+  # job="crm-hindsight" / hindsight_llm_* metrics that no longer exist —
+  # HindsightTargetDown (up==0) was firing against the removed container.
+  # Restore from git history if Hindsight is ever redeployed.
 
   - name: salones-wa
     rules:

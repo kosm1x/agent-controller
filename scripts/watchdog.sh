@@ -56,7 +56,7 @@ prom_query() {
 }
 
 # --- Check 1: Services alive ---
-for svc in mission-control agentic-crm; do
+for svc in mission-control; do
   # A masked/disabled unit is intentionally down — don't fight the operator.
   if ! systemctl is-enabled --quiet "$svc" 2>/dev/null; then
     continue
@@ -81,21 +81,10 @@ if [ "$MC_HEALTH" != "200" ]; then
   alert "MC health failed (HTTP $MC_HEALTH), restarted. Now: HTTP $MC_HEALTH2"
 fi
 
-# --- Check 3: Hindsight health ---
-HS_HEALTH=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8888/health 2>/dev/null || echo "000")
-if [ "$HS_HEALTH" != "200" ]; then
-  docker restart crm-hindsight 2>/dev/null || true
-  sleep 10
-  alert "Hindsight health failed (HTTP $HS_HEALTH), container restarted"
-fi
-
-# --- Check 4: Hindsight CPU (with timeout to prevent hang on stopped container) ---
-HS_CPU=$(timeout 10 docker stats --no-stream --format "{{.CPUPerc}}" crm-hindsight 2>/dev/null | tr -d '%' | cut -d. -f1 || echo "0")
-if [ -n "$HS_CPU" ] && [ "$HS_CPU" -gt 95 ] 2>/dev/null; then
-  docker restart crm-hindsight 2>/dev/null || true
-  sleep 10
-  alert "Hindsight CPU at ${HS_CPU}%, container restarted"
-fi
+# --- Checks 3 & 4 (Hindsight health/CPU) REMOVED 2026-06-15 ---
+# crm-hindsight container was torn down in the CRM clean-start (Azteca-Aura).
+# These blocks curled localhost:8888 and restarted crm-hindsight — they would
+# fire/alert forever against a container that no longer exists.
 
 # --- Check 5: Disk usage ---
 DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
@@ -106,29 +95,11 @@ if [ "$DISK_PCT" -gt 90 ]; then
   alert "Disk at ${DISK_PCT}%, ran cleanup. Now ${NEW_DISK}%"
 fi
 
-# --- Check 6: CRM container prerequisites (network + images) ---
-# CRM's /health stays green even when these are missing — failures only surface
-# when a message arrives and docker run spawns an agent. Check proactively.
-if ! docker network inspect crm-net >/dev/null 2>&1; then
-  if docker network create crm-net >/dev/null 2>&1; then
-    alert "crm-net docker network was missing, recreated"
-  else
-    alert "crm-net docker network missing, recreation FAILED"
-  fi
-fi
-
-if ! docker image inspect nanoclaw-agent:latest >/dev/null 2>&1 \
-   || ! docker image inspect agentic-crm-agent:latest >/dev/null 2>&1; then
-  if (cd /root/claude/crm-azteca && ./crm/container/build.sh) >/tmp/crm-rebuild.log 2>&1; then
-    # Only bounce the service if the operator hasn't masked/disabled it.
-    if systemctl is-enabled --quiet agentic-crm 2>/dev/null; then
-      systemctl restart agentic-crm 2>/dev/null || true
-    fi
-    alert "CRM agent image(s) missing, rebuilt"
-  else
-    alert "CRM agent image(s) missing, rebuild FAILED — see /tmp/crm-rebuild.log"
-  fi
-fi
+# --- Check 6 (CRM container prerequisites) REMOVED 2026-06-15 ---
+# CRM was undeployed in the Azteca-Aura clean-start. This block used to recreate
+# the crm-net network and REBUILD the agent images (crm/container/build.sh),
+# which actively fought the teardown — recreating crm-net and re-tagging
+# agentic-crm-agent/nanoclaw-agent every 5 min. Intentionally gone.
 
 # --- Check 7: MC DB size (alert-only, NO auto-retention) ---
 # Policy (decided 2026-04-24): preserve ALL telemetry for traceability.
