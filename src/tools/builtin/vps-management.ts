@@ -94,7 +94,7 @@ AFTER CHECKING: Report the key metrics concisely.`,
     }
 
     // Services
-    const services = ["mission-control", "agentic-crm"];
+    const services = ["mission-control"];
     for (const svc of services) {
       try {
         const status = execFileSync("systemctl", ["is-active", svc], {
@@ -344,8 +344,7 @@ Returns filtered log entries. Default: last 30 lines of mission-control.`,
           },
           service: {
             type: "string",
-            description:
-              'Service name (default: "mission-control"). Also: "agentic-crm".',
+            description: 'Service name (default: "mission-control").',
           },
           filter: {
             type: "string",
