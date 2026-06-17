@@ -214,6 +214,7 @@ Teach Jarvis what to do when things go wrong.
 - First-round tool-skip guard (nudges when LLM skips tools)
 - Refusal fallback (uses raw tool result when LLM refuses to format)
 - Hallucination guard (detects narrated tool execution without actual calls)
+- Confabulated permission-block guard (strips "blocked by don't-ask/policy" refusals for in-scope tools — see worked example below)
 - `gmail_search` description: "If 0 results, say '0 results' — NEVER fabricate responses"
 
 **Where to encode:** Code guards (Layer 3) for detection, tool descriptions (Layer 2) for recovery behavior.
@@ -227,6 +228,25 @@ Teach Jarvis how to format and present information.
 **The fix:** Directive #6 — "Formato de respuesta: texto plano y markdown simple. NUNCA uses bloques de código para listas."
 
 **Where to encode:** Directives (Layer 1) — this applies to every response.
+
+---
+
+## Worked example: the confabulated permission-block refusal (2026-06-16)
+
+A case spanning Categories 4 and 5 — worth studying because the symptom pointed at the wrong layer.
+
+**Symptom:** Jarvis intermittently refused to send mail, telling the user the tool was _"bloqueado en esta sesión (modo 'don't ask')"_ — then sent fine on a reworded retry. Same shape for `mcp__supabase__query`.
+
+**False lead:** looks like a scope bug (tool not activated). It wasn't — `scope_telemetry` showed `gmail_send` was `tools_in_scope` for BOTH the refused turn and the accepted retry. The SDK fast-path runs `permissionMode:"dontAsk"` with `allowedTools` = every scoped tool (`claude-sdk.ts:382`), so anything in scope is auto-approved. There was no permission gate to hit.
+
+**Root cause — confabulation, not a real block.** The model borrowed the real-but-internal `dontAsk` SDK term (a Claude-Code training prior) as a plausible excuse to dodge an irreversible send, over-applying the Category-4 boundary `gmail_send`: "NEVER send unless explicitly requested" into "I'm not allowed to send." The poison-detector had no pattern for the excuse, so the refusal persisted in the thread buffer and the model re-read its own excuse → recurrence.
+
+**The fix, by layer:**
+
+- **Layer 1/2 (persona):** `prompt-sections.ts` (`confirmationSection` + "solo usa herramientas disponibles") now states that an in-scope tool is never blocked/disabled/permission-gated; the only legitimate pause is Jarvis's own "¿Confirmo?" ask — the real `requiresConfirmation` flow in `task-executor.ts` is preserved, not denied. Stops the _generation_.
+- **Layer 3 (mechanical):** `router.ts` `POISONED_RESPONSE_PATTERNS` + exported `isPoisonedExchange` strip the confabulated refusal from the thread buffer so it can't reinforce. Patterns anchor on the FALSE "blocked by session / policy / don't-ask" framing, NOT a bare "X bloqueado" (which legitimately reports a real Cloudflare / rate-limit / provider block). Stops the _recurrence_.
+
+**Transferable lesson:** when a refusal names an internal mechanism ("don't ask mode", a permission policy), suspect confabulation before a real gate. Diagnose at `scope_telemetry` first; fix at the persona (stop the excuse) + the poison-detector (stop the reinforcement) — never the scope classifier. Commit `bcb1894`; full pattern in memory `feedback_confabulated_permission_block_refusal`.
 
 ---
 
