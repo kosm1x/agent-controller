@@ -112,21 +112,39 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 [1-2 sentences: observations relevant to the agent-user co-evolution paper. What phase are we in? Any milestone crossed?]
 \`\`\`
 
-5. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md.
-   Use shell_exec with: echo '<entry>' >> /root/claude/mission-control/docs/EVOLUTION-LOG.md
-   Or use file_write (read full file first, append entry, write back).
-   Both tools are available and authorized for this file.
+5. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md using shell_exec with a heredoc append. This is the ONLY authorized way to write this file:
 
-Do NOT modify existing entries. Only append.
-If there were zero interactions today, still write an entry noting the quiet day.`,
+   cat >> /root/claude/mission-control/docs/EVOLUTION-LOG.md << 'ENTRY'
+
+   <your entry text here — starts with the "## ${dateLabel}" header>
+   ENTRY
+
+   The \`>>\` operator APPENDS to the end of the file. NEVER use file_write, jarvis_file_write, or a single \`>\` redirect on this file — those OVERWRITE the whole file, and the log is ~45 KB of irreplaceable longitudinal history that a single overwrite destroys every prior day's entry. You do NOT have file_write in scope, by design: the heredoc append above is the only method. Use it and nothing else.
+
+## Do NOT run git recovery or commits
+
+This file legitimately holds many uncommitted days of entries between commits — the operator commits it in batches, NOT you. A large \`git diff HEAD\` on docs/EVOLUTION-LOG.md is EXPECTED and is NOT data loss. Do NOT run \`git diff\` / \`git show\` / \`git reflog\` "to check whether entries were lost", do NOT try to "restore" or "reconstruct" earlier days, and do NOT run \`git add\` / \`git commit\` (they are blocked for you regardless). If the file already contains prior entries, that is correct — leave every existing entry untouched and only append today's single new entry.
+
+Do NOT modify existing entries. Only append the single new entry.
+If there were zero interactions today, still append an entry noting the quiet day.`,
     agentType: "fast",
+    // file_write is deliberately EXCLUDED. It overwrites the whole file, and on
+    // 2026-06-17 the ritual truncated the 45 KB log down to a single entry by
+    // calling file_write as an "append" (it then spent ~7 min reconstructing the
+    // lost days from the task DB and tried to git-commit the restore). The only
+    // safe write is shell_exec `cat >>` — and shell.ts exempts this path from its
+    // mission-control write-block ONLY for append redirects (`>>`), blocking a bare
+    // `>`/tee/mv/cp overwrite (RITUAL_WRITABLE_DOCS, append-only gate). That closes
+    // the file_write incident vector and the realistic `>` mistake — but it is NOT
+    // airtight (exotic shell truncation like `truncate`/`sed -i`/`>|`/relative
+    // paths still slips the regex-based guard; durable git persistence is the real
+    // backstop). See feedback_evolution_log_truncation.
     tools: [
       "jarvis_file_read",
       "project_list",
       "memory_search",
       "memory_reflect",
       "file_read",
-      "file_write",
       "shell_exec",
     ],
   };

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { execFileSync } from "node:child_process";
 import { shellTool, validateShellCommand } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
 
@@ -590,5 +591,66 @@ describe("shellTool exec contract", () => {
     );
     expect(parsed.exit_code).toBe(-2);
     expect(parsed.stderr).toContain("timed out");
+  });
+});
+
+describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-06-17)", () => {
+  // Coverage note: these pin the WRITE_INDICATORS-captured overwrite forms the
+  // gate actually blocks (`>`, tee, etc.). The gate is best-effort, NOT airtight —
+  // it does NOT close `>|` / `truncate` / `sed -i` / relative-path truncation
+  // (those skip WRITE_INDICATORS entirely). Durable git persistence is the real
+  // backstop; see feedback_evolution_log_truncation.
+  //
+  // The append-only restriction applies only when NOT on a jarvis/* dev branch —
+  // those branches allow ALL mission-control writes (isMissionControlWriteAllowed
+  // short-circuits before the gate). Commits/CI run on main, where the gate is
+  // active; skip the block-assertions on a dev branch so the suite stays green
+  // regardless of the checked-out branch.
+  function onJarvisBranch(): boolean {
+    try {
+      const b = execFileSync("git", ["branch", "--show-current"], {
+        cwd: "/root/claude/mission-control",
+        encoding: "utf-8",
+        timeout: 5000,
+      }).trim();
+      return /^jarvis\/(feat|fix|refactor)\/.+$/.test(b);
+    } catch {
+      return false;
+    }
+  }
+  const itOnMain = onJarvisBranch() ? it.skip : it;
+  const LOG = "/root/claude/mission-control/docs/EVOLUTION-LOG.md";
+
+  it("ALLOWS an append redirect (`>>`) to the ritual log", () => {
+    expect(validateShellCommand(`echo "x" >> ${LOG}`)).toEqual({
+      allowed: true,
+    });
+  });
+
+  it("ALLOWS a heredoc append (`cat >> log << 'ENTRY'`) to the ritual log", () => {
+    const cmd = `cat >> ${LOG} << 'ENTRY'\n## 2026-06-18\nbody\nENTRY`;
+    expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+  });
+
+  itOnMain("BLOCKS a bare `>` overwrite of the ritual log (truncation)", () => {
+    const result = validateShellCommand(`echo "x" > ${LOG}`);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("append-only");
+  });
+
+  itOnMain("BLOCKS `printf >` overwrite of the ritual log", () => {
+    const result = validateShellCommand(`printf 'x' > ${LOG}`);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("append-only");
+  });
+
+  itOnMain("BLOCKS `: >` truncate-to-empty of the ritual log", () => {
+    const result = validateShellCommand(`: > ${LOG}`);
+    expect(result.allowed).toBe(false);
+  });
+
+  itOnMain("BLOCKS `tee` (overwrite, no -a) of the ritual log", () => {
+    const result = validateShellCommand(`echo x | tee ${LOG}`);
+    expect(result.allowed).toBe(false);
   });
 });

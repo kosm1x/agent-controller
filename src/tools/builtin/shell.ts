@@ -348,11 +348,37 @@ export function validateShellCommand(command: string): {
         ) {
           continue;
         }
-        // Narrow exception: ritual-writable docs (operational logs, not source)
+        // Narrow exception: ritual-writable docs (operational logs, not source).
+        // APPEND-ONLY: the exemption applies only to an append redirect (`>>`).
+        // A bare `>`, `tee` (overwrite), `mv`, or `cp` to one of these paths would
+        // TRUNCATE the file — these logs are large, irreplaceable longitudinal
+        // history (the 2026-06-17 incident truncated the 45 KB EVOLUTION-LOG.md to
+        // a single entry via a whole-file write). Keying the exemption on the
+        // operator (not just the path) blocks those overwrite redirects here.
+        //
+        // BEST-EFFORT, NOT AIRTIGHT: this lives inside the WRITE_INDICATORS loop,
+        // so truncation primitives that regex doesn't capture still slip past —
+        // `>|` clobber, `truncate -s 0`, `sed -i`, and RELATIVE paths (the service
+        // cwd is /root/claude/mission-control, so `> docs/EVOLUTION-LOG.md` hits
+        // the real log with no absolute match). This is defense-in-depth against
+        // the realistic ritual mistake (`>` vs `>>`); durable git persistence is
+        // the only real backstop against truncation. See the WRITE_INDICATORS
+        // hardening follow-up + memory feedback_evolution_log_truncation.
         if (targetPath.includes("/mission-control/")) {
           const rel = targetPath.replace(/.*\/mission-control\//, "");
           if (RITUAL_WRITABLE_DOCS.includes(rel)) {
-            continue;
+            const p = targetPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const isAppend = new RegExp(`>>\\s*${p}(?:\\s|$)`).test(sanitized);
+            const hasOverwrite = new RegExp(
+              `(?:^|[^>])>\\s*${p}(?:\\s|$)`,
+            ).test(sanitized);
+            if (isAppend && !hasOverwrite) {
+              continue;
+            }
+            return {
+              allowed: false,
+              reason: `${rel} is append-only via shell_exec — use \`cat >> ${rel}\` (the \`>>\` append redirect), not an overwrite (\`>\`, tee, mv, cp)`,
+            };
           }
         }
         return { allowed: false, reason: deny.reason };

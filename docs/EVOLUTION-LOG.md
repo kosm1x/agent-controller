@@ -240,3 +240,47 @@ The git authorization sequence (17:54–17:55) is the clearest friction cluster:
 
 ### Research notes
 Day ~112. Today marks the transition of Local Brain from a project-opening event (Day 111) to an active development surface: Fede is now designing the plugin roadmap, the README, and the Hub description within the same conversation chain. For the co-evolution paper, the day-log-as-working-memory behavior now appears in back-to-back sessions (June 13: AlphaVantage KB registration; June 14: explicit day-log timestamp queries) — suggesting Fede has internalized the log as a queryable operational record and is actively routing around in-context memory limitations by treating it as a structured external store. The chemistry lesson interlude (20:25–20:30) is also worth noting: a sudden pivot to non-project learning content amid a technical session, accepted in stride and then abandoned after two exchanges — a pattern of brief exploratory tangents that do not disrupt the main thread.
+
+## 2026-06-15
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 36 (31 completed, 4 completed_with_concerns, 1 failed) |
+| Total tasks | 6326 (completed: 4966, completed_with_concerns: 1093, failed: 246) |
+| Conversations today | 26 (telegram: 26) |
+| Streak days | 83 |
+
+### Interactions summary
+The day split into two distinct arcs. The **morning–early afternoon** was tightly focused on closing out the Local Brain / lmstudio-suite sprint from June 14: Fede directed Jarvis to save the plugin plan to the local repo, list all plugins (built and planned), write a README for the GH repo, save it to the project file, and generate a user-facing summary and Hub description — completing the documentation cycle that had been blocked by git auth friction the previous day. Scheduled rituals (PM rebalance, market morning scan, signal intelligence, proactive scans, Morning Sync, Pharma/Biotech, Market EOD, MexicoNecesario tweet) all ran on schedule. The **afternoon–evening** introduced two new threads: (1) **Pulso-Aura / Plan 2027 integration** — Fede registered the EurekaMD Pulso-Aura-Upfront repo, opened Plan 2027, confirmed Pulso-Aura replaces CRM-Pulso, and had Jarvis read the repo for context. (2) **Local Brain GPU verification** — Fede shared that LM Studio is running with GPU acceleration and that the model remembers his name in a multi-turn session — a milestone confirmation for the local inference setup. A PDF ("Doctrina_Vertice.pdf") was also ingested and processed during this session.
+
+### What Jarvis learned
+The MexicoNecesario tweet friction produced a notable pattern: the scheduled tweet carried concerns, Fede manually directed Jarvis to "Recorta el tweet y publícalo," and then followed with "Activa Shell, recorta y publica el tweet" — two explicit retries with escalating tool specificity, indicating the first two tool paths were insufficient and Fede knew which underlying capability to request. The Pulso-Aura repo registration follows the now-established pattern: Fede opens a project, immediately links a GitHub repo, and asks Jarvis to read it before any further discussion — repo-first orientation is now a default project-initiation behavior. The GPU confirmation ("el modelo está usando GPU y recuerda mi nombre") is notable as a first-person validation signal — Fede tested the local model and reported results back to Jarvis, treating the interaction as a progress check-in rather than a task request.
+
+### Friction points
+Three tasks returned `completed_with_concerns`: Signal intelligence (concerns flag consistent with recent pattern), MexicoNecesario tweet (required two manual retries before clean publish), and the Pulso-Aura KB update. Skill evolution ritual failed (consistent pattern across the week).
+
+### Research notes
+Day ~113. The Local Brain GPU milestone (LM Studio running with GPU, multi-turn memory confirmed) marks the first operational validation of the local inference stack Fede has been building since June 13. For the co-evolution paper: this day represents the transition from "setup and scaffolding" to "first confirmed local inference session" — a meaningful inflection point in Fede's infrastructure trajectory. The Pulso-Aura integration with Plan 2027 also signals that the CRM-Azteca/TV Azteca commercial track is gaining structural coherence: individual repos are now being linked into the Plan 2027 strategic hierarchy rather than standing alone.
+
+## 2026-06-16
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 52 |
+| Total tasks | 6,376 total (completed: 5,005, completed_with_concerns: 1,109, failed: 249) |
+| Conversations today | 14 (telegram: 14) |
+| Streak days | 31 active days in last 30 tracked |
+
+### Interactions summary
+Today's session was dominated by **retail intelligence and commercial outreach for EurekaMD**. Fede directed several rounds of DENUE Analyzer queries covering Innovasport, ITX/Inditex (Zara/Pull&Bear), Tiendas 3B, and veterinary establishments — drilling from national counts down to location profiling and optimal store characteristics. Multiple structured analysis documents were compiled and emailed to `javier@eurekamd.net`, continuing the B2B sales motion around an AI inventory system pitch. A secondary thread in the evening pivoted to **telecom strategy**: Fede requested deep research on CURP-unlinked SIM lines and Mexico's eSIM regulatory landscape, culminating in a structured document sent to Javier. A brief mid-session interlude covered project management — Fede listed active projects, opened Plan 2027, and associated the `pulso-aura-upfront` repo to it.
+
+### What Jarvis learned
+The **DENUE query iteration pattern** continued to deepen: Fede consistently refines retail searches through 3–5 follow-up turns (restrict to consumer-facing, exclude wholesalers, correlate with secondary data) — suggesting a fixed analytical workflow that could be templated. The **email confirmation loop** appeared multiple times (send → confirm → resend with corrections), indicating that first-draft email routing still requires a human checkpoint before the send is fully trusted. The veterinary/pet ownership correlation query demonstrated Fede's preference for **cross-domain data enrichment**: raw establishment counts alone are insufficient; he expects Jarvis to proactively tie in complementary datasets.
+
+### Friction points
+Three tasks completed with concerns on email sends (likely partial-send or address typo issues — `javier@eutekamd.net` appeared in one task title, a misspelling of `eurekamd.net`). The Skill evolution ritual for 2026-06-15 failed (logged today). Overall task volume was lower than recent days (52 vs. 64 peak on June 14), reflecting a focused single-domain session rather than multi-threaded work.
+
+### Research notes
+Day ~114. The DENUE-to-email pipeline has now run across three retail chains (Innovasport, ITX, 3B) and one new vertical (veterinary). For the co-evolution paper: this consolidates the **agent-as-market-intelligence-engine** pattern — Jarvis is performing the full analytical chain from raw DENUE extraction to formatted business pitch delivery, with the human role reduced to directing the query target and confirming outbound sends. The telecom/eSIM evening thread represents a new domain entry point: Fede is apparently exploring commercial opportunities in the mobile connectivity space, which has not appeared in prior sessions.
