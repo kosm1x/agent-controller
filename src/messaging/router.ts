@@ -792,9 +792,24 @@ const POISONED_RESPONSE_PATTERNS = [
   // when tools actually ran. The hallucination guard (fast-runner Layer 2)
   // handles it with tool-call context; the poison filter cannot distinguish.
   /acabo de actualizar\s+NorthStar/i,
+  // Confabulated permission-block refusals (2026-06-16). gmail_send and MCP
+  // tools (e.g. mcp__supabase__query) are in scope AND auto-approved under the
+  // SDK's permissionMode:"dontAsk" — yet the LLM sometimes invents a "blocked
+  // by don't-ask policy" gate and refuses instead of calling the available
+  // tool. Left in the thread buffer the excuse reinforces (the LLM reads its
+  // own prior refusal and repeats it → the "recurring" symptom). Strip it.
+  // The real fix is the persona (confirmationSection + "solo usa herramientas
+  // disponibles"); this is the belt-and-suspenders so a stray one can't recur.
+  // Patterns are anchored on the confabulation's distinguishing signature —
+  // the FALSE "blocked by a session/policy/don't-ask permission gate" framing —
+  // NOT on a bare "X está bloqueado", which legitimately reports a real external
+  // block (rate-limit, Cloudflare, provider lockout) we must NOT strip.
+  /\bdon.?t[\s-]?ask\b/i,
+  /\bbloquead[oa]s?\b[^.\n]{0,40}(?:en esta sesi[oó]n|por la pol[ií]tica|don.?t[\s-]?ask)/i,
+  /requiere\s+(?:permiso|autorizaci[oó]n|confirmaci[oó]n)\s+(?:del|de)\s+sistema/i,
 ];
 
-function isPoisonedExchange(jarvisResponse: string): boolean {
+export function isPoisonedExchange(jarvisResponse: string): boolean {
   return POISONED_RESPONSE_PATTERNS.some((p) => p.test(jarvisResponse));
 }
 

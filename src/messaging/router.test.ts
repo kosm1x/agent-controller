@@ -69,7 +69,12 @@ vi.mock("../db/index.js", () => ({
   }),
 }));
 
-import { MessageRouter, threadKey, isOwnerChannel } from "./router.js";
+import {
+  MessageRouter,
+  threadKey,
+  isOwnerChannel,
+  isPoisonedExchange,
+} from "./router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
   ChannelAdapter,
@@ -756,6 +761,92 @@ describe("MessageRouter", () => {
     it("treats email with undefined mode as NOT owner (default-deny)", () => {
       expect(isOwnerChannel("email:comunidades", undefined)).toBe(false);
       expect(isOwnerChannel("email", undefined)).toBe(false);
+    });
+  });
+
+  describe("isPoisonedExchange — confabulated permission-block refusals", () => {
+    // 2026-06-16: gmail_send / mcp__supabase__query are in scope AND
+    // auto-approved under permissionMode:"dontAsk", but the LLM sometimes
+    // invents a "blocked by don't-ask policy" gate and refuses. These must be
+    // stripped from the thread buffer so the excuse can't reinforce/recur.
+    it("flags the 'gmail bloqueado en modo don't ask' confabulation", () => {
+      expect(
+        isPoisonedExchange(
+          "El tool de Gmail está bloqueado en esta sesión (modo 'don't ask').",
+        ),
+      ).toBe(true);
+    });
+
+    it("flags the supabase 'bloqueado por la política don't ask mode' variant", () => {
+      expect(
+        isPoisonedExchange(
+          "El tool mcp__supabase__query fue bloqueado por la política 'don't ask mode' en esta sesión.",
+        ),
+      ).toBe(true);
+    });
+
+    it("flags the 'correo bloqueado en esta sesión' refusal", () => {
+      expect(
+        isPoisonedExchange(
+          "Lo siento, el correo está bloqueado en esta sesión y no puedo enviarlo.",
+        ),
+      ).toBe(true);
+    });
+
+    it("flags 'requiere confirmación del sistema' framing", () => {
+      expect(
+        isPoisonedExchange(
+          "No puedo mandarlo porque gmail_send requiere confirmación del sistema.",
+        ),
+      ).toBe(true);
+    });
+
+    // Negative cases — the patterns are anchored on the FALSE permission-gate
+    // framing, NOT on bare "X está bloqueado", which legitimately reports a real
+    // external block we must keep in context (qa-auditor 2026-06-16 FP classes).
+    it("does NOT flag a legitimate 'el número está bloqueado' status", () => {
+      expect(
+        isPoisonedExchange(
+          "El número del cliente está bloqueado en WhatsApp, no podemos contactarlo.",
+        ),
+      ).toBe(false);
+    });
+
+    it("does NOT flag a real external-block report (rate-limit / Cloudflare / provider)", () => {
+      expect(
+        isPoisonedExchange(
+          "La herramienta de WhatsApp está bloqueada por rate-limit; reintento en 1h.",
+        ),
+      ).toBe(false);
+      expect(
+        isPoisonedExchange(
+          "El tool fue bloqueado por Cloudflare al hacer el scrape.",
+        ),
+      ).toBe(false);
+      expect(
+        isPoisonedExchange(
+          "Gmail tiene la cuenta bloqueada por actividad sospechosa del proveedor.",
+        ),
+      ).toBe(false);
+    });
+
+    it("does NOT flag generic 'modo' / 'permiso' prose (not a permission gate)", () => {
+      expect(
+        isPoisonedExchange("Cambié el modo de contacto del cliente a correo."),
+      ).toBe(false);
+      expect(
+        isPoisonedExchange(
+          "Necesitas permiso del dueño del CRM para ese cambio.",
+        ),
+      ).toBe(false);
+    });
+
+    it("does NOT flag a normal successful-send report", () => {
+      expect(
+        isPoisonedExchange(
+          "Enviado ✅ a javier@eurekamd.net con el análisis completo de 3B.",
+        ),
+      ).toBe(false);
     });
   });
 });

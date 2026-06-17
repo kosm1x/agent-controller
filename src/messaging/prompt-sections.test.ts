@@ -142,6 +142,16 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("gmail_send");
   });
 
+  it("confirmationSection frames confirmation as NOT a block (anti-confabulation)", () => {
+    // Prevents the "gmail está bloqueado en modo don't ask" false refusal
+    // (2026-06-16): the model must never read "confirmación obligatoria" as a
+    // system-level permission gate.
+    const flags = detectToolFlags(["gmail_send"]);
+    const s = confirmationSection(flags);
+    expect(s).toContain("NO es un bloqueo");
+    expect(s.toLowerCase()).toContain("don't ask");
+  });
+
   it("toolFirstSection includes WP rules when wordpress active", () => {
     const flags = detectToolFlags(["wp_publish"]);
     const s = toolFirstSection(flags);
