@@ -517,6 +517,25 @@ export const CONVERSATIONAL_PATTERN =
 const JOURNAL_AUTHORING_RE =
   /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i;
 
+// Send/forward verb + an explicit recipient email ADDRESS → google (gmail_send)
+// intent, even with NO email noun ("correo"/"gmail"). Shared — one source of
+// truth — between the DEFAULT_SCOPE_PATTERNS rule (regex-fallback path) and the
+// google safety-net injection (semantic path) so they cannot drift, same dual
+// use as JOURNAL_AUTHORING_RE above. Bounded ≤80-char gap (no ReDoS); the verb
+// is required so a bare quoted address ("el dueño es pedro@x.com") doesn't fire.
+// 2026-06-17: "Envía esto a javier@eurekamd.net. Confirma el envío" classified
+// to `intel` (gmail_send out of scope) → the model confabulated a "don't ask
+// block" and punted (scope_telemetry). The mandar arm is `m[aá]nd[aá]` (not
+// `mand[aá]`) so the accent-on-first-syllable enclitic imperatives `mándalo`/
+// `mándale`/`mándaselo` and voseo `mandá` all match — `env[ií]a` already absorbs
+// its accent (envíalo), mandar must too (qa W1, 2026-06-17). The trailing `\b`
+// anchors ONLY the English forward|send alts (blocks "sendero"); the Spanish arm
+// must NOT carry it, because an accent-final form ("mandá") has no ASCII word
+// boundary before the next space and a group-wide `\b` would drop it
+// (feedback_ascii_word_boundary_accents).
+const EMAIL_SEND_RE =
+  /\b(?:(?:env[ií]a|m[aá]nd[aá]|reenv[ií]a|escr[ií]b)\w*|(?:forward|send)\b)[\s\S]{0,80}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/i;
+
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
@@ -649,6 +668,12 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // post-freeze item; closing `\b` alone does not address them.
     pattern:
       /\b(emails?|correos?|mails?|gmail|calendars?|calendarios?|agenda|eventos?|citas?|reuni[oó]n|drive|g?docs?|g?sheets?|document[oa]?s?|hojas?|slides?|google|spreadsheet|google\s*chat|google\s*tasks?|google\s*forms?|google\s*meet|google\s*keep|google\s*people|google\s*classroom|apps\s*script|workspace\s*events?|google\s*admin|admin\s*reports?|contactos?\s*google)\b/i,
+    group: "google",
+  },
+  {
+    // Email-send by ADDRESS with no email noun → google. Shared regex with the
+    // semantic-path injection in scopeToolsForMessage (see EMAIL_SEND_RE).
+    pattern: EMAIL_SEND_RE,
     group: "google",
   },
   {
@@ -1096,6 +1121,15 @@ export function scopeToolsForMessage(
         ),
       )
     ) {
+      activeGroups.add("google");
+    }
+    // Email-send injection (semantic path): a send verb + recipient ADDRESS
+    // carries gmail_send intent even with no email noun. The classifier routed
+    // "Envía esto a javier@eurekamd.net. Confirma el envío" to `intel`, so
+    // gmail_send was out of scope → the model confabulated a "don't ask block"
+    // and punted (2026-06-17). Shared EMAIL_SEND_RE with the DEFAULT_SCOPE_PATTERNS
+    // rule (regex-fallback path) so both paths self-heal identically.
+    if (!activeGroups.has("google") && EMAIL_SEND_RE.test(currentMessage)) {
       activeGroups.add("google");
     }
     // v7.3: SEO keyword injection. Classifier may tag as browser/research when

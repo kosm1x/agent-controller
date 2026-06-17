@@ -406,6 +406,49 @@ describe("scope pattern matching", () => {
     expect(scope("revisa mi calendario para mañana")).toContain("gmail_send");
   });
 
+  it("activates google for a send verb + bare email ADDRESS (no email noun)", () => {
+    // 2026-06-17 confabulation root cause: "Envía esto a javier@eurekamd.net.
+    // Confirma el envío" classified to `intel` (no "correo"/"gmail" noun) →
+    // gmail_send out of scope → the model confabulated a "don't ask block" and
+    // punted. A send verb + recipient address must force-add google.
+    expect(
+      scope("Envía esto a javier@eurekamd.net. Confirma el envío"),
+    ).toContain("gmail_send");
+    expect(scope("manda el reporte a ana.lopez@empresa.com.mx")).toContain(
+      "gmail_send",
+    );
+    expect(scope("reenvía esto a bob@y.org por favor")).toContain("gmail_send");
+    // Enclitic imperatives + voseo of mandar (accent on first syllable) — qa W1.
+    expect(scope("mándalo a carla@x.com")).toContain("gmail_send");
+    expect(scope("mándaselo a dev@team.io ahora")).toContain("gmail_send");
+    expect(scope("mandá el archivo a sol@x.com")).toContain("gmail_send");
+    // Negative: a bare address with NO send verb must NOT pull gmail_send
+    // (avoids over-firing on addresses quoted in unrelated prose).
+    expect(
+      scope("el dueño del registro es pedro@x.com según la base"),
+    ).not.toContain("gmail_send");
+    // Negative: the English "send" alt is boundary-anchored, so it must NOT
+    // match inside "sendero" even with an address present.
+    expect(
+      scope("déjale el sobre en el sendero donde vive pedro@x.com"),
+    ).not.toContain("gmail_send");
+  });
+
+  it("force-adds gmail_send on the SEMANTIC path when classifier mis-routes a send+address", () => {
+    // The exact live 2026-06-17 bug: the LLM classifier returned ["intel"] for
+    // "Envía esto a javier@eurekamd.net", dropping gmail_send → confabulated
+    // "don't ask block". The semantic-path injection must still force-add google
+    // even when a (wrong) pre-classified group set is supplied.
+    const tools = scopeToolsForMessage(
+      "Envía esto a javier@eurekamd.net. Confirma el envío",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["intel"]),
+    );
+    expect(tools).toContain("gmail_send");
+  });
+
   // Residual-leak documentation: closing `\b` only fixes prefix-match bugs.
   // The google regex still has bare exact-word alts (`agenda`, `drive`,
   // `document[oa]?s?`, `hojas?`, `slides?`) that match generic Spanish/English

@@ -152,6 +152,19 @@ describe("conditional prompt sections", () => {
     expect(s.toLowerCase()).toContain("don't ask");
   });
 
+  it("identitySection routes a genuine scope-miss to a recoverable ask, not a dead-end", () => {
+    // 2026-06-17 root cause A: when a needed tool is genuinely OUT of scope, the
+    // model confabulated a "don't ask block" and punted ("hazlo tú manualmente")
+    // instead of naming the missing capability so its scope re-activates. The
+    // persona must offer the escape-hatch, and the old dead-end must be gone.
+    const s = identitySection();
+    expect(s).toContain("reactiva su scope");
+    expect(s).toContain("usa shell_exec");
+    expect(s).not.toContain(
+      "No tengo esa herramienta disponible en este momento",
+    );
+  });
+
   it("toolFirstSection includes WP rules when wordpress active", () => {
     const flags = detectToolFlags(["wp_publish"]);
     const s = toolFirstSection(flags);
