@@ -775,8 +775,20 @@ const POISONED_RESPONSE_PATTERNS = [
   // Require sentence-start position (^|\n|[.!?]\s+) to avoid matching
   // inside capability reports ("No puedo hacer búsquedas" as status vs refusal).
   /(?:^|[\n.!?]\s*)no puedo (?:continuar|completar|ejecutar)\b/im,
-  /problema t[eé]cnico (?:cr[ií]tico|grave)/i,
-  /error de configuraci[oó]n/i,
+  // Anchored to sentence-start too (2026-06-17 FP fix). An external description
+  // ("...el broker ejecutó el stop como buy stop por error de configuración —
+  // ya lo corregiste") is a legitimate status report, NOT Jarvis self-excusing.
+  // Only a sentence-initial claim is the learned-helplessness signal; the
+  // unanchored forms stripped a real vision-analysis answer from the thread,
+  // which read as the assistant "forgetting" its own prior reply.
+  // ACCEPTED TRADEOFF (qa W1): a genuine self-error phrased mid-clause ("Hubo un
+  // error de configuración con Gmail, no pude enviar") is NOT caught here and
+  // has NO sibling net — unlike the don't-ask class below. We accept that false
+  // negative because over-stripping a real answer is worse than leaving one
+  // self-excuse in the buffer; the durable fix for self-excuses is the persona,
+  // not this regex.
+  /(?:^|[\n.!?]\s*)problema t[eé]cnico (?:cr[ií]tico|grave)/im,
+  /(?:^|[\n.!?]\s*)error de configuraci[oó]n/im,
   // Tool configuration errors (stale from prior session)
   /(?:wordpress|wp).{0,20}not configured/i,
   /falla con.*(?:not configured|no configurad)/i,
@@ -804,7 +816,16 @@ const POISONED_RESPONSE_PATTERNS = [
   // the FALSE "blocked by a session/policy/don't-ask permission gate" framing —
   // NOT on a bare "X está bloqueado", which legitimately reports a real external
   // block (rate-limit, Cloudflare, provider lockout) we must NOT strip.
-  /\bdon.?t[\s-]?ask\b/i,
+  // The confabulation always frames it as a "don't ask MODE/policy" gate, never
+  // a bare phrase. Require the mode/modo signature so an incidental English
+  // "don't ask" in legitimate prose ("you said don't ask, so I just did it")
+  // can't strip a real answer (2026-06-17 FP fix; the bare /\bdon.?t ask\b/
+  // form was over-broad). A real don't-ask refusal also carries a
+  // `bloqueado … don't ask` clause (next pattern) or `no tengo acceso`, so the
+  // don't-ask class stays caught even if this signature drifts. NOTE: that
+  // sibling net is specific to the don't-ask class — it does NOT backstop the
+  // sentence-anchored self-error patterns above.
+  /(?:modo\s*['"]?\s*don.?t[\s-]?ask|don.?t[\s-]?ask[\s'"-]*mode)/i,
   /\bbloquead[oa]s?\b[^.\n]{0,40}(?:en esta sesi[oó]n|por la pol[ií]tica|don.?t[\s-]?ask)/i,
   /requiere\s+(?:permiso|autorizaci[oó]n|confirmaci[oó]n)\s+(?:del|de)\s+sistema/i,
 ];

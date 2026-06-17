@@ -848,6 +848,51 @@ describe("MessageRouter", () => {
         ),
       ).toBe(false);
     });
+
+    // 2026-06-17 FP fix — unanchored self-error patterns stripped legitimate
+    // answers, which read to the operator as Jarvis "forgetting" its own reply.
+    it("does NOT flag an external 'por error de configuración' description", () => {
+      // Real stripped answer (06-17): Jarvis describing the USER's broker mix-up.
+      expect(
+        isPoisonedExchange(
+          "El enredo de las 8:59 fue el broker ejecutando el stop adjunto como buy stop por error de configuración — ya lo corregiste colocando la orden independiente.",
+        ),
+      ).toBe(false);
+    });
+
+    it("does NOT flag a mid-sentence 'problema técnico grave' description", () => {
+      expect(
+        isPoisonedExchange(
+          "El cliente reportó que el sistema del banco tuvo un problema técnico grave durante la transferencia.",
+        ),
+      ).toBe(false);
+    });
+
+    it("still flags a sentence-initial self-reported 'Error de configuración'", () => {
+      // Anchoring keeps the true positive: a self-excuse at sentence start.
+      expect(
+        isPoisonedExchange(
+          "Error de configuración: el sistema no arranca y no completé la tarea.",
+        ),
+      ).toBe(true);
+    });
+
+    it("does NOT flag a bare incidental English 'don't ask'", () => {
+      expect(
+        isPoisonedExchange(
+          "Listo, lo hice directo — you said don't ask, so I didn't bug you about it.",
+        ),
+      ).toBe(false);
+    });
+
+    it("still flags a '(don't ask mode activo)' confabulation without 'bloqueado'", () => {
+      // Real stripped answer (06-17): the gate signature with no `bloqueado`.
+      expect(
+        isPoisonedExchange(
+          "Preparé el correo, pero hay un don't ask mode activo, así que necesito que lo envíes tú.",
+        ),
+      ).toBe(true);
+    });
   });
 });
 
