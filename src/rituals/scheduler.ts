@@ -17,6 +17,7 @@ import { createMorningBriefing } from "./morning.js";
 import { composeMorningBriefDriftSection } from "../lib/s3/delivery.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
+import { commitEvolutionLogIfDirty } from "./evolution-log-commit.js";
 import { createDayNarrative } from "./day-narrative.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
@@ -244,6 +245,7 @@ export function startRitualScheduler(): void {
   scheduleKbBackup();
   scheduleKbReindex();
   scheduleAutonomousImprovement();
+  scheduleEvolutionLogCommit();
   scheduleDiffDigest();
   scheduleMemoryConsolidation();
   scheduleStaleArtifactPrune();
@@ -389,6 +391,41 @@ function scheduleKbBackup(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] kb-backup: scheduled (30 22 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * Mechanical evolution-log durability commit — no LLM. Pathspec-scoped git
+ * commit of docs/EVOLUTION-LOG.md so the week's appended entries become
+ * recoverable. The daily evolution-log ritual only appends (never commits);
+ * this is the sanctioned committer. It runs mechanically (not as an LLM ritual)
+ * because the git TOOLS can't commit mc on `main` (branch gate) and this is
+ * deterministic infra. Motivating incident: 2026-06-17 truncation lost five
+ * never-committed days. See feedback_evolution_log_truncation.
+ */
+function scheduleEvolutionLogCommit(): void {
+  // Sunday 3:00 AM MX — after Saturday's 23:59 evolution-log entry, before the
+  // Sunday morning rituals.
+  const job = cron.schedule(
+    "0 3 * * 0",
+    () => {
+      try {
+        const result = commitEvolutionLogIfDirty();
+        console.log(
+          result.committed
+            ? `[rituals] evolution-log-commit: committed docs/EVOLUTION-LOG.md (${result.hash})`
+            : `[rituals] evolution-log-commit: nothing to commit (${result.reason})`,
+        );
+      } catch (err) {
+        console.error("[rituals] evolution-log-commit failed:", err);
+        recordRitualFailure("evolution-log-commit", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] evolution-log-commit: scheduled (0 3 * * 0, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

@@ -123,7 +123,7 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 
 ## Do NOT run git recovery or commits
 
-This file legitimately holds many uncommitted days of entries between commits — the operator commits it in batches, NOT you. A large \`git diff HEAD\` on docs/EVOLUTION-LOG.md is EXPECTED and is NOT data loss. Do NOT run \`git diff\` / \`git show\` / \`git reflog\` "to check whether entries were lost", do NOT try to "restore" or "reconstruct" earlier days, and do NOT run \`git add\` / \`git commit\` (they are blocked for you regardless). If the file already contains prior entries, that is correct — leave every existing entry untouched and only append today's single new entry.
+This file legitimately holds many uncommitted days of entries between commits — it is committed weekly by the mechanical evolution-log-commit ritual (and by the operator), NOT by you. A large \`git diff HEAD\` on docs/EVOLUTION-LOG.md is EXPECTED and is NOT data loss. Do NOT run \`git diff\` / \`git show\` / \`git reflog\` "to check whether entries were lost", do NOT try to "restore" or "reconstruct" earlier days, and do NOT run \`git add\` / \`git commit\` (they are blocked for you regardless). If the file already contains prior entries, that is correct — leave every existing entry untouched and only append today's single new entry.
 
 Do NOT modify existing entries. Only append the single new entry.
 If there were zero interactions today, still append an entry noting the quiet day.`,
