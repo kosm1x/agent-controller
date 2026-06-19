@@ -124,6 +124,49 @@ function computeMessagingTier(title: string, _description: string): ModelTier {
   return "standard";
 }
 
+/**
+ * Detect a messaging task whose USER TEXT is a genuine multi-step build/ship
+ * request (plan→implement→execute→commit). These need the heavy (Prometheus
+ * plan→execute→reflect) runner, NOT the single-pass fast runner.
+ *
+ * We gate on the CO-OCCURRENCE of a "build" verb AND a "ship" verb in the user's
+ * own words — the title, which is the clean message, not the persona-inflated
+ * description. Either signal alone is routinely fine on fast (a bare
+ * "commit and push", an "implementa el fix" one-liner, or a "haz una auditoría
+ * SEO" research task), so requiring both keeps the escalation tight. Bilingual
+ * EN/ES — the operator writes both.
+ *
+ * 2026-06-19: borne from task 6511 ("Haz un plan para el cambio 3. Execute,
+ * test, audit, commit…") — a full ship-cycle code change that landed on `fast`
+ * and, when a restart orphaned it, died with no retry. A 30-day audit found ~25
+ * chat coding tasks routed to `fast`, 32% finishing `completed_with_concerns`.
+ *
+ * Kill switch: set MESSAGING_HEAVY_ESCALATION=false to revert to fast-for-all.
+ */
+const MSG_BUILD_PATTERNS: readonly RegExp[] = [
+  /\bplan\s+(and|para|to|y)\b/i, // "plan and execute", "plan para el cambio"
+  /\bhaz\s+un\s+plan\b/i, // ES imperative "haz un plan ..."
+  /\b(implement|implementa|desarrolla|develop|build|construye)\b/i,
+  /\b(refactor|refactoriza|architect|redesign|redise[ñn]a)\b/i,
+];
+const MSG_SHIP_PATTERNS: readonly RegExp[] = [
+  /\bexecute\b|\bej[eé]c[uú]ta/i, // execute / ejecuta / ejécuta / ejecútalo / ejecútenlo
+  /\bcommit(?:s|ted|ting|ea|eo|ear)?\b/i, // commit family — NOT ES "comité"/"comitiva" or "commitment"
+  /\bpush\b/i,
+  /\bdeploy\b|\bdespliega/i,
+  /\bship[- ]?it\b/i,
+];
+
+/** True when a messaging task's user text is a multi-step build/ship request. */
+export function messagingNeedsHeavyRunner(title: string): boolean {
+  if (process.env.MESSAGING_HEAVY_ESCALATION === "false") return false;
+  const text = title.replace(/^Chat:\s*/, "");
+  return (
+    MSG_BUILD_PATTERNS.some((p) => p.test(text)) &&
+    MSG_SHIP_PATTERNS.some((p) => p.test(text))
+  );
+}
+
 export function classify(input: ClassificationInput): ClassificationResult {
   // Explicit override always wins
   if (input.agentType && input.agentType !== "auto") {
@@ -138,11 +181,26 @@ export function classify(input: ClassificationInput): ClassificationResult {
     }
   }
 
-  // Messaging tasks always route to fast — they use MCP tools, not containers.
-  // The description is inflated by persona + conversation memories, which would
-  // cause false-positive complexity scoring. Model tier IS dynamic though.
+  // Messaging tasks route to fast by default — they use MCP tools, not
+  // containers. The description is inflated by persona + conversation memories,
+  // which would cause false-positive complexity scoring, so we deliberately do
+  // NOT run the scoring path on it. Model tier IS dynamic though.
+  //
+  // Exception: a chat whose USER TEXT is a genuine multi-step build/ship request
+  // (plan→execute→test→commit) needs the heavy plan-execute-reflect runner. We
+  // detect that from the title (the clean user message), keeping the inflated
+  // description out of the decision. See messagingNeedsHeavyRunner.
   const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
   if (tags.has("messaging")) {
+    if (messagingNeedsHeavyRunner(input.title)) {
+      return {
+        agentType: "heavy",
+        score: 6,
+        reason: "messaging task: multi-step build/ship → heavy",
+        explicit: false,
+        modelTier: "capable",
+      };
+    }
     return {
       agentType: "fast",
       score: 0,

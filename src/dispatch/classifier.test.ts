@@ -3,8 +3,8 @@
  * Tests the heuristic scoring and agent type routing.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { classify } from "./classifier.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { classify, messagingNeedsHeavyRunner } from "./classifier.js";
 import type {
   RunnerStats,
   KeywordOutcomeRow,
@@ -223,6 +223,118 @@ describe("classifier", () => {
       description: "Show disk usage of /var/log",
     });
     expect(result.modelTier).toBe("flash");
+  });
+
+  // ----- Multi-step build/ship messaging escalation (2026-06-19, task 6511) -----
+  // A chat that is a genuine plan→execute→commit code change must route to the
+  // heavy plan-execute-reflect runner, not the single-pass fast runner.
+  it("should route a multi-step build/ship chat to heavy (regression 6511)", () => {
+    const result = classify({
+      title:
+        "Chat: Haz un plan para el cambio 3. Execute, test, audit, commit a...",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("heavy");
+    expect(result.modelTier).toBe("capable");
+    expect(result.reason).toContain("multi-step build/ship");
+  });
+
+  it("should route an EN implement+push chat to heavy", () => {
+    const result = classify({
+      title: "Chat: implement the retry fix and push it",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("heavy");
+  });
+
+  it("should keep a bare 'commit and push' chat on fast (no build verb)", () => {
+    const result = classify({
+      title: "Chat: commit and push",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("should keep an implement-only chat on fast (no ship verb)", () => {
+    const result = classify({
+      title: "Chat: implementa los fixes que discutimos",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("should keep a research/audit chat on fast (no build+ship pair)", () => {
+    const result = classify({
+      title: "Chat: Haz una auditoría SEO/GEO de gilda.mx",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+});
+
+describe("messagingNeedsHeavyRunner", () => {
+  afterEach(() => {
+    delete process.env.MESSAGING_HEAVY_ESCALATION;
+  });
+
+  it("requires BOTH a build verb and a ship verb", () => {
+    expect(messagingNeedsHeavyRunner("Chat: haz un plan y haz commit")).toBe(
+      true,
+    );
+    expect(messagingNeedsHeavyRunner("Chat: implementa el fix")).toBe(false); // build only
+    expect(messagingNeedsHeavyRunner("Chat: commit and push")).toBe(false); // ship only
+    expect(messagingNeedsHeavyRunner("Chat: cómo estás?")).toBe(false);
+  });
+
+  it("matches the accented ES imperative 'ejecútalo' (W1 regression)", () => {
+    expect(messagingNeedsHeavyRunner("Chat: haz un plan y ejecútalo")).toBe(
+      true,
+    );
+    expect(
+      messagingNeedsHeavyRunner("Chat: implementa y ejecuta el cambio"),
+    ).toBe(true);
+  });
+
+  it("does NOT escalate ES 'comité'/'comitiva' false-positives (W2 regression)", () => {
+    expect(
+      messagingNeedsHeavyRunner(
+        "Chat: implementa el plan del comité de marketing",
+      ),
+    ).toBe(false);
+    expect(
+      messagingNeedsHeavyRunner(
+        "Chat: desarrolla la propuesta para la comitiva",
+      ),
+    ).toBe(false);
+    expect(
+      messagingNeedsHeavyRunner("Chat: build trust and make a commitment"),
+    ).toBe(false);
+  });
+
+  it("stays fast when the ship verb is truncated past the 60-char title (fails safe)", () => {
+    // router truncates user text to "Chat: " + 60 chars + "..." — a ship verb
+    // beyond the cut is unseen, so the predicate sees build-only → fast.
+    expect(
+      messagingNeedsHeavyRunner(
+        "Chat: Implementa el nuevo sistema de autenticación con todos los det",
+      ),
+    ).toBe(false);
+  });
+
+  it("strips the 'Chat:' prefix before matching", () => {
+    expect(messagingNeedsHeavyRunner("implementa y despliega")).toBe(true);
+  });
+
+  it("honors the MESSAGING_HEAVY_ESCALATION=false kill switch", () => {
+    process.env.MESSAGING_HEAVY_ESCALATION = "false";
+    expect(messagingNeedsHeavyRunner("Chat: haz un plan y haz commit")).toBe(
+      false,
+    );
   });
 });
 
