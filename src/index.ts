@@ -8,6 +8,7 @@ import { createServer } from "net";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
+import { isTriageMonitorEnabled } from "./lib/self-healing/flags.js";
 import { getConfig } from "./config.js";
 import {
   initDatabase,
@@ -357,6 +358,26 @@ async function main(): Promise<void> {
         log.warn(
           { err },
           "[v8.2] sycophancy probe cron registration failed (non-fatal)",
+        );
+      });
+  }
+
+  // Self-healing triage monitor (every 6h MX). Read-only: detects health
+  // anomalies, has a sub-agent root-cause them, persists a triage report —
+  // NEVER remediates. Registered only when SELF_HEALING_TRIAGE_ENABLED=true, so
+  // it ships dormant. Non-fatal if registration fails.
+  if (isTriageMonitorEnabled()) {
+    import("./lib/self-healing/triage-cron.js")
+      .then(({ registerTriageCron }) =>
+        registerTriageCron({
+          info: (msg, fields) => log.info(fields ?? {}, msg),
+          warn: (msg, fields) => log.warn(fields ?? {}, msg),
+        }),
+      )
+      .catch((err) => {
+        log.warn(
+          { err },
+          "[self-healing] triage cron registration failed (non-fatal)",
         );
       });
   }

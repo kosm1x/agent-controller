@@ -14,6 +14,7 @@ import { seedDirectives } from "./jarvis-fs.js";
 import { ensureTuningTables } from "../tuning/schema.js";
 import { ensureIntelTables } from "./intel-schema.js";
 import { ensureVideoTables } from "./video-schema.js";
+import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
 import { activateBestVariant } from "../tuning/activation.js";
 
 let _db: Database.Database | null = null;
@@ -1060,6 +1061,7 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureTuningTables();
   ensureIntelTables(_db);
   ensureVideoTables(_db);
+  ensureSelfHealingTables(_db);
 
   // Activate best variant from archive (v2.28 — HyperAgents pattern)
   activateBestVariant();
