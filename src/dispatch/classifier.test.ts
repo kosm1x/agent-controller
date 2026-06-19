@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { classify, messagingNeedsHeavyRunner } from "./classifier.js";
+import { classify, isCodingTask, needsHeavyReasoning } from "./classifier.js";
 import type {
   RunnerStats,
   KeywordOutcomeRow,
@@ -33,11 +33,13 @@ describe("classifier", () => {
     expect(result.score).toBeLessThan(6);
   });
 
-  it("should classify multi-step tasks as heavy", () => {
+  it("should classify multi-step (non-coding) tasks as heavy", () => {
+    // Coding multi-step tasks now route to the nanoclaw sandbox; a multi-step
+    // NON-coding task (analysis/strategy across scopes, in parallel) → heavy.
     const result = classify({
-      title: "Refactor auth",
+      title: "Market positioning review",
       description:
-        "Architect a new authentication system. Redesign the token storage to meet compliance. Analyze and fix all related modules.",
+        "Evaluate our market positioning across all regional segments, working the strategic options in parallel, then recommend a prioritized roadmap.",
     });
     expect(result.agentType).toBe("heavy");
     expect(result.score).toBeGreaterThanOrEqual(6);
@@ -132,7 +134,7 @@ describe("classifier", () => {
 
   it("should recommend standard model for medium complexity", () => {
     const result = classify({
-      title: "Update config",
+      title: "Weekly summary",
       description: Array(101).fill("word").join(" "),
     });
     expect(result.modelTier).toBe("standard");
@@ -225,31 +227,49 @@ describe("classifier", () => {
     expect(result.modelTier).toBe("flash");
   });
 
-  // ----- Multi-step build/ship messaging escalation (2026-06-19, task 6511) -----
-  // A chat that is a genuine plan→execute→commit code change must route to the
-  // heavy plan-execute-reflect runner, not the single-pass fast runner.
-  it("should route a multi-step build/ship chat to heavy (regression 6511)", () => {
+  // ----- Coding → nanoclaw sandbox, challenging → heavy (2026-06-19) -----
+  // All coding tasks run containerized (nanoclaw = sandboxed Prometheus PER);
+  // genuinely challenging non-coding requests get heavy's PER loop; else fast.
+  it("routes a build/ship coding chat to nanoclaw (regression 6511)", () => {
     const result = classify({
       title:
         "Chat: Haz un plan para el cambio 3. Execute, test, audit, commit a...",
       description: "You are Jarvis, a strategic AI assistant...",
       tags: ["messaging"],
     });
-    expect(result.agentType).toBe("heavy");
-    expect(result.modelTier).toBe("capable");
-    expect(result.reason).toContain("multi-step build/ship");
+    expect(result.agentType).toBe("nanoclaw");
+    expect(result.reason).toContain("coding task");
   });
 
-  it("should route an EN implement+push chat to heavy", () => {
+  it("routes a code-authoring chat (verb+noun) to nanoclaw", () => {
     const result = classify({
-      title: "Chat: implement the retry fix and push it",
+      title: "Chat: implement the retry endpoint and add a test",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("routes a refactor chat to nanoclaw (strong solo coding signal)", () => {
+    const result = classify({
+      title: "Chat: refactoriza el módulo de auth",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("routes a challenging non-coding chat to heavy", () => {
+    const result = classify({
+      title: "Chat: analiza nuestra estrategia comercial y recomienda pasos",
       description: "You are Jarvis, a strategic AI assistant...",
       tags: ["messaging"],
     });
     expect(result.agentType).toBe("heavy");
+    expect(result.reason).toContain("challenging");
   });
 
-  it("should keep a bare 'commit and push' chat on fast (no build verb)", () => {
+  it("keeps a bare 'commit and push' chat on fast (host git op, not authoring)", () => {
     const result = classify({
       title: "Chat: commit and push",
       description: "You are Jarvis, a strategic AI assistant...",
@@ -258,18 +278,9 @@ describe("classifier", () => {
     expect(result.agentType).toBe("fast");
   });
 
-  it("should keep an implement-only chat on fast (no ship verb)", () => {
+  it("keeps a plain chat on fast", () => {
     const result = classify({
-      title: "Chat: implementa los fixes que discutimos",
-      description: "You are Jarvis, a strategic AI assistant...",
-      tags: ["messaging"],
-    });
-    expect(result.agentType).toBe("fast");
-  });
-
-  it("should keep a research/audit chat on fast (no build+ship pair)", () => {
-    const result = classify({
-      title: "Chat: Haz una auditoría SEO/GEO de gilda.mx",
+      title: "Chat: cómo va el día?",
       description: "You are Jarvis, a strategic AI assistant...",
       tags: ["messaging"],
     });
@@ -277,64 +288,89 @@ describe("classifier", () => {
   });
 });
 
-describe("messagingNeedsHeavyRunner", () => {
+describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
   afterEach(() => {
     delete process.env.MESSAGING_HEAVY_ESCALATION;
   });
 
-  it("requires BOTH a build verb and a ship verb", () => {
-    expect(messagingNeedsHeavyRunner("Chat: haz un plan y haz commit")).toBe(
-      true,
+  it("isCodingTask: code authoring → true; host git ops / prose / strategy → false", () => {
+    expect(isCodingTask("Chat: refactoriza el módulo")).toBe(true);
+    expect(isCodingTask("implement the endpoint and write a test")).toBe(true);
+    expect(
+      isCodingTask("Chat: haz un plan y ejecuta el cambio, luego commit"),
+    ).toBe(
+      true, // build×ship co-occurrence
     );
-    expect(messagingNeedsHeavyRunner("Chat: implementa el fix")).toBe(false); // build only
-    expect(messagingNeedsHeavyRunner("Chat: commit and push")).toBe(false); // ship only
-    expect(messagingNeedsHeavyRunner("Chat: cómo estás?")).toBe(false);
+    expect(isCodingTask("git rebase onto main and merge")).toBe(true);
+    expect(isCodingTask("commit and push")).toBe(false); // lone ship verbs = host git op
+    expect(isCodingTask("write an email to the client")).toBe(false);
+    expect(isCodingTask("build a 2027 commercial strategy")).toBe(false);
   });
 
-  it("matches the accented ES imperative 'ejecútalo' (W1 regression)", () => {
-    expect(messagingNeedsHeavyRunner("Chat: haz un plan y ejecútalo")).toBe(
-      true,
-    );
-    expect(
-      messagingNeedsHeavyRunner("Chat: implementa y ejecuta el cambio"),
-    ).toBe(true);
-  });
-
-  it("does NOT escalate ES 'comité'/'comitiva' false-positives (W2 regression)", () => {
-    expect(
-      messagingNeedsHeavyRunner(
-        "Chat: implementa el plan del comité de marketing",
-      ),
-    ).toBe(false);
-    expect(
-      messagingNeedsHeavyRunner(
-        "Chat: desarrolla la propuesta para la comitiva",
-      ),
-    ).toBe(false);
-    expect(
-      messagingNeedsHeavyRunner("Chat: build trust and make a commitment"),
-    ).toBe(false);
-  });
-
-  it("stays fast when the ship verb is truncated past the 60-char title (fails safe)", () => {
-    // router truncates user text to "Chat: " + 60 chars + "..." — a ship verb
-    // beyond the cut is unseen, so the predicate sees build-only → fast.
-    expect(
-      messagingNeedsHeavyRunner(
-        "Chat: Implementa el nuevo sistema de autenticación con todos los det",
-      ),
-    ).toBe(false);
-  });
-
-  it("strips the 'Chat:' prefix before matching", () => {
-    expect(messagingNeedsHeavyRunner("implementa y despliega")).toBe(true);
-  });
-
-  it("honors the MESSAGING_HEAVY_ESCALATION=false kill switch", () => {
-    process.env.MESSAGING_HEAVY_ESCALATION = "false";
-    expect(messagingNeedsHeavyRunner("Chat: haz un plan y haz commit")).toBe(
+  it("isCodingTask: ES 'comité' false-positive guard still holds", () => {
+    expect(isCodingTask("implementa el plan del comité de marketing")).toBe(
       false,
     );
+  });
+
+  it("isCodingTask: incremental edits sandbox (C1 — no coding escapes the invariant)", () => {
+    expect(isCodingTask("fix the login flow")).toBe(true);
+    expect(isCodingTask("rename the function")).toBe(true);
+    expect(isCodingTask("bump the dependency")).toBe(true);
+    expect(isCodingTask("add a column to the users table")).toBe(true);
+    expect(isCodingTask("tighten the regex in scope.ts")).toBe(true); // filename
+    expect(isCodingTask("update users.sql")).toBe(true); // filename
+    expect(isCodingTask("optimize the query")).toBe(true);
+    expect(isCodingTask("modifica el endpoint de auth")).toBe(true);
+    expect(isCodingTask("remove the import in config.ts")).toBe(true);
+    expect(isCodingTask("wire up the webhook handler")).toBe(true);
+    expect(isCodingTask("patch the vulnerability")).toBe(true);
+    expect(isCodingTask("migrate the schema")).toBe(true);
+    expect(isCodingTask("delete the route")).toBe(true);
+  });
+
+  it("isCodingTask: non-coding 'merge'/'build+deploy' prose stays out of the sandbox", () => {
+    expect(isCodingTask("merge the two spreadsheets")).toBe(false); // polysemous merge
+    expect(isCodingTask("build a strategy and deploy the team")).toBe(false); // build×ship prose
+    expect(isCodingTask("create a report for the client")).toBe(false);
+  });
+
+  it("needsHeavyReasoning: architecture/strategy/multi-step → true; bare research → false", () => {
+    expect(needsHeavyReasoning("redesign the architecture")).toBe(true);
+    expect(needsHeavyReasoning("diseña la estrategia 2027")).toBe(true);
+    expect(needsHeavyReasoning("analiza el mercado y recomienda pasos")).toBe(
+      true,
+    );
+    expect(needsHeavyReasoning("compare the options and pick one")).toBe(true);
+    expect(needsHeavyReasoning("investiga las tendencias de AI")).toBe(false); // bare research
+    expect(needsHeavyReasoning("cómo estás?")).toBe(false);
+  });
+
+  it("INVARIANT: a non-messaging (auto) coding task is containerized → nanoclaw", () => {
+    const result = classify({
+      title: "Debug the slot-finder script",
+      description: "There is a bug in the module; debug and patch the code.",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("kill switch: MESSAGING_HEAVY_ESCALATION=false reverts a coding chat to fast", () => {
+    process.env.MESSAGING_HEAVY_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: refactoriza el módulo de auth",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("kill switch does NOT affect non-messaging coding (invariant holds)", () => {
+    process.env.MESSAGING_HEAVY_ESCALATION = "false";
+    const result = classify({
+      title: "Refactor the auth module",
+      description: "...",
+    });
+    expect(result.agentType).toBe("nanoclaw");
   });
 });
 
@@ -444,8 +480,8 @@ describe("classifier outcome adjustments", () => {
       ]),
       similar,
       {
-        title: "Deploy config",
-        description: "update deployment configuration",
+        title: "Quarterly numbers",
+        description: "tally the quarterly numbers across regions",
       },
     );
     expect(result.reason).toContain("similar tasks");

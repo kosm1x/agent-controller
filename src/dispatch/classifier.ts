@@ -125,46 +125,101 @@ function computeMessagingTier(title: string, _description: string): ModelTier {
 }
 
 /**
- * Detect a messaging task whose USER TEXT is a genuine multi-step build/ship
- * request (plan→implement→execute→commit). These need the heavy (Prometheus
- * plan→execute→reflect) runner, NOT the single-pass fast runner.
+ * Runner routing for coding vs challenging-reasoning tasks (2026-06-19).
  *
- * We gate on the CO-OCCURRENCE of a "build" verb AND a "ship" verb in the user's
- * own words — the title, which is the clean message, not the persona-inflated
- * description. Either signal alone is routinely fine on fast (a bare
- * "commit and push", an "implementa el fix" one-liner, or a "haz una auditoría
- * SEO" research task), so requiring both keeps the escalation tight. Bilingual
- * EN/ES — the operator writes both.
+ * Two orthogonal axes drive non-fast routing, detected from the user's own words:
+ *   1. CODING tasks (write/modify/ship code) → `nanoclaw` — the SAME Prometheus
+ *      plan-execute-reflect loop as heavy, but **containerized** (sandboxed),
+ *      with the repo mounted + coding tools. INVARIANT: every coding task runs
+ *      sandboxed, so the coding check takes precedence over everything else.
+ *   2. CHALLENGING non-coding requests (architecture, deep research/analysis,
+ *      strategy, multi-option evaluation) → `heavy` — in-process PER reasoning;
+ *      hard, but no sandbox needed.
+ *   Everything else → `fast`.
  *
- * 2026-06-19: borne from task 6511 ("Haz un plan para el cambio 3. Execute,
- * test, audit, commit…") — a full ship-cycle code change that landed on `fast`
- * and, when a restart orphaned it, died with no retry. A 30-day audit found ~25
- * chat coding tasks routed to `fast`, 32% finishing `completed_with_concerns`.
+ * For messaging the detection text is the TITLE (the clean user message; the
+ * description is persona/memory-inflated and false-positives). Bilingual EN/ES.
  *
- * Kill switch: set MESSAGING_HEAVY_ESCALATION=false to revert to fast-for-all.
+ * History: task 6511 (a chat coding task) landed on `fast` — under-provisioned
+ * AND un-sandboxed. First fix escalated build/ship chats to heavy; this revision
+ * routes ALL coding to the nanoclaw sandbox and reserves heavy for hard
+ * non-coding reasoning. Kill switch (messaging only):
+ * MESSAGING_HEAVY_ESCALATION=false → messaging reverts to fast-for-all.
  */
-const MSG_BUILD_PATTERNS: readonly RegExp[] = [
+
+// Plan→ship lifecycle markers — a "plan ... and execute/commit" chat is a code
+// change even with no code noun (task 6511).
+const PLAN_PATTERNS: readonly RegExp[] = [
   /\bplan\s+(and|para|to|y)\b/i, // "plan and execute", "plan para el cambio"
   /\bhaz\s+un\s+plan\b/i, // ES imperative "haz un plan ..."
-  /\b(implement|implementa|desarrolla|develop|build|construye)\b/i,
-  /\b(refactor|refactoriza|architect|redesign|redise[ñn]a)\b/i,
 ];
+// Ship/lifecycle verbs. A LONE "commit and push" operates on the HOST working
+// tree (which nanoclaw mounts read-only), so ship verbs only mark coding via the
+// plan→ship co-occurrence below — never on their own.
 const MSG_SHIP_PATTERNS: readonly RegExp[] = [
-  /\bexecute\b|\bej[eé]c[uú]ta/i, // execute / ejecuta / ejécuta / ejecútalo / ejecútenlo
-  /\bcommit(?:s|ted|ting|ea|eo|ear)?\b/i, // commit family — NOT ES "comité"/"comitiva" or "commitment"
+  /\bexecute\b|\bej[eé]c[uú]ta/i, // execute / ejecuta / ejécuta / ejecútalo
+  /\bcommit(?:s|ted|ting|ea|eo|ear)?\b/i, // NOT ES "comité"/"comitiva"/"commitment"
   /\bpush\b/i,
   /\bdeploy\b|\bdespliega/i,
   /\bship[- ]?it\b/i,
 ];
 
-/** True when a messaging task's user text is a multi-step build/ship request. */
-export function messagingNeedsHeavyRunner(title: string): boolean {
-  if (process.env.MESSAGING_HEAVY_ESCALATION === "false") return false;
-  const text = title.replace(/^Chat:\s*/, "");
+// Any single strong signal means "this is code-authoring work".
+const STRONG_CODING_PATTERNS: readonly RegExp[] = [
+  /\b(refactor|refactoriza|debug|depura|hotfix)\b/i,
+  /\bship[- ]?it\b/i,
+  // git is unambiguous; "merge" only with a code context (NOT "merge the cells")
+  /\bgit\b|\bpull request\b|\bPR\b|\bmerge\s+(branch|conflict|request|main|master|rama)\b/i,
+  /\b(codebase|c[oó]digo|repo|repositor\w*)\b/i,
+];
+// A source-file path/name → almost certainly code work regardless of the verb
+// ("tighten the regex in scope.ts", "edit users.sql"). Robust against the
+// verb/noun lists missing a synonym.
+const FILENAME_PATTERN =
+  /[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|sql|json|ya?ml|sh)\b/i;
+// Coding verb + code-noun co-occurrence: "fix the login flow" / "rename the
+// function" / "bump the dependency" → code; "write an email" / "build a
+// strategy" → not. Lists are broad — incremental edits use many verbs/nouns.
+const CODING_VERB =
+  /\b(implement|implementa|code|codifica|programa|write|escribe|edit|edita|add|a[ñn]ade|agrega|create|crea|build|construye|fix|arregla|corrige|develop|desarrolla|update|actualiza|rename|renombra|modify|modifica|change|cambia|remove|elimina|quita|delete|borra|bump|tighten|ajusta|wire|optimi[sz]e|optimiza|configure|configura|port|migrate|migra|rewrite|reescribe|extend|extiende|parse|parsea|handle|maneja|patch|parchea)\b/i;
+const CODING_NOUN =
+  /\b(function|funci[oó]n|method|m[eé]todo|class|clase|file|archivo|script|module|m[oó]dulo|component|componente|endpoint|api|route|ruta|tests?|prueba|bug|repo|branch|rama|migration|migraci[oó]n|schema|esquema|feature|funcionalidad|patch|parche|dependenc\w*|service|servicio|flow|flujo|column|columna|field|campo|hook|handler|query|consulta|validation|validaci[oó]n|regex|import|config|configuraci[oó]n|table|tabla|interface|interfaz|enum|constant\w*|constante|variable|helper|util\w*|hash|webhook|linter|pipeline|vulnerabilit\w*)\b/i;
+
+/** True when the user's text is a coding task (→ sandboxed nanoclaw). */
+export function isCodingTask(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
   return (
-    MSG_BUILD_PATTERNS.some((p) => p.test(text)) &&
-    MSG_SHIP_PATTERNS.some((p) => p.test(text))
+    STRONG_CODING_PATTERNS.some((p) => p.test(t)) ||
+    FILENAME_PATTERN.test(t) ||
+    (CODING_VERB.test(t) && CODING_NOUN.test(t)) ||
+    (PLAN_PATTERNS.some((p) => p.test(t)) &&
+      MSG_SHIP_PATTERNS.some((p) => p.test(t)))
   );
+}
+
+// GENUINELY challenging non-coding work that needs heavy's PER loop. Deliberately
+// TIGHTER than CAPABLE_MSG_PATTERNS (which tiers up the model for any research
+// keyword): a bare "investiga X" / "analiza Y" stays on fast — only architecture,
+// strategy, deep/comprehensive work, or explicit multi-step "analyze→recommend" /
+// "compare options" reasoning escalates the RUNNER. Bilingual EN/ES.
+const HEAVY_REASONING_PATTERNS: readonly RegExp[] = [
+  /\barchitect\w*\b|\barquitect\w*\b/i,
+  /\bredesign\b|\bredise[ñn]\w*\b/i,
+  /\bdeep[- ]?(dive|analysis|research)\b|\bcomprehensive\b|\bexhaustiv\w*\b|\bthorough(ly)?\b|\ba fondo\b|\ben profundidad\b/i,
+  /\bstrateg\w*\b|\bestrateg\w*\b|\broadmap\b|\bhoja de ruta\b/i,
+  // multi-step: "analyze/research X and recommend/synthesize/decide/prioritize"
+  /\b(analy[sz]e|anali[zc]a|evaluate|eval[uú]a|research|investiga|assess|val[oó]ra)\b[^.!?]*\b(and|y|then|luego|para)\b[^.!?]*\b(recommend|recomienda|propose|propon|decide|synthesi\w*|sinteti\w*|conclu\w*|prioriti\w*|prioriza)\b/i,
+  // "compare/evaluate options/approaches/alternatives/trade-offs"
+  /\b(compare|compara|evaluate|eval[uú]a|weigh|sopesa)\b[^.!?]*\b(options|opciones|approaches|enfoques|alternativ\w*|trade[- ]?offs?)\b/i,
+];
+
+/**
+ * True when a NON-coding request is challenging enough to need heavy's PER loop.
+ * Coding is filtered first, so e.g. "redesign" here means a non-code redesign.
+ */
+export function needsHeavyReasoning(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
+  return HEAVY_REASONING_PATTERNS.some((p) => p.test(t));
 }
 
 export function classify(input: ClassificationInput): ClassificationResult {
@@ -181,22 +236,40 @@ export function classify(input: ClassificationInput): ClassificationResult {
     }
   }
 
-  // Messaging tasks route to fast by default — they use MCP tools, not
-  // containers. The description is inflated by persona + conversation memories,
-  // which would cause false-positive complexity scoring, so we deliberately do
-  // NOT run the scoring path on it. Model tier IS dynamic though.
-  //
-  // Exception: a chat whose USER TEXT is a genuine multi-step build/ship request
-  // (plan→execute→test→commit) needs the heavy plan-execute-reflect runner. We
-  // detect that from the title (the clean user message), keeping the inflated
-  // description out of the decision. See messagingNeedsHeavyRunner.
   const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
-  if (tags.has("messaging")) {
-    if (messagingNeedsHeavyRunner(input.title)) {
+  const isMessaging = tags.has("messaging");
+  // Detection text: messaging uses the clean TITLE (description is inflated by
+  // persona + memories → false positives); non-messaging uses title+description.
+  const detectText = isMessaging
+    ? input.title
+    : `${input.title} ${input.description}`;
+  // Kill switch scoped to messaging: MESSAGING_HEAVY_ESCALATION=false reverts
+  // messaging to fast-for-all. Non-messaging routing is always active (rituals
+  // set agentType explicitly and never reach here).
+  const advancedRouting = process.env.MESSAGING_HEAVY_ESCALATION !== "false";
+
+  // INVARIANT: every coding task runs in the nanoclaw sandbox (containerized
+  // Prometheus PER + repo mount + coding tools). Takes precedence over the
+  // messaging/score routing below so coding can never land on an in-process
+  // runner. Messaging is gated by the kill switch.
+  if ((!isMessaging || advancedRouting) && isCodingTask(detectText)) {
+    return {
+      agentType: "nanoclaw",
+      score: 4,
+      reason: "coding task → nanoclaw (containerized sandbox)",
+      explicit: false,
+      modelTier: "capable",
+    };
+  }
+
+  if (isMessaging) {
+    // Non-coding chat: a genuinely challenging request gets heavy's PER loop;
+    // everything else stays on fast (MCP tools, no container).
+    if (advancedRouting && needsHeavyReasoning(input.title)) {
       return {
         agentType: "heavy",
         score: 6,
-        reason: "messaging task: multi-step build/ship → heavy",
+        reason: "messaging task: challenging reasoning → heavy",
         explicit: false,
         modelTier: "capable",
       };
@@ -284,6 +357,18 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "nanoclaw";
   } else {
     agentType = "fast";
+  }
+
+  // Be "very aware" of challenging requests: a non-coding task with hard-
+  // reasoning signals (architecture / deep research / strategy / multi-option
+  // eval) that only scored into fast or nanoclaw is bumped to heavy's PER loop.
+  // Coding was already routed to the sandbox above, so this is non-coding work.
+  if (
+    (agentType === "fast" || agentType === "nanoclaw") &&
+    needsHeavyReasoning(text)
+  ) {
+    agentType = "heavy";
+    reasons.push("challenging reasoning → heavy");
   }
 
   // Determine model tier based on task complexity signals
