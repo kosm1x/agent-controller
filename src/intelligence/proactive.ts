@@ -12,6 +12,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import type { MessageRouter } from "../messaging/router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { createLogger } from "../lib/logger.js";
+import { startSessionEndWriter, stopSessionEndWriter } from "./session-end-writer.js";
 
 const log = createLogger("proactive");
 
@@ -30,6 +31,9 @@ let routerRef: MessageRouter | null = null;
  */
 export function startProactiveScheduler(router: MessageRouter): void {
   routerRef = router;
+
+  // Start idle-session watcher alongside the proactive cron jobs
+  startSessionEndWriter(router);
 
   job = cron.schedule(
     NUDGE_CRON,
@@ -52,6 +56,7 @@ export function stopProactiveScheduler(): void {
     job.stop();
     job = null;
   }
+  stopSessionEndWriter();
   routerRef = null;
   log.info("stopped");
 }
