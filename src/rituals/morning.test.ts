@@ -87,4 +87,34 @@ describe("createMorningBriefing", () => {
       );
     });
   });
+
+  // Cambio 2 (2026-06-19): the brief reads the prior-day narrative so it has
+  // ground truth on what happened yesterday instead of marking it "incierto".
+  describe("Cambio 2 — brief reads prior-day narrative", () => {
+    it("instructs the LLM to read yesterday's day-narrative file", () => {
+      const submission = createMorningBriefing("2026-04-21");
+      expect(submission.description).toContain(
+        'jarvis_file_read on path="logs/day-narratives/2026-04-20.md"',
+      );
+    });
+
+    it("adds the '📋 Ayer' line to the brief template", () => {
+      const submission = createMorningBriefing("2026-04-21");
+      expect(submission.description).toMatch(/📋 Ayer/);
+    });
+
+    it("computes yesterday across a month boundary (non-leap Feb)", () => {
+      const submission = createMorningBriefing("2026-03-01");
+      expect(submission.description).toContain(
+        "logs/day-narratives/2026-02-28.md",
+      );
+    });
+
+    it("computes yesterday across a year boundary", () => {
+      const submission = createMorningBriefing("2026-01-01");
+      expect(submission.description).toContain(
+        "logs/day-narratives/2025-12-31.md",
+      );
+    });
+  });
 });

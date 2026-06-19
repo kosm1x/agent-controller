@@ -35,6 +35,11 @@ export function createMorningBriefing(
   // instead of a placeholder the LLM would have to invent.
   const morningBriefTaskId = `morning-brief-${dateLabel}-${randomUUID().slice(0, 8)}`;
 
+  // Pre-compute yesterday's label so the LLM can read the prior-day narrative.
+  const [y, m, d] = dateLabel.split("-").map(Number);
+  const yd = new Date(Date.UTC(y, m - 1, d - 1));
+  const yesterdayLabel = `${yd.getUTCFullYear()}-${String(yd.getUTCMonth() + 1).padStart(2, "0")}-${String(yd.getUTCDate()).padStart(2, "0")}`;
+
   // S3 drift-alerts block (Spine 2 Bundle 2). Two parts injected only when
   // alertSection is non-empty: the section itself (in description body) and
   // a verbatim-copy instruction the LLM must follow.
@@ -57,6 +62,7 @@ NorthStar is the **compass** (intent: visions, goals, objectives, recurring rhyt
 Project KB tree is the **execution surface** (in-flight project work). Read both;
 NorthStar tells you *where Fede is heading*, projects tell you *what's moving today*.
 
+0. Call jarvis_file_read on path="logs/day-narratives/${yesterdayLabel}.md" to read yesterday's session narrative. This gives you ground truth on what actually happened yesterday — completed analyses, KB updates, code shipped, conversations. If the file doesn't exist (first day), skip this step. Use it to resolve any uncertainty the user or the brief flagged about prior work.
 1. Read NorthStar/INDEX.md (compass narrative — already in your context) for today's intent framing: active visions, goals, objectives, and recurring tasks.
 2. Call project_list to see active projects. For projects with imminent milestones or active sprints, call jarvis_file_read on projects/<slug>/README.md to surface execution-level priorities. Cap project drill-downs at 3 to keep budget tight.
 3. Review the vision and active goals to frame the day strategically.
@@ -92,6 +98,8 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
 **Buenos días, Fede.** 🗓️ ${dateLabel}
 
 **Tu visión**: [one-line reminder]
+
+**📋 Ayer**: [1-2 líneas de lo más relevante de ayer: qué se completó, qué quedó pendiente, basado en la narrativa del día anterior. Si no hay narrativa, omitir esta línea.]
 
 **🔴 Crítico** (hacer primero)
 - [ ] Task 1 — [context/why it matters]
