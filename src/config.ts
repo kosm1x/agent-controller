@@ -54,8 +54,6 @@ export interface Config {
   /** Fraction of context window that triggers compression (0.0–1.0). */
   compressionThreshold: number;
 
-  /** NanoClaw Docker image name. */
-  nanoclawImage: string;
   /** Max simultaneous containers. */
   maxConcurrentContainers: number;
 
@@ -209,7 +207,6 @@ export function loadConfig(): Config {
       process.env.COMPRESSION_THRESHOLD ?? "0.85",
     ),
 
-    nanoclawImage: process.env.NANOCLAW_IMAGE ?? "nanoclaw-agent:latest",
     nanoclawTimeoutMs: int("NANOCLAW_TIMEOUT_MS", 900_000),
     maxConcurrentContainers: int("MAX_CONCURRENT_CONTAINERS", 5),
 

@@ -71,7 +71,6 @@ function makeConfig(containerized = false) {
     goalTimeoutMs: 120_000,
     inferenceContextLimit: 128_000,
     compressionThreshold: 0.85,
-    nanoclawImage: "nanoclaw-agent:latest",
     maxConcurrentContainers: 5,
     heavyRunnerContainerized: containerized,
     heavyRunnerImage: "mission-control:latest",

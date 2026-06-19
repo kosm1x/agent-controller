@@ -173,7 +173,11 @@ export function parsePayload(jsonStr: string): ParsedPayload {
  */
 export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   const config = getConfig();
-  const image = opts.image ?? config.nanoclawImage;
+  // Fallback to the real, present image (mission-control:latest). The former
+  // `nanoclawImage` default ("nanoclaw-agent:latest") never existed on the host,
+  // so an image-less call silently exit-125'd — the same drift that broke the
+  // nanoclaw runner. All callers pass `image` explicitly; this is the backstop.
+  const image = opts.image ?? config.heavyRunnerImage;
   const name = opts.name ?? generateContainerName();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
