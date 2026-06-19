@@ -391,6 +391,49 @@ export function persistAttributedClaims(
 }
 
 /**
+ * Replace a judgment's `attributed_claims` with a fresh resolved set, in ONE
+ * transaction (DELETE then INSERT). Used by the judgment-assembly producer's
+ * critic-loop re-author: a revised prose yields a new claim set, so the prior
+ * rows (and any `contradicted` marks on them — they describe the SUPERSEDED
+ * prose) must be cleared before the new claims land. Returns rows written.
+ *
+ * Atomic so a concurrent `countContradictions`/resolver-rate read never sees a
+ * half-deleted ledger. The judgments row itself is untouched (FK parent stays).
+ */
+export function replaceAttributedClaims(
+  judgmentId: number,
+  resolved: ResolvedClaim[],
+  db: Database.Database = getDatabase(),
+): number {
+  const rows = toAttributedClaimRows(judgmentId, resolved);
+  const del = db.prepare(`DELETE FROM attributed_claims WHERE judgment_id = ?`);
+  const stmt = db.prepare(
+    `INSERT INTO attributed_claims
+       (judgment_id, claim_id, claim_text, prose_offset,
+        evidence_kind, evidence_id, evidence_excerpt, retrieved_at, resolver_status)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  );
+  const replace = db.transaction((rs: Omit<AttributedClaimRow, "id">[]) => {
+    del.run(judgmentId);
+    for (const r of rs) {
+      stmt.run(
+        r.judgment_id,
+        r.claim_id,
+        r.claim_text,
+        r.prose_offset,
+        r.evidence_kind,
+        r.evidence_id,
+        r.evidence_excerpt,
+        r.retrieved_at,
+        r.resolver_status,
+      );
+    }
+  });
+  replace(rows);
+  return rows.length;
+}
+
+/**
  * Mark the given claims as `contradicted` (§11 → §12 wiring).
  *
  * The §11 CRITIC's `submit_critic_verdict.contradicted_claim_ids` lists the

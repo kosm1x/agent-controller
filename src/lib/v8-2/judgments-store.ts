@@ -17,6 +17,7 @@
 import type Database from "better-sqlite3";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
 import { createLogger } from "../logger.js";
+import type { Judgment } from "../../briefing/schema.js";
 import { EvidenceRefSchema, type EvidenceRef } from "./types.js";
 
 const log = createLogger("v8-2:judgments-store");
@@ -125,6 +126,118 @@ export function getJudgmentById(
     .prepare(`SELECT ${SELECT_COLS} FROM judgments WHERE id = ?`)
     .get(id) as RawJudgmentRow | undefined;
   return row ? rowToJudgment(row) : null;
+}
+
+/**
+ * Normalize the V8.1 `Judgment` posture vocabulary ('has_momentum') to the
+ * persisted `judgments.posture` CHECK vocabulary ('momentum'). The two diverge
+ * deliberately (the in-memory base is the V8.1 schema; the table is the V8.2
+ * vocab) — this is the single sanctioned crossing point. Every other posture is
+ * identical across the two enums.
+ */
+export function normalizePosture(
+  p: Judgment["posture"],
+): JudgmentRow["posture"] {
+  return p === "has_momentum" ? "momentum" : p;
+}
+
+/** A new `judgments` row to insert. `posture` is the V8.1 vocabulary; it is
+ *  normalized to the persisted 'momentum' form here so a caller can never trip
+ *  the CHECK constraint. Optional `*Json` columns default to null. */
+export interface NewJudgment {
+  briefingId: string;
+  subject: string;
+  posture: Judgment["posture"];
+  prose: string;
+  createdAt: string;
+  confidence?: "green" | "yellow" | "red" | null;
+  signalKind?: string | null;
+  signalLastSeenAt?: string | null;
+  evidenceRefsJson?: string | null;
+  proposedOptionsJson?: string | null;
+  strategicVoicePrincipleId?: string | null;
+  confidenceBasisJson?: string | null;
+  criticTrailJson?: string | null;
+}
+
+/**
+ * INSERT one `judgments` row and return its auto-increment id. This is the
+ * judgment-assembly producer's write — the row the whole V8.2 layer was dormant
+ * for (no production INSERT existed before; only `setConcessionKind` /
+ * `appendEvidenceRef` UPDATE an existing row). Posture is normalized here, so
+ * the CHECK can't be violated. The `attributed_claims` children are written
+ * separately (`persistAttributedClaims`) AFTER this returns the id (FK order).
+ */
+export function insertJudgment(
+  j: NewJudgment,
+  db: Database.Database = getDatabase(),
+): number {
+  return writeWithRetry(() => {
+    const info = db
+      .prepare(
+        `INSERT INTO judgments
+           (briefing_id, subject, posture, prose, confidence, signal_kind,
+            signal_last_seen_at, created_at, evidence_refs_json,
+            proposed_options_json, strategic_voice_principle_id,
+            confidence_basis_json, critic_trail_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        j.briefingId,
+        j.subject,
+        normalizePosture(j.posture),
+        j.prose,
+        j.confidence ?? null,
+        j.signalKind ?? null,
+        j.signalLastSeenAt ?? null,
+        j.createdAt,
+        j.evidenceRefsJson ?? null,
+        j.proposedOptionsJson ?? null,
+        j.strategicVoicePrincipleId ?? null,
+        j.confidenceBasisJson ?? null,
+        j.criticTrailJson ?? null,
+      );
+    return Number(info.lastInsertRowid);
+  });
+}
+
+/** Overwrite a judgment's prose (the critic-loop re-author / concession re-run
+ *  writes the revised text back onto the row). */
+export function updateJudgmentProse(
+  id: number,
+  prose: string,
+  db: Database.Database = getDatabase(),
+): void {
+  writeWithRetry(() => {
+    db.prepare(`UPDATE judgments SET prose = ? WHERE id = ?`).run(prose, id);
+  });
+}
+
+/** Post-critic finalize: write the computed `confidence`, its basis, and the
+ *  critic trail onto the judgment row. Null args leave that column unchanged is
+ *  NOT the semantics — they SET the column (the producer always has all three
+ *  after the critic loop). */
+export function updateJudgmentVerdict(
+  id: number,
+  fields: {
+    confidence: "green" | "yellow" | "red" | null;
+    confidenceBasisJson: string | null;
+    criticTrailJson: string | null;
+  },
+  db: Database.Database = getDatabase(),
+): void {
+  writeWithRetry(() => {
+    db.prepare(
+      `UPDATE judgments
+          SET confidence = ?, confidence_basis_json = ?, critic_trail_json = ?
+        WHERE id = ?`,
+    ).run(
+      fields.confidence,
+      fields.confidenceBasisJson,
+      fields.criticTrailJson,
+      id,
+    );
+  });
 }
 
 /**

@@ -63,6 +63,8 @@ import {
 } from "../intelligence/feedback.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
 import { resolveBriefingOnOperatorReply } from "../briefing/promote.js";
+import { isV82ProducerEnabled } from "../lib/v8-2/flags.js";
+import { reRunJudgment } from "../lib/v8-2/produce.js";
 import {
   getPendingConfirmation,
   clearPendingConfirmation,
@@ -1214,12 +1216,16 @@ export class MessageRouter {
     // V8.2 §13: when the brief carries judgments, the reply may be a pushback;
     // the handler classifies it, applies the evidence gate, and returns a
     // re-delivery `reply` (held restatement / "updating on your input" update).
-    // No per-judgment re-run is wired in production yet (the judgment-assembly
-    // producer is a later phase), so this is a no-op for ALL current traffic
-    // (countJudgmentsForBriefing === 0 → the V8.1 regex path, which sets no
-    // `reply`). Fire-and-forget; the handler swallows its own errors.
+    // The per-judgment re-run (`reRunJudgment`) is injected ONLY when the V8.2
+    // producer is armed — otherwise no `judgments` rows exist, so
+    // countJudgmentsForBriefing === 0 keeps this the pure V8.1 regex path
+    // (byte-identical, zero new LLM calls) for all current traffic.
+    // Fire-and-forget; the handler swallows its own errors.
     if (isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
-      void resolveBriefingOnOperatorReply(msg.text)
+      void resolveBriefingOnOperatorReply(
+        msg.text,
+        isV82ProducerEnabled() ? { reRunJudgment } : {},
+      )
         .then((res) => {
           if (res?.reply) this.sendToChannel(msg.channel, msg.from, res.reply);
         })

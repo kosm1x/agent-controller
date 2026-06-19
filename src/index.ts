@@ -341,6 +341,26 @@ async function main(): Promise<void> {
       );
     });
 
+  // V8.2 §14 nightly sycophancy probe (02:30 MX). Registered only when the
+  // judgment-assembly producer is armed (V82_JUDGMENT_PRODUCER_ENABLED=true);
+  // dormant even then until judgments exist (zero LLM calls on an empty window).
+  // Non-fatal if registration fails.
+  if (process.env.V82_JUDGMENT_PRODUCER_ENABLED === "true") {
+    import("./lib/v8-2/probe-cron.js")
+      .then(({ registerSycophancyProbeCron }) =>
+        registerSycophancyProbeCron({
+          info: (msg, fields) => log.info(fields ?? {}, msg),
+          warn: (msg, fields) => log.warn(fields ?? {}, msg),
+        }),
+      )
+      .catch((err) => {
+        log.warn(
+          { err },
+          "[v8.2] sycophancy probe cron registration failed (non-fatal)",
+        );
+      });
+  }
+
   // Start Intelligence Depot collectors (S6)
   startIntelCollectors();
 

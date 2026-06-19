@@ -31,10 +31,17 @@ import {
 } from "../briefing/delivery.js";
 import { expireStalePendingBriefings } from "../briefing/storage.js";
 import { sweepDueReflectionFollowups } from "../briefing/reflection-followups.js";
+import { isV82ProducerEnabled } from "../lib/v8-2/flags.js";
+import { runJudgmentAssembly } from "../lib/v8-2/produce.js";
 import { createLogger } from "../lib/logger.js";
 import { recordTriggerRun } from "./throttle.js";
 
 const log = createLogger("triggers:morning-surface");
+
+/** Wall-clock cap on the whole V8.2 judgment-assembly shadow pass (serial,
+ *  multi-LLM-call). The brief is already constructed + persisted before this
+ *  runs, so the cap only bounds dormant shadow work, never the live brief. */
+const JUDGMENT_ASSEMBLY_DEADLINE_MS = 5 * 60_000;
 
 export interface MorningSurfaceResult {
   ok: boolean;
@@ -74,6 +81,39 @@ export async function runMorningSurface(): Promise<MorningSurfaceResult> {
     if (construct.ok) {
       const briefingId = construct.briefing.briefing_id;
       result = { ok: true, briefingId };
+
+      // V8.2 §17 shadow — the judgment-assembly producer. Flag-gated
+      // (`V82_JUDGMENT_PRODUCER_ENABLED`), isolated in its OWN try/catch
+      // (mirrors the reflection-followup sweep above): it writes `judgments` /
+      // `attributed_claims` rows + runs the critic for measurement, but those
+      // rows are NOT delivered (the brief still delivers its V8.1 prose). A
+      // producer failure here must NEVER break the live brief or its delivery.
+      // A pass-level AbortController caps the whole (serial, multi-LLM-call)
+      // pass so a slow shadow run can't hold the morning flow unbounded — each
+      // per-judgment step already honors the signal.
+      if (isV82ProducerEnabled()) {
+        const ac = new AbortController();
+        const deadline = setTimeout(
+          () => ac.abort(new Error("judgment-assembly pass deadline")),
+          JUDGMENT_ASSEMBLY_DEADLINE_MS,
+        );
+        try {
+          const produced = await runJudgmentAssembly(construct.briefing, {
+            signal: ac.signal,
+          });
+          log.info(
+            { briefingId, ...produced },
+            "v8.2 judgment-assembly produced shadow judgments",
+          );
+        } catch (err) {
+          log.error(
+            { err, briefingId },
+            "v8.2 judgment-assembly failed (non-fatal)",
+          );
+        } finally {
+          clearTimeout(deadline);
+        }
+      }
 
       // Phase 8 delivery — flag-gated. Off until Phase 9 activation, so by
       // default the briefing stays a persisted `pending` row.
