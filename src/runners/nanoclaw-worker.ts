@@ -10,6 +10,7 @@
  * needed by autonomous improvement (jarvis_dev, code_search, etc.).
  */
 
+import { execFileSync } from "node:child_process";
 import { loadConfig } from "../config.js";
 import { initDatabase } from "../db/index.js";
 import { initEventBus } from "../lib/event-bus.js";
@@ -34,6 +35,58 @@ import { rebuildIndex } from "../tools/builtin/code-index.js";
 
 import { orchestrate } from "../prometheus/orchestrator.js";
 import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
+
+/** Read-only reference mount of the host repo (never writable). */
+const RO_REPO = "/root/claude/mission-control";
+/** Writable working copy the coding agent edits/commits/pushes from. */
+const WORKSPACE = "/workspace";
+
+/**
+ * Set up a WRITABLE clone of the read-only repo mount so coding tasks can edit,
+ * test, commit and push. nanoclaw mounts the host repo `:ro` (deliberate — the
+ * container must never write the host tree), so without this the agent dies on
+ * `git commit` ("Read-only file system"). The clone gets the host's current
+ * HEAD; the image's installed deps are symlinked in so tests run; push auth is
+ * wired from the mounted gh token. Returns the workspace path, or null on
+ * failure (read-only/analysis tasks still work from the `:ro` mount).
+ */
+function setupCodingWorkspace(): string | null {
+  const run = (cmd: string, args: string[]): string =>
+    execFileSync(cmd, args, { stdio: "pipe", encoding: "utf8" });
+  try {
+    // Writable clone of the current host repo (local path → fast, no network).
+    run("git", ["clone", "--no-hardlinks", "--quiet", RO_REPO, WORKSPACE]);
+    // Symlink the image's installed node_modules so `npx vitest`/tsc work.
+    run("ln", ["-sfn", "/app/node_modules", `${WORKSPACE}/node_modules`]);
+    // Repoint origin from the local clone path to the real GitHub remote.
+    const ghUrl = run("git", [
+      "-C",
+      RO_REPO,
+      "remote",
+      "get-url",
+      "origin",
+    ]).trim();
+    run("git", ["-C", WORKSPACE, "remote", "set-url", "origin", ghUrl]);
+    // Wire `git push` auth from the mounted gh token + a commit identity.
+    run("gh", ["auth", "setup-git"]);
+    run("git", [
+      "-C",
+      WORKSPACE,
+      "config",
+      "user.email",
+      "jarvis@mission-control.local",
+    ]);
+    run("git", ["-C", WORKSPACE, "config", "user.name", "Jarvis (nanoclaw)"]);
+    process.chdir(WORKSPACE);
+    return WORKSPACE;
+  } catch (err) {
+    console.error(
+      "[nanoclaw-worker] workspace setup failed (read-only tasks unaffected):",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
 
 async function main(): Promise<void> {
   // Read stdin
@@ -65,7 +118,15 @@ async function main(): Promise<void> {
   toolRegistry.register(jarvisDiagnoseTool);
   toolRegistry.register(jarvisTestRunTool);
 
-  // Build code index so code_search has data from the mounted repo
+  // Coding tasks need a WRITABLE workspace — the repo is mounted read-only.
+  // Clone it into one the agent can edit/commit/push from. Returns null for the
+  // rare read-only task (still works against the :ro mount).
+  const workspace = setupCodingWorkspace();
+  const envNote = workspace
+    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` is a READ-ONLY reference mount; never write or commit in it. To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`
+    : `\n\n[ENVIRONMENT] Isolated container; \`${RO_REPO}\` is READ-ONLY and no writable workspace is available — you can read code but cannot commit.`;
+
+  // Build code index so code_search has data (from the workspace if cloned).
   try {
     rebuildIndex();
   } catch {
@@ -96,7 +157,7 @@ async function main(): Promise<void> {
   try {
     const result = await orchestrate(
       input.taskId ?? "container-task",
-      input.prompt,
+      input.prompt + envNote,
       undefined,
       input.tools,
     );
