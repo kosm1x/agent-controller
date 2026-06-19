@@ -120,7 +120,9 @@ export function findRelevantPatterns(
         .filter((w) => w.length > 3),
     );
 
-    const scored = allPatterns
+    // First pass — cheap metadata score (scope-tag overlap + title keywords).
+    // Gates which patterns we bother reading from disk.
+    const candidates = allPatterns
       .map((p) => {
         let score = 0;
         // Scope overlap
@@ -138,26 +140,51 @@ export function findRelevantPatterns(
         }
         return { ...p, score };
       })
-      .filter((p) => p.score > 0)
+      .filter((p) => p.score > 0);
+
+    if (candidates.length === 0) return "";
+
+    // Second pass — read the lesson body once and add keyword-overlap score so a
+    // domain-specific pattern (e.g. a DENUE lesson) outranks generic same-scope
+    // patterns when the message is about that domain. Without this, every
+    // `coding`-tagged pattern ties at the scope score and the relevant one gets
+    // diluted out of the top-N. Body contribution is capped so a long pattern
+    // can't dominate on length alone. The content read here is reused to build
+    // the injection block (no double read). NOTE: this reads content for EVERY
+    // in-scope candidate (up to MAX_PATTERNS reads), not just the top-N — the
+    // cost of ranking on body. Runs once per task; revisit if MAX_PATTERNS grows.
+    const lines = ["## Patrones de ejecución anteriores"];
+    const enriched = candidates
+      .map((p) => {
+        const file = getFile(p.path);
+        // Extract just the lesson lines (after the metadata header)
+        const body = file
+          ? file.content
+              .split("\n")
+              .filter(
+                (l) =>
+                  !l.startsWith("#") &&
+                  !l.startsWith("**") &&
+                  l.trim().length > 0,
+              )
+              .join("\n")
+          : "";
+        let bodyScore = 0;
+        for (const w of new Set(
+          body
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((w) => w.length > 3),
+        )) {
+          if (msgWords.has(w)) bodyScore++;
+        }
+        return { ...p, body, score: p.score + Math.min(bodyScore, 3) };
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, PATTERN_INJECT_LIMIT);
 
-    if (scored.length === 0) return "";
-
-    // Read content and build injection block
-    const lines = ["## Patrones de ejecución anteriores"];
-    for (const p of scored) {
-      const file = getFile(p.path);
-      if (!file) continue;
-      // Extract just the lesson lines (after the metadata header)
-      const content = file.content
-        .split("\n")
-        .filter(
-          (l) =>
-            !l.startsWith("#") && !l.startsWith("**") && l.trim().length > 0,
-        )
-        .join("\n")
-        .slice(0, PATTERN_MAX_CHARS);
+    for (const p of enriched) {
+      const content = p.body.slice(0, PATTERN_MAX_CHARS);
       if (content) {
         lines.push(`- ${content}`);
       }
