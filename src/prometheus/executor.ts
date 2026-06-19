@@ -11,7 +11,7 @@ import type { ChatMessage } from "../inference/adapter.js";
 import {
   queryClaudeSdkAsInfer,
   queryClaudeSdkAsInferWithTools,
-  queryClaudeSdkComplexWithFallback,
+  queryClaudeSdkTiered,
 } from "../inference/claude-sdk.js";
 import { CB_COOLDOWN_MS } from "../config/constants.js";
 import { getConfig } from "../config.js";
@@ -189,6 +189,7 @@ export async function selfAssess(
   goal: Goal,
   resultText: string,
   toolCallAudit: readonly ToolCallAudit[] = [],
+  useOpus = true,
 ): Promise<SelfAssessResult> {
   if (goal.completionCriteria.length === 0) {
     return {
@@ -209,7 +210,7 @@ export async function selfAssess(
       { role: "user", content: userContent },
     ];
     const response = useSdkPath()
-      ? await queryClaudeSdkComplexWithFallback((model) =>
+      ? await queryClaudeSdkTiered(useOpus, (model) =>
           queryClaudeSdkAsInfer(selfAssessMessages, { model }),
         )
       : await infer({ messages: selfAssessMessages, temperature: 0.1 });
@@ -346,6 +347,7 @@ export async function executeGoal(
   budget?: IterationBudget,
   goalTimeoutMs?: number,
   signal?: AbortSignal,
+  useOpus = true,
 ): Promise<GoalResult> {
   const start = Date.now();
 
@@ -397,7 +399,7 @@ export async function executeGoal(
         `Criteria: ${goal.completionCriteria.join("; ")}`,
       ].join("\n");
       const inferPromise = useSdkPath()
-        ? queryClaudeSdkComplexWithFallback((model) =>
+        ? queryClaudeSdkTiered(useOpus, (model) =>
             queryClaudeSdkAsInferWithTools(
               messages,
               definitions,
@@ -497,6 +499,7 @@ export async function executeGoal(
           goal,
           finalContent,
           tcAudit,
+          useOpus,
         );
         totalPrompt += assessUsage.promptTokens;
         totalCompletion += assessUsage.completionTokens;
@@ -539,7 +542,7 @@ export async function executeGoal(
         };
 
         const retryResult = useSdkPath()
-          ? await queryClaudeSdkComplexWithFallback((model) =>
+          ? await queryClaudeSdkTiered(useOpus, (model) =>
               queryClaudeSdkAsInferWithTools(
                 [...currentMessages, reflectionMsg],
                 definitions,
@@ -747,6 +750,7 @@ export async function executeGraph(
   budget?: IterationBudget,
   goalTimeoutMs?: number,
   signal?: AbortSignal,
+  useOpus = true,
 ): Promise<ExecutionResult> {
   const results: Record<string, GoalResult> = {};
   let totalToolCalls = 0;
@@ -791,7 +795,15 @@ export async function executeGraph(
     // Execute concurrently
     const settled = await Promise.allSettled(
       ready.map((goal) =>
-        executeGoal(goal, contextStr, toolNames, budget, goalTimeoutMs, signal),
+        executeGoal(
+          goal,
+          contextStr,
+          toolNames,
+          budget,
+          goalTimeoutMs,
+          signal,
+          useOpus,
+        ),
       ),
     );
 

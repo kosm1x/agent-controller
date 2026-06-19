@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 import { executeGraph } from "./executor.js";
 import { reflect } from "./reflector.js";
+import { resolveUseOpus } from "./model-tier.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -73,7 +74,10 @@ export async function resumeFromGoal(
     }
   }
 
-  // Execute — getReady() skips completed goals naturally
+  // Execute — getReady() skips completed goals naturally. Resume on the same
+  // model tier the original task would have used (kept consistent via the same
+  // task-description heuristic), so a resumed run doesn't silently change model.
+  const useOpus = resolveUseOpus(taskDescription);
   const timeoutController = new AbortController();
   const timer = setTimeout(() => timeoutController.abort(), cfg.timeoutMs);
 
@@ -85,6 +89,7 @@ export async function resumeFromGoal(
       budget,
       cfg.goalTimeoutMs,
       timeoutController.signal,
+      useOpus,
     );
   } finally {
     clearTimeout(timer);
@@ -113,6 +118,7 @@ export async function resumeFromGoal(
     graph,
     mergedExecResult,
     taskId,
+    useOpus,
   );
 
   return {

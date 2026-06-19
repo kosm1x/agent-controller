@@ -241,6 +241,36 @@ export async function queryClaudeSdkComplexWithFallback<T>(
   }
 }
 
+/**
+ * Complexity-tiered variant of {@link queryClaudeSdkComplexWithFallback}.
+ *
+ * Prometheus (planner/executor/reflector) historically hardcoded the
+ * Opus-first complex path for EVERY step of EVERY task — so a trivial coding
+ * chat ("clamp a percentage") ran the same Opus loop as a deep architecture
+ * task, at ~5× the cost. This lets the orchestrator pick the model by assessed
+ * task complexity:
+ *
+ * - `useOpus === true`  → Opus-first with the Sonnet-on-error fallback (the old
+ *   behavior, unchanged). The safe default — anything not *confidently* simple
+ *   stays here, so nothing silently regresses.
+ * - `useOpus === false` → Sonnet directly (no Opus attempt). Used only for
+ *   tasks the orchestrator assessed as confidently simple.
+ *
+ * The fallback semantics differ deliberately: the Opus path degrades to Sonnet
+ * on error, but the Sonnet path does NOT escalate to Opus — a simple task that
+ * errors on Sonnet is a genuine failure for the reflect/replan loop to handle,
+ * not a reason to silently pay Opus prices.
+ */
+export async function queryClaudeSdkTiered<T>(
+  useOpus: boolean,
+  call: (model: string) => Promise<T>,
+): Promise<T> {
+  if (useOpus) {
+    return queryClaudeSdkComplexWithFallback(call);
+  }
+  return call(SONNET_MODEL_ID);
+}
+
 export interface ClaudeSdkResult {
   text: string;
   /** Bare tool names called during the run (mcp__jarvis__ prefix stripped). */

@@ -17,6 +17,7 @@ import type { TaskRow } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { plan } from "../prometheus/planner.js";
 import { reflect } from "../prometheus/reflector.js";
+import { resolveUseOpus } from "../prometheus/model-tier.js";
 import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
 import type { Goal, ExecutionResult, GoalResult } from "../prometheus/types.js";
@@ -463,6 +464,12 @@ export const swarmRunner: Runner = {
     // blob fed to plan() and as text for sub-task descriptions.
     const taskDescription = `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`;
 
+    // Model tier for swarm's own plan/reflect LLM calls (sub-tasks re-enter
+    // dispatch and tier themselves). Swarm is the top complexity tier, so this
+    // almost always resolves to Opus; the heuristic + kill switch keep it
+    // consistent with the rest of Prometheus.
+    const useOpus = resolveUseOpus(taskDescription);
+
     // --- DEPTH GUARD ---
     // Prevent recursive swarm spawning beyond MAX_SWARM_DEPTH levels.
     // Walk the parent chain via getTask() to count nesting.
@@ -485,7 +492,7 @@ export const swarmRunner: Runner = {
     // --- PHASE 1: PLAN ---
     let graph: GoalGraph;
     try {
-      const planResult = await plan(taskDescription);
+      const planResult = await plan(taskDescription, useOpus);
       graph = planResult.graph;
     } catch (err) {
       return {
@@ -628,6 +635,8 @@ export const swarmRunner: Runner = {
         taskDescription,
         graph,
         executionResults,
+        undefined,
+        useOpus,
       );
       reflectionResult = result;
     } catch (err) {

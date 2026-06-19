@@ -9,7 +9,7 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import {
   queryClaudeSdkAsInfer,
-  queryClaudeSdkComplexWithFallback,
+  queryClaudeSdkTiered,
 } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -115,6 +115,7 @@ interface PlanResponse {
  */
 export async function plan(
   taskDescription: string,
+  useOpus = true,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
   const memories = await getMemoryService().recall(taskDescription, {
     bank: "mc-operational",
@@ -167,7 +168,7 @@ export async function plan(
   ];
 
   const response = useSdkPath()
-    ? await queryClaudeSdkComplexWithFallback((model) =>
+    ? await queryClaudeSdkTiered(useOpus, (model) =>
         queryClaudeSdkAsInfer(messages, { model }),
       )
     : await infer({ messages, temperature: 0.4 });
@@ -197,6 +198,7 @@ export async function replan(
   taskDescription: string,
   graph: GoalGraph,
   reason: string,
+  useOpus = true,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
   const enforceKb = buildKnowledgeBaseSection([], true, undefined, "planner");
   const systemPrompt = enforceKb
@@ -215,7 +217,7 @@ export async function replan(
   ];
 
   const response = useSdkPath()
-    ? await queryClaudeSdkComplexWithFallback((model) =>
+    ? await queryClaudeSdkTiered(useOpus, (model) =>
         queryClaudeSdkAsInfer(messages, { model }),
       )
     : await infer({ messages, temperature: 0.4 });

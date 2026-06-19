@@ -9,7 +9,7 @@ import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import {
   queryClaudeSdkAsInfer,
-  queryClaudeSdkComplexWithFallback,
+  queryClaudeSdkTiered,
 } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { GoalGraph } from "./goal-graph.js";
@@ -145,6 +145,7 @@ export async function reflect(
   graph: GoalGraph,
   executionResults: ExecutionResult,
   taskId?: string,
+  useOpus = true,
 ): Promise<{ result: ReflectionResult; usage: TokenUsage }> {
   const userContent = buildReflectPrompt(
     taskDescription,
@@ -163,7 +164,7 @@ export async function reflect(
 
   try {
     const response = useSdkPath()
-      ? await queryClaudeSdkComplexWithFallback((model) =>
+      ? await queryClaudeSdkTiered(useOpus, (model) =>
           queryClaudeSdkAsInfer(messages, { model }),
         )
       : await infer({ messages, temperature: 0.3 });

@@ -20,6 +20,7 @@ import { plan, replan } from "./planner.js";
 import { executeGraph } from "./executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 import { reflect } from "./reflector.js";
+import { resolveUseOpus } from "./model-tier.js";
 import { eventBus } from "../lib/event-bus.js";
 import type { PrometheusSnapshot } from "./snapshot.js";
 
@@ -40,6 +41,17 @@ export async function orchestrate(
   const cfg = defaultConfig(config);
   const trace = createTrace();
   const budget = new IterationBudget(cfg.maxIterations);
+
+  // Per-task model tiering: every Prometheus call (plan/execute/replan/reflect)
+  // for this task runs on the same model class — Opus for genuinely complex
+  // work, Sonnet for confidently-simple tasks — instead of the old always-Opus.
+  // Assessed once from the task description (keyword-driven, so the nanoclaw
+  // [ENVIRONMENT] note appended to coding prompts doesn't skew it). Kill switch:
+  // PROMETHEUS_ECONOMY_MODEL=false forces Opus everywhere (pre-tiering behavior).
+  const useOpus = resolveUseOpus(taskDescription);
+  console.log(
+    `[orchestrator] Task ${taskId}: model tier = ${useOpus ? "Opus (complex)" : "Sonnet (simple)"}`,
+  );
 
   // Per-task execution context: isolates mutable state for concurrent safety
   const _taskContext = new TaskExecutionContext(taskId);
@@ -124,7 +136,10 @@ export async function orchestrate(
       traceRecord(trace, "phase_start", { phase: Phase.PLAN });
 
       try {
-        const { graph: g, usage: planUsage } = await plan(taskDescription);
+        const { graph: g, usage: planUsage } = await plan(
+          taskDescription,
+          useOpus,
+        );
         graph = g;
         totalPromptTokens += planUsage.promptTokens;
         totalCompletionTokens += planUsage.completionTokens;
@@ -179,6 +194,7 @@ export async function orchestrate(
         budget,
         cfg.goalTimeoutMs,
         timeoutController.signal,
+        useOpus,
       );
       // Merge: keep prior snapshot results + add newly executed results
       executionResults = {
@@ -326,6 +342,7 @@ export async function orchestrate(
             taskDescription,
             graph,
             vote.reason,
+            useOpus,
           );
           graph = rg;
           totalPromptTokens += replanUsage.promptTokens;
@@ -400,6 +417,7 @@ export async function orchestrate(
       graph,
       executionResults,
       taskId,
+      useOpus,
     );
     totalPromptTokens += reflectUsage.promptTokens;
     totalCompletionTokens += reflectUsage.completionTokens;
