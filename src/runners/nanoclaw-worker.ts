@@ -78,6 +78,11 @@ function setupCodingWorkspace(): string | null {
     ]);
     run("git", ["-C", WORKSPACE, "config", "user.name", "Jarvis (nanoclaw)"]);
     process.chdir(WORKSPACE);
+    // The image sets NODE_ENV=production; if the agent runs `npm install` it
+    // would strip devDependencies (vitest, tsc) and clobber the symlink. Unset
+    // it so any install the agent does still pulls dev tools. (Deps are already
+    // present via the symlink — the prompt tells the agent not to install.)
+    delete process.env.NODE_ENV;
     return WORKSPACE;
   } catch (err) {
     console.error(
@@ -123,7 +128,7 @@ async function main(): Promise<void> {
   // rare read-only task (still works against the :ro mount).
   const workspace = setupCodingWorkspace();
   const envNote = workspace
-    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` is a READ-ONLY reference mount; never write or commit in it. To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`
+    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` is a READ-ONLY reference mount; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools). To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`
     : `\n\n[ENVIRONMENT] Isolated container; \`${RO_REPO}\` is READ-ONLY and no writable workspace is available — you can read code but cannot commit.`;
 
   // Build code index so code_search has data (from the workspace if cloned).
