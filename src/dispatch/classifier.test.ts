@@ -9,6 +9,7 @@ import {
   isCodingTask,
   needsHeavyReasoning,
   targetsForeignRepo,
+  isFanOutTask,
 } from "./classifier.js";
 import type {
   RunnerStats,
@@ -404,6 +405,7 @@ describe("classifier", () => {
 describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
   afterEach(() => {
     delete process.env.MESSAGING_HEAVY_ESCALATION;
+    delete process.env.MESSAGING_SWARM_ESCALATION;
   });
 
   it("isCodingTask: code authoring → true; host git ops / prose / strategy → false", () => {
@@ -484,6 +486,65 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
       description: "...",
     });
     expect(result.agentType).toBe("nanoclaw");
+  });
+
+  // ----- Fan-out chats → swarm (2026-06-20; swarm validated end-to-end) -----
+  it("isFanOutTask: produce-verb + per-item quantifier → true; single/read → false", () => {
+    expect(isFanOutTask("Abre un archivo para cada prospecto")).toBe(true);
+    expect(isFanOutTask("crea un reporte por cada cadena")).toBe(true);
+    expect(isFanOutTask("for each chain, generate a profile")).toBe(true);
+    expect(isFanOutTask("guarda un resumen para cada prospecto")).toBe(true);
+    // read/summarize "each" — no produce verb → not fan-out
+    expect(isFanOutTask("explícame cada función")).toBe(false);
+    expect(isFanOutTask("dame un resumen de cada reunión")).toBe(false);
+    // single artifact, no quantifier (task 6550 must stay fast)
+    expect(isFanOutTask("Guarda el reporte de top 10 cadenas en el repo")).toBe(
+      false,
+    );
+    expect(isFanOutTask("crea un archivo de prospectos")).toBe(false);
+    // W3 (qa 2026-06-20): analysis verbs are NOT producers (→ heavy, not swarm)
+    expect(isFanOutTask("analiza cada reunión del trimestre")).toBe(false);
+    expect(isFanOutTask("investiga cada competidor")).toBe(false);
+    // W3: "todos los" is a single-artifact-covering-a-collection, not per-item
+    expect(isFanOutTask("crea un resumen de todos los puntos")).toBe(false);
+  });
+
+  it("routes a fan-out chat to swarm (parallel per-item)", () => {
+    const result = classify({
+      title: "Chat: Abre un archivo para cada prospecto y enriquécelo",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+  });
+
+  it("a single 'guarda en el repo' chat stays on fast (not swarm)", () => {
+    const result = classify({
+      title: "Chat: Guarda el reporte de top 10 cadenas en el repo",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("MESSAGING_SWARM_ESCALATION=false → fan-out falls back to heavy (not fast)", () => {
+    process.env.MESSAGING_SWARM_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: crea un reporte por cada cadena de retail",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("heavy");
+  });
+
+  it("MESSAGING_HEAVY_ESCALATION=false reverts a fan-out chat all the way to fast", () => {
+    process.env.MESSAGING_HEAVY_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: crea un reporte por cada cadena de retail",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
   });
 });
 

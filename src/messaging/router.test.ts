@@ -299,6 +299,42 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
     });
 
+    it("delivers a swarm {content} object result as prose, not raw JSON (2026-06-20)", async () => {
+      // task.completed carries result.output as an OBJECT (the event bus is
+      // in-process, by reference — dispatcher.ts:639). swarm aggregates to
+      // { content, score, learnings, goalSummary } with NO `.text`, so the object
+      // branch of extractResultText must surface `.content` — else the chat user
+      // gets raw JSON. Guards the production delivery path for fan-out → swarm.
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "crea un archivo por cada prospecto",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "swarm",
+          result: {
+            content: "Listo — creé 3 archivos, uno por prospecto.",
+            score: 1,
+            learnings: ["fan-out mapped cleanly"],
+            goalSummary: { completed: 3 },
+          },
+          duration_ms: 1200,
+        },
+      });
+
+      expect(waAdapter.sentMessages[1].text).toBe(
+        "Listo — creé 3 archivos, uno por prospecto.",
+      );
+      expect(waAdapter.sentMessages[1].text).not.toContain("goalSummary");
+    });
+
     it("should send error message on task.failed event", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",

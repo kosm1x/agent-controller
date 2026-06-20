@@ -261,6 +261,34 @@ export function needsHeavyReasoning(text: string): boolean {
   return HEAVY_REASONING_PATTERNS.some((p) => p.test(t));
 }
 
+// Fan-out detection (2026-06-20): a chat that asks to PRODUCE one artifact PER
+// item of a collection ("un archivo para cada prospecto", "a report for each
+// chain") is an N-way fan-out. On `fast` a single agent runs the N items
+// sequentially and can exhaust its turn/token budget mid-list → silent PARTIAL
+// delivery. Such tasks route to `swarm` (Prometheus decomposes the goal graph and
+// fans the independent items out in parallel — validated end-to-end 2026-06-20).
+//
+// Requires BOTH an artifact-PRODUCE verb AND an explicit per-item quantifier, so:
+//   - read/summarize "each" ("explícame cada función", "dame un resumen de cada
+//     reunión") stays on fast — those verbs aren't producers;
+//   - a single save with no quantifier ("guarda el reporte en el repo", task 6550)
+//     stays on fast;
+//   - a single artifact COVERING a collection ("crea un resumen de todos los
+//     puntos") stays on fast — "todos los" is deliberately NOT a quantifier here.
+// Analysis verbs (analiza/investiga/research) are excluded: they're read-leaning
+// and already escalate via needsHeavyReasoning, so they go to heavy, not a 10-agent
+// swarm. Title-only (messaging detection text). Bilingual EN/ES.
+const FANOUT_PRODUCE_VERB =
+  /\b(crea|crear|abre|abrir|genera|generar|escribe|escribir|guarda|guardar|haz|hacer|arma|armar|prepara|preparar|redacta|redactar|construye|construir|elabora|elaborar|create|open|generate|write|save|make|build|draft|compile|produce|prepare)\b/i;
+const FANOUT_QUANTIFIER =
+  /\b((para|por)\s+cada\b|for\s+each\b|cada\s+uno\s+de\b|uno\s+(por|para)\s+cada\b|one\s+(per|for\s+each)\b|every\s+single\b)/i;
+
+/** True when the text asks to produce one artifact per item of a collection. */
+export function isFanOutTask(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
+  return FANOUT_PRODUCE_VERB.test(t) && FANOUT_QUANTIFIER.test(t);
+}
+
 export function classify(input: ClassificationInput): ClassificationResult {
   // Explicit override always wins
   if (input.agentType && input.agentType !== "auto") {
@@ -309,13 +337,32 @@ export function classify(input: ClassificationInput): ClassificationResult {
   // → fast/heavy/swarm) where the repo and git_*/shell_exec actually exist.
 
   if (isMessaging) {
-    // Non-coding chat: a genuinely challenging request gets heavy's PER loop;
-    // everything else stays on fast (MCP tools, no container).
-    if (advancedRouting && needsHeavyReasoning(input.title)) {
+    const isFanOut = isFanOutTask(input.title);
+    // A per-item fan-out ("un archivo para cada prospecto") parallelizes cleanly:
+    // swarm decomposes the goal graph and runs the independent items concurrently,
+    // avoiding fast's silent-partial-on-budget-exhaustion (validated end-to-end
+    // 2026-06-20). Killable independently via MESSAGING_SWARM_ESCALATION=false —
+    // then a fan-out still escalates to heavy below (better than fast for N items).
+    const swarmEnabled = process.env.MESSAGING_SWARM_ESCALATION !== "false";
+    if (advancedRouting && isFanOut && swarmEnabled) {
+      return {
+        agentType: "swarm",
+        score: 9,
+        reason: "messaging fan-out → swarm (parallel per-item)",
+        explicit: false,
+        modelTier: "capable",
+      };
+    }
+    // Non-coding chat: a genuinely challenging request — or a fan-out when swarm is
+    // disabled — gets heavy's PER loop; everything else stays on fast (MCP tools,
+    // no container).
+    if (advancedRouting && (needsHeavyReasoning(input.title) || isFanOut)) {
       return {
         agentType: "heavy",
         score: 6,
-        reason: "messaging task: challenging reasoning → heavy",
+        reason: isFanOut
+          ? "messaging fan-out → heavy (swarm disabled)"
+          : "messaging task: challenging reasoning → heavy",
         explicit: false,
         modelTier: "capable",
       };

@@ -448,3 +448,15 @@ blocks mc `.env` reads; overnight-tuning broadcasts directly instead of an LLM
 5. **classifier W2** (P3, benign). A read task naming code ("explica el código")
    still sandboxes via the strong `código` signal — wastes a container, loses
    nothing. Low priority.
+
+### Update 2026-06-20 (later) — fan-out chats → swarm WIRED + swarm validated
+
+The "messaging router is blind to parallelism" gap is closed: `isFanOutTask`
+(produce-verb AND per-item quantifier) routes a chat fan-out to **swarm**
+(kill `MESSAGING_SWARM_ESCALATION`; → heavy if off). **swarm had 0 lifetime
+runs — validated end-to-end first** (`scripts/validate-swarm.ts`, isolated DB
+copy; PASS 3/3). NOT deployed (user-only). New follow-up:
+- **W4 (UX, P3):** a swarm chat reply is the reflector **aggregate summary**, not
+  the per-item sub-task outputs (those live in `parent_task_id` rows / saved
+  artifacts). Fine for file-producing fan-outs; consider surfacing per-item
+  results inline if a user expects them.
