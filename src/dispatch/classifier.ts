@@ -197,6 +197,31 @@ export function isCodingTask(text: string): boolean {
   );
 }
 
+// A coding task that names a sibling repo under /root/claude — anything other than
+// the mission-control checkout — cannot run in the nanoclaw sandbox. That container
+// only mounts /root/claude/mission-control (read-only) and clones IT to /workspace,
+// so git/file ops on e.g. /root/claude/thewilliamsradar-journal hit a path that isn't
+// in the container: they fail outright ("Read-only file system") or, worse, "succeed"
+// against the throwaway clone without ever landing on the host. Such tasks must stay
+// on a HOST runner (fast/heavy/swarm), where the repo physically exists and
+// shell_exec / git_* are allowlisted for it. (Williams Journal publish regression,
+// 2026-06-20 — the W25 commit was routed to nanoclaw and silently never landed.)
+// The leading [a-z0-9] guard makes a bare "/root/claude/..." ellipsis NOT match.
+// The lookahead only exempts `mission-control` followed by `/`, whitespace, or EOL,
+// so a hypothetical `/root/claude/mission-control-worktree` would read as foreign —
+// the SAFE direction (it just loses the sandbox and runs on a host runner that can
+// still reach it), and no such sibling dir exists today.
+const FOREIGN_REPO_PATH =
+  /\/root\/claude\/(?!mission-control(?:[/\s]|$))[a-z0-9][a-z0-9._-]*/i;
+
+/**
+ * True when the text references a `/root/claude/<repo>` path that is NOT the
+ * mission-control checkout — i.e. a repo the nanoclaw sandbox cannot reach.
+ */
+export function targetsForeignRepo(text: string): boolean {
+  return FOREIGN_REPO_PATH.test(text);
+}
+
 // GENUINELY challenging non-coding work that needs heavy's PER loop. Deliberately
 // TIGHTER than CAPABLE_MSG_PATTERNS (which tiers up the model for any research
 // keyword): a bare "investiga X" / "analiza Y" stays on fast — only architecture,
@@ -252,7 +277,11 @@ export function classify(input: ClassificationInput): ClassificationResult {
   // Prometheus PER + repo mount + coding tools). Takes precedence over the
   // messaging/score routing below so coding can never land on an in-process
   // runner. Messaging is gated by the kill switch.
-  if ((!isMessaging || advancedRouting) && isCodingTask(detectText)) {
+  if (
+    (!isMessaging || advancedRouting) &&
+    isCodingTask(detectText) &&
+    !targetsForeignRepo(detectText)
+  ) {
     return {
       agentType: "nanoclaw",
       score: 4,
@@ -261,6 +290,9 @@ export function classify(input: ClassificationInput): ClassificationResult {
       modelTier: "capable",
     };
   }
+  // Coding task that targets a sibling repo (not mission-control): the nanoclaw
+  // sandbox can't reach it, so fall through to the HOST runners below (score-based
+  // → fast/heavy/swarm) where the repo and git_*/shell_exec actually exist.
 
   if (isMessaging) {
     // Non-coding chat: a genuinely challenging request gets heavy's PER loop;

@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { classify, isCodingTask, needsHeavyReasoning } from "./classifier.js";
+import {
+  classify,
+  isCodingTask,
+  needsHeavyReasoning,
+  targetsForeignRepo,
+} from "./classifier.js";
 import type {
   RunnerStats,
   KeywordOutcomeRow,
@@ -276,6 +281,88 @@ describe("classifier", () => {
       tags: ["messaging"],
     });
     expect(result.agentType).toBe("fast");
+  });
+
+  // ----- Foreign-repo git ops stay on the HOST, never nanoclaw (2026-06-20) -----
+  // The nanoclaw sandbox only mounts /root/claude/mission-control. A git/file op on
+  // a sibling repo (e.g. the Williams Journal) routed to nanoclaw silently never
+  // lands on the host — the W25 journal publish regression.
+  it("keeps a journal git-commit task OFF nanoclaw (foreign repo → host)", () => {
+    const result = classify({
+      title: "Git commit W25 journal",
+      description:
+        "git_commit en /root/claude/thewilliamsradar-journal: staged files = " +
+        "[pages/w25-2026.md], commit message = feat: publish W25. Luego git_push a origin main.",
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("still routes a mission-control coding task to nanoclaw (control)", () => {
+    const result = classify({
+      title: "git commit the fix in /root/claude/mission-control/src/scope.ts",
+      description: "tighten the EMAIL_SEND_RE regex and push",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("keeps a messaging journal task OFF nanoclaw when the path is in the title", () => {
+    // Messaging tasks classify on the TITLE only (description is persona-inflated).
+    // When the sibling-repo path is visible in the title, the guard still fires.
+    const result = classify({
+      title: "Chat: git commit en /root/claude/thewilliamsradar-journal y push",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+  });
+
+  it("KNOWN GAP: a path-less journal-commit messaging chat still routes to nanoclaw", () => {
+    // qa W1 (2026-06-20): the guard is path-literal. A messaging chat that names no
+    // absolute path ("commit the journal repo") gives detectText = title with no
+    // /root/claude/<repo> token, so the foreign-repo guard cannot fire and it lands
+    // on nanoclaw. This is the documented residual — the classifier can't know the
+    // target repo without a path, and hardcoding project keywords would be brittle.
+    // Backstops that make this acceptable: (1) the weekly publish is a SCHEDULED task
+    // pinned to `fast` (host); (2) Jarvis's dispatched git_commit instructions carry
+    // the absolute path (caught above); (3) the scheduled prompt's hard week-gate.
+    // If a future fix closes this gap, flip this assertion.
+    const result = classify({
+      title: "Chat: commit the journal repo and push to origin",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  describe("targetsForeignRepo", () => {
+    it("flags /root/claude sibling repos as foreign", () => {
+      expect(
+        targetsForeignRepo(
+          "git_commit en /root/claude/thewilliamsradar-journal",
+        ),
+      ).toBe(true);
+      expect(
+        targetsForeignRepo("cd /root/claude/williams-entry-radar && git add"),
+      ).toBe(true);
+      expect(
+        targetsForeignRepo("edit /root/claude/crm-azteca/src/index.ts"),
+      ).toBe(true);
+    });
+
+    it("does NOT flag the mission-control checkout", () => {
+      expect(targetsForeignRepo("/root/claude/mission-control")).toBe(false);
+      expect(
+        targetsForeignRepo("edit /root/claude/mission-control/src/scope.ts"),
+      ).toBe(false);
+    });
+
+    it("does NOT flag a bare ellipsis or pathless text", () => {
+      expect(targetsForeignRepo("filesystem access at /root/claude/...")).toBe(
+        false,
+      );
+      expect(targetsForeignRepo("just refactor the auth module")).toBe(false);
+    });
   });
 
   it("keeps a plain chat on fast", () => {

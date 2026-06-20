@@ -51,6 +51,8 @@ Our architecture maps to five workflow patterns from this guide. Name them expli
 
 Always prefer the simplest runner that can solve the task. The classifier enforces this: fast → heavy → swarm. Never default to Prometheus when a single LLM call with tools suffices. Add orchestration layers only when measurably better outcomes justify the latency/cost tradeoff.
 
+> **nanoclaw is mission-control-only.** The nanoclaw sandbox mounts ONLY `/root/claude/mission-control` (read-only, cloned to `/workspace`). A coding task that targets a SIBLING repo (e.g. `/root/claude/thewilliamsradar-journal`, `crm-azteca`) cannot run there — `git_*`/file ops fail or "succeed" against the throwaway clone and never land on the host. `classifier.ts`'s `targetsForeignRepo()` guard keeps any coding task that names a non-mission-control `/root/claude/<repo>` path on a HOST runner (fast/heavy/swarm) instead. (Williams Journal W25 publish regression, 2026-06-20.)
+
 ### ACI (Agent-Computer Interface) design
 
 Tool definitions are prompts — they deserve more engineering than the handler code. Models read descriptions to decide which tool to call and how. Principles:
