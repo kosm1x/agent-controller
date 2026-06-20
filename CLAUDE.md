@@ -230,6 +230,7 @@ Recipe:
 - `reflect()` returns `{ result, usage }` — always destructure
 - Token usage must propagate: goal → execution → orchestrator result
 - GoalResult and ExecutionResult require `tokenUsage` field in all code paths
+- **Model tiering**: `plan`/`replan`/`executeGraph`/`executeGoal`/`selfAssess`/`reflect` take a trailing `useOpus` (default `true`); the orchestrator/resume/swarm compute it once via `resolveUseOpus(taskDescription)` (`src/prometheus/model-tier.ts`) and thread it down. SDK calls go through `queryClaudeSdkTiered(useOpus, …)`, NOT `queryClaudeSdkComplexWithFallback` directly — keep new call sites tiered or simple tasks silently pay Opus. Kill switch: `PROMETHEUS_ECONOMY_MODEL=false` (all-Opus revert; set via systemd drop-in, not `.env`).
 
 ## Git
 
