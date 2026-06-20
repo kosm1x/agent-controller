@@ -109,6 +109,7 @@ describe("git tools", () => {
       mockExecFileSync
         .mockReturnValueOnce("") // git fetch origin (runArgs)
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
+        .mockReturnValueOnce("") // git status --porcelain — clean (runArgs)
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
         .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
@@ -117,7 +118,10 @@ describe("git tools", () => {
       expect(result).toContain("ba2005e");
     });
 
-    it("warns about uncommitted changes when nothing to push", async () => {
+    it("blocks with an actionable error when the tree is dirty + remote exists", async () => {
+      // Regression (williams-entry-radar, 2026-06-20): a dirty tree makes the
+      // pre-push rebase abort. The tool must surface that BEFORE pushing into a
+      // guaranteed rejection — not swallow it as "empty repo".
       mockExecSync
         .mockReturnValueOnce("✓ Logged in") // gh auth status
         .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
@@ -126,15 +130,32 @@ describe("git tools", () => {
       mockExecFileSync
         .mockReturnValueOnce("") // git fetch origin (runArgs)
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
-        .mockReturnValueOnce("") // git rebase (runArgs)
-        .mockReturnValueOnce(" M src/foo.ts\n?? src/bar.ts") // git status --short (runArgs)
-        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)
-        .mockReturnValueOnce("Everything up-to-date"); // git push (runArgs)
+        .mockReturnValueOnce(" M signals.md\n?? results/x.csv"); // git status --porcelain → DIRTY
       const result = await gitPushTool.execute({});
-      expect(result).toContain("WARNING");
-      expect(result).toContain("uncommitted changes");
-      expect(result).toContain("git_commit first");
-      expect(result).toContain("src/foo.ts");
+      expect(result).toContain("uncommitted");
+      expect(result).toContain("git_commit");
+      expect(result).toContain("signals.md");
+      expect(result).not.toContain("-> main"); // never reached the push
+    });
+
+    it("reports a manual-reconcile error when the auto-rebase conflicts", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFileSync
+        .mockReturnValueOnce("") // git fetch origin (runArgs)
+        .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
+        .mockReturnValueOnce("") // git status --porcelain — clean (runArgs)
+        .mockImplementationOnce(() => {
+          throw new Error("CONFLICT (content): Merge conflict in signals.md");
+        }) // git rebase (runArgs) → conflict
+        .mockReturnValueOnce(""); // git rebase --abort (runArgs)
+      const result = await gitPushTool.execute({});
+      expect(result).toContain("diverged");
+      expect(result).toContain("manual reconcile");
+      expect(result).not.toContain("-> main"); // never reached the push
     });
 
     it("returns clean message when up-to-date with clean tree", async () => {
@@ -146,6 +167,7 @@ describe("git tools", () => {
       mockExecFileSync
         .mockReturnValueOnce("") // git fetch origin (runArgs)
         .mockReturnValueOnce("origin/main") // git branch -r (runArgs)
+        .mockReturnValueOnce("") // git status --porcelain — clean (runArgs)
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
         .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch (execFileSync)

@@ -390,15 +390,50 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         return "Error: Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.";
       }
 
-      // Fetch + rebase to avoid push rejection from diverged remote
+      // Fetch + rebase to avoid push rejection from a diverged remote. Each step
+      // is handled distinctly so a REAL failure surfaces an actionable error
+      // instead of being swallowed as "empty repo" and pushed into a guaranteed
+      // non-fast-forward rejection — the dead-end Jarvis hit on williams-entry-radar
+      // (diverged + dirty tree → silent rebase failure → rejected push → stuck).
       try {
         runArgs("git", ["fetch", "origin"], 15_000, cwd);
-        const remoteBranches = runArgs("git", ["branch", "-r"], 30_000, cwd);
-        if (remoteBranches.includes(`origin/${branch}`)) {
-          runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
-        }
       } catch {
-        // First push to empty repo — no remote branch yet, safe to proceed
+        // Offline or no remote yet — let the push attempt surface the real error.
+      }
+      let remoteBranches = "";
+      try {
+        remoteBranches = runArgs("git", ["branch", "-r"], 30_000, cwd);
+      } catch {
+        // Fresh repo with no refs yet — nothing to rebase onto.
+      }
+      if (remoteBranches.includes(`origin/${branch}`)) {
+        // A dirty working tree makes `git rebase` abort immediately. Surface that
+        // as an actionable error so the caller commits/discards first, rather than
+        // silently pushing into a rejection with no recoverable signal.
+        const dirty = runArgs("git", ["status", "--porcelain"], 15_000, cwd);
+        if (dirty) {
+          return (
+            `Error: cannot sync with origin/${branch} — the working tree has uncommitted ` +
+            `changes that block the rebase. git_commit them (or discard them) first, then push.\n\n` +
+            `Uncommitted:\n${dirty}`
+          );
+        }
+        try {
+          runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
+        } catch (rebaseErr) {
+          // Diverged histories changed the same files — abort the half-applied
+          // rebase (leave the tree usable) and report it needs a manual reconcile.
+          try {
+            runArgs("git", ["rebase", "--abort"], 15_000, cwd);
+          } catch {
+            // Nothing to abort.
+          }
+          return (
+            `Error: local ${branch} has diverged from origin/${branch} and the automatic ` +
+            `rebase hit conflicts — this needs a manual reconcile (both sides changed the ` +
+            `same files).\n\n${rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr)}`
+          );
+        }
       }
 
       // Check for uncommitted changes — warn before the LLM claims success
