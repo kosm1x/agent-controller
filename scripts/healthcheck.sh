@@ -5,6 +5,11 @@
 # Requires: TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_CHAT_ID from .env
 
 HC_URL="http://localhost:8080/health"
+
+# Self-source Telegram vars from .env (cron's `. .env` sources without exporting,
+# so vars don't reach this subprocess). Mirrors the defensive pattern in watchdog.sh.
+eval "$(grep -E '^TELEGRAM_BOT_TOKEN=|^TELEGRAM_OWNER_CHAT_ID=' /root/claude/mission-control/.env 2>/dev/null || true)"
+
 BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 CHAT_ID="${TELEGRAM_OWNER_CHAT_ID:-}"
 
