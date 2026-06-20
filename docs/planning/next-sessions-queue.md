@@ -420,3 +420,31 @@ The 06-16 persona fix (`bcb1894`: `confirmationSection` + poison patterns) REDUC
 ### A-refinement (optional, from qa W1). Mid-clause self-error FN
 
 Fix B anchored the self-error patterns (`error de configuración`, `problema técnico crítico/grave`) to sentence-start, which knowingly lets a genuine self-error phrased mid-clause through ("Hubo un error de configuración con Gmail, no pude enviar") with no sibling net. Accepted (over-stripping a real answer is worse). IF buffer-poisoning by mid-sentence self-errors is later observed, the middle-ground is a 1st-person/impersonal lead-in anchor (`(?:tuve|hubo|se produjo|hay) un …`) — but verify it does NOT re-match external descriptions (`"el cliente tuvo un error de configuración"`) before shipping. Tie-break toward root cause A (persona) over re-widening the regex.
+
+---
+
+## Deferred from 2026-06-20 monitoring/fix session (DENUE-chat watch)
+
+Three fixes shipped this session (classifier lone-"repo" silent-save; shell-guard
+blocks mc `.env` reads; overnight-tuning broadcasts directly instead of an LLM
+"go send this" task). Residuals deliberately NOT done, in priority order:
+
+1. **Cost-ledger blindness to chat/aux/streaming SDK calls** (P1, instrumentation).
+   `cost_ledger` captured ~300 rows in 5 days while the journal logged 44
+   completions in 10 min — the aux 0-tool + streaming calls bypass the ledger, so
+   the $2/hr soft-cap can't see chat-driven burn (one DENUE turn = $1.08 / 1.5M
+   tokens, unmetered). Route all SDK completions through `cost_ledger`. Same
+   silent-state class as queue §3.
+2. **Out-of-order / interleaved Telegram replies** (P2, UX). A 4-min streamed reply
+   with an interim message posted mid-stream lands out of order (msgId 17361 sent
+   before 17360 finalized). Suppress interim sends while a stream is in flight,
+   and/or debounce rapid-fire messages per chat.
+3. **DENUE-turn cost cap** (P2). Each turn reloads large `establecimientos` psql
+   dumps into context ($1+/turn). Summarize/row-limit before it hits the model.
+4. **shell-guard `.env` hardening** (P3, qa W3). Current guard = enumerated readers
+   + literal mc path; misses `vim`/`python open()`/`while read`/`$HOME`/relative-cwd
+   reads (the same limitation every sibling credential guard has). Broaden if a
+   real bypass recurs.
+5. **classifier W2** (P3, benign). A read task naming code ("explica el código")
+   still sandboxes via the strong `código` signal — wastes a container, loses
+   nothing. Low priority.

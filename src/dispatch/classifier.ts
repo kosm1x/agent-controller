@@ -170,7 +170,14 @@ const STRONG_CODING_PATTERNS: readonly RegExp[] = [
   /\bship[- ]?it\b/i,
   // git is unambiguous; "merge" only with a code context (NOT "merge the cells")
   /\bgit\b|\bpull request\b|\bPR\b|\bmerge\s+(branch|conflict|request|main|master|rama)\b/i,
-  /\b(codebase|c[oó]digo|repo|repositor\w*)\b/i,
+  // "codebase"/"código" unambiguously mean source code. A LONE "repo"/"repositorio"
+  // does NOT: in chat, "guarda esto en el repo" means save to the KB/project store
+  // (a host-only jarvis_file_write), not authoring code. Forcing it to nanoclaw —
+  // which mounts ONLY mission-control and has no KB tools — made the save silently
+  // evaporate (task 6548, "guarda en el repo… marca las cadenas", 2026-06-20: 0 tool
+  // calls, nothing written). "repo" stays in CODING_NOUN, so a verb×noun pairing
+  // ("fix the repo", "edit the repo config") still routes coding correctly.
+  /\b(codebase|c[oó]digo)\b/i,
 ];
 // A source-file path/name → almost certainly code work regardless of the verb
 // ("tighten the regex in scope.ts", "edit users.sql"). Robust against the
@@ -182,8 +189,15 @@ const FILENAME_PATTERN =
 // strategy" → not. Lists are broad — incremental edits use many verbs/nouns.
 const CODING_VERB =
   /\b(implement|implementa|code|codifica|programa|write|escribe|edit|edita|add|a[ñn]ade|agrega|create|crea|build|construye|fix|arregla|corrige|develop|desarrolla|update|actualiza|rename|renombra|modify|modifica|change|cambia|remove|elimina|quita|delete|borra|bump|tighten|ajusta|wire|optimi[sz]e|optimiza|configure|configura|port|migrate|migra|rewrite|reescribe|extend|extiende|parse|parsea|handle|maneja|patch|parchea)\b/i;
+// NOTE: "repo"/"repositorio" is deliberately NOT a coding noun. In chat it is
+// ambiguous between a git repository and the KB/project store, so a verb×repo
+// pairing ("agrega esto al repo", "add this to the repo") is just as likely a
+// host-only KB save as code work — routing it to the nanoclaw sandbox (which
+// can't reach the KB) silently loses the save (task 6548, 2026-06-20). Genuine
+// code work carries a more specific noun (function/file/bug/test/branch/…) or a
+// strong signal (git/refactor/filename). "branch"/"rama" stay — they're code-only.
 const CODING_NOUN =
-  /\b(function|funci[oó]n|method|m[eé]todo|class|clase|file|archivo|script|module|m[oó]dulo|component|componente|endpoint|api|route|ruta|tests?|prueba|bug|repo|branch|rama|migration|migraci[oó]n|schema|esquema|feature|funcionalidad|patch|parche|dependenc\w*|service|servicio|flow|flujo|column|columna|field|campo|hook|handler|query|consulta|validation|validaci[oó]n|regex|import|config|configuraci[oó]n|table|tabla|interface|interfaz|enum|constant\w*|constante|variable|helper|util\w*|hash|webhook|linter|pipeline|vulnerabilit\w*)\b/i;
+  /\b(function|funci[oó]n|method|m[eé]todo|class|clase|file|archivo|script|module|m[oó]dulo|component|componente|endpoint|api|route|ruta|tests?|prueba|bug|branch|rama|migration|migraci[oó]n|schema|esquema|feature|funcionalidad|patch|parche|dependenc\w*|service|servicio|flow|flujo|column|columna|field|campo|hook|handler|query|consulta|validation|validaci[oó]n|regex|import|config|configuraci[oó]n|table|tabla|interface|interfaz|enum|constant\w*|constante|variable|helper|util\w*|hash|webhook|linter|pipeline|vulnerabilit\w*)\b/i;
 
 /** True when the user's text is a coding task (→ sandboxed nanoclaw). */
 export function isCodingTask(text: string): boolean {

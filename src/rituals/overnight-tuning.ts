@@ -13,7 +13,7 @@ import { getConfig } from "../config.js";
 import { seedTestCases } from "../tuning/test-cases.js";
 import { countTestCases } from "../tuning/schema.js";
 import { runOvernightTuning } from "../tuning/overnight-loop.js";
-import { submitTask } from "../dispatch/dispatcher.js";
+import { getRouter } from "../messaging/index.js";
 import { mineTestCases } from "../tuning/case-miner.js";
 import { computeAllBaselines } from "../intel/baselines.js";
 
@@ -59,26 +59,30 @@ export async function executeOvernightTuning(): Promise<void> {
       maxCostUsd: config.tuningMaxCostUsd,
     });
 
-    // Submit a summary task for Telegram broadcast
+    // Deliver the report straight to the owner's channels. The report is already
+    // rendered, so we broadcast it directly (router.broadcastToAll) like every
+    // other ritual (diff-digest, market scans, canary) — NOT via a "deliver this"
+    // LLM task. The old submitTask path spun up a fast-runner agent that, lacking a
+    // telegram_send tool, reverse-engineered mission-control's own code, lifted the
+    // bot token from .env, and shelled out a raw curl/python send — 17 turns, ~$1,
+    // and a secret in the logs (2026-06-20). Direct broadcast is deterministic,
+    // free, and leaks nothing.
     if (result.report) {
       const summary =
         result.experiments_won > 0
           ? `Found ${result.experiments_won} improvements (${result.baseline_score?.toFixed(1)} → ${result.best_score?.toFixed(1)})`
           : `No improvements found (score: ${result.baseline_score?.toFixed(1)})`;
 
-      await submitTask({
-        title: `Overnight tuning — ${new Date().toLocaleDateString("en-CA")}`,
-        description: `Deliver this overnight tuning report to Fede via Telegram. Be concise — just send the key findings.
+      const message = `🔧 Overnight Tuning — ${new Date().toLocaleDateString("en-CA")}\n\n${summary}\n\n${result.report}`;
 
-${summary}
-
-Full report:
-${result.report}
-
-STATUS: DONE`,
-        agentType: "fast",
-        interactive: false,
-      });
+      const router = getRouter();
+      if (router) {
+        await router.broadcastToAll(message);
+      } else {
+        console.log(
+          "[rituals] overnight-tuning: no messaging router — report not delivered",
+        );
+      }
     }
 
     console.log(

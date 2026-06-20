@@ -317,22 +317,48 @@ describe("classifier", () => {
     expect(result.agentType).not.toBe("nanoclaw");
   });
 
-  it("KNOWN GAP: a path-less journal-commit messaging chat still routes to nanoclaw", () => {
-    // qa W1 (2026-06-20): the guard is path-literal. A messaging chat that names no
-    // absolute path ("commit the journal repo") gives detectText = title with no
-    // /root/claude/<repo> token, so the foreign-repo guard cannot fire and it lands
-    // on nanoclaw. This is the documented residual — the classifier can't know the
-    // target repo without a path, and hardcoding project keywords would be brittle.
-    // Backstops that make this acceptable: (1) the weekly publish is a SCHEDULED task
-    // pinned to `fast` (host); (2) Jarvis's dispatched git_commit instructions carry
-    // the absolute path (caught above); (3) the scheduled prompt's hard week-gate.
-    // If a future fix closes this gap, flip this assertion.
+  it("GAP CLOSED: a path-less journal-commit messaging chat stays on the host", () => {
+    // Was the qa W1 residual: "commit the journal repo" named no absolute path, so
+    // the foreign-repo guard couldn't fire and it landed on nanoclaw (silent-fail).
+    // Closed 2026-06-20 by dropping lone "repo" from STRONG_CODING_PATTERNS — a bare
+    // "repo" mention is too weak a coding signal. With no git/filename/verb×noun
+    // signal, this is no longer a coding task → it stays on `fast` (host), where the
+    // git_* tools can actually reach the repo. Genuine coding ("fix the repo bug",
+    // "git commit …") still routes via the remaining strong/verb×noun signals.
     const result = classify({
       title: "Chat: commit the journal repo and push to origin",
       description: "You are Jarvis, a strategic AI assistant...",
       tags: ["messaging"],
     });
-    expect(result.agentType).toBe("nanoclaw");
+    expect(result.agentType).not.toBe("nanoclaw");
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("keeps a 'guarda en el repo' KB-save chat OFF nanoclaw (silent-save regression)", () => {
+    // Task 6548 (2026-06-20): "Guarda esto en el repo y marca las cadenas como
+    // target" was forced to nanoclaw by the lone word "repo", which can't reach the
+    // KB → 0 tool calls, nothing saved. A save-to-KB chat must stay on the host
+    // (fast), where jarvis_file_write/project_update exist.
+    const result = classify({
+      title: "Chat: Guarda esto en el repo y marca las cadenas como target",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("treats 'repo' as non-coding (lone OR verb-paired) — real code work has a specific noun", () => {
+    // "repo" is neither a strong signal nor a coding noun: in chat it's ambiguous
+    // between a git repo and the KB. A verb×repo paraphrase ("agrega esto al repo")
+    // is the same silent-save class as the original bug → must stay off nanoclaw.
+    expect(isCodingTask("guarda esto en el repo")).toBe(false);
+    expect(isCodingTask("agrega esto al repo")).toBe(false);
+    expect(isCodingTask("add this note to the repo")).toBe(false);
+    // Genuine code work still routes via a specific noun / strong signal:
+    expect(isCodingTask("fix the bug in the repo")).toBe(true); // bug
+    expect(isCodingTask("rename the branch")).toBe(true); // branch
+    expect(isCodingTask("git commit and push the fix")).toBe(true); // git
   });
 
   describe("targetsForeignRepo", () => {

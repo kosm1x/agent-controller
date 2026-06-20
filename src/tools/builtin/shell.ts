@@ -128,6 +128,24 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
       /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/(\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/,
     reason: "read of dotfile credential blocked",
   },
+  {
+    // Block reads of mission-control's OWN .env (the crown jewels: Telegram bot
+    // token, Anthropic keys) via shell reader commands. Nothing legitimate reads
+    // it through the shell — code reads process.env. Without this, an LLM bypasses
+    // the env sandbox: the overnight-tuning agent ran
+    // `grep TELEGRAM_BOT_TOKEN /root/claude/mission-control/.env` to lift the bot
+    // token and shell out a raw Telegram send (2026-06-20).
+    // Scope is deliberately mission-control's .env ONLY — project .envs are lower-
+    // stakes AND have documented legit reads (the DENUE analyzer's API key lives in
+    // /root/claude/projects/.../denue-data-analysis/.env and fast-runner.ts tells
+    // the agent to grep it). A blanket .env block would break authenticated DENUE
+    // queries. Order-independent lookaheads (NOT an adjacent `[^|;&]*` span) because
+    // a grep alternation arg ("A\|B") contains a `|` that truncates an adjacent
+    // match before the path. `.env.<suffix>` is covered; `.environment` is not.
+    pattern:
+      /(?=[\s\S]*\b(?:cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev|cut|tr|paste)\b)(?=[\s\S]*\/root\/claude\/mission-control\/\.env(?:\.[A-Za-z0-9_-]+)?\b)/,
+    reason: "read of mission-control .env (secrets) blocked",
+  },
 ];
 
 /** Safe path prefixes for write operations.

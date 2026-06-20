@@ -88,6 +88,46 @@ describe("validateShellCommand", () => {
       );
       expect(result.allowed).toBe(false);
     });
+
+    it("should block reading mission-control .env (the bot-token extraction, 2026-06-20)", () => {
+      // The grep alternation arg ("A\|B") contains a `|` — the guard must still fire.
+      const result = validateShellCommand(
+        'grep -n "TELEGRAM_BOT_TOKEN\\|TELEGRAM_OWNER" /root/claude/mission-control/.env',
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe(
+        "read of mission-control .env (secrets) blocked",
+      );
+      // Also blocks suffixed variants and other reader commands.
+      expect(
+        validateShellCommand("cat /root/claude/mission-control/.env.local")
+          .allowed,
+      ).toBe(false);
+    });
+
+    it("blocks cut/tr reading mission-control .env (near-variants of the incident)", () => {
+      expect(
+        validateShellCommand("cut -d= -f2- /root/claude/mission-control/.env")
+          .allowed,
+      ).toBe(false);
+    });
+
+    it("does NOT block project .env reads (DENUE analyzer API-key retrieval)", () => {
+      // fast-runner.ts instructs the agent to read the analyzer's own API key this
+      // way — a blanket .env block would break every authenticated DENUE query.
+      expect(
+        validateShellCommand(
+          "grep '^API_KEY=' /root/claude/projects/data-intelligence/denue-data-analysis/.env | cut -d= -f2-",
+        ).allowed,
+      ).toBe(true);
+    });
+
+    it("does NOT block mission-control .environment (word char after env)", () => {
+      expect(
+        validateShellCommand("cat /root/claude/mission-control/.environment")
+          .allowed,
+      ).toBe(true);
+    });
   });
 
   describe("git command blocking", () => {
@@ -420,7 +460,9 @@ B`;
     // /dev/null as a write target outside ALLOW_WRITE_PREFIXES, blocking
     // every command that silenced stderr — one of the most common idioms.
     it("allows 2>/dev/null stderr discard", () => {
-      const r = validateShellCommand("cat .env 2>/dev/null");
+      // Neutral filename: `.env` reads are now blocked by the secrets guard, so
+      // this discard-idiom test uses a non-secret file (the suffix is the subject).
+      const r = validateShellCommand("cat config.log 2>/dev/null");
       expect(r.allowed).toBe(true);
     });
 
@@ -436,7 +478,7 @@ B`;
 
     it("allows chained discard idiom", () => {
       const r = validateShellCommand(
-        'cat .env 2>/dev/null || ls *.env || echo "no env"',
+        'cat config.log 2>/dev/null || ls *.log || echo "no file"',
       );
       expect(r.allowed).toBe(true);
     });
