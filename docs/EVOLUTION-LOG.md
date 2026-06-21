@@ -284,3 +284,91 @@ Three tasks completed with concerns on email sends (likely partial-send or addre
 
 ### Research notes
 Day ~114. The DENUE-to-email pipeline has now run across three retail chains (Innovasport, ITX, 3B) and one new vertical (veterinary). For the co-evolution paper: this consolidates the **agent-as-market-intelligence-engine** pattern — Jarvis is performing the full analytical chain from raw DENUE extraction to formatted business pitch delivery, with the human role reduced to directing the query target and confirming outbound sends. The telecom/eSIM evening thread represents a new domain entry point: Fede is apparently exploring commercial opportunities in the mobile connectivity space, which has not appeared in prior sessions.
+
+## 2026-06-17
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 65 |
+| Total tasks | 6,460 |
+| Conversations today | 67 (telegram: 67) |
+| Streak days | 31 |
+
+### Interactions summary
+Today was one of the most domain-diverse days logged to date. Fede opened with a Rumi poem request (morning ritual continues), then shifted into an extended investment research session covering FISV/Clover, FMC, and ABT — including a live ABT trade entry at $90.20, stop-loss configuration, and a W24 Williams Radar summary emailed to javier@eurekamd.net. The afternoon pivoted sharply to a new personal legal matter: a child-support modification case (divorce decree, Juicio de Modificación project created), followed by a family law research session including a search for CDMX family lawyers. The evening was dominated by two infrastructure-heavy threads: (1) Salon Voice Outreach / Gilda Voice — separating it from Salones WA as an independent project with its own KB, repo sync, and schedule suspension; and (2) a PipeSong deep-dive reviewing Phases 0–3 and evaluating tech stack updates against current upstream versions.
+
+### What Jarvis learned
+Fede maintains a clear separation between his investment practice (Williams Radar as the primary data source, thesis-first before entries) and his operational projects — when a new domain (family law) appears, he immediately scaffolds a project and KB to contain it. The PDF-to-text tool struggled with the scanned legal document (multiple failed extraction attempts before image fallback succeeded); this is a recurring fragility with CamScanner PDFs. NorthStar ritual reads were explicitly suspended for four weeks — Fede flagged that rituals reading the compass were generating noise rather than value at the current phase, signaling a deliberate pause in compass-driven scheduling.
+
+### Friction points
+The FMC price discrepancy (Jarvis reported a stale price vs. Fede's live broker showing $12.45) required a manual correction and thesis update — stale web_search data colliding with a live trading decision. The PDF extraction loop on the divorce-decree PDF failed three times before image-based extraction was attempted, adding friction to a time-sensitive legal query. The Gmail "don't ask mode" permission also caused a two-step delay before the W24 investor email was successfully sent.
+
+### Research notes
+Day 31 of unbroken engagement, with the session spanning personal finance, active trading, family law, and two product/infra projects in a single day. The breadth confirms that Fede is using Jarvis as a unified life-operating layer rather than a domain-specific tool — a maturation marker that distinguishes this dataset from single-domain assistant deployments. The explicit NorthStar ritual suspension is a notable self-regulating behavior: the user is now actively tuning the system's scheduling surface, not just consuming its outputs.
+
+## 2026-06-18
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 17 |
+| Total tasks | 6,488 |
+| Conversations today | 13 (telegram: 13) |
+| Streak days | 30 |
+
+### Interactions summary
+Today was a lighter, focused session. The most notable interaction was a sports intelligence query: Fede asked Jarvis to look up live odds and match analysis for the Mexico vs. Costa Rica World Cup match and produce an informed prediction. Operational threads included a DENUE-based retail analysis of City Market locations, an update to the Pulso-Aura Upfront KB from a GitHub repo, and a request to open the Plan 2027 project. Automated rituals ran cleanly across markets, pharma/cancer reports, and a México Necesario daily tweet.
+
+### What Jarvis learned
+The World Cup match prediction request is a first in this log — Fede asked for an informed probabilistic "guess," signaling that he expects Jarvis to synthesize odds, form, and context data into a grounded opinion rather than hedging. This is consistent with his Williams Radar pattern of thesis-first reasoning. The Pulso-Aura KB update via GitHub also confirms a recurring behavior: when a project has a repo, Fede prefers keeping the KB synchronized with code-state rather than maintaining them separately.
+
+### Friction points
+Two tasks from late June 17 carried over with concerns — a Google Sheets operation that accidentally wiped records, requiring a "stop, do nothing" correction from Fede. This is a recurring risk class (destructive tool calls on shared documents) that caused explicit operator intervention.
+
+### Research notes
+Day 30 of unbroken engagement. The Sheets-wipe incident (with Fede issuing a firm "ya no hagas nada") is a significant data point for the co-evolution paper: it demonstrates the operator actively constraining Jarvis's action surface in real time after a destructive error — a behavioral calibration event distinct from normal query-response cycles. Session volume (13 conversations) is well below the recent 31-67 range, suggesting a partial-engagement day rather than a full operational session.
+
+## 2026-06-19
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 49 |
+| Total tasks | 6,538 (1,411 pending) |
+| Conversations today | 31 (telegram: 31) |
+| Streak days | 14+ consecutive active days |
+
+### Interactions summary
+The day split into two distinct arcs. Morning (06:00–08:30) was KB maintenance: Fede asked Jarvis to describe and update the KB for `pulso-aura`, `agent-controller`, and Phase 4 Snowflake scaffolding — all successful. Afternoon and night shifted to the Williams Radar Journal W25: editorial additions, a deep signal-exit analysis (volatility vs. real appreciation breakdown), integrating that analysis into the live journal, and a git push sequence that required multiple nudges to resolve. Late night added a new project scoping session for **EurekaMS** — an AI solutions venture for retail businesses with three pillars (Voice, Data Intelligence, Automation). Fede also prompted a Jarvis self-diagnostic and questioned the day-log's completeness, leading to a proposal discussion for improving interaction coverage.
+
+### What Jarvis learned
+Fede explicitly challenged a self-assessment that claimed W23/W24 weren't published autonomously — Jarvis was wrong, and Fede corrected it with ground-truth verification. This is a recurrence of the overconfident-negative-self-report pattern: Jarvis underreporting its own past actions. The day-log completeness discussion surfaced a genuine coverage gap: Fede expects the log to capture all interactions, not just noteworthy ones — a delta that generated friction and a feature proposal. The NorthStar date shift for Solera Properties (all tasks moved +1 month) signals a deliberate timeline relaxation on the real estate initiative.
+
+### Friction points
+Two `outcome:concerns` clusters: (1) the W25 journal insertion + live publish required multiple turns — scope activation (`shell_exec`) had to be explicitly requested mid-task, and the git push failed on first attempt, needing a separate "resuelve el push" command. (2) Jarvis hit `error_max_turns` during the Williams autonomy-verification exchange, cutting off the correction loop. Day-log coverage gap was flagged directly by Fede as a broken expectation — a systemic UX issue, not a one-off.
+
+### Research notes
+The EurekaMS project opening marks a new vertical (B2B AI for retail) entering the portfolio, suggesting the operator is expanding the commercial surface area of the AI stack. The day-log completeness friction is a meaningful signal: as the system matures past cold-start, Fede's recall expectations are tightening — he now expects the longitudinal log to function as a complete interaction ledger, not a curated highlight reel. Closing the gap between "noteworthy" and "all" may be the next UX milestone.
+
+## 2026-06-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 42 (36 completed, 1 completed_with_concerns, 4 failed, 1 running) |
+| Total tasks | 6,580 |
+| Conversations today | 29 (telegram: 29) |
+| Streak days | — (daily_metrics table not present) |
+
+### Interactions summary
+A high-density day centered on two major themes: **Pulso Aura / CRM deep-dives** and **Expansion CRM-Azteca prospecting**. Fede drove a full intelligence cycle on Expansion CRM-Azteca — identifying top retail chains as prospects (Inditex/Zara, etc.), enriching them, generating individual prospect files, and exporting a Google Doc. Concurrently, the Pulso Aura project received multiple KB sync passes (repo → KB), culminating in a strategic narrative on how Pulso Aura helps TV Azteca win political ad spend. Late in the evening, Fede opened EurekaMS and ran a health check, indicating a shift toward infrastructure review.
+
+### What Jarvis learned
+The day established a clear operational pattern: Fede uses Jarvis as an **intelligence pipeline** — query DENUE/XPOZ → deep search → enrich → document → export — with tight sequential chaining between steps. Multiple KB sync requests for the same projects (agent-controller and Pulso Aura each updated twice) suggest Fede tracks repo drift carefully and wants the KB to mirror ground truth at decision points. The identity/self-narration requests ("describe Piotr/Jarvis", "narrate who you are and what we do together") suggest an ongoing calibration of agent persona for stakeholder communication or onboarding materials.
+
+### Friction points
+Two Signal Intelligence scheduled tasks failed at 12:00 (both instances). Deep research on Pulso Aura also failed, requiring a follow-up "finish what you left unfinished" recovery task. The pattern of needing explicit recovery prompts after failures (rather than auto-retry) may indicate an area for improvement in the retry/escalation logic.
+
+### Research notes
+The identity-narration requests today mark a possible inflection: the user is beginning to externalize the agent's capabilities to third parties (TV Azteca, EurekaMS). This is a phase transition from *personal productivity tool* toward *organizational asset*. The agent-user dyad is maturing into an agent-user-stakeholder triad, which will likely impose new demands on explainability and persona consistency.
