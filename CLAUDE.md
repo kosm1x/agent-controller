@@ -119,6 +119,19 @@ After deploy, always verify:
 2. `journalctl -u mission-control --since '30 sec ago' --no-pager | tail -10` — check for startup errors
 3. Test at least one affected endpoint or trigger one affected workflow
 
+### Validating a risky / never-run path
+
+Debut a 0-usage or destructive-if-wrong path with a `scripts/validate-*.ts` (or
+`verify-*.ts`) one-off harness, NOT against live state:
+
+- isolated DB: `initDatabase('/tmp/<name>.db')` on a `copyFileSync` snapshot of
+  `data/mc.db` (+`-wal`/`-shm`), `chmodSync(…, 0o600)` — it's a full memory snapshot.
+- live env via `/proc/<MainPID>/environ` (loads INFERENCE\_\* / keys; never printed).
+- the harness must replicate `index.ts`'s tool-source init
+  (`new ToolSourceManager().addSource(new BuiltinToolSource()); await initAll(registry)`)
+  or sub-agents fail with "No tools available."
+- gate real spend behind `--run`. Precedents: `validate-swarm.ts`, `verify-v82-cache.ts`.
+
 ### Inference provider cutover & revert
 
 The inference adapter routes through the Anthropic Claude Agent SDK when `INFERENCE_PRIMARY_PROVIDER=claude-sdk` (current default since 2026-05-10) — Sonnet primary, Haiku fallback for `infer()`/`inferWithTools()` callers, Opus→Sonnet for Prometheus complex paths. CRM and the Hindsight container deliberately stay on Fireworks; vision and Whisper stay on Groq. Cutover memory: `feedback_anthropic_sdk_cutover_2026_05_10.md`.
@@ -217,6 +230,20 @@ Recipe:
 3. Add classification case in `src/dispatch/classifier.ts`
 4. Add tests
 
+> **Chat tasks never reach the score-based path.** `classify()` returns from the
+> messaging branch BEFORE the `PARALLEL_PATTERNS`/score routing, so a chat
+> (Telegram/email) only lands on a runner the messaging branch _explicitly_ routes
+> to. A `PARALLEL_PATTERNS` score case alone leaves the runner unreachable from
+> chat — wire an explicit check into the messaging branch too, behind a
+> `MESSAGING_*_ESCALATION` kill switch. (`swarm` had 0 lifetime runs until
+> `isFanOutTask` was added to the messaging branch, 2026-06-20.)
+>
+> **Delivery: the event bus passes the result OBJECT by reference** (in-process).
+> `task.completed`'s `result` is the runner's raw output object, NOT a JSON string;
+> the router's `extractResultText` reads `.text`/`.output`/`.result`/`.content` off
+> it. A new runner's output shape must expose one of those keys. Don't "fix" a
+> serialization path assuming a string — trace the actual value type first.
+
 ### Adding a new MCP server (`mcp-servers.json`)
 
 `src/mcp/manager.ts:137` passes `env: undefined` to `StdioClientTransport` whenever `McpServerConfig.env` is missing — the SDK interprets that as a clean minimal env (HOME/PATH/etc, ~5 vars), **not** parent inheritance. Any truthy `config.env` (including `{}`) flips to `{...process.env, ...config.env}` and the bridge child receives mc's full env.
@@ -236,5 +263,7 @@ Recipe:
 
 ## Git
 
-- Remote: `kosm1x/agent-controller` on GitHub
-- SSH preferred. Fall back to `gh` CLI for HTTPS if SSH unavailable.
+- Remote: `https://github.com/kosm1x/agent-controller.git` (HTTPS)
+- **No SSH keys on this VPS — HTTPS + `gh` CLI only.** Run `gh auth status` before
+  the first push; never switch the remote to SSH. (Operator + Jarvis share this
+  worktree's `.git`; commits land on local `main`.)
