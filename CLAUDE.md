@@ -92,6 +92,8 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl task <id>           # Task detail + runs + subtasks
 ./mc-ctl logs 50             # journalctl last N lines
 ./mc-ctl db "SELECT ..."    # Raw SQLite query or interactive shell
+./mc-ctl briefing-gate      # V8.1 §13 + V8.2 §17 activation gates (worst-of-two exit)
+./mc-ctl judgments [id]     # V8.2 shadow judgments — list/detail + §17 gate-readiness header
 ./mc-ctl audit-claim utility --window=24h --stratify-by=bank   # Self-audit before reporting (V8 S2)
 ```
 

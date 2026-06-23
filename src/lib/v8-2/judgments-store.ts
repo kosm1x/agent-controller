@@ -128,6 +128,109 @@ export function getJudgmentById(
   return row ? rowToJudgment(row) : null;
 }
 
+// ── Operator inspector reads (mc-ctl judgments) ────────────────────────────
+// Read-only views over the shadow judgments, for the `mc-ctl judgments`
+// inspector that surfaces what's accruing toward the §17 activation gate.
+// Cross-briefing (newest-first) — unlike the briefing-scoped readers above.
+
+/** Resolver-status rollup of one judgment's attributed claims (its citation
+ *  health). The five buckets sum to `total`. */
+export interface JudgmentClaimSummary {
+  total: number;
+  resolved: number;
+  stale: number;
+  contradicted: number;
+  unresolved: number;
+}
+
+/** One attributed-claim row, flattened for the inspector's detail view. */
+export interface AttributedClaimRow {
+  claimId: number;
+  claimText: string;
+  evidenceKind: string;
+  evidenceId: string;
+  evidenceExcerpt: string;
+  resolverStatus: "unresolved" | "resolved" | "stale" | "contradicted";
+  retrievedAt: string;
+}
+
+/**
+ * Recent judgments across ALL briefings, newest first. `windowDays > 0` filters
+ * by `created_at`; `limit` caps the row count (default 20, hard-capped 200 so a
+ * stray `--limit` can't scan the whole table). Read-only.
+ */
+export function getRecentJudgments(
+  opts: { windowDays?: number; limit?: number } = {},
+  db: Database.Database = getDatabase(),
+): JudgmentRow[] {
+  const limit = Math.max(1, Math.min(Math.trunc(opts.limit ?? 20), 200));
+  const windowDays =
+    opts.windowDays && opts.windowDays > 0 ? Math.trunc(opts.windowDays) : 0;
+  const order = `ORDER BY created_at DESC, id DESC LIMIT ?`;
+  const rows = (
+    windowDays > 0
+      ? db
+          .prepare(
+            `SELECT ${SELECT_COLS} FROM judgments
+              WHERE created_at > datetime('now', ?) ${order}`,
+          )
+          .all(`-${windowDays} days`, limit)
+      : db.prepare(`SELECT ${SELECT_COLS} FROM judgments ${order}`).all(limit)
+  ) as RawJudgmentRow[];
+  return rows.map(rowToJudgment);
+}
+
+/** Resolver-status breakdown of a judgment's attributed claims. A judgment with
+ *  no claims returns all-zero (the inspector renders that as "no claims yet"). */
+export function getJudgmentClaimSummary(
+  judgmentId: number,
+  db: Database.Database = getDatabase(),
+): JudgmentClaimSummary {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(resolver_status='resolved'),0)     AS resolved,
+              COALESCE(SUM(resolver_status='stale'),0)        AS stale,
+              COALESCE(SUM(resolver_status='contradicted'),0) AS contradicted,
+              COALESCE(SUM(resolver_status='unresolved'),0)   AS unresolved
+         FROM attributed_claims WHERE judgment_id = ?`,
+    )
+    .get(judgmentId) as JudgmentClaimSummary;
+}
+
+/** A judgment's attributed claims, ordered by claim then row, for the detail
+ *  view. Empty list = no claims. */
+export function getAttributedClaimRows(
+  judgmentId: number,
+  db: Database.Database = getDatabase(),
+): AttributedClaimRow[] {
+  const rows = db
+    .prepare(
+      `SELECT claim_id, claim_text, evidence_kind, evidence_id,
+              evidence_excerpt, resolver_status, retrieved_at
+         FROM attributed_claims WHERE judgment_id = ?
+        ORDER BY claim_id, id`,
+    )
+    .all(judgmentId) as {
+    claim_id: number;
+    claim_text: string;
+    evidence_kind: string;
+    evidence_id: string;
+    evidence_excerpt: string;
+    resolver_status: AttributedClaimRow["resolverStatus"];
+    retrieved_at: string;
+  }[];
+  return rows.map((r) => ({
+    claimId: r.claim_id,
+    claimText: r.claim_text,
+    evidenceKind: r.evidence_kind,
+    evidenceId: r.evidence_id,
+    evidenceExcerpt: r.evidence_excerpt,
+    resolverStatus: r.resolver_status,
+    retrievedAt: r.retrieved_at,
+  }));
+}
+
 /**
  * Normalize the V8.1 `Judgment` posture vocabulary ('has_momentum') to the
  * persisted `judgments.posture` CHECK vocabulary ('momentum'). The two diverge

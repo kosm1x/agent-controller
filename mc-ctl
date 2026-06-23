@@ -1715,6 +1715,7 @@ usage() {
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
   echo -e "                          metrics: utility | cache-hit | latency | cost"
   echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
+  echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
   echo -e "  ${GREEN}intel${NC} status          Source health + signal counts"
@@ -2640,6 +2641,12 @@ cmd_briefing_gate() {
   ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/briefing-gate.ts )
 }
 
+cmd_judgments() {
+  # mc-ctl judgments [id] [--window=N] [--limit=N] — inspect the V8.2 shadow
+  # judgments accruing toward the §17 activation gate. Read-only.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/judgments.ts "$@" )
+}
+
 # ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
@@ -2688,6 +2695,7 @@ case "$cmd" in
   cohort)            cmd_cohort "$@" ;;
   recall-modes)      cmd_recall_modes ;;
   briefing-gate)     cmd_briefing_gate ;;
+  judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;
   resume)            cmd_resume "${1:-}" ;;
