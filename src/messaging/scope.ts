@@ -255,6 +255,7 @@ export const SOCIAL_TOOLS = [
   "social_publish_status",
   "tweet_post",
   "tweet_probe",
+  "tweet_mentions",
 ];
 
 /** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
@@ -781,7 +782,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b((?:publica(?:r|ci[oó]n)?|publique)\s+(?:\S+\s+){0,3}(?:en\s+)?(?:redes|instagram|facebook|tiktok|youtube|x|twitter)|publish\s+(?:to|on)\s|postea(?:r|lo)?|tweet|re-?tweet|tuit(?:ea|ear|[eé]alo|[eé]ame)?|twitter|x\.com|tweet_post|tweet_probe|(?:sesi[oó]n|cuenta|acceso|credencial(?:es)?|cookies?|login|token)\s+(?:\S+\s+){0,4}(?:de|en|a|para|to|of|del)\s+(?:twitter\b|x\b(?!\s+\w))|instagram|facebook(?!\s*auth)|redes\s*sociales|social\s*media|contenido\s+para\s+(?:redes|social)|programar?\s+(?:un\s+)?post|schedule\s+post)\b/i,
+      /\b((?:publica(?:r|ci[oó]n)?|publique)\s+(?:\S+\s+){0,3}(?:en\s+)?(?:redes|instagram|facebook|tiktok|youtube|x|twitter)|publish\s+(?:to|on)\s|postea(?:r|lo)?|tweet|re-?tweet|tuit(?:ea|ear|[eé]alo|[eé]ame)?|twitter|x\.com|tweet_post|tweet_probe|tweet_mentions|(?:menci[oó]n(?:es)?|mention(?:s|ed)?)\s+(?:de\s+|en\s+|on\s+|in\s+)?(?:x\b|twitter)|(?:x\b|twitter)\s+mentions?|(?:sesi[oó]n|cuenta|acceso|credencial(?:es)?|cookies?|login|token)\s+(?:\S+\s+){0,4}(?:de|en|a|para|to|of|del)\s+(?:twitter\b|x\b(?!\s+\w))|instagram|facebook(?!\s*auth)|redes\s*sociales|social\s*media|contenido\s+para\s+(?:redes|social)|programar?\s+(?:un\s+)?post|schedule\s+post)\b/i,
     group: "social",
   },
   {

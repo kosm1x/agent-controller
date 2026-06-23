@@ -17,6 +17,7 @@ export { CookieBackend } from "./cookie-backend.js";
 export { ApiBackend } from "./api-backend.js";
 export * from "./types.js";
 export * from "./config.js";
+export * from "./read.js";
 
 /**
  * Router for one account. `account` is resolved (explicit → default → sole).

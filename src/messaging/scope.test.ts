@@ -94,6 +94,22 @@ describe("scope pattern matching", () => {
     }
   });
 
+  it("loads tweet_mentions on mention phrasings (ES + EN, both word orders)", () => {
+    for (const msg of [
+      "lee mis menciones de X",
+      "revisa las menciones en twitter",
+      "check my X mentions",
+      "read my twitter mentions",
+      "who mentioned me on twitter",
+    ]) {
+      expect(scope(msg)).toContain("tweet_mentions");
+    }
+    // Bare "menciones" with no platform must NOT over-fire (other platforms).
+    expect(scope("revisa las menciones del reporte")).not.toContain(
+      "tweet_mentions",
+    );
+  });
+
   it("does NOT activate the X tools on the Spanish 'x = variable' idiom (false-positive guard)", () => {
     // W2: "x" followed by a noun is the algebraic-variable idiom, not the platform.
     for (const msg of [

@@ -379,7 +379,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     //                        skill_load + skill_run added per spec §7 L1/L2/exec).
     // 2026-06-23: 192 → 194 (X backend-router — tweet_post + tweet_probe added,
     //                        native replacement for ad-hoc Playwright X scripts).
-    expect(ALL_TOOLS.length).toBe(194);
+    // 2026-06-23: 194 → 195 (X read path — tweet_mentions added).
+    expect(ALL_TOOLS.length).toBe(195);
   });
 
   // ──────────────────────────────────────────────────────────────────

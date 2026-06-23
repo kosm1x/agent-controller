@@ -35,6 +35,7 @@ X_BEARER=...                  # public web bearer (constant; override only if X 
 X_CREATETWEET_QUERY_ID=...    # GraphQL CreateTweet queryId — bump if posting 404s
 X_CREATETWEET_FEATURES={...}  # GraphQL feature flags JSON — override if CreateTweet 400s
 X_PROBE_URL=...               # probe endpoint (default: badge_count; override if X moves it)
+X_MENTIONS_URL=...            # mentions read endpoint (default: notifications/mentions.json; override if X moves it)
 X_PROBE_ENABLED=true          # arm the daily proactive probe (systemd drop-in, ships dormant)
 X_PROBE_CRON="0 9 * * *"      # probe cadence (MX tz)
 ```
@@ -53,9 +54,18 @@ loads at boot.
   with script variants). 280-weighted-char pre-check.
 - `tweet_probe { account? }` — read-only doctor; omit `account` to probe all
   accounts. Hits `badge_count` (read-only) to detect expiry without posting.
+- `tweet_mentions { account?, limit? }` — **read-only**; reads an account's
+  recent mentions (the reply inbox). Returns newest-first
+  `{tweet_id, author, name, text, created_at, in_reply_to?}`. To reply, feed a
+  `tweet_id` into `tweet_post`'s `reply_to_id`. Reads do NOT consume the daily
+  send-limit (code 344), so this works even while posting is throttled. Empty
+  list = no mentions, not an error. Code: `src/lib/x-poster/read.ts`
+  (`/2/notifications/mentions.json`, env-overridable `X_MENTIONS_URL`, no
+  rotating GraphQL queryId needed).
 
 Reach them in chat with X-intent phrasing ("tuitea…", "postea en X…", "verifica
-la sesión de x", "tweet_probe") **or by naming a configured account** — the scope
+la sesión de x", "tweet_probe", "lee mis menciones de X", "check my X mentions")
+**or by naming a configured account** — the scope
 also activates when the message mentions a configured handle (exact or near-miss,
 e.g. "Verifica @iooking4ward" / "@lookin4ward"), via `findConfiguredHandleInText`.
 Ground-truth from `listXAccounts()`, so unrelated `@mentions` and the "México

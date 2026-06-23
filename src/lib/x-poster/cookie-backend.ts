@@ -22,61 +22,11 @@ import {
   type AccountCreds,
 } from "./config.js";
 import { classifyXError, describeXError } from "./x-errors.js";
-import { STEALTH_LAUNCH_ARGS } from "../stealth-browser.js";
+import { authHeaders, withAuthedRequest } from "./authed-request.js";
 import { createLogger } from "../logger.js";
 
 const NAV_TIMEOUT_MS = 30_000;
 const log = createLogger("x-poster");
-
-function authHeaders(creds: AccountCreds): Record<string, string> {
-  return {
-    authorization: getXGlobals().bearer,
-    "x-csrf-token": creds.ct0 ?? "",
-    "x-twitter-auth-type": "OAuth2Session",
-    "x-twitter-active-user": "yes",
-    "content-type": "application/json",
-  };
-}
-
-/** Cookies on both apex domains (X migrated x.com↔twitter.com). */
-function cookiePayload(creds: AccountCreds) {
-  const out: Array<{
-    name: string;
-    value: string;
-    domain: string;
-    path: string;
-  }> = [];
-  for (const domain of [".x.com", ".twitter.com"]) {
-    if (creds.authToken)
-      out.push({
-        name: "auth_token",
-        value: creds.authToken,
-        domain,
-        path: "/",
-      });
-    if (creds.ct0)
-      out.push({ name: "ct0", value: creds.ct0, domain, path: "/" });
-  }
-  return out;
-}
-
-async function withAuthedRequest<T>(
-  creds: AccountCreds,
-  fn: (request: import("playwright").APIRequestContext) => Promise<T>,
-): Promise<T> {
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({
-    headless: true,
-    args: [...STEALTH_LAUNCH_ARGS],
-  });
-  try {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    await context.addCookies(cookiePayload(creds));
-    return await fn(context.request);
-  } finally {
-    await browser.close().catch(() => {});
-  }
-}
 
 export class CookieBackend implements XBackend {
   readonly name = "cookie";

@@ -15,6 +15,7 @@ import {
   listXAccounts,
   resolveAccount,
   anyXAccountConfigured,
+  readMentions,
 } from "../../lib/x-poster/index.js";
 
 const NOT_CONFIGURED =
@@ -274,5 +275,90 @@ check ALL configured accounts. Returns per-account/backend {ok, detail, authExpi
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  },
+};
+
+export const tweetMentionsTool: Tool = {
+  name: "tweet_mentions",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  deferred: true,
+  triggerPhrases: [
+    "lee mis menciones",
+    "revisa las menciones de X",
+    "check my X mentions",
+    "who mentioned me on twitter",
+  ],
+  definition: {
+    type: "function",
+    function: {
+      name: "tweet_mentions",
+      description: `Read recent X (Twitter) MENTIONS for an account (read-only — safe; does
+NOT consume the daily posting limit).
+
+USE WHEN:
+- The operator asks who mentioned/replied to an account on X, or to triage the
+  mention inbox.
+- You need a tweet's id to reply: read mentions → take the \`tweet_id\` → call
+  tweet_post with \`reply_to_id\` set to it.
+
+THIS is how you read X mentions. Do NOT use shell_exec, Playwright/.cjs scripts,
+or user_facts/mc.db. ${accountsHint()}
+
+Returns newest-first; each item: \`tweet_id\`, \`author\` (handle), \`name\`,
+\`text\`, \`created_at\`, optional \`in_reply_to\`. An empty list means no
+mentions, not an error.`,
+      parameters: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description:
+              "Account whose mentions to read — an EXACT configured label (see CONFIGURED ACCOUNTS). Omit for the default account.",
+          },
+          limit: {
+            type: "number",
+            description: "Max mentions to return (default 20, max 50).",
+          },
+        },
+      },
+    },
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    if (!anyXAccountConfigured())
+      return JSON.stringify({ error: NOT_CONFIGURED });
+    const account =
+      typeof args.account === "string" && args.account.trim() !== ""
+        ? args.account.trim()
+        : undefined;
+    const limit =
+      typeof args.limit === "number" && args.limit > 0
+        ? Math.min(Math.floor(args.limit), 50)
+        : 20;
+
+    // Reuse the router's resolution + config guard (fuzzy handle, real list error).
+    if (!getXRouter(account))
+      return JSON.stringify({ error: noAccountError(account) });
+    const handle = resolveAccount(account);
+    if (!handle) return JSON.stringify({ error: noAccountError(account) });
+
+    const result = await readMentions(handle, limit);
+    if (!result.ok)
+      return JSON.stringify({ error: result.error, account: result.account });
+    return JSON.stringify({
+      account: result.account,
+      count: result.mentions.length,
+      mentions: result.mentions.map((m) => ({
+        tweet_id: m.tweetId,
+        author: m.author,
+        name: m.authorName,
+        text: m.text,
+        created_at: m.createdAt,
+        in_reply_to: m.inReplyToTweetId,
+      })),
+    });
   },
 };
