@@ -102,7 +102,7 @@ POST /api/tasks           POST /a2a (JSON-RPC)
 
 Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 35 rounds (coding) / 10 default. Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
 
-186 non-MCP tools across builtin (143 incl. teaching-tools), Google (22), WordPress (10), Memory (4), Social (3), Skills (2), CRM/GWS (1+1) — plus MCP-bridge tools registered dynamically at startup (xpoz, browser, playwright, etc.). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
+258 tools across 4 ToolSources — builtin (161, incl. Google-Workspace, WordPress, memory, social, CRM, teaching, video, coding), MCP-bridge (70, registered dynamically: xpoz, browser, playwright, supabase), Google (22), Skills (5). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
 
 ### NanoClaw runner
 
@@ -148,9 +148,9 @@ MC also acts as an A2A server — external agents can discover MC and submit tas
 
 ### Inference adapter
 
-Vendor-agnostic — raw HTTP to any OpenAI-compatible `/v1/chat/completions` endpoint. Adapted from NanoClaw's production code.
+The current default routes through the **Claude Agent SDK** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`). The OpenAI-compatible path below is the fallback/alternative, selected with `INFERENCE_PRIMARY_PROVIDER=openai` — vendor-agnostic raw HTTP to any `/v1/chat/completions` endpoint, adapted from NanoClaw's production code.
 
-Configure via environment:
+Configure the OpenAI-compat path via environment:
 
 ```
 INFERENCE_PRIMARY_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -187,20 +187,20 @@ Set `MC_MCP_CONFIG` to point to a custom config path, or place `mcp-servers.json
 
 All endpoints require `X-Api-Key` header except health check.
 
-| Method | Path                      | What it does                                |
-| ------ | ------------------------- | ------------------------------------------- |
-| `POST` | `/api/tasks`              | Submit a task                               |
-| `GET`  | `/api/tasks`              | List tasks (filter by status, type, parent) |
-| `GET`  | `/api/tasks/:id`          | Task detail with runs and sub-tasks         |
-| `POST` | `/api/tasks/:id/cancel`   | Cancel (cascades to sub-tasks)              |
-| `POST` | `/api/agents/register`    | Agent self-registration                     |
-| `POST` | `/api/agents/heartbeat`   | Agent heartbeat                             |
-| `GET`  | `/api/agents`             | List agents                                 |
-| `GET`  | `/api/events/stream`      | SSE real-time event stream                  |
+| Method | Path                      | What it does                                   |
+| ------ | ------------------------- | ---------------------------------------------- |
+| `POST` | `/api/tasks`              | Submit a task                                  |
+| `GET`  | `/api/tasks`              | List tasks (filter by status, type, parent)    |
+| `GET`  | `/api/tasks/:id`          | Task detail with runs and sub-tasks            |
+| `POST` | `/api/tasks/:id/cancel`   | Cancel (cascades to sub-tasks)                 |
+| `POST` | `/api/agents/register`    | Agent self-registration                        |
+| `POST` | `/api/agents/heartbeat`   | Agent heartbeat                                |
+| `GET`  | `/api/agents`             | List agents                                    |
+| `GET`  | `/api/events/stream`      | SSE real-time event stream                     |
 | `GET`  | `/health`                 | Liveness public; detail needs key/private peer |
-| `GET`  | `/dashboard/`             | Web dashboard (no auth, JS handles API key) |
-| `GET`  | `/.well-known/agent.json` | A2A agent card (no auth)                    |
-| `POST` | `/a2a`                    | A2A JSON-RPC endpoint                       |
+| `GET`  | `/dashboard/`             | Web dashboard (no auth, JS handles API key)    |
+| `GET`  | `/.well-known/agent.json` | A2A agent card (no auth)                       |
+| `POST` | `/a2a`                    | A2A JSON-RPC endpoint                          |
 
 ### Examples
 
@@ -348,30 +348,39 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ### Environment variables
 
-| Variable                    | Required | Default                   | Description                 |
-| --------------------------- | -------- | ------------------------- | --------------------------- |
-| `MC_API_KEY`                | Yes      | —                         | API key for authentication  |
-| `MC_PORT`                   | No       | `8080`                    | Server port                 |
-| `MC_DB_PATH`                | No       | `./data/mc.db`            | SQLite database path        |
-| `INFERENCE_PRIMARY_URL`     | Yes      | —                         | LLM provider base URL       |
-| `INFERENCE_PRIMARY_KEY`     | Yes      | —                         | LLM provider API key        |
-| `INFERENCE_PRIMARY_MODEL`   | Yes      | —                         | Model name                  |
-| `INFERENCE_FALLBACK_URL`    | No       | —                         | Fallback provider URL       |
-| `INFERENCE_FALLBACK_KEY`    | No       | —                         | Fallback provider key       |
-| `INFERENCE_FALLBACK_MODEL`  | No       | —                         | Fallback model name         |
-| `INFERENCE_TIMEOUT_MS`      | No       | `30000`                   | LLM call timeout            |
-| `INFERENCE_MAX_TOKENS`      | No       | `4096`                    | Max tokens per response     |
-| `NANOCLAW_IMAGE`            | No       | `nanoclaw-agent:latest`   | NanoClaw container image    |
-| `MAX_CONCURRENT_CONTAINERS` | No       | `5`                       | Max simultaneous containers |
-| `MC_MCP_CONFIG`             | No       | `./mcp-servers.json`      | Path to MCP servers config  |
-| `A2A_AGENT_NAME`            | No       | `Mission Control`         | A2A agent card display name |
-| `A2A_AGENT_URL`             | No       | `http://localhost:{port}` | A2A agent card base URL     |
+| Variable                     | Required    | Default                   | Description                                                                            |
+| ---------------------------- | ----------- | ------------------------- | -------------------------------------------------------------------------------------- |
+| `MC_API_KEY`                 | Yes         | —                         | API key for authentication                                                             |
+| `MC_PORT`                    | No          | `8080`                    | Server port                                                                            |
+| `MC_DB_PATH`                 | No          | `./data/mc.db`            | SQLite database path                                                                   |
+| `INFERENCE_PRIMARY_PROVIDER` | No          | `claude-sdk`              | `claude-sdk` (Sonnet via Agent SDK, current default) or `openai` (OpenAI-compat below) |
+| `INFERENCE_PRIMARY_URL`      | If `openai` | —                         | LLM provider base URL (unused under `claude-sdk`)                                      |
+| `INFERENCE_PRIMARY_KEY`      | If `openai` | —                         | LLM provider API key (unused under `claude-sdk`)                                       |
+| `INFERENCE_PRIMARY_MODEL`    | If `openai` | —                         | Model name (unused under `claude-sdk`)                                                 |
+| `INFERENCE_FALLBACK_URL`     | No          | —                         | Fallback provider URL                                                                  |
+| `INFERENCE_FALLBACK_KEY`     | No          | —                         | Fallback provider key                                                                  |
+| `INFERENCE_FALLBACK_MODEL`   | No          | —                         | Fallback model name                                                                    |
+| `INFERENCE_TIMEOUT_MS`       | No          | `30000`                   | LLM call timeout                                                                       |
+| `INFERENCE_MAX_TOKENS`       | No          | `4096`                    | Max tokens per response                                                                |
+| `NANOCLAW_IMAGE`             | No          | `nanoclaw-agent:latest`   | NanoClaw container image                                                               |
+| `MAX_CONCURRENT_CONTAINERS`  | No          | `5`                       | Max simultaneous containers                                                            |
+| `MC_MCP_CONFIG`              | No          | `./mcp-servers.json`      | Path to MCP servers config                                                             |
+| `A2A_AGENT_NAME`             | No          | `Mission Control`         | A2A agent card display name                                                            |
+| `A2A_AGENT_URL`              | No          | `http://localhost:{port}` | A2A agent card base URL                                                                |
 
 ---
 
 ## Current status
 
-**Session 105 (2026-04-24 → 2026-04-25): Jarvis self-improvement loop — both PRs MERGED on `kosm1x/agent-controller`.** Diagnosed why Jarvis couldn't ship his own teaching-resume fix: `jarvis_dev action=pr` re-ran the full 3734-test suite synchronously and exhausted his 900s claude-sdk query budget mid-suite under concurrent WhatsApp/inference load — branch dirty, no PR. **PR #22 (merged `607053d`)** — `feat(teaching): auto-resume active plan + optional plan_id`, new read-only `learning_plan_status` tool + `getActivePlan()` fallback so `learning_plan_advance/_quiz/_explain_back/_summarize` resume across session restarts when `plan_id` isn't in context. **PR #23 (merged `b1920b7`)** — `jarvis_dev` caches `action=test` results at `.git/jarvis-test-cache.json` keyed on branch + HEAD SHA + working-tree-hash (15-min TTL), so `action=pr` short-circuits the inline 136s suite; round-2 qa-auditor caught a Critical (post-test snapshot could pair `tests: PASS` with code that mutated mid-run) + a Major (untracked-file content was missing from the dirty hash), both fixed via `detectRunMutation(pre, post)` + `computeDirtyHash` reading untracked files. `jarvis-authored` GitHub label created in repo (purple) and retro-applied to #22 via REST API. Deployed on main 2026-04-25 01:34 UTC — service active, **252 tools** (was 251, `+1` for `learning_plan_status`). Tests on PR #23 branch: 3752 (3734 +18 new on `isCacheFresh`/`detectRunMutation`/`computeDirtyHash`). **Parallel session work**: `williams-entry-radar` (Jarvis's own repo, `EurekaMD-net/Williams-Entry-Radar`) received full audit remediation — lookahead bias removed in all 3 backtests, 33 tests added, OHLC CHECK migration ran live on the 102,737-row production DB, leaked AV API key scrubbed from public history via `git filter-repo` + force-push (rotation pending). Out of scope for this repo; tracked in `project_williams_entry_radar` memory. **Phase β complete (F1→F9 + β-addendum 1a/1b/1c) + Phase γ 13/13 original scope + v7.5 extended scope Done. Session 101 (2026-04-22 → 2026-04-23): 30-day hardening audit COMPLETE — ALL 5 DIMENSIONS CLOSED.** Dim-1 Efficiency (4 observability bugs + Anthropic prompt cache broken by `${mxTime}` in identitySection — live-verified 0% → 56% cache hit, 52% cost reduction per turn); Dim-2 Speed (Hindsight recall 5000ms → 1500ms, 70% wall-clock reduction per recall); Dim-3 Security (double-audit discipline closed 9 Critical + 7 Major — SSRF on 3 fetch tools + path-exfil on 6 tools including `wp_publish`/`google_docs`/`google_drive` contentFile, `sanitizeToolResult` never wired on claude-sdk path, shell_exec cat-bypass of denylist, symlink escape, XFF rate-limit bypass); Dim-4 Resilience (double-audit closed 5 Critical + 2 Major — claude-sdk had zero circuit-breaker integration since Sonnet flip, no startup reconciliation of orphaned tasks after SIGKILL/OOM, static ritual failures invisible to `events` table, Prometheus fan-out spuriously escalated breaker-OPEN errors during recovery, `recordRitualFailure` bare `catch {}` swallowed programming bugs, silent reconcile-flip with no `task.failed` event → no retry / no user notification, `providerOutcome` null default inverted); Dim-5 Tool Scoping (1 Critical + 2 Major — NFC normalization gap on background-agent path where `taskText` flowed raw into scope regex bypassing the main-path normalize at router.ts:1450 — fixed via defense-in-depth inside `scopeToolsForMessage` + `detectActiveGroups`, idempotent; `intel_query.source` enum miss; `http_fetch` description expanded from 87-char stub to full WHEN/NOT/BOUNDARIES spec). **30-day hardening window**: measurement portion complete day-1; only day-30 re-benchmark (2026-05-22) + any in-flight P0 hardening items remain. **Session 100 (2026-04-22)**: Sonnet 4.6 now primary across ALL runners — fast, heavy-in-process, Prometheus, nanoclaw, and heavy-containerized — via `INFERENCE_PRIMARY_PROVIDER=claude-sdk`. Rollback to qwen with `INFERENCE_PRIMARY_PROVIDER=openai`. **3733 tests passing** (239 test files), zero type errors, **246 tools** (builtin 154 + MCP 65 + Google 21 + memory 4 + skills 2), 15 core + 2 messaging deps. β delivered: Financial Signal Detection Stack — data layer (F1), indicator engine + watchlist tools (F2/F4), macro regime + signal detector (F5/F3), prediction-markets & whale tracking (F6/F6.5), alpha combination engine (F7), strategy backtester with CPCV+PBO+DSR firewall (F7.5), paper-trading executor (F8/F8.1a-c), morning/EOD rituals (F9). Phase γ shipped: v7.12 diagram_generate, v7.14 infographic_generate, v7.2 weekly autoseed, v7.10, v7.1 chart rendering + patterns, v7.11 Jarvis Teaching Module, v7.3 P1/P2/P3/P5 SEO+GEO suite, v7.3 P4a Digital Marketing Buyer, v7.4 S1+S2a Video Production, v7.4.3 HTML-as-Composition DSL, **v7.5 Skill Evolution Engine (GEPA confidence proxy + SkillClaw failure classifier + trajectory mining + HyperAgents `score_child_prop` parent selection + Memoria-pattern cooldown + Superpowers inline self-review — 6-item surgical extension to existing `src/tuning/` module)**, plus NorthStar↔COMMIT 2-way LWW sync. Remaining from extended scope: credential-gated P4b/P4c/S2b; v7.5.1 + v7.6 deferrals per roadmap. See `docs/V7-ROADMAP.md` and PROJECT-STATUS.md.
+**Development state (2026-06-23): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` @ `181c522`. **258 tools** across 4 ToolSources (builtin 161, MCP-bridge 70, Google 22, Skills 5); **6446 tests** passing (377 files); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
+
+**Current capability layer — V8 ("Jarvis as colleague"):**
+
+- **V8.1 Morning-Surface briefing (ACTIVE).** The 06:00 cron constructs + delivers a daily strategic briefing (`runMorningSurface`), gated on the §13 activation gate (`mc-ctl briefing-gate`). Runbook: `docs/V8.1-GUIDE.md`.
+- **V8.2 Strategic Initiative Layer (SHADOW, armed 2026-06-19).** The judgment-assembly producer (`src/lib/v8-2/produce.ts`) runs inside the morning brief: per brief it assembles up to 3 strategic _judgments_ — decompose → evidence ledger → RAPID-D options → author `[K]`-cited prose → critic loop → confidence/hedge floor — writing `judgments` + `attributed_claims` rows for measurement but **not delivering them** (the brief still ships its V8.1 prose). Plus a 02:30 sycophancy probe. Flag `V82_JUDGMENT_PRODUCER_ENABLED` (systemd drop-in, not `.env`). Next gates: ≥10 shadow judgments → §17 activation → bilateral voice. Spec: `docs/planning/v8-capability-2-spec.md`.
+  - _Latest fix (2026-06-23, this commit):_ the producer assembled its judgments serially under a 5-min pass deadline, starving the 3rd every run (`written:2 of 3` + a daily `caller signal already aborted`). Converted to concurrent `Promise.allSettled` — verified live: one pass **attempted 3 / wrote 3 in 137.5s, zero aborts** (judgments table 11→15).
+
+Prior milestones (v1–v7) are summarized in the phase table below; full per-session history is in `docs/PROJECT-STATUS.md`.
 
 | Phase        | Status | What                                                                                                                                                                 |
 | ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -391,14 +400,18 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 | v5.0 S6–S8   | Done   | Intelligence Depot (8 sources, delta engine, alert router, baselines, z-scores, 4 Jarvis tools, ritual integration)                                                  |
 | Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support, sandbox E2E verified                                   |
 | NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
+| v6           | Done   | Unified file system, hybrid memory (FTS5 + pgvector + Ebbinghaus decay), pgvector KB migration                                                                       |
+| v7.x         | Done   | Financial signal stack (F1–F9), video production, SEO/GEO suite, teaching module, Skill Evolution Engine, NorthStar↔COMMIT sync; 30-day 5-dimension hardening closed |
+| v8.1         | Active | Morning-Surface daily strategic briefing — construct + deliver, §13 activation gate, drift/temporal-spread surfacing                                                 |
+| v8.2         | Shadow | Strategic Initiative Layer — judgment-assembly producer (decompose→author→critic→confidence), sycophancy probe; write+measure, not yet delivered (armed 2026-06-19)  |
 
-See `docs/V7-ROADMAP.md` for the active roadmap and `docs/PROJECT-STATUS.md` for detailed phase history. v6 roadmap archived at `docs/archive/V6-ROADMAP-session67-final.md`.
+See `docs/V7-ROADMAP.md` + `docs/V8-VISION.md` for the active roadmap and `docs/PROJECT-STATUS.md` for detailed phase history. v6 roadmap archived at `docs/archive/V6-ROADMAP-session67-final.md`.
 
 ### Jarvis — the user-facing persona
 
 Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
 
-- **186 non-MCP tools + dynamic MCP-bridge tools** across 5 ToolSources (builtin 143 incl. teaching, Google 22, WordPress 10, Memory 4, Social 3, Skills 2, CRM/GWS 1+1). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
+- **258 tools across 4 ToolSources** (builtin 161 incl. Google-Workspace/WordPress/memory/social/CRM/teaching/video/coding, MCP-bridge 70, Google 22, Skills 5). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
 - **Tool deferral** — most tools deferred (name+desc only, full schema on first call). ~52% prompt token reduction
 - **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
 - **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)
@@ -419,7 +432,7 @@ Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built o
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (21 tools)
 - **WordPress multi-site** — content management with destruction safeguards (10 tools)
 - **Autonomous improvement** — SG1-SG5 safeguards (diff digest, kill switch, immutable core, directive cooldown, pre-cycle git tags)
-- **3-provider cascade** — Claude Sonnet (Agent SDK) → Groq/Llama 4 Scout → DashScope/qwen3.5-plus. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
+- **Multi-provider inference** — Claude Agent SDK primary (Sonnet 4.6, Haiku 4.5 fallback, Opus→Sonnet heavy-path tiering) → Groq → DashScope OpenAI-compat fallback. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
 
 ---
 
