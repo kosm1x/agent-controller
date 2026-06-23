@@ -8,6 +8,7 @@ import {
   isCookieConfigured,
   anyXAccountConfigured,
   getProbeUrl,
+  findConfiguredHandleInText,
 } from "./config.js";
 
 const X_KEYS = Object.keys(process.env).filter((k) => k.startsWith("X_"));
@@ -122,6 +123,59 @@ describe("resolveAccount fuzzy match (iooking/looking l↔I typo class)", () => 
     process.env.X_AUTH_TOKEN__bcdef = "1";
     process.env.X_AUTH_TOKEN__abcde = "1";
     expect(resolveAccount("abcdef")).toBe("abcdef"); // dist 1 to both → ambiguous → unchanged
+  });
+});
+
+describe("findConfiguredHandleInText (scope activation on a named account)", () => {
+  beforeEach(() => {
+    process.env.X_AUTH_TOKEN__iooking4ward = "a";
+    process.env.X_CT0__iooking4ward = "b";
+    process.env.X_AUTH_TOKEN__mexiconecesario = "c";
+    process.env.X_CT0__mexiconecesario = "d";
+  });
+
+  it("finds an exact @handle / handle mention (no X keyword needed)", () => {
+    expect(findConfiguredHandleInText("Verifica @iooking4ward")).toBe(
+      "iooking4ward",
+    );
+    expect(findConfiguredHandleInText("postea en mexiconecesario hoy")).toBe(
+      "mexiconecesario",
+    );
+  });
+
+  it("finds a near-miss handle (l↔I typo class)", () => {
+    expect(findConfiguredHandleInText("revisa @lookin4ward")).toBe(
+      "iooking4ward",
+    );
+    expect(findConfiguredHandleInText("acceso a looking4ward")).toBe(
+      "iooking4ward",
+    );
+  });
+
+  it("does NOT match the project name 'México Necesario' (two tokens ≠ handle)", () => {
+    expect(
+      findConfiguredHandleInText("abre el proyecto México Necesario"),
+    ).toBeUndefined();
+    expect(
+      findConfiguredHandleInText("reporte de mexico necesario"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT match unrelated text / short tokens / the 'x = variable' idiom", () => {
+    expect(
+      findConfiguredHandleInText("cuenta de ahorro para x meses"),
+    ).toBeUndefined();
+    expect(
+      findConfiguredHandleInText("dame el status del crm"),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when no accounts are configured", () => {
+    for (const k of Object.keys(process.env))
+      if (k.startsWith("X_")) delete process.env[k];
+    expect(
+      findConfiguredHandleInText("Verifica @iooking4ward"),
+    ).toBeUndefined();
   });
 });
 

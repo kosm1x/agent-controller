@@ -7,6 +7,7 @@
 
 import type { ScopePattern } from "../tuning/types.js";
 import { normalizeForMatching } from "./normalize.js";
+import { findConfiguredHandleInText } from "../lib/x-poster/config.js";
 
 // ---------------------------------------------------------------------------
 // Tool groups — organized for dynamic scoping
@@ -1373,6 +1374,15 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("video")) {
     tools.push(...VIDEO_TOOLS);
+  }
+  // Naming a configured X account (e.g. "Verifica @iooking4ward") must load the X
+  // tools even with no "X/tweet" keyword. Ground-truth via listXAccounts() → no
+  // over-fire on unrelated @mentions. [RC3 2026-06-23 — the scope-keyword gap]
+  if (
+    !activeGroups.has("social") &&
+    findConfiguredHandleInText(currentMessage)
+  ) {
+    activeGroups.add("social");
   }
   if (activeGroups.has("social")) {
     tools.push(...SOCIAL_TOOLS);

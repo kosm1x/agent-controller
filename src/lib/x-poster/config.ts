@@ -169,6 +169,34 @@ function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
+/**
+ * The configured X account a message NAMES (exact or near-miss `@handle`/`handle`),
+ * or undefined. Lets scope load the X tools when the operator names an account
+ * WITHOUT an "X/tweet" keyword (e.g. "Verifica @iooking4ward" — the 2026-06-23 gap).
+ * Ground-truth: only configured handles match, so it can't over-fire on unrelated
+ * @mentions; "México Necesario" the project (two tokens) never matches the
+ * `mexiconecesario` handle (one token). Near-miss leg reuses resolveAccount's
+ * edit-distance≤2 tolerance. Tokens shorter than 5 chars are ignored.
+ */
+export function findConfiguredHandleInText(text: string): string | undefined {
+  const accounts = listXAccounts();
+  if (accounts.length === 0) return undefined;
+  const tokens = (text.toLowerCase().match(/@?[a-z0-9_]{5,}/g) ?? []).map((t) =>
+    t.replace(/^@/, ""),
+  );
+  if (tokens.length === 0) return undefined;
+  // Exact configured handle first.
+  for (const tok of tokens) if (accounts.includes(tok)) return tok;
+  // Then a unique near-miss (the iooking/looking l↔I typo class).
+  for (const tok of tokens) {
+    const near = accounts.filter(
+      (h) => Math.abs(h.length - tok.length) <= 2 && levenshtein(h, tok) <= 2,
+    );
+    if (near.length === 1) return near[0];
+  }
+  return undefined;
+}
+
 export function isCookieConfigured(creds: AccountCreds | null): boolean {
   return Boolean(creds?.authToken && creds.ct0);
 }

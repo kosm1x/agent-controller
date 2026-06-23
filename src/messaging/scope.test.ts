@@ -4,7 +4,7 @@
  * scopeToolsForMessage is a pure function — no mocking needed.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   scopeToolsForMessage,
   detectActiveGroups,
@@ -104,6 +104,56 @@ describe("scope pattern matching", () => {
     ]) {
       expect(scope(msg)).not.toContain("tweet_post");
     }
+  });
+
+  describe("X tools activate when a configured account is NAMED (RC3 — no X keyword)", () => {
+    const SAVED: Record<string, string | undefined> = {};
+    beforeEach(() => {
+      for (const k of Object.keys(process.env))
+        if (k.startsWith("X_")) {
+          SAVED[k] = process.env[k];
+          delete process.env[k];
+        }
+      process.env.X_AUTH_TOKEN__iooking4ward = "a";
+      process.env.X_CT0__iooking4ward = "b";
+      process.env.X_AUTH_TOKEN__mexiconecesario = "c";
+      process.env.X_CT0__mexiconecesario = "d";
+    });
+    afterEach(() => {
+      for (const k of Object.keys(process.env))
+        if (k.startsWith("X_")) delete process.env[k];
+      for (const [k, v] of Object.entries(SAVED))
+        if (v !== undefined) process.env[k] = v;
+    });
+
+    it("bare '@iooking4ward' mention (the 04:09 prod failure) loads tweet_post/tweet_probe", () => {
+      const tools = scope("Verifica @iooking4ward");
+      expect(tools).toContain("tweet_post");
+      expect(tools).toContain("tweet_probe");
+    });
+
+    it("a near-miss handle (@lookin4ward) also loads the X tools", () => {
+      expect(scope("confirma acceso a @lookin4ward")).toContain("tweet_probe");
+    });
+
+    it("does NOT activate for the 'México Necesario' project name (no handle token)", () => {
+      expect(scope("abre el proyecto México Necesario")).not.toContain(
+        "tweet_post",
+      );
+    });
+
+    it("also fires on the semantic-classifier path (preClassifiedGroups)", () => {
+      // Insertion lives after BOTH branches; pin that a classifier verdict with
+      // no 'social' group still gains the X tools on a named account.
+      const tools = scopeToolsForMessage(
+        "Verifica @iooking4ward",
+        [],
+        DEFAULT_SCOPE_PATTERNS,
+        ALL_ON,
+        new Set(),
+      );
+      expect(tools).toContain("tweet_post");
+    });
   });
 
   it("coding activates on Journal/editorial authoring (2026-06-06 commentary incident)", () => {

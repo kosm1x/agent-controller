@@ -55,7 +55,13 @@ loads at boot.
   accounts. Hits `badge_count` (read-only) to detect expiry without posting.
 
 Reach them in chat with X-intent phrasing ("tuitea…", "postea en X…", "verifica
-la sesión de x", "tweet_probe").
+la sesión de x", "tweet_probe") **or by naming a configured account** — the scope
+also activates when the message mentions a configured handle (exact or near-miss,
+e.g. "Verifica @iooking4ward" / "@lookin4ward"), via `findConfiguredHandleInText`.
+Ground-truth from `listXAccounts()`, so unrelated `@mentions` and the "México
+Necesario" project name don't over-fire. A persistent always-read KB directive
+card (`directives/x-posting-card.md`) also tells the model these are the only X
+path and never to use `shell_exec`/`user_facts` for X.
 
 ## Backends (per account, ordered)
 
