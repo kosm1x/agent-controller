@@ -84,28 +84,36 @@ path and never to use `shell_exec`/`user_facts` for X.
 
 ## Error classification (`x-errors.ts`)
 
-`tweet_post` failures used to return X's raw body only as a transient string, so
-the model could (and did) INVENT a cause. `classifyXError(status, raw)` now parses
-X's actual `{code, message}` and maps known codes to a stable `label`, returned on
-the tool result (`code` + `label`) and logged:
+`tweet_post` failures used to return X's raw body only as a transient string,
+logged nowhere — so the operator could not VERIFY the model's account of a failure.
+`classifyXError(status, raw)` now parses X's actual `{code, message}` and maps known
+codes to a stable `label`, returned on the tool result (`code` + `label`) and logged:
 
-| X code     | label               | meaning                                 |
-| ---------- | ------------------- | --------------------------------------- |
-| 32, 89     | `auth_expired`      | bad/expired token → refresh cookies     |
-| 88 / `429` | `rate_limited`      | too many requests                       |
-| 185        | `daily_limit`       | over daily status limit (the REAL one)  |
-| 186        | `too_long`          | tweet > 280 (pre-check usually catches) |
-| 187        | `duplicate`         | identical to a recent tweet             |
-| 226        | `flagged_automated` | spam/automation filter                  |
-| 261        | `write_restricted`  | app/account cannot write                |
-| 64, 326    | `account_locked`    | suspended / temporarily locked          |
-| `5xx`      | `server_error`      | X-side outage                           |
-| _other_    | `unknown`           | surfaced VERBATIM (code + X's message)  |
+| X code     | label               | meaning                                                                         |
+| ---------- | ------------------- | ------------------------------------------------------------------------------- |
+| 32, 89     | `auth_expired`      | bad/expired token → refresh cookies                                             |
+| 88 / `429` | `rate_limited`      | too many requests                                                               |
+| 185, 344   | `daily_limit`       | over daily send limit (185=v1.1; 344=GraphQL CreateTweet / automation throttle) |
+| 186        | `too_long`          | tweet > 280 (pre-check usually catches)                                         |
+| 187        | `duplicate`         | identical to a recent tweet                                                     |
+| 226        | `flagged_automated` | spam/automation filter                                                          |
+| 261        | `write_restricted`  | app/account cannot write                                                        |
+| 64, 326    | `account_locked`    | suspended / temporarily locked                                                  |
+| `5xx`      | `server_error`      | X-side outage                                                                   |
+| _other_    | `unknown`           | surfaced VERBATIM (code + X's message)                                          |
 
 A recognized non-auth code on a 401/403 (e.g. 64=suspended) keeps its real label
 and does NOT trigger the cookie-refresh path; a bare 401/403 with no code remains
-the canonical `auth_expired` signal. An unrecognized code (e.g. the fabricated
-"344") comes back as `unknown` with X's verbatim message — never a guess.
+the canonical `auth_expired` signal. An unrecognized code comes back as `unknown`
+with X's verbatim message — never a guess.
+
+**GraphQL errors arrive at HTTP 200.** `CreateTweet` is GraphQL, so a REJECTED
+tweet returns `200` with the reason in an `errors[]` body (`{data:{}, errors:[{code,
+name:"AuthorizationError", message}]}`), NOT an HTTP error status. The cookie/api
+backends classify the 200 body on a no-`rest_id` result and log it raw as
+`x post rejected (200, no tweet id)`. This is how `code 344` ("you have reached your
+daily limit for sending Tweets and messages") was finally captured 2026-06-23 —
+it had been a 200-body error all along.
 
 ## Scheduled posting
 
@@ -137,14 +145,18 @@ It reads `mexiconecesario/calendario-editorial.md`, posts via
   them internally. The tool descriptions state this explicitly (2026-06-23 diagnosis:
   the tools were in scope but the model kept reaching for the old `shell_exec` path,
   and four poisoned `execution-patterns` KB entries were reinforcing it — deleted).
-- **A post failure is NOT a confabulation license.** The 2026-06-23 incident: a
-  scheduled `@iooking4ward` tweet failed and the model reported "X daily posting
-  limit reached, code 344" to the operator — the tweet was 213 chars, cookies were
-  valid, it was the day's first attempt, and 344 isn't X's daily-limit code (185).
-  Fix: the tool now returns X's real `code`+`label` and logs every outcome (above);
-  the always-read card `directives/x-posting-card.md` rule 6 + the Nocturno
-  schedule prompt mandate relaying the tool's exact error verbatim — no invented
-  code/limit, no auto-retry promise.
+- **`code 344` = X's daily send-limit / automation throttle (verified live
+  2026-06-23).** A scheduled `@iooking4ward` tweet failed and the model reported
+  "daily posting limit, code 344". Capturing X's raw body (now that we log it)
+  PROVED the model right: X returns `{code:344, name:"AuthorizationError",
+"...you have reached your daily limit for sending Tweets and messages..."}`. The
+  earlier guess that 344 was fabricated (reasoned from the v1.1 code 185) was the
+  mistake — the lesson is **capture the tool's real output BEFORE concluding the
+  model lied**, which is exactly what the logging now enables. On a low-trust
+  account this throttle hits automated posts while MANUAL posts still succeed; the
+  durable fix is account trust/age or the X API v2 slot, not cookie tweaks.
+  Backstops still hold (card rule 6 + schedule prompt mandate verbatim relay) so
+  the model never _embellishes_ a real error (e.g. a guessed reset time).
 - X session cookies live ~30 days; the proactive probe is the early warning.
 - X retires API endpoints periodically — that's why the queryId, features, and
   probe URL are all env-overridable. A **404** (vs 401) from the probe means a

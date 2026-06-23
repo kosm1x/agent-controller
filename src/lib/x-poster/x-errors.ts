@@ -46,7 +46,11 @@ const CODE_LABELS: Readonly<Record<number, XErrorLabel>> = {
   32: "auth_expired", // Could not authenticate you
   89: "auth_expired", // Invalid or expired token
   88: "rate_limited", // Rate limit exceeded
-  185: "daily_limit", // User is over daily status update limit
+  185: "daily_limit", // User is over daily status update limit (v1.1)
+  344: "daily_limit", // AuthorizationError "daily limit for sending Tweets and
+  //                     messages" — the GraphQL CreateTweet send-limit/automation
+  //                     throttle (verified live 2026-06-23: a low-trust account's
+  //                     automated posts get 344 while manual posts still succeed).
   186: "too_long", // Tweet needs to be a bit shorter
   187: "duplicate", // Status is a duplicate
   226: "flagged_automated", // This request looks like it might be automated

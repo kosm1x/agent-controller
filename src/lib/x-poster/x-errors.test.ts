@@ -77,13 +77,28 @@ describe("classifyXError — status fallbacks when no code", () => {
     expect(classifyXError(503, "upstream").label).toBe("server_error");
   });
 
-  it("an UNKNOWN code (e.g. 344) surfaces verbatim, never invents a meaning", () => {
-    // The 2026-06-23 confabulation: 344 was reported as "daily limit". It must
-    // come back as code 344 / unknown with X's real message, not a guess.
-    const i = classifyXError(400, body(344, "Some X-specific condition"));
+  it("344 → daily_limit (X's GraphQL CreateTweet send-limit; verified live 2026-06-23)", () => {
+    // Ground truth captured from a live @iooking4ward post:
+    // {code:344, name:"AuthorizationError", kind:"Permissions",
+    //  message:"...you have reached your daily limit for sending Tweets..."}
+    const i = classifyXError(
+      200,
+      body(
+        344,
+        "Authorization: You have reached your daily limit for sending Tweets and messages. Please try again later. (344)",
+      ),
+    );
     expect(i.code).toBe(344);
+    expect(i.label).toBe("daily_limit");
+    expect(i.authExpired).toBe(false);
+    expect(i.message).toContain("daily limit");
+  });
+
+  it("a genuinely unknown code surfaces VERBATIM, never invents a meaning", () => {
+    const i = classifyXError(400, body(99999, "Some new X-specific condition"));
+    expect(i.code).toBe(99999);
     expect(i.label).toBe("unknown");
-    expect(i.message).toBe("Some X-specific condition");
+    expect(i.message).toBe("Some new X-specific condition");
     expect(i.authExpired).toBe(false);
   });
 });
