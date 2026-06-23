@@ -9,6 +9,7 @@ import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
 import { isTriageMonitorEnabled } from "./lib/self-healing/flags.js";
+import { isXProbeEnabled } from "./lib/x-poster/config.js";
 import { getConfig } from "./config.js";
 import {
   initDatabase,
@@ -359,6 +360,23 @@ async function main(): Promise<void> {
           { err },
           "[v8.2] sycophancy probe cron registration failed (non-fatal)",
         );
+      });
+  }
+
+  // Proactive X (Twitter) auth probe (daily MX). Read-only: probes the posting
+  // backends' auth, records mc_x_backend_healthy, and notifies the operator on a
+  // healthy→unhealthy transition (cookies expiring) BEFORE a post 401s. Registered
+  // only when X_PROBE_ENABLED=true, so it ships dormant. Non-fatal if it fails.
+  if (isXProbeEnabled()) {
+    import("./lib/x-poster/probe-cron.js")
+      .then(({ registerXProbeCron }) =>
+        registerXProbeCron({
+          info: (msg) => log.info(msg),
+          warn: (msg) => log.warn(msg),
+        }),
+      )
+      .catch((err) => {
+        log.warn({ err }, "[x-probe] cron registration failed (non-fatal)");
       });
   }
 

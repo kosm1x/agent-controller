@@ -140,6 +140,7 @@ import {
   socialAccountsListTool,
   socialPublishStatusTool,
 } from "../builtin/social.js";
+import { tweetPostTool, tweetProbeTool } from "../builtin/x-post.js";
 import { humanizeTextTool } from "../builtin/writing.js";
 import { submitReportTool } from "../builtin/submit-report.js";
 import {
@@ -214,6 +215,8 @@ import { TEACHING_TOOL_OBJECTS } from "../builtin/teaching-tools.js";
 import type { Tool } from "../types.js";
 
 export const BUILTIN_TOOLS: Tool[] = [
+  tweetPostTool,
+  tweetProbeTool,
   shellTool,
   httpTool,
   fileReadTool,

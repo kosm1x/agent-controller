@@ -75,6 +75,37 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("file_edit");
   });
 
+  it("social activates the X tools on tweet/twitter/X intent (reachability guard)", () => {
+    // A deferred tool needs BOTH registration AND scope membership + an
+    // activating regex; this guards the second wiring (the 2026-06-23 X
+    // backend-router blocker — registered but unreachable from chat).
+    for (const msg of [
+      "tweet this thread",
+      "tuitea esto",
+      "publica un tweet sobre el lanzamiento",
+      "postea en X el anuncio",
+      // Exact operator phrasings that FAILED in prod on 2026-06-23:
+      "Verifica si esta viva la sesion de x",
+      "Verifica tu acceso a @lookin4ward en x",
+      "corre tweet_probe",
+      "prueba tweet_post",
+    ]) {
+      expect(scope(msg)).toContain("tweet_post");
+    }
+  });
+
+  it("does NOT activate the X tools on the Spanish 'x = variable' idiom (false-positive guard)", () => {
+    // W2: "x" followed by a noun is the algebraic-variable idiom, not the platform.
+    for (const msg of [
+      "cuenta de ahorro para x meses",
+      "acceso de x usuarios al sistema",
+      "sesión de x horas de duración",
+      "la cuenta de x cliente",
+    ]) {
+      expect(scope(msg)).not.toContain("tweet_post");
+    }
+  });
+
   it("coding activates on Journal/editorial authoring (2026-06-06 commentary incident)", () => {
     // Regression for task 5902: "agrega el comentario editorial al Journal"
     // routed to a KB-only write scope (jarvis_file_write) with no real-FS write

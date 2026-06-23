@@ -377,7 +377,9 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-05-19: 188 → 189 (v7.7 Spine 1 Phase 2a — submit_report added).
     // 2026-05-19: 189 → 192 (v7.7 Spine 3 Phase 4 B2 — skill_describe +
     //                        skill_load + skill_run added per spec §7 L1/L2/exec).
-    expect(ALL_TOOLS.length).toBe(192);
+    // 2026-06-23: 192 → 194 (X backend-router — tweet_post + tweet_probe added,
+    //                        native replacement for ad-hoc Playwright X scripts).
+    expect(ALL_TOOLS.length).toBe(194);
   });
 
   // ──────────────────────────────────────────────────────────────────

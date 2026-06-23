@@ -752,6 +752,26 @@ export function recordWhatsappDisconnect(
   whatsappDisconnectsTotal.inc({ reason });
 }
 
+// --- X (Twitter) posting backend health (per account) ---
+const xBackendHealthy = new client.Gauge({
+  name: "mc_x_backend_healthy",
+  help: "X posting backend health from the proactive probe (1=auth valid, 0=expired/unreachable)",
+  labelNames: ["account", "backend"] as const,
+});
+
+/**
+ * Record an X account's backend probe outcome. Drives proactive cookie-expiry
+ * alerting: a daily `verify_credentials` check flips this to 0 ~day 30 BEFORE a
+ * real post 401s. Alert rule: `mc_x_backend_healthy{backend="cookie"} == 0`.
+ */
+export function recordXBackendHealth(
+  account: string,
+  backend: string,
+  healthy: boolean,
+): void {
+  xBackendHealthy.set({ account, backend }, healthy ? 1 : 0);
+}
+
 /** Return Prometheus-formatted metrics string. */
 export async function getMetricsText(): Promise<string> {
   collectMetrics();
