@@ -178,8 +178,16 @@ Error","...looks like it might be automated... try again later."}`. Distinct fro
   VPS IP — 7 `tweet_probe`/`--probe` runs plus repeated `@iooking4ward` auto-post
   attempts (which X already 344-throttles) clustered on one IP/session. Remediation
   is operational + time: stop probing (cookies were valid), let the account cool
-  down hours, retry once manually; longer-term, space the two accounts' posts apart
-  and move automated posting to the X API v2 slot (sanctioned, doesn't trip 226/344).
+  down, retry once later; longer-term, space the two accounts' posts apart and
+  move automated posting to the X API v2 slot (sanctioned, doesn't trip 226/344).
+  **CONFIRMED the same day:** the schedule fired ZERO auto-retries (correct — no
+  storm), and at 20:20 (~80 min after the 19:00 226) an operator-timed retry posted
+  fine — `x post ok tweetId 2069515924491599950`, **same cookie backend**. So the
+  cooldown was ~80 min (not "several hours"), and "retry manually" means an
+  operator-TIMED retry on the SAME automated path — NOT a browser post (the 344
+  case has a genuine browser-works distinction; 226 does not — it just needs the
+  flag to clear). Validates: 226 is transient + X-side, don't auto-retry, retry
+  once later.
 - X session cookies live ~30 days; the proactive probe is the early warning.
 - X retires API endpoints periodically — that's why the queryId, features, and
   probe URL are all env-overridable. A **404** (vs 401) from the probe means a
