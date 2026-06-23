@@ -116,6 +116,21 @@ export class ApiBackend implements XBackend {
           { account: this.account, backend: this.name, tweetId },
           "x post ok",
         );
+      } else {
+        // 2xx + no id = the body carried the rejection; capture it like the
+        // cookie backend's GraphQL-200 path.
+        const info = classifyXError(res.status, raw);
+        log.warn(
+          {
+            account: this.account,
+            status: res.status,
+            code: info.code,
+            label: info.label,
+            message: info.message,
+            body: raw.slice(0, 400),
+          },
+          "x post rejected (2xx, no tweet id)",
+        );
       }
       return {
         backend: this.name,

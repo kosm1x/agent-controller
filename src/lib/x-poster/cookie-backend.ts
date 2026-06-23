@@ -197,21 +197,40 @@ export class CookieBackend implements XBackend {
             { account: this.account, backend: this.name, tweetId },
             "x post ok",
           );
-        } else {
-          log.warn(
-            { account: this.account, status },
-            "x post 200 but no tweet id",
-          );
+          return {
+            backend: this.name,
+            ok: true,
+            tweetId,
+            authExpired: false,
+          };
         }
+        // 200 + no tweet id = a GraphQL-level REJECTION: CreateTweet returns the
+        // reason in an `errors[]` body at HTTP 200 (the original "AuthorizationError
+        // code 344" was one of these, never an HTTP error). Classify the body and
+        // log it RAW so X's exact rejection reason is captured, not hidden by 200.
+        const info = classifyXError(200, raw);
+        const classified =
+          info.code !== undefined || info.message !== undefined;
+        log.warn(
+          {
+            account: this.account,
+            status: 200,
+            code: info.code,
+            label: info.label,
+            message: info.message,
+            body: raw.slice(0, 400),
+          },
+          "x post rejected (200, no tweet id)",
+        );
         return {
           backend: this.name,
-          ok: Boolean(tweetId),
-          tweetId,
-          error: tweetId
-            ? undefined
+          ok: false,
+          error: classified
+            ? describeXError(info)
             : `200 but no tweet id — ${raw.slice(0, 240)}`,
-          authExpired: false,
-          xErrorLabel: tweetId ? undefined : "unknown",
+          authExpired: info.authExpired,
+          xErrorCode: info.code,
+          xErrorLabel: classified ? info.label : "unknown",
         };
       });
     } catch (err) {

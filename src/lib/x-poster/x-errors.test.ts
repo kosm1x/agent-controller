@@ -89,6 +89,24 @@ describe("classifyXError — status fallbacks when no code", () => {
 });
 
 describe("classifyXError — robust parsing", () => {
+  it("classifies a GraphQL error returned at HTTP 200 (CreateTweet rejection) from the BODY, not the status", () => {
+    // CreateTweet is GraphQL: a rejected tweet comes back as HTTP 200 with an
+    // errors[] body (the @iooking4ward block, 2026-06-23). Status is 200 but the
+    // code/message in the body must still drive the label.
+    const flagged = JSON.stringify({
+      errors: [
+        {
+          code: 226,
+          message: "This request looks like it might be automated.",
+        },
+      ],
+    });
+    const i = classifyXError(200, flagged);
+    expect(i.code).toBe(226);
+    expect(i.label).toBe("flagged_automated");
+    expect(i.message).toContain("automated");
+  });
+
   it("reads a GraphQL extensions.code shape", () => {
     const raw = JSON.stringify({
       errors: [{ message: "dup", extensions: { code: 187 } }],
