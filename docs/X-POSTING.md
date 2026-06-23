@@ -167,6 +167,19 @@ It reads `mexiconecesario/calendario-editorial.md`, posts via
   durable fix is account trust/age or the X API v2 slot, not cookie tweaks.
   Backstops still hold (card rule 6 + schedule prompt mandate verbatim relay) so
   the model never _embellishes_ a real error (e.g. a guessed reset time).
+- **`code 226` = X's `flagged_automated` anti-spam block — TRANSIENT, not a ban
+  (observed live 2026-06-23).** A scheduled `@mexiconecesario` tweet (the clean
+  baseline account) failed for the FIRST time with `{code:226,name:"Authorization
+Error","...looks like it might be automated... try again later."}`. Distinct from
+  344: 226 is a velocity/heuristic block keyed on the IP + cookie footprint, and it
+  says "try again later" (≠ code 64 `account_locked` = a real ban). **Do NOT
+  auto-retry on 226** — X is asking you to back off; an immediate retry deepens the
+  flag. The likely trigger that day was an automation-traffic spike on the shared
+  VPS IP — 7 `tweet_probe`/`--probe` runs plus repeated `@iooking4ward` auto-post
+  attempts (which X already 344-throttles) clustered on one IP/session. Remediation
+  is operational + time: stop probing (cookies were valid), let the account cool
+  down hours, retry once manually; longer-term, space the two accounts' posts apart
+  and move automated posting to the X API v2 slot (sanctioned, doesn't trip 226/344).
 - X session cookies live ~30 days; the proactive probe is the early warning.
 - X retires API endpoints periodically — that's why the queryId, features, and
   probe URL are all env-overridable. A **404** (vs 401) from the probe means a
