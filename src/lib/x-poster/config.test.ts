@@ -90,6 +90,41 @@ describe("getDefaultAccount / resolveAccount", () => {
   });
 });
 
+describe("resolveAccount fuzzy match (iooking/looking l↔I typo class)", () => {
+  beforeEach(() => {
+    process.env.X_AUTH_TOKEN__iooking4ward = "a";
+    process.env.X_CT0__iooking4ward = "b";
+    process.env.X_AUTH_TOKEN__mexiconecesario = "c";
+    process.env.X_CT0__mexiconecesario = "d";
+  });
+
+  it("maps a near-miss handle to the unique configured account", () => {
+    expect(resolveAccount("looking4ward")).toBe("iooking4ward"); // l→i (dist 1)
+    expect(resolveAccount("lookin4ward")).toBe("iooking4ward"); // l→i + missing g (dist 2)
+    expect(resolveAccount("@Looking4ward")).toBe("iooking4ward"); // cased + @
+    expect(resolveAccount("mexiconecesari")).toBe("mexiconecesario"); // dist 1
+  });
+
+  it("never overrides an EXACT configured handle", () => {
+    expect(resolveAccount("iooking4ward")).toBe("iooking4ward");
+    expect(resolveAccount("@MexicoNecesario")).toBe("mexiconecesario");
+  });
+
+  it("returns the input unchanged when too far / too short / ambiguous (lets noAccountError fire)", () => {
+    expect(resolveAccount("garbage")).toBe("garbage"); // distance > 2 from both
+    expect(resolveAccount("x")).toBe("x"); // length < 5 → no fuzzy attempt
+  });
+
+  it("does not fuzzy-bind when two configured accounts are equally near (ambiguous)", () => {
+    // Wipe and seed two handles within dist 2 of the probe → must NOT pick one.
+    for (const k of Object.keys(process.env))
+      if (k.startsWith("X_")) delete process.env[k];
+    process.env.X_AUTH_TOKEN__bcdef = "1";
+    process.env.X_AUTH_TOKEN__abcde = "1";
+    expect(resolveAccount("abcdef")).toBe("abcdef"); // dist 1 to both → ambiguous → unchanged
+  });
+});
+
 describe("getProbeUrl", () => {
   it("defaults to the badge_count endpoint (v1.1 verify_credentials was retired by X)", () => {
     expect(getProbeUrl()).toContain("/2/badge_count/badge_count.json");

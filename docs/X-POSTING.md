@@ -14,6 +14,15 @@ health probe. Code: `src/lib/x-poster/`, tools `src/tools/builtin/x-post.ts`.
 The label is an internal identifier (lowercased via `normalizeHandle`); the
 cookies decide the real account. Casing of the display handle is cosmetic.
 
+**Handle resolution is typo-tolerant.** `resolveAccount` maps a near-miss handle to
+the unique configured account within edit-distance 2 (e.g. `looking4ward` /
+`lookin4ward` → `iooking4ward` — the registration-typo `i`/`l` lookalike class). An
+exact configured label is never overridden; an ambiguous or far handle is left
+unchanged so the tool returns the real configured list. The resolved account is
+echoed in every tool result, so a fuzzy bind is observable. The tool descriptions
+also inject the **live** `listXAccounts()` list at load, so the model reads
+ground-truth labels rather than a hardcoded example that can drift.
+
 ## Env (`.env`)
 
 ```
@@ -85,6 +94,12 @@ It reads `mexiconecesario/calendario-editorial.md`, posts via
 
 ## Notes / gotchas
 
+- **This is the ONLY supported X path.** Do not post/check X via `shell_exec`,
+  Playwright/`.cjs` scripts, or by looking up `auth_token`/`ct0` in `user_facts` /
+  `mc.db` — that path is retired. Cookies live in the environment and the tools read
+  them internally. The tool descriptions state this explicitly (2026-06-23 diagnosis:
+  the tools were in scope but the model kept reaching for the old `shell_exec` path,
+  and four poisoned `execution-patterns` KB entries were reinforcing it — deleted).
 - X session cookies live ~30 days; the proactive probe is the early warning.
 - X retires API endpoints periodically — that's why the queryId, features, and
   probe URL are all env-overridable. A **404** (vs 401) from the probe means a

@@ -9,7 +9,7 @@
 import { XPostRouter } from "./router.js";
 import { CookieBackend } from "./cookie-backend.js";
 import { ApiBackend } from "./api-backend.js";
-import { resolveAccount, listXAccounts } from "./config.js";
+import { resolveAccount, listXAccounts, getAccountCreds } from "./config.js";
 import type { RouterProbe } from "./types.js";
 
 export { XPostRouter } from "./router.js";
@@ -25,6 +25,9 @@ export * from "./config.js";
 export function getXRouter(account?: string): XPostRouter | null {
   const handle = resolveAccount(account);
   if (!handle) return null;
+  // Unknown/unconfigured handle → null so the tool surfaces noAccountError with the
+  // real configured list, rather than a backend "X_AUTH_TOKEN__<typo> unset" error.
+  if (!getAccountCreds(handle)) return null;
   return new XPostRouter([new CookieBackend(handle), new ApiBackend(handle)]);
 }
 

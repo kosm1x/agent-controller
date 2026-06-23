@@ -8,7 +8,7 @@
  * across `/tmp/*.cjs` scripts and `user_facts`.
  *
  * Accounts: discovered from `X_AUTH_TOKEN__<handle>` / `X_CT0__<handle>` pairs
- * (e.g. `X_AUTH_TOKEN__lookin4ward`). `X_DEFAULT_ACCOUNT` names the one used when
+ * (e.g. `X_AUTH_TOKEN__mexiconecesario`). `X_DEFAULT_ACCOUNT` names the one used when
  * a tool call omits `account`. For migration ease, a bare `X_AUTH_TOKEN`/`X_CT0`
  * pair (no handle) is treated as the default account's cookies if no explicit
  * `X_AUTH_TOKEN__<default>` is set.
@@ -123,8 +123,50 @@ export function getAccountCreds(handle: string): AccountCreds | null {
 
 /** Resolve the account to act on: explicit arg → default → sole account. */
 export function resolveAccount(account?: string): string | undefined {
-  if (account && account.trim() !== "") return normalizeHandle(account);
+  if (account && account.trim() !== "") {
+    const norm = normalizeHandle(account);
+    if (getAccountCreds(norm)) return norm; // exact configured handle
+    const near = fuzzyMatchAccount(norm); // tolerate the iooking/looking l↔I typo class
+    return near ?? norm; // unknown → caller surfaces noAccountError with the real list
+  }
   return getDefaultAccount();
+}
+
+/**
+ * Map a near-miss handle to the UNIQUE configured account within edit-distance 2
+ * (length-guarded). Defends the recurring `iooking4ward` ↔ `looking4ward` / `lookin4ward`
+ * l/I-lookalike confusion: the real env label is a registration typo, so the model
+ * (or operator) naturally types the "correct" spelling and misses. Returns undefined
+ * when zero or >1 accounts are near (ambiguous → let the explicit error fire with the
+ * real list). The resolved handle is echoed back in every tool result, so a fuzzy
+ * bind is observable, not silent.
+ */
+function fuzzyMatchAccount(handle: string): string | undefined {
+  if (handle.length < 5) return undefined; // too short to disambiguate safely
+  const near = listXAccounts().filter(
+    (h) =>
+      Math.abs(h.length - handle.length) <= 2 && levenshtein(h, handle) <= 2,
+  );
+  return near.length === 1 ? near[0] : undefined;
+}
+
+/** Iterative Levenshtein edit distance (handles are short; no dependency). */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  let curr = new Array<number>(n + 1);
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
 }
 
 export function isCookieConfigured(creds: AccountCreds | null): boolean {

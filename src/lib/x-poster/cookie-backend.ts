@@ -4,7 +4,8 @@
  * cookies to call X's internal GraphQL/REST endpoints through a real Chromium
  * context (browser TLS), not the compose UI.
  *
- * `probe()` hits v1.1 `verify_credentials` (stable, read-only) to detect cookie
+ * `probe()` hits the read-only `badge_count` endpoint (`getProbeUrl()`, env-
+ * overridable — X retired the old v1.1 `verify_credentials`) to detect cookie
  * expiry WITHOUT posting. `post()` calls GraphQL `CreateTweet` (queryId is
  * env-configurable because X rotates it). The post path is inherently brittle
  * and cannot be unit-tested without live cookies; the probe path is the
@@ -78,7 +79,7 @@ export class CookieBackend implements XBackend {
   readonly name = "cookie";
   private readonly creds: AccountCreds | null;
 
-  /** @param account normalized handle (e.g. "lookin4ward"). */
+  /** @param account normalized handle (e.g. "iooking4ward"). */
   constructor(private readonly account: string) {
     this.creds = getAccountCreds(account);
   }

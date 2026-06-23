@@ -36,8 +36,21 @@ function noAccountError(account?: string): string {
   const accts = listXAccounts();
   if (accts.length === 0) return NOT_CONFIGURED;
   return account
-    ? `Unknown X account "${account}". Configured: ${accts.join(", ")}.`
+    ? `Unknown X account "${account}". Configured: ${accts.join(", ")}. Use one of these EXACT labels (do not re-spell).`
     : `No default X account (set X_DEFAULT_ACCOUNT). Configured: ${accts.join(", ")}. Pass account: explicitly.`;
+}
+
+/**
+ * Ground-truth account list injected into the tool descriptions at load time, so
+ * the model reads the REAL configured labels (not a hardcoded example handle that
+ * can drift — the 2026-06-23 `iooking4ward`→`lookin4ward` mangling). Env loads at
+ * boot before tools register; a changed list needs a restart anyway.
+ */
+function accountsHint(): string {
+  const accts = listXAccounts();
+  return accts.length
+    ? `CONFIGURED ACCOUNTS (use these EXACT labels verbatim — do NOT re-spell, "correct", or normalize them; e.g. a leading lowercase "i" is intentional): ${accts.join(", ")}.`
+    : "No X accounts configured yet.";
 }
 
 export const tweetPostTool: Tool = {
@@ -70,9 +83,14 @@ DO NOT USE FOR:
 - Other platforms (use social_publish).
 - Drafting only — this PUBLISHES (confirms on the interactive path).
 
-MULTI-ACCOUNT: pass account:"<handle>" (e.g. "mexiconecesario" or "lookin4ward").
-Omit it to use the default account. On expired cookies it returns refresh
-guidance — do NOT retry with variants; surface it. Keep text ≤280 weighted chars.`,
+THIS IS THE ONLY SUPPORTED X PATH. Do NOT use shell_exec, Playwright/.cjs scripts,
+or look up auth_token/ct0 cookies in user_facts or mc.db for X — that path is
+RETIRED. Cookies live in the environment and are handled internally by this tool;
+you never need them. If auth is stale this tool says so.
+
+MULTI-ACCOUNT: pass account:"<handle>". ${accountsHint()} Omit account to use the
+default. On expired cookies it returns refresh guidance — do NOT retry with
+variants; surface it. Keep text ≤280 weighted chars.`,
       parameters: {
         type: "object",
         properties: {
@@ -84,7 +102,7 @@ guidance — do NOT retry with variants; surface it. Keep text ≤280 weighted c
           account: {
             type: "string",
             description:
-              'X account handle to post as (e.g. "mexiconecesario"). Omit for the default account.',
+              "X account handle to post as — must EXACTLY match a configured label (see the tool description's CONFIGURED ACCOUNTS list). Do not re-spell or normalize it. Omit for the default account.",
           },
           reply_to_id: {
             type: "string",
@@ -179,9 +197,14 @@ export const tweetProbeTool: Tool = {
 USE WHEN:
 - Before a thread, to confirm an account's cookies are valid.
 - Diagnosing why tweet_post failed (expired vs unreachable).
+- The operator asks to "verify X access / is the X session alive".
 
-Pass account:"<handle>" to check one account; omit to check ALL configured
-accounts. Returns per-account/backend {ok, detail, authExpired}.`,
+THIS is how you check X access. Do NOT use shell_exec or hunt for cookies in
+user_facts/mc.db — cookies live in the environment and this tool reads them
+internally. ${accountsHint()}
+
+Pass account:"<handle>" (an EXACT configured label) to check one account; omit to
+check ALL configured accounts. Returns per-account/backend {ok, detail, authExpired}.`,
       parameters: {
         type: "object",
         properties: {
