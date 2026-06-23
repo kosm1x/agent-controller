@@ -12,10 +12,13 @@ import {
   isApiConfigured,
   type AccountCreds,
 } from "./config.js";
+import { classifyXError, describeXError } from "./x-errors.js";
+import { createLogger } from "../logger.js";
 
 const ME_URL = "https://api.x.com/2/users/me";
 const TWEETS_URL = "https://api.x.com/2/tweets";
 const TIMEOUT_MS = 20_000;
+const log = createLogger("x-poster");
 
 export class ApiBackend implements XBackend {
   readonly name = "api";
@@ -81,20 +84,25 @@ export class ApiBackend implements XBackend {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       const raw = await res.text();
-      if (res.status === 401 || res.status === 403) {
-        return {
-          backend: this.name,
-          ok: false,
-          error: `${res.status} — token invalid/insufficient`,
-          authExpired: true,
-        };
-      }
       if (res.status !== 201 && res.status !== 200) {
+        const info = classifyXError(res.status, raw);
+        log.warn(
+          {
+            account: this.account,
+            status: res.status,
+            code: info.code,
+            label: info.label,
+            message: info.message,
+          },
+          "x post failed",
+        );
         return {
           backend: this.name,
           ok: false,
-          error: `${res.status} — ${raw.slice(0, 240)}`,
-          authExpired: false,
+          error: describeXError(info),
+          authExpired: info.authExpired,
+          xErrorCode: info.code,
+          xErrorLabel: info.label,
         };
       }
       let tweetId: string | undefined;
@@ -103,19 +111,34 @@ export class ApiBackend implements XBackend {
       } catch {
         /* leave undefined */
       }
+      if (tweetId) {
+        log.info(
+          { account: this.account, backend: this.name, tweetId },
+          "x post ok",
+        );
+      }
       return {
         backend: this.name,
         ok: Boolean(tweetId),
         tweetId,
         error: tweetId ? undefined : `created but no id — ${raw.slice(0, 240)}`,
         authExpired: false,
+        xErrorLabel: tweetId ? undefined : "unknown",
       };
     } catch (err) {
+      log.warn(
+        {
+          account: this.account,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "x post error",
+      );
       return {
         backend: this.name,
         ok: false,
         error: `post error: ${err instanceof Error ? err.message : String(err)}`,
         authExpired: false,
+        xErrorLabel: "unknown",
       };
     }
   }

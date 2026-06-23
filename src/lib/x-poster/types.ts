@@ -33,6 +33,10 @@ export interface PostResult {
   readonly error?: string;
   /** True when the failure was auth-expiry (drives the refresh-cookies guidance). */
   readonly authExpired?: boolean;
+  /** X's app-level error code when the body carried one (e.g. 187 duplicate). */
+  readonly xErrorCode?: number;
+  /** Stable classification label for the failure (see `classifyXError`). */
+  readonly xErrorLabel?: string;
 }
 
 /** A single way of posting to / probing X. Ordered behind the router. */

@@ -82,6 +82,29 @@ describe("XPostRouter.post", () => {
     expect(res.allAuthExpired).toBe(false);
   });
 
+  it("a suspension (code 64) on every backend is NOT allAuthExpired — never triggers the cookie-refresh wall", async () => {
+    // Precedence guard: an account-locked failure must surface its real attempts
+    // (so the tool reports "account_locked"), not the REFRESH_GUIDANCE path that
+    // only fits genuine cookie expiry.
+    const locked = {
+      ok: false,
+      authExpired: false,
+      error: "403 code 64 (account_locked) — Your account is suspended",
+      xErrorCode: 64,
+      xErrorLabel: "account_locked",
+    };
+    const router = new XPostRouter([
+      fake("cookie", { post: locked }),
+      fake("api", { post: locked }),
+    ]);
+    const res = await router.post("hi");
+    expect(res.ok).toBe(false);
+    expect(res.allAuthExpired).toBe(false);
+    expect(res.attempts.every((a) => a.xErrorLabel === "account_locked")).toBe(
+      true,
+    );
+  });
+
   it("skips unconfigured backends entirely", async () => {
     const cookieCalls = { post: 0, probe: 0 };
     const router = new XPostRouter([

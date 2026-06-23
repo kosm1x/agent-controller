@@ -75,6 +75,37 @@ path and never to use `shell_exec`/`user_facts` for X.
 - Gauge `mc_x_backend_healthy{account,backend}` (1=auth valid, 0=expired/unreachable).
 - Proactive probe cron (dormant; `X_PROBE_ENABLED=true`): daily check, edge-triggered
   Telegram alert to the operator on healthy→unhealthy (cookies expiring) BEFORE a post 401s.
+- **Every post outcome is logged** (pino `module:"x-poster"`): `x post ok`
+  `{account, backend, tweetId}` on success, `x post failed`
+  `{account, status, code, label, message}` on an X rejection, `x post error`
+  on a network error. Before this (2026-06-23) a failure existed nowhere but the
+  model's narration — grep `journalctl -u mission-control` for `"x post failed"`
+  to see the REAL X error of any failed tweet.
+
+## Error classification (`x-errors.ts`)
+
+`tweet_post` failures used to return X's raw body only as a transient string, so
+the model could (and did) INVENT a cause. `classifyXError(status, raw)` now parses
+X's actual `{code, message}` and maps known codes to a stable `label`, returned on
+the tool result (`code` + `label`) and logged:
+
+| X code     | label               | meaning                                 |
+| ---------- | ------------------- | --------------------------------------- |
+| 32, 89     | `auth_expired`      | bad/expired token → refresh cookies     |
+| 88 / `429` | `rate_limited`      | too many requests                       |
+| 185        | `daily_limit`       | over daily status limit (the REAL one)  |
+| 186        | `too_long`          | tweet > 280 (pre-check usually catches) |
+| 187        | `duplicate`         | identical to a recent tweet             |
+| 226        | `flagged_automated` | spam/automation filter                  |
+| 261        | `write_restricted`  | app/account cannot write                |
+| 64, 326    | `account_locked`    | suspended / temporarily locked          |
+| `5xx`      | `server_error`      | X-side outage                           |
+| _other_    | `unknown`           | surfaced VERBATIM (code + X's message)  |
+
+A recognized non-auth code on a 401/403 (e.g. 64=suspended) keeps its real label
+and does NOT trigger the cookie-refresh path; a bare 401/403 with no code remains
+the canonical `auth_expired` signal. An unrecognized code (e.g. the fabricated
+"344") comes back as `unknown` with X's verbatim message — never a guess.
 
 ## Scheduled posting
 
@@ -106,6 +137,14 @@ It reads `mexiconecesario/calendario-editorial.md`, posts via
   them internally. The tool descriptions state this explicitly (2026-06-23 diagnosis:
   the tools were in scope but the model kept reaching for the old `shell_exec` path,
   and four poisoned `execution-patterns` KB entries were reinforcing it — deleted).
+- **A post failure is NOT a confabulation license.** The 2026-06-23 incident: a
+  scheduled `@iooking4ward` tweet failed and the model reported "X daily posting
+  limit reached, code 344" to the operator — the tweet was 213 chars, cookies were
+  valid, it was the day's first attempt, and 344 isn't X's daily-limit code (185).
+  Fix: the tool now returns X's real `code`+`label` and logs every outcome (above);
+  the always-read card `directives/x-posting-card.md` rule 6 + the Nocturno
+  schedule prompt mandate relaying the tool's exact error verbatim — no invented
+  code/limit, no auto-retry promise.
 - X session cookies live ~30 days; the proactive probe is the early warning.
 - X retires API endpoints periodically — that's why the queryId, features, and
   probe URL are all env-overridable. A **404** (vs 401) from the probe means a

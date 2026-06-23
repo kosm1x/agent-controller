@@ -21,9 +21,12 @@ import {
   isCookieConfigured,
   type AccountCreds,
 } from "./config.js";
+import { classifyXError, describeXError } from "./x-errors.js";
 import { STEALTH_LAUNCH_ARGS } from "../stealth-browser.js";
+import { createLogger } from "../logger.js";
 
 const NAV_TIMEOUT_MS = 30_000;
+const log = createLogger("x-poster");
 
 function authHeaders(creds: AccountCreds): Record<string, string> {
   return {
@@ -163,23 +166,43 @@ export class CookieBackend implements XBackend {
         });
         const status = res.status();
         const raw = await res.text();
-        if (status === 401 || status === 403) {
-          return {
-            backend: this.name,
-            ok: false,
-            error: `${status} — cookies expired/invalid`,
-            authExpired: true,
-          };
-        }
         if (status !== 200) {
+          // Classify X's ACTUAL error (code + verbatim message) so the model
+          // relays facts instead of inventing a cause — and log it durably, the
+          // gap that let the 2026-06-23 "code 344 daily limit" confabulation
+          // reach the operator with no ground-truth record. See x-errors.ts.
+          const info = classifyXError(status, raw);
+          log.warn(
+            {
+              account: this.account,
+              status,
+              code: info.code,
+              label: info.label,
+              message: info.message,
+            },
+            "x post failed",
+          );
           return {
             backend: this.name,
             ok: false,
-            error: `${status} — ${raw.slice(0, 240)}`,
-            authExpired: false,
+            error: describeXError(info),
+            authExpired: info.authExpired,
+            xErrorCode: info.code,
+            xErrorLabel: info.label,
           };
         }
         const tweetId = extractTweetId(raw);
+        if (tweetId) {
+          log.info(
+            { account: this.account, backend: this.name, tweetId },
+            "x post ok",
+          );
+        } else {
+          log.warn(
+            { account: this.account, status },
+            "x post 200 but no tweet id",
+          );
+        }
         return {
           backend: this.name,
           ok: Boolean(tweetId),
@@ -188,14 +211,23 @@ export class CookieBackend implements XBackend {
             ? undefined
             : `200 but no tweet id — ${raw.slice(0, 240)}`,
           authExpired: false,
+          xErrorLabel: tweetId ? undefined : "unknown",
         };
       });
     } catch (err) {
+      log.warn(
+        {
+          account: this.account,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "x post error",
+      );
       return {
         backend: this.name,
         ok: false,
         error: `post error: ${err instanceof Error ? err.message : String(err)}`,
         authExpired: false,
+        xErrorLabel: "unknown",
       };
     }
   }

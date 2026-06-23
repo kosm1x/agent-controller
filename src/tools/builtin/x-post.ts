@@ -90,7 +90,12 @@ you never need them. If auth is stale this tool says so.
 
 MULTI-ACCOUNT: pass account:"<handle>". ${accountsHint()} Omit account to use the
 default. On expired cookies it returns refresh guidance — do NOT retry with
-variants; surface it. Keep text ≤280 weighted chars.`,
+variants; surface it. Keep text ≤280 weighted chars.
+
+ON FAILURE: relay the result's EXACT error/code/label VERBATIM. Do NOT invent an
+X error code, a "daily limit"/"rate limit", or an auto-retry promise — this
+result is ground truth and is logged. If a field isn't in the result, it didn't
+happen.`,
       parameters: {
         type: "object",
         properties: {
@@ -166,6 +171,8 @@ variants; surface it. Keep text ≤280 weighted chars.`,
         attempts: result.attempts.map((a) => ({
           backend: a.backend,
           error: a.error,
+          code: a.xErrorCode,
+          label: a.xErrorLabel,
         })),
       });
     } catch (err) {
