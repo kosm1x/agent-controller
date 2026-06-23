@@ -414,8 +414,26 @@ export interface JudgmentAssemblyResult {
 
 /**
  * Run the judgment-assembly producer over a just-constructed brief. Selects the
- * top judgments, assembles each (own try/catch so one failure never sinks the
- * batch), and returns how many judgment rows were written.
+ * top judgments and assembles them CONCURRENTLY — each judgment is independent
+ * (own row, own claims, own critic loop; `better-sqlite3` is synchronous so the
+ * per-judgment writes can't interleave mid-statement). Concurrency makes the
+ * pass wall-clock ≈ the slowest single judgment instead of the sum (~2.5 min vs
+ * ~6 min serial), so the morning-surface pass deadline
+ * (`JUDGMENT_ASSEMBLY_DEADLINE_MS`, 5 min) reverts from the routine path to a
+ * rarely-hit backstop. Tradeoff vs the old serial loop: if the deadline DOES
+ * still fire mid-pass, `signal.abort()` reaches every in-flight judgment at once,
+ * so each one whose author/decompose step hasn't completed throws and is dropped
+ * (the serial loop instead kept the completed prefix and dropped only the tail).
+ * Acceptable for a shadow producer — the whole pass is non-fatal and undelivered.
+ *
+ * Concurrency is bounded by `maxJudgmentsPerBrief()` (default 3, abs max 6); no
+ * extra semaphore. At the default this is well within SDK/budget headroom; if the
+ * cap is ever raised toward 6, add a concurrency limiter (each judgment fans out
+ * several sequential SDK calls, incl. RAPID-D perspectives).
+ *
+ * Each assembly keeps its own isolation (via `allSettled`) so one failure never
+ * sinks the batch, and `judgmentIds` preserves selection (priority) order, not
+ * completion order.
  */
 export async function runJudgmentAssembly(
   briefing: Briefing,
@@ -425,28 +443,43 @@ export async function runJudgmentAssembly(
   const nowIso = options.nowIso ?? new Date().toISOString();
   const max = options.maxJudgments ?? maxJudgmentsPerBrief();
   const selected = selectJudgments(briefing.judgments, max);
-  const judgmentIds: number[] = [];
 
-  for (const j of selected) {
-    if (options.signal?.aborted) break;
-    const contextDigest = renderContextDigest(briefing, j);
-    try {
-      const id = await assembleOneJudgment(briefing, j, contextDigest, {
+  // Pre-flight: if the caller already aborted, do no work (mirrors the
+  // per-step pre-checks in author/decompose/critic).
+  if (options.signal?.aborted) {
+    return { attempted: selected.length, written: 0, judgmentIds: [] };
+  }
+
+  const settled = await Promise.allSettled(
+    selected.map((j) => {
+      const contextDigest = renderContextDigest(briefing, j);
+      return assembleOneJudgment(briefing, j, contextDigest, {
         nowIso,
         signal: options.signal,
         db,
       });
-      if (id != null) judgmentIds.push(id);
-    } catch (err) {
+    }),
+  );
+
+  // Collect in selection order so judgmentIds stays priority-ranked. Log each
+  // rejection non-fatally, matched back to its subject by index.
+  const judgmentIds: number[] = [];
+  settled.forEach((outcome, idx) => {
+    if (outcome.status === "fulfilled") {
+      if (outcome.value != null) judgmentIds.push(outcome.value);
+    } else {
       log.error(
         {
-          subject: j.subject,
-          err: err instanceof Error ? err.message : String(err),
+          subject: selected[idx].subject,
+          err:
+            outcome.reason instanceof Error
+              ? outcome.reason.message
+              : String(outcome.reason),
         },
         "judgment assembly failed for one judgment (non-fatal)",
       );
     }
-  }
+  });
 
   return {
     attempted: selected.length,

@@ -276,6 +276,128 @@ describe("runJudgmentAssembly", () => {
     expect(res.attempted).toBe(2);
     expect(res.written).toBe(1);
   });
+
+  it("assembles the selected judgments concurrently, not serially", async () => {
+    seedBriefingRow("11111111-1111-1111-1111-111111111111");
+    // Barrier: each author call parks until BOTH have entered. Under serial
+    // execution the 2nd judgment never starts (the 1st is parked waiting for a
+    // gate only the 2nd can open) → the run deadlocks and the test times out.
+    // Concurrency lets both enter, opens the gate, and both resolve.
+    let entered = 0;
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => (openGate = resolve));
+    vi.mocked(authorJudgment).mockImplementation(async () => {
+      entered += 1;
+      if (entered === 2) openGate();
+      await gate;
+      return { prose: DIRECT_PROSE };
+    });
+
+    const res = await runJudgmentAssembly(
+      briefing([
+        judgment({
+          signal_id: "00000000-0000-0000-0000-00000000000a",
+          subject: "a",
+        }),
+        judgment({
+          signal_id: "00000000-0000-0000-0000-00000000000b",
+          subject: "b",
+        }),
+      ]),
+      { nowIso: NOW, db: getDatabase(), maxJudgments: 2 },
+    );
+
+    expect(entered).toBe(2); // both were in-flight at the same time
+    expect(res.written).toBe(2);
+  });
+
+  it("judgmentIds preserve selection order despite out-of-order completion", async () => {
+    seedBriefingRow("11111111-1111-1111-1111-111111111111");
+    // Selection order by priority: hl(a) > at_risk(b) > noted(c). Drive authoring
+    // to FINISH in the reverse order (c → b → a) via per-subject deferreds so c
+    // inserts first (smallest row id) and a last — completion order ≠ selection
+    // order. Deterministic (no real timers): judgmentIds must still follow
+    // selection (priority) order, not insertion/completion order.
+    const release: Record<string, () => void> = {};
+    const gate: Record<string, Promise<void>> = {};
+    for (const s of ["a", "b", "c"]) {
+      gate[s] = new Promise<void>((r) => (release[s] = r));
+    }
+    const entered: string[] = [];
+    vi.mocked(authorJudgment).mockImplementation(async (input) => {
+      entered.push(input.subject);
+      await gate[input.subject];
+      return { prose: DIRECT_PROSE };
+    });
+
+    const runPromise = runJudgmentAssembly(
+      briefing([
+        judgment({
+          signal_id: "00000000-0000-0000-0000-00000000000a",
+          subject: "a",
+          posture: "highest_leverage",
+        }),
+        judgment({
+          signal_id: "00000000-0000-0000-0000-00000000000b",
+          subject: "b",
+          posture: "at_risk",
+        }),
+        judgment({
+          signal_id: "00000000-0000-0000-0000-00000000000c",
+          subject: "c",
+          posture: "noted",
+          kind: "stalled_task",
+        }),
+      ]),
+      { nowIso: NOW, db: getDatabase(), maxJudgments: 3 },
+    );
+
+    // All three are in-flight (also confirms concurrency); release them c→b→a,
+    // flushing each judgment's synchronous insert before releasing the next.
+    await vi.waitFor(() => expect(entered).toHaveLength(3));
+    for (const s of ["c", "b", "a"]) {
+      release[s]();
+      await new Promise((r) => setImmediate(r));
+    }
+    const res = await runPromise;
+
+    const idBySubject = Object.fromEntries(
+      (
+        getDatabase()
+          .prepare(`SELECT subject, id FROM judgments WHERE briefing_id = ?`)
+          .all("11111111-1111-1111-1111-111111111111") as {
+          subject: string;
+          id: number;
+        }[]
+      ).map((r) => [r.subject, r.id]),
+    );
+
+    // judgmentIds[k] is the id of the k-th SELECTED judgment (a, b, c).
+    expect(res.judgmentIds).toEqual([
+      idBySubject["a"],
+      idBySubject["b"],
+      idBySubject["c"],
+    ]);
+    // c completed first → smallest id; a last → largest. So selection order is
+    // strictly DESCENDING by id — proving the order is not insertion/completion.
+    expect(res.judgmentIds[0]).toBeGreaterThan(res.judgmentIds[2]);
+  });
+
+  it("does no work and writes nothing when the caller signal is already aborted", async () => {
+    seedBriefingRow("11111111-1111-1111-1111-111111111111");
+    const ac = new AbortController();
+    ac.abort();
+    const res = await runJudgmentAssembly(briefing([judgment()]), {
+      nowIso: NOW,
+      db: getDatabase(),
+      signal: ac.signal,
+    });
+    expect(res).toEqual({ attempted: 1, written: 0, judgmentIds: [] });
+    expect(authorJudgment).not.toHaveBeenCalled();
+    expect(
+      getJudgmentsForBriefing("11111111-1111-1111-1111-111111111111"),
+    ).toHaveLength(0);
+  });
 });
 
 describe("reRunJudgment (§13 concession)", () => {
