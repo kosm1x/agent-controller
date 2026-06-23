@@ -220,6 +220,8 @@ The non-technical condition (preserved from pre-plan): operator must have **clar
 
 ## §7 — V9 — Validation of premises (preserved)
 
+> **Operationalized 2026-06-23 → see `docs/V9-ROADMAP.md`.** This section named the _questions_ V9 must answer but left them as a validation period with no instrument. The Agentic Loop Engineering corpus (Master Reference Bibliography, wave 6) supplies the instrument — an internal eval harness with a METR-style time-horizon metric over `logs/decisions/` (**W3**) — and the loop upgrades V9 ships while the validation runs: a structural Verify phase gate (**W1**, highest-leverage, spec at `docs/planning/v9-capability-1-spec.md`), Ralph-loop continuity (**W2**), loop vocabulary (**W5**), and verify-gated self-modification (**W4**, gated behind W3 + V8.3 shadow-Git). The four questions below are unchanged; W3 is how they get answered. **The reframe that drives V9: the harness/loop is the lever, not the weights — validate Jarvis-the-_system_, not a bare-model benchmark.**
+
 V9 is not a feature sprint — it's a **structured validation period**. The questions v9 must answer:
 
 1. **Did Jarvis amplify decisions, or only execute them?** — Difference between tool and co-pilot.
