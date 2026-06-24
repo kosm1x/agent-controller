@@ -58,7 +58,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Spec (2026-04-30)** — _Authored_: full spec at `docs/planning/v8-substrate-s1-spec.md`. ~5 days post-freeze. Adds canonical prefix layout + pre-flight linter + per-tool cache config + `cost_ledger` instrumentation + S3 watchpoint. V8.2's strategic-voice principle block is the canonical case S1 protects.
 
-**Status (2026-04-26)** — _Partial ship_:
+**Status (shipped 2026-04-26; cache-read validated 2026-05-27)** — _Shipped_:
 
 - ✅ `buildJarvisSystemPrompt` returns `{stable, variable}` instead of one concatenated string. Stable = P1+P2 (identity, safety, capabilities, personalData, correctionMemory). Variable = P3+P4 (scope-conditional sections + userFacts + enrichment).
 - ✅ New `buildKnowledgeBaseSections(scopedTools, messageText, logTag)` exposes split KB: stable = enforce + always-read, variable = conditional + project README.
@@ -68,7 +68,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 - ✅ A2A runner + A2A mapper strip the marker before sending to remote peers (audit C1, C2 fix).
 - ✅ Dispatcher persistence strips the marker before INSERT into `tasks.description`, `runs.input`, and event emissions (audit W1 fix). DB stays clean; runners still receive the marker via in-memory submission.
 - ✅ 7 new unit tests (4 for `buildKnowledgeBaseSections`, 3 for `stripCacheMarker`).
-- 🟡 **Validation pending**: post-deploy organic traffic needs ~24h to accrue N≥30 fast-runner tasks. Pre-S1 baseline (post-S4) was 81% average across n=5. Test bar is ≥80% on a full mixed-traffic day at v8 prompt sizes — measurement runs against `cost_ledger.cache_read_tokens / cost_ledger.prompt_tokens` over the post-2026-04-26 20:23 window.
+- ✅ **Validated**: cache-read ratio sustained ≥80% at v8 prompt sizes — the V8.1 §13 activation gate reads 82–85% over 70+ daily runs (2026-05-27 onward), clearing S1's test bar (`cost_ledger.cache_read_tokens / cost_ledger.prompt_tokens`).
 
 ### S2 — Self-audit before reporting
 
@@ -78,7 +78,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Test**: zero "Audited?" cycles in a sprint of v8 proposals. Operator stops needing to ask.
 
-**Status (2026-04-30)** — _Specced, not shipped_. Full design at `docs/planning/v8-substrate-s2-spec.md`. Composes DATAGEN's note-agent JSON-schema enforcement with Voyager's critic-as-write-gate. Phase 1 (harness + schema, ~3 days) + Phase 2 (`morning_brief` retrofit, ~2 days) post-freeze. 6 open questions, none blocking.
+**Status (shipped 2026-05-19/20)** — _Shipped_. Full design at `docs/planning/v8-substrate-s2-spec.md`. Composes DATAGEN's note-agent JSON-schema enforcement with Voyager's critic-as-write-gate. Phase 1 (harness + schema, ~3 days) + Phase 2 (`morning_brief` retrofit, ~2 days) post-freeze. 6 open questions, none blocking.
 
 ### S3 — Out-of-band drift detector
 
@@ -116,7 +116,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Test**: at least 5 production-grade skills exist by end of v8.0; all have green test runs in the prior 7 days; operator can list them with one command.
 
-**Status (2026-04-30)** — _Specced, not shipped_. Full design at `docs/planning/v8-substrate-s5-spec.md`. Builds on existing 57-skill shim (`src/db/skills.ts`). Composes DATAGEN's frontmatter contract + 3-level disclosure with Voyager's description-embedding + critic-as-gate + failed-tasks anti-list. ~10 days post-freeze across 5 phases. 7 open questions, none blocking. Reuses S2 critic primitive.
+**Status (shipped 2026-05-19/20)** — _Shipped_. Full design at `docs/planning/v8-substrate-s5-spec.md`. Builds on existing 57-skill shim (`src/db/skills.ts`). Composes DATAGEN's frontmatter contract + 3-level disclosure with Voyager's description-embedding + critic-as-gate + failed-tasks anti-list. ~10 days post-freeze across 5 phases. 7 open questions, none blocking. Reuses S2 critic primitive.
 
 ---
 
@@ -139,7 +139,7 @@ These are preserved from Jarvis's pre-plan, with §3 substrate items mapped wher
 
 **Activation gate**: cache-read ratio ≥80% sustained over a 24h window with morning-brief generation included.
 
-**Status (2026-04-30)** — _Specced, not shipped_. Full design at `docs/planning/v8-capability-1-spec.md`. Composes Letta sleep-time pattern (N-turn trigger + bounded cursor + role-reframe) with Conway SMS Patterns 1+2+3 (general events + self-defining cohort + coherence/correspondence modes). ~18 days post-freeze across 9 phases; Phases 1-3 (Conway-pattern foundations) can ship independently. 7 open questions, none blocking. Reuses S2 critic + S5 skill registration.
+**Status (ACTIVE — §13 gate passed 2026-05-27)** — _Active_; 06:00 cron briefing live (runbook `docs/V8.1-GUIDE.md`). Full design at `docs/planning/v8-capability-1-spec.md`. Composes Letta sleep-time pattern (N-turn trigger + bounded cursor + role-reframe) with Conway SMS Patterns 1+2+3 (general events + self-defining cohort + coherence/correspondence modes). ~18 days post-freeze across 9 phases; Phases 1-3 (Conway-pattern foundations) can ship independently. 7 open questions, none blocking. Reuses S2 critic + S5 skill registration.
 
 ### V8.2 — Strategic Initiative Layer
 
