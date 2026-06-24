@@ -17,14 +17,18 @@ import {
 const isoDatetime = z.iso.datetime({ offset: true });
 
 /**
- * Signal kinds — the four Phase 5 detectors plus two judgment-only kinds the
+ * Signal kinds. `stalled_project` (day-log-grounded) is the live production
+ * detector kind as of 2026-06-23; the four legacy detector kinds are retired
+ * (their detectors are no longer run) but kept in the enum so historical
+ * persisted briefings still validate. Plus two judgment-only kinds the
  * reflector may raise from general-events/cohort state (spec §9).
  */
 export const SignalKindSchema = z.enum([
-  "stalled_task",
-  "dormant_objective",
-  "implicit_deadline",
-  "recurring_blocker",
+  "stalled_project", // active project gone quiet in the day-log (live)
+  "stalled_task", // RETIRED detector kind (kept for old-row validation)
+  "dormant_objective", // RETIRED
+  "implicit_deadline", // RETIRED
+  "recurring_blocker", // RETIRED
   "momentum", // a recently-completed objective milestone
   "self_defining_progress", // movement on a Conway Pattern 2 cohort entry
 ]);

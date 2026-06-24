@@ -12,6 +12,7 @@
  */
 
 export type DetectionSignalKind =
+  | "stalled_project"
   | "stalled_task"
   | "dormant_objective"
   | "implicit_deadline"
@@ -25,6 +26,22 @@ interface BaseSignal {
   summary: string;
   /** Detector hint — not the final briefing posture (see file header). */
   severity: DetectionSeverity;
+}
+
+/**
+ * An active project with no mention in the Telegram day-log for over the stale
+ * window — the work-truth detector (operator ruling 2026-06-23: the day-log is
+ * the ONLY record of work done; NorthStar/task-table are not). Replaces the
+ * NorthStar `dormant_objective` + task-table `stalled_task` detectors as the
+ * production signal source.
+ */
+export interface StalledProjectSignal extends BaseSignal {
+  kind: "stalled_project";
+  slug: string;
+  name: string;
+  /** Days since the project was last mentioned in a day-log, or null when it
+   *  was not mentioned anywhere in the scan window. */
+  daysSinceMention: number | null;
 }
 
 /** A task silently abandoned — running/queued/blocked, no activity > 7d (§8 Layer 1). */
@@ -73,6 +90,7 @@ export interface RecurringBlockerSignal extends BaseSignal {
 }
 
 export type DetectionSignal =
+  | StalledProjectSignal
   | StalledTaskSignal
   | DormantObjectiveSignal
   | ImplicitDeadlineSignal

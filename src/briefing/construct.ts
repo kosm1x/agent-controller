@@ -115,17 +115,21 @@ async function assembleBriefingInputs(
     toIsoUtc(scope.priorStateSnapshot.asOfTimestamp) ??
     new Date(startedAt.getTime() - MS_PER_DAY).toISOString();
 
+  // Active-project list — the execution surface. Replaces the retired NorthStar
+  // objectives read (operator ruling 2026-06-23: NorthStar is a stale compass,
+  // not work-truth). Shape kept as {id,title,description} so the downstream
+  // judgment prompt + retrieval filter are unchanged.
   const objectives = (
     db
       .prepare(
-        `SELECT path, title, content FROM jarvis_files
-          WHERE path LIKE 'NorthStar/objectives/%'`,
+        `SELECT slug, name, COALESCE(description, '') AS description
+           FROM projects WHERE status = 'active'`,
       )
-      .all() as { path: string; title: string; content: string }[]
-  ).map((o) => ({
-    id: o.path,
-    title: o.title,
-    description: o.content.slice(0, 300),
+      .all() as { slug: string; name: string; description: string }[]
+  ).map((p) => ({
+    id: p.slug,
+    title: p.name,
+    description: p.description.slice(0, 300),
   }));
 
   const cohort = getCohort();
@@ -150,15 +154,15 @@ async function assembleBriefingInputs(
   const verifiedAgainst: DataSourceCitation[] = [
     {
       type: "sqlite",
-      table: "tasks",
-      query_sha: querySha("detection:tasks"),
+      table: "jarvis_files",
+      query_sha: querySha("detection:day-logs"),
       row_count: signals.length,
       queried_at: queriedAt,
     },
     {
       type: "sqlite",
-      table: "jarvis_files",
-      query_sha: querySha("objectives"),
+      table: "projects",
+      query_sha: querySha("active-projects"),
       row_count: objectives.length,
       queried_at: queriedAt,
     },
@@ -178,8 +182,8 @@ async function assembleBriefingInputs(
     },
   ];
   const evidenceSources = [
-    "tasks — Phase 5 detection (stalled / deadlines / blockers)",
-    "NorthStar objectives",
+    "day-log — stalled-project detection",
+    "active projects",
     "general_events — bounded-diff retrieval",
     "self-defining cohort",
   ];
@@ -385,7 +389,7 @@ export async function constructBriefing(
   if (objectives.length === 0) {
     producerConcerns.push({
       type: "incomplete_coverage",
-      detail: "no NorthStar objectives loaded",
+      detail: "no active projects loaded",
     });
   }
   const s2Result = await submitReport({

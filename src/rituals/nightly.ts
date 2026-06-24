@@ -1,9 +1,10 @@
 /**
  * Nightly close task template.
  *
- * Submitted to the dispatcher as a fast runner task.
- * The LLM reviews the day, prepares tomorrow, and emails the report.
- * Journal is user-only — the agent does NOT write there.
+ * Submitted to the dispatcher as a fast runner task. The LLM reviews the day
+ * FROM THE DAY-LOG (the only record of work done; NorthStar is NOT read for
+ * advancement — operator ruling 2026-06-23), prepares tomorrow, and emails the
+ * report. Journal is user-only — the agent does NOT write there.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -13,45 +14,46 @@ export function createNightlyClose(dateLabel: string): TaskSubmission {
     title: `Nightly close — ${dateLabel}`,
     description: `You are Jarvis, Fede's personal strategic assistant. Execute the nightly close ritual.
 
+## Source of truth (READ THIS FIRST)
+
+The Telegram **day-log is the ONLY record of work done.** Do NOT read NorthStar —
+it is a stale compass, not the record of today's work. Ground this close in
+exactly two sources:
+1. **today's day-log** (\`logs/day-logs/${dateLabel}.md\` — the verbatim record of
+   today's Telegram activity), and
+2. the **active-project list**.
+
+NEVER state a task count ("N tareas completadas") or a deadline unless it appears
+verbatim in today's day-log. There is no due_date/deadline data in this system —
+do NOT invent "pending"/"overdue" tasks. Report only what the day-log shows.
+
 ## Instructions (BUDGET: max 8 tool calls)
 
-NorthStar is the **compass** (recurring rhythms, intent). Projects are the
-**execution surface** (in-flight work). The close should report both: which
-compass-rhythms held today, and which project deliverables moved.
+1. Call jarvis_file_read on path="logs/day-logs/${dateLabel}.md" — today's verbatim Telegram log, what actually happened today. If it doesn't exist, the day was quiet on Telegram — say so briefly and keep the close short.
+2. Call project_list for active projects; note which ones today's log shows real movement on.
+3. From the day-log, summarize: what moved today, what was left open (a thread the operator was mid-way through), and the top 3 for tomorrow. Tie each line to something the log actually shows.
+4. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
 
-1. Read NorthStar/INDEX.md (already in your context) — scan for today's active tasks (recurring rhythms).
-2. Read ONLY the 3-5 NorthStar tasks with today's due date or highest priority. Do NOT read all NorthStar files.
-3. Call project_list to see active projects. If any deliverable was clearly worked on today (operator mentioned it, commits landed, KB updated), include it in the close.
-4. For each NorthStar task and surfaced project deliverable: completed or pending? If pending, carry over to tomorrow.
-5. Send the report via gmail_send to fede@eurekamd.net with subject "Cierre del día — ${dateLabel}".
-
-CRITICAL: Do NOT read every NorthStar file. INDEX.md has the summary. Do NOT drill into every project README. Surface only projects with visible activity today. Budget is 8 tool calls total.
-
-Do NOT write to the journal. Do NOT rebalance tasks — just report.
+Do NOT write to the journal. Do NOT rebalance tasks — just report. Do NOT invent counts or deadlines.
 
 ## Email body (Spanish, concise)
 
 **Cierre del día** 🌙 ${dateLabel}
 
-**✅ Completado hoy** (N tareas)
-- [task] ✓
+**✅ Lo que se movió hoy**
+- [de lo que muestra el day-log de hoy]
 
-**⏳ Pendiente → mañana**
-- [task] — [reason]
+**⏳ Quedó abierto → mañana**
+- [hilos que quedaron a medias en el day-log]
 
 **📋 Top 3 mañana**
 1. ...
 2. ...
 3. ...
 
-[1 sentence reflection + streak if applicable]`,
+[1 frase de reflexión]`,
     agentType: "fast",
-    tools: [
-      "jarvis_file_read",
-      "jarvis_file_list",
-      "project_list",
-      "gmail_send",
-    ],
+    tools: ["jarvis_file_read", "project_list", "gmail_send"],
     requiredTools: ["jarvis_file_read", "gmail_send"],
   };
 }

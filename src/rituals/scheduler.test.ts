@@ -81,12 +81,13 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Nineteen: 7 base rituals (+ day-narrative) + 2 F9 market rituals (morning-scan + eod-scan)
+    // Eighteen: 6 base rituals (+ day-narrative; weekly-review DISABLED 2026-06-23,
+    //   NorthStar work-source) + 2 F9 market rituals (morning-scan + eod-scan)
     //   + 1 KB backup + 1 KB reindex (2026-05-07) + 1 autonomous improvement + 1 diff digest
     //   + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
     //   + 1 PM daily rebalance (F8.1c) + 1 hindsight-cost-pull (2026-05-07, queue #4)
     //   + 1 evolution-log-commit (weekly durability, 2026-06-17)
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockSchedule).toHaveBeenCalledTimes(18);
   });
 
   it("should pass timezone to cron.schedule", () => {
@@ -107,7 +108,7 @@ describe("startRitualScheduler", () => {
     delete process.env.HINDSIGHT_ENABLED;
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(18);
+      expect(mockSchedule).toHaveBeenCalledTimes(17);
     } finally {
       if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
     }
@@ -121,7 +122,7 @@ describe("startRitualScheduler", () => {
     process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(19);
+      expect(mockSchedule).toHaveBeenCalledTimes(18);
     } finally {
       if (priorEnabled !== undefined)
         process.env.HINDSIGHT_ENABLED = priorEnabled;
@@ -142,7 +143,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(19);
+    expect(mockStop).toHaveBeenCalledTimes(18);
   });
 });
 
@@ -260,7 +261,8 @@ describe("task templates", () => {
     expect(task.tools).toContain("jarvis_file_read");
     expect(task.tools).toContain("gmail_send");
     expect(task.description).toContain("Jarvis");
-    expect(task.description).toContain("reflection");
+    // Converted 2026-06-23: grounded in the day-log (work-truth), not NorthStar.
+    expect(task.description).toContain("day-log");
     expect(task.description).toContain("Do NOT");
   });
 

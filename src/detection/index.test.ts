@@ -1,12 +1,11 @@
 /**
- * Detection aggregator test (V8.1 Phase 5 B3) — runDetection().
+ * Detection aggregator test — runDetection().
  *
- * §12 Phase 5 item 3 asks for "detection on synthetic data + held-out
- * historical period". The synthetic-data half is these unit tests + the
- * per-detector suites. The held-out-historical half is a live verification
- * step: the detectors are run against the real `data/mc.db` (4 objectives /
- * 193 failed tasks / 10 stalled candidates) at ship time — it cannot be a
- * unit test (no historical fixture is checked into the repo).
+ * As of 2026-06-23 the only production detector is `detectStalledProjects`
+ * (day-log-grounded). The legacy NorthStar / task-table detectors are RETIRED
+ * (operator ruling — the day-log is the only record of work done); this test
+ * pins that runDetection emits `stalled_project` and NEVER the retired kinds,
+ * even when the conditions those detectors fired on are present.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,14 +25,22 @@ describe("runDetection", () => {
     expect(runDetection()).toEqual([]);
   });
 
-  it("aggregates signals across every detector", () => {
+  it("emits stalled_project from the day-log and NOT the retired detector kinds", () => {
     const db = getDatabase();
-    // A stalled task.
+    // An active project with no day-log mention → should surface.
+    db.prepare(
+      `INSERT INTO projects (id, slug, name) VALUES ('p1','salones-wa','Salones WA')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content)
+       VALUES ('dl','logs/day-logs/2026-06-23.md','Day Log','trabajé en pipesong')`,
+    ).run();
+    // Conditions the RETIRED detectors used to fire on — a stalled task + a
+    // recurring blocker. They must NOT appear, proving the detectors are off.
     db.prepare(
       `INSERT INTO tasks (task_id, title, description, status, updated_at)
-       VALUES ('stall-1', 'stalled', 'd', 'running', datetime('now','-20 days'))`,
+       VALUES ('stall-1','stalled','d','running', datetime('now','-20 days'))`,
     ).run();
-    // A recurring blocker — 3 failed tasks, one signature.
     for (let i = 0; i < 3; i++) {
       db.prepare(
         `INSERT INTO tasks (task_id, title, description, status, error)
@@ -41,7 +48,9 @@ describe("runDetection", () => {
       ).run(`fail-${i}`);
     }
     const kinds = new Set(runDetection().map((s) => s.kind));
-    expect(kinds.has("stalled_task")).toBe(true);
-    expect(kinds.has("recurring_blocker")).toBe(true);
+    expect(kinds.has("stalled_project")).toBe(true);
+    expect(kinds.has("stalled_task")).toBe(false);
+    expect(kinds.has("recurring_blocker")).toBe(false);
+    expect(kinds.has("dormant_objective")).toBe(false);
   });
 });

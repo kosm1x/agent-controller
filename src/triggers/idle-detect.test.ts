@@ -1,6 +1,6 @@
 /**
  * Idle-detect trigger tests (V8.1 Phase 7). `runReflection` and
- * `detectStalledTasks` are mocked — the `tasks` / `trigger_runs` tables are a
+ * `detectStalledProjects` are mocked — the `tasks` / `trigger_runs` tables are a
  * real in-memory DB.
  */
 
@@ -14,7 +14,7 @@ vi.mock("../reflection/runner.js", () => ({
 
 const detectStalledMock = vi.fn();
 vi.mock("../detection/index.js", () => ({
-  detectStalledTasks: () => detectStalledMock(),
+  detectStalledProjects: () => detectStalledMock(),
 }));
 
 import { runIdleDetectCheck } from "./idle-detect.js";
@@ -34,7 +34,7 @@ beforeEach(() => {
   runReflectionMock.mockReset();
   runReflectionMock.mockResolvedValue({ ran: true, scope: {} });
   detectStalledMock.mockReset();
-  detectStalledMock.mockReturnValue([{ kind: "stalled_task" }]);
+  detectStalledMock.mockReturnValue([{ kind: "stalled_project" }]);
 });
 
 afterEach(() => {
@@ -61,7 +61,7 @@ describe("runIdleDetectCheck", () => {
   it("does not fire when no task is stalled", async () => {
     detectStalledMock.mockReturnValue([]);
     const result = await runIdleDetectCheck();
-    expect(result.reason).toBe("no-stalled-task");
+    expect(result.reason).toBe("no-stalled-project");
     expect(runReflectionMock).not.toHaveBeenCalled();
   });
 

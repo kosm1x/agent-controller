@@ -12,7 +12,10 @@ import cron, { type ScheduledTask } from "node-cron";
 import type { MessageRouter } from "../messaging/router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { createLogger } from "../lib/logger.js";
-import { startSessionEndWriter, stopSessionEndWriter } from "./session-end-writer.js";
+import {
+  startSessionEndWriter,
+  stopSessionEndWriter,
+} from "./session-end-writer.js";
 
 const log = createLogger("proactive");
 
@@ -32,8 +35,21 @@ let routerRef: MessageRouter | null = null;
 export function startProactiveScheduler(router: MessageRouter): void {
   routerRef = router;
 
-  // Start idle-session watcher alongside the proactive cron jobs
+  // ALWAYS keep the session-end writer running — it stamps the [SESSION_END]
+  // markers in the day-log, which is the work-truth source the rest of the
+  // system now depends on. (It is independent of the nudge scan below.)
   startSessionEndWriter(router);
+
+  // The proactive nudge scan reads NorthStar to flag "overdue/stale/estancado"
+  // work — exactly the source the operator ruled is NOT work-truth (2026-06-23).
+  // OFF by default. Re-enable only behind a day-log-grounded rewrite:
+  //   PROACTIVE_NUDGE_ENABLED=true
+  if (process.env.PROACTIVE_NUDGE_ENABLED !== "true") {
+    log.info(
+      "proactive NorthStar nudge DISABLED (PROACTIVE_NUDGE_ENABLED!=true); session-end day-log writer still active",
+    );
+    return;
+  }
 
   job = cron.schedule(
     NUDGE_CRON,

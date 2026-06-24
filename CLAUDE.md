@@ -73,6 +73,8 @@ Tool definitions are prompts — they deserve more engineering than the handler 
 
 Agent progress must be validated through concrete tool results, not LLM self-assessment. The Prometheus reflector scores based on goal outcomes, not the model's opinion of itself. When adding new agent loops, always feed real environment state (DB results, file contents, API responses) back into the next step.
 
+**The day-log is the only record of work done (operator ruling 2026-06-23).** Signals, detectors, and rituals must judge advancement/stalledness from the **Telegram day-log** (`jarvis_files` path `logs/day-logs/%` + the day-narrative) and the **active-`projects`** list — NEVER from `NorthStar/` (a stale compass of visions/goals) or the `tasks` table (no `due_date` column exists; deriving "overdue" from it fabricates data). `runDetection()` runs only `detectStalledProjects` (day-log-grounded); the legacy NorthStar/task-table detectors are retired. The proactive nudge + weekly-review (NorthStar-based) are off. Do NOT re-wire NorthStar/tasks as a work-source. NorthStar sync (`northstar_sync`, `kb-reindex` skip) stays — it's compass data, not work-truth. See `feedback_daylog_is_work_truth.md`.
+
 ### Stopping conditions
 
 Every agent loop must have bounded iteration limits, token budgets, and timeouts. No unbounded loops — ever. Prometheus enforces this via `maxIterations`, `budgetTokens`, and `maxReplans`. New runners must implement equivalent guards.

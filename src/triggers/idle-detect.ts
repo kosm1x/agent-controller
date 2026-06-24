@@ -22,7 +22,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
-import { detectStalledTasks } from "../detection/index.js";
+import { detectStalledProjects } from "../detection/index.js";
 import { runReflection } from "../reflection/runner.js";
 import { createLogger } from "../lib/logger.js";
 import {
@@ -43,7 +43,7 @@ export interface IdleDetectResult {
   reason:
     | "fired"
     | "not-idle"
-    | "no-stalled-task"
+    | "no-stalled-project"
     | "throttled"
     | "budget-exhausted";
   stalledCount: number;
@@ -78,9 +78,9 @@ export async function runIdleDetectCheck(): Promise<IdleDetectResult> {
     return { fired: false, reason: "not-idle", stalledCount: 0 };
   }
 
-  const stalled = detectStalledTasks();
+  const stalled = detectStalledProjects();
   if (stalled.length === 0) {
-    return { fired: false, reason: "no-stalled-task", stalledCount: 0 };
+    return { fired: false, reason: "no-stalled-project", stalledCount: 0 };
   }
 
   if (isThrottled("idle_detect", IDLE_THROTTLE_WINDOW)) {
@@ -101,7 +101,7 @@ export async function runIdleDetectCheck(): Promise<IdleDetectResult> {
   recordTriggerRun(
     "idle_detect",
     "fired",
-    `${stalled.length} stalled task(s) after 4h idle`,
+    `${stalled.length} stalled project(s) after 4h idle`,
   );
   try {
     const result = await runReflection({

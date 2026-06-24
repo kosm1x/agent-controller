@@ -50,10 +50,12 @@ describe("proactive", () => {
 
   afterEach(() => {
     stopProactiveScheduler();
+    vi.unstubAllEnvs();
   });
 
   describe("startProactiveScheduler", () => {
-    it("should schedule a cron job", () => {
+    it("schedules the nudge cron only when PROACTIVE_NUDGE_ENABLED=true", () => {
+      vi.stubEnv("PROACTIVE_NUDGE_ENABLED", "true");
       startProactiveScheduler(router);
 
       expect(cron.schedule).toHaveBeenCalledWith(
@@ -62,10 +64,17 @@ describe("proactive", () => {
         expect.objectContaining({ timezone: "America/Mexico_City" }),
       );
     });
+
+    it("does NOT schedule the NorthStar nudge by default (operator ruling 2026-06-23)", () => {
+      // Flag unset → the day-log-truth posture: no NorthStar nudge cron.
+      startProactiveScheduler(router);
+      expect(cron.schedule).not.toHaveBeenCalled();
+    });
   });
 
   describe("stopProactiveScheduler", () => {
     it("should stop the cron job", () => {
+      vi.stubEnv("PROACTIVE_NUDGE_ENABLED", "true");
       startProactiveScheduler(router);
       const mockJob = vi.mocked(cron.schedule).mock.results[0]?.value;
 

@@ -148,7 +148,7 @@ EVIDENCE SOURCES (cite these by 0-based index in each judgment's evidence_indice
 ${sources}
 
 INPUTS YOU'VE BEEN GIVEN:
-- Active goal context:
+- Active projects (the execution surface):
 ${objectives}
 - Self-defining memory cohort (Conway Pattern 2 — what Fede actually has live):
 ${cohort}
@@ -156,15 +156,9 @@ ${cohort}
 ${events}
 - Episodic samples:
 ${episodic}
-- Detection outputs:
-  Stalled tasks:
-${signalsOf(input.detectionSignals, "stalled_task")}
-  Dormant objectives:
-${signalsOf(input.detectionSignals, "dormant_objective")}
-  Implicit deadlines:
-${signalsOf(input.detectionSignals, "implicit_deadline")}
-  Recurring blockers:
-${signalsOf(input.detectionSignals, "recurring_blocker")}
+- Detection outputs (grounded in the Telegram day-log — the only record of work done):
+  Stalled projects (active projects with no day-log mention beyond the stale window):
+${signalsOf(input.detectionSignals, "stalled_project")}
 - Signals the operator already discarded in the last 7 days:
 ${discarded}
 
@@ -185,7 +179,7 @@ DISCIPLINE:
 
 DO NOT:
 - Write prose paragraphs recounting what happened — that is correspondence mode, not your job.
-- Recommend actions outside Fede's stated objectives.
+- Recommend actions outside Fede's active projects.
 - Speak as if you were Jarvis addressing Fede — you are a reflector writing judgments for Jarvis to use.
 
 OUTPUT:
@@ -193,8 +187,8 @@ Return ONLY a JSON object, no prose, no code fences:
 {
   "judgments": [
     {
-      "kind": "stalled_task|dormant_objective|implicit_deadline|recurring_blocker|momentum|self_defining_progress",
-      "subject": "<task_id, objective path, blocker signature, etc.>",
+      "kind": "stalled_project|momentum|self_defining_progress",
+      "subject": "<project slug/name, or the cohort member, etc.>",
       "posture": "at_risk|has_momentum|highest_leverage|noted",
       "confidence": "green|yellow|red",
       "confidence_reason": "<>=10 chars>",
