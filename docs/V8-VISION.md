@@ -1,6 +1,6 @@
 # V8 Vision — Autonomía Estratégica + Engineering Substrate
 
-> **Status**: Pre-plan. No activation date. Bilateral-maturity gated.
+> **Status (updated 2026-06-24)**: substrate S1–S5 shipped; V8.1 **ACTIVE** (§13 gate passed 2026-05-27); V8.2 shipped, shadow-armed (delivery OFF); V8.3 specced (R2), not shipped. Bilateral-maturity gated.
 > **Prerequisite**: v7 stable + 30d hardening window (2026-04-22 → 2026-05-22) cleanly closed.
 > **Authored**: 2026-04-26, consolidating Jarvis-authored vision (`projects/agent-controller/evolucion-v7-beta.md`, `v8-pre-plan.md`, both 2026-04-15) with engineering-substrate findings from the 2026-04-26 P2 hardening session.
 > **Reading order**: skim §1 → read §3 (substrate) → read §4 (capabilities) → §6 (activation gate). The Spanish-language vision (§2) is the _why_; the engineering substrate (§3) is the _how-to-get-there_.
