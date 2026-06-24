@@ -19,10 +19,13 @@ function addProject(
   slug: string,
   name: string,
   status: "active" | "paused" | "archived" = "active",
+  config: string | null = null,
 ): void {
   getDatabase()
-    .prepare(`INSERT INTO projects (id, slug, name, status) VALUES (?,?,?,?)`)
-    .run(slug, slug, name, status);
+    .prepare(
+      `INSERT INTO projects (id, slug, name, status, config) VALUES (?,?,?,?,?)`,
+    )
+    .run(slug, slug, name, status, config);
 }
 
 /** Seed a day-log at logs/day-logs/<date>.md with the given content. */
@@ -92,5 +95,57 @@ describe("detectStalledProjects", () => {
   it("returns [] when there is no day-log to judge against", () => {
     addProject("salones-wa", "Salones WA");
     expect(detectStalledProjects()).toEqual([]);
+  });
+
+  it("does NOT flag a project marked config.stall_exempt (intentional silence)", () => {
+    // VLMP case: code-complete, launch-pending — quiet by design, not stalling.
+    addProject(
+      "vlmp",
+      "VLMP",
+      "active",
+      JSON.stringify({ stall_exempt: true }),
+    );
+    addDayLog("2026-06-23", "trabajé en otra cosa"); // vlmp absent on purpose
+    expect(detectStalledProjects()).toHaveLength(0);
+  });
+
+  it("exempts only the marked project — a silent non-exempt sibling still flags", () => {
+    addProject(
+      "vlmp",
+      "VLMP",
+      "active",
+      JSON.stringify({ stall_exempt: true }),
+    );
+    addProject("salones-wa", "Salones WA"); // not exempt, also absent
+    addDayLog("2026-06-23", "día de descanso");
+    const signals = detectStalledProjects();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].slug).toBe("salones-wa");
+  });
+
+  it("malformed config is NOT treated as exempt (fails toward flagging)", () => {
+    addProject("vlmp", "VLMP", "active", "{not valid json");
+    addDayLog("2026-06-23", "puro descanso hoy"); // no mention of the project
+    const signals = detectStalledProjects();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].slug).toBe("vlmp");
+  });
+
+  it("stall_exempt must be exactly true — a falsy/other value still flags", () => {
+    addProject(
+      "vlmp",
+      "VLMP",
+      "active",
+      JSON.stringify({ stall_exempt: "yes" }),
+    );
+    addDayLog("2026-06-23", "otra cosa");
+    expect(detectStalledProjects()).toHaveLength(1);
+  });
+
+  it("the production-default config '{}' (no stall_exempt key) still flags", () => {
+    // Every live row carries '{}' at minimum (projects.config DEFAULT '{}').
+    addProject("vlmp", "VLMP", "active", "{}");
+    addDayLog("2026-06-23", "otra cosa");
+    expect(detectStalledProjects()).toHaveLength(1);
   });
 });

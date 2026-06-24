@@ -90,6 +90,13 @@ describe("renderJudgmentPrompt", () => {
     expect(p).not.toContain("Dormant objectives:");
   });
 
+  it("warns the author that day-log silence is ambiguous (not necessarily drift)", () => {
+    const p = renderJudgmentPrompt(makeInput());
+    const note = p.indexOf("day-log silence is AMBIGUOUS");
+    expect(note).toBeGreaterThan(p.indexOf("Stalled projects"));
+    expect(p).toContain('Do NOT assert "drift"');
+  });
+
   it("renders '(none)' for an empty input section", () => {
     const p = renderJudgmentPrompt(
       makeInput({ detectionSignals: [], generalEvents: [] }),

@@ -159,6 +159,10 @@ ${episodic}
 - Detection outputs (grounded in the Telegram day-log — the only record of work done):
   Stalled projects (active projects with no day-log mention beyond the stale window):
 ${signalsOf(input.detectionSignals, "stalled_project")}
+  NOTE: day-log silence is AMBIGUOUS — a quiet project may be finished, parked, or
+  deliberately deprioritized, not necessarily drifting. Do NOT assert "drift" / "at
+  risk" from silence alone; only treat dormancy as a concern when other evidence
+  supports it, otherwise use NOTED. Absence records what did not happen, not why.
 - Signals the operator already discarded in the last 7 days:
 ${discarded}
 

@@ -24,6 +24,15 @@
  * tokens are excluded (they also collide across projects, e.g.
  * salon-voice-outreach vs salones-wa). Tighten precision by adding alias terms
  * to `projects.config` over time.
+ *
+ * Silence ≠ stall (operator correction 2026-06-24): a project can go quiet in
+ * the day-log because it is FINISHED, parked, or deliberately deprioritized —
+ * not drifting. Day-log absence records what did NOT happen; it cannot say WHY.
+ * So a project whose `config.stall_exempt` is `true` is skipped — its silence is
+ * intentional, and flagging it would seed a false-premise "drift" judgment (the
+ * VLMP case: code-complete, launch-pending). The exemption is an explicit
+ * operator override; absent/malformed config is NOT exempt (fail toward
+ * flagging — the safe direction, consistent with the bias above).
  */
 
 import { getDatabase } from "../db/index.js";
@@ -58,6 +67,8 @@ const COMMON_TOKENS = new Set([
 interface ProjectRow {
   slug: string;
   name: string;
+  /** Free-form JSON; `stall_exempt: true` marks intentional day-log silence. */
+  config: string | null;
 }
 interface DayLogRow {
   /** `logs/day-logs/YYYY-MM-DD.md` */
@@ -89,6 +100,25 @@ function matchTermsFor(p: ProjectRow): string[] {
   return [...terms];
 }
 
+/** A project whose day-log silence is INTENTIONAL, not a stall — the operator
+ *  sets `config.stall_exempt: true` (e.g. code-complete & launch-pending, or
+ *  parked on a deliberate deprioritization). Such a project must not be flagged
+ *  as drifting; doing so seeds a false-premise judgment. Malformed or absent
+ *  config → NOT exempt (fail toward flagging, the safe direction). */
+function isStallExempt(config: string | null): boolean {
+  if (!config) return false;
+  try {
+    const parsed: unknown = JSON.parse(config);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { stall_exempt?: unknown }).stall_exempt === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 function daysBetween(aIso: string, bIso: string): number {
   const a = Date.parse(aIso + "T00:00:00Z");
   const b = Date.parse(bIso + "T00:00:00Z");
@@ -106,7 +136,7 @@ export function detectStalledProjects(
   db: Database.Database = getDatabase(),
 ): StalledProjectSignal[] {
   const projects = db
-    .prepare(`SELECT slug, name FROM projects WHERE status = 'active'`)
+    .prepare(`SELECT slug, name, config FROM projects WHERE status = 'active'`)
     .all() as ProjectRow[];
   if (projects.length === 0) return [];
 
@@ -133,6 +163,7 @@ export function detectStalledProjects(
 
   const signals: StalledProjectSignal[] = [];
   for (const p of projects) {
+    if (isStallExempt(p.config)) continue; // intentional silence, not a stall
     const terms = matchTermsFor(p);
     // newest day-log (already sorted desc) that mentions any term
     const hit = dated.find((d) => terms.some((t) => d.content.includes(t)));
