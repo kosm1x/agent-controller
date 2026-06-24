@@ -65,7 +65,7 @@ Each is a **candidate gated behind its own readiness bar** — none is "decided"
 ### W3 — V9 internal eval harness · **gates W4**
 
 **What**: an internal evaluation set + runner that scores Jarvis-the-system on a fixed task corpus over `logs/decisions/`, with the **time-horizon** metric (longest task finished 50% of the time) as the primary autonomy yardstick. This is the instrument that finally answers V8-VISION §7's four questions.
-**Sources**: METR HCAST / Time-Horizons; **τ²-Bench** (τ-bench arXiv 2406.12045 — tool-agent-user + policy adherence); **Terminal-Bench 2.0** (arXiv 2601.11868); **LH-Bench** (arXiv 2603.22744 — _process quality_, matches the Kasparov thesis). Capability-specific: GAIA / SWE-bench Pro / OSWorld / Claw-eval (2604.06132).
+**Sources**: METR HCAST / Time-Horizons; **τ²-Bench** (τ-bench arXiv 2406.12045 — tool-agent-user + policy adherence); **Terminal-Bench 2.0** (arXiv 2601.11868); **LH-Bench** (arXiv 2603.22744 — _process quality_, matches the Kasparov thesis). Capability-specific: GAIA / SWE-bench Pro / OSWorld / WildClawBench / Claw-eval (2604.06132).
 **Lands**: new `src/eval/*`, `mc-ctl eval` subcommand.
 **Gate**: prerequisite for **any** self-evolution (W4). **Caveat (load-bearing)**: public benchmark scores measure a _system_ (model+scaffold+harness), differing 30–50 pts from the bare model — so build the _internal_ eval vs an explicit-direction baseline; never quote a public number as Jarvis's autonomy score.
 **Status**: candidate; **the gate W4 hangs on.**
@@ -73,7 +73,7 @@ Each is a **candidate gated behind its own readiness bar** — none is "decided"
 ### W4 — Verify-gated self-modification
 
 **What**: the autonomy frontier beyond skill-accretion — Jarvis proposing changes to its own code/harness, each **empirically validated against the W3 benchmark before keep**, with an **archive of known-good versions + hard rollback** (self-modification can destroy the ability to self-modify).
-**Sources**: **Darwin Gödel Machine** (arXiv 2505.22954, ICLR 2026 — archive + open-ended exploration + empirical-validation gate); **SICA** (arXiv 2504.15228 — collapses meta/target agent → maps to a `jarvis_dev` self-PR); Survey of Self-Evolving Agents (arXiv 2507.21046); ReVeal. _Extends_ `reference_voyager` (write-gate critic) into self-code-modification.
+**Sources**: **Darwin Gödel Machine** (arXiv 2505.22954, ICLR 2026 — archive + open-ended exploration + empirical-validation gate); **SICA** (arXiv 2504.15228 — collapses meta/target agent → maps to a `jarvis_dev` self-PR); **Gödel Agent** (arXiv 2410.04444); **AlphaEvolve** (arXiv 2506.13131); **EvoAgentX** (arXiv 2507.03616); **HyperAgents DGM-H** (arXiv 2603.19461); Survey of Self-Evolving Agents (arXiv 2507.21046); ReVeal. _Extends_ `reference_voyager` (write-gate critic) into self-code-modification.
 **Lands**: a gated self-PR path on top of V8.3 shadow-Git.
 **Gate (hard)**: W3 eval harness **+** V8.3 shadow-Git reversibility **+** L≥3 human authorization. Wiring this before W3 risks the unrecoverable "self-modified past the ability to edit" trap (§6).
 **Status**: candidate; **blocked on W3 + V8.3.**
