@@ -25,6 +25,7 @@ import {
   SCHEDULE_TOOLS,
   RESEARCH_TOOLS,
   TEACHING_TOOLS,
+  SOCIAL_TOOLS,
 } from "./scope.js";
 
 /**
@@ -48,6 +49,7 @@ const CONDITION_TOOL_GROUPS: ReadonlyArray<{
   { keyword: "reporting", tools: ["web_search", "exa_search", "gmail_send"] },
   { keyword: "research", tools: RESEARCH_TOOLS },
   { keyword: "teaching", tools: TEACHING_TOOLS },
+  { keyword: "social", tools: SOCIAL_TOOLS },
 ];
 
 export function conditionMatches(
@@ -299,7 +301,9 @@ export function buildKnowledgeBaseSections(
             }
           } catch {
             // non-fatal — log and continue
-            console.warn(`[${logTag}] Rumi SOP guardrail: could not inject ${rumiPath}`);
+            console.warn(
+              `[${logTag}] Rumi SOP guardrail: could not inject ${rumiPath}`,
+            );
           }
         }
       }

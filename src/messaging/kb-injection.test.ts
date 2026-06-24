@@ -15,6 +15,7 @@ import {
   BROWSER_TOOLS,
   SCHEDULE_TOOLS,
   RESEARCH_TOOLS,
+  SOCIAL_TOOLS,
 } from "./scope.js";
 
 vi.mock("../db/jarvis-fs.js", () => ({
@@ -77,6 +78,14 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
     expect(conditionMatches("", ["shell_exec"])).toBe(false);
   });
 
+  it("matches social only when an X/social tool (e.g. tweet_post) is scoped", () => {
+    expect(conditionMatches("social", ["tweet_post"])).toBe(true);
+    expect(conditionMatches("social", ["social_publish"])).toBe(true);
+    expect(conditionMatches("social", ["shell_exec", "web_search"])).toBe(
+      false,
+    );
+  });
+
   // Symmetric coverage — every tool in a scope group must match its keyword.
   // Earlier audit caught `learner_model_status` silently missing from the
   // `teaching` keyword via a stale `startsWith("learning_plan_")` rule. This
@@ -92,6 +101,7 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
     ["research", RESEARCH_TOOLS],
     ["northstar", ["northstar_sync"] as const],
     ["reporting", ["web_search", "exa_search", "gmail_send"] as const],
+    ["social", SOCIAL_TOOLS],
   ] as const)(
     "every %s tool maps to its keyword via conditionMatches",
     (keyword, tools) => {
