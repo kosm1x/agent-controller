@@ -34,7 +34,7 @@ Carried forward from the bibliography's one-page summary. Each is load-bearing; 
 | :--------------------------------------------------- | :------------------- | :------------------------------------------------------------------------------------------------------------------------ |
 | V8.1 Proactive Context Engine                        | Communication        | **ACTIVE** — §13 gate passed 2026-05-27; 06:00 cron briefing live                                                         |
 | V8.2 Strategic Initiative Layer                      | Consent              | **SHADOW** — P0–P9 shipped; judgment producer armed 2026-06-19 (delivery OFF); judgments accruing toward the §17 ≥10 gate |
-| V8.3 Autonomous Execution Gates                      | Control              | **Specced, not shipped** — `docs/planning/v8-capability-3-spec.md` (~821 lines)                                           |
+| V8.3 Autonomous Execution Gates                      | Control              | **Specced (R2, 500 lines), not shipped** — `docs/planning/v8-capability-3-spec.md`                                        |
 | S1 cache / S2 audit / S3 drift / S4 cost / S5 skills | substrate            | **All shipped** (S1+S4 2026-04-26; S2+S3+S5 + Conway 1–3 2026-05-19/20)                                                   |
 | **V9 Agentic Loop Engineering**                      | (puts V8.x on trial) | **Frontier — scoped here**                                                                                                |
 
