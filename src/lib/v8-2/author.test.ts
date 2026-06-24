@@ -71,6 +71,27 @@ describe("renderEvidenceLedger", () => {
   });
 });
 
+describe("AUTHOR_ROLE_INSTRUCTIONS — claim discipline (§17 author over-assert fix)", () => {
+  it("forbids inferring specifics from silence/absence", () => {
+    expect(AUTHOR_ROLE_INSTRUCTIONS).toContain("never infer a cause");
+    expect(AUTHOR_ROLE_INSTRUCTIONS).toMatch(/silence or absence/);
+  });
+  it("instructs a thin-evidence down-scope (say only what is supported)", () => {
+    expect(AUTHOR_ROLE_INSTRUCTIONS).toContain("evidence is thin");
+    expect(AUTHOR_ROLE_INSTRUCTIONS).toContain("NOT known");
+  });
+  it("tells a revision to REMOVE an unsupported claim, not soften it", () => {
+    expect(AUTHOR_ROLE_INSTRUCTIONS).toContain("REMOVE it");
+  });
+  it("still opens with the original framing (cache-prefix slice unchanged)", () => {
+    expect(
+      AUTHOR_ROLE_INSTRUCTIONS.startsWith(
+        "You are writing ONE strategic judgment",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("authorJudgment", () => {
   it("returns the prose and an authoritative cost", async () => {
     mocks.queryClaudeSdk.mockResolvedValue(sdkResult());
