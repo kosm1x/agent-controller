@@ -515,4 +515,6 @@ What remains explicitly unresolved post-bibliography:
 5. **Bibliography negative findings are themselves load-bearing** — ~28 explicit rejections protect us from re-litigating cost/transferability trade-offs in future spec discussions.
 6. **Bush 1945 is V8.1's deepest ancestor** — trail-following memory + associative-not-alphabetical recall = V8.1 retrieval principle, finally personal-scale 80 years late.
 
-**Status**: synthesis complete; V8.2 spec authored; V8.3 spec composed but unwritten. Suggested next: V8.3 spec authoring drawing from §3 V8.3 row.
+**Status** _(as of this 2026-04-30 synthesis)_: synthesis complete; V8.2 spec authored; V8.3 spec composed but unwritten. Suggested next: V8.3 spec authoring drawing from §3 V8.3 row.
+
+> **[UPDATE 2026-06-24]** The V8.3 spec has since been authored and reconciled — `docs/planning/v8-capability-3-spec.md`, Revision 2 (2026-05-30), 500 lines. "Composed but unwritten" above is the historical 2026-04-30 state; both V8.2 (679 lines, R2) and V8.3 specs now exist and are build-ready (V8.3 build hard-gated on V8.2 shipping).
