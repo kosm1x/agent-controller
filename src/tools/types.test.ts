@@ -86,6 +86,22 @@ describe("getToolAnnotations", () => {
       expect(typeof a[k]).toBe("boolean");
     }
   });
+
+  it("returns a fresh object per call — mutating one result does not leak into the next", () => {
+    // Behavior contract: callers (confirmation gates, logging layers) often
+    // shallow-copy or tag the returned annotations. If getToolAnnotations ever
+    // returned a shared default object, a downstream mutation would silently
+    // corrupt subsequent reads. Guard against that regression.
+    const tool = baseTool();
+    const a = getToolAnnotations(tool);
+    const b = getToolAnnotations(tool);
+    expect(a).not.toBe(b); // distinct references
+    (a as { readOnlyHint: boolean }).readOnlyHint = true;
+    expect(b.readOnlyHint).toBe(false);
+    const c = getToolAnnotations(tool);
+    expect(c.readOnlyHint).toBe(false);
+    expect(c.destructiveHint).toBe(true);
+  });
 });
 
 describe("Annotation invariants on annotated tools", () => {
