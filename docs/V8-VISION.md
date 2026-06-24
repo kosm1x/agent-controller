@@ -270,26 +270,26 @@ These are the failure modes most likely to derail v8. Each has a session-history
 
 ## §10 — One-page summary
 
-| Layer                                             | Item                            | Status                                                                                                                             |
-| ------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | **Shipped 2026-04-26** — split persona + KB into stable/variable, marker-based emission via fast-runner. Validation pending N≥30   |
-|                                                   | S2 self-audit before reporting  | ✅ **Shipped 2026-05-19** — v7.7 Spine 1. `docs/planning/v8-substrate-s2-impl.md`                                                  |
-|                                                   | S3 out-of-band drift detector   | ✅ **Shipped 2026-05-19** — v7.7 Spine 2. `docs/planning/v8-substrate-s3-impl.md`                                                  |
-|                                                   | S4 `cost_ledger` v2             | **Phases 1+2 shipped 2026-04-26** — cache breakdown end-to-end on fast/heavy/nanoclaw paths. Swarm zero-track is separate concern. |
-|                                                   | S5 skills-as-stored-procedures  | ✅ **Shipped 2026-05-19** — v7.7 Spine 3, all 5 phases. `docs/planning/v8-substrate-s5-impl.md`                                    |
-|                                                   | Conway 1 — general-events layer | ✅ **Shipped 2026-05-20** — v7.7 Spine 4. `docs/planning/v7.7-spine-4-impl.md`                                                     |
-|                                                   | Conway 2 — self-defining cohort | ✅ **Shipped 2026-05-20** — v7.7 Spine 5 (+ Q3 operator-profile skeleton). `docs/planning/v7.7-spine-5-impl.md`                    |
-|                                                   | Conway 3 — named recall modes   | ✅ **Shipped 2026-05-20** — v7.7 Spine 6. `docs/planning/v7.7-spine-6-impl.md`                                                     |
-| **Capabilities**                                  | V8.1 Proactive Context Engine   | Pre-plan — substrate complete (S2/S3/S5 + Conway 1-3); v8.0 entry point                                                            |
-|                                                   | V8.2 Strategic Initiative Layer | Pre-plan                                                                                                                           |
-|                                                   | V8.3 Autonomous Execution Gates | Pre-plan                                                                                                                           |
-| **Activation**                                    | Bilateral-maturity gate         | Stage B today                                                                                                                      |
-| **Horizon**                                       | V9 validation period            | Activated by v8 maturity                                                                                                           |
-|                                                   | Beta 1.0                        | Activated by v9 evidence                                                                                                           |
+| Layer                                             | Item                            | Status                                                                                                                                                        |
+| ------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Foundation (must ship before v8 capabilities)** | S1 cache-aware prompts          | ✅ **Shipped 2026-04-26** — split persona + KB into stable/variable, marker-based emission via fast-runner. Cache-read validated (V8.1 §13 gate reads 82–85%) |
+|                                                   | S2 self-audit before reporting  | ✅ **Shipped 2026-05-19** — v7.7 Spine 1. `docs/planning/v8-substrate-s2-impl.md`                                                                             |
+|                                                   | S3 out-of-band drift detector   | ✅ **Shipped 2026-05-19** — v7.7 Spine 2. `docs/planning/v8-substrate-s3-impl.md`                                                                             |
+|                                                   | S4 `cost_ledger` v2             | **Phases 1+2 shipped 2026-04-26** — cache breakdown end-to-end on fast/heavy/nanoclaw paths. Swarm zero-track is separate concern.                            |
+|                                                   | S5 skills-as-stored-procedures  | ✅ **Shipped 2026-05-19** — v7.7 Spine 3, all 5 phases. `docs/planning/v8-substrate-s5-impl.md`                                                               |
+|                                                   | Conway 1 — general-events layer | ✅ **Shipped 2026-05-20** — v7.7 Spine 4. `docs/planning/v7.7-spine-4-impl.md`                                                                                |
+|                                                   | Conway 2 — self-defining cohort | ✅ **Shipped 2026-05-20** — v7.7 Spine 5 (+ Q3 operator-profile skeleton). `docs/planning/v7.7-spine-5-impl.md`                                               |
+|                                                   | Conway 3 — named recall modes   | ✅ **Shipped 2026-05-20** — v7.7 Spine 6. `docs/planning/v7.7-spine-6-impl.md`                                                                                |
+| **Capabilities**                                  | V8.1 Proactive Context Engine   | ✅ **ACTIVE** — §13 gate passed 2026-05-27; 06:00 briefing live                                                                                               |
+|                                                   | V8.2 Strategic Initiative Layer | **Shipped, shadow-armed** (P0–P9 2026-06; delivery OFF, §17 gate pending)                                                                                     |
+|                                                   | V8.3 Autonomous Execution Gates | **Specced (R2, 500 lines), not shipped** — gated on V8.2 + bilateral maturity                                                                                 |
+| **Activation**                                    | Bilateral-maturity gate         | Stage B today                                                                                                                                                 |
+| **Horizon**                                       | V9 validation period            | Activated by v8 maturity                                                                                                                                      |
+|                                                   | Beta 1.0                        | Activated by v9 evidence                                                                                                                                      |
 
-**Next session, post-freeze**: write engineering specs for S1, S2, S3 (the cheapest of the five). S4 and S5 are larger; defer until S1-S3 are shipping.
+**[Superseded]** — all five substrate specs were authored and shipped (S1+S4 2026-04-26; S2/S3/S5 + Conway 1-3 2026-05-19/20). V8.1 is active, V8.2 is shipped-in-shadow, V8.3 is specced (R2).
 
-**Today's freeze posture remains correct**: hardening first, vision second. This document codifies the vision so it's ready to consume when the freeze lifts (target 2026-05-22).
+**Freeze context (historical)**: the stabilization freeze (hardening-first) lifted 2026-05-07; this document's vision has since been consumed — V8.1 active, V8.2 built (shadow), V8.3 specced.
 
 ---
 
