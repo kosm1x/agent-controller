@@ -36,8 +36,12 @@ import { rebuildIndex } from "../tools/builtin/code-index.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
 import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
 
-/** Read-only reference mount of the host repo (never writable). */
-const RO_REPO = "/root/claude/mission-control";
+import {
+  RO_REPO,
+  buildEnvironmentNote,
+  emittedTargetNotInSandbox,
+} from "./nanoclaw-env-note.js";
+
 /** Writable working copy the coding agent edits/commits/pushes from. */
 const WORKSPACE = "/workspace";
 
@@ -127,9 +131,7 @@ async function main(): Promise<void> {
   // Clone it into one the agent can edit/commit/push from. Returns null for the
   // rare read-only task (still works against the :ro mount).
   const workspace = setupCodingWorkspace();
-  const envNote = workspace
-    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` is a READ-ONLY reference mount; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools). To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`
-    : `\n\n[ENVIRONMENT] Isolated container; \`${RO_REPO}\` is READ-ONLY and no writable workspace is available — you can read code but cannot commit.`;
+  const envNote = buildEnvironmentNote(workspace);
 
   // Build code index so code_search has data (from the workspace if cloned).
   try {
@@ -169,10 +171,19 @@ async function main(): Promise<void> {
 
     clearInterval(heartbeat);
 
+    // Layer-B enforcement (2026-06-24): the `[SANDBOX SCOPE]` env-note guard tells
+    // the agent to emit `TARGET_NOT_IN_SANDBOX` when the task targets a repo/site
+    // that isn't in this mission-control-only sandbox. Make that a STRUCTURAL
+    // failure here — never report success on a wrong-workspace task — so the
+    // dispatcher/operator sees the miss instead of a confabulated "done". The
+    // advisory prompt alone is the defense class that failed in the incident.
+    const summary = result.reflection.summary ?? "";
+    const targetMissing = emittedTargetNotInSandbox(summary);
+
     const output = {
       type: "result",
-      success: result.success,
-      content: result.reflection.summary,
+      success: targetMissing ? false : result.success,
+      content: summary,
       score: result.reflection.score,
       learnings: result.reflection.learnings,
       toolCalls: result.executionResults.totalToolNames,

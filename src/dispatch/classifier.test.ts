@@ -9,6 +9,7 @@ import {
   isCodingTask,
   needsHeavyReasoning,
   targetsForeignRepo,
+  referencesForeignProject,
   isFanOutTask,
 } from "./classifier.js";
 import type {
@@ -303,6 +304,78 @@ describe("classifier", () => {
     const result = classify({
       title: "git commit the fix in /root/claude/mission-control/src/scope.ts",
       description: "tighten the EMAIL_SEND_RE regex and push",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  // ----- Sibling repo named (no path) stays OFF nanoclaw (2026-06-24) -----
+  // Operators name a project, not a path: "termina la landing de EurekaMS" → the
+  // path-literal targetsForeignRepo guard can't fire, the task wrongly hit the
+  // mission-control-only nanoclaw sandbox, and the agent confabulated edits to mc's
+  // OWN source. referencesForeignProject closes the named case.
+  describe("referencesForeignProject", () => {
+    it("matches a named non-mc project (slug ≥4 chars, word boundary)", () => {
+      expect(
+        referencesForeignProject("termina la landing de EurekaMS", [
+          "eurekams",
+        ]),
+      ).toBe(true);
+      expect(
+        referencesForeignProject("fix the bug in solera-leads", [
+          "solera-leads",
+        ]),
+      ).toBe(true);
+    });
+    it("does NOT match a substring inside a larger token", () => {
+      expect(
+        referencesForeignProject("rerun eurekamsxyz pipeline", ["eurekams"]),
+      ).toBe(false);
+    });
+    it("ignores short slugs (<4 chars) to avoid spurious collisions", () => {
+      expect(referencesForeignProject("add a cms feature", ["cms"])).toBe(
+        false,
+      );
+    });
+    it("returns false on empty/undefined name list", () => {
+      expect(
+        referencesForeignProject("termina la landing de EurekaMS", []),
+      ).toBe(false);
+      expect(
+        referencesForeignProject("termina la landing de EurekaMS", undefined),
+      ).toBe(false);
+    });
+    it("does NOT match a mission-control coding task (no foreign name present)", () => {
+      expect(
+        referencesForeignProject("fix the regex in classifier.ts and push", [
+          "eurekams",
+        ]),
+      ).toBe(false);
+    });
+  });
+
+  it("keeps a NAMED-project coding chat OFF nanoclaw (EurekaMS landing → host)", () => {
+    // The exact 2026-06-24 incident: a landing-site coding task with no /root/claude
+    // path, only the project name. With foreignProjectNames resolved, it must NOT
+    // route to the mission-control-only sandbox.
+    const result = classify({
+      title:
+        "Chat: Usa shell exec y tus herramientas de código para terminar la landing de EurekaMS",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+      foreignProjectNames: ["eurekams"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+  });
+
+  it("WITHOUT a resolved name list, behavior is unchanged (backward compat)", () => {
+    // Same task, no foreignProjectNames passed → prior behavior (still nanoclaw).
+    // Proves the new guard is purely additive and the dispatcher's resolution is
+    // what activates it.
+    const result = classify({
+      title:
+        "Chat: usa shell exec para terminar la landing, crea branch y haz commit",
+      description: "You are Jarvis...",
+      tags: ["messaging"],
     });
     expect(result.agentType).toBe("nanoclaw");
   });

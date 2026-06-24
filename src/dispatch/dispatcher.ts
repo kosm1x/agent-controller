@@ -212,6 +212,38 @@ function drainContainerQueue(): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Slugs + names of registered projects that are NOT mission-control. Fed to the
+ * classifier so a coding task that NAMES a sibling project (e.g. "termina la
+ * landing de EurekaMS") routes to a host runner instead of the
+ * mission-control-only nanoclaw sandbox — the path-literal `targetsForeignRepo`
+ * guard alone misses name references (2026-06-24 EurekaMS-Landing incident).
+ * Cheap (small table), recomputed per submission so newly-registered projects
+ * take effect immediately. Length-gated ≥4 to avoid spurious short-slug matches.
+ * Never throws — routing must not break on a project-table read.
+ */
+function getForeignProjectNames(db: ReturnType<typeof getDatabase>): string[] {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT slug, name FROM projects
+         WHERE lower(slug) NOT IN ('mission-control', 'agent-controller', 'jarvis')
+           AND lower(COALESCE(status, 'active')) NOT IN ('archived', 'completed')`,
+      )
+      .all() as Array<{ slug: string | null; name: string | null }>;
+    const out = new Set<string>();
+    for (const r of rows) {
+      const slug = r.slug?.trim();
+      const name = r.name?.trim();
+      if (slug && slug.length >= 4) out.add(slug);
+      if (name && name.length >= 4) out.add(name);
+    }
+    return [...out];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Submit a new task. Classifies it, persists it, and dispatches to the
  * appropriate runner asynchronously.
  */
@@ -239,6 +271,9 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     tags: submission.tags,
     priority: submission.priority,
     agentType: submission.agentType,
+    // Sibling projects named (not just path-referenced) keep a coding task off
+    // the mission-control-only nanoclaw sandbox. Resolved fresh per submission.
+    foreignProjectNames: getForeignProjectNames(db),
   });
 
   // Insert task. retry_count defaults to 0 for fresh submissions; the

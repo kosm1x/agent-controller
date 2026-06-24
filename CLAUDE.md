@@ -51,7 +51,13 @@ Our architecture maps to five workflow patterns from this guide. Name them expli
 
 Always prefer the simplest runner that can solve the task. The classifier enforces this: fast → heavy → swarm. Never default to Prometheus when a single LLM call with tools suffices. Add orchestration layers only when measurably better outcomes justify the latency/cost tradeoff.
 
-> **nanoclaw is mission-control-only.** The nanoclaw sandbox mounts ONLY `/root/claude/mission-control` (read-only, cloned to `/workspace`). A coding task that targets a SIBLING repo (e.g. `/root/claude/thewilliamsradar-journal`, `crm-azteca`) cannot run there — `git_*`/file ops fail or "succeed" against the throwaway clone and never land on the host. `classifier.ts`'s `targetsForeignRepo()` guard keeps any coding task that names a non-mission-control `/root/claude/<repo>` path on a HOST runner (fast/heavy/swarm) instead. (Williams Journal W25 publish regression, 2026-06-20.)
+> **nanoclaw is mission-control-only.** The nanoclaw sandbox mounts ONLY `/root/claude/mission-control` (read-only, cloned to `/workspace`). A coding task that targets a SIBLING repo (e.g. `/root/claude/thewilliamsradar-journal`, `crm-azteca`) cannot run there — `git_*`/file ops fail or "succeed" against the throwaway clone and never land on the host. **Three-layer guard** (defense-in-depth):
+>
+> 1. **Path-literal** — `classifier.ts`'s `targetsForeignRepo()` keeps any coding task naming a non-mission-control `/root/claude/<repo>` path on a HOST runner. (Williams Journal W25 publish regression, 2026-06-20.)
+> 2. **Name reference** — `referencesForeignProject()` keeps a coding task that NAMES a registered non-mc project (no path needed — "termina la landing de EurekaMS") on a host runner. The dispatcher resolves active non-mc project slugs/names via `getForeignProjectNames()`. Applied at BOTH the coding gate AND the score-path nanoclaw assignment. (EurekaMS-Landing misroute, 2026-06-24.)
+> 3. **In-sandbox stop** — `nanoclaw-env-note.ts`'s `[SANDBOX SCOPE]` prompt guard tells the agent that only mission-control is here; if the target is anything else it must emit `TARGET_NOT_IN_SANDBOX` and STOP (never edit mc's own source as a substitute). The worker turns that sentinel into a STRUCTURAL failure (`emittedTargetNotInSandbox` → `success:false`), so a misroute that slips both routing layers can't report a confabulated success. A companion `[GUARD POLICY]` line forbids guard evasion (no base64/wrapper-script bypass — the 06-24 agent base64-encoded `commit` to dodge the shell-guard).
+>
+> **Layers 2–3 deploy differently:** Layer 2 (classifier/dispatcher) is HOST code → `./scripts/deploy.sh`. Layer 3 (nanoclaw-worker/env-note) runs INSIDE the container → rebuild the image: `docker build -f Dockerfile -t mission-control:latest .` (else the sandbox keeps the old prompt). See `feedback_containerized_runner_image_dependency`.
 
 ### ACI (Agent-Computer Interface) design
 

@@ -56,6 +56,15 @@ export interface ClassificationInput {
   tags?: string[];
   priority?: string;
   agentType?: string;
+  /**
+   * Pre-lowercased slugs/names of registered NON-mission-control projects.
+   * The dispatcher resolves these from the `projects` table so a coding task
+   * that NAMES a sibling project (without a literal `/root/claude/<repo>` path)
+   * still routes to a host runner instead of the mission-control-only nanoclaw
+   * sandbox. Optional + defaults to none, so callers/tests that omit it keep the
+   * prior behavior. See `referencesForeignProject`.
+   */
+  foreignProjectNames?: string[];
 }
 
 export interface ClassificationResult {
@@ -236,6 +245,33 @@ export function targetsForeignRepo(text: string): boolean {
   return FOREIGN_REPO_PATH.test(text);
 }
 
+/**
+ * True when the text mentions a registered NON-mission-control project by slug
+ * or name. Operators reference a sibling repo by name far more often than by
+ * literal path — "termina la landing de EurekaMS", not
+ * "/root/claude/EurekaMS-Landing" — so `targetsForeignRepo` (path-only) misses
+ * them and the coding task wrongly routes to the mission-control-only nanoclaw
+ * sandbox, where the agent confabulates edits to mc's OWN source (2026-06-24
+ * EurekaMS-Landing incident). This catches the named case; the runner-side
+ * sandbox-scope guard catches the rest. `names` are pre-lowercased slugs/names
+ * of non-mc projects (length-gated ≥4 by the resolver) — matched on a
+ * non-alphanumeric word boundary so "eurekams" does not match inside
+ * "eurekamsxyz".
+ */
+export function referencesForeignProject(
+  text: string,
+  names: readonly string[] | undefined,
+): boolean {
+  if (!names || names.length === 0) return false;
+  const t = text.toLowerCase();
+  return names.some((raw) => {
+    const name = raw.trim().toLowerCase();
+    if (name.length < 4) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(t);
+  });
+}
+
 // GENUINELY challenging non-coding work that needs heavy's PER loop. Deliberately
 // TIGHTER than CAPABLE_MSG_PATTERNS (which tiers up the model for any research
 // keyword): a bare "investiga X" / "analiza Y" stays on fast — only architecture,
@@ -322,7 +358,8 @@ export function classify(input: ClassificationInput): ClassificationResult {
   if (
     (!isMessaging || advancedRouting) &&
     isCodingTask(detectText) &&
-    !targetsForeignRepo(detectText)
+    !targetsForeignRepo(detectText) &&
+    !referencesForeignProject(detectText, input.foreignProjectNames)
   ) {
     return {
       agentType: "nanoclaw",
@@ -332,9 +369,11 @@ export function classify(input: ClassificationInput): ClassificationResult {
       modelTier: "capable",
     };
   }
-  // Coding task that targets a sibling repo (not mission-control): the nanoclaw
-  // sandbox can't reach it, so fall through to the HOST runners below (score-based
-  // → fast/heavy/swarm) where the repo and git_*/shell_exec actually exist.
+  // Coding task that targets a sibling repo (not mission-control) — by literal
+  // path (`targetsForeignRepo`) OR by registered project name
+  // (`referencesForeignProject`): the nanoclaw sandbox can't reach it, so fall
+  // through to the HOST runners below (score-based → fast/heavy/swarm) where the
+  // repo and git_*/shell_exec actually exist.
 
   if (isMessaging) {
     const isFanOut = isFanOutTask(input.title);
@@ -446,8 +485,18 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "swarm";
   } else if (score >= 6) {
     agentType = "heavy";
-  } else if (score >= 3) {
+  } else if (
+    score >= 3 &&
+    !targetsForeignRepo(detectText) &&
+    !referencesForeignProject(detectText, input.foreignProjectNames)
+  ) {
     agentType = "nanoclaw";
+  } else if (score >= 3) {
+    // A task that scored into the sandbox range but targets a sibling
+    // repo/project (by path OR name) must NOT land in the mission-control-only
+    // nanoclaw sandbox — the same single-check gap the coding gate above had,
+    // closed on the score path too (qa W1, 2026-06-24). Keep it on a HOST runner.
+    agentType = "heavy";
   } else {
     agentType = "fast";
   }
