@@ -48,6 +48,8 @@ import { ReactionManager } from "./reactions/manager.js";
 
 // Tool source plugin system
 import { toolRegistry } from "./tools/registry.js";
+import { seedV83Capabilities } from "./lib/v8-3/seed.js";
+import { assertV82Dependencies } from "./lib/v8-3/schema.js";
 import { ToolSourceManager } from "./tools/source.js";
 import { BuiltinToolSource } from "./tools/sources/builtin.js";
 import { McpToolSource } from "./tools/sources/mcp.js";
@@ -88,6 +90,10 @@ async function main(): Promise<void> {
   // Initialize database
   const db = initDatabase(config.dbPath);
   log.info({ path: config.dbPath }, "database initialized");
+
+  // V8.3 Phase-0 gate: V8.3 is hard-gated on V8.2's consent substrate (§12).
+  // Fail loud at boot if the dependency tables are missing — never silently.
+  assertV82Dependencies(db);
 
   // V8.1 Phase 4: ensure the named reflection cursors exist from boot so the
   // table is observable before the first reflection pass. Idempotent.
@@ -225,6 +231,22 @@ async function main(): Promise<void> {
     "tool sources loaded",
   );
   log.debug({ tools: toolRegistry.list() }, "tools registered");
+
+  // V8.3 Phase 0+1 — seed the (inert) capability-autonomy ledger now that the
+  // tool registry is populated (tool-backed capabilities resolve + hint-check
+  // against the live registry). Idempotent; failures log loudly, never crash boot.
+  const v83Seed = seedV83Capabilities(db, toolRegistry);
+  if (v83Seed.errors.length > 0) {
+    log.error(
+      { errors: v83Seed.errors },
+      "V8.3 capability seed reported errors",
+    );
+  } else {
+    log.info(
+      { seeded: v83Seed.seeded, skipped: v83Seed.skipped },
+      "V8.3 capability-autonomy seed complete",
+    );
+  }
 
   // Start reaction engine
   const reactionManager = new ReactionManager(db);

@@ -15,6 +15,7 @@ import { ensureTuningTables } from "../tuning/schema.js";
 import { ensureIntelTables } from "./intel-schema.js";
 import { ensureVideoTables } from "./video-schema.js";
 import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
+import { ensureV83Tables } from "../lib/v8-3/schema.js";
 import { activateBestVariant } from "../tuning/activation.js";
 
 let _db: Database.Database | null = null;
@@ -1062,6 +1063,10 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureIntelTables(_db);
   ensureVideoTables(_db);
   ensureSelfHealingTables(_db);
+  // V8.3 Phase 0+1 substrate — creates the (inert) decision-ledger tables. No
+  // pipeline reads/writes them yet. The V8.2 hard-dependency check is a boot
+  // precondition run from src/index.ts (assertV82Dependencies), not here.
+  ensureV83Tables(_db);
 
   // Activate best variant from archive (v2.28 — HyperAgents pattern)
   activateBestVariant();
