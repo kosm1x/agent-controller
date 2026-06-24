@@ -372,7 +372,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**Development state (2026-06-24): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` @ `d91978c`. **258 tools** across 4 ToolSources (builtin 161, MCP-bridge 70, Google 22, Skills 5); **6511 tests** passing (382 files); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
+**Development state (2026-06-24): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` @ `e5648ff`. **258 tools** across 4 ToolSources (builtin 161, MCP-bridge 70, Google 22, Skills 5); **6511 tests** passing (384 test files); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
 
 **Current capability layer — V8 ("Jarvis as colleague"):**
 
