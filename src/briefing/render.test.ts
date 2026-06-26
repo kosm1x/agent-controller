@@ -102,4 +102,23 @@ describe("renderBriefing", () => {
     const out = renderBriefing(briefingWith([judgment()]));
     expect(out).not.toContain("autoauditoría");
   });
+
+  it("splices an extra section before the promote/discard footer", () => {
+    const out = renderBriefing(
+      briefingWith([judgment()]),
+      "*Lectura estratégica*\n\nfoo-bar-strategic",
+    );
+    expect(out).toContain("foo-bar-strategic");
+    // The strategic section appears BEFORE the footer, keeping it last.
+    expect(out.indexOf("foo-bar-strategic")).toBeLessThan(
+      out.indexOf("descartar"),
+    );
+  });
+
+  it("is byte-identical with no extra section vs an absent/blank one", () => {
+    const b = briefingWith([judgment()]);
+    expect(renderBriefing(b, "")).toBe(renderBriefing(b));
+    expect(renderBriefing(b, "   ")).toBe(renderBriefing(b));
+    expect(renderBriefing(b, undefined)).toBe(renderBriefing(b));
+  });
 });

@@ -56,8 +56,17 @@ function renderJudgment(j: Judgment): string {
  * any) is featured first; the rest are grouped by posture. A non-`pass` S2
  * verdict is surfaced honestly. The footer tells the operator how their reply
  * promotes or discards the brief (spec §10 promote/discard).
+ *
+ * `extraSection` (optional) is pre-rendered markdown spliced in just BEFORE the
+ * footer — the seam the V8.2 delivery layer uses to append its strategic-
+ * judgment section (`renderStrategicSection`) without this renderer knowing
+ * anything about V8.2. Absent/blank → byte-identical V8.1 output (the param is
+ * additive; the existing callers and tests pass no second argument).
  */
-export function renderBriefing(briefing: Briefing): string {
+export function renderBriefing(
+  briefing: Briefing,
+  extraSection?: string,
+): string {
   const lines: string[] = [];
   lines.push(
     `*${SURFACE_LABEL[briefing.surface]}* — ${dateLabel(briefing.generated_at)}`,
@@ -94,6 +103,14 @@ export function renderBriefing(briefing: Briefing): string {
     lines.push(
       `_Nota: la autoauditoría marcó este resumen como \`${briefing.critic_verdict}\`._`,
     );
+    lines.push("");
+  }
+
+  // V8.2 delivery seam — append the strategic-judgment section (if any) before
+  // the footer, so the promote/discard line stays last.
+  const extra = extraSection?.trim();
+  if (extra) {
+    lines.push(extra);
     lines.push("");
   }
 

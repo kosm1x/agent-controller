@@ -21,8 +21,13 @@ import {
   insertProposedBriefing,
   transitionBriefing,
 } from "./storage.js";
+import {
+  insertJudgment,
+  updateJudgmentVerdict,
+} from "../lib/v8-2/judgments-store.js";
 
 const ISO = "2026-05-20T08:00:00.000Z";
+const ORIGINAL_DELIVERY = process.env.V82_DELIVERY_ENABLED;
 const SHA256 = "a".repeat(64);
 
 function makeBriefing(): Briefing {
@@ -75,6 +80,8 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDatabase();
+  if (ORIGINAL_DELIVERY === undefined) delete process.env.V82_DELIVERY_ENABLED;
+  else process.env.V82_DELIVERY_ENABLED = ORIGINAL_DELIVERY;
 });
 
 describe("deliverBriefing", () => {
@@ -150,6 +157,81 @@ describe("deliverBriefing", () => {
     expect(await deliverBriefing(b.briefing_id)).toEqual({
       delivered: false,
       reason: "no-router",
+    });
+  });
+
+  describe("V8.2 delivery (V82_DELIVERY_ENABLED)", () => {
+    it("appends the strategic section when the flag is on and a judgment is deliverable", async () => {
+      process.env.V82_DELIVERY_ENABLED = "true";
+      const b = makeBriefing();
+      insertProposedBriefing(b);
+      const jid = insertJudgment({
+        briefingId: b.briefing_id,
+        subject: "pulso-aura-upfront",
+        posture: "highest_leverage",
+        prose: "El layer factual de Snowflake desbloquea el cierre.",
+        createdAt: ISO,
+        signalKind: "stalled_task",
+      });
+      updateJudgmentVerdict(jid, {
+        confidence: "green",
+        confidenceBasisJson: null,
+        criticTrailJson: JSON.stringify({ verdict: "pass" }),
+      });
+
+      const result = await deliverBriefing(b.briefing_id);
+
+      expect(result).toEqual({ delivered: true });
+      const text = String(sendMock.mock.calls[0]![0]);
+      expect(text).toContain("Lectura estratégica");
+      expect(text).toContain("pulso-aura-upfront");
+    });
+
+    it("does NOT append the strategic section when the flag is off (default)", async () => {
+      delete process.env.V82_DELIVERY_ENABLED;
+      const b = makeBriefing();
+      insertProposedBriefing(b);
+      insertJudgment({
+        briefingId: b.briefing_id,
+        subject: "should-not-appear",
+        posture: "noted",
+        prose: "shadow-only judgment",
+        createdAt: ISO,
+        confidence: "green",
+      });
+
+      await deliverBriefing(b.briefing_id);
+
+      const text = String(sendMock.mock.calls[0]![0]);
+      expect(text).not.toContain("Lectura estratégica");
+      expect(text).not.toContain("should-not-appear");
+    });
+
+    it("delivers the V8.1-only brief when the flag is on but no judgment survives the §9 filter", async () => {
+      process.env.V82_DELIVERY_ENABLED = "true";
+      const b = makeBriefing();
+      insertProposedBriefing(b);
+      // A red has_momentum judgment is dropped by the §9 filter.
+      const jid = insertJudgment({
+        briefingId: b.briefing_id,
+        subject: "dropped-red",
+        posture: "has_momentum",
+        prose: "thin evidence, no carve-out",
+        createdAt: ISO,
+      });
+      updateJudgmentVerdict(jid, {
+        confidence: "red",
+        confidenceBasisJson: null,
+        criticTrailJson: JSON.stringify({ verdict: "pass" }),
+      });
+
+      const result = await deliverBriefing(b.briefing_id);
+
+      expect(result).toEqual({ delivered: true });
+      const text = String(sendMock.mock.calls[0]![0]);
+      expect(text).toContain("Resumen matutino");
+      expect(text).not.toContain("Lectura estratégica");
+      expect(text).not.toContain("dropped-red");
     });
   });
 });

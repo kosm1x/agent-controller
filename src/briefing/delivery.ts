@@ -17,6 +17,9 @@ import { getRouter } from "../messaging/index.js";
 import { createLogger } from "../lib/logger.js";
 import { renderBriefing } from "./render.js";
 import { getProposedBriefing, markBriefingDelivered } from "./storage.js";
+import { isV82DeliveryEnabled } from "../lib/v8-2/flags.js";
+import { getJudgmentsForBriefing } from "../lib/v8-2/judgments-store.js";
+import { renderStrategicSection } from "../lib/v8-2/judgment-render.js";
 
 const log = createLogger("briefing:delivery");
 
@@ -50,7 +53,29 @@ export async function deliverBriefing(
     return { delivered: false, reason: "no-router" };
   }
 
-  const text = renderBriefing(row.briefing);
+  // V8.2 delivery (flag-gated, default off): surface the shadow strategic
+  // judgments attached to this brief. The §9 drop-vs-surface filter lives in
+  // `renderStrategicSection`; a brief with no deliverable judgments yields null,
+  // so the operator-facing text is byte-identical to the V8.1-only brief.
+  // Wrapped: the `judgments` read is synchronous SQLite and could throw (e.g.
+  // SQLITE_BUSY under a concurrent admin write) — a V8.2 hiccup must NEVER sink
+  // the V8.1 brief, so any error degrades to V8.1-only (the never-throws
+  // contract on this function).
+  let strategicSection: string | undefined;
+  if (isV82DeliveryEnabled()) {
+    try {
+      strategicSection =
+        renderStrategicSection(getJudgmentsForBriefing(briefingId)) ??
+        undefined;
+    } catch (err) {
+      log.error(
+        { err, briefingId },
+        "v8.2 strategic section failed — delivering V8.1-only brief",
+      );
+    }
+  }
+
+  const text = renderBriefing(row.briefing, strategicSection);
   let tally: { sent: number; failed: number };
   try {
     tally = await router.sendBriefingToOwner(text);

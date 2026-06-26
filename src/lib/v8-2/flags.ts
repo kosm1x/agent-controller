@@ -13,15 +13,27 @@
  * OFF (`=== "true"` opt-in idiom) so the whole V8.2 layer stays dormant until
  * the operator deliberately starts the 7-day shadow.
  *
- * Note on delivery: V8.2 judgments are written-and-measured in shadow but are
- * NOT in the operator-facing delivered payload — the brief still delivers its
- * V8.1 prose (gated by `V81_BRIEF_DELIVERY_ENABLED`). Surfacing V8.2 judgments
- * to the operator is the post-shadow activation step, deliberately deferred
- * until the §17 gate proves the judgments are sound. So there is no separate
- * `V82_DELIVERY_ENABLED` flag yet — that lands with the brief-recompose work.
+ * Note on delivery: the producer (`V82_JUDGMENT_PRODUCER_ENABLED`) writes-and-
+ * measures judgments in shadow; surfacing them to the operator is a SEPARATE,
+ * second opt-in — `V82_DELIVERY_ENABLED` (`isV82DeliveryEnabled`). With delivery
+ * off, the brief still delivers only its V8.1 prose (gated by
+ * `V81_BRIEF_DELIVERY_ENABLED`); with it on, `deliverBriefing` appends a
+ * strategic-judgment section. The two flags are independent on purpose: the
+ * §17 acceptance signal can't accrue until delivery is on, so the operator
+ * flips delivery once the shadow proves the judgments sound — without touching
+ * the producer. Default OFF (`=== "true"` opt-in idiom) so V8.2 stays dormant
+ * in the delivered payload until that deliberate flip.
  */
 
 /** True when the V8.2 judgment-assembly producer + nightly probe are armed. */
 export function isV82ProducerEnabled(): boolean {
   return process.env.V82_JUDGMENT_PRODUCER_ENABLED === "true";
+}
+
+/** True when V8.2 strategic judgments are surfaced into the delivered brief.
+ *  Independent of `isV82ProducerEnabled` — the producer can run in shadow while
+ *  delivery stays off; flipping this on appends the strategic section so the
+ *  §17 acceptance signal (promote-on-reply) can start accruing. */
+export function isV82DeliveryEnabled(): boolean {
+  return process.env.V82_DELIVERY_ENABLED === "true";
 }
