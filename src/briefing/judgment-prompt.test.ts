@@ -97,6 +97,23 @@ describe("renderJudgmentPrompt", () => {
     expect(p).toContain('Do NOT assert "drift"');
   });
 
+  it("forbids unverified absence claims and treats input-silence as ambiguous (absence-guard)", () => {
+    // Root cause of 3/4 V8.2 critic-unfixable verdicts (2026-06-26): momentum
+    // judgments asserting "no tasks/day-log entries for X" about sources the
+    // author was never given (it cannot read the tasks table). The guard forbids
+    // claiming absence beyond the evidence surface and maps input-silence → NOTED.
+    const p = renderJudgmentPrompt(makeInput());
+    expect(p).toContain("ABSENCE IS NOT EVIDENCE");
+    expect(p).toContain("cannot speak to the tasks table");
+    expect(p).toContain(
+      'Claim a project has "no evidence", "no tasks", or "no day-log entries"',
+    );
+    // The carve-out keeps a real, signal-backed stall from being muzzled.
+    expect(p).toContain(
+      "a stalled_project signal that WAS handed to you above is positive evidence",
+    );
+  });
+
   it("renders '(none)' for an empty input section", () => {
     const p = renderJudgmentPrompt(
       makeInput({ detectionSignals: [], generalEvents: [] }),
