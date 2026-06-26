@@ -63,6 +63,7 @@ export class ReactionManager {
   // Cached prepared statements for hot-path queries
   private stmtStuckTasks!: Database.Statement;
   private stmtMarkStuck!: Database.Statement;
+  private stmtMarkStuckRun!: Database.Statement;
 
   constructor(private readonly db: Database.Database) {}
 
@@ -78,6 +79,13 @@ export class ReactionManager {
     );
     this.stmtMarkStuck = this.db.prepare(
       `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now')
+       WHERE task_id = ? AND status = 'running'`,
+    );
+    // Cascade the same terminal flip to the stuck task's run row, scoped to
+    // THIS task only — a blanket sweep here (live operation) would wrongly fail
+    // every other in-flight run.
+    this.stmtMarkStuckRun = this.db.prepare(
+      `UPDATE runs SET status = 'failed', error = ?, completed_at = datetime('now')
        WHERE task_id = ? AND status = 'running'`,
     );
 
@@ -325,6 +333,11 @@ export class ReactionManager {
         );
         // Mark as failed — this triggers a task.failed event which handleTaskFailed picks up
         this.stmtMarkStuck.run(
+          `Stuck task detected (no progress for ${STUCK_THRESHOLD_MINUTES} minutes)`,
+          stuck.task_id,
+        );
+        // Keep the run row in lockstep with its task (scoped to this task_id).
+        this.stmtMarkStuckRun.run(
           `Stuck task detected (no progress for ${STUCK_THRESHOLD_MINUTES} minutes)`,
           stuck.task_id,
         );

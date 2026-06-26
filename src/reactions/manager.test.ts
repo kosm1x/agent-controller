@@ -151,6 +151,16 @@ describe("ReactionManager", () => {
         created_at TEXT DEFAULT (datetime('now'))
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY,
+        run_id TEXT UNIQUE,
+        task_id TEXT NOT NULL,
+        status TEXT DEFAULT 'running',
+        error TEXT,
+        completed_at TEXT
+      )
+    `);
 
     mockSubmitTask.mockClear();
     mockGoalSnapshot.mockReset();
@@ -330,5 +340,37 @@ describe("ReactionManager", () => {
     // Second reaction within cooldown should be skipped
     await triggerTaskFailed("task-1", "ECONNRESET again");
     expect(mockSubmitTask).toHaveBeenCalledTimes(1); // Still 1
+  });
+
+  it("checkStuckTasks cascades ONLY the stuck task's run to failed (scoped, not blanket)", () => {
+    // Stuck task: started 20 min ago (> 15 min threshold), still running.
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, started_at) VALUES (?, 'running', ?, datetime('now','-20 minutes'))`,
+    ).run("stuck-1", "Stuck one");
+    db.prepare(
+      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-stuck', 'stuck-1', 'running')`,
+    ).run();
+    // A different, healthy task whose run is live — must be left alone. A
+    // blanket `WHERE status='running'` cascade would wrongly fail this too.
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, started_at) VALUES (?, 'running', ?, datetime('now'))`,
+    ).run("live-1", "Live one");
+    db.prepare(
+      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-live', 'live-1', 'running')`,
+    ).run();
+
+    // Invoke the private poll handler directly.
+    (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
+
+    const stuckRun = db
+      .prepare("SELECT status, completed_at FROM runs WHERE run_id='run-stuck'")
+      .get() as { status: string; completed_at: string | null };
+    const liveRun = db
+      .prepare("SELECT status FROM runs WHERE run_id='run-live'")
+      .get() as { status: string };
+
+    expect(stuckRun.status).toBe("failed");
+    expect(stuckRun.completed_at).not.toBeNull();
+    expect(liveRun.status).toBe("running"); // scoped — untouched
   });
 });

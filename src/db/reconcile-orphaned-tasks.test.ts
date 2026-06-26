@@ -14,7 +14,7 @@ import { reconcileOrphanedTasks } from "./index.js";
 
 function makeDb() {
   const db = new BetterSqlite3(":memory:");
-  // Minimal tasks table shape — only the columns the reconcile touches.
+  // Minimal tasks + runs table shapes — only the columns the reconcile touches.
   db.exec(`
     CREATE TABLE tasks (
       task_id      TEXT PRIMARY KEY,
@@ -22,6 +22,13 @@ function makeDb() {
       error        TEXT,
       completed_at TEXT,
       updated_at   TEXT
+    );
+    CREATE TABLE runs (
+      run_id       TEXT PRIMARY KEY,
+      task_id      TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      error        TEXT,
+      completed_at TEXT
     );
   `);
   return db;
@@ -94,5 +101,80 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
       "completed",
     );
     expect(reconcileOrphanedTasks(db)).toEqual([]);
+  });
+
+  // Run-row cascade — the leak that accumulated ~66 zombie 'running' run rows
+  // from 2026-03 through 2026-06. Every non-graceful death left the run row at
+  // 'running' because no path swept runs; the boot task-sweep cleaned the task
+  // but not its run.
+  it("cascades orphaned run rows to failed, including runs whose parent task is ALREADY terminal", () => {
+    const db = makeDb();
+    const insTask = db.prepare(
+      "INSERT INTO tasks (task_id, status) VALUES (?, ?)",
+    );
+    const insRun = db.prepare(
+      "INSERT INTO runs (run_id, task_id, status, error) VALUES (?, ?, ?, ?)",
+    );
+
+    // A: task still 'running' at boot → task + its run both orphaned.
+    insTask.run("tA", "running");
+    insRun.run("runA", "tA", "running", null);
+    // B: task ALREADY 'failed' (cleaned in a prior boot) but run left 'running'
+    //    — the dominant row class. Drained only because the run sweep is
+    //    unconditional (no orphaned task drives it).
+    insTask.run("tB", "failed");
+    insRun.run("runB", "tB", "running", null);
+    // C: a completed run must not be touched.
+    insTask.run("tC", "completed");
+    insRun.run("runC", "tC", "completed", null);
+    // D: a run that already failed with a real captured error — preserve it.
+    insTask.run("tD", "failed");
+    insRun.run("runD", "tD", "failed", "real OOM error");
+
+    reconcileOrphanedTasks(db);
+
+    const runs = Object.fromEntries(
+      (
+        db
+          .prepare("SELECT run_id, status, error, completed_at FROM runs")
+          .all() as Array<{
+          run_id: string;
+          status: string;
+          error: string | null;
+          completed_at: string | null;
+        }>
+      ).map((r) => [r.run_id, r]),
+    );
+
+    expect(runs.runA.status).toBe("failed");
+    expect(runs.runA.completed_at).not.toBeNull();
+    expect(runs.runA.error).toContain("Orphaned across non-graceful restart");
+
+    expect(runs.runB.status).toBe("failed");
+    expect(runs.runB.completed_at).not.toBeNull();
+
+    expect(runs.runC.status).toBe("completed");
+
+    expect(runs.runD.status).toBe("failed");
+    expect(runs.runD.error).toBe("real OOM error"); // preserved, not overwritten
+  });
+
+  it("drains an orphaned run even when there are zero orphaned tasks (unconditional run sweep)", () => {
+    const db = makeDb();
+    db.prepare("INSERT INTO tasks (task_id, status) VALUES (?, ?)").run(
+      "tB",
+      "failed",
+    );
+    db.prepare(
+      "INSERT INTO runs (run_id, task_id, status) VALUES (?, ?, ?)",
+    ).run("runB", "tB", "running");
+
+    // No running/pending/queued tasks → the returned task-id list is empty…
+    expect(reconcileOrphanedTasks(db)).toEqual([]);
+    // …but the orphaned run is still drained.
+    const run = db
+      .prepare("SELECT status FROM runs WHERE run_id='runB'")
+      .get() as { status: string };
+    expect(run.status).toBe("failed");
   });
 });

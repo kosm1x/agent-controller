@@ -1113,6 +1113,22 @@ export function reconcileOrphanedTasks(
   // id-list and the status-flip atomic so a concurrent write can't sneak a
   // row in between.
   const reconciled = db.transaction((): string[] => {
+    // Sweep orphaned RUN rows first, UNCONDITIONALLY. At boot nothing has been
+    // dispatched yet (the dispatcher + reaction poll start later in index.ts),
+    // so any run still at 'running' is a zombie from a prior non-graceful death.
+    // This is what stops the runs table accumulating 'running' rows across
+    // restarts. It must run even when there are zero orphaned *tasks*: the
+    // dominant leak is a run whose parent task already went terminal in an
+    // earlier boot (task cleaned, run left 'running'), which the task-only
+    // short-circuit below (rows.length===0) would otherwise skip forever.
+    // COALESCE preserves a run's own captured error if it had one.
+    db.prepare(
+      `UPDATE runs SET status = 'failed',
+         error = COALESCE(NULLIF(error, ''), 'Orphaned across non-graceful restart'),
+         completed_at = datetime('now')
+       WHERE status = 'running'`,
+    ).run();
+
     const rows = db
       .prepare(
         `SELECT task_id FROM tasks WHERE status IN ('running','pending','queued')`,

@@ -530,6 +530,12 @@ async function main(): Promise<void> {
       if (orphaned.changes > 0) {
         log.info(`marked ${orphaned.changes} orphaned task(s) as failed`);
       }
+      // Cascade to their run rows so they don't linger at 'running' until the
+      // next boot sweep. At shutdown every live run is dying with the process,
+      // so a blanket sweep is correct (mirrors the task update above).
+      db.prepare(
+        `UPDATE runs SET status='failed', error='Service shutdown', completed_at=datetime('now') WHERE status='running'`,
+      ).run();
     } catch {
       // Non-fatal — DB may already be closed
     }
