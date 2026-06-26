@@ -12,12 +12,13 @@
  * claims / probes, or no acceptance signal yet) yields `insufficient_data`
  * (exit 2), NOT `fail` — V8.2 simply isn't activatable yet.
  *
- * NOTE on check 6: only 6(a) — the green/red promote ratio — is mechanically
- * measurable from the schema. During the shadow run delivery is off, so no brief
- * is promoted and 6 stays `insufficient_data` (correct: acceptance can't be
- * judged without delivery). 6(b) — "≥10 consecutive accepted, 0 'Audited?'
- * cycles" — has no backing column; it folds into the operator's bilateral-
- * maturity judgment (§16), not this mechanical gate.
+ * NOTE on check 6: only 6(a) — the green/red BRIEF promote ratio (brief-grain;
+ * see `briefConfidenceColor`) — is mechanically measurable from the schema.
+ * During the shadow run delivery is off, so no brief is promoted and 6 stays
+ * `insufficient_data` (correct: acceptance can't be judged without delivery).
+ * 6(b) — "≥10 consecutive accepted, 0 'Audited?' cycles" — has no backing
+ * column; it folds into the operator's bilateral-maturity judgment (§16), not
+ * this mechanical gate.
  */
 
 import { getDatabase } from "../db/index.js";
@@ -60,7 +61,8 @@ export interface V82GateResult {
   unfixablePct: number | null;
   /** Sycophancy concede-without-evidence rate (%) over 30d probes; null = none. */
   sycophancyPct: number | null;
-  /** green/red promote-rate ratio (acceptance 6a); null = not yet measurable. */
+  /** green/red BRIEF promote-rate ratio (acceptance 6a, brief-grain); null =
+   *  not yet measurable (no promoted green-brief AND red-brief pair). */
   promoteRatio: number | null;
   checks: {
     schema: ActivationGateCheck;
@@ -82,6 +84,52 @@ const V82_TABLES = [
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+type Color = "green" | "yellow" | "red";
+
+interface BriefJudgment {
+  posture: string;
+  confidence: Color | null;
+}
+
+/** Most-cautious-first order, used for plurality tie-breaks (an equal count of
+ *  red and green resolves to red). */
+const COLORS_CAUTIOUS_FIRST: Color[] = ["red", "yellow", "green"];
+
+/**
+ * The single confidence color of a brief, for the §17 6a brief-grain acceptance
+ * check (recalibrated 2026-06-26 from judgment-grain). Operator's rule:
+ * lead-judgment first — the brief's color is its highest-leverage judgment's
+ * confidence when present (the headline the operator reacts to), else the
+ * plurality of its judgments' confidences with ties broken toward the more
+ * cautious color. Returns null when no judgment on the brief carries a color.
+ */
+export function briefConfidenceColor(judgments: BriefJudgment[]): Color | null {
+  const colored = judgments.filter(
+    (j): j is { posture: string; confidence: Color } => j.confidence !== null,
+  );
+  if (colored.length === 0) return null;
+
+  // Lead: the highest-leverage judgment's color. An un-vetted (null-confidence)
+  // lead was filtered out above, so it doesn't define the brief — the plurality
+  // of the vetted judgments does. Deterministic if >1 HL (invariant caps at 1).
+  const lead = colored.find((j) => j.posture === "highest_leverage");
+  if (lead) return lead.confidence;
+
+  // Fallback: plurality. Iterating cautious-first with strict `>` keeps the more
+  // cautious color seated on an equal count (red > yellow > green).
+  const counts: Record<Color, number> = { green: 0, yellow: 0, red: 0 };
+  for (const j of colored) counts[j.confidence]++;
+  let best: Color = "green";
+  let bestN = -1;
+  for (const c of COLORS_CAUTIOUS_FIRST) {
+    if (counts[c] > bestN) {
+      best = c;
+      bestN = counts[c];
+    }
+  }
+  return best;
 }
 
 /**
@@ -172,32 +220,61 @@ export function evaluateV82Gate(): V82GateResult {
   const sycophancyPass =
     sycophancyPct !== null && sycophancyPct <= GATE_V82_SYCOPHANCY_MAX_PCT;
 
-  // --- Check 6a: acceptance — green/red promote-rate ratio ≥ 1.5 over 30d.
-  // KNOWN CALIBRATION LIMIT (audit follow-up, post-shadow): promotion is a
-  // per-BRIEFING event, but this ratio is measured at JUDGMENT grain (GROUP BY
-  // j.confidence over the judgments↔briefings join — the spec §17 SQL). A
-  // production brief carries MULTIPLE mixed-color judgments, so a promoted brief
-  // lifts both its green and red judgments' promote-rate together, collapsing
-  // green/red toward 1.0 and making ≥1.5 hard to reach. This is faithful to the
-  // spec SQL and DORMANT during the shadow (delivery off → insufficient_data
-  // here anyway), so it is flagged rather than silently re-derived; the
-  // post-shadow fix is brief-grain stratification (correlate brief outcome with
-  // the brief's dominant confidence), to be decided with the operator.
-  const promoteRows = db
+  // --- Check 6a: acceptance — green/red BRIEF promote-rate ratio ≥ 1.5 over 30d.
+  // BRIEF-GRAIN (recalibrated 2026-06-26; was judgment-grain). Promotion is a
+  // per-BRIEFING event, so the ratio is measured per brief: each brief is given
+  // ONE color by `briefConfidenceColor` (its highest-leverage judgment's color,
+  // else the plurality, ties → more cautious), then green-briefs' promote-rate
+  // is compared to red-briefs'. The old judgment-grain GROUP BY counted every
+  // judgment on a promoted brief as promoted, so a mixed-color brief lifted
+  // green and red equally and the ratio collapsed toward 1.0 — ≥1.5 was
+  // unreachable regardless of how well-calibrated confidence actually was.
+  const acceptanceRows = db
     .prepare(
-      `SELECT j.confidence AS confidence,
-              CAST(SUM(b.status='promoted') AS REAL)/CAST(COUNT(*) AS REAL) AS promote_rate
+      `SELECT j.briefing_id AS briefingId, j.posture AS posture,
+              j.confidence AS confidence, b.status AS status
          FROM judgments j
          JOIN proposed_briefings b ON b.briefing_id = j.briefing_id
         WHERE j.created_at > datetime('now','-30 days')
-          AND j.confidence IS NOT NULL
-        GROUP BY j.confidence`,
+          AND j.confidence IS NOT NULL`,
     )
-    .all() as { confidence: string; promote_rate: number }[];
-  const greenRate = promoteRows.find(
-    (r) => r.confidence === "green",
-  )?.promote_rate;
-  const redRate = promoteRows.find((r) => r.confidence === "red")?.promote_rate;
+    .all() as {
+    briefingId: string;
+    posture: string;
+    confidence: Color;
+    status: string;
+  }[];
+  const briefs = new Map<
+    string,
+    { judgments: BriefJudgment[]; promoted: boolean }
+  >();
+  for (const r of acceptanceRows) {
+    let entry = briefs.get(r.briefingId);
+    if (!entry) {
+      entry = { judgments: [], promoted: r.status === "promoted" };
+      briefs.set(r.briefingId, entry);
+    }
+    entry.judgments.push({ posture: r.posture, confidence: r.confidence });
+  }
+  const briefTally: Record<Color, { total: number; promoted: number }> = {
+    green: { total: 0, promoted: 0 },
+    yellow: { total: 0, promoted: 0 },
+    red: { total: 0, promoted: 0 },
+  };
+  for (const entry of briefs.values()) {
+    const color = briefConfidenceColor(entry.judgments);
+    if (!color) continue;
+    briefTally[color].total++;
+    if (entry.promoted) briefTally[color].promoted++;
+  }
+  const greenRate =
+    briefTally.green.total > 0
+      ? briefTally.green.promoted / briefTally.green.total
+      : undefined;
+  const redRate =
+    briefTally.red.total > 0
+      ? briefTally.red.promoted / briefTally.red.total
+      : undefined;
   const promoteRatio =
     greenRate !== undefined && redRate !== undefined && redRate > 0
       ? round1(greenRate / redRate)
@@ -269,8 +346,8 @@ export function evaluateV82Gate(): V82GateResult {
         pass: acceptancePass,
         detail:
           promoteRatio === null
-            ? "no green/red acceptance signal yet (delivery off during shadow)"
-            : `green/red promote ratio ${promoteRatio}× (need ≥${GATE_V82_PROMOTE_RATIO}×)`,
+            ? "no green/red brief acceptance signal yet (needs both a promoted green AND a red brief; delivery off during shadow → none)"
+            : `green/red brief promote ratio ${promoteRatio}× over ${briefTally.green.total} green / ${briefTally.red.total} red brief(s) (need ≥${GATE_V82_PROMOTE_RATIO}×)`,
       },
     },
     verdict,

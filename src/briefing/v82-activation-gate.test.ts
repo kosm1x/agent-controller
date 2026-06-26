@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { initDatabase, closeDatabase, getDatabase } from "../db/index.js";
-import { evaluateV82Gate, combineVerdicts } from "./v82-activation-gate.js";
+import {
+  evaluateV82Gate,
+  combineVerdicts,
+  briefConfidenceColor,
+} from "./v82-activation-gate.js";
 
 const NOW = new Date().toISOString();
 
@@ -27,6 +31,7 @@ function insertJudgment(opts: {
   confidence?: "green" | "yellow" | "red";
   verdict?: "approved" | "needs_revision" | "unfixable";
   createdAt?: string;
+  posture?: "at_risk" | "momentum" | "highest_leverage" | "noted";
 }): number {
   const trail =
     opts.verdict === undefined
@@ -36,10 +41,11 @@ function insertJudgment(opts: {
     .prepare(
       `INSERT INTO judgments
          (briefing_id, subject, posture, prose, confidence, created_at, critic_trail_json)
-       VALUES (?, 's', 'at_risk', 'p', ?, ?, ?)`,
+       VALUES (?, 's', ?, 'p', ?, ?, ?)`,
     )
     .run(
       opts.briefingId,
+      opts.posture ?? "at_risk",
       opts.confidence ?? null,
       opts.createdAt ?? NOW,
       trail,
@@ -184,5 +190,107 @@ describe("evaluateV82Gate", () => {
     const g = evaluateV82Gate();
     expect(g.unfixablePct).toBe(10); // 1 of 10
     expect(g.checks.unfixable.pass).toBe(false); // ≥5%
+  });
+
+  it("measures acceptance at BRIEF grain — a mixed-color brief counts once by its lead color, not once per judgment", () => {
+    // 3 green-LED briefs (highest_leverage=green + an at_risk red noise
+    // judgment), all promoted. 3 red-LED briefs (highest_leverage=red + a noted
+    // green noise judgment): 1 promoted, 2 expired.
+    //   brief-grain (lead): green-briefs 3/3 = 1.0, red-briefs 1/3 ≈ 0.33 → 3.0×
+    //   judgment-grain (old): green judgments = 3 green-led(promoted) +
+    //     3 noise(1 promoted+2 expired) → 4/6; red judgments symmetrically 4/6 →
+    //     ratio 1.0 (collapsed). The brief-grain result (3.0) is the fix.
+    for (let i = 0; i < 3; i++) {
+      const b = insertBrief("promoted");
+      insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        posture: "highest_leverage",
+      });
+      insertJudgment({ briefingId: b, confidence: "red", posture: "at_risk" });
+    }
+    for (let i = 0; i < 3; i++) {
+      const b = insertBrief(i < 1 ? "promoted" : "expired");
+      insertJudgment({
+        briefingId: b,
+        confidence: "red",
+        posture: "highest_leverage",
+      });
+      insertJudgment({ briefingId: b, confidence: "green", posture: "noted" });
+    }
+
+    const g = evaluateV82Gate();
+    expect(g.promoteRatio).toBe(3); // 1.0 / (1/3) = 3.0 — NOT the 1.0 collapse
+    expect(g.checks.acceptance.pass).toBe(true); // ≥1.5×
+    expect(g.checks.acceptance.detail).toContain("3 green / 3 red brief(s)");
+  });
+
+  it("acceptance is insufficient when there is no red-led brief to compare against", () => {
+    // All briefs green-led + promoted → greenRate measurable, redRate undefined
+    // → promoteRatio null (a ratio needs both colors), mirroring the old guard.
+    for (let i = 0; i < 3; i++) {
+      const b = insertBrief("promoted");
+      insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        posture: "highest_leverage",
+      });
+      insertJudgment({ briefingId: b, confidence: "yellow", posture: "noted" });
+    }
+    expect(evaluateV82Gate().promoteRatio).toBeNull();
+  });
+});
+
+describe("briefConfidenceColor — §17 6a brief-grain labeling", () => {
+  it("uses the highest-leverage judgment's color as the lead", () => {
+    expect(
+      briefConfidenceColor([
+        { posture: "highest_leverage", confidence: "green" },
+        { posture: "at_risk", confidence: "red" },
+        { posture: "noted", confidence: "red" },
+      ]),
+    ).toBe("green"); // lead wins over the red majority
+  });
+
+  it("falls back to plurality when there is no highest-leverage judgment", () => {
+    expect(
+      briefConfidenceColor([
+        { posture: "at_risk", confidence: "green" },
+        { posture: "noted", confidence: "green" },
+        { posture: "momentum", confidence: "red" },
+      ]),
+    ).toBe("green");
+  });
+
+  it("breaks a plurality tie toward the more cautious color", () => {
+    expect(
+      briefConfidenceColor([
+        { posture: "momentum", confidence: "green" },
+        { posture: "at_risk", confidence: "red" },
+      ]),
+    ).toBe("red");
+    expect(
+      briefConfidenceColor([
+        { posture: "momentum", confidence: "green" },
+        { posture: "noted", confidence: "yellow" },
+      ]),
+    ).toBe("yellow"); // yellow more cautious than green
+  });
+
+  it("ignores an un-finalized (null-confidence) lead and uses the vetted plurality", () => {
+    expect(
+      briefConfidenceColor([
+        { posture: "highest_leverage", confidence: null },
+        { posture: "at_risk", confidence: "green" },
+        { posture: "noted", confidence: "green" },
+      ]),
+    ).toBe("green");
+  });
+
+  it("returns null when no judgment carries a confidence color", () => {
+    expect(briefConfidenceColor([])).toBeNull();
+    expect(
+      briefConfidenceColor([{ posture: "at_risk", confidence: null }]),
+    ).toBeNull();
   });
 });

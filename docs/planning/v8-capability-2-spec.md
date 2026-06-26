@@ -622,12 +622,17 @@ FROM sycophancy_probes WHERE probed_at > datetime('now','-30 days');
 
 -- 6. ACCEPTANCE — the headline gate R1's queries omitted entirely
 --    (a) green/red promote ratio ≥ 1.5×  (b) ≥10 consecutive operator-accepted judgments, 0 "Audited?" cycles
+-- NOTE: the SQL below is the ORIGINAL judgment-grain form; 6a was RECALIBRATED to
+--       brief-grain 2026-06-26 (see the note under this block). Kept for the
+--       collapse it illustrates.
 SELECT confidence,
        CAST(SUM(b.status='promoted') AS REAL)/CAST(COUNT(*) AS REAL) AS promote_rate
 FROM judgments j JOIN proposed_briefings b ON b.briefing_id = j.briefing_id
 WHERE j.created_at > datetime('now','-30 days') GROUP BY confidence;
 -- gate: promote_rate(green)/promote_rate(red) ≥ 1.5
 ```
+
+**6a RECALIBRATED to brief-grain (2026-06-26).** The judgment-grain SQL above is faithful to R1 but COLLAPSES on real briefs: promotion is a per-BRIEF event, so a promoted brief with mixed-color judgments counts every one of them (green AND red) as promoted → green-rate ≈ red-rate → ratio → 1.0, unreachable ≥1.5 no matter how well confidence is calibrated. The implementation (`evaluateV82Gate` + the exported `briefConfidenceColor` in `src/briefing/v82-activation-gate.ts`) instead assigns each brief ONE color — its **highest-leverage judgment's** confidence (the headline the operator reacts to), else the **plurality** of its judgments' confidences with ties broken toward the more cautious color — then compares green-briefs' promote-rate to red-briefs'. `null` (insufficient) unless both a green-brief and a red-brief exist with red-rate > 0. WATCH (qa I1): the lead path ignores an un-vetted (null-confidence) highest-leverage judgment and falls back to plurality — confirm the producer always scores the HL judgment's confidence before delivery is armed, since this signal feeds V8.3.
 
 `mc-ctl briefing-gate` is extended (not duplicated) to emit a single `pass | fail | insufficient_data` verdict over these. Watch the cadence trap ([[gate-target-must-match-cadence]]): on quiet weeks volume falls below minimums → `insufficient_data` (exit 2), not fail.
 
@@ -640,7 +645,7 @@ WHERE j.created_at > datetime('now','-30 days') GROUP BY confidence;
 1. `./scripts/deploy.sh` (build + restart; picks up the producer + probe-cron registration).
 2. `V82_JUDGMENT_PRODUCER_ENABLED=true` in `.env` → restart. The 06:00 morning surface now writes shadow `judgments`/`attributed_claims` rows + runs the critic; the 02:30 sycophancy probe cron registers. **Delivery stays off** — the operator-facing brief is unchanged (V8.1 prose); V8.2 judgments are measured, not shown.
 3. Day 1–7: `mc-ctl briefing-gate` returns `insufficient_data` for §17 while volume/acceptance accrue (V8.1 §13 stays exit 0 — the combined verdict does NOT demote a passing V8.1 during the V8.2 shadow). Watch the §17 section's six checks + the watchpoints above.
-4. **Delivery (Phase 10, SHIPPED 2026-06-26 — dormant behind `V82_DELIVERY_ENABLED`):** the §17 6a acceptance check is structurally `insufficient_data` until delivery is on (no brief is promoted with delivery off → `promote_rate` null). To accrue the acceptance signal, set `V82_DELIVERY_ENABLED=true` → restart; the 06:00 brief now appends the strategic-judgment section, and the operator's promote/discard reply (existing `resolveBriefingOnOperatorReply` path) populates `proposed_briefings.status`. Requires `V81_BRIEF_DELIVERY_ENABLED=true` (the V8.1 brief must itself be delivered) and `V82_JUDGMENT_PRODUCER_ENABLED=true` (so judgments exist). KNOWN LIMIT: brief-grain acceptance recalibration (§17 6a note — a brief carries mixed-color judgments, collapsing green/red promote-rate toward 1.0) is still a post-shadow operator call, NOT fixed by this layer.
+4. **Delivery (Phase 10, SHIPPED 2026-06-26 — dormant behind `V82_DELIVERY_ENABLED`):** the §17 6a acceptance check is structurally `insufficient_data` until delivery is on (no brief is promoted with delivery off → `promote_rate` null). To accrue the acceptance signal, set `V82_DELIVERY_ENABLED=true` → restart; the 06:00 brief now appends the strategic-judgment section, and the operator's promote/discard reply (existing `resolveBriefingOnOperatorReply` path) populates `proposed_briefings.status`. Requires `V81_BRIEF_DELIVERY_ENABLED=true` (the V8.1 brief must itself be delivered) and `V82_JUDGMENT_PRODUCER_ENABLED=true` (so judgments exist). The 6a acceptance metric is now BRIEF-grain (recalibrated 2026-06-26 — see the §17 6a note), so once delivery is on the promote-ratio reads correctly per brief instead of collapsing toward 1.0.
 5. Day ≥7 + ≥10 judgments: when §17 reads `pass` AND the operator + Jarvis agree the principle block is the desired voice (bilateral-maturity), V8.2 is activatable.
 6. Kill switch: `V82_JUDGMENT_PRODUCER_ENABLED=false` → restart (rows stop, cron unregisters on next boot, concession path reverts to V8.1 regex). Delivery alone reverts with `V82_DELIVERY_ENABLED=false` (brief returns to V8.1-only; producer/shadow unaffected).
 
