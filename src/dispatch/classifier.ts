@@ -173,20 +173,27 @@ const MSG_SHIP_PATTERNS: readonly RegExp[] = [
   /\bship[- ]?it\b/i,
 ];
 
+// "codebase"/"código" unambiguously name source code — a strong noun. But it is
+// verb-BLIND: it marks AUTHORING only alongside an authoring action. A task that
+// READS / EXTRACTS / EXPLAINS / TRANSLATES-to-a-human-language code is research,
+// NOT authoring, and must NOT reach the authoring-only nanoclaw sandbox (see
+// `isCodeReadOrExplainTask`). Kept as its OWN const so that guard can exclude it
+// from the "is there an authoring signal?" check. (Misroute 2026-06-26: "Extrae
+// el código y traduce al español lo que se visualiza" → nanoclaw → 0 output.)
+const CODE_NOUN_STRONG = /\b(codebase|c[oó]digo)\b/i;
+
 // Any single strong signal means "this is code-authoring work".
 const STRONG_CODING_PATTERNS: readonly RegExp[] = [
   /\b(refactor|refactoriza|debug|depura|hotfix)\b/i,
   /\bship[- ]?it\b/i,
   // git is unambiguous; "merge" only with a code context (NOT "merge the cells")
   /\bgit\b|\bpull request\b|\bPR\b|\bmerge\s+(branch|conflict|request|main|master|rama)\b/i,
-  // "codebase"/"código" unambiguously mean source code. A LONE "repo"/"repositorio"
-  // does NOT: in chat, "guarda esto en el repo" means save to the KB/project store
-  // (a host-only jarvis_file_write), not authoring code. Forcing it to nanoclaw —
-  // which mounts ONLY mission-control and has no KB tools — made the save silently
-  // evaporate (task 6548, "guarda en el repo… marca las cadenas", 2026-06-20: 0 tool
-  // calls, nothing written). "repo" stays in CODING_NOUN, so a verb×noun pairing
-  // ("fix the repo", "edit the repo config") still routes coding correctly.
-  /\b(codebase|c[oó]digo)\b/i,
+  // A LONE "repo"/"repositorio" is NOT here: in chat, "guarda esto en el repo"
+  // means save to the KB/project store (host-only jarvis_file_write), not
+  // authoring code — forcing it to nanoclaw (no KB tools) silently evaporated the
+  // save (task 6548, 2026-06-20). "repo" stays in CODING_NOUN, so a verb×noun
+  // pairing ("fix the repo", "edit the repo config") still routes coding correctly.
+  CODE_NOUN_STRONG,
 ];
 // A source-file path/name → almost certainly code work regardless of the verb
 // ("tighten the regex in scope.ts", "edit users.sql"). Robust against the
@@ -270,6 +277,62 @@ export function referencesForeignProject(
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(t);
   });
+}
+
+// An EXTERNAL / out-of-sandbox web target. Two families: a URL/web-domain, and
+// rendered-content phrasing ("lo que se visualiza", "del sitio", "de la página").
+// The nanoclaw sandbox mounts ONLY mission-control, so a coding task whose subject
+// is code FROM an external website has nothing to author there.
+const WEB_URL_OR_DOMAIN =
+  /\bhttps?:\/\/\S+|\bwww\.\S+|\b[a-z0-9-]{2,}\.(io|com|net|org|app|dev|ai|co|cloud|xyz|info|site|mx|es)\b/i;
+const RENDERED_CONTENT =
+  /\blo que se (visualiza|ve|muestra|renderiza|despliega)\b|\ben pantalla\b|\bdel sitio\b|\bde la (p[áa]gina|web)\b|\bsitio web\b|\bla demo\b|\bwhat(?:'s| is) (displayed|shown|rendered)\b|\bon the (site|page|website)\b/i;
+// Bare code NOUN — stripped before the authoring-verb test so EN "code" (a noun
+// here) is not mistaken for the verb "code" in `CODING_VERB`.
+const CODE_NOUN_BARE = /\b(c[oó]digo|codebase|code)\b/gi;
+// Authoring verbs that `CODING_VERB` misses: JS `\b` is ASCII-only so accented
+// Spanish clitic imperatives don't match the bare stems (arréglalo/corrígelo/
+// optimízalo/…), plus a few list gaps (mejora/simplifica/convierte/improve). Stem
+// + `\w*` so the clitic suffix (-lo/-melo) is absorbed. (qa-W1, 2026-06-26.)
+const AUTHORING_VERB_EXTRA =
+  /\b(arr[ée]gl|corr[íi]g|ed[íi]t|optim[íi]z|modif[íi]c|ren[óo]mbr|reescrib|parch|simplif|mejor|conv[ie]rt|improv|convert)\w*/i;
+
+/**
+ * True when a coding task's subject is code FROM an EXTERNAL website — a target
+ * the nanoclaw sandbox (mission-control-only) cannot reach. Keyed on the
+ * OUT-OF-SANDBOX TARGET, NOT on read-vs-author: reading/explaining mission-
+ * control's OWN code is fine on nanoclaw, so this fires only on an external
+ * signal. An exclusion on the nanoclaw gate, exactly like `targetsForeignRepo` /
+ * `referencesForeignProject`. (Misroute 2026-06-26: "Extrae el código y traduce
+ * al español lo que se visualiza" re wilab.io → nanoclaw → 0 output; the message
+ * carried no `/root/claude` path or project name, so the foreign guards could
+ * not fire.)
+ *
+ * Precision (the danger is a false-positive that strips the sandbox from real
+ * authoring): it fires ONLY with an external signal AND no local source-file/path
+ * AND no authoring verb — so "implementa un cliente para https://stripe.com"
+ * (write LOCAL code that calls an external API) stays on nanoclaw, and a filename
+ * INSIDE a web URL doesn't count as a local file.
+ */
+export function referencesExternalWebTarget(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
+  const hasWebUrl = WEB_URL_OR_DOMAIN.test(t);
+  if (!hasWebUrl && !RENDERED_CONTENT.test(t)) return false;
+  // A LOCAL source-file path (or foreign /root/claude path) ⇒ "edit local code"
+  // = real authoring — UNLESS a web URL/domain is present (a filename inside it,
+  // e.g. example.com/app.js, is part of the target, not a local file — qa-W2).
+  if (!hasWebUrl && (FILENAME_PATTERN.test(t) || FOREIGN_REPO_PATH.test(t))) {
+    return false;
+  }
+  // An authoring verb ⇒ write LOCAL code (e.g. a client for that API) → keep
+  // nanoclaw. Strip the bare code-noun first so EN "code" (noun) ≠ verb "code".
+  const stripped = t.replace(CODE_NOUN_BARE, " ");
+  const authoring =
+    STRONG_CODING_PATTERNS.some((p) => p !== CODE_NOUN_STRONG && p.test(t)) ||
+    CODING_VERB.test(stripped) ||
+    AUTHORING_VERB_EXTRA.test(t) ||
+    MSG_SHIP_PATTERNS.some((p) => p.test(t));
+  return !authoring;
 }
 
 // GENUINELY challenging non-coding work that needs heavy's PER loop. Deliberately
@@ -358,6 +421,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
   if (
     (!isMessaging || advancedRouting) &&
     isCodingTask(detectText) &&
+    !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames)
   ) {
@@ -369,6 +433,10 @@ export function classify(input: ClassificationInput): ClassificationResult {
       modelTier: "capable",
     };
   }
+  // A coding task whose subject is code from an EXTERNAL website
+  // (`referencesExternalWebTarget`) can't be served by the mission-control-only
+  // sandbox — it falls through to the HOST runners below (web/file tools).
+  // (Misroute 2026-06-26.)
   // Coding task that targets a sibling repo (not mission-control) — by literal
   // path (`targetsForeignRepo`) OR by registered project name
   // (`referencesForeignProject`): the nanoclaw sandbox can't reach it, so fall
@@ -487,6 +555,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "heavy";
   } else if (
     score >= 3 &&
+    !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames)
   ) {

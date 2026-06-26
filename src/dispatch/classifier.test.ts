@@ -7,6 +7,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   classify,
   isCodingTask,
+  referencesExternalWebTarget,
   needsHeavyReasoning,
   targetsForeignRepo,
   referencesForeignProject,
@@ -304,6 +305,130 @@ describe("classifier", () => {
     const result = classify({
       title: "git commit the fix in /root/claude/mission-control/src/scope.ts",
       description: "tighten the EMAIL_SEND_RE regex and push",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  // ----- EXTERNAL-website code tasks stay OFF nanoclaw (2026-06-26) -----
+  // "código" is a verb-blind strong signal, so an extract/read task whose subject
+  // is code FROM an external site scored coding->nanoclaw — but the sandbox mounts
+  // ONLY mission-control, so it had nothing to author and failed with 0 output.
+  // Keyed on the OUT-OF-SANDBOX target (URL / domain / rendered-content phrasing),
+  // NOT read-vs-author. Misroute: task e77ed5b7 "Extrae el código y traduce al
+  // español lo que se visualiza" (re wilab.io) -> nanoclaw -> 0 output, failed 43s.
+  it("keeps the wilab.io extract-and-translate chat OFF nanoclaw (external -> host)", () => {
+    const result = classify({
+      title: "Chat: Extrae el código y traduce al español lo que se visualiza",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+  });
+
+  it("keeps an 'extrae el código de wilab.io' chat OFF nanoclaw (domain -> host)", () => {
+    const result = classify({
+      title: "Chat: extrae el código de la demo de wilab.io",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+  });
+
+  // Regression guard (qa-C1 false-positive class): a real AUTHORING task in
+  // Spanish — incl. compound "show-me-and-fix-it" with accented clitic
+  // imperatives — has NO external signal, so it must STILL reach nanoclaw.
+  it("still routes 'muéstrame el código y arréglalo' to nanoclaw (local authoring)", () => {
+    const result = classify({
+      title: "Chat: muéstrame el código y arréglalo",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("still routes 'explica y mejora el código' to nanoclaw (local, no external)", () => {
+    const result = classify({
+      title: "Chat: explica y mejora el código del checkout",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("still routes code PORTING (traduce a TypeScript) to nanoclaw (authoring)", () => {
+    const result = classify({
+      title: "Chat: traduce este código de Python a TypeScript",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("still routes 'build a client for https://stripe.com' to nanoclaw (LOCAL code)", () => {
+    const result = classify({
+      title: "Chat: implementa un cliente para la API de https://stripe.com",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  // Unit-level: the predicate (external signal + not-local + not-authoring).
+  it("referencesExternalWebTarget: external read vs local authoring", () => {
+    // external website code, no authoring -> true
+    expect(
+      referencesExternalWebTarget(
+        "Extrae el código y traduce al español lo que se visualiza",
+      ),
+    ).toBe(true);
+    expect(referencesExternalWebTarget("extrae el código de wilab.io")).toBe(
+      true,
+    );
+    // local / no external signal -> false (qa-C1: these stay on nanoclaw)
+    expect(referencesExternalWebTarget("muéstrame el código y arréglalo")).toBe(
+      false,
+    );
+    expect(referencesExternalWebTarget("explica y mejora el código")).toBe(
+      false,
+    );
+    expect(referencesExternalWebTarget("explica el código de auth.ts")).toBe(
+      false,
+    );
+    // external URL but an AUTHORING verb (writes local code) -> false
+    expect(
+      referencesExternalWebTarget(
+        "implementa un cliente para https://stripe.com",
+      ),
+    ).toBe(false);
+    // external URL but a LOCAL file named too (editing local code) -> false
+    expect(
+      referencesExternalWebTarget("arregla el fetch a https://x.com en api.ts"),
+    ).toBe(false);
+    // qa-W1: external phrase + a MISSED authoring verb (accent clitic / list gap)
+    // must still rescue → false (stays nanoclaw).
+    expect(
+      referencesExternalWebTarget(
+        "muéstrame el código de la página de checkout y arréglalo",
+      ),
+    ).toBe(false);
+    expect(
+      referencesExternalWebTarget("mejora el código del sitio de checkout"),
+    ).toBe(false);
+    expect(
+      referencesExternalWebTarget("explica el código de la demo y optimízalo"),
+    ).toBe(false);
+    // qa-W2: a bare-domain URL with a code-extension path is EXTERNAL, not a
+    // local file → true.
+    expect(
+      referencesExternalWebTarget("extrae el código de example.com/app.js"),
+    ).toBe(true);
+  });
+
+  it("still routes 'muéstrame el código de la página y arréglalo' to nanoclaw (qa-W1)", () => {
+    const result = classify({
+      title: "Chat: muéstrame el código de la página de checkout y arréglalo",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
     });
     expect(result.agentType).toBe("nanoclaw");
   });
