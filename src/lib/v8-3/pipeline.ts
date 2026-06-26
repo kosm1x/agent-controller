@@ -21,6 +21,7 @@ import type {
   DecisionEventKind,
   GateConfig,
   ODDPredicate,
+  ReversalStrategy,
 } from "./types.js";
 import type { DecisionContext } from "./odd-evaluator.js";
 import { evaluateODD } from "./odd-evaluator.js";
@@ -28,9 +29,18 @@ import {
   appendDecisionEvent,
   getCapabilityRow,
   insertDecision,
-  setDecisionPreState,
+  markReverted,
   updateDecisionStatus,
 } from "./decisions-store.js";
+import {
+  applyReversal,
+  buildReversalOp,
+  captureSqlPreState,
+  verifyRestored,
+  type MutationTarget,
+  type ReversalOp,
+  type SqlPreState,
+} from "./reversal.js";
 
 export type DecisionRoute = "confirm" | "autonomous";
 
@@ -47,8 +57,26 @@ export interface DecisionTrigger {
   judgmentId?: number | null;
   /** Conversation thread this decision belongs to. */
   threadId: string;
-  /** Pre-mutation state (Phase 2 mock; real snapshot is Phase 3). */
+  /**
+   * Pre-mutation state mock used when no SQL mutation is declared (Phase 2 path).
+   * When `sqlMutation` is present, the pipeline captures the real snapshot and
+   * this field is ignored.
+   */
   preState?: unknown | null;
+  /**
+   * Phase 3 — declares that this decision performs a SQL mutation, enabling
+   * reversibility: the pipeline snapshots the named rows BEFORE execute, derives
+   * the inverse, stores it on the decision, and (for `sql_inverse`) auto-reverts
+   * on execution failure. `allowedTables` is the capability's declared
+   * blast-radius surface; an inverse touching anything outside it is rejected
+   * (§7). Absent ⇒ Phase-2 mock pre-state, no reversal op.
+   */
+  sqlMutation?: {
+    targets: MutationTarget[];
+    strategy: ReversalStrategy;
+    allowedTables: string[];
+    compensatingProposal?: string;
+  };
 }
 
 export interface RunPipelineOptions {
@@ -70,7 +98,15 @@ export interface PipelineResult {
   /** ODD verdict, or null when not evaluated (L1-L2 always sync-confirm). */
   inODD: boolean | null;
   demoted: boolean;
-  status: "pending" | "committed";
+  status: "pending" | "committed" | "reverted";
+  /** Kind of the recorded reversal op, or null when none was declared. */
+  reversal: ReversalOp["kind"] | null;
+  /**
+   * Auto-revert verification result: `true` = restored + marked reverted;
+   * `false` = replay ran but state NOT restored (CRITICAL, left pending); `null`
+   * = no auto-revert attempted (committed, or no replayable inverse).
+   */
+  restored: boolean | null;
   events: DecisionEventKind[];
 }
 
@@ -140,22 +176,55 @@ export async function runDecisionPipeline(
       `V8.3 pipeline: capability '${cap.capability}' is disabled (effective level 0)`,
     );
   }
+  const demotions: Array<{
+    from: AutonomyLevel;
+    to: AutonomyLevel;
+    reason: string;
+  }> = [];
   let inODD: boolean | null = null;
-  let demoted = false;
   if (effectiveLevel >= 3) {
     inODD = evaluateODD(predicate, trigger.context, now);
     if (!inODD) {
+      const from = effectiveLevel;
       effectiveLevel = clampLevel(effectiveLevel - 1);
-      demoted = true;
+      demotions.push({ from, to: effectiveLevel, reason: "out_of_odd" });
     }
   }
+
+  // 2b. Phase 3 reversibility. When the trigger declares a SQL mutation, capture
+  //     the real pre-state now (before execute) and derive the inverse. Then
+  //     enforce §7: an autonomous (L≥3) action MUST be mechanically reversible,
+  //     and `sql_inverse` is the only strategy v1 can replay — anything else
+  //     (compensating / irreversible / deferred) demotes to confirm (L2). A
+  //     trigger with no declared mutation keeps the Phase-2 mock pre-state.
+  let reversalOp: ReversalOp | null = null;
+  let capturedPreState: unknown = trigger.preState ?? null;
+  if (trigger.sqlMutation) {
+    const pre = captureSqlPreState(db, trigger.sqlMutation.targets, nowIso);
+    capturedPreState = pre;
+    reversalOp = buildReversalOp({
+      strategy: trigger.sqlMutation.strategy,
+      preState: pre,
+      allowedTables: trigger.sqlMutation.allowedTables,
+      level: effectiveLevel,
+      reversibleRequired: gateConfig.reversible_required,
+      compensatingProposal: trigger.sqlMutation.compensatingProposal,
+    });
+    if (effectiveLevel >= 3 && reversalOp.kind !== "sql_inverse") {
+      const from = effectiveLevel;
+      effectiveLevel = 2;
+      demotions.push({ from, to: 2, reason: "not_reversible" });
+    }
+  }
+  const demoted = demotions.length > 0;
 
   // 3. Classify the gate route. `ux_confirm_flag` is an operator preference that
   //    forces the confirm path even when the level would be autonomous.
   const route: DecisionRoute =
     effectiveLevel <= 2 || cap.ux_confirm_flag !== 0 ? "confirm" : "autonomous";
 
-  // 4. Write the decision (state) at status='pending' + emit `proposed`.
+  // 4. Write the decision (state) at status='pending' + emit `proposed`. The
+  //    captured pre-state and (if any) reversal op are persisted at insert.
   const decisionId = insertDecision(
     {
       capability: cap.capability,
@@ -166,6 +235,8 @@ export async function runDecisionPipeline(
         capability: cap.capability,
       },
       payload: trigger.payload,
+      preState: capturedPreState,
+      reversalOp,
       threadId: trigger.threadId,
       proposedAt: nowIso,
     },
@@ -194,12 +265,8 @@ export async function runDecisionPipeline(
     effectiveLevel,
     cadence: CADENCE_BY_LEVEL[effectiveLevel],
   });
-  if (demoted) {
-    emit("autonomy_demoted", {
-      from: clampLevel(effectiveLevel + 1),
-      to: effectiveLevel,
-      reason: "out_of_odd",
-    });
+  for (const demotion of demotions) {
+    emit("autonomy_demoted", demotion);
   }
 
   // 5. Confirm path: production hands off to the existing router confirm flow
@@ -209,20 +276,40 @@ export async function runDecisionPipeline(
     emit("approved", { mock: true });
   }
 
-  // 6. Capture pre-state (Phase 2 takes it from the trigger; real snapshot Ph3).
-  setDecisionPreState(decisionId, trigger.preState ?? null, db);
-
-  // 7. Mock execute → commit. A mock failure ({ok:false}) intentionally leaves
-  //    the decision at status='pending' with no terminal event — execution-
-  //    failure handling + auto-revert is Phase 3 (spec §7); Phase 2's status
-  //    vocabulary has no "failed" terminal, so the row stays pending for the
-  //    caller to reconcile rather than being mislabeled.
+  // 6. Execute. On success → committed + `executed`. On failure WITH a replayable
+  //    inverse (§7): auto-revert from the captured pre-state, verify, and mark the
+  //    decision reverted. On failure with NO replayable inverse, the row stays
+  //    pending for the caller to reconcile (Phase-2 behaviour).
   const result = await execute(trigger);
-  let status: "pending" | "committed" = "pending";
+  let status: "pending" | "committed" | "reverted" = "pending";
+  let restored: boolean | null = null;
   if (result.ok) {
     emit("executed", { mock: true });
     updateDecisionStatus(decisionId, "committed", nowIso, db);
     status = "committed";
+  } else if (
+    reversalOp?.kind === "sql_inverse" &&
+    (capturedPreState as SqlPreState | null)?.kind === "sql"
+  ) {
+    // Execution failed with a replayable inverse → attempt auto-revert.
+    const applied = applyReversal(db, reversalOp);
+    restored =
+      applied.ok && verifyRestored(db, capturedPreState as SqlPreState);
+    if (restored) {
+      emit("reverted", {
+        reason: "execution_failed",
+        auto: true,
+        restored: true,
+      });
+      markReverted(decisionId, nowIso, db);
+      status = "reverted";
+    }
+    // else CRITICAL (spec §10): the replay ran but state was NOT restored — do
+    // NOT mark the decision reverted (that would imply a clean rollback that did
+    // not happen). Leave it `pending` with pre_state + reversal op intact for
+    // investigation/freeze; `restored:false` is surfaced to the caller. (A
+    // dedicated revert-failed event kind needs a decision_events CHECK migration —
+    // deferred to activation; this mirrors revertDecision's not-restored path.)
   }
 
   return {
@@ -234,6 +321,8 @@ export async function runDecisionPipeline(
     inODD,
     demoted,
     status,
+    reversal: reversalOp?.kind ?? null,
+    restored,
     events,
   };
 }

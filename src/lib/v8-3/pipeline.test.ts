@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
-import type { GateConfig, ODDPredicate } from "./types.js";
+import type { GateConfig, ODDPredicate, ReversalStrategy } from "./types.js";
 import { runDecisionPipeline, type DecisionTrigger } from "./pipeline.js";
 
 const ALWAYS_IN: ODDPredicate = { op: "eq", field: "ok", value: true };
@@ -321,5 +321,165 @@ describe("runDecisionPipeline", () => {
     expect(seen).toEqual(
       new Set(["proposed", "autonomy_demoted", "approved", "executed"]),
     );
+  });
+});
+
+// ── Phase 3: reversibility wiring (sqlMutation) ───────────────────────────────
+
+function makeWidgets(): void {
+  getDatabase().exec(
+    `CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)`,
+  );
+  getDatabase()
+    .prepare(`INSERT INTO widgets (id, name, qty) VALUES (1, 'alpha', 10)`)
+    .run();
+}
+
+function triggerSql(
+  capability: string,
+  pk: Record<string, unknown>,
+  strategy: ReversalStrategy = "sql_inverse",
+  context: Record<string, unknown> = { ok: true },
+): DecisionTrigger {
+  return {
+    capability,
+    payload: { do: "x" },
+    context,
+    threadId: "t-1",
+    sqlMutation: {
+      targets: [{ table: "widgets", pk }],
+      strategy,
+      allowedTables: ["widgets"],
+    },
+  };
+}
+
+describe("runDecisionPipeline — Phase 3 reversibility", () => {
+  it("a sqlMutation trigger records a real sql_inverse reversal op + captured pre-state", async () => {
+    makeWidgets();
+    seedCapability({
+      capability: "c_sql",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(triggerSql("c_sql", { id: 1 }));
+    expect(r.reversal).toBe("sql_inverse");
+    expect(r.route).toBe("autonomous");
+    expect(r.status).toBe("committed");
+    const row = getDatabase()
+      .prepare(
+        "SELECT pre_state_json, reversal_op_json FROM decisions WHERE id = ?",
+      )
+      .get(r.decisionId) as {
+      pre_state_json: string;
+      reversal_op_json: string;
+    };
+    expect(JSON.parse(row.pre_state_json).kind).toBe("sql");
+    expect(JSON.parse(row.reversal_op_json).kind).toBe("sql_inverse");
+  });
+
+  it("§7: an autonomous (L4) action with a non-reversible (compensating) op demotes to confirm", async () => {
+    makeWidgets();
+    seedCapability({
+      capability: "c_comp",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(
+      triggerSql("c_comp", { id: 1 }, "compensating"),
+    );
+    expect(r.demoted).toBe(true);
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+    expect(r.reversal).toBe("compensating");
+    expect(r.events).toContain("autonomy_demoted");
+    const ev = getDatabase()
+      .prepare(
+        "SELECT payload_json FROM decision_events WHERE decision_id = ? AND event_kind = 'autonomy_demoted'",
+      )
+      .get(r.decisionId) as { payload_json: string };
+    expect(JSON.parse(ev.payload_json).reason).toBe("not_reversible");
+  });
+
+  it("auto-reverts on execution failure and restores the mutated row", async () => {
+    makeWidgets();
+    seedCapability({
+      capability: "c_rev",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(triggerSql("c_rev", { id: 1 }), {
+      // simulate a partial mutation that then fails
+      execute: () => {
+        getDatabase()
+          .prepare(`UPDATE widgets SET qty = 999 WHERE id = 1`)
+          .run();
+        return { ok: false };
+      },
+    });
+    expect(r.status).toBe("reverted");
+    expect(r.restored).toBe(true);
+    expect(r.events).toEqual(["proposed", "approved", "reverted"]);
+    expect(
+      getDatabase().prepare(`SELECT qty FROM widgets WHERE id = 1`).get(),
+    ).toEqual({
+      qty: 10,
+    });
+    const status = (
+      getDatabase()
+        .prepare("SELECT status FROM decisions WHERE id = ?")
+        .get(r.decisionId) as {
+        status: string;
+      }
+    ).status;
+    expect(status).toBe("reverted");
+  });
+
+  it("a failed auto-revert (replay errors) stays pending and is NOT mislabeled reverted", async () => {
+    makeWidgets();
+    seedCapability({
+      capability: "c_revfail",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(triggerSql("c_revfail", { id: 1 }), {
+      // mutate, then destroy the table so the inverse replay throws → not restored
+      execute: () => {
+        getDatabase()
+          .prepare(`UPDATE widgets SET qty = 999 WHERE id = 1`)
+          .run();
+        getDatabase().exec(`DROP TABLE widgets`);
+        return { ok: false };
+      },
+    });
+    expect(r.status).toBe("pending");
+    expect(r.restored).toBe(false);
+    expect(r.events).not.toContain("reverted"); // never claims a clean rollback
+    const status = (
+      getDatabase()
+        .prepare("SELECT status FROM decisions WHERE id = ?")
+        .get(r.decisionId) as {
+        status: string;
+      }
+    ).status;
+    expect(status).toBe("pending"); // frozen for investigation, not "reverted"
+  });
+
+  it("a failing execute with NO declared mutation stays pending (Phase-2 behaviour)", async () => {
+    seedCapability({
+      capability: "c_nop",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(trigger("c_nop"), {
+      execute: () => ({ ok: false }),
+    });
+    expect(r.status).toBe("pending");
+    expect(r.reversal).toBeNull();
   });
 });

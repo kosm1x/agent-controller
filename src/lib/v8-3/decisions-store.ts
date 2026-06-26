@@ -133,3 +133,50 @@ export function updateDecisionStatus(
     `UPDATE decisions SET status = ?, decided_at = COALESCE(?, decided_at) WHERE id = ?`,
   ).run(status, decidedAt, decisionId);
 }
+
+/** Columns needed to revert a decision (Phase 3). */
+export interface DecisionRevertRow {
+  id: number;
+  capability: string;
+  status: DecisionStatus;
+  autonomy_level: AutonomyLevel;
+  reversal_op_json: string | null;
+  pre_state_json: string | null;
+}
+
+/** Fetch the revert-relevant columns of a decision (or undefined if absent). */
+export function getDecisionForRevert(
+  decisionId: number,
+  db: Database.Database = getDatabase(),
+): DecisionRevertRow | undefined {
+  return db
+    .prepare(
+      `SELECT id, capability, status, autonomy_level, reversal_op_json, pre_state_json
+       FROM decisions WHERE id = ?`,
+    )
+    .get(decisionId) as DecisionRevertRow | undefined;
+}
+
+/** Mark a decision reverted and stamp `reverted_at` (terminal revert state). */
+export function markReverted(
+  decisionId: number,
+  revertedAt: string,
+  db: Database.Database = getDatabase(),
+): void {
+  db.prepare(
+    `UPDATE decisions SET status = 'reverted', reverted_at = ? WHERE id = ?`,
+  ).run(revertedAt, decisionId);
+}
+
+/** Next 1-based sequence_no for a decision's append-only event stream. */
+export function nextSequenceNo(
+  decisionId: number,
+  db: Database.Database = getDatabase(),
+): number {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM decision_events WHERE decision_id = ?`,
+    )
+    .get(decisionId) as { n: number };
+  return row.n;
+}
