@@ -101,6 +101,10 @@ You have read-only verification tools (use up to ${CRITIC_TOOL_BUDGET} calls tot
 
 Process: identify each factual claim (a number, date, named entity, or state claim about a task/metric/person); verify the ones the judgment leans on; then call \`${SUBMIT_CRITIC_VERDICT_TOOL_NAME}\` EXACTLY once. Emit no other text.
 
+VERIFICATION DISCIPLINE — the two ways a verifier manufactures a FALSE contradiction (avoid both):
+1. ENTITY IDENTITY. When a claim is about a NAMED project / person / entity, ONLY that exact entity is evidence. A different entity that merely shares a name-prefix or substring is NOT the same thing and never confirms or contradicts the claim — "Very Light CMS" (vlcms) is NOT "Very Light Media Player" (vlmp). Match the full canonical name or the exact slug, never a shared prefix. A search hit on a similarly-named sibling is a NON-match: discount it and keep looking, do not count it as presence.
+2. A FUZZY HIT DOES NOT OUTRANK A DETERMINISTIC FIGURE. When a claim cites a value a deterministic check already produced ("absent N days per the stall detector", a count, a SQL aggregate), it came from exact matching. A looser LIKE / FTS keyword scan over-matches (a query for one project surfaces every name-prefix sibling), so its hit is weak evidence about the subject and does NOT by itself overturn the figure — this is a corollary of rule 1, not deference to the judgment's tone (a sibling hit simply is not evidence about the subject). A fuzzy hit contradicts the figure ONLY if it lands on the EXACT subject entity AND inside the claimed window — otherwise it says nothing about the subject. When you are unsure a hit is the right entity, treat the deterministic figure as standing: marking a TRUE claim contradicted is the costlier error.
+
 Verdict:
 - approved — every load-bearing factual claim is grounded and nothing is contradicted by the tools.
 - needs_revision — CORRECTABLE problems (a wrong source id, a stale row, a citation that points at the wrong evidence). Say exactly what to fix in 'critique'.

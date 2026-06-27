@@ -24,6 +24,7 @@ import {
   runFileSha,
   sanitizeFtsQuery,
   CRITIC_MAX_LOOP,
+  CRITIC_SYSTEM_PROMPT_V1,
   type CriticInput,
   type CriticVerdict,
 } from "./critic.js";
@@ -33,6 +34,35 @@ import {
   countContradictions,
 } from "./cite.js";
 import type { EvidenceRef } from "./types.js";
+
+describe("CRITIC_SYSTEM_PROMPT_V1 — verification discipline", () => {
+  it("forbids name-prefix entity conflation and fuzzy override of deterministic figures", () => {
+    // Regression: judgment 19 — the critic read a 'Very Light CMS' (vlcms)
+    // day-log entry as evidence for 'Very Light Media Player' (vlmp) and
+    // overturned a CORRECT deterministic stall-detector figure ("absent 27
+    // days") with a fuzzy LIKE hit, falsely marking a TRUE claim contradicted.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain("VERIFICATION DISCIPLINE");
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain("ENTITY IDENTITY");
+    // Names the exact sibling-collision so the rule is concrete, not abstract.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      '"Very Light CMS" (vlcms) is NOT "Very Light Media Player" (vlmp)',
+    );
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "A FUZZY HIT DOES NOT OUTRANK A DETERMINISTIC FIGURE",
+    );
+    // Pin the safety conditional — the ONLY clause stopping rule 2 from becoming
+    // a blanket "deterministic figure always wins" suppressor. A reword that drops
+    // it would turn the critic into a rubber-stamp for REAL contradictions while
+    // every other assertion here still passed green.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "ONLY if it lands on the EXACT subject entity AND inside the claimed window",
+    );
+    // The asymmetry: a false contradiction of a true claim is the costlier error.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "marking a TRUE claim contradicted is the costlier error",
+    );
+  });
+});
 
 vi.mock("../../inference/claude-sdk.js", async () => {
   const actual = await vi.importActual<
