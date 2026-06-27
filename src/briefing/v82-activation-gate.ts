@@ -162,13 +162,27 @@ export function evaluateV82Gate(): V82GateResult {
   const volumePass = judgments7d >= GATE_V82_MIN_JUDGMENTS;
 
   // --- Check 3: citation resolver hit-rate ≥ 95% over those judgments' claims.
+  // CLAIM-GRAIN, not row-grain. The normalized schema stores one attributed_claims
+  // row PER evidence ref, so a claim cited to K sources is K rows. Counting rows
+  // over-weights well-sourced claims: a single contradicted 10-source claim is 10
+  // non-hits and swings the rate ~10pts, while a thinly-cited false claim barely
+  // moves it — backwards (more evidence ⇒ bigger penalty), and the cause of the
+  // metric's volatility (85.1%→74.5% on evidence-volume churn alone). The epistemic
+  // unit is the distinct claim, so collapse rows to (judgment_id, claim_id) first:
+  // a claim is a "hit" iff EVERY row resolved (`markClaimsContradicted` flips a
+  // claim's rows uniformly; 'stale'/'unresolved' are non-hits too). Mirrors the §17
+  // 6a brief-grain recalibration and the claim-grain `countContradictions` that §12
+  // confidence already consumes.
   const claimAgg = db
     .prepare(
       `SELECT COUNT(*) AS total,
-              COALESCE(SUM(resolver_status='resolved'),0) AS resolved
-         FROM attributed_claims
-        WHERE judgment_id IN (
-          SELECT id FROM judgments WHERE created_at > datetime('now','-7 days'))`,
+              COALESCE(SUM(all_resolved),0) AS resolved
+         FROM (
+           SELECT MIN(resolver_status='resolved') AS all_resolved
+             FROM attributed_claims
+            WHERE judgment_id IN (
+              SELECT id FROM judgments WHERE created_at > datetime('now','-7 days'))
+            GROUP BY judgment_id, claim_id)`,
     )
     .get() as { total: number; resolved: number };
   const resolverPct =
@@ -326,7 +340,7 @@ export function evaluateV82Gate(): V82GateResult {
         detail:
           resolverPct === null
             ? "no attributed claims in the 7d window yet"
-            : `resolver hit-rate ${resolverPct}% over ${claimAgg.total} claim row(s) (need ≥${GATE_V82_RESOLVER_PCT}%)`,
+            : `resolver hit-rate ${resolverPct}% over ${claimAgg.total} distinct claim(s) (need ≥${GATE_V82_RESOLVER_PCT}%)`,
       },
       unfixable: {
         pass: unfixablePass,

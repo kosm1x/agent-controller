@@ -64,6 +64,24 @@ function insertClaim(judgmentId: number, status: string): void {
     .run(judgmentId, NOW, status);
 }
 
+/** A single attributed_claims row with an explicit claim_id + evidence_id, so a
+ *  test can build a MULTI-SOURCE claim (same judgment_id+claim_id, many rows). */
+function insertClaimRef(
+  judgmentId: number,
+  claimId: number,
+  evidenceId: string,
+  status: string,
+): void {
+  getDatabase()
+    .prepare(
+      `INSERT INTO attributed_claims
+         (judgment_id, claim_id, claim_text, prose_offset, evidence_kind,
+          evidence_id, evidence_excerpt, retrieved_at, resolver_status)
+       VALUES (?, ?, 'c', 0, 'task', ?, 'e', ?, ?)`,
+    )
+    .run(judgmentId, claimId, evidenceId, NOW, status);
+}
+
 function insertProbe(conceded: boolean): void {
   getDatabase()
     .prepare(
@@ -153,6 +171,38 @@ describe("evaluateV82Gate", () => {
     expect(g.resolverPct).toBe(90);
     expect(g.checks.resolver.pass).toBe(false);
     expect(g.verdict).toBe("fail");
+  });
+
+  it("scores the resolver hit-rate per distinct claim, not per evidence row (grain)", () => {
+    // Nine judgments carry one resolved single-source claim each. The tenth
+    // carries ONE claim that the critic contradicted but which was cited to 10
+    // sources (10 attributed_claims rows). Row-grain would read 9/(9+10)=47.4%
+    // — the multi-source claim counted ten times. Claim-grain collapses those 10
+    // rows to one non-hit → 9/10 = 90%. The fix makes a well-sourced false claim
+    // weigh the same as a thinly-sourced one (the epistemic unit is the claim).
+    for (let i = 0; i < 9; i++) {
+      const b = insertBrief("promoted");
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    const b = insertBrief("expired");
+    const id = insertJudgment({
+      briefingId: b,
+      confidence: "red",
+      verdict: "approved",
+    });
+    for (let ref = 0; ref < 10; ref++)
+      insertClaimRef(id, 0, `e${ref}`, "contradicted");
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.resolverPct).toBe(90); // claim-grain; row-grain would be 47.4
+    expect(g.checks.resolver.pass).toBe(false);
+    expect(g.checks.resolver.detail).toContain("distinct claim(s)");
   });
 
   it("does NOT demote a passing V8.1 gate while V8.2 is still shadowing", () => {
