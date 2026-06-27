@@ -14,6 +14,8 @@ import type {
   AutonomyLevel,
   CapabilityAutonomyRow,
   DecisionEventKind,
+  DecisionEventRow,
+  DecisionRow,
   DecisionStatus,
   PheropathSignal,
 } from "./types.js";
@@ -166,6 +168,28 @@ export function markReverted(
   db.prepare(
     `UPDATE decisions SET status = 'reverted', reverted_at = ? WHERE id = ?`,
   ).run(revertedAt, decisionId);
+}
+
+/** Fetch a full `decisions` row by id (or undefined if absent). Used by the
+ *  Phase-4 ADR renderer, which derives the whole record from this row. */
+export function getDecisionById(
+  decisionId: number,
+  db: Database.Database = getDatabase(),
+): DecisionRow | undefined {
+  return db.prepare(`SELECT * FROM decisions WHERE id = ?`).get(decisionId) as
+    DecisionRow | undefined;
+}
+
+/** Fetch a decision's append-only event history, ordered by sequence_no. */
+export function getDecisionEvents(
+  decisionId: number,
+  db: Database.Database = getDatabase(),
+): DecisionEventRow[] {
+  return db
+    .prepare(
+      `SELECT * FROM decision_events WHERE decision_id = ? ORDER BY sequence_no ASC`,
+    )
+    .all(decisionId) as DecisionEventRow[];
 }
 
 /** Next 1-based sequence_no for a decision's append-only event stream. */
