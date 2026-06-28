@@ -71,7 +71,13 @@ vi.mock("../lib/logger.js", () => ({
   }),
 }));
 
-import { submitTask, getTask, listTasks, cancelTask } from "./dispatcher.js";
+import {
+  submitTask,
+  getTask,
+  listTasks,
+  cancelTask,
+  extractPersistText,
+} from "./dispatcher.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -244,5 +250,51 @@ describe("cancelTask", () => {
     expect(result).toBe(true);
     // Should have called run() for: cancel main task + cancel main runs + cancel subtask + cancel subtask runs
     expect(mockRun.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractPersistText — report text extraction for ritual persistResult
+// ---------------------------------------------------------------------------
+
+describe("extractPersistText", () => {
+  it("on the REAL heavy-runner shape returns finalAnswer (the agent report), NOT content (the reflector summary)", () => {
+    // This is the exact shape heavy-runner emits: content = reflector summary,
+    // finalAnswer = the agent's joined goal answers. Persisting `content` here
+    // would store "Heuristic score: 0.63..." instead of the report (qa BLOCKER).
+    expect(
+      extractPersistText({
+        content: "Heuristic score: 0.63. 2/3 goals completed.",
+        finalAnswer: "EVOLUTION REPORT — tool patterns...",
+        score: 0.63,
+        learnings: [],
+      }),
+    ).toBe("EVOLUTION REPORT — tool patterns...");
+  });
+
+  it("accepts a bare string output", () => {
+    expect(extractPersistText("  a report  ")).toBe("a report");
+  });
+
+  it("falls back to content/text/result/output when finalAnswer is absent", () => {
+    expect(extractPersistText({ content: "via content" })).toBe("via content");
+    expect(extractPersistText({ text: "via text" })).toBe("via text");
+    expect(extractPersistText({ result: "via result" })).toBe("via result");
+    expect(extractPersistText({ output: "via output" })).toBe("via output");
+  });
+
+  it("prefers finalAnswer over every fallback key", () => {
+    expect(
+      extractPersistText({ finalAnswer: "fa", content: "c", text: "t" }),
+    ).toBe("fa");
+  });
+
+  it("returns null when there is no usable text (avoids storing junk)", () => {
+    expect(extractPersistText({ content: "   " })).toBeNull();
+    expect(extractPersistText({ score: 0.5 })).toBeNull();
+    expect(extractPersistText("")).toBeNull();
+    expect(extractPersistText(null)).toBeNull();
+    expect(extractPersistText(undefined)).toBeNull();
+    expect(extractPersistText(42)).toBeNull();
   });
 });

@@ -8,6 +8,7 @@
 import { registerRunner } from "../dispatch/dispatcher.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
+import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { getConfig } from "../config.js";
 import {
@@ -57,6 +58,10 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         content: result.reflection.summary,
         score: result.reflection.score,
         learnings: result.reflection.learnings,
+        // The agent's actual report (joined per-goal answers), distinct from
+        // `content` (the reflector's meta-summary). Consumed by the dispatcher
+        // for ritual persistResult so it stores what the agent produced.
+        finalAnswer: collectFinalAnswer(result.executionResults),
       },
       toolCalls: result.executionResults.totalToolNames,
       tokenUsage: {
@@ -169,6 +174,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       content?: string;
       score?: number;
       learnings?: string[];
+      finalAnswer?: string | null;
       toolCalls?: string[];
       tokenUsage?: {
         promptTokens: number;
@@ -200,6 +206,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
         content: parsed.content,
         score: parsed.score,
         learnings: parsed.learnings,
+        finalAnswer: parsed.finalAnswer,
       },
       toolCalls: parsed.toolCalls,
       tokenUsage: parsed.tokenUsage,

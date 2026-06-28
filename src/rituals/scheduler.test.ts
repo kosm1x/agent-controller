@@ -284,7 +284,14 @@ describe("task templates", () => {
     expect(task.agentType).toBe("heavy");
     expect(task.tools).toContain("evolution_get_data");
     expect(task.tools).toContain("evolution_deactivate_skill");
-    expect(task.tools).toContain("memory_store");
+    // memory_store removed 2026-06-28: persistence is now deterministic via
+    // persistResult (the agent skipped the discretionary store ~100% of the
+    // time on Sonnet). See evolution.test.ts for the full coverage.
+    expect(task.tools).not.toContain("memory_store");
+    expect(task.persistResult).toEqual({
+      bank: "mc-operational",
+      tags: ["evolution", "ritual"],
+    });
     expect(task.description).toContain("evolution mode");
   });
 

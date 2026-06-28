@@ -13,6 +13,7 @@ import { shellTool } from "../tools/builtin/shell.js";
 import { httpTool } from "../tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
+import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
 
 async function main(): Promise<void> {
@@ -71,6 +72,9 @@ async function main(): Promise<void> {
       content: result.reflection.summary,
       score: result.reflection.score,
       learnings: result.reflection.learnings,
+      // Agent's actual report (joined per-goal answers), distinct from the
+      // reflector meta-summary in `content`. See final-answer.ts.
+      finalAnswer: collectFinalAnswer(result.executionResults),
       tokenUsage: result.tokenUsage,
       goalGraph: result.goalGraph,
       trace: result.trace,

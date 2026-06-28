@@ -22,6 +22,8 @@ import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";
+import { getMemoryService } from "../memory/index.js";
+import type { MemoryBank } from "../memory/types.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -79,6 +81,21 @@ export interface TaskSubmission {
    * EVOLUTION-LOG.md even when the API was healthy.
    */
   ritualId?: string;
+  /**
+   * Deterministic output persistence for rituals (skill-evolution /diagnose,
+   * 2026-06-28). When set, the dispatcher stores the runner's report text to
+   * memory in CODE on completion — instead of relying on the agent to call
+   * `memory_store` itself. The old skill-evolution ritual gated success on a
+   * final discretionary `memory_store` call the model skipped ~100% of the
+   * time on Sonnet (0/10), failing the ritual for 9 straight days. Persisting
+   * here removes the dependency on the agent's tool choice. Stores on a normal
+   * completion whether the reflector judged it success or failure; never blocks
+   * completion. NOTE: the required-tools-missing early returns short-circuit
+   * before this point, so a submission that sets BOTH `requiredTools` and
+   * `persistResult` would not persist on that specific failure — fine for
+   * rituals (they set `tools`, not `requiredTools`).
+   */
+  persistResult?: { bank: MemoryBank; tags: string[] };
 }
 
 export interface TaskRow {
@@ -437,6 +454,32 @@ async function dispatchTask(
 }
 
 /**
+ * Pull the human-readable report text out of a runner's output object for
+ * `TaskSubmission.persistResult`. Prefers `finalAnswer` — the agent's actual
+ * report (heavy-runner derives it from the goal answers via collectFinalAnswer).
+ * `content` is the REFLECTOR's 1-3 sentence meta-summary, NOT what the agent
+ * produced, so it is only a last-resort fallback. Falls back across the shapes
+ * the router's `extractResultText` reads, then to null when nothing is usable.
+ */
+export function extractPersistText(output: unknown): string | null {
+  if (typeof output === "string") return output.trim() || null;
+  if (output && typeof output === "object") {
+    const o = output as Record<string, unknown>;
+    for (const key of [
+      "finalAnswer",
+      "content",
+      "text",
+      "result",
+      "output",
+    ] as const) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
+/**
  * Execute a task that already has any required container slot acquired.
  * Releases the slot on completion.
  */
@@ -628,6 +671,35 @@ async function dispatchWithSlot(
     }
 
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
+
+    // Deterministic ritual-output persistence (skill-evolution /diagnose,
+    // 2026-06-28). Rituals that declare `persistResult` get their report
+    // stored to memory HERE, in code — not by the agent voluntarily calling
+    // memory_store, which it skipped ~100% of the time on Sonnet. Stores
+    // whether the reflector judged success or failure: the analysis report has
+    // value even when the score is docked. Never blocks completion. (The
+    // required-tools early returns above short-circuit before this — see the
+    // persistResult docstring; moot for rituals, which set tools not
+    // requiredTools.)
+    if (submission.persistResult) {
+      try {
+        const report = extractPersistText(result.output);
+        if (report) {
+          await getMemoryService().retain(report, {
+            bank: submission.persistResult.bank,
+            tags: submission.persistResult.tags,
+            async: true,
+            trustTier: 3,
+            source: "ritual",
+          });
+        }
+      } catch (err) {
+        log.warn(
+          { taskId, err: err instanceof Error ? err.message : String(err) },
+          "ritual persistResult: failed to store report",
+        );
+      }
+    }
 
     // Record cost in ledger (if budget feature is available and we have token data)
     if (result.tokenUsage) {

@@ -85,10 +85,23 @@ function makeOrchestratorResult(
     success: true,
     goalGraph: { goals: {} },
     executionResults: {
-      goalResults: {},
+      goalResults: {
+        "g-1": {
+          goalId: "g-1",
+          ok: true,
+          result: "the agent report",
+          durationMs: 0,
+          toolCalls: 0,
+          toolNames: [],
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+      },
       summary: { completed: 1, total: 1 },
       totalToolCalls: 2,
+      totalToolNames: [],
       totalToolFailures: 0,
+      toolRepairs: [],
       tokenUsage: { promptTokens: 0, completionTokens: 0 },
     },
     reflection: {
@@ -137,6 +150,9 @@ describe("heavyRunner", () => {
       content: "Task completed",
       score: 0.9,
       learnings: ["Learned something"],
+      // The agent's report (joined goal answers), surfaced for ritual
+      // persistResult — distinct from `content` (the reflector summary).
+      finalAnswer: "the agent report",
     });
     expect(result.tokenUsage).toEqual({
       promptTokens: 1000,
