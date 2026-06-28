@@ -136,6 +136,11 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
     if (project.description) lines.push(`${project.description}`);
     if (project.urls?.site) lines.push(`URL: ${project.urls.site}`);
     if (project.urls?.repo) lines.push(`Repo: ${project.urls.repo}`);
+    // Surface additional repos (multi-repo projects store them as repo_* keys).
+    for (const [k, v] of Object.entries(project.urls ?? {})) {
+      if (k === "repo" || k === "site" || !v || !/repo/i.test(k)) continue;
+      lines.push(`Repo (${k.replace(/_?repo_?/i, "") || k}): ${v}`);
+    }
     if (project.commit_goal_id)
       lines.push(`NorthStar goal: ${project.commit_goal_id}`);
     const credKeys = Object.keys(project.credentials ?? {});
