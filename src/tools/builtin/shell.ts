@@ -26,7 +26,47 @@ import {
 const execAsync = promisify(exec);
 
 const MAX_OUTPUT = 10_000; // chars
-const TIMEOUT_MS = 30_000; // 30 seconds
+const TIMEOUT_MS = 30_000; // 30 seconds — default for general commands
+const MAX_TIMEOUT_MS = 60_000; // cap for general commands (runaway protection)
+
+// Database CLI ops (TRUNCATE / COPY / migrations on large tables) legitimately
+// run far longer than a general command — a 2M-row `TRUNCATE … CASCADE` blew the
+// 30s default, its docker-exec retries then tripped the flailing guard, and the
+// seed dead-ended (MiniSu, 2026-06-28). Detected DB commands get a much larger
+// default + cap so they aren't killed mid-statement. Detection only RAISES the
+// allowed timeout, so a false positive is harmless.
+const DB_TIMEOUT_MS = 120_000; // 2 min — default for detected DB ops
+const DB_MAX_TIMEOUT_MS = 300_000; // 5 min — cap for detected DB ops
+const DB_OP_PATTERN =
+  /\b(psql|pg_dump|pg_dumpall|pg_restore|mysql|mysqldump|mariadb)\b/i;
+
+/**
+ * A command that invokes a DB CLI (psql / pg_* / mysql*), including via
+ * `docker exec <container> psql …`. These run long on large tables, so they get
+ * the larger DB timeout budget instead of the tight general cap.
+ */
+export function isDbOp(command: string): boolean {
+  return DB_OP_PATTERN.test(command);
+}
+
+/**
+ * Resolve the exec timeout (ms) for a command. DB ops get a larger default and
+ * ceiling than general commands; the agent may override via `timeout_ms` up to
+ * that ceiling. A non-positive or non-numeric `timeout_ms` falls back to the
+ * default — never to 0, which Node's `exec` treats as "no timeout" and would
+ * bypass the ceiling into UNBOUNDED execution. So the cap is a real hard cap.
+ */
+export function resolveShellTimeout(
+  command: string,
+  timeoutMsArg: unknown,
+): number {
+  const dbOp = isDbOp(command);
+  const def = dbOp ? DB_TIMEOUT_MS : TIMEOUT_MS;
+  const max = dbOp ? DB_MAX_TIMEOUT_MS : MAX_TIMEOUT_MS;
+  const requested =
+    typeof timeoutMsArg === "number" && timeoutMsArg > 0 ? timeoutMsArg : def;
+  return Math.min(requested, max);
+}
 
 // ---------------------------------------------------------------------------
 // Command validation guard
@@ -449,7 +489,9 @@ RESTRICTIONS:
 - Destructive commands blocked (rm, mkfs, dd, kill, shutdown, systemctl)
 - File writes restricted to project dirs (/root/claude/, /tmp/, /workspace/)
 - System directories blocked (/etc, /boot, /usr, /proc, /sys, /dev)
-- Max 60 seconds, max 10,000 chars output.`,
+- Timeout: 60s max for general commands; 5 min max for database commands
+  (psql, pg_dump/restore, mysql/mysqldump — incl. via 'docker exec'), since
+  TRUNCATE/COPY/migrations on large tables run long. Max 10,000 chars output.`,
       parameters: {
         type: "object",
         properties: {
@@ -459,7 +501,7 @@ RESTRICTIONS:
           },
           timeout_ms: {
             type: "number",
-            description: `Timeout in milliseconds (default: ${TIMEOUT_MS}, max: 60000)`,
+            description: `Timeout in milliseconds. General commands: default ${TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}. Database commands (psql/pg_dump/pg_restore/mysql/mysqldump, incl. via 'docker exec'): default ${DB_TIMEOUT_MS}, max ${DB_MAX_TIMEOUT_MS} — set this higher for a long TRUNCATE/COPY/migration on big tables.`,
           },
         },
         required: ["command"],
@@ -503,10 +545,7 @@ RESTRICTIONS:
       `[shell-guard] OK: ${command.length > 120 ? command.slice(0, 120) + "..." : command}`,
     );
 
-    const timeout = Math.min(
-      typeof args.timeout_ms === "number" ? args.timeout_ms : TIMEOUT_MS,
-      60_000,
-    );
+    const timeout = resolveShellTimeout(command, args.timeout_ms);
 
     try {
       const { stdout, stderr } = await execAsync(command, {

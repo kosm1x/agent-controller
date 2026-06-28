@@ -4,8 +4,80 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { shellTool, validateShellCommand } from "./shell.js";
+import {
+  shellTool,
+  validateShellCommand,
+  isDbOp,
+  resolveShellTimeout,
+} from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
+
+describe("resolveShellTimeout — DB ops get a larger budget; cap is a real hard cap", () => {
+  const DB = "docker exec supabase-db psql -U postgres -c 'TRUNCATE x CASCADE'";
+  const GEN = "ls -la /root";
+
+  it("general command, no override → 30s default", () => {
+    expect(resolveShellTimeout(GEN, undefined)).toBe(30_000);
+  });
+  it("general command, override within cap → honored", () => {
+    expect(resolveShellTimeout(GEN, 45_000)).toBe(45_000);
+  });
+  it("general command, override above cap → clamped to 60s", () => {
+    expect(resolveShellTimeout(GEN, 200_000)).toBe(60_000);
+  });
+  it("DB op, no override → 120s default (not the 30s general default)", () => {
+    expect(resolveShellTimeout(DB, undefined)).toBe(120_000);
+  });
+  it("DB op, large override → clamped to the 300s DB ceiling", () => {
+    expect(resolveShellTimeout(DB, 999_999)).toBe(300_000);
+  });
+  it("DB op, small explicit override → honored (only RAISES default/ceiling)", () => {
+    expect(resolveShellTimeout(DB, 5_000)).toBe(5_000);
+  });
+  // W1: a non-positive / non-numeric timeout_ms must NOT become 0 — Node's exec
+  // treats timeout:0 as "no timeout", which would bypass the ceiling.
+  it("timeout_ms=0 falls back to the default (never unbounded)", () => {
+    expect(resolveShellTimeout(GEN, 0)).toBe(30_000);
+    expect(resolveShellTimeout(DB, 0)).toBe(120_000);
+  });
+  it("negative / non-numeric timeout_ms falls back to the default", () => {
+    expect(resolveShellTimeout(GEN, -5)).toBe(30_000);
+    expect(resolveShellTimeout(GEN, "60000")).toBe(30_000);
+    expect(resolveShellTimeout(GEN, null)).toBe(30_000);
+  });
+});
+
+describe("isDbOp — DB commands get the larger timeout budget", () => {
+  const dbOps = [
+    "psql -U postgres -c 'TRUNCATE minisu.ventas CASCADE'",
+    "docker exec supabase-db psql -U postgres -d postgres -c 'COPY x FROM ...'",
+    "pg_dump mydb > /tmp/dump.sql",
+    "pg_dumpall -U postgres",
+    "pg_restore -d db /tmp/dump.sql",
+    "mysql -u root -e 'SELECT 1'",
+    "mysqldump db > /tmp/db.sql",
+    "mariadb -e 'SHOW TABLES'",
+  ];
+  for (const cmd of dbOps) {
+    it(`detects DB op: ${cmd.slice(0, 48)}`, () => {
+      expect(isDbOp(cmd)).toBe(true);
+    });
+  }
+
+  const nonDbOps = [
+    "ls /root",
+    "npm test",
+    "node --version",
+    "cat /etc/hostname",
+    "echo psqlfoo", // word-boundary: 'psql' inside a longer token does not match
+    "curl https://example.com",
+  ];
+  for (const cmd of nonDbOps) {
+    it(`leaves general command alone: ${cmd}`, () => {
+      expect(isDbOp(cmd)).toBe(false);
+    });
+  }
+});
 
 describe("validateShellCommand", () => {
   describe("allowed commands", () => {
