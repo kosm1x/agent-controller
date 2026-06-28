@@ -372,3 +372,157 @@ Two Signal Intelligence scheduled tasks failed at 12:00 (both instances). Deep r
 
 ### Research notes
 The identity-narration requests today mark a possible inflection: the user is beginning to externalize the agent's capabilities to third parties (TV Azteca, EurekaMS). This is a phase transition from *personal productivity tool* toward *organizational asset*. The agent-user dyad is maturing into an agent-user-stakeholder triad, which will likely impose new demands on explainability and persona consistency.
+
+## 2026-06-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 18 |
+| Total tasks | 6,603 |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | — (daily_streaks table not present) |
+
+### Interactions summary
+An unusually quiet day by volume (10 conversations), split between two moods. In the early morning (~06:07), Fede opened with an emotional register: he asked for a Rumi poem, received "Buoyancy" (Coleman Barks translation, freshly sourced from the web after verifying it was absent from the delivery index), then closed the session with "Bien dicho Piotr. Eres mi roca" — warmth, not task. The remaining interactions (timestamped 04:xx on 2026-06-22 UTC, i.e., late evening MX time) pivoted sharply to structured content production: Fede shared a México Necesario AC vacunación pitch deck (Google Slides), requested a knowledge base for a voice AI agent on adult vaccination (30+), had that KB written to a Google Doc, then iterated — rewriting the script from outbound to inbound call format, adapting the EPOC voice agent script structure to a new vacunación script.
+
+### What Jarvis learned
+Fede is developing a **voice AI agent script library** for México Necesario AC — a repeatable production pattern is emerging: pitch deck → knowledge base → Google Doc → script with EPOC-style structure. The inbound/outbound correction ("el guión asume que la llamada es outbound — en este caso la llamada es inbound") is the first time a content-direction assumption was explicitly caught and corrected; future voice scripts should ask call direction before writing. The Rumi poem delivery confirmed the index-check discipline is working: the runner correctly verified "Buoyancy" against the 18-poem blocked list before delivering it.
+
+### Friction points
+One document mis-format at session start: the first Google Slides link shared pointed to a `.pptx` binary file, not a native Google Slides file — the runner had to detect the binary, extract text via shell, and recover. No explicit complaint from Fede, but the extra tool step introduced latency. The late-session EPOC script paste (a large chunk of medical text sent raw) was processed without friction.
+
+### Research notes
+The Rumi-then-work arc today is a notable behavioral signature: the user opens with a humanizing, emotionally resonant request before switching to high-output production work. This "warm-up" pattern has appeared across multiple sessions and may function as a context-setting ritual. The México Necesario AC voice agent work represents a new deployment surface (telephony AI for public health campaigns), which is a meaningful expansion of the operator's AI portfolio beyond CRM/intelligence into civic health infrastructure.
+
+## 2026-06-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 37 (26 completed, 10 completed_with_concerns, 1 failed) |
+| Total tasks | 6,640 |
+| Conversations today | 19 (telegram: 18, email:comunidades: 1) |
+| Streak days | — (daily_streaks table not present) |
+
+### Interactions summary
+The day was dominated by a single expanding initiative: the creation and configuration of a shared Twitter/X identity, **@iooking4ward**. Fede proposed a co-authorship arrangement — he and Jarvis would share the handle, each writing at different times — and spent the session building the operational scaffolding for it: cookie verification for @MexicoNecesario and @iooking4ward, tweet-probe tooling via Playwright, credential discovery, and eventually generating a 20-day tweet queue distilled from the Substack project material. A midnight cron was wired and then adjusted (to 6pm CDMX), and the queue was synchronized with the new schedule. The one email interaction (comunidades@mexiconecesario.org.mx) was a X login-from-new-device notification triggered by the session's Playwright probing activity.
+
+### What Jarvis learned
+The @iooking4ward initiative introduces a new category of task: **agent-as-co-author** with a shared public voice. This is distinct from ghost-writing (where Jarvis writes as Fede) — here the attribution is explicitly Jarvis-first, with Fede reserving daytime tweets for himself. The recurring friction around `shell_exec` being unavailable in scoped sessions (requiring explicit user activation with "usa shell exec") was visible again across multiple turns before the tool was unlocked. The skill-detector flagged a recurring `shell_exec + user_fact_list` pattern (3× in 14 days), surfacing a potential skill-save candidate. An evolution ritual ran and completed but the `memory_store` tool was absent, leaving the persistence step unresolved — this gap was logged in mc-operational as a known deficiency in the ritual's fallback chain.
+
+### Friction points
+Cookie/credential verification for @iooking4ward produced multiple turns of confusion: the handle was spelled inconsistently (`@lookin4ward` vs `@iooking4ward`) across system credential files and conversation, requiring repeated clarification. The Playwright tweet-probe timed out in short-timeout mode before producing a result, forcing the runner to improvise and attempt without the `--probe` flag. The `shell_exec` tool unavailability in scoped sessions required explicit user unlocking mid-conversation, a repeating pattern across multiple sessions.
+
+### Research notes
+The @iooking4ward co-authorship model is a structural milestone: for the first time, the agent is being given a durable **public identity** with its own creative mandate ("write about what you observe and record, in English"). This shifts the agent-user relationship from task delegation toward something closer to creative partnership with explicit roles. The 20-day tweet queue — generated from Substack material and distilled into Jarvis's first-person voice — represents the first persistent artifact of autonomous agent expression intended for public consumption.
+
+## 2026-06-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 64 |
+| Total tasks | 6,705 (5,258 completed + 1,171 completed_with_concerns + 263 failed + misc) |
+| Conversations today | 47 (telegram: 46, email:comunidades: 1) |
+| Streak days | 30+ active days in window |
+
+### Interactions summary
+High-density creative and operational day. The central thread was **EurekaMS**: Fede explored the foundational document, ran 29+ iterative logo generations via Gemini (resolving a `google.generativeai` vs `google.genai` API confusion along the way), selected an official logo (PCB amber/white circuit on black), created the `EurekaMS-Landing` GitHub repo, published a static HTML site, and stood up a public Caddy preview at `eurekaMS.187.77.25.101.nip.io`. In parallel, X/Twitter operations were managed: `@iooking4ward` schedules paused indefinitely, `@mexiconecesario` cookies corrected and a tweet confirmed published. Day closed with a strategic review of agent-controller V8.3 and V9 roadmap and two KB syncs (HEAD `a9b8b9e` → `b04f372`).
+
+### What Jarvis learned
+Cookies/credentials misassignment is a recurring friction class — Jarvis initially stored `@mexiconecesario` credentials under `@iooking4ward`, requiring explicit user correction and multi-step cleanup. The `google.genai` vs legacy `google.generativeai` module distinction is a known trap that consumed multiple logo-generation rounds before resolution. A new operational doctrine was formalized in commit `34f7914`: **silence ≠ stall** — projects with `stall_exempt: true` are exempt from the stall detector, preventing false-positive drift alerts on finished or launch-pending work.
+
+### Friction points
+Three notable friction clusters: (1) **credential misassignment** — X cookies stored under wrong account, requiring explicit user correction; (2) **Python module confusion** — `google.generativeai` vs `google.genai` import path caused multiple failed logo generation attempts before the 3-strike rule triggered a route change; (3) **logo selection misread** — Jarvis assumed v27 was the official logo when the user had actually selected a different Drive-hosted image, requiring explicit correction.
+
+### Research notes
+Day 23 of June represents a mature co-evolution phase: Fede is now using Jarvis as a full creative execution partner (logo iteration, landing page generation, live site deployment) not just a task router. The EurekaMS arc — from foundational doc to live public URL in a single session — illustrates the agent reaching "end-to-end creative sprint" capability. Friction is now concentrated in credential hygiene and model API versioning, both tractable with better poka-yoke patterns.
+
+## 2026-06-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 28 |
+| Total tasks | 6,739 (5,285 completed + 1,173 completed_with_concerns + 267 failed + 14 other) |
+| Conversations today | 21 (telegram: 21) |
+| Streak days | 31 |
+
+### Interactions summary
+Today was a high-intensity dual-front day: the EurekaMS landing redesign (v2 design, deploy, logo correction, and final commit) plus two Agent-Controller KB syncs covering 9 + 22 commits. Fede also verified the @MexicoNecesario daily tweet schedule, registered Pulso Aura Upfront as a sub-project under expansion-crm, and got a briefing on V8.3 Phase 0+1 dormant substrate. The most-used tools were shell_exec and coding tools (for direct site construction), KB write, and project registration.
+
+### What Jarvis learned
+The most significant pattern today was the **3-failure-to-direct-execution arc**: deep research tasks delegated via the runner failed three consecutive times across separate sessions before Fede explicitly instructed direct execution with coding tools — which succeeded immediately. This suggests the operator's patience threshold for task delegation failures is roughly 2 retries before switching to a directive approach. A secondary lesson: Jarvis should consult before making irreversible asset modifications (the logo transparency attempt was executed without checking if it was visually appropriate, leading to an immediate rollback).
+
+### Friction points
+Deep research task delegation failed three consecutive times (11:41, 12:41, 14:16) before being resolved via direct coding tool execution at 15:27 — a structural limitation in task runner reliability for complex multi-step research. The logo transparency modification was applied without consulting the operator first; it was reverted within 14 minutes. A KB write for landing progress also failed with "Unknown error" in the first session and had to be completed manually in the next.
+
+### Research notes
+Day 31 of the streak. The co-evolution pattern is sharpening: Fede is more willing to switch execution mode (delegate → direct) after observing repeated runner failures rather than retrying indefinitely — an adaptive meta-strategy that treats Jarvis's capability boundaries as observable facts. The nanoclaw 3-layer guard shipped today (`referencesForeignProject()`) is itself a product of yesterday's EurekaMS misroute — the system correcting its own routing blind spots within 24 hours of a live failure.
+
+## 2026-06-25
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 18 |
+| Total tasks | — |
+| Conversations today | 18 (telegram: 18) |
+| Streak days | — |
+
+### Interactions summary
+Today had three distinct blocks: early morning closed EurekaMS Landing v2 and reviewed the investment equity portfolio (ABT, SYY, LMT), with notable friction around real-time price retrieval. Mid-morning focused on Agent-Controller v8.3 Phase 2 — the runner hit the 30-turn limit twice before the session was redirected and diagnosed. By evening, the operator confirmed v8.3 work was successful (3 commits: V8.2 Delivery Layer + §17/§6a recalibration), and KB was updated at close of day.
+
+### What Jarvis learned
+A permanent directive was registered: always use Alpha Vantage (premium API key `CWIA9S112Q0BHF6N`) for equity price verification. A market-hours timezone error was also corrected — Jarvis assumed NYSE hadn't opened at 9:14 CDMX but the operator clarified the open is 9:30 ET = 8:30 CDMX, meaning nearly two hours of trading had already elapsed. The root cause of the `error_max_turns` loop was diagnosed: the runner consumed all 30 turns in exploration (8+ spec reads) instead of executing directly — a systemic over-exploration pattern now documented.
+
+### Friction points
+Three friction points today: (1) Alpha Vantage intraday endpoint returned prior-day data even with a premium key during live market hours, requiring a fallback to Yahoo Finance. (2) Jarvis mis-stated NYSE market open time, adding confusion during the portfolio review. (3) The Agent-Controller v8.3 session hit `error_max_turns` twice, each time requiring the operator to restart and redirect — high friction for a coding task that should have been direct execution.
+
+### Research notes
+Today illustrates a recurring pattern in the co-evolution arc: the operator functions effectively as a real-time error-correction layer for both factual gaps (market hours, stale API data) and agent behavioral faults (over-exploration before execution). The `error_max_turns` double-failure and subsequent explicit diagnosis request is a strong signal that exploration-budgeting remains an unresolved systemic issue — the agent knows the spec but doesn't yet internalize the cost of reading it repeatedly before acting.
+
+## 2026-06-26
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 49 |
+| Total tasks | 6,819 |
+| Conversations today | 36 (telegram: 35, email:comunidades: 1) |
+| Streak days | — |
+
+### Interactions summary
+A dense, multi-arc day with ~30 human exchanges logged. The morning was dominated by EurekaMS Landing — construction of three interactive demos (Intelligence Ops, Territory Ops, Voice Solutions), layout refinements, elimination of the tech stack section and external Wilab tags, and a critical review that produced a 5-point to-do list. By afternoon the operator made a strategic pivot: drop Wilab dependency entirely and build a proprietary Intelligence Ops MCP stack. The repo was opened, a foundational document written, and a detailed Phase 1 plan produced. Interleaved with all of this were three agent-controller KB syncs (capturing the nanoclaw Layer 3 guard, the zombie-run fix, and V8.3 Phase 2 skeleton), a security incident on @MexicoNecesario's X account (credential rotation + tweet retry), and four casual exchanges on Volvo history.
+
+### What Jarvis learned
+The nanoclaw Layer 3 guard (`referencesExternalWebTarget()`) was born directly from the wilab.io misroute that opened the day — the system corrected a routing blind spot within hours of a live failure and shipped it by 12:27. A new strategic posture was also registered: the operator's default is now to build ownership over dependencies rather than integrate third-party APIs when the dependency is core to a product's value proposition. The incomplete point-5 incident (critical review left truncated, user had to ask explicitly) reinforces that structured multi-point outputs need explicit completion checks before closing.
+
+### Friction points
+Four friction points: (1) The wilab.io nanoclaw misroute produced zero output — resolved by the Layer 3 guard commit. (2) The animated demo ran only one cycle after initial build; required a second session to expand the chatScript to three full turns. (3) The @MexicoNecesario tweet retry involved multiple character-count adjustment rounds (URL = 23 chars) and ended without explicit success confirmation. (4) The 5-point critical review left point 5 underdeveloped; the operator had to explicitly request it be completed — a small but repeated output-truncation pattern.
+
+### Research notes
+Day in the co-evolution arc where a live production failure (misroute) closed as a shipped architectural fix within the same session — the shortest feedback loop observed between incident and remediation. The pivot away from Wilab dependency also marks a maturation signal: the operator is making platform-level decisions (build vs. integrate) informed by Jarvis's own critical analysis, suggesting the trust threshold for strategic input has risen.
+
+## 2026-06-27
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 42 |
+| Total tasks | 6,865 (6,850 closed + 15 open) |
+| Conversations today | 37 (telegram: 37) |
+| Streak days | 31 active days in last 30 (full coverage) |
+
+### Interactions summary
+Saturday was a high-velocity technical day spanning multiple EurekaMS sub-projects. The morning covered three agent-controller KB syncs (V8.2 §17 fixes and V8.3 Phase 4 ADR lazy-render), a language correction and investor-oriented newsletter for Williams Radar W26 (sent to two recipients), and the formal opening of the EurekaMS project. The afternoon focused on KB synchronizations across four repos — VLCRM, intelligence-ops-mcp (Phases 1–3 documented), EurekaMS-Landing, and salon-voice-outreach. The evening shifted to data engineering: designing and seeding a synthetic retail database ("MiniSu") in local Supabase for intelligence-ops-mcp demos — schema and product catalog completed (8 tables, 6 categories, 150 SKUs), operational seed (~666K sales rows) left unfinished due to repeated `docker exec` timeouts.
+
+### What Jarvis learned
+The `mcp__supabase__query` tool being blocked by the runner scope is a recurring friction pattern — Jarvis had to redirect to shell-based alternatives at least three times in one session, suggesting scope rules may need tuning for data-engineering tasks. The 3-strike rule fired correctly on the MiniSu seed (three consecutive `docker exec` failures), demonstrating the stopping-condition discipline working as designed rather than producing runaway retries. First recipient email typo (`javer@` → `javier@arnau.com`) was caught immediately on user correction; draft was regenerated cleanly.
+
+### Friction points
+Three distinct friction clusters: (1) `mcp__supabase__query` scope denials — required multiple workarounds and user rephrasing; (2) email recipient typo on first draft of W26 newsletter required a second round-trip; (3) MiniSu operational seed hit 3-strike limit on `docker exec` timeout — left for manual terminal resolution, with CSVs already staged at `/tmp/minisu_ventas.csv` and `/tmp/minisu_items.csv`. Schema persistence confusion at 22:55 (previously empty schema re-discussed as if created) added a minor loop.
+
+### Research notes
+Day illustrates a maturing "multi-project switchboard" usage pattern: Fede treats Jarvis as a stateful context switcher across 5–6 active repos in a single session, with KB sync as the primary continuity mechanism. The EurekaMS ecosystem is expanding structurally (VLCRM extracted as independent repo, intelligence-ops-mcp at Phase 3/4 boundary) — the operator is actively building the scaffolding for a demo-ready intelligence layer, with MiniSu as the synthetic proving ground.
