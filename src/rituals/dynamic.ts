@@ -226,9 +226,10 @@ export async function executeScheduleNow(
       "\n\nEl resultado será enviado automáticamente por Telegram.";
   }
 
+  const dateContext = buildDateContext(now);
   const result = await submitTask({
     title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-    description: `${schedule.description}${deliveryInstructions}`,
+    description: `${dateContext}${schedule.description}${deliveryInstructions}`,
     agentType: "fast",
     tools,
     tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
@@ -247,6 +248,28 @@ export async function executeScheduleNow(
 
 const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 let pollingJob: ScheduledTask | null = null;
+
+/**
+ * Build a precise date+time context header for scheduled task prompts.
+ * Injects the authoritative date, day-of-week, and time in CDMX timezone
+ * so agents never need to calculate or infer the current day themselves.
+ * This prevents day-of-week calculation bugs (e.g. 2026-06-29 = lunes
+ * being miscalculated as domingo).
+ */
+function buildDateContext(now: Date): string {
+  const dateLabel = now.toLocaleDateString("en-CA", { timeZone: TIMEZONE }); // YYYY-MM-DD
+  const dayName = now.toLocaleDateString("es-MX", {
+    timeZone: TIMEZONE,
+    weekday: "long",
+  }); // lunes, martes, etc.
+  const timeLabel = now.toLocaleTimeString("es-MX", {
+    timeZone: TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }); // HH:MM
+  return `[Hoy: ${dateLabel} (${dayName}), ${timeLabel} CDMX]\n\n`;
+}
 
 /**
  * Start the dynamic schedule executor.
@@ -323,9 +346,10 @@ async function checkAndExecuteSchedules(): Promise<void> {
           "\n\nEl resultado será enviado automáticamente por Telegram.";
       }
 
+      const dateContext = buildDateContext(now);
       const result = await submitTask({
         title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-        description: `${schedule.description}${deliveryInstructions}`,
+        description: `${dateContext}${schedule.description}${deliveryInstructions}`,
         agentType: "fast",
         tools,
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
@@ -495,9 +519,10 @@ async function retryScheduledTask(
     if (!tools.includes("gmail_send")) tools.push("gmail_send");
   }
 
+  const dateContext = buildDateContext(now);
   const result = await submitTask({
     title: `[Retry] ${schedule.name} — ${todayLabel}`,
-    description: `${schedule.description}${deliveryInstructions}`,
+    description: `${dateContext}${schedule.description}${deliveryInstructions}`,
     agentType: "fast",
     tools,
     tags: ["scheduled", "retry", `schedule:${schedule.schedule_id}`],
