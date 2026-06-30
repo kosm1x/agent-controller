@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { classifyXError, describeXError } from "./x-errors.js";
+import {
+  classifyXError,
+  classifyNoTweetId,
+  describeXError,
+} from "./x-errors.js";
 
 /** A minimal X GraphQL/REST error body for a given code+message. */
 const body = (code: number, message: string) =>
@@ -148,6 +152,46 @@ describe("classifyXError — robust parsing", () => {
   });
 });
 
+describe("classifyNoTweetId — 2xx accepted but no tweet returned", () => {
+  // The EXACT body X returned for @mexiconecesario on 2026-06-29 (silent withhold).
+  const EMPTY = '{"data":{"create_tweet":{"tweet_results":{}}}}';
+
+  it("empty tweet_results + no error code → silent_withhold (NOT unknown)", () => {
+    const i = classifyNoTweetId(EMPTY);
+    expect(i.label).toBe("silent_withhold");
+    expect(i.code).toBeUndefined();
+    expect(i.message).toBeUndefined();
+    expect(i.authExpired).toBe(false);
+  });
+
+  it("a coded GraphQL-200 rejection is NOT masked as silent_withhold (344 still daily_limit)", () => {
+    const i = classifyNoTweetId(
+      JSON.stringify({
+        errors: [{ code: 344, message: "daily limit for sending Tweets" }],
+      }),
+    );
+    expect(i.label).toBe("daily_limit");
+    expect(i.code).toBe(344);
+  });
+
+  it("a 200-body duplicate (187) still surfaces as duplicate, not silent_withhold", () => {
+    expect(
+      classifyNoTweetId(
+        JSON.stringify({ errors: [{ code: 187, message: "duplicate" }] }),
+      ).label,
+    ).toBe("duplicate");
+  });
+
+  it("empty / garbage body → silent_withhold without throwing", () => {
+    expect(classifyNoTweetId("").label).toBe("silent_withhold");
+    expect(classifyNoTweetId("<html>").label).toBe("silent_withhold");
+  });
+
+  it("carries the response status through (api 201 path)", () => {
+    expect(classifyNoTweetId(EMPTY, 201).status).toBe(201);
+  });
+});
+
 describe("describeXError", () => {
   it("renders a one-line, secret-free summary with code + label + message", () => {
     const i = classifyXError(403, body(187, "Status is a duplicate."));
@@ -157,6 +201,21 @@ describe("describeXError", () => {
   });
 
   it("omits code when absent", () => {
+    expect(describeXError(classifyXError(401, ""))).toBe("401 (auth_expired)");
+  });
+
+  it("silent_withhold (no X message) gets an honest explanatory hint, not a bare label", () => {
+    const out = describeXError(
+      classifyNoTweetId('{"data":{"create_tweet":{"tweet_results":{}}}}'),
+    );
+    expect(out).toMatch(/^200 \(silent_withhold\) —/);
+    expect(out).toContain("silently withheld");
+    expect(out).toContain("Do NOT retry");
+    expect(out).not.toContain("daily limit"); // must not imply a fabricated cause
+  });
+
+  it("a hint-less label still renders bare (no spurious suffix)", () => {
+    // auth_expired has no hint → unchanged output (regression guard).
     expect(describeXError(classifyXError(401, ""))).toBe("401 (auth_expired)");
   });
 

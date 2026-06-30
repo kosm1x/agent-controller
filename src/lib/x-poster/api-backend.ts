@@ -12,7 +12,11 @@ import {
   isApiConfigured,
   type AccountCreds,
 } from "./config.js";
-import { classifyXError, describeXError } from "./x-errors.js";
+import {
+  classifyXError,
+  classifyNoTweetId,
+  describeXError,
+} from "./x-errors.js";
 import { createLogger } from "../logger.js";
 
 const ME_URL = "https://api.x.com/2/users/me";
@@ -116,29 +120,30 @@ export class ApiBackend implements XBackend {
           { account: this.account, backend: this.name, tweetId },
           "x post ok",
         );
-      } else {
-        // 2xx + no id = the body carried the rejection; capture it like the
-        // cookie backend's GraphQL-200 path.
-        const info = classifyXError(res.status, raw);
-        log.warn(
-          {
-            account: this.account,
-            status: res.status,
-            code: info.code,
-            label: info.label,
-            message: info.message,
-            body: raw.slice(0, 400),
-          },
-          "x post rejected (2xx, no tweet id)",
-        );
+        return { backend: this.name, ok: true, tweetId, authExpired: false };
       }
+      // 2xx + no id = the body carried the rejection (a coded error) OR X
+      // silently withheld it (empty body, no code). `classifyNoTweetId` gives the
+      // latter the explicit `silent_withhold` label, mirroring the cookie backend.
+      const info = classifyNoTweetId(raw, res.status);
+      log.warn(
+        {
+          account: this.account,
+          status: res.status,
+          code: info.code,
+          label: info.label,
+          message: info.message,
+          body: raw.slice(0, 400),
+        },
+        "x post rejected (2xx, no tweet id)",
+      );
       return {
         backend: this.name,
-        ok: Boolean(tweetId),
-        tweetId,
-        error: tweetId ? undefined : `created but no id — ${raw.slice(0, 240)}`,
-        authExpired: false,
-        xErrorLabel: tweetId ? undefined : "unknown",
+        ok: false,
+        error: describeXError(info),
+        authExpired: info.authExpired,
+        xErrorCode: info.code,
+        xErrorLabel: info.label,
       };
     } catch (err) {
       log.warn(

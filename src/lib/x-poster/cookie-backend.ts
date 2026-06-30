@@ -21,7 +21,11 @@ import {
   isCookieConfigured,
   type AccountCreds,
 } from "./config.js";
-import { classifyXError, describeXError } from "./x-errors.js";
+import {
+  classifyXError,
+  classifyNoTweetId,
+  describeXError,
+} from "./x-errors.js";
 import { authHeaders, withAuthedRequest } from "./authed-request.js";
 import { createLogger } from "../logger.js";
 
@@ -154,13 +158,13 @@ export class CookieBackend implements XBackend {
             authExpired: false,
           };
         }
-        // 200 + no tweet id = a GraphQL-level REJECTION: CreateTweet returns the
-        // reason in an `errors[]` body at HTTP 200 (the original "AuthorizationError
-        // code 344" was one of these, never an HTTP error). Classify the body and
-        // log it RAW so X's exact rejection reason is captured, not hidden by 200.
-        const info = classifyXError(200, raw);
-        const classified =
-          info.code !== undefined || info.message !== undefined;
+        // 200 + no tweet id = a GraphQL-level REJECTION. Two shapes: an `errors[]`
+        // body (the original "AuthorizationError code 344", never an HTTP error), OR
+        // `{"data":{"create_tweet":{"tweet_results":{}}}}` — accepted but EMPTY, a
+        // silent withhold with no code. `classifyNoTweetId` maps the latter to
+        // `silent_withhold` (was a confabulation-inviting `unknown`, 2026-06-29).
+        // Log RAW either way so X's exact response is captured, not hidden by 200.
+        const info = classifyNoTweetId(raw);
         log.warn(
           {
             account: this.account,
@@ -175,12 +179,10 @@ export class CookieBackend implements XBackend {
         return {
           backend: this.name,
           ok: false,
-          error: classified
-            ? describeXError(info)
-            : `200 but no tweet id — ${raw.slice(0, 240)}`,
+          error: describeXError(info),
           authExpired: info.authExpired,
           xErrorCode: info.code,
-          xErrorLabel: classified ? info.label : "unknown",
+          xErrorLabel: info.label,
         };
       });
     } catch (err) {

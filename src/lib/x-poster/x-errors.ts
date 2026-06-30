@@ -13,6 +13,14 @@
  * known codes to a stable label, so the tool relays facts the model cannot
  * over-write with a guess. Pure (no network) → fully unit-testable.
  *
+ * `classifyNoTweetId` covers the sibling gap: a 2xx CreateTweet response that
+ * carried NO tweet id AND no error code — `{"data":{"create_tweet":{"tweet_results":{}}}}`.
+ * X accepts (200) but silently withholds the tweet. With no code/message the
+ * model again got a void and invented a cause (the 2026-06-29 incident: it told
+ * the operator "límite diario de la API X, 17 tweets/día en free tier" — pure
+ * fabrication; we use cookie GraphQL, not API v2). That void is now the explicit
+ * `silent_withhold` label with an honest, verbatim explanation.
+ *
  * Codes: https://developer.x.com/en/support/twitter-api/error-troubleshooting
  */
 
@@ -26,6 +34,7 @@ export type XErrorLabel =
   | "write_restricted"
   | "account_locked"
   | "server_error"
+  | "silent_withhold"
   | "unknown";
 
 export interface XErrorInfo {
@@ -107,11 +116,41 @@ export function classifyXError(status: number, raw: string): XErrorInfo {
   return { status, code, message, label, authExpired };
 }
 
+/**
+ * Classify a 2xx CreateTweet/REST response that returned NO tweet id. Two shapes:
+ *  - an `errors[]` / `"code":N` body (a GraphQL rejection delivered at HTTP 200,
+ *    e.g. code 344 daily_limit or 187 duplicate) → the normal coded classification.
+ *  - `{"data":{"create_tweet":{"tweet_results":{}}}}` — accepted (2xx) but X
+ *    returned an EMPTY result with NO code/message: a SILENT withhold (soft
+ *    anti-automation throttle or duplicate). X tells us nothing, so map it to the
+ *    explicit `silent_withhold` label instead of leaving an `unknown` void the
+ *    model fills with a guess.
+ */
+export function classifyNoTweetId(raw: string, status = 200): XErrorInfo {
+  const coded = classifyXError(status, raw);
+  if (coded.code !== undefined || coded.message !== undefined) return coded;
+  return { status, label: "silent_withhold", authExpired: false };
+}
+
+/**
+ * Synthetic, secret-free explanations for labels X conveys WITHOUT a message of
+ * its own (so `describeXError` never hands the model a bare label it can dress up).
+ */
+const LABEL_HINTS: Partial<Record<XErrorLabel, string>> = {
+  silent_withhold:
+    "X accepted the request (HTTP 2xx) but returned no tweet and no error code — " +
+    "the post was silently withheld. Most likely a soft anti-automation/velocity " +
+    "throttle or a duplicate of a recent tweet. NOT an auth, rate-limit, or daily-" +
+    "limit error. Do NOT retry (retrying deepens the flag); wait for the account to " +
+    "cool down, or move writes to X API v2. This is not a fabricated cause.",
+};
+
 /** One-line, secret-free human summary, e.g. `403 code 187 (duplicate) — Status is a duplicate.` */
 export function describeXError(info: XErrorInfo): string {
   const parts = [`${info.status}`];
   if (info.code !== undefined) parts.push(`code ${info.code}`);
   parts.push(`(${info.label})`);
   if (info.message) parts.push(`— ${info.message.slice(0, 240)}`);
+  else if (LABEL_HINTS[info.label]) parts.push(`— ${LABEL_HINTS[info.label]}`);
   return parts.join(" ");
 }
