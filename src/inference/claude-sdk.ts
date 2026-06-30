@@ -68,8 +68,7 @@ function jsonSchemaToZodShape(
   params: Record<string, unknown>,
 ): Record<string, ZodType> {
   const properties = params.properties as
-    | Record<string, Record<string, unknown>>
-    | undefined;
+    Record<string, Record<string, unknown>> | undefined;
   if (!properties) return {};
 
   const required = new Set((params.required as string[]) ?? []);
@@ -179,17 +178,28 @@ export function buildMcpServer(
 /**
  * Canonical model IDs for cost_ledger attribution.
  *
- * The Claude Agent SDK auths via ~/.claude/.credentials.json and defaults to
- * claude-sonnet-4-6. The config's INFERENCE_PRIMARY_MODEL env var is unused
- * under provider='claude-sdk' (often stale qwen-era string), so every call
- * site that needs to record a model name for SDK-routed calls must use these
- * constants instead of cfg.inferencePrimaryModel.
+ * The Claude Agent SDK auths via ~/.claude/.credentials.json. The config's
+ * INFERENCE_PRIMARY_MODEL env var is unused under provider='claude-sdk' (often
+ * stale qwen-era string), so every call site that needs to record a model name
+ * for SDK-routed calls must use these constants instead of
+ * cfg.inferencePrimaryModel. The constant below is also what queryClaudeSdk
+ * passes as the SDK `model` option, so it IS the primary engine, not just a
+ * label.
  *
  * 2026-05-10: HAIKU_MODEL_ID and OPUS_MODEL_ID added for the operator-directed
  * cutover off Fireworks/Groq. Haiku replaces the OpenAI-compat fallback chain;
  * Opus is reserved for Prometheus complex paths (planner/executor/reflector).
+ * 2026-06-30: SONNET_MODEL_ID bumped claude-sonnet-4-6 → claude-sonnet-5
+ * (near-Opus coding/agentic quality, same Max-sub auth path). SDK v0.2.101
+ * passes the full model ID through to the API (no allowlist gate). Watch: the
+ * new tokenizer counts ~30% more tokens for the same text, so THIS path's own
+ * bound — the SDK compaction budget below + maxTurns — is reached on ~30% less
+ * real content, and per-turn accounting rises ~30% (watch the seven_day_sonnet
+ * Max-sub rate bucket). INFERENCE_MAX_TOKENS / INFERENCE_CONTEXT_LIMIT do NOT
+ * govern this path — they cap only the dormant OpenAI-compat revert path
+ * (adapter.ts), so no 6144 output-cap truncation risk on the primary engine.
  */
-export const SONNET_MODEL_ID = "claude-sonnet-4-6";
+export const SONNET_MODEL_ID = "claude-sonnet-5";
 export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
 export const OPUS_MODEL_ID = "claude-opus-4-7";
 

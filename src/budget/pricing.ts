@@ -55,6 +55,7 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // don't double-book phantom API spend against the Max subscription. If a
   // user ever routes Sonnet through metered API, override via
   // BUDGET_PRICING_JSON with the real per-M rates.
+  "claude-sonnet-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-sonnet-4-6": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-sonnet-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-opus-4-7": { promptCostPer1k: 0, completionCostPer1k: 0 },
