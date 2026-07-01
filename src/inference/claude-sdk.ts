@@ -189,17 +189,19 @@ export function buildMcpServer(
  * 2026-05-10: HAIKU_MODEL_ID and OPUS_MODEL_ID added for the operator-directed
  * cutover off Fireworks/Groq. Haiku replaces the OpenAI-compat fallback chain;
  * Opus is reserved for Prometheus complex paths (planner/executor/reflector).
- * 2026-06-30: SONNET_MODEL_ID bumped claude-sonnet-4-6 → claude-sonnet-5
- * (near-Opus coding/agentic quality, same Max-sub auth path). SDK v0.2.101
- * passes the full model ID through to the API (no allowlist gate). Watch: the
- * new tokenizer counts ~30% more tokens for the same text, so THIS path's own
- * bound — the SDK compaction budget below + maxTurns — is reached on ~30% less
- * real content, and per-turn accounting rises ~30% (watch the seven_day_sonnet
- * Max-sub rate bucket). INFERENCE_MAX_TOKENS / INFERENCE_CONTEXT_LIMIT do NOT
- * govern this path — they cap only the dormant OpenAI-compat revert path
- * (adapter.ts), so no 6144 output-cap truncation risk on the primary engine.
+ * 2026-06-30: SONNET_MODEL_ID bumped claude-sonnet-4-6 → claude-sonnet-5.
+ * 2026-07-01: REVERTED to claude-sonnet-4-6. Sonnet 5's new tokenizer counts
+ * ~30% more tokens for the same text, which in production shifted the cached
+ * prompt-prefix boundaries (cache-read hit ~62%→49%, 0%-cache calls ~15%→27%
+ * on the first live day) and pushed fast-runner tasks into heavier SDK
+ * compaction — slower, pricier, plus one empty-completion delivery miss on a
+ * daily report that had shipped fine for a week. Re-attempt only with
+ * cache/context tuning that accounts for the +30% footprint. The bound on THIS
+ * path is the SDK compaction budget below + maxTurns; INFERENCE_MAX_TOKENS /
+ * INFERENCE_CONTEXT_LIMIT govern only the dormant OpenAI-compat revert path
+ * (adapter.ts), so there is no 6144 output-cap truncation risk on this engine.
  */
-export const SONNET_MODEL_ID = "claude-sonnet-5";
+export const SONNET_MODEL_ID = "claude-sonnet-4-6";
 export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
 export const OPUS_MODEL_ID = "claude-opus-4-7";
 

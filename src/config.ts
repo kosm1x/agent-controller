@@ -17,7 +17,7 @@ export interface Config {
   inferencePrimaryUrl: string;
   /** Primary inference provider API key. Required when provider='openai', empty string when provider='claude-sdk'. */
   inferencePrimaryKey: string;
-  /** Primary inference model name. Required when provider='openai', empty string when provider='claude-sdk' (model is pinned by SONNET_MODEL_ID in claude-sdk.ts, currently claude-sonnet-5). */
+  /** Primary inference model name. Required when provider='openai', empty string when provider='claude-sdk' (model is pinned by SONNET_MODEL_ID in claude-sdk.ts, currently claude-sonnet-4-6). */
   inferencePrimaryModel: string;
 
   /** Fallback inference provider URL (optional). */
@@ -171,7 +171,7 @@ export function loadConfig(): Config {
     // Primary URL/key/model are only required for the openai (raw HTTP) path.
     // The claude-sdk path uses the Claude Agent SDK which auths via
     // ~/.claude/.credentials.json; the model is pinned by SONNET_MODEL_ID in
-    // claude-sdk.ts (currently claude-sonnet-5) — these
+    // claude-sdk.ts (currently claude-sonnet-4-6) — these
     // env vars are unused and default to empty string, which loadProviders()
     // treats as falsy (no provider registered).
     inferencePrimaryUrl:

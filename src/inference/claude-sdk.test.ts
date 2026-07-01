@@ -1008,7 +1008,7 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
 
 describe("model selection threading (2026-05-10 cutover)", () => {
   it("exports distinct model IDs for Sonnet, Haiku, and Opus", () => {
-    expect(SONNET_MODEL_ID).toBe("claude-sonnet-5");
+    expect(SONNET_MODEL_ID).toBe("claude-sonnet-4-6");
     expect(HAIKU_MODEL_ID).toBe("claude-haiku-4-5-20251001");
     expect(OPUS_MODEL_ID).toBe("claude-opus-4-7");
     // No two ids should collide — drift guard for future model bumps.
