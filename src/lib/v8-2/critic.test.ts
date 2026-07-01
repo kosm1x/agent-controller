@@ -26,6 +26,7 @@ import {
   sanitizeFtsQuery,
   CRITIC_MAX_LOOP,
   CRITIC_SYSTEM_PROMPT_V1,
+  SQL_CHECK_TOOL_DESCRIPTION,
   type CriticInput,
   type CriticVerdict,
 } from "./critic.js";
@@ -62,6 +63,41 @@ describe("CRITIC_SYSTEM_PROMPT_V1 — verification discipline", () => {
     expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
       "marking a TRUE claim contradicted is the costlier error",
     );
+  });
+
+  it("forbids treating a self-authored 0-row query as proof of absence (judgment 32 regression)", () => {
+    // Regression: judgment 32 — the critic queried the `tasks` table by the
+    // integer `id` column for 10 real `task_id` UUIDs, got 0 rows each, and
+    // falsely concluded the whole evidence ledger was nonexistent → unfixable.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "YOUR OWN 0-ROW QUERY IS NOT PROOF OF ABSENCE",
+    );
+    // Names the exact key-column trap so the rule is concrete.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      'keys on "task_id" (a TEXT UUID), NOT the integer "id"',
+    );
+    // The disposition: never contradict on a self-authored 0-row result.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain("EXISTS by construction");
+    // Pin the SCOPE-LIMITER (qa-W1): rule 3 must stay gated to 0-row results, not
+    // widen into a blanket "never contradict" suppressor. A reword dropping this
+    // clause would rubber-stamp REAL value-contradictions while this test still
+    // passed green — mirrors the rule-2 safety-clause pin above.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "on the strength of a 0-row result",
+    );
+  });
+});
+
+describe("sql_check tool — schema guidance (ACI)", () => {
+  it("tells the critic that a task ref keys on tasks.task_id, not the integer id", () => {
+    // The critic authors free-form SQL; without this the LLM defaults to
+    // `WHERE id = '<uuid>'` (int column vs UUID → silent 0 rows). ACI fix at the
+    // point the model writes the query (judgment 32 regression).
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("tasks.task_id");
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("INTEGER rowid");
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("WHERE task_id = '<uuid>'");
+    // Phase-2 kb_entry refs (id=path) carry the same key-column trap live now (I2).
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("jarvis_files.path");
   });
 });
 

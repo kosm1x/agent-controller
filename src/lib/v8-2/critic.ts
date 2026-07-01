@@ -104,6 +104,7 @@ Process: identify each factual claim (a number, date, named entity, or state cla
 VERIFICATION DISCIPLINE — the two ways a verifier manufactures a FALSE contradiction (avoid both):
 1. ENTITY IDENTITY. When a claim is about a NAMED project / person / entity, ONLY that exact entity is evidence. A different entity that merely shares a name-prefix or substring is NOT the same thing and never confirms or contradicts the claim — "Very Light CMS" (vlcms) is NOT "Very Light Media Player" (vlmp). Match the full canonical name or the exact slug, never a shared prefix. A search hit on a similarly-named sibling is a NON-match: discount it and keep looking, do not count it as presence.
 2. A FUZZY HIT DOES NOT OUTRANK A DETERMINISTIC FIGURE. When a claim cites a value a deterministic check already produced ("absent N days per the stall detector", a count, a SQL aggregate), it came from exact matching. A looser LIKE / FTS keyword scan over-matches (a query for one project surfaces every name-prefix sibling), so its hit is weak evidence about the subject and does NOT by itself overturn the figure — this is a corollary of rule 1, not deference to the judgment's tone (a sibling hit simply is not evidence about the subject). A fuzzy hit contradicts the figure ONLY if it lands on the EXACT subject entity AND inside the claimed window — otherwise it says nothing about the subject. When you are unsure a hit is the right entity, treat the deterministic figure as standing: marking a TRUE claim contradicted is the costlier error.
+3. YOUR OWN 0-ROW QUERY IS NOT PROOF OF ABSENCE. Every ref in the evidence ledger was retrieved DETERMINISTICALLY from the DB — it EXISTS by construction. If a sql_check you wrote returns 0 rows for a ledger ref, your QUERY is wrong (most often the KEY COLUMN — the "tasks" table keys on "task_id" (a TEXT UUID), NOT the integer "id"), NOT the evidence. NEVER conclude a cited task is missing/fake, and never mark a claim contradicted, on the strength of a 0-row result from SQL you authored — re-query with the right column, or let the ledger ref stand. (Judgment 32: the critic queried "tasks" by "id" for 10 real "task_id" UUIDs, got 0 rows each, and falsely called the whole ledger nonexistent.)
 
 Verdict:
 - approved — every load-bearing factual claim is grounded and nothing is contradicted by the tools.
@@ -235,10 +236,16 @@ export function runReadOnlySelect(db: Database.Database, sql: string): string {
   }
 }
 
+/** `sql_check` tool description (exported so the ACI schema guidance is testable —
+ *  tool descriptions are prompts). The SCHEMA NOTE closes the judgment-32 trap:
+ *  the LLM defaults to `WHERE id = '<uuid>'`, but `tasks.id` is an integer rowid,
+ *  so a UUID filter on it silently returns 0 rows (false "task missing"). */
+export const SQL_CHECK_TOOL_DESCRIPTION = `Run ONE read-only SELECT against ground-truth tables (${[...SQL_CHECK_TABLES].join(", ")}) and return up to ${SQL_CHECK_ROW_CAP} rows as JSON. Read-only: writes/DDL/PRAGMA/ATTACH and non-whitelisted tables are rejected. Use it to verify a factual claim against live data. SCHEMA NOTE — an evidence ref keys on its table's BUSINESS key, not the row's \`id\`: a \`task <uuid>\` ref keys on \`tasks.task_id\` (a TEXT UUID) — filter \`WHERE task_id = '<uuid>'\`, NOT \`WHERE id = '<uuid>'\` (\`tasks.id\` is an unrelated INTEGER rowid, so an id=uuid filter silently returns 0 rows and would look like the task is missing when it is not); a \`kb_entry <path>\` ref keys on \`jarvis_files.path\` — filter \`WHERE path = '<path>'\` (or just use recall_check for KB).`;
+
 function buildSqlCheckTool(db: Database.Database): InlineSdkTool {
   return sdkTool(
     "sql_check",
-    `Run ONE read-only SELECT against ground-truth tables (${[...SQL_CHECK_TABLES].join(", ")}) and return up to ${SQL_CHECK_ROW_CAP} rows as JSON. Read-only: writes/DDL/PRAGMA/ATTACH and non-whitelisted tables are rejected. Use it to verify a factual claim against live data.`,
+    SQL_CHECK_TOOL_DESCRIPTION,
     { query: z.string().describe("a single read-only SELECT statement") },
     async (args: { query: string }) => ({
       content: [
