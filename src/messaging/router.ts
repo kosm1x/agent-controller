@@ -8,6 +8,7 @@
 
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
 import { toolRegistry } from "../tools/registry.js";
+import { executeGatedCapability } from "../lib/v8-3/trigger.js";
 import { SYSTEM_PROMPT_TOKEN_BUDGET } from "../config/constants.js";
 import { getDatabase } from "../db/index.js";
 import {
@@ -1651,10 +1652,13 @@ export class MessageRouter {
           // Without this, a precious-path delete loops: tool returns
           // CONFIRMATION_REQUIRED → router formats as "Error: ..." → operator
           // never gets the actual deletion. Queue #17 audit W2 (2026-05-15).
-          const result = await toolRegistry.execute(pendingConf.toolName, {
-            ...pendingConf.args,
-            confirmed: true,
-          });
+          // V8.3 L1-L2: route operator-confirmed gated capabilities through the
+          // decision ledger (dormant/passthrough unless V83_ENABLED + canary).
+          const result = await executeGatedCapability(
+            pendingConf.toolName,
+            { ...pendingConf.args, confirmed: true },
+            { threadId: tk },
+          );
           // Format result for user — human-readable confirmation
           let userResponse: string;
           try {
