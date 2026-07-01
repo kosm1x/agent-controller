@@ -189,6 +189,60 @@ describe("runJudgmentAssembly", () => {
     expect(trail.verdict).toBe("approved");
   });
 
+  it("counts CITED kb_entry refs but NOT uncited ones toward confidence (qa-W1)", async () => {
+    seedBriefingRow("11111111-1111-1111-1111-111111111111");
+    // 1 task + 3 KB refs. Pre-fix all 4 would count → green; the fix counts only
+    // the cited refs, so the two uncited KB entries must not inflate the color.
+    vi.mocked(gatherEvidence).mockReturnValue([
+      { kind: "task", id: "t1", excerpt: "blocked", retrieved_at: NOW },
+      {
+        kind: "kb_entry",
+        id: "projects/x/README.md",
+        excerpt: "readme",
+        retrieved_at: NOW,
+      },
+      {
+        kind: "kb_entry",
+        id: "projects/x/CHANGELOG.md",
+        excerpt: "changelog",
+        retrieved_at: NOW,
+      },
+      {
+        kind: "kb_entry",
+        id: "NorthStar/snap.md",
+        excerpt: "snap",
+        retrieved_at: NOW,
+      },
+    ]);
+    // cites the task [1] and ONE kb_entry [2]; [3][4] are gathered but never cited.
+    vi.mocked(authorJudgment).mockResolvedValue({
+      prose:
+        "The task is blocked [1], and the README documents the next step [2].",
+    });
+    await runJudgmentAssembly(briefing([judgment()]), {
+      nowIso: NOW,
+      db: getDatabase(),
+    });
+    const row = getJudgmentsForBriefing(
+      "11111111-1111-1111-1111-111111111111",
+    )[0];
+    const basis = JSON.parse(row.confidenceBasisJson ?? "{}");
+    expect(basis.distinct_sources).toBe(2); // task + 1 cited KB, NOT the 2 uncited
+    expect(row.confidence).not.toBe("green"); // 2 < 3 → not green (was 4 pre-fix)
+  });
+
+  it("passes the judgment subject into gatherEvidence for the Phase-2 KB pass (qa-W3)", async () => {
+    seedBriefingRow("11111111-1111-1111-1111-111111111111");
+    await runJudgmentAssembly(briefing([judgment({ subject: "pipesong" })]), {
+      nowIso: NOW,
+      db: getDatabase(),
+    });
+    expect(gatherEvidence).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ subject: "pipesong" }),
+    );
+  });
+
   it("skips a judgment when decomposition fails (no row written)", async () => {
     seedBriefingRow("11111111-1111-1111-1111-111111111111");
     vi.mocked(decomposeQuestion).mockRejectedValueOnce(

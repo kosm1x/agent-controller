@@ -43,6 +43,7 @@ import {
 import { getDatabase } from "../../db/index.js";
 import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
+import { sanitizeFtsQuery } from "./critic.js";
 import {
   DecompositionAngleSchema,
   DecompositionSchema,
@@ -253,7 +254,16 @@ export interface RetrievalOptions {
   db?: Database.Database;
   /** ISO retrieval timestamp stamped on every EvidenceRef. Injected. */
   nowIso?: string;
+  /** Subject (project/entity) the judgment is about. When set, `gatherEvidence`
+   *  adds a KB (`jarvis_files`) pass keyed on it (Phase 2 — see below). */
+  subject?: string;
 }
+
+/** Default / ceiling KB entries pulled per gather. Kept small: the KB pass is
+ *  supplemental identity/grounding evidence, and every ref costs author + critic
+ *  tokens (more so under the Sonnet-5 tokenizer). */
+export const DEFAULT_KB_LIMIT = 5;
+export const MAX_KB_LIMIT = 8;
 
 type TaskEvidenceRow = {
   task_id: string;
@@ -345,10 +355,74 @@ export function retrieveForAngle(
   return retrieveTasksForBoundaries(angle.boundaries, options);
 }
 
+type KbEvidenceRow = { path: string; title: string; snippet: string };
+
+/**
+ * Retrieve KB (`jarvis_files`) rows matching a free-text query → evidence refs
+ * (`kind='kb_entry'`, `id`=path). Mirrors the critic's `recall_check` surface
+ * (lexical `jarvis_files_fts`, bm25 ranked) so the AUTHOR can cite the SAME KB
+ * the critic VERIFIES against. This closes the ledger↔citation asymmetry that
+ * capped the §17 unfixable rate: before Phase 2 the ledger was task-only, so the
+ * critic could demand a `projects/<subject>/README.md` / timestamp the author
+ * had no `[K]` marker for → a correct-but-mis-cited judgment it could never fix.
+ * Never throws: if `jarvis_files_fts` is absent (a bare in-memory db) the pass
+ * degrades to empty and the ledger stays task-only.
+ */
+export function retrieveKbForQuery(
+  query: string,
+  options: RetrievalOptions & { limit?: number } = {},
+): EvidenceRef[] {
+  const match = sanitizeFtsQuery(query);
+  if (!match) return [];
+  const db = options.db ?? getDatabase();
+  const retrievedAt = options.nowIso ?? new Date().toISOString();
+  const limit = Math.min(options.limit ?? DEFAULT_KB_LIMIT, MAX_KB_LIMIT);
+
+  let rows: KbEvidenceRow[];
+  try {
+    rows = db
+      .prepare(
+        `SELECT path, title,
+                snippet(jarvis_files_fts, 1, '', '', '…', 16) AS snippet
+           FROM jarvis_files_fts WHERE jarvis_files_fts MATCH ?
+           ORDER BY bm25(jarvis_files_fts) LIMIT ?`,
+      )
+      .all(match, limit) as KbEvidenceRow[];
+  } catch (e) {
+    // FTS table absent / query rejected → degrade to task-only, never throw.
+    log.debug(
+      { err: e instanceof Error ? e.message : String(e) },
+      "decompose: KB retrieval unavailable (jarvis_files_fts) — task-only ledger",
+    );
+    return [];
+  }
+
+  // No-silent-cap: a full page means more matching KB entries exist unseen.
+  if (rows.length === limit) {
+    log.debug(
+      { limit, query },
+      "decompose: KB retrieval hit the row limit — more matches may exist",
+    );
+  }
+
+  return rows.map((r) => ({
+    kind: "kb_entry" as const,
+    id: r.path,
+    excerpt: `${r.title}${r.snippet ? ` — ${r.snippet}` : ""}`.slice(0, 200),
+    retrieved_at: retrievedAt,
+  }));
+}
+
 /**
  * Run every angle's retrieval and return the deduplicated evidence ledger.
  * Dedup key is `kind:id` — the same task surfaced by two angles is one ledger
  * entry (the FIRST retrieval wins, preserving its excerpt/timestamp).
+ *
+ * Phase 2: when `options.subject` is set, a KB (`jarvis_files`) pass keyed on the
+ * subject is appended, so the ledger the author cites includes the same identity
+ * / grounding files the critic verifies against (`recall_check`). Subject-keyed
+ * because the diagnosed failures were the critic demanding `projects/<subject>/`
+ * README/snapshot sources that a task-only ledger could never carry.
  */
 export function gatherEvidence(
   decomposition: Decomposition,
@@ -356,13 +430,17 @@ export function gatherEvidence(
 ): EvidenceRef[] {
   const seen = new Set<string>();
   const ledger: EvidenceRef[] = [];
+  const push = (ref: EvidenceRef) => {
+    const key = `${ref.kind}:${ref.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    ledger.push(ref);
+  };
   for (const angle of decomposition.angles) {
-    for (const ref of retrieveForAngle(angle, options)) {
-      const key = `${ref.kind}:${ref.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      ledger.push(ref);
-    }
+    for (const ref of retrieveForAngle(angle, options)) push(ref);
+  }
+  if (options.subject) {
+    for (const ref of retrieveKbForQuery(options.subject, options)) push(ref);
   }
   return ledger;
 }

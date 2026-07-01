@@ -23,6 +23,7 @@ import {
   DecompositionError,
   retrieveForAngle,
   retrieveTasksForBoundaries,
+  retrieveKbForQuery,
   gatherEvidence,
   saveDecomposition,
   MAX_ANGLE_LIMIT,
@@ -326,6 +327,125 @@ describe("gatherEvidence — dedup across angles", () => {
     });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].id).toBe("t-1");
+  });
+});
+
+describe("retrieveKbForQuery + gatherEvidence KB pass (Phase 2 — ledger↔citation asymmetry)", () => {
+  beforeEach(() => {
+    initDatabase(":memory:");
+    const db = getDatabase();
+    // KB files (FTS populated via jarvis_files trigger).
+    const kb = db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    );
+    kb.run(
+      "k1",
+      "projects/pipesong/README.md",
+      "PipeSong",
+      "Voice AI infrastructure. Phase 4a is the documented next step.",
+    );
+    kb.run(
+      "k2",
+      "NorthStar/priority-snapshot.md",
+      "Priority snapshot",
+      "PipeSong prioritized for the salon voice outreach funnel.",
+    );
+    kb.run(
+      "k3",
+      "projects/vlcms/README.md",
+      "Very Light CMS",
+      "A Hono + SQLite content service — unrelated to the voice stack.",
+    );
+    // One task, so gatherEvidence has a task ref to merge the KB pass with.
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, status, priority, created_at)
+       VALUES (?,?,?,?,?,?)`,
+    ).run(
+      "t-ps",
+      "pipesong bringup",
+      "d",
+      "blocked",
+      "high",
+      "2026-05-20T00:00:00.000Z",
+    );
+  });
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  it("returns kb_entry refs (id = path) for the subject, bm25-ranked, excluding non-matches", () => {
+    const refs = retrieveKbForQuery("pipesong", {
+      db: getDatabase(),
+      nowIso: NOW,
+    });
+    expect(refs.length).toBeGreaterThanOrEqual(2);
+    expect(refs.every((r) => r.kind === "kb_entry")).toBe(true);
+    const ids = refs.map((r) => r.id);
+    expect(ids).toContain("projects/pipesong/README.md");
+    expect(ids).toContain("NorthStar/priority-snapshot.md");
+    expect(ids).not.toContain("projects/vlcms/README.md"); // non-match excluded
+    expect(refs[0].retrieved_at).toBe(NOW);
+    expect(refs[0].excerpt.length).toBeGreaterThan(0);
+  });
+
+  it("returns [] on an empty-after-sanitization query (no alnum tokens)", () => {
+    expect(retrieveKbForQuery("  @#$ -- ", { db: getDatabase() })).toEqual([]);
+  });
+
+  it("returns [] when nothing in the KB matches", () => {
+    expect(
+      retrieveKbForQuery("nonexistentsubjectxyz", { db: getDatabase() }),
+    ).toEqual([]);
+  });
+
+  it("honors an explicit limit (cap ≤ MAX_KB_LIMIT)", () => {
+    const refs = retrieveKbForQuery("pipesong", {
+      db: getDatabase(),
+      limit: 1,
+    });
+    expect(refs).toHaveLength(1);
+  });
+
+  it("gatherEvidence merges the subject KB pass into the task ledger", () => {
+    const decomposition: Decomposition = {
+      question: "what is the state of pipesong?",
+      angles: [angle({ boundaries: { status_in: ["blocked"] } })],
+      generated_at: NOW,
+    };
+    const ledger = gatherEvidence(decomposition, {
+      db: getDatabase(),
+      nowIso: NOW,
+      subject: "pipesong",
+    });
+    const kinds = new Set(ledger.map((r) => r.kind));
+    expect(kinds.has("task")).toBe(true);
+    expect(kinds.has("kb_entry")).toBe(true);
+    expect(ledger.some((r) => r.id === "t-ps")).toBe(true);
+    expect(ledger.some((r) => r.id === "projects/pipesong/README.md")).toBe(
+      true,
+    );
+  });
+
+  it("gatherEvidence stays task-only when no subject is provided (backward-compatible)", () => {
+    const decomposition: Decomposition = {
+      question: "q?",
+      angles: [angle({ boundaries: { status_in: ["blocked"] } })],
+      generated_at: NOW,
+    };
+    const ledger = gatherEvidence(decomposition, {
+      db: getDatabase(),
+      nowIso: NOW,
+    });
+    expect(ledger.every((r) => r.kind === "task")).toBe(true);
+    expect(ledger.some((r) => r.kind === "kb_entry")).toBe(false);
+  });
+
+  it("degrades to [] (never throws) when jarvis_files_fts is absent (qa-W2)", () => {
+    getDatabase().exec("DROP TABLE jarvis_files_fts");
+    expect(() =>
+      retrieveKbForQuery("pipesong", { db: getDatabase() }),
+    ).not.toThrow();
+    expect(retrieveKbForQuery("pipesong", { db: getDatabase() })).toEqual([]);
   });
 });
 

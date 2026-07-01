@@ -273,8 +273,21 @@ async function runCriticAndFinalize(
 
   // §12 confidence (after the loop → contradiction_count is final) + the §10
   // mechanical floor: never let over-confident prose ship on a weaker color.
+  // qa-W1: confidence counts GROUNDING, not what was merely GATHERED. The Phase-2
+  // subject-keyed KB pass adds `kb_entry` refs the author may never cite, so an
+  // UNCITED kb_entry must NOT inflate distinct_sources (green needs ≥3). Count a
+  // kb_entry only when the final prose actually cites it; task refs keep their
+  // prior ledger-wide treatment (unchanged). resolveCitations is deterministic.
+  const citedKeys = new Set(
+    resolveCitations(finalProse, ledger, { startClaimId: 0 })
+      .resolved.flatMap((c) => c.evidence_refs)
+      .map((r) => `${r.kind}:${r.id}`),
+  );
+  const confidenceRefs = ledger.filter(
+    (r) => r.kind !== "kb_entry" || citedKeys.has(`${r.kind}:${r.id}`),
+  );
   const conf = computeConfidence(
-    { judgmentId, evidenceRefs: ledger },
+    { judgmentId, evidenceRefs: confidenceRefs },
     { db, nowIso },
   );
   const color = registerMatchesColor(finalProse, conf.color)
@@ -325,7 +338,7 @@ async function assembleOneJudgment(
       nowIso,
       signal,
     });
-    ledger = gatherEvidence(decomposition, { db, nowIso });
+    ledger = gatherEvidence(decomposition, { db, nowIso, subject: j.subject });
   } catch (err) {
     if (err instanceof DecompositionError) {
       log.warn(
