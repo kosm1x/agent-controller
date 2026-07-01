@@ -18,6 +18,7 @@ import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import {
   runCritic,
   runCriticLoop,
+  escalationDisposition,
   runReadOnlySelect,
   runCostCheck,
   runRecallCheck,
@@ -315,10 +316,109 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     expect(reAuthor.mock.calls[0][1]).toMatch(/fix the date/);
   });
 
-  it("escalates to unfixable after two needs_revision passes", async () => {
+  it("finalizes approved-with-caveat when two needs_revision passes contradict nothing (verified, correctable-only)", async () => {
+    // The re-author couldn't fully satisfy a sourcing/citation nit, but the
+    // critic VERIFIED and disproved nothing → the judgment is substantively
+    // sound. §11 reserves `unfixable` for CONTRADICTED claims, so this must NOT
+    // be dropped as unfixable — it surfaces approved with the residual caveat.
     installCritic([
-      { verdict: "needs_revision", critique: "first problem" },
-      { verdict: "needs_revision", critique: "still wrong" },
+      {
+        verdict: "needs_revision",
+        critique: "citation [1] points at the wrong task",
+      },
+      { verdict: "needs_revision", critique: "still the wrong source id" },
+    ]);
+    const reAuthor = vi.fn(async () => ({
+      prose: "revised",
+      claims: INPUT.claims,
+    }));
+    const r = await runCriticLoop(INPUT, { reAuthor });
+    expect(r.verdict).toBe("approved");
+    expect(r.iterations).toBe(CRITIC_MAX_LOOP);
+    expect(r.critique).toMatch(
+      /approved with residual citation\/sourcing caveat/,
+    );
+    expect(reAuthor).toHaveBeenCalledTimes(1); // re-authored once, then finalized
+  });
+
+  it("keeps unfixable when an unsupported sentence survives both passes (not merely mis-cited — qa-W1)", async () => {
+    // INPUT_WITH_UNRESOLVED carries an unsupported sentence; the re-author fails
+    // to clear it (returns the same unresolved), so the terminal disposition must
+    // NOT approve it despite no contradiction.
+    installCritic([
+      {
+        verdict: "needs_revision",
+        critique: "the legal-blocker sentence is unsupported",
+      },
+      { verdict: "needs_revision", critique: "still unsupported" },
+    ]);
+    const reAuthor = vi.fn(async (input: CriticInput) => ({
+      prose: "revised but still unsupported",
+      claims: INPUT.claims,
+      unresolved: input.unresolved, // re-author did NOT remove the flagged sentence
+    }));
+    const r = await runCriticLoop(
+      {
+        ...INPUT,
+        unresolved: [
+          {
+            claim_text: "legal is the blocker",
+            prose_offset: 0,
+            reason: "no_marker_factual",
+            invalid_markers: [],
+          },
+        ],
+      },
+      { reAuthor },
+    );
+    expect(r.verdict).toBe("unfixable");
+    expect(r.critique).toMatch(/unsupported sentence still unresolved/);
+  });
+
+  it("approves after the re-author REMOVES the flagged unsupported sentence (intended happy path)", async () => {
+    installCritic([
+      {
+        verdict: "needs_revision",
+        critique: "remove the unsupported legal-blocker sentence",
+      },
+      {
+        verdict: "needs_revision",
+        critique: "citation nit remains but nothing contradicted",
+      },
+    ]);
+    const reAuthor = vi.fn(async () => ({
+      prose: "revised, unsupported sentence removed",
+      claims: INPUT.claims,
+      unresolved: [], // re-author cleared it → clears the unresolved gate
+    }));
+    const r = await runCriticLoop(
+      {
+        ...INPUT,
+        unresolved: [
+          {
+            claim_text: "legal is the blocker",
+            prose_offset: 0,
+            reason: "no_marker_factual",
+            invalid_markers: [],
+          },
+        ],
+      },
+      { reAuthor },
+    );
+    expect(r.verdict).toBe("approved");
+    expect(r.critique).toMatch(
+      /approved with residual citation\/sourcing caveat/,
+    );
+  });
+
+  it("escalates to unfixable when the second needs_revision carries a contradiction", async () => {
+    installCritic([
+      { verdict: "needs_revision", critique: "check claim 1" },
+      {
+        verdict: "needs_revision",
+        critique: "claim 1 is contradicted by ground truth",
+        contradicted_claim_ids: [1],
+      },
     ]);
     const reAuthor = vi.fn(async () => ({
       prose: "revised",
@@ -326,9 +426,21 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     }));
     const r = await runCriticLoop(INPUT, { reAuthor });
     expect(r.verdict).toBe("unfixable");
-    expect(r.iterations).toBe(CRITIC_MAX_LOOP);
     expect(r.critique).toMatch(/escalated to unfixable/);
-    expect(reAuthor).toHaveBeenCalledTimes(1); // re-authored once, then escalated
+  });
+
+  it("escalates to unfixable when the critic could not verify on the last pass (infra error)", async () => {
+    installCritic([
+      { verdict: "needs_revision", critique: "check it" },
+      "no_tool",
+    ]);
+    const reAuthor = vi.fn(async () => ({
+      prose: "revised",
+      claims: INPUT.claims,
+    }));
+    const r = await runCriticLoop(INPUT, { reAuthor });
+    expect(r.verdict).toBe("unfixable");
+    expect(r.critique).toMatch(/could not verify/);
   });
 
   it("is terminal on a first-pass unfixable without re-authoring", async () => {
@@ -338,6 +450,53 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     expect(r.verdict).toBe("unfixable");
     expect(r.iterations).toBe(1);
     expect(reAuthor).not.toHaveBeenCalled();
+  });
+});
+
+describe("escalationDisposition — §11 terminal semantics", () => {
+  const base = {
+    critique: "the residual problem",
+    contradictedClaimIds: [] as number[],
+    latencyMs: 1,
+    error: false,
+  };
+
+  it("infra error → unfixable (never auto-approve the unverified)", () => {
+    const d = escalationDisposition(
+      { ...base, verdict: "needs_revision", error: true },
+      0,
+    );
+    expect(d.verdict).toBe("unfixable");
+    expect(d.critique).toMatch(/could not verify/);
+  });
+
+  it("a contradicted claim → unfixable (a claim proven false by the tools)", () => {
+    const d = escalationDisposition(
+      { ...base, verdict: "needs_revision", contradictedClaimIds: [7] },
+      0,
+    );
+    expect(d.verdict).toBe("unfixable");
+    expect(d.critique).toMatch(/escalated to unfixable/);
+  });
+
+  it("a surviving unsupported sentence → unfixable (unresolved has no claim_id, so the discriminator is blind to it — qa-W1)", () => {
+    const d = escalationDisposition(
+      { ...base, verdict: "needs_revision" },
+      1, // one unresolved (unsupported) sentence still present
+    );
+    expect(d.verdict).toBe("unfixable");
+    expect(d.critique).toMatch(/unsupported sentence still unresolved/);
+  });
+
+  it("verified + nothing contradicted + no unsupported sentence → approved-with-caveat (correctable citation nit only)", () => {
+    const d = escalationDisposition({ ...base, verdict: "needs_revision" }, 0);
+    expect(d.verdict).toBe("approved");
+    expect(d.critique).toMatch(
+      /approved with residual citation\/sourcing caveat/,
+    );
+    // the residual critique is preserved in the critic trail (audit-trail only,
+    // via `mc-ctl judgments` — NOT rendered in the operator's brief)
+    expect(d.critique).toContain("the residual problem");
   });
 });
 

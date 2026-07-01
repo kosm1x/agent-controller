@@ -649,10 +649,66 @@ export interface CriticLoopResult extends CriticResult {
 }
 
 /**
+ * §11 terminal disposition when a SECOND `needs_revision` ends the loop.
+ * `unfixable` (per the critic's own §11 definition) is reserved for a claim
+ * CONTRADICTED by ground truth — plus two conservative cases that must never
+ * auto-approve:
+ *   1. infra error (no tool call / timeout) — the critic never actually verified;
+ *   2. a surviving UNSUPPORTED sentence (`unresolvedCount > 0`). cite.ts couldn't
+ *      resolve it, so it has no claim_id and can NEVER be a contradicted_claim_id —
+ *      the discriminator below is structurally blind to it (qa-W1). "Unsupported"
+ *      is NOT "mis-cited", so we do not let it ride in dressed as green: any
+ *      unresolved sentence still present after the re-author keeps the judgment
+ *      `unfixable`. The re-author recomputes `unresolved` each pass, so removing
+ *      the flagged sentence (the intended fix, per author.ts) clears this gate.
+ *
+ * ONLY a pass that VERIFIED, contradicted nothing, AND left no unsupported
+ * sentence is `approved` — that residual is a CORRECTABLE citation/sourcing nit on
+ * RESOLVED claims that the re-author couldn't fully fix, usually because the right
+ * source isn't in the frozen task-only ledger (the critic verifies against task +
+ * KB recall, so it can demand a marker the author has no ledger entry for). That
+ * judgment is substantively sound, so `approved` beats mislabeling it "contradicted
+ * by ground truth" (which also structurally caps the §17 unfixable rate). The
+ * residual critique is preserved in the critic trail — visible in the AUDIT trail
+ * (`mc-ctl judgments <id>`), NOT rendered in the operator's brief. Phase 2 widens
+ * the gather ledger so these citations become fixable at the source.
+ */
+export function escalationDisposition(
+  last: CriticResult,
+  unresolvedCount: number,
+): {
+  verdict: CriticVerdict;
+  critique: string;
+} {
+  const tail = `after ${CRITIC_MAX_LOOP} needs_revision iterations — last critique: ${last.critique}`;
+  if (last.error) {
+    return {
+      verdict: "unfixable",
+      critique: `escalated to unfixable ${tail} (critic could not verify)`,
+    };
+  }
+  if (last.contradictedClaimIds.length > 0) {
+    return { verdict: "unfixable", critique: `escalated to unfixable ${tail}` };
+  }
+  if (unresolvedCount > 0) {
+    return {
+      verdict: "unfixable",
+      critique: `escalated to unfixable ${tail} (unsupported sentence still unresolved)`,
+    };
+  }
+  return {
+    verdict: "approved",
+    critique: `approved with residual citation/sourcing caveat ${tail}`,
+  };
+}
+
+/**
  * The §11 2-loop. `approved`/`unfixable` are terminal. `needs_revision`
- * re-authors (critique injected) and re-critics; a SECOND `needs_revision`
- * escalates to `unfixable` (Self-Refine diminishing returns — do not loop
- * forever re-authoring the unsalvageable). The contradiction write happens
+ * re-authors (critique injected) and re-critics; a SECOND `needs_revision` ends
+ * the loop via `escalationDisposition` — `unfixable` only when a claim was
+ * contradicted or the critic couldn't verify, else `approved`-with-caveat (a
+ * substantively-sound judgment whose residual defect is an uncorrectable
+ * citation, not a ground-truth contradiction). The contradiction write happens
  * inside each `runCritic` pass.
  */
 export async function runCriticLoop(
@@ -671,10 +727,10 @@ export async function runCriticLoop(
     }
     // needs_revision
     if (i === CRITIC_MAX_LOOP) {
+      const unresolvedCount = current.unresolved?.length ?? 0;
       return {
         ...last,
-        verdict: "unfixable",
-        critique: `escalated to unfixable after ${CRITIC_MAX_LOOP} needs_revision iterations — last critique: ${last.critique}`,
+        ...escalationDisposition(last, unresolvedCount),
         iterations: i,
       };
     }
