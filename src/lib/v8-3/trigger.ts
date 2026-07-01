@@ -159,7 +159,13 @@ export async function executeGatedCapability(
       },
       "v8-3: decision pipeline failed — degrading to direct execute",
     );
-    if (output === undefined) return toolRegistry.execute(toolName, args);
+    if (output === undefined) {
+      log.warn(
+        { capability, toolName },
+        "v8-3: pipeline degrade — executing direct fallback (output was undefined)",
+      );
+      return toolRegistry.execute(toolName, args);
+    }
   }
   return output ?? "";
 }
