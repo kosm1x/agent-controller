@@ -133,10 +133,29 @@ export function classifyNoTweetId(raw: string, status = 200): XErrorInfo {
 }
 
 /**
- * Synthetic, secret-free explanations for labels X conveys WITHOUT a message of
- * its own (so `describeXError` never hands the model a bare label it can dress up).
+ * Secret-free operational guidance keyed by label. Two uses, both consumed by
+ * `describeXError`:
+ *  - labels X conveys WITHOUT a message of its own (`silent_withhold`) — so the
+ *    model never gets a bare label it can dress up with a guessed cause; and
+ *  - labels whose X message is MISLEADING (`daily_limit`'s "try again later"
+ *    actually means "not until X's daily clock resets") — the hint supplements
+ *    X's verbatim text with the operational reality so the model doesn't act on
+ *    the misleading surface reading.
+ *
+ * Entries are appended by `describeXError` UN-capped (unlike X's message, which is
+ * sliced to 240) — so every hint MUST stay a static, secret-free, short literal.
  */
 const LABEL_HINTS: Partial<Record<XErrorLabel, string>> = {
+  // Written for the LIVE code 344 (GraphQL CreateTweet automation throttle). Code
+  // 185 (legacy v1.1) also maps to `daily_limit` but is unreachable here (cookie
+  // backend = GraphQL, api backend = v2), so the automation-specific / API-v2
+  // framing targets 344; revisit if a v1.1 call path (185) is ever added.
+  daily_limit:
+    "This is X's automated-post daily send throttle: manual posts from the app " +
+    "still succeed, but automated posts get throttled. X says 'try again later', " +
+    "but the limit resets on X's own daily clock — do NOT retry the same day " +
+    "(each automated retry deepens the flag). The durable fix is account trust/age " +
+    "or moving writes to X API v2, not a resend.",
   silent_withhold:
     "X accepted the request (HTTP 2xx) but returned no tweet and no error code — " +
     "the post was silently withheld. Most likely a soft anti-automation/velocity " +
@@ -151,6 +170,10 @@ export function describeXError(info: XErrorInfo): string {
   if (info.code !== undefined) parts.push(`code ${info.code}`);
   parts.push(`(${info.label})`);
   if (info.message) parts.push(`— ${info.message.slice(0, 240)}`);
-  else if (LABEL_HINTS[info.label]) parts.push(`— ${LABEL_HINTS[info.label]}`);
+  // Append our operational guidance IN ADDITION to X's message — for labels
+  // where X sends no message (silent_withhold) OR where its message is
+  // misleading (daily_limit's "try again later" ⇒ retries deepen the throttle).
+  // Supplements, never replaces, so the model gets both X's words and the reality.
+  if (LABEL_HINTS[info.label]) parts.push(`— ${LABEL_HINTS[info.label]}`);
   return parts.join(" ");
 }

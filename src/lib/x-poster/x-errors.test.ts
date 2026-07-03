@@ -214,6 +214,30 @@ describe("describeXError", () => {
     expect(out).not.toContain("daily limit"); // must not imply a fabricated cause
   });
 
+  it("daily_limit (344) appends the don't-retry hint ALONGSIDE X's verbatim message", () => {
+    // The 2026-07-02 @mexiconecesario failure: X sends a real "try again later"
+    // message that INVITES a retry. The hint must ride ALONGSIDE X's words (not
+    // replace them) so the model gets both the verbatim text and the operational
+    // reality — X's daily automation throttle does NOT reset on a same-day resend.
+    const out = describeXError(
+      classifyXError(
+        200,
+        body(
+          344,
+          "Authorization: You have reached your daily limit for sending Tweets and messages. Please try again later. (344)",
+        ),
+      ),
+    );
+    expect(out).toContain("code 344");
+    expect(out).toContain("daily limit for sending Tweets"); // X's verbatim message kept
+    expect(out).toContain("do NOT retry the same day"); // our hint appended too
+    expect(out).toContain("X API v2");
+    // X's message first, our hint after — supplements, never replaces.
+    expect(out.indexOf("daily limit for sending")).toBeLessThan(
+      out.indexOf("do NOT retry"),
+    );
+  });
+
   it("a hint-less label still renders bare (no spurious suffix)", () => {
     // auth_expired has no hint → unchanged output (regression guard).
     expect(describeXError(classifyXError(401, ""))).toBe("401 (auth_expired)");
