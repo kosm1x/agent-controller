@@ -167,6 +167,19 @@ It reads `mexiconecesario/calendario-editorial.md`, posts via
   durable fix is account trust/age or the X API v2 slot, not cookie tweaks.
   Backstops still hold (card rule 6 + schedule prompt mandate verbatim relay) so
   the model never _embellishes_ a real error (e.g. a guessed reset time).
+- **`code 344` RECURRED on `@mexiconecesario` (2026-07-02) + a `describeXError`
+  blind spot fixed (commit `485b473`).** The daily `@mexiconecesario` tweet hit 344
+  at 19:00 then `silent_withhold` on the retry — so the throttle now hits BOTH
+  accounts (a cookie/GraphQL-backend posture, not one bad account). Jarvis detected
+  it correctly, but a gap kept the guidance from reaching the model: `describeXError`
+  appended a label's operational hint ONLY when X sent no message of its own. So
+  `silent_withhold` (message-less) got its "do NOT retry" note, but `daily_limit`
+  (344 ALWAYS carries X's misleading "try again later") did not — inviting the very
+  same-day retries that deepen the flag. Fixed: a `daily_limit` `LABEL_HINTS` entry
+  ("resets on X's daily clock; retries deepen the flag; fix = account trust/age or
+  X API v2") now rides ALONGSIDE X's verbatim message (`else if`→`if` in
+  `describeXError`). **Meta-lesson: a de-confabulation/guidance hint gated on the
+  platform sending NO message misses the MISLEADING-message case — cover both.**
 - **`code 226` = X's `flagged_automated` anti-spam block — TRANSIENT, not a ban
   (observed live 2026-06-23).** A scheduled `@mexiconecesario` tweet (the clean
   baseline account) failed for the FIRST time with `{code:226,name:"Authorization
