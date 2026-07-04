@@ -235,6 +235,13 @@ describe("git tools", () => {
       expect(result).toContain("must be under an allowed project path");
     });
 
+    it("blocks git operations on operator config paths under /root/claude/", async () => {
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude/.claude",
+      });
+      expect(result).toMatch(/operator config|blocked/i);
+    });
+
     it("blocks mission-control exact path", async () => {
       const result = await gitStatusTool.execute({
         cwd: "/root/claude/mission-control",

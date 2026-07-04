@@ -10,6 +10,7 @@ import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 import {
   buildFlailingBlockMessage,
   checkFlailing,
@@ -384,16 +385,29 @@ export function validateShellCommand(command: string): {
   let match: RegExpExecArray | null;
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(sanitized)) !== null) {
-    const targetPath = match[1];
+    const rawTarget = match[1];
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
-    // `>` redirect shape but are not real writes — exempt them so common
-    // idioms like `2>/dev/null` don't false-positive.
-    if (WRITE_INDICATOR_EXEMPT.has(targetPath)) continue;
+    // `>` redirect shape but are not real writes — exempt them (raw, pre-realpath)
+    // so idioms like `2>/dev/null` don't false-positive.
+    if (WRITE_INDICATOR_EXEMPT.has(rawTarget)) continue;
+    // realpath so an in-domain symlink can't point the write outside the gates.
+    // Security decisions below use this resolved path; the ritual-doc append regex
+    // further down still matches the RAW target against the original command text.
+    const targetPath = realResolve(rawTarget);
     // SG3: Immutable core — blocked even on jarvis/* branches
     if (isImmutableCorePath(targetPath).immutable) {
       return {
         allowed: false,
         reason: `write to immutable core file blocked: ${targetPath}`,
+      };
+    }
+    // Deny-first: the operator's own config (.claude/ settings+hooks, .mcp.json,
+    // umbrella CLAUDE.md) lives under /root/claude/ but is not project content —
+    // rewriting it is a guardrail/command-execution vector.
+    if (isOperatorConfigPath(targetPath)) {
+      return {
+        allowed: false,
+        reason: `write to operator config blocked: ${targetPath}`,
       };
     }
     // Check deny list first (mission-control is protected unless on jarvis/* branch)
@@ -425,7 +439,9 @@ export function validateShellCommand(command: string): {
         if (targetPath.includes("/mission-control/")) {
           const rel = targetPath.replace(/.*\/mission-control\//, "");
           if (RITUAL_WRITABLE_DOCS.includes(rel)) {
-            const p = targetPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            // Match the RAW redirect target against the original command text —
+            // targetPath is now the realpath, which may not appear verbatim.
+            const p = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const isAppend = new RegExp(`>>\\s*${p}(?:\\s|$)`).test(sanitized);
             const hasOverwrite = new RegExp(
               `(?:^|[^>])>\\s*${p}(?:\\s|$)`,

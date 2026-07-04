@@ -8,6 +8,7 @@
 import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
+import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
@@ -82,7 +83,15 @@ function checkMissionControlAccess(resolved: string): boolean {
 
 function resolveWorkDir(cwd?: string): string {
   if (!cwd) return DEFAULT_CWD;
-  const resolved = resolve(cwd);
+  // realpath first so a symlink can't smuggle the cwd outside the allowed domain.
+  const resolved = realResolve(cwd);
+  // Deny-first: the operator's own config (.claude/, .mcp.json, umbrella CLAUDE.md)
+  // sits under /root/claude/ but is never a valid git working dir for Jarvis.
+  if (isOperatorConfigPath(resolved)) {
+    throw new Error(
+      `Git operations on operator config are blocked: ${resolved}.`,
+    );
+  }
   const withSlash = resolved.endsWith("/") ? resolved : resolved + "/";
   if (!ALLOWED_CWD_PREFIXES.some((p) => withSlash.startsWith(p))) {
     throw new Error(

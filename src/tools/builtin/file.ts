@@ -20,6 +20,7 @@ import {
   PREVIEW_CHARS,
 } from "../../lib/file-slicing.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 
 /** Hard cap on a single `file_read` payload — protects against pathological
  *  slice requests (e.g. lines='1-100000' on a giant log). */
@@ -84,13 +85,24 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
     return { allowed: false, reason: `Write blocked: ${safety.reason}` };
   }
 
-  const resolved = resolve(path);
+  // realpath first so a symlink inside an allowed dir can't smuggle the write
+  // outside the deny/immutable/allow gates.
+  const resolved = realResolve(path);
   // SG3: Immutable core — blocked even on jarvis/* branches
   const immCheck = isImmutableCorePath(resolved);
   if (immCheck.immutable) {
     return {
       allowed: false,
       reason: `Write blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
+    };
+  }
+  // Deny-first: the operator's own config (.claude/ settings+hooks, .mcp.json,
+  // umbrella CLAUDE.md) lives under /root/claude/ but is not project content —
+  // rewriting it is a guardrail/command-execution vector.
+  if (isOperatorConfigPath(resolved)) {
+    return {
+      allowed: false,
+      reason: `Write blocked: ${resolved} is operator config (Claude Code settings/hooks, MCP config, or umbrella CLAUDE.md), not project content.`,
     };
   }
   for (const deny of DENY_WRITE_PREFIXES) {

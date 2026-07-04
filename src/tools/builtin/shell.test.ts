@@ -622,6 +622,19 @@ B`;
       );
       expect(r.allowed).toBe(false);
     });
+
+    it("blocks writes to the operator's own config under /root/claude/ (C1 regression guard)", () => {
+      // The broad /root/claude/ allow-list must NOT expose the operator's Claude
+      // Code settings/hooks, MCP config, or umbrella CLAUDE.md — rewriting them is
+      // a guardrail-tamper / command-execution vector.
+      for (const cmd of [
+        "echo x > /root/claude/.claude/settings.local.json",
+        "tee /root/claude/.mcp.json",
+        "echo x > /root/claude/CLAUDE.md",
+      ]) {
+        expect(validateShellCommand(cmd).allowed).toBe(false);
+      }
+    });
   });
 });
 
