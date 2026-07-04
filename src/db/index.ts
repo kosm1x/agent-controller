@@ -186,6 +186,15 @@ export function initDatabase(dbPath: string): Database.Database {
   } catch {
     /* column already exists */
   }
+  // Phase 0 (Jarvis execution-improvement plan): attribute concerns so the
+  // completed_with_concerns rate becomes actionable instead of an opaque ~1/3.
+  try {
+    _db.exec(
+      "ALTER TABLE task_outcomes ADD COLUMN concern_reason TEXT DEFAULT NULL",
+    );
+  } catch {
+    /* column already exists */
+  }
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_outcomes_feedback ON task_outcomes(created_at, feedback_signal, ran_on, model_tier)",
   );
@@ -297,14 +306,12 @@ export function initDatabase(dbPath: string): Database.Database {
   const ftsCount =
     (
       _db.prepare("SELECT COUNT(*) AS n FROM jarvis_files_fts").get() as
-        | { n: number }
-        | undefined
+        { n: number } | undefined
     )?.n ?? 0;
   const filesCount =
     (
       _db.prepare("SELECT COUNT(*) AS n FROM jarvis_files").get() as
-        | { n: number }
-        | undefined
+        { n: number } | undefined
     )?.n ?? 0;
   if (ftsCount !== filesCount) {
     _db.exec(

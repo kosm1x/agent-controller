@@ -16,7 +16,7 @@ output before it ships (raise the floor). Ordered by leverage ÷ effort.
 - Scope is fixed at task start (`src/messaging/scope.ts`); **no mid-loop tool-scope escalation exists**.
 - `reflect()`/verify runs only in the heavy runner (Prometheus); the fast runner has no verify gate.
 
-## Phase 0 — Make the success metric trustworthy _(precondition, S)_ — **THIS SESSION**
+## Phase 0 — Make the success metric trustworthy _(precondition, S)_ — **✅ SHIPPED 2026-07-04**
 
 You can't target what you can't see. Tighten the concern signal so `completed_with_concerns`
 means a real defect, and make it attributable.
@@ -28,7 +28,7 @@ means a real defect, and make it attributable.
   fallback) — NOT a soft caveat on otherwise-good output.
 - **Measure:** baseline the reason distribution for one week → attack the top reason.
 
-## Phase 1a — Mid-task tool-scope escalation _(highest success leverage)_ — **THIS SESSION (cheap variant)**
+## Phase 1a — Mid-task tool-scope escalation _(highest success leverage)_ — **✅ SHIPPED 2026-07-04 (cheap variant)**
 
 Fixes the 7060 class. This is friction the git/write-guard fixes did NOT touch — it is scope
 _activation_, not write _access_.

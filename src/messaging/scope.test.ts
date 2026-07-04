@@ -190,6 +190,76 @@ describe("scope pattern matching", () => {
     expect(scope("rellena el ticker of the week")).toContain("file_write");
   });
 
+  it("coding activates on build/authoring intent the old regexes missed (tasks 5905/7060)", () => {
+    // Regression: "Escribo el seed script y creo la DB" / "ejecutar el seed"
+    // missed codingNounRe (no bare 'script'/'db') AND codingVerbRe ('escribo'/
+    // 'creo' aren't in the verb list) → shell_exec/file tools withheld mid-build.
+    expect(scope("Escribo el seed script y creo la DB")).toContain(
+      "shell_exec",
+    );
+    expect(scope("creo la base de datos y corro el seed")).toContain(
+      "file_write",
+    );
+    expect(scope("genera el schema y ejecuta la migración")).toContain(
+      "shell_exec",
+    );
+    expect(scope("write the seed script for the demo db")).toContain(
+      "shell_exec",
+    );
+  });
+
+  it("build-authoring rule does NOT over-fire on non-build authoring (qa guard)", () => {
+    // Verb→build-noun adjacency keeps it specific: authoring verbs with a
+    // non-build object must NOT pull the heavy coding scope.
+    expect(scope("crea una reunión para mañana")).not.toContain("shell_exec");
+    expect(scope("escribe un correo al cliente")).not.toContain("shell_exec");
+    expect(scope("genera un resumen de la semana")).not.toContain("file_write");
+  });
+
+  it("build-authoring homograph guards: 'creo que' / 'correo' do NOT grant coding (qa 2026-07-04)", () => {
+    // creo que = I believe (not create); correo = email (not corre=run). These
+    // are what BUILD_AUTHORING_RE controls — the big coding regex does not
+    // bare-match them, so the scope() (regex-fallback) helper is a fair test.
+    expect(scope("creo que la migración fue exitosa")).not.toContain(
+      "shell_exec",
+    );
+    expect(scope("el correo sobre la base de datos del cliente")).not.toContain(
+      "shell_exec",
+    );
+  });
+
+  it("build-authoring drops código/code polysemy on the SEMANTIC path (qa 2026-07-04)", () => {
+    // codingNounRe lacks bare código/code, so BUILD_AUTHORING_RE must NOT
+    // re-introduce it on the codingHit override path (código postal/de barras,
+    // QR/promo code are not programming). On the semantic path (preClassified
+    // set, no coding) the big fallback regex does NOT run, so this isolates the
+    // BUILD_AUTHORING_RE contribution. (Bare código on the regex-fallback path is
+    // pre-existing big-regex behavior, out of this change's scope.)
+    const t = scopeToolsForMessage(
+      "genera el código postal correcto",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(),
+    );
+    expect(t).not.toContain("shell_exec");
+  });
+
+  it("build-authoring force-adds coding on the SEMANTIC path too (codingHit safety net)", () => {
+    // Production supplies preClassifiedGroups; the codingHit safety net must add
+    // coding when the LLM classifier missed a build message. The scope() helper
+    // exercises only the regex-fallback path, so call the pure fn directly with a
+    // non-coding preClassified set (the classifier said "research", not coding).
+    const tools = scopeToolsForMessage(
+      "creo la base de datos y corro el seed",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["research"]),
+    );
+    expect(tools).toContain("shell_exec");
+  });
+
   it("Journal-authoring rule does NOT over-fire on reads / non-journal authoring (qa-W2)", () => {
     // Verb-gated + journal-anchored noun: bare nouns, reads, deletes, and
     // non-journal objects must NOT pull the heavy coding scope.

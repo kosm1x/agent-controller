@@ -17,6 +17,8 @@ export interface TaskOutcome {
   success: boolean;
   tags: string[];
   model_tier?: string;
+  /** Phase 0: why a task landed with concerns (max_turns, tool_scope_block, …). */
+  concern_reason?: string | null;
 }
 
 export interface OutcomeFilter {
@@ -38,6 +40,7 @@ export interface OutcomeRow {
   feedback_signal: string;
   tags: string;
   model_tier: string | null;
+  concern_reason: string | null;
   created_at: string;
 }
 
@@ -47,8 +50,8 @@ export function recordOutcome(outcome: TaskOutcome): void {
   writeWithRetry(() =>
     db
       .prepare(
-        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, model_tier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, model_tier, concern_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         outcome.task_id,
@@ -59,6 +62,7 @@ export function recordOutcome(outcome: TaskOutcome): void {
         outcome.success ? 1 : 0,
         JSON.stringify(outcome.tags),
         outcome.model_tier ?? null,
+        outcome.concern_reason ?? null,
       ),
   );
 }

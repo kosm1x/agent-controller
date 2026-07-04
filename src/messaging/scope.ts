@@ -521,6 +521,22 @@ export const CONVERSATIONAL_PATTERN =
 const JOURNAL_AUTHORING_RE =
   /\b(?:agrega\w*|a[ñn]ade|escr[ií]b\w*|redacta\w*|completa\w*|rellena\w*|llena\w*|publ[ií]ca\w*|re-?emite\w*|reedita\w*|ed[ií]ta\w*|actual[ií]za\w*)\s+(?:\S+\s+){0,3}(?:comentario\s+editorial|coment\w*\s+del?\s+analista|an[aá]lisis\s+(?:editorial|del?\s+(?:journal|radar))|deep\s*dive|manager\s+note|(?:number|ticker)\s+of\s+the\s+week|edici[oó]n\s+(?:W\d|del?\s+(?:journal|radar|williams)))/i;
 
+// Phase 1a (execution-improvement plan): build/authoring intent the other coding
+// rules miss — an authoring OR execution verb followed within a few words by a
+// build/code noun. Catches "escribo el seed script", "creo la base de datos",
+// "ejecutar el seed", "genera el schema" — the recurring coding-scope miss where
+// shell_exec/file tools were withheld mid-build (tasks 5905, 7060, and the DENUE
+// 2026-05-05 max_turns thrash). Verb→noun adjacency ({0,3} words, bounded, no
+// ReDoS) keeps it specific. Homograph guards (qa 2026-07-04): `creo(?!\s+que)`
+// excludes "creo que" (= I believe, the common discourse marker) while keeping
+// "creo la base de datos" (= I create); `corr[eo]\b` matches "corre/corro" (run)
+// but not "correo" (= email); the noun set excludes bare `código/code` (polysemy:
+// código postal/de barras/de conducta, promo/QR code) and `tabla` (spreadsheet).
+// Single source of truth, referenced by BOTH the DEFAULT_SCOPE_PATTERNS rule
+// (regex-fallback path) and the coding safety net (semantic path) so they can't drift.
+const BUILD_AUTHORING_RE =
+  /\b(?:escrib\w*|redact\w*|crea\w*|creo(?!\s+que\b)|genera\w*|construy\w*|arma\w*|implementa\w*|scaffold\w*|write|create|generate|build|implement|seed\w*|ejecut\w*|corr[eo]\b|run|lanza\w*)\b(?:\W+\w+){0,3}\W+\b(?:script|seed|semilla|base\s+de\s+datos|database|\bdb\b|migrac\w*|migration|schema|esquema|\bsql\b|\.(?:ts|tsx|js|jsx|py|sh|sql|json))\b/i;
+
 // Send/forward verb + an explicit recipient email ADDRESS → google (gmail_send)
 // intent, even with NO email noun ("correo"/"gmail"). Shared — one source of
 // truth — between the DEFAULT_SCOPE_PATTERNS rule (regex-fallback path) and the
@@ -705,6 +721,14 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // 2026-06-06). The LLM classifier (scope-classifier.ts) is the primary,
     // smarter path; this regex is the fallback.
     pattern: JOURNAL_AUTHORING_RE,
+    group: "coding",
+  },
+  {
+    // Build/authoring intent (verb→build-noun): "escribo el seed script", "creo
+    // la base de datos", "ejecuta la migración". Shared BUILD_AUTHORING_RE with
+    // the coding safety net (semantic path). Fixes the recurring mid-build
+    // scope miss (tasks 5905/7060, DENUE 2026-05-05 max_turns thrash).
+    pattern: BUILD_AUTHORING_RE,
     group: "coding",
   },
   {
@@ -1201,6 +1225,7 @@ export function scopeToolsForMessage(
       const codingHit = (s: string) =>
         codingNounRe.test(s) ||
         codingVerbRe.test(s) ||
+        BUILD_AUTHORING_RE.test(s) ||
         JOURNAL_AUTHORING_RE.test(s);
       // Topic carryover: a follow-up like "Cómo están distribuidas?" has no
       // domain signal of its own, but the prior turn was a DENUE query — the

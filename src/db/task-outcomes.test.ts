@@ -2,7 +2,7 @@
  * Task outcomes CRUD tests.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockDb = {
   prepare: vi.fn().mockReturnValue({
@@ -23,7 +23,9 @@ import {
 } from "./task-outcomes.js";
 
 describe("task-outcomes", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.prepare.mockReturnValue({
@@ -59,6 +61,7 @@ describe("task-outcomes", () => {
         1,
         '["messaging","telegram"]',
         null,
+        null,
       );
     });
 
@@ -84,6 +87,7 @@ describe("task-outcomes", () => {
         500,
         0,
         "[]",
+        null,
         null,
       );
     });

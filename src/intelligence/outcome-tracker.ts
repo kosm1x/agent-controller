@@ -13,6 +13,7 @@ import { recordOutcome, updateFeedback } from "../db/task-outcomes.js";
 import { incrementSkillUsage } from "../db/skills.js";
 import { getTask } from "../dispatch/dispatcher.js";
 import { getMemoryService } from "../memory/index.js";
+import { classifyConcernReason } from "./concern-reason.js";
 
 const FEEDBACK_WINDOW_MS = 120_000; // 2 minutes
 
@@ -54,6 +55,15 @@ export function trackTaskOutcome(
         })()
       : [];
 
+    // Phase 0: attribute the concern (max_turns / tool_scope_block / partial)
+    // so completed_with_concerns becomes actionable. Cheap regex over the
+    // already-persisted output/error; 'none' for clean/failed tasks.
+    const concernReason = classifyConcernReason(
+      task.status,
+      task.output ?? null,
+      task.error ?? null,
+    );
+
     // Write to SQLite
     recordOutcome({
       task_id: taskId,
@@ -64,6 +74,7 @@ export function trackTaskOutcome(
       success,
       tags,
       model_tier: classification?.modelTier ?? null,
+      concern_reason: concernReason,
     });
 
     // Write semantic summary to Hindsight
