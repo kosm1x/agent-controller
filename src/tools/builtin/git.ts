@@ -13,15 +13,14 @@ import type { Tool } from "../types.js";
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
 const GITHUB_ORG = "EurekaMD-net";
 const MC_DIR = "/root/claude/mission-control/";
-const ALLOWED_CWD_PREFIXES = [
-  "/root/claude/cuatro-flor/",
-  "/root/claude/projects/",
-  "/root/claude/williams-entry-radar/",
-  "/root/claude/thewilliamsradar-journal/",
-  "/root/claude/very-light-cms/",
-  "/tmp/",
-  MC_DIR, // allowed only on jarvis/* branches — checked at runtime
-];
+// Every EurekaMD/Jarvis project lives under /root/claude/ — some at the top level
+// (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …), some under projects/
+// (EurekaMS-Landing, …). A single prefix covers them all and cannot drift, which the
+// old per-repo enumeration did: it silently blocked git_commit on every repo it forgot
+// (e.g. the EurekaMS repos), reported to the caller as "no soporta este path".
+// mission-control is inside this prefix but further restricted to jarvis/* branches by
+// checkMissionControlAccess below. /tmp/ covers sandbox/throwaway clones.
+const ALLOWED_CWD_PREFIXES = ["/root/claude/", "/tmp/"];
 const SENSITIVE_PATTERNS = [
   ".env",
   "credentials",

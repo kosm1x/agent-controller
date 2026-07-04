@@ -604,9 +604,21 @@ B`;
       expect(r.allowed).toBe(true);
     });
 
-    it("still blocks writes to siblings outside allowed prefixes", () => {
+    it("allows writes to any project repo under /root/claude/", () => {
+      // Sibling repos (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …)
+      // are all legitimate targets — the allow-list is a single /root/claude/ prefix,
+      // so it can't drift out of date and block a repo it forgot to enumerate.
       const r = validateShellCommand(
-        "echo bad > /root/claude/some-other-repo/file.txt",
+        "echo data > /root/claude/eurekams-intelligence-ui/web/build.log",
+      );
+      expect(r.allowed).toBe(true);
+    });
+
+    it("still blocks writes outside the /root/claude/ git domain", () => {
+      // The prefix carries a trailing slash, so a similarly-named sibling like
+      // /root/claude-backups is NOT inside the domain and stays blocked.
+      const r = validateShellCommand(
+        "echo bad > /root/claude-backups/sprint-1/file.txt",
       );
       expect(r.allowed).toBe(false);
     });

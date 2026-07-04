@@ -32,10 +32,11 @@ const MAX_READ = 50_000; // chars
 // so JARVIS_KB_MIRROR_DIR overrides flow through tools too (tests, alt deploys).
 function getAllowWritePrefixes(): string[] {
   return [
-    `${getJarvisKbRoot()}/`,
-    "/root/claude/cuatro-flor/",
-    "/root/claude/projects/",
-    "/root/claude/mission-control/", // allowed only on jarvis/* branches
+    `${getJarvisKbRoot()}/`, // may resolve outside /root/claude via JARVIS_KB_MIRROR_DIR
+    "/root/claude/", // every EurekaMD/Jarvis project repo lives here; mission-control is
+    // still gated by DENY_WRITE_PREFIXES + isImmutableCorePath above (the allow-list is
+    // checked LAST), so this does not weaken its source protection. Replaces a per-repo
+    // enumeration that silently blocked writes to any repo it forgot.
     "/tmp/",
     "/workspace/",
   ];

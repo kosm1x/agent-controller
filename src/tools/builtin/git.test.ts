@@ -216,9 +216,21 @@ describe("git tools", () => {
       expect(result).toContain("clean");
     });
 
-    it("rejects similar-prefix path outside allowed list", async () => {
+    it("accepts a top-level project repo (regression: old enumerated allowlist blocked these)", async () => {
+      mockExecSync
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main"); // git branch
       const result = await gitStatusTool.execute({
-        cwd: "/root/claude/cuatro-flor-other",
+        cwd: "/root/claude/eurekams-intelligence-ui",
+      });
+      expect(result).toContain("clean");
+    });
+
+    it("rejects a similar-prefix path outside the git domain", async () => {
+      // The /root/claude/ prefix carries a trailing slash so a sibling like
+      // /root/claude-backups does NOT match — prefix-confusion protection.
+      const result = await gitStatusTool.execute({
+        cwd: "/root/claude-backups/sprint-1",
       });
       expect(result).toContain("must be under an allowed project path");
     });
