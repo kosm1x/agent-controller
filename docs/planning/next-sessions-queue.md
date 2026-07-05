@@ -461,3 +461,23 @@ copy; PASS 3/3). NOT deployed (user-only). New follow-up:
   the per-item sub-task outputs (those live in `parent_task_id` rows / saved
   artifacts). Fine for file-producing fan-outs; consider surfacing per-item
   results inline if a user expects them.
+
+---
+
+## Next session — system-hardening-sweep residuals (2026-07-05)
+
+Sweep SHIPPED + deployed (`34fbb4f`→`a2e4da1`; plan `docs/planning/system-hardening-sweep-2026-07-05.md`; 6672 tests). Open follow-ups, none blocking:
+
+**Operator actions (I can't do these):**
+- **Arm the eval-gate baseline**: `npm run eval:gate -- --run --update-baseline` on current prod, commit `src/tuning/eval-baseline.json`. Until then its PASS/FAIL is a *relative* comparator only (builtin-only ~160-tool registry vs live 257; 55 tool_selection cases = catches gross collapse, not subtle drift). Then it's mandatory before any model-id / system-prompt / tool-desc change.
+- **`chmod 600 .env`** (currently 644 while its own backups are 600).
+- **Delete stale `data/mc.db.bak-orphan-cleanup-20260526…`** (~386 MB, 40d old, backed up by nothing).
+- **Quarterly `VACUUM INTO`** — 77 MB (17%) of mc.db is dead freelist inflating every backup; `VACUUM INTO '/tmp/mc-compact.db'` (non-blocking) → verify → swap on a planned restart.
+- **AV key rotation** (pre-existing, blocks williams-radar).
+
+**Code follow-ups (P3, deferred by design):**
+- **Nightly eval drift 66.9→63.3** over 2026-06-27..07-04 — the eval-gate surfaced a possible slow prod regression. Investigate before trusting the gate as a hard floor.
+- **Resume auto-path is limited**: goals never persist as `FAILED` (failure is orchestrator-level), so `mc-ctl task-resume` needs an explicit `goalId`. To make auto-resume-from-failed-goal useful, persist goal-level failure status in the heavy runner (`dispatcher`/`heavy-runner` — writes `runs.goal_graph`). [[feedback_multi_agent_refactor_orchestration]].
+- **Mechanical-ritual silent-cease** (closure-audit W1/W2 residual): a *single* mechanical ritual silently ceasing to fire (no throw) while others run isn't heartbeated (only config rituals + the `*/2` poller stamp `mc_ritual_last_success_timestamp`). The *systemic* wedge IS caught (`MCRitualLoopStale`) and throws are delivered (`schedule.run_failed`→Telegram, now incl. canary). True out-of-band poller-wedge delivery still relies on `watchdog.sh` — consider a watchdog Prom query on `min(time()-mc_ritual_last_success_timestamp)` for a fully external detector.
+- **scope.ts inert dead names** (audit I3): `SOCIAL_TOOLS` string array still lists `social_publish`/`_accounts_list`/`_publish_status` — filtered against the live registry before use (never offered to the agent), only inflates the `getAllAvailableTools` denominator by 3. Prune with the 2 test updates (`kb-injection.test.ts`, `scope.test.ts`) when convenient.
+- **container `--cap-drop=ALL` + `--memory 4g` watch** (audit I1): could bite a heavy nanoclaw build (npm postinstall `chown`, webpack OOM). The 8 working runs are small JS tasks. Loosen only if a real build fails.
