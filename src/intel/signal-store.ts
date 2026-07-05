@@ -21,25 +21,26 @@ export function insertSignals(signals: Signal[]): number {
   if (signals.length === 0) return 0;
 
   const db = getDatabase();
-  let inserted = 0;
 
-  writeWithRetry(() => {
+  // Counted INSIDE the retry callback: writeWithRetry re-invokes fn() on
+  // SQLITE_BUSY after the tx rolls back — an outer accumulator would keep the
+  // rolled-back attempt's count and double-report (pre-2026-07-05 latent bug).
+  return writeWithRetry(() => {
+    let inserted = 0;
+    // Dedup rides the UNIQUE idx_signals_hash_uq: ON CONFLICT DO NOTHING skips
+    // already-seen hashes in one statement (no per-row SELECT). Scoped to the
+    // hash conflict — any other constraint violation still throws. NULL hashes
+    // never conflict (SQLite NULLs are distinct), same as the old skip-if-hash
+    // behavior. `changes` is 1 on insert, 0 on dedup-skip.
     const stmt = db.prepare(`
       INSERT INTO signals (source, domain, signal_type, key, value_numeric, value_text, metadata, geo_lat, geo_lon, content_hash, source_timestamp)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(content_hash) DO NOTHING
     `);
 
     const tx = db.transaction((batch: Signal[]) => {
       for (const s of batch) {
-        // Skip if content_hash already exists (dedup)
-        if (s.contentHash) {
-          const existing = db
-            .prepare("SELECT 1 FROM signals WHERE content_hash = ? LIMIT 1")
-            .get(s.contentHash);
-          if (existing) continue;
-        }
-
-        stmt.run(
+        inserted += stmt.run(
           s.source,
           s.domain,
           s.signalType,
@@ -51,15 +52,13 @@ export function insertSignals(signals: Signal[]): number {
           s.geoLon ?? null,
           s.contentHash ?? null,
           s.sourceTimestamp ?? null,
-        );
-        inserted++;
+        ).changes;
       }
     });
 
     tx(signals);
+    return inserted;
   });
-
-  return inserted;
 }
 
 /**

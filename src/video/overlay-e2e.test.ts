@@ -94,8 +94,8 @@ describe(
         { timeout: 15_000, stdio: "pipe" },
       );
 
-      // 5. Compose overlay video (V3)
-      const outputPath = composeOverlayVideo({
+      // 5. Compose overlay video (V3) — async since the 2026-07-05 event-loop fix
+      const outputPath = await composeOverlayVideo({
         jobId: TEST_JOB_ID,
         backgroundVideo: bgPath,
         imageFiles,

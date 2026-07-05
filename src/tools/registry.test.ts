@@ -57,6 +57,8 @@ import { skillSaveTool, skillListTool } from "./builtin/skills.js";
 import { skillDescribeTool } from "./builtin/skill-describe.js";
 import { skillLoadTool } from "./builtin/skill-load.js";
 import { skillRunTool } from "./builtin/skill-run.js";
+// Chat scope universe — for the deferred-tool reachability invariant.
+import { getAllAvailableTools } from "../messaging/scope.js";
 
 function makeTool(name: string, opts?: { deferred?: boolean }): Tool {
   return {
@@ -568,6 +570,79 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
             .map((v) => `${v.name}: ${v.len} chars (cap ${v.maxLen})`)
             .join("\n  ") +
           `\n\nEither trim back below maxLen, or deliberately raise maxLen in TOOL_DESC_EXCEPTIONS.`,
+      );
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 2026-07-05 efficiency audit — registry hygiene (Phase 0.8)
+  // ──────────────────────────────────────────────────────────────────
+
+  it("every tool's registry key matches its LLM-visible definition name", () => {
+    // Every tool declares its name TWICE: `name` (registry key) and
+    // `definition.function.name` (what the LLM sees and calls) — hand-synced
+    // across all 195 tools with nothing guarding equality until now. A drift
+    // registers the tool under one name while the LLM calls another, landing
+    // in "Unknown tool" (or a fuzzy findClosest recovery to a DIFFERENT tool).
+    const mismatched: string[] = [];
+    for (const tool of ALL_TOOLS) {
+      if (tool.name !== tool.definition.function.name) {
+        mismatched.push(
+          `${tool.name} (registry) ≠ ${tool.definition.function.name} (definition)`,
+        );
+      }
+    }
+    if (mismatched.length > 0) {
+      throw new Error(`Tool name drift:\n  ${mismatched.join("\n  ")}`);
+    }
+  });
+
+  it("every deferred tool is reachable through the chat scope universe", () => {
+    // A `deferred: true` tool only surfaces when a scope group activates it.
+    // If it's absent from getAllAvailableTools (all env flags on), no chat
+    // message can EVER load it — the known "tool doesn't exist at runtime"
+    // bug class. Ritual/runner-only tools that are deliberately not
+    // chat-reachable belong in the exceptions list below WITH a reason.
+    const CHAT_UNREACHABLE_EXCEPTIONS: Record<string, string> = {
+      // Ritual-only: the evolution ritual passes these in its explicit tools
+      // list (rituals/evolution.ts) with skipDeferral — never meant for chat.
+      evolution_get_data: "evolution ritual explicit tools list",
+      evolution_deactivate_skill: "evolution ritual explicit tools list",
+      // Hindsight-gated (MemoryToolSource) + consumed by the V8.2
+      // reconciliation tool list, not chat scope. Hindsight is demoted
+      // (HINDSIGHT_ENABLED=false), so there is no live path regardless.
+      memory_kg_query: "V8.2 reconciliation list; Hindsight-gated source",
+      // V8.3 gated-capability backing tool (lib/v8-3/seed.ts), dormant by
+      // design behind V83_ENABLED.
+      skill_run: "V8.3 gated capability backing; dormant by design",
+      // KNOWN GAPS surfaced by the 2026-07-05 efficiency audit — kept green
+      // here so the invariant protects FUTURE tools; resolving these is a
+      // deliberate scope/product decision, not test hygiene:
+      // - skill_describe/skill_load: the v7.7 Spine 3 L1/L2 dispatch surface
+      //   shipped registered+deferred but NO scope group ever wired them.
+      // - jarvis_init: one-shot KB bootstrap, long since completed; zero
+      //   references anywhere. Phase 1 kill candidate.
+      skill_describe: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
+      skill_load: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
+      jarvis_init: "AUDIT GAP 2026-07-05: completed one-shot, zero references",
+    };
+    const universe = getAllAvailableTools({
+      hasGoogle: true,
+      hasWordpress: true,
+      hasMemory: true,
+      hasCrm: true,
+    });
+    const unreachable: string[] = [];
+    for (const tool of ALL_TOOLS) {
+      if (!tool.deferred) continue;
+      if (CHAT_UNREACHABLE_EXCEPTIONS[tool.name]) continue;
+      if (!universe.has(tool.name)) unreachable.push(tool.name);
+    }
+    if (unreachable.length > 0) {
+      throw new Error(
+        `Deferred tool(s) missing from the chat scope universe (unreachable from chat):\n  ` +
+          unreachable.join("\n  ") +
+          `\n\nAdd them to a scope group in src/messaging/scope.ts, or list them in CHAT_UNREACHABLE_EXCEPTIONS with a reason.`,
       );
     }
   });

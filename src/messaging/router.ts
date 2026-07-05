@@ -136,6 +136,19 @@ const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warni
 const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → give up (past SDK 15min timeout with grace)
 const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
 
+// Intent regexes for handleInbound. Module-level (they close over nothing) so
+// they compile once, not on every inbound message.
+const CONTEXT_CLEAR_RE =
+  /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
+const BACKGROUND_AGENT_RE =
+  /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
+const CANCEL_INTENT_RE =
+  /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
+const SKIP_ENHANCER_RE =
+  /^(skip|hazlo|procede|sin preguntas|no importa|ya|dale|solo hazlo|just do it)\b/i;
+const CONTINUATION_RE =
+  /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
+
 /**
  * Fork child injection boilerplate for background agents (OpenClaude pattern).
  * Explicit identity, numbered rules, structured output. Module-level constant
@@ -1249,8 +1262,6 @@ export class MessageRouter {
     // Context clear: "limpia tu contexto", "clear context", "contexto limpio"
     // Mechanical: purges in-memory thread buffer + strips poisoned DB entries.
     // If the message continues after the phrase, process the rest as a fresh task.
-    const CONTEXT_CLEAR_RE =
-      /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
     // Pass the channel adapter's email mode so threadKey can per-sender isolate
     // community-manager mailboxes (each external sender gets their own buffer +
@@ -1287,8 +1298,6 @@ export class MessageRouter {
     }
 
     // Background agents: "lanza un agente", "investiga en background"
-    const BACKGROUND_AGENT_RE =
-      /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
     if (BACKGROUND_AGENT_RE.test(msg.text)) {
       try {
         const db = getDatabase();
@@ -1483,8 +1492,6 @@ export class MessageRouter {
     // --- v6.2 S2: Task cancellation from Telegram ---
     // Detect cancel intent: "cancela", "detente", "para", "stop", "cancel"
     // Aborts the running task for this channel, extracts partial result, notifies user.
-    const CANCEL_INTENT_RE =
-      /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
     if (CANCEL_INTENT_RE.test(msg.text.trim())) {
       // Find the active pending reply for this channel
       let cancelledTaskId: string | null = null;
@@ -1537,9 +1544,7 @@ export class MessageRouter {
 
       // Skip enhancer if user says "skip", "hazlo", "procede", "sin preguntas"
       // or sends a short dismissal — just pass the original through
-      const SKIP_RE =
-        /^(skip|hazlo|procede|sin preguntas|no importa|ya|dale|solo hazlo|just do it)\b/i;
-      if (SKIP_RE.test(msg.text.trim())) {
+      if (SKIP_ENHANCER_RE.test(msg.text.trim())) {
         console.log("[enhancer] User skipped questions. Passing original.");
         this.sendToChannel(msg.channel, msg.from, "🔍 Procesando...");
         msg.text = original;
@@ -1676,7 +1681,7 @@ export class MessageRouter {
             userResponse = `✅ ${pendingConf.toolName} ejecutado.`;
           }
           this.sendToChannel(msg.channel, msg.from, userResponse);
-          appendDayLog("USER", msg.text);
+          // USER line already day-logged at the top of handleInbound.
           appendDayLog("JARVIS", userResponse);
           pushToThread(tk, `User: ${msg.text}\nJarvis: ${userResponse}`);
         } catch (err) {
@@ -1688,7 +1693,7 @@ export class MessageRouter {
         console.log(`[router] Confirmation declined: ${pendingConf.toolName}`);
         clearPendingConfirmation(tk);
         this.sendToChannel(msg.channel, msg.from, "Cancelado.");
-        appendDayLog("USER", msg.text);
+        // USER line already day-logged at the top of handleInbound.
         appendDayLog("JARVIS", "Cancelado.");
         return;
       }
@@ -1974,8 +1979,6 @@ export class MessageRouter {
 
     // Task continuity: check for a recent checkpoint ONLY on continuation
     // messages. Checkpoint blocks are per-call by definition — VARIABLE half.
-    const CONTINUATION_RE =
-      /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
     let checkpointBlock = "";
     if (CONTINUATION_RE.test(msg.text.trim())) {
       try {

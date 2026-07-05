@@ -905,13 +905,29 @@ export function getRunToolCalls(taskId: string): string[] {
   }
 }
 
+/**
+ * List-view projection of TaskRow: everything EXCEPT the fat payload columns
+ * (description/input/output/metadata — `output` alone averages ~1.6 KB, max
+ * ~21 KB). A 50-row page of SELECT * pulled up to ~1 MB nobody rendered; the
+ * single-row getTask/getTaskWithRuns detail paths keep the full row.
+ */
+export type TaskListRow = Omit<
+  TaskRow,
+  "description" | "input" | "output" | "metadata"
+>;
+
+const TASK_LIST_COLUMNS =
+  "id, task_id, parent_task_id, spawn_type, title, priority, status, " +
+  "agent_type, classification, assigned_to, error, progress, " +
+  "created_at, updated_at, started_at, completed_at, retry_count";
+
 export function listTasks(filters: {
   status?: string;
   agentType?: string;
   parentTaskId?: string;
   limit?: number;
   offset?: number;
-}): TaskRow[] {
+}): TaskListRow[] {
   const db = getDatabase();
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
@@ -936,9 +952,9 @@ export function listTasks(filters: {
 
   return db
     .prepare(
-      `SELECT * FROM tasks ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT ${TASK_LIST_COLUMNS} FROM tasks ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
     )
-    .all({ ...params, limit, offset }) as TaskRow[];
+    .all({ ...params, limit, offset }) as TaskListRow[];
 }
 
 export function getTaskWithRuns(

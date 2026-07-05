@@ -151,10 +151,12 @@ describe("composeVideo — v7.4 S1.1 parallel scene-clip generation", () => {
     // 4-task fan-out → peak inflight should hit 4 (or at least 2 worst case).
     expect(peak).toBeGreaterThanOrEqual(2);
 
-    // Sequential downstream steps still run via execFileSync (concat + encode)
-    expect(
-      childProcessMocks.execFileSync.mock.calls.length,
-    ).toBeGreaterThanOrEqual(2);
+    // Assembly steps (concat + final encode) run via async execFile too — a
+    // sync exec here would block the whole single-process orchestrator for
+    // minutes. execFileSync must never fire anywhere in the pipeline.
+    const otherCalls = callTimes.filter((c) => c.kind === "other");
+    expect(otherCalls.length).toBeGreaterThanOrEqual(2);
+    expect(childProcessMocks.execFileSync).not.toHaveBeenCalled();
   });
 
   it("propagates per-scene ffmpeg failures with scene index", async () => {

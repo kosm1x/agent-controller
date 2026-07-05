@@ -200,6 +200,19 @@ describe("listTasks", () => {
     const result = listTasks({});
     expect(result).toEqual([]);
   });
+
+  it("projects list columns — never SELECT * (fat output/input/metadata blobs)", () => {
+    mockAll.mockReturnValueOnce([]);
+    listTasks({});
+    const sql = mockPrepare.mock.calls.at(-1)?.[0] as string;
+    expect(sql).not.toMatch(/SELECT\s+\*/i);
+    expect(sql).toContain("task_id");
+    expect(sql).toContain("status");
+    // The fat columns stay on the single-row detail path only.
+    for (const fat of ["description", "input", "output", "metadata"]) {
+      expect(sql).not.toMatch(new RegExp(`\\b${fat}\\b`));
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

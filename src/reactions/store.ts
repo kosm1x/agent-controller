@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS reactions (
 );
 CREATE INDEX IF NOT EXISTS idx_reactions_source ON reactions(source_task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reactions_status ON reactions(status);
+-- countReactionChainLength walks spawned_task_id → source_task_id up to 20
+-- hops per retry decision; without this each hop is a table scan (2026-07-05).
+CREATE INDEX IF NOT EXISTS idx_reactions_spawned ON reactions(spawned_task_id);
 `;
 
 /**

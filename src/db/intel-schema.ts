@@ -26,7 +26,12 @@ export function ensureIntelTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_signals_source_key ON signals(source, key);
     CREATE INDEX IF NOT EXISTS idx_signals_domain ON signals(domain, collected_at);
-    CREATE INDEX IF NOT EXISTS idx_signals_hash ON signals(content_hash);
+    -- UNIQUE so insertSignals can dedup via ON CONFLICT DO NOTHING instead of a
+    -- per-row SELECT (2026-07-05). NULL hashes stay insertable (NULLs are
+    -- distinct in SQLite). The DROP migrates DBs that carry the old
+    -- non-unique version of this index; no-op afterwards.
+    DROP INDEX IF EXISTS idx_signals_hash;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_hash_uq ON signals(content_hash);
 
     CREATE TABLE IF NOT EXISTS signal_snapshots (
       source TEXT NOT NULL,

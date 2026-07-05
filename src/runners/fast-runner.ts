@@ -689,9 +689,12 @@ export const fastRunner: Runner = {
     // (extra inference round + timeout risk) outweighs token savings (~200
     // tokens per deferred tool). Deferral is designed for scope-triggered
     // sessions with 20-40+ tools.
-    const totalTools = toolRegistry.getDefinitions(input.tools).length;
+    const allDefinitions = toolRegistry.getDefinitions(input.tools);
+    const totalTools = allDefinitions.length;
     const skipDeferral = totalTools <= 6;
-    const definitions = toolRegistry.getDefinitions(input.tools, !skipDeferral);
+    const definitions = skipDeferral
+      ? allDefinitions
+      : toolRegistry.getDefinitions(input.tools, true);
     const deferredCatalog = skipDeferral
       ? undefined
       : toolRegistry.getDeferredCatalog(input.tools);

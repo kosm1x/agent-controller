@@ -2,7 +2,9 @@
  * Signal store tests — CRUD operations on signals and snapshots.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import Database from "better-sqlite3";
+import { ensureIntelTables } from "../db/intel-schema.js";
 
 const mockStmt = {
   run: vi.fn(),
@@ -15,8 +17,13 @@ const mockDb = {
   transaction: vi.fn((fn: Function) => fn),
 };
 
+// insertSignals' dedup lives in the DB itself (UNIQUE index + ON CONFLICT), so
+// its tests run against a real in-memory DB; the query-shape tests below keep
+// the statement mock. getDatabase() serves whichever is active.
+let activeDb: unknown = mockDb;
+
 vi.mock("../db/index.js", () => ({
-  getDatabase: () => mockDb,
+  getDatabase: () => activeDb,
   writeWithRetry: <T>(fn: () => T): T => fn(),
 }));
 
@@ -41,44 +48,61 @@ describe("signal-store", () => {
     mockDb.transaction.mockImplementation((fn: Function) => fn);
   });
 
-  describe("insertSignals", () => {
-    it("inserts signals in a transaction", () => {
-      const signals: Signal[] = [
-        {
-          source: "usgs",
-          domain: "weather",
-          signalType: "numeric",
-          key: "quakes_5plus",
-          valueNumeric: 3,
-        },
-      ];
+  describe("insertSignals (real in-memory DB — dedup lives in the UNIQUE index)", () => {
+    let db: Database.Database;
 
-      // Mock: no existing hash
-      mockStmt.get.mockReturnValue(undefined);
-      const count = insertSignals(signals);
-      expect(count).toBe(1);
-      expect(mockStmt.run).toHaveBeenCalled();
+    beforeEach(() => {
+      db = new Database(":memory:");
+      ensureIntelTables(db);
+      activeDb = db;
+    });
+
+    afterEach(() => {
+      activeDb = mockDb;
+      db.close();
+    });
+
+    const signal = (over: Partial<Signal> = {}): Signal => ({
+      source: "usgs",
+      domain: "weather",
+      signalType: "numeric",
+      key: "quakes_5plus",
+      valueNumeric: 3,
+      ...over,
+    });
+
+    it("inserts signals and reports the inserted count", () => {
+      const count = insertSignals([signal(), signal({ key: "quakes_6plus" })]);
+      expect(count).toBe(2);
+      const rows = db.prepare("SELECT key FROM signals ORDER BY key").all();
+      expect(rows).toEqual([{ key: "quakes_5plus" }, { key: "quakes_6plus" }]);
     });
 
     it("returns 0 for empty input", () => {
       expect(insertSignals([])).toBe(0);
     });
 
-    it("skips signals with duplicate content_hash", () => {
-      const signals: Signal[] = [
-        {
-          source: "usgs",
-          domain: "weather",
-          signalType: "event",
-          key: "quake_abc",
-          contentHash: "abc123",
-        },
-      ];
+    it("skips signals whose content_hash already exists", () => {
+      expect(insertSignals([signal({ contentHash: "abc123" })])).toBe(1);
+      // Same hash again — deduped by the UNIQUE index, not counted.
+      expect(insertSignals([signal({ contentHash: "abc123" })])).toBe(0);
+      const n = db.prepare("SELECT COUNT(*) AS n FROM signals").get() as {
+        n: number;
+      };
+      expect(n.n).toBe(1);
+    });
 
-      // Mock: hash already exists
-      mockStmt.get.mockReturnValue({ 1: 1 });
-      const count = insertSignals(signals);
-      expect(count).toBe(0);
+    it("dedupes within a single batch too", () => {
+      const count = insertSignals([
+        signal({ contentHash: "same" }),
+        signal({ key: "other", contentHash: "same" }),
+      ]);
+      expect(count).toBe(1);
+    });
+
+    it("allows multiple signals with NULL content_hash (NULLs never conflict)", () => {
+      const count = insertSignals([signal(), signal()]);
+      expect(count).toBe(2);
     });
   });
 

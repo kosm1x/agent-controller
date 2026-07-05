@@ -454,28 +454,24 @@ export async function queryClaudeSdk(opts: {
   const safePromptText = sanitizeSurrogates(opts.prompt);
   const safeSystemPromptText = sanitizeSurrogates(opts.systemPrompt);
 
-  // cache_diag (2026-05-22): we observe ~34K cache_creation per fast task with
-  // ZERO cross-task reuse despite the marker-split sending only the "stable"
-  // half here. Log a SHA-256 of the systemPrompt + a stable hash of the sorted
-  // toolNames so we can group consecutive calls by scope and tell apart:
-  //   - same toolsHash + same promptHash  → SDK is NOT carrying cache across
-  //     query() calls (Agent SDK cross-session gap; Hermes v0.14 territory).
-  //   - same toolsHash + DIFFERENT promptHash → "stable" half has hidden
-  //     per-task variation that the per-scope cache prefix doesn't tolerate.
-  //   - different toolsHash → scope churn drives the miss; expected when the
-  //     user message scope-flips, not a defect.
-  // Cheap (~50µs SHA-256 on ~34K chars); one line per query() call.
-  const promptHash = createHash("sha256")
-    .update(safeSystemPromptText)
-    .digest("hex")
-    .slice(0, 12);
-  const toolsHash = createHash("sha256")
-    .update([...opts.toolNames].sort().join(","))
-    .digest("hex")
-    .slice(0, 8);
-  console.log(
-    `[claude-sdk] cache_diag systemPromptHash=${promptHash} toolsHash=${toolsHash} toolsN=${opts.toolNames.length} chars=${safeSystemPromptText.length} model=${opts.model ?? "default"}`,
-  );
+  // cache_diag (2026-05-22): diagnostic for grouping consecutive query() calls
+  // by scope to attribute cache misses (same/different promptHash × toolsHash —
+  // see git history for the decision table). The investigation concluded with
+  // the 2026-06 Sonnet-5 revert; hashing ~34K chars twice per message is pure
+  // overhead now, so it's opt-in behind DEBUG_CACHE_DIAG for future regressions.
+  if (process.env.DEBUG_CACHE_DIAG === "true") {
+    const promptHash = createHash("sha256")
+      .update(safeSystemPromptText)
+      .digest("hex")
+      .slice(0, 12);
+    const toolsHash = createHash("sha256")
+      .update([...opts.toolNames].sort().join(","))
+      .digest("hex")
+      .slice(0, 8);
+    console.log(
+      `[claude-sdk] cache_diag systemPromptHash=${promptHash} toolsHash=${toolsHash} toolsN=${opts.toolNames.length} chars=${safeSystemPromptText.length} model=${opts.model ?? "default"}`,
+    );
+  }
 
   const options: SdkOptions = {
     model: opts.model ?? SONNET_MODEL_ID,

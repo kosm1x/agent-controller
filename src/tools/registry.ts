@@ -42,8 +42,13 @@ export class ToolRegistry {
         tool.definition.function.parameters as Record<string, unknown>,
       );
       if (schema) this.schemas.set(tool.name, schema);
-    } catch {
-      // Schema conversion failed — tool will execute without validation
+    } catch (e) {
+      // Schema conversion failed — the tool will execute WITHOUT arg
+      // validation. Log it: a silently-unvalidated tool is a latent misuse
+      // trap (malformed LLM args reach the handler unchecked).
+      log.warn(
+        `schema compile failed for tool "${tool.name}" — running unvalidated: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 

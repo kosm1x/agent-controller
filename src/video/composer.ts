@@ -2,7 +2,7 @@
  * FFmpeg-based video composer — stitches images + audio + subtitles into MP4.
  */
 
-import { execFile, execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
@@ -107,8 +107,10 @@ export async function composeVideo(opts: {
   writeFileSync(concatFile, concatContent, "utf-8");
 
   // Step 3: Concat clips into raw video
+  // Async (not execFileSync): each assembly step can run minutes — a sync exec
+  // would freeze the whole single-process orchestrator (HTTP, messaging, cron).
   const rawVideo = join(workDir, "raw.mp4");
-  execFileSync(
+  await execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -122,7 +124,7 @@ export async function composeVideo(opts: {
       "copy",
       rawVideo,
     ],
-    { timeout: FFMPEG_TIMEOUT_MS, stdio: "pipe" },
+    { timeout: FFMPEG_TIMEOUT_MS },
   );
 
   // Step 4: Mix audio + burn subtitles
@@ -165,9 +167,8 @@ export async function composeVideo(opts: {
 
   ffmpegArgs.push(outputFile);
 
-  execFileSync("ffmpeg", ffmpegArgs, {
+  await execFileAsync("ffmpeg", ffmpegArgs, {
     timeout: FFMPEG_TIMEOUT_MS * 2, // final encode gets more time
-    stdio: "pipe",
   });
 
   return outputFile;
@@ -201,7 +202,7 @@ export function cleanupJob(jobId: string): void {
  * 4. Mix narration + optional background music
  * 5. Output final MP4
  */
-export function composeOverlayVideo(opts: {
+export async function composeOverlayVideo(opts: {
   jobId: string;
   backgroundVideo: string;
   imageFiles: string[];
@@ -211,7 +212,7 @@ export function composeOverlayVideo(opts: {
   backgroundMusicPath?: string;
   backgroundMusicVolume?: number;
   opacity?: number;
-}): string {
+}): Promise<string> {
   const {
     jobId,
     backgroundVideo,
@@ -237,8 +238,9 @@ export function composeOverlayVideo(opts: {
   mkdirSync(workDir, { recursive: true });
 
   // Step 1: Crop background to target aspect ratio
+  // Async throughout (see composeVideo): sync execs here froze the event loop.
   const croppedBg = join(workDir, "bg-cropped.mp4");
-  execFileSync(
+  await execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -253,7 +255,7 @@ export function composeOverlayVideo(opts: {
       "-an",
       croppedBg,
     ],
-    { timeout: FFMPEG_TIMEOUT_MS, stdio: "pipe" },
+    { timeout: FFMPEG_TIMEOUT_MS },
   );
 
   // Step 2: Concat per-scene audio into single narration track
@@ -262,7 +264,7 @@ export function composeOverlayVideo(opts: {
   writeFileSync(concatFile, concatLines, "utf-8");
 
   const narrationFile = join(workDir, "narration.mp3");
-  execFileSync(
+  await execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -276,7 +278,7 @@ export function composeOverlayVideo(opts: {
       "copy",
       narrationFile,
     ],
-    { timeout: FFMPEG_TIMEOUT_MS, stdio: "pipe" },
+    { timeout: FFMPEG_TIMEOUT_MS },
   );
 
   // Step 3: Build overlay filter graph with timed enable
@@ -299,7 +301,7 @@ export function composeOverlayVideo(opts: {
   let audioInput: string;
   if (backgroundMusicPath && existsSync(backgroundMusicPath)) {
     const mixedAudio = join(workDir, "mixed-audio.mp3");
-    execFileSync(
+    await execFileAsync(
       "ffmpeg",
       [
         "-y",
@@ -317,7 +319,7 @@ export function composeOverlayVideo(opts: {
         "192k",
         mixedAudio,
       ],
-      { timeout: FFMPEG_TIMEOUT_MS, stdio: "pipe" },
+      { timeout: FFMPEG_TIMEOUT_MS },
     );
     audioInput = mixedAudio;
   } else {
@@ -326,7 +328,7 @@ export function composeOverlayVideo(opts: {
 
   // Step 5: Final output — overlaid video + audio
   const outputFile = join(workDir, "output.mp4");
-  execFileSync(
+  await execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -352,7 +354,7 @@ export function composeOverlayVideo(opts: {
       "-shortest",
       outputFile,
     ],
-    { timeout: FFMPEG_TIMEOUT_MS * 3, stdio: "pipe" }, // 6 min for complex filter
+    { timeout: FFMPEG_TIMEOUT_MS * 3 }, // 6 min for complex filter
   );
 
   return outputFile;

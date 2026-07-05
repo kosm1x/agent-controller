@@ -88,8 +88,7 @@ function updateJob(
 function getJob(jobId: string): VideoJobRow | undefined {
   const db = getDatabase();
   return db.prepare("SELECT * FROM video_jobs WHERE job_id = ?").get(jobId) as
-    | VideoJobRow
-    | undefined;
+    VideoJobRow | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +337,7 @@ async function runPipeline(
     // Compose with overlay engine
     updateJob(jobId, { status: "composing" });
     const { composeOverlayVideo } = await import("../../video/composer.js");
-    outputFile = composeOverlayVideo({
+    outputFile = await composeOverlayVideo({
       jobId,
       backgroundVideo: bgSubclip,
       imageFiles,
@@ -1195,8 +1194,7 @@ No-op if the job is already completed/failed/cancelled. Returns {ok:false} if th
     if (!jobId) return JSON.stringify({ error: "job_id is required" });
 
     const row = getJob(jobId) as
-      | (VideoJobRow & { ffmpeg_pid: number | null })
-      | undefined;
+      (VideoJobRow & { ffmpeg_pid: number | null }) | undefined;
     if (!row)
       return JSON.stringify({ ok: false, error: `Job ${jobId} not found` });
 
@@ -1423,10 +1421,7 @@ URLs in the brief are redacted before hitting the LLM (prompt-injection defense)
         brief,
         duration,
         template: args.template as
-          | "landscape"
-          | "portrait"
-          | "square"
-          | undefined,
+          "landscape" | "portrait" | "square" | undefined,
         language: typeof args.language === "string" ? args.language : undefined,
         fps: args.fps as 24 | 30 | 60 | undefined,
         style: args.style as
