@@ -6,7 +6,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { existsSync, readFileSync, rmSync, mkdtempSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  rmSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  utimesSync,
+} from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,11 +48,16 @@ let dataDir: string;
 
 beforeEach(() => {
   db = new Database(":memory:");
+  // Mirror the LIVE FK topology (R1 audit): tasks has a self-FK on
+  // parent_task_id, runs + a2a_contexts reference tasks, and the real DB runs
+  // with foreign_keys=ON — the batch-ordering invariant only exists under
+  // these constraints, so the tests must carry them.
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id TEXT UNIQUE NOT NULL,
-      parent_task_id TEXT,
+      parent_task_id TEXT REFERENCES tasks(task_id),
       status TEXT,
       title TEXT DEFAULT 't',
       created_at TEXT,
@@ -53,8 +66,13 @@ beforeEach(() => {
     );
     CREATE TABLE runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES tasks(task_id),
       output TEXT
+    );
+    CREATE TABLE a2a_contexts (
+      context_id TEXT PRIMARY KEY,
+      task_id TEXT REFERENCES tasks(task_id),
+      created_at TEXT
     );
     CREATE TABLE task_outcomes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,5 +184,50 @@ describe("runTasksRetention", () => {
       runsDeleted: 0,
       archivePath: null,
     });
+  });
+
+  it("deletes a >BATCH_SIZE subtree without tripping the self-FK across batches (R1 fix)", () => {
+    // Parent + 600 children: with naive candidate ordering the parent can land
+    // in an earlier delete batch than some children → FK error under
+    // foreign_keys=ON. The leaf-first depth sort must make this pass.
+    insertTask("mega-parent", "completed", OLD);
+    const insert = db.prepare(
+      `INSERT INTO tasks (task_id, parent_task_id, status, created_at, updated_at, completed_at)
+       VALUES (?, 'mega-parent', 'completed', ?, ?, ?)`,
+    );
+    for (let i = 0; i < 600; i++) insert.run(`child-${i}`, OLD, OLD, OLD);
+
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.tasksDeleted).toBe(601);
+    expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
+  });
+
+  it("deletes a2a_contexts rows referencing deleted tasks (FK holder)", () => {
+    insertTask("ctx-task", "completed", OLD);
+    db.prepare(
+      "INSERT INTO a2a_contexts (context_id, task_id, created_at) VALUES ('c1', 'ctx-task', ?)",
+    ).run(OLD);
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.tasksDeleted).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) n FROM a2a_contexts").get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it("rotates archives older than a year", () => {
+    // Seed a stale archive, then trigger a sweep that deletes something.
+    const stale = join(dataDir, "archive");
+    mkdirSync(stale, { recursive: true });
+    const staleFile = join(
+      stale,
+      "tasks-retention-2024-01-01-00-00-00.jsonl.gz",
+    );
+    writeFileSync(staleFile, "old");
+    const old = new Date("2024-01-01T00:00:00Z");
+    utimesSync(staleFile, old, old);
+
+    insertTask("old-done-2", "completed", OLD);
+    runTasksRetention(dataDir, NOW);
+    expect(existsSync(staleFile)).toBe(false);
   });
 });

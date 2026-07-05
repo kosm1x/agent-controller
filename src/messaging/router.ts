@@ -1991,8 +1991,9 @@ export class MessageRouter {
     }
 
     // Implicit feedback: compare current scope groups with previous message's.
-    // Uses feedbackTaskId captured at line 592 (checkFeedbackWindow is destructive
-    // — consumes the ID on first call, so we can't call it again here).
+    // Uses the feedbackTaskId param threaded from recordFeedbackWindowSignal
+    // (checkFeedbackWindow is destructive — consumes the ID on first call, so
+    // it can't be called again here).
     const prevGroups = previousScopeGroups.get(tk);
     const prevMsg = previousMessages.get(tk);
     if (prevGroups && prevMsg && feedbackTaskId) {
@@ -2629,10 +2630,7 @@ export class MessageRouter {
           channel: pending.channel,
           taskId,
         }).catch((err) => {
-          console.warn(
-            "[router] Auto-persist failed:",
-            errMsg(err),
-          );
+          console.warn("[router] Auto-persist failed:", errMsg(err));
         });
       } catch {
         // Non-fatal
@@ -2651,10 +2649,7 @@ export class MessageRouter {
             });
           })
           .catch((err) => {
-            console.warn(
-              "[router] recall-utility match failed:",
-              errMsg(err),
-            );
+            console.warn("[router] recall-utility match failed:", errMsg(err));
           });
       } catch {
         // Non-fatal — instrumentation must never break delivery
@@ -2716,10 +2711,7 @@ export class MessageRouter {
                 data.duration_ms,
                 taskId,
               ).catch((err) => {
-                console.warn(
-                  "[router] Crystallization failed:",
-                  errMsg(err),
-                );
+                console.warn("[router] Crystallization failed:", errMsg(err));
               });
             }
           })

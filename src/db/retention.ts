@@ -13,9 +13,12 @@
  *  - A parent task is only deleted when its ENTIRE subtree is also being
  *    deleted (fixpoint exclusion) — no orphaned children, and an old parent
  *    with a live retry-child survives.
- *  - Rows are archived to a gzipped JSONL under data/archive/ BEFORE deletion.
- *  - Deletes run in batched transactions via writeWithRetry, runs before
- *    tasks (runs.task_id has an FK on tasks).
+ *  - Rows are archived to a gzipped JSONL under data/archive/ BEFORE deletion
+ *    (archives themselves rotate after a year — no unbounded artifact).
+ *  - FK discipline under foreign_keys=ON: within each batch tx, FK-holding
+ *    rows delete first (runs, a2a_contexts) and ACROSS batches tasks delete
+ *    leaf-first (depth sort), so a parent is never removed in an earlier
+ *    batch than one of its children (tasks.parent_task_id is a self-FK).
  *  - task_outcomes rows for deleted tasks are pruned too (analytics windows
  *    are ≤30d; keeping 90d+ orphaned outcome rows only skews joins).
  *    cost_ledger is NEVER touched — spend history stays complete.
@@ -25,9 +28,32 @@
  */
 
 import { gzipSync } from "node:zlib";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getDatabase, writeWithRetry } from "./index.js";
+
+/** Keep sweep archives for a year, then drop them (best-effort). */
+const ARCHIVE_RETENTION_MS = 365 * 86_400_000;
+
+function pruneOldArchives(archiveDir: string, now: Date): void {
+  try {
+    for (const f of readdirSync(archiveDir)) {
+      if (!f.startsWith("tasks-retention-")) continue;
+      const p = join(archiveDir, f);
+      if (now.getTime() - statSync(p).mtimeMs > ARCHIVE_RETENTION_MS) {
+        rmSync(p, { force: true });
+      }
+    }
+  } catch {
+    // best-effort — never fail a sweep over archive housekeeping
+  }
+}
 
 /**
  * Operator-approved retention window (2026-07-05). Env-overridable, read per
@@ -123,7 +149,30 @@ export function runTasksRetention(
   }
   if (deletable.size === 0) return report;
 
-  const ids = [...deletable];
+  // LEAF-FIRST ordering (R1 audit fix): tasks.parent_task_id is a
+  // self-referential FK with foreign_keys=ON, and deletes run in 500-row
+  // batches, each its own transaction. A parent deleted in batch N while its
+  // child waits in batch N+1 fails the FK check at statement end. Sorting by
+  // subtree depth (deepest first) guarantees every child is deleted in the
+  // same or an earlier batch than its parent. (Within one statement SQLite
+  // checks immediate FKs at statement conclusion, so same-batch pairs are
+  // fine in either order — the sort covers the cross-batch case.)
+  const parentOf = new Map<string, string>();
+  for (const { parent, child } of childrenByParent) {
+    if (deletable.has(child) && deletable.has(parent)) {
+      parentOf.set(child, parent);
+    }
+  }
+  const depthCache = new Map<string, number>();
+  const depthOf = (id: string): number => {
+    const hit = depthCache.get(id);
+    if (hit !== undefined) return hit;
+    const parent = parentOf.get(id);
+    const d = parent ? depthOf(parent) + 1 : 0;
+    depthCache.set(id, d);
+    return d;
+  };
+  const ids = [...deletable].sort((x, y) => depthOf(y) - depthOf(x));
 
   // Archive BEFORE delete: full task + run rows as JSONL, gzipped.
   const archiveDir = join(dataDir, "archive");
@@ -148,7 +197,8 @@ export function runTasksRetention(
   writeFileSync(archivePath, gzipSync(lines.join("\n") + "\n"));
   report.archivePath = archivePath;
 
-  // Batched deletes: runs first (FK), then outcomes, then tasks. Counts are
+  // Batched deletes: FK holders first (runs, a2a_contexts), then outcomes,
+  // then tasks (leaf-first across batches — see the sort above). Counts are
   // RETURNED from the retry callback, never accumulated inside it — on a
   // SQLITE_BUSY retry the tx rolls back but an outer `+=` would keep the
   // failed attempt's count (see feedback_accumulator_outside_retry).
@@ -160,6 +210,9 @@ export function runTasksRetention(
         const runs = db
           .prepare(`DELETE FROM runs WHERE task_id IN (${ph})`)
           .run(...batch).changes;
+        db.prepare(`DELETE FROM a2a_contexts WHERE task_id IN (${ph})`).run(
+          ...batch,
+        );
         const outcomes = db
           .prepare(`DELETE FROM task_outcomes WHERE task_id IN (${ph})`)
           .run(...batch).changes;
@@ -173,6 +226,11 @@ export function runTasksRetention(
     report.outcomesDeleted += res.outcomes;
     report.tasksDeleted += res.tasks;
   }
+
+  // Archive rotation (R1 audit fix): without this, data/archive/ grows one
+  // gzip per sweep forever — a retention feature must not spawn its own
+  // unbounded artifact. 365d keeps a year of recovery window.
+  pruneOldArchives(archiveDir, now);
 
   return report;
 }
