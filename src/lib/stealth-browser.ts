@@ -13,6 +13,7 @@
  */
 
 import { applyStealthPatches } from "../tools/builtin/stealth.js";
+import { errMsg } from "./err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Stealth launch flags (from Scrapling constants.py)
@@ -190,7 +191,7 @@ export async function solveCloudflareTurnstile(
     } catch (err) {
       console.warn(
         `[stealth] Challenge click failed:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -310,7 +311,7 @@ export async function stealthFetch(
   } catch (err) {
     console.warn(
       `[stealth] Fetch failed for ${url}:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }

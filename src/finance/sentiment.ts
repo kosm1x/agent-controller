@@ -11,6 +11,7 @@ import { getDatabase } from "../db/index.js";
 import { RateLimitedError, redactApiKeys, type Provider } from "./types.js";
 import { canCall, recordCall } from "./rate-limit.js";
 import { recordBudget } from "./budget.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const ALT_ME_URL = "https://api.alternative.me/fng/?limit=1";
 const CMC_PUBLIC_URL =
@@ -189,13 +190,13 @@ export async function getSentimentSnapshot(
   const [altMe, cmc] = await Promise.all([
     fetchAltMeFearGreed(fetchImpl).catch((err) => {
       degraded.push(
-        `alternative_me: ${err instanceof Error ? err.message : err}`,
+        `alternative_me: ${errMsg(err)}`,
       );
       return null;
     }),
     fetchCmcFearGreed(fetchImpl).catch((err) => {
       degraded.push(
-        `coinmarketcap: ${err instanceof Error ? err.message : err}`,
+        `coinmarketcap: ${errMsg(err)}`,
       );
       return null;
     }),
@@ -234,7 +235,7 @@ export async function getSentimentSnapshot(
     DEFAULT_FUNDING_SYMBOLS.map((s) =>
       fetchBinanceFunding(s, fetchImpl).catch((err) => {
         degraded.push(
-          `binance ${s}: ${err instanceof Error ? err.message : err}`,
+          `binance ${s}: ${errMsg(err)}`,
         );
         return null;
       }),
@@ -360,7 +361,7 @@ async function makeRequest<T>(
       responseTimeMs: Date.now() - start,
     });
     throw new Error(
-      redactApiKeys(err instanceof Error ? err.message : String(err)),
+      redactApiKeys(errMsg(err)),
     );
   }
   const responseTimeMs = Date.now() - start;

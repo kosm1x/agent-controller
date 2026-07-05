@@ -14,6 +14,7 @@ import { incrementSkillUsage } from "../db/skills.js";
 import { getTask } from "../dispatch/dispatcher.js";
 import { getMemoryService } from "../memory/index.js";
 import { classifyConcernReason } from "./concern-reason.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const FEEDBACK_WINDOW_MS = 120_000; // 2 minutes
 
@@ -108,7 +109,7 @@ export function trackTaskOutcome(
   } catch (err) {
     console.warn(
       `[outcome-tracker] Failed to track outcome for ${taskId}:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }

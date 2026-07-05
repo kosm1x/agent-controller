@@ -15,6 +15,7 @@
 import { getConfig } from "../config.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { inferViaOpenAi, inferWithToolsViaOpenAi } from "./adapter-openai.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -230,7 +231,7 @@ async function inferViaClaudeSdk(
     });
   } catch (err) {
     console.warn(
-      `[inference] claude-sdk ${primaryModel} failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+      `[inference] claude-sdk ${primaryModel} failed (${errMsg(err)}), retrying with Haiku`,
     );
     return await queryClaudeSdkAsInfer(request.messages, {
       signal: options?.signal,
@@ -295,7 +296,7 @@ async function inferWithToolsViaClaudeSdk(
     });
   } catch (err) {
     console.warn(
-      `[inference] claude-sdk ${primaryModel} (with tools) failed (${err instanceof Error ? err.message : String(err)}), retrying with Haiku`,
+      `[inference] claude-sdk ${primaryModel} (with tools) failed (${errMsg(err)}), retrying with Haiku`,
     );
     return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
       ...passthrough,

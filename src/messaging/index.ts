@@ -7,6 +7,7 @@
 
 import { MessageRouter } from "./router.js";
 import { withTimeout } from "../lib/with-timeout.js";
+import { errMsg } from "../lib/err-msg.js";
 
 let router: MessageRouter | null = null;
 
@@ -41,7 +42,7 @@ export async function initMessaging(): Promise<MessageRouter | null> {
       await wa?.stop().catch(() => {});
       console.error(
         "[messaging] WhatsApp channel FAILED — skipped:",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -60,7 +61,7 @@ export async function initMessaging(): Promise<MessageRouter | null> {
     } catch (err) {
       console.error(
         "[messaging] Telegram channel FAILED — skipped:",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -95,7 +96,7 @@ export async function initMessaging(): Promise<MessageRouter | null> {
           router.unregisterChannel(email.name);
           console.error(
             `[messaging] Email mailbox ${account.id} FAILED — skipped:`,
-            err instanceof Error ? err.message : err,
+            errMsg(err),
           );
         }
       }
@@ -105,7 +106,7 @@ export async function initMessaging(): Promise<MessageRouter | null> {
     } catch (err) {
       console.error(
         "[messaging] Email channel FAILED — skipped:",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }

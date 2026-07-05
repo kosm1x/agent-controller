@@ -65,6 +65,7 @@ import {
   type ProposedOption,
   type RapidDRole,
 } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:multi-option");
 
@@ -304,7 +305,7 @@ export function validateOptions(raw: RawOption[]): ProposedOption[] {
     );
   } catch (e) {
     throw new SynthesisError(
-      `option failed ProposedOption validation: ${e instanceof Error ? e.message : String(e)}`,
+      `option failed ProposedOption validation: ${errMsg(e)}`,
     );
   }
 }
@@ -400,7 +401,7 @@ async function runPerspective(
     return text.length > 0 ? text : null;
   } catch (e) {
     log.warn(
-      { err: e instanceof Error ? e.message : String(e), role },
+      { err: errMsg(e), role },
       "rapid-d: perspective call failed",
     );
     return null;
@@ -450,7 +451,7 @@ async function runSynthesizer(
     // fall through rather than discard it (mirrors decompose.ts / critic.ts).
     if (!sink.captured) {
       throw new SynthesisError(
-        `synthesizer call failed: ${e instanceof Error ? e.message : String(e)}`,
+        `synthesizer call failed: ${errMsg(e)}`,
       );
     }
   } finally {
@@ -561,7 +562,7 @@ export async function runMultiOption(
       sawValidOptions = true;
     } catch (e) {
       log.warn(
-        { err: e instanceof Error ? e.message : String(e), attempt },
+        { err: errMsg(e), attempt },
         "rapid-d: synthesizer attempt failed",
       );
       continue; // spend the attempt; retry if budget remains

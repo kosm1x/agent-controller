@@ -19,6 +19,7 @@ import {
 } from "./container.js";
 import type { ContainerHandle } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import { errMsg } from "../lib/err-msg.js";
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
@@ -92,7 +93,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
       durationMs: Date.now() - start,
     };
   }
@@ -218,7 +219,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     if (handle) killContainer(handle);
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
       durationMs: Date.now() - start,
     };
   }

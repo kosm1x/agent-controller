@@ -29,6 +29,7 @@ import {
   pgUpsert,
   contentHash,
 } from "../db/pgvector.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Extraction trigger gate
@@ -118,7 +119,7 @@ export async function extractFacts(
   } catch (err) {
     console.warn(
       "[extractor] LLM extraction failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return [];
   }
@@ -177,7 +178,7 @@ export async function storeFacts(
     } catch (err) {
       console.warn(
         `[extractor] Failed to store fact:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -213,7 +214,7 @@ export async function runBackgroundExtraction(
   } catch (err) {
     console.warn(
       "[extractor] Background extraction failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 
@@ -315,7 +316,7 @@ export async function extractLessons(
   } catch (err) {
     console.warn(
       "[crystal] LLM crystallization failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return [];
   }
@@ -363,7 +364,7 @@ async function storeLessons(
     } catch (err) {
       console.warn(
         `[crystal] Failed to store lesson:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -399,7 +400,7 @@ export async function runCrystallization(
   } catch (err) {
     console.warn(
       "[crystal] Crystallization failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }

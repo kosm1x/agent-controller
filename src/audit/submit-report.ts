@@ -35,6 +35,7 @@ import {
   type ReportDraft,
   type ReportSurface,
 } from "./report-schema.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Surfaces that bypass the critic call. Schema is STILL enforced. This is
@@ -177,7 +178,7 @@ export async function submitReport(
       draft = await options.reviseFn(draft, critic.critique, retryCount);
     } catch (e) {
       const detail = `reviseFn threw on retry ${retryCount}: ${
-        e instanceof Error ? e.message : String(e)
+        errMsg(e)
       }`;
       const folded = appendConcern(draft, { type: "audit_failed", detail });
       const report = freezeReport(folded, {

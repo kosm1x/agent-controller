@@ -43,6 +43,7 @@ import {
 } from "../inference/claude-sdk.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
 import type { Report, ReportDraft } from "./report-schema.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Single-source-of-truth name (audit-S1). Used by the system prompt, the
@@ -269,7 +270,7 @@ export async function runCritic(
     }
     return {
       verdict: "fail",
-      critique: `critic call failed: ${e instanceof Error ? e.message : String(e)}`,
+      critique: `critic call failed: ${errMsg(e)}`,
       latencyMs: Date.now() - t0,
       error: true,
     };

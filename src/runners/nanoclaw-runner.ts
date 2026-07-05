@@ -22,6 +22,7 @@ import {
 } from "./container.js";
 import type { ContainerHandle } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export const nanoclawRunner: Runner = {
   type: "nanoclaw",
@@ -190,7 +191,7 @@ export const nanoclawRunner: Runner = {
 
       return {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg(err),
         durationMs: Date.now() - start,
       };
     }

@@ -24,6 +24,7 @@ import {
   LIGHTING_STYLES,
   MOOD_ARCHETYPES,
 } from "./cinema-prompts.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const MAX_BRIEF_LENGTH = 4000;
 /**
@@ -234,7 +235,7 @@ export async function generateStoryboard(
     parsed = JSON.parse(jsonBlock);
   } catch (err) {
     throw new Error(
-      `generateStoryboard: LLM JSON parse failed: ${err instanceof Error ? err.message : String(err)}`,
+      `generateStoryboard: LLM JSON parse failed: ${errMsg(err)}`,
     );
   }
 

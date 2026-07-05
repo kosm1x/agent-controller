@@ -161,7 +161,7 @@ ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, d
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string") {
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
     }
 
     const params = new URLSearchParams();
@@ -202,7 +202,6 @@ ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, d
     }
 
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: httpStatus,
       error: data,
@@ -263,7 +262,7 @@ This approach prevents content truncation and article destruction.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string") {
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
     }
 
     const postId = args.post_id as number;
@@ -302,7 +301,6 @@ This approach prevents content truncation and article destruction.`,
     }
 
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,
@@ -459,7 +457,7 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
 
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string") {
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
     }
 
     const postId = args.post_id as number | undefined;
@@ -474,13 +472,11 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
       const safety = validatePathSafety(contentFile, "read");
       if (!safety.safe) {
         return JSON.stringify({
-          success: false,
           error: `content_file blocked: ${safety.reason}`,
         });
       }
       if (!existsSync(contentFile)) {
         return JSON.stringify({
-          success: false,
           error: `content_file not found: ${contentFile}. Call wp_read_post first to create it.`,
         });
       }
@@ -495,7 +491,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
       const originalHash = getOriginalContentHash(resolved.name, postId);
       if (originalHash !== null && hashContent(newContent) === originalHash) {
         return JSON.stringify({
-          success: false,
           error:
             "BLOCKED: content_file is identical to what wp_read_post saved — " +
             "file_edit likely failed (old_string not found). " +
@@ -513,7 +508,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
     if (postId && newContent) {
       if (!wasReadRecently(resolved.name, postId)) {
         return JSON.stringify({
-          success: false,
           error:
             "BLOCKED: You must call wp_read_post for this post BEFORE calling wp_publish. " +
             "This is required to prevent article destruction. Call wp_read_post(" +
@@ -552,7 +546,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
         // Layer 1: Text content must be at least 80% of existing
         if (existingTextLen > 200 && newTextLen < existingTextLen * 0.8) {
           return JSON.stringify({
-            success: false,
             error:
               `CONTENT DESTRUCTION BLOCKED: New text content (${newTextLen} chars) is ` +
               `only ${Math.round((newTextLen / existingTextLen) * 100)}% of existing article ` +
@@ -569,7 +562,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
         // Layer 2: Raw HTML must be at least 70% of existing
         if (existingHtmlLen > 300 && newHtmlLen < existingHtmlLen * 0.7) {
           return JSON.stringify({
-            success: false,
             error:
               `CONTENT DESTRUCTION BLOCKED: New HTML (${newHtmlLen} chars) is ` +
               `only ${Math.round((newHtmlLen / existingHtmlLen) * 100)}% of existing HTML ` +
@@ -585,7 +577,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
         // Layer 3: Structural elements must not drop by more than 30%
         if (existingStructure >= 5 && newStructure < existingStructure * 0.7) {
           return JSON.stringify({
-            success: false,
             error:
               `CONTENT DESTRUCTION BLOCKED: New content has ${newStructure} structural ` +
               `elements but existing article "${existingTitle}" has ${existingStructure}. ` +
@@ -655,7 +646,6 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
     }
 
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,
@@ -727,7 +717,7 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string") {
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
     }
 
     const imageUrl = args.image_url as string;
@@ -756,20 +746,17 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
       const allowedLocal = `${WP_TEMP_DIR}/`;
       if (!canonical.startsWith(allowedLocal) && canonical !== WP_TEMP_DIR) {
         return JSON.stringify({
-          success: false,
           error: `Local image_url must be under ${WP_TEMP_DIR}/; got: ${canonical}`,
         });
       }
       const safety = validatePathSafety(canonical, "read");
       if (!safety.safe) {
         return JSON.stringify({
-          success: false,
           error: `Local image_url blocked: ${safety.reason}`,
         });
       }
       if (!existsSync(canonical)) {
         return JSON.stringify({
-          success: false,
           error: `Local file not found: ${canonical}`,
         });
       }
@@ -785,7 +772,6 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
       const urlError = validateOutboundUrl(imageUrl);
       if (urlError) {
         return JSON.stringify({
-          success: false,
           error: `Blocked image_url: ${urlError}`,
         });
       }
@@ -797,7 +783,6 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
         });
         if (!imgResponse.ok) {
           return JSON.stringify({
-            success: false,
             error: `Failed to download image: ${imgResponse.status} ${imgResponse.statusText}`,
           });
         }
@@ -862,14 +847,13 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
       }
 
       return JSON.stringify({
-        success: false,
         site: resolved.name,
         http_status: uploadResponse.status,
         error: data,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ success: false, error: message });
+      return JSON.stringify({ error: message });
     } finally {
       clearTimeout(uploadTimeout);
     }
@@ -927,7 +911,7 @@ Returns an array of {id, name, slug, count} objects.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string") {
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
     }
 
     const taxonomy = (args.taxonomy as string) ?? "categories";
@@ -961,7 +945,6 @@ Returns an array of {id, name, slug, count} objects.`,
     }
 
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,

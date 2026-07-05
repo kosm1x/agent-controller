@@ -16,6 +16,7 @@
  */
 
 import { getDatabase } from "./index.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface ReflectorGapRecord {
   taskId: string;
@@ -92,7 +93,7 @@ export function getLatestGoalSnapshot(
     };
   } catch (err) {
     console.warn(
-      `[reflector-gap] getLatestGoalSnapshot(${taskId}) failed: ${err instanceof Error ? err.message : err}`,
+      `[reflector-gap] getLatestGoalSnapshot(${taskId}) failed: ${errMsg(err)}`,
     );
     return null;
   }

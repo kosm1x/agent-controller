@@ -38,6 +38,7 @@ import {
   projectedDailyAvCalls,
   recordBudget,
 } from "./budget.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // L1 cache entry. `ts` is the wall-clock millis when populated.
 interface CacheEntry {
@@ -194,7 +195,7 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "alpha_vantage",
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         });
         if (!(err instanceof RateLimitedError)) {
           // Non-rate-limit error: still try Polygon
@@ -214,7 +215,7 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "polygon",
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         });
       }
     } else if (this.polygon) {
@@ -300,7 +301,7 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "alpha_vantage",
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         });
       }
     } else if (this.av?.fetchWeekly) {
@@ -369,7 +370,7 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "alpha_vantage",
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         });
       }
     }
@@ -383,7 +384,7 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "polygon",
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         });
       }
     }

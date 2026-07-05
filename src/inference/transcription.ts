@@ -11,6 +11,7 @@
 
 import fs from "fs";
 import path from "path";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface TranscriptionSegment {
   /** Start time in seconds */
@@ -198,7 +199,7 @@ export async function transcribeBuffer(
     return await transcribe(tmpPath);
   } catch (err) {
     console.warn(
-      `[transcription] Failed: ${err instanceof Error ? err.message : err}`,
+      `[transcription] Failed: ${errMsg(err)}`,
     );
     return null;
   } finally {

@@ -14,6 +14,7 @@ import { getDatabase } from "../db/index.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -284,7 +285,7 @@ export function startDynamicScheduler(): void {
     () => {
       checkAndExecuteSchedules().catch((err) => {
         console.error(
-          `[schedules] Execution error: ${err instanceof Error ? err.message : err}`,
+          `[schedules] Execution error: ${errMsg(err)}`,
         );
       });
     },
@@ -361,7 +362,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       // Watch for result to verify delivery and broadcast
       watchScheduledTask(result.taskId, schedule);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error(
         `[schedules] Failed to submit "${schedule.name}": ${message}`,
       );
@@ -379,7 +380,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       } catch (busErr) {
         console.error(
           `[schedules] run_failed event emit failed:`,
-          busErr instanceof Error ? busErr.message : busErr,
+          errMsg(busErr),
         );
       }
     }
@@ -560,7 +561,7 @@ export function handleScheduledTaskResult(
       if (schedule) {
         retryScheduledTask(schedule, meta.retryCount + 1).catch((err) => {
           console.error(
-            `[schedules] Retry failed for "${meta.name}": ${err instanceof Error ? err.message : err}`,
+            `[schedules] Retry failed for "${meta.name}": ${errMsg(err)}`,
           );
         });
         return;

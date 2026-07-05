@@ -18,6 +18,7 @@ import {
   readdirSync,
 } from "fs";
 import { join } from "path";
+import { errMsg } from "../lib/err-msg.js";
 
 const CACHE_DIR = "/tmp/video-backgrounds";
 const SKIP_SECONDS = 180; // skip first 3 minutes (intros, title cards)
@@ -223,7 +224,7 @@ export function downloadBackground(
   } catch (err) {
     console.warn(
       `[backgrounds] Download failed for ${name}:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }
@@ -289,7 +290,7 @@ export function extractSubclip(
   } catch (err) {
     console.warn(
       `[backgrounds] Subclip extraction failed:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }

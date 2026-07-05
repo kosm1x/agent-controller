@@ -57,7 +57,7 @@ treats pages similarly to posts for create/update operations.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string")
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
 
     const params = new URLSearchParams({
       status: (args.status as string) ?? "any",
@@ -87,7 +87,6 @@ treats pages similarly to posts for create/update operations.`,
       });
     }
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,
@@ -159,7 +158,7 @@ COMMON PLUGINS for script injection:
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string")
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
 
     const action = args.action as string;
 
@@ -189,7 +188,6 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
-        success: false,
         site: resolved.name,
         http_status: status,
         error: data,
@@ -200,7 +198,6 @@ COMMON PLUGINS for script injection:
       const plugin = args.plugin as string;
       if (!plugin)
         return JSON.stringify({
-          success: false,
           error: 'Missing "plugin" parameter (e.g. "akismet/akismet.php").',
         });
       const newStatus = action === "activate" ? "active" : "inactive";
@@ -223,7 +220,6 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
-        success: false,
         site: resolved.name,
         http_status: status,
         error: data,
@@ -234,7 +230,6 @@ COMMON PLUGINS for script injection:
       const slug = args.slug as string;
       if (!slug)
         return JSON.stringify({
-          success: false,
           error:
             'Missing "slug" parameter (e.g. "insert-headers-and-footers").',
         });
@@ -254,7 +249,6 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
-        success: false,
         site: resolved.name,
         http_status: status,
         error: data,
@@ -262,7 +256,6 @@ COMMON PLUGINS for script injection:
     }
 
     return JSON.stringify({
-      success: false,
       error: `Unknown action: ${action}`,
     });
   },
@@ -308,7 +301,7 @@ For reading, call without any update fields. For updating, include the fields to
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string")
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
 
     const updates: Record<string, unknown> = {};
     if (args.title !== undefined) updates.title = args.title;
@@ -348,7 +341,6 @@ For reading, call without any update fields. For updating, include the fields to
       });
     }
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,
@@ -405,7 +397,7 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSite(args.site as string | undefined);
     if (typeof resolved === "string")
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
 
     const id = args.id as number;
     const type = (args.type as string) ?? "posts";
@@ -432,7 +424,6 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
       });
     }
     return JSON.stringify({
-      success: false,
       site: resolved.name,
       http_status: status,
       error: data,
@@ -504,7 +495,7 @@ The path is appended to the site's /wp-json/ base URL.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const resolved = resolveSiteRaw(args.site as string | undefined);
     if (typeof resolved === "string")
-      return JSON.stringify({ success: false, error: resolved });
+      return JSON.stringify({ error: resolved });
 
     const method = (args.method as string) ?? "GET";
     const path = args.path as string;
@@ -532,16 +523,24 @@ The path is appended to the site's /wp-json/ base URL.`,
       options,
     );
 
+    const payload =
+      typeof data === "string"
+        ? data.slice(0, 3000)
+        : JSON.stringify(data).length > 3000
+          ? JSON.stringify(data).slice(0, 3000) + "...(truncated)"
+          : data;
+    if (status < 200 || status >= 300) {
+      return JSON.stringify({
+        site: resolved.name,
+        http_status: status,
+        error: payload,
+      });
+    }
     return JSON.stringify({
-      success: status >= 200 && status < 300,
+      success: true,
       site: resolved.name,
       http_status: status,
-      data:
-        typeof data === "string"
-          ? data.slice(0, 3000)
-          : JSON.stringify(data).length > 3000
-            ? JSON.stringify(data).slice(0, 3000) + "...(truncated)"
-            : data,
+      data: payload,
     });
   },
 };

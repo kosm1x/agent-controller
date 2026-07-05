@@ -21,6 +21,7 @@ import {
 import { runTriageAnalysis } from "./analyze.js";
 import { persistTriageReport, hasOpenTriageWithin } from "./persist.js";
 import { runTriageTick, type TriageTickLog } from "./tick.js";
+import { errMsg } from "../err-msg.js";
 
 /** Every 6h on the hour, MX. The throttle (one open report / 6h) prevents
  *  duplicate reports for the same ongoing issue between ticks. */
@@ -54,7 +55,7 @@ async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
     );
   } catch (err) {
     log.warn("[triage] tick failed (non-fatal)", {
-      err: err instanceof Error ? err.message : String(err),
+      err: errMsg(err),
     });
   }
 }

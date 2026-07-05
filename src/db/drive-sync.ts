@@ -11,6 +11,7 @@
 
 import { googleFetch } from "../google/client.js";
 import { getDatabase } from "./index.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -260,7 +261,7 @@ export function syncToDrive(
     } catch (err) {
       console.warn(
         `[drive-sync] Failed for ${path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   })();
@@ -287,7 +288,7 @@ export function syncDeleteToDrive(path: string): void {
     } catch (err) {
       console.warn(
         `[drive-sync] Delete failed for ${path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   })();
@@ -399,7 +400,7 @@ export async function backfillToDrive(): Promise<{
     } catch (err) {
       console.warn(
         `[drive-sync] Backfill failed for ${file.path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       failed++;
     }
@@ -490,7 +491,7 @@ export async function reformatDriveFiles(): Promise<{
     } catch (err) {
       console.warn(
         `[drive-sync] Reformat failed for ${file.path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       failed++;
     }

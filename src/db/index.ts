@@ -17,6 +17,7 @@ import { ensureVideoTables } from "./video-schema.js";
 import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
 import { ensureV83Tables } from "../lib/v8-3/schema.js";
 import { activateBestVariant } from "../tuning/activation.js";
+import { errMsg } from "../lib/err-msg.js";
 
 let _db: Database.Database | null = null;
 
@@ -1255,7 +1256,7 @@ export function writeWithRetry<T>(fn: () => T): T {
       }
       return result;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errMsg(err);
       if (msg.includes("SQLITE_BUSY") || msg.includes("database is locked")) {
         lastErr = err instanceof Error ? err : new Error(msg);
         if (attempt < WRITE_MAX_RETRIES - 1) {

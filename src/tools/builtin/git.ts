@@ -8,6 +8,7 @@
 import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
@@ -167,7 +168,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
       if (!status) return `On branch ${branch}. Working tree clean.`;
       return `Branch: ${branch}\n\n${status}`;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };
@@ -224,7 +225,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
         ? diff.slice(0, 5000) + "\n... (truncated)"
         : diff;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };
@@ -285,14 +286,18 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
       const message = args.message as string;
       const cwd = args.cwd as string | undefined;
 
-      if (!files?.length) return "Error: files array is required.";
-      if (!message) return "Error: commit message is required.";
+      if (!files?.length)
+        return JSON.stringify({ error: "files array is required." });
+      if (!message)
+        return JSON.stringify({ error: "commit message is required." });
 
       // Block sensitive files
       for (const f of files) {
         const lower = f.toLowerCase();
         if (SENSITIVE_PATTERNS.some((p) => lower.includes(p))) {
-          return `Error: Refused to stage potentially sensitive file: ${f}`;
+          return JSON.stringify({
+            error: `Refused to stage potentially sensitive file: ${f}`,
+          });
         }
       }
 
@@ -313,7 +318,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
       const result = runArgs("git", commitArgs, 30_000, cwd);
       return result;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };
@@ -359,7 +364,9 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       try {
         run("gh auth status 2>&1");
       } catch {
-        return "Error: GitHub auth not configured. Run `gh auth login` first.";
+        return JSON.stringify({
+          error: "GitHub auth not configured. Run `gh auth login` first.",
+        });
       }
 
       // Verify remote exists
@@ -371,18 +378,24 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
             try {
               run(`gh repo view ${match[1]} --json name 2>&1`);
             } catch {
-              return `Error: Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`;
+              return JSON.stringify({
+                error: `Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`,
+              });
             }
           }
         }
       } catch {
-        return "Error: No remote 'origin' configured. Use shell_exec to add one.";
+        return JSON.stringify({
+          error: "No remote 'origin' configured. Use shell_exec to add one.",
+        });
       }
 
       // Ensure branch is named 'main' (git init defaults to 'master')
       let branch = run("git branch --show-current", 30_000, cwd);
       if (!branch) {
-        return "Error: detached HEAD state. Checkout a branch before pushing.";
+        return JSON.stringify({
+          error: "detached HEAD state. Checkout a branch before pushing.",
+        });
       }
       if (branch === "master") {
         run("git branch -M main", 30_000, cwd);
@@ -395,7 +408,10 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         resolvedCwd.startsWith("/root/claude/mission-control") &&
         branch === "main"
       ) {
-        return "Error: Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.";
+        return JSON.stringify({
+          error:
+            "Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.",
+        });
       }
 
       // Fetch + rebase to avoid push rejection from a diverged remote. Each step
@@ -420,11 +436,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         // silently pushing into a rejection with no recoverable signal.
         const dirty = runArgs("git", ["status", "--porcelain"], 15_000, cwd);
         if (dirty) {
-          return (
-            `Error: cannot sync with origin/${branch} — the working tree has uncommitted ` +
-            `changes that block the rebase. git_commit them (or discard them) first, then push.\n\n` +
-            `Uncommitted:\n${dirty}`
-          );
+          return JSON.stringify({
+            error:
+              `cannot sync with origin/${branch} — the working tree has uncommitted ` +
+              `changes that block the rebase. git_commit them (or discard them) first, then push.\n\n` +
+              `Uncommitted:\n${dirty}`,
+          });
         }
         try {
           runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
@@ -436,11 +453,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
           } catch {
             // Nothing to abort.
           }
-          return (
-            `Error: local ${branch} has diverged from origin/${branch} and the automatic ` +
-            `rebase hit conflicts — this needs a manual reconcile (both sides changed the ` +
-            `same files).\n\n${rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr)}`
-          );
+          return JSON.stringify({
+            error:
+              `local ${branch} has diverged from origin/${branch} and the automatic ` +
+              `rebase hit conflicts — this needs a manual reconcile (both sides changed the ` +
+              `same files).\n\n${errMsg(rebaseErr)}`,
+          });
         }
       }
 
@@ -482,7 +500,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       return pushResult || `Pushed ${branch} to origin.`;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };
@@ -532,7 +550,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
       const rawName = args.name as string;
-      if (!rawName) return "Error: name is required.";
+      if (!rawName) return JSON.stringify({ error: "name is required." });
 
       // Default to EurekaMD-net org if no org prefix given
       const name = rawName.includes("/") ? rawName : `${GITHUB_ORG}/${rawName}`;
@@ -546,7 +564,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
       const result = runArgs("gh", ghArgs, 30_000);
       return result || `Created repository ${name}.`;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };
@@ -597,8 +615,8 @@ Returns the PR URL on success.`,
       const body = args.body as string;
       const base = (args.base as string) || "main";
 
-      if (!title) return "Error: title is required.";
-      if (!body) return "Error: body is required.";
+      if (!title) return JSON.stringify({ error: "title is required." });
+      if (!body) return JSON.stringify({ error: "body is required." });
 
       // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
       const prArgs = [
@@ -623,7 +641,7 @@ Returns the PR URL on success.`,
       }
       return result;
     } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({ error: errMsg(err) });
     }
   },
 };

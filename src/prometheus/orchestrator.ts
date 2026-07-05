@@ -23,6 +23,7 @@ import { reflect } from "./reflector.js";
 import { resolveUseOpus } from "./model-tier.js";
 import { eventBus } from "../lib/event-bus.js";
 import type { PrometheusSnapshot } from "./snapshot.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -155,7 +156,7 @@ export async function orchestrate(
           error: String(err),
         });
         throw new Error(
-          `Planning failed: ${err instanceof Error ? err.message : err}`,
+          `Planning failed: ${errMsg(err)}`,
         );
       }
 
@@ -355,7 +356,7 @@ export async function orchestrate(
           }
         } catch (err) {
           console.warn(
-            `[orchestrator] Replan failed: ${err instanceof Error ? err.message : err}`,
+            `[orchestrator] Replan failed: ${errMsg(err)}`,
           );
           break;
         }
@@ -403,7 +404,7 @@ export async function orchestrate(
         });
       } catch (err) {
         console.warn(
-          `[orchestrator] Failed to save snapshot: ${err instanceof Error ? err.message : err}`,
+          `[orchestrator] Failed to save snapshot: ${errMsg(err)}`,
         );
       }
     }

@@ -28,6 +28,7 @@ import {
   type ReflectionScope,
   type ReflectionTrigger,
 } from "./scope.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Read-only tool allowlist for the reflection pass. PHASE 6 adds the
@@ -165,7 +166,7 @@ export async function runReflection(
       scope,
       output: {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg(err),
         durationMs: 0,
       },
     };

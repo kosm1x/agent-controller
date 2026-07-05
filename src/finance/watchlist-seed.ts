@@ -15,6 +15,7 @@
 import { getDatabase } from "../db/index.js";
 import { detectAllSignals, persistSignals } from "./signals.js";
 import { getDataLayer } from "./data-layer.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface SeedOptions {
   /** Minimum weekly bars that must be present for us to skip re-fetching. */
@@ -109,7 +110,7 @@ export async function seedSymbol(
       signalsInserted,
     };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = errMsg(err);
     // Best-effort re-count; if countWeeklyBars itself is what failed, stay at 0.
     let after = before;
     try {

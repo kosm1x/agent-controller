@@ -7,6 +7,7 @@
 
 import type Database from "better-sqlite3";
 import { getMemoryService } from "./index.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const MIGRATION_MARKER = "__hindsight_migration_done";
 
@@ -65,7 +66,7 @@ export async function migrateLearningsToHindsight(
       migrated++;
     } catch (err) {
       console.warn(
-        `[memory] Migration failed for learning: ${err instanceof Error ? err.message : err}`,
+        `[memory] Migration failed for learning: ${errMsg(err)}`,
       );
     }
   }

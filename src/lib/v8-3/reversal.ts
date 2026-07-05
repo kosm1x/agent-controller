@@ -32,6 +32,7 @@ import {
   markReverted,
   nextSequenceNo,
 } from "./decisions-store.js";
+import { errMsg } from "../err-msg.js";
 
 // ── SQL identifier poka-yoke ────────────────────────────────────────────────
 // Table/column names flow into DDL-position SQL (better-sqlite3 cannot bind
@@ -305,7 +306,7 @@ export function applyReversal(
       } catch (err) {
         return {
           ok: false,
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errMsg(err),
         };
       }
     }

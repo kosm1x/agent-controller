@@ -15,6 +15,7 @@
 import { HindsightClient } from "./hindsight-client.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import type { MemoryBank, MemoryItem } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_TOP_N = 3;
@@ -113,7 +114,7 @@ async function runHindsight(
       results: [],
       latencyMs: Date.now() - start,
       totalCount: 0,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     };
   }
 }
@@ -161,7 +162,7 @@ async function runSqlite(
       results: [],
       latencyMs: Date.now() - start,
       totalCount: 0,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     };
   }
 }

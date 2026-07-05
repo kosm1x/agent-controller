@@ -13,6 +13,7 @@
 import type { Database } from "better-sqlite3";
 import { logger } from "../../lib/logger.js";
 import type { McpTokenInfo } from "./types.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 type AuditType = "request_received" | "request_completed" | "request_failed";
 
@@ -49,7 +50,7 @@ export function logMcpCall(
     // Escalate to pino so operators see it in journalctl / logs.
     logger.error(
       {
-        err: e instanceof Error ? e.message : String(e),
+        err: errMsg(e),
         type,
         token_id: token.id,
         client_name: token.clientName,

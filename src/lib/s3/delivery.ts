@@ -25,6 +25,7 @@
 
 import { getDatabase } from "../../db/index.js";
 import { loadAgingBaselines, formatAgingSection } from "./aging.js";
+import { errMsg } from "../err-msg.js";
 
 export interface BriefAlertRow {
   id: number;
@@ -191,7 +192,7 @@ export function composeMorningBriefDriftSection(
       // higher-priority. Log and proceed without the aging subsection.
       console.warn(
         "[s3-delivery] aging baseline load failed (alerts section unaffected):",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }

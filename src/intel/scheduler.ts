@@ -11,6 +11,7 @@ import { insertSignals, pruneOldSignals } from "./signal-store.js";
 import { processSignals } from "./delta-engine.js";
 import { evaluateDeltas, shouldSuppress, createAlert } from "./alert-router.js";
 import { deliverPendingAlerts } from "./alert-delivery.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const timers = new Map<string, ReturnType<typeof setInterval>>();
 const health = new Map<string, CollectorHealth>();
@@ -69,7 +70,7 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
           await deliverPendingAlerts(broadcastFn).catch((err) => {
             console.warn(
               `[intel] Alert delivery failed:`,
-              err instanceof Error ? err.message : err,
+              errMsg(err),
             );
           });
         }
@@ -80,7 +81,7 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
     }
   } catch (err) {
     h.consecutiveFailures++;
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errMsg(err);
     console.warn(
       `[intel] ${adapter.source} failed (${h.consecutiveFailures}x): ${msg}`,
     );

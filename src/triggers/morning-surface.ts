@@ -35,6 +35,7 @@ import { isV82ProducerEnabled } from "../lib/v8-2/flags.js";
 import { runJudgmentAssembly } from "../lib/v8-2/produce.js";
 import { createLogger } from "../lib/logger.js";
 import { recordTriggerRun } from "./throttle.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const log = createLogger("triggers:morning-surface");
 
@@ -151,7 +152,7 @@ export async function runMorningSurface(): Promise<MorningSurfaceResult> {
   } catch (err) {
     result = {
       ok: false,
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errMsg(err),
     };
     log.error({ err }, "morning-surface trigger threw");
   }

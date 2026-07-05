@@ -130,6 +130,7 @@ import {
 } from "../intelligence/scope-telemetry.js";
 import { autoPersistConversation } from "../memory/auto-persist.js";
 import { getOutcomeTag } from "../memory/outcome-tag.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -266,7 +267,7 @@ function buildJarvisSystemPrompt(
     // prod (it does) any throw is an anomaly worth surfacing — not silence.
     console.warn(
       "[prompt] getCohort failed — cohort grounding omitted:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
   const cohortBlock = cohortSection(cohortMembers, ownerChannel);
@@ -1726,8 +1727,8 @@ export class MessageRouter {
           appendDayLog("JARVIS", userResponse);
           pushToThread(tk, `User: ${msg.text}\nJarvis: ${userResponse}`);
         } catch (err) {
-          const errMsg = `Error ejecutando ${pendingConf.toolName}: ${err instanceof Error ? err.message : String(err)}`;
-          this.sendToChannel(msg.channel, msg.from, errMsg);
+          const errText = `Error ejecutando ${pendingConf.toolName}: ${errMsg(err)}`;
+          this.sendToChannel(msg.channel, msg.from, errText);
         }
         return true;
       } else if (confResponse === "decline") {
@@ -2272,7 +2273,7 @@ export class MessageRouter {
                 } catch (cbErr) {
                   console.error(
                     `[router] broadcastToAll onChannelFailure callback threw:`,
-                    cbErr instanceof Error ? cbErr.message : cbErr,
+                    errMsg(cbErr),
                   );
                 }
               }
@@ -2630,7 +2631,7 @@ export class MessageRouter {
         }).catch((err) => {
           console.warn(
             "[router] Auto-persist failed:",
-            err instanceof Error ? err.message : err,
+            errMsg(err),
           );
         });
       } catch {
@@ -2652,7 +2653,7 @@ export class MessageRouter {
           .catch((err) => {
             console.warn(
               "[router] recall-utility match failed:",
-              err instanceof Error ? err.message : err,
+              errMsg(err),
             );
           });
       } catch {
@@ -2683,7 +2684,7 @@ export class MessageRouter {
               ).catch((err) => {
                 console.warn(
                   "[router] Background extraction failed:",
-                  err instanceof Error ? err.message : err,
+                  errMsg(err),
                 );
               });
             }
@@ -2717,7 +2718,7 @@ export class MessageRouter {
               ).catch((err) => {
                 console.warn(
                   "[router] Crystallization failed:",
-                  err instanceof Error ? err.message : err,
+                  errMsg(err),
                 );
               });
             }

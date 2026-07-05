@@ -24,6 +24,8 @@
  *   const finalDecision = r.judged.decision
  */
 
+import { errMsg } from "../lib/err-msg.js";
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Single LLM call adapter. Returns text + tokens; throws on inference error. */
@@ -185,12 +187,12 @@ export async function runAdversarialCritique(
     const failed: string[] = [];
     if (bullSettled.status === "rejected") {
       failed.push(
-        `bull (${bullSettled.reason instanceof Error ? bullSettled.reason.message : String(bullSettled.reason)})`,
+        `bull (${errMsg(bullSettled.reason)})`,
       );
     }
     if (bearSettled.status === "rejected") {
       failed.push(
-        `bear (${bearSettled.reason instanceof Error ? bearSettled.reason.message : String(bearSettled.reason)})`,
+        `bear (${errMsg(bearSettled.reason)})`,
       );
     }
     return {
@@ -232,7 +234,7 @@ export async function runAdversarialCritique(
       judged: draft,
       tokensUsed,
       failedOpen: true,
-      failureReason: `judge stage: ${err instanceof Error ? err.message : String(err)}`,
+      failureReason: `judge stage: ${errMsg(err)}`,
     };
   }
 }

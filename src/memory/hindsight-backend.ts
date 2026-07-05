@@ -27,6 +27,7 @@ import type {
   RecallOptions,
   ReflectOptions,
 } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // applyOutcomeFilter (binary drop) replaced by applyOutcomeBias (drop +
 // score adjustment + re-sort). 2026-05-07 queue #7 part 2. See
@@ -416,7 +417,7 @@ export class HindsightMemoryBackend implements MemoryService {
       this.circuit.open = true;
       console.warn(
         `[memory] Circuit breaker OPEN after ${this.circuit.failures} failures. ` +
-          `Cooldown: ${CIRCUIT_COOLDOWN_MS / 1000}s. Last error: ${err instanceof Error ? err.message : err}`,
+          `Cooldown: ${CIRCUIT_COOLDOWN_MS / 1000}s. Last error: ${errMsg(err)}`,
       );
     }
   }
@@ -438,7 +439,7 @@ export class HindsightMemoryBackend implements MemoryService {
     } catch (err) {
       // Non-fatal — bank may already exist
       console.warn(
-        `[memory] Bank "${bankId}" init warning: ${err instanceof Error ? err.message : err}`,
+        `[memory] Bank "${bankId}" init warning: ${errMsg(err)}`,
       );
       this.initializedBanks.add(bankId); // Don't retry
     }

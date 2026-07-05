@@ -6,6 +6,7 @@
  */
 
 import { generateEmbedding } from "../inference/embeddings.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export const EMBED_DIMS = 1536;
 
@@ -24,7 +25,7 @@ export async function embed(text: string): Promise<Float32Array | null> {
   } catch (err) {
     console.warn(
       "[embed] Embedding failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }

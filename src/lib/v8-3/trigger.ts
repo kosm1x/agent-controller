@@ -32,6 +32,7 @@ import { getDatabase } from "../../db/index.js";
 import { createLogger } from "../logger.js";
 import { isV83Enabled } from "./flags.js";
 import { runDecisionPipeline, type DecisionTrigger } from "./pipeline.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-3:trigger");
 
@@ -133,7 +134,7 @@ export async function executeGatedCapability(
           return { ok: !toolReportedError(output) };
         } catch (e) {
           output = JSON.stringify({
-            error: e instanceof Error ? e.message : String(e),
+            error: errMsg(e),
           });
           return { ok: false };
         }
@@ -155,7 +156,7 @@ export async function executeGatedCapability(
     log.error(
       {
         capability,
-        err: err instanceof Error ? err.message : String(err),
+        err: errMsg(err),
       },
       "v8-3: decision pipeline failed — degrading to direct execute",
     );

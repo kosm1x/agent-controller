@@ -9,6 +9,7 @@
 
 import { HindsightClient } from "../memory/hindsight-client.js";
 import type { MentalModelCreateRequest } from "../memory/hindsight-client.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** The 4 mental models that power adaptive intelligence. */
 const MODELS: Array<MentalModelCreateRequest & { bank: string }> = [
@@ -97,7 +98,7 @@ export async function seedMentalModels(
       );
     } catch (err) {
       // 409/422 = already exists, which is fine
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errMsg(err);
       if (
         msg.includes("409") ||
         msg.includes("422") ||

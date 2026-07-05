@@ -21,6 +21,7 @@ import {
   updateReactionStatus,
   getLatestReaction,
 } from "./store.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -46,7 +47,7 @@ function parseTaskMeta(
     return JSON.parse(metadata);
   } catch (err) {
     console.warn(
-      `[reactions] task ${taskId} has malformed metadata, retry forwarding skipped: ${err instanceof Error ? err.message : err}`,
+      `[reactions] task ${taskId} has malformed metadata, retry forwarding skipped: ${errMsg(err)}`,
     );
     return {};
   }

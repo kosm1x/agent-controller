@@ -17,6 +17,7 @@
 
 import { infer } from "../inference/adapter.js";
 import { extractBalancedObjects } from "../lib/critic-verdict.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Harness prompt — DO NOT modify without auditing every caller
@@ -185,7 +186,7 @@ export async function runSkillPrompt(
       usage,
     };
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = errMsg(e);
     const status: MiniRunStatus =
       /timeout/i.test(message) || ac.signal.aborted ? "timeout" : "error";
     return {

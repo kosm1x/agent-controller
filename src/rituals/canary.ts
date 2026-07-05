@@ -13,6 +13,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { getDatabase } from "../db/index.js";
 import { getRouter } from "../messaging/index.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 
@@ -180,7 +181,7 @@ export function scheduleCanary(): void {
         }
       } catch (err) {
         console.error(
-          `[canary] Check failed: ${err instanceof Error ? err.message : err}`,
+          `[canary] Check failed: ${errMsg(err)}`,
         );
       }
     },

@@ -5,7 +5,7 @@
  * Default: Mexico City. Use geocode_address first if you only have a city name.
  */
 
-import type { Tool } from "../types.js";
+import { defineTool } from "../define-tool.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
@@ -14,18 +14,14 @@ const TIMEOUT_MS = 10_000;
 const DEFAULT_LAT = 19.4326;
 const DEFAULT_LON = -99.1332;
 
-export const weatherForecastTool: Tool = {
+export const weatherForecastTool = defineTool({
   name: "weather_forecast",
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
   deferred: true,
-  definition: {
-    type: "function",
-    function: {
-      name: "weather_forecast",
-      description: `Get current weather and multi-day forecast for a location.
+  description: `Get current weather and multi-day forecast for a location.
 
 USE WHEN:
 - User asks about weather, temperature, or precipitation anywhere in the world
@@ -39,23 +35,20 @@ DO NOT USE WHEN:
 Accepts latitude/longitude. Default: Mexico City (19.43, -99.13).
 If you only have a city name, call geocode_address first to get coordinates.
 Returns current conditions + daily forecast (temperature, precipitation, wind).`,
-      parameters: {
-        type: "object",
-        properties: {
-          latitude: {
-            type: "number",
-            description: "Latitude (-90 to 90). Default: 19.4326 (Mexico City)",
-          },
-          longitude: {
-            type: "number",
-            description:
-              "Longitude (-180 to 180). Default: -99.1332 (Mexico City)",
-          },
-          days: {
-            type: "number",
-            description: "Forecast days (1-7, default: 3)",
-          },
-        },
+  parameters: {
+    type: "object",
+    properties: {
+      latitude: {
+        type: "number",
+        description: "Latitude (-90 to 90). Default: 19.4326 (Mexico City)",
+      },
+      longitude: {
+        type: "number",
+        description: "Longitude (-180 to 180). Default: -99.1332 (Mexico City)",
+      },
+      days: {
+        type: "number",
+        description: "Forecast days (1-7, default: 3)",
       },
     },
   },
@@ -109,7 +102,7 @@ Returns current conditions + daily forecast (temperature, precipitation, wind).`
       return JSON.stringify({ error: `Weather fetch failed: ${errMsg(err)}` });
     }
   },
-};
+});
 
 interface OpenMeteoResponse {
   timezone?: string;

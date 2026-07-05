@@ -127,6 +127,7 @@ import {
   TOKEN_BUDGET_BROWSER,
   HALLUCINATION_RETRY_HEADROOM,
 } from "../config/constants.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
@@ -1865,7 +1866,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
     } catch (err) {
       return {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg(err),
         durationMs: Date.now() - start,
       };
     } finally {

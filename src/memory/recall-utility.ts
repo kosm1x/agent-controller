@@ -19,6 +19,7 @@ import { getDatabase, writeWithRetry } from "../db/index.js";
 import type { RecallMode } from "./recall-mode.js";
 import type { MemoryItem } from "./types.js";
 import { recordRecallOutcomes } from "../observability/prometheus.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Time window for claiming unmatched recall rows during a turn-end sweep. */
 export const MATCH_WINDOW_MS = 60_000;
@@ -458,7 +459,7 @@ export function logRecall(input: LogRecallInput): void {
     // Instrumentation must never break the recall path
     console.warn(
       "[recall-audit] logRecall failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }
@@ -523,7 +524,7 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
   } catch (err) {
     console.warn(
       "[recall-audit] sweep query failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return { updated: 0, used: 0 };
   }
@@ -599,7 +600,7 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
       console.warn(
         "[recall-audit] update failed for row",
         row.id,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }

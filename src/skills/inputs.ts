@@ -20,6 +20,7 @@
  */
 
 import { z } from "zod";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Declaration schema — validates ONE entry in `inputs[]`
@@ -121,7 +122,7 @@ export function buildArgsSchema(
   } catch (e) {
     throw new InputsBuildError(
       "malformed_json",
-      `inputs_json is not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
+      `inputs_json is not valid JSON: ${errMsg(e)}`,
     );
   }
 
@@ -214,7 +215,7 @@ export function validateSkillArgs(
       reason:
         e instanceof InputsBuildError
           ? `skill inputs_json corrupt: ${e.message}`
-          : `schema build failed: ${e instanceof Error ? e.message : String(e)}`,
+          : `schema build failed: ${errMsg(e)}`,
     };
   }
 

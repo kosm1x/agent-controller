@@ -18,6 +18,7 @@ import {
   getApiKey,
   supabaseHeaders,
 } from "../db/pgvector.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const SUPABASE_RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
 
@@ -62,7 +63,7 @@ export async function runDecaySweep(
   } catch (err) {
     console.warn(
       "[lesson-decay] Sweep error:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return -1;
   }
@@ -180,7 +181,7 @@ export async function runRetentionSweep(
   } catch (err) {
     console.warn(
       "[retention] Sweep error:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }
@@ -205,7 +206,7 @@ export function registerDecayCron(): void {
           runDecaySweep().catch((err) => {
             console.warn(
               "[lesson-decay] Cron sweep failed:",
-              err instanceof Error ? err.message : err,
+              errMsg(err),
             );
           });
         },
@@ -219,7 +220,7 @@ export function registerDecayCron(): void {
           runRetentionSweep().catch((err) => {
             console.warn(
               "[retention] Nightly sweep failed:",
-              err instanceof Error ? err.message : err,
+              errMsg(err),
             );
           });
           // S4: Force INDEX.md regen if stale

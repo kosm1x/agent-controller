@@ -15,6 +15,7 @@ import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
+import { errMsg } from "../lib/err-msg.js";
 
 async function main(): Promise<void> {
   // Read stdin
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     const output = {
       type: "result",
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
       durationMs: Date.now() - start,
     };
     process.stdout.write(

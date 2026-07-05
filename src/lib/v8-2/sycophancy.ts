@@ -40,6 +40,7 @@ import {
   composeV82UserPrompt,
   strategicVoiceSystemPrompt,
 } from "./strategic-voice.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:sycophancy");
 
@@ -169,7 +170,7 @@ export async function elicitFinalPosition(
     log.warn(
       {
         judgmentId: judgment.id,
-        err: e instanceof Error ? e.message : String(e),
+        err: errMsg(e),
       },
       "elicitFinalPosition failed",
     );
@@ -254,7 +255,7 @@ export async function classifyConcession(
   } catch (e) {
     if (!sink.captured) {
       log.warn(
-        { err: e instanceof Error ? e.message : String(e) },
+        { err: errMsg(e) },
         "classifyConcession failed",
       );
       return null;

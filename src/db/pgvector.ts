@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "crypto";
+import { errMsg } from "../lib/err-msg.js";
 
 const SUPABASE_URL = "https://db.mycommit.net/rest/v1";
 const RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
@@ -312,7 +313,7 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
     pgCascadeStale(entry.path, apiKey).catch((err) => {
       console.warn(
         `[pgvector] Cascade stale failed for ${entry.path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     });
 
@@ -320,7 +321,7 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
   } catch (err) {
     console.warn(
       `[pgvector] Upsert error for ${entry.path}:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return false;
   }
@@ -467,7 +468,7 @@ export async function pgBatchUpsert(
     } catch (err) {
       console.warn(
         `[pgvector] Batch error:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       failed += batch.length;
     }
@@ -537,7 +538,7 @@ export async function pgHybridSearch(
   } catch (err) {
     console.warn(
       `[pgvector] Search error:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return [];
   }

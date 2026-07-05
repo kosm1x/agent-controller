@@ -23,6 +23,7 @@ import {
   type DeviationKind,
   type ToleranceRule,
 } from "./tolerance.js";
+import { errMsg } from "../err-msg.js";
 
 export interface DriftAlertRecord {
   id: number;
@@ -56,7 +57,7 @@ export async function evaluateSignal(
     observed = await runBaselineQuery(signal.baseline_query);
   } catch (err) {
     queryFailed = true;
-    queryError = err instanceof Error ? err.message : String(err);
+    queryError = errMsg(err);
     observed = null;
   }
 
@@ -82,7 +83,7 @@ export async function evaluateSignal(
   } catch (err) {
     // Schema-corrupt signal — emit query_failure rather than crash. Operator
     // sees the bad signal in the alerts table; can fix via migration.
-    const detail = `bad signal JSON: ${err instanceof Error ? err.message : String(err)}`;
+    const detail = `bad signal JSON: ${errMsg(err)}`;
     const alertId = emitAlert(
       signal,
       JSON.stringify({ value: observed, error: detail }),

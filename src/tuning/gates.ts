@@ -14,6 +14,7 @@
 
 import type { Mutation } from "./types.js";
 import { getLastExperimentForTarget } from "./schema.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export type GateName =
   | "constitution"
@@ -85,7 +86,7 @@ export function runGates(
       return {
         passed: false,
         failedGate: "regex_sanity",
-        reason: `invalid regex: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `invalid regex: ${errMsg(err)}`,
       };
     }
   }

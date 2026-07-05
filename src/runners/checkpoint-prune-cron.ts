@@ -22,6 +22,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import { pruneExpiredSnapshots } from "../prometheus/snapshot.js";
 import { pruneExpiredCheckpoints } from "./checkpoint.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -88,14 +89,14 @@ export function runCheckpointPrune(log: PruneLog = DEFAULT_LOG): {
     snapshots = pruneExpiredSnapshots();
   } catch (err) {
     log.warn("pruneExpiredSnapshots threw (contract violation)", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     });
   }
   try {
     checkpoints = pruneExpiredCheckpoints();
   } catch (err) {
     log.warn("pruneExpiredCheckpoints threw (contract violation)", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     });
   }
   if (snapshots > 0 || checkpoints > 0) {

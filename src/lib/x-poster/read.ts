@@ -14,6 +14,7 @@
 import { getAccountCreds, isCookieConfigured } from "./config.js";
 import { authHeaders, withAuthedRequest } from "./authed-request.js";
 import { createLogger } from "../logger.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("x-poster");
 const READ_TIMEOUT_MS = 30_000;
@@ -135,14 +136,14 @@ export async function readMentions(
     });
   } catch (err) {
     log.warn(
-      { account, err: err instanceof Error ? err.message : String(err) },
+      { account, err: errMsg(err) },
       "x mentions read error",
     );
     return {
       ok: false,
       account,
       mentions: [],
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     };
   }
 }

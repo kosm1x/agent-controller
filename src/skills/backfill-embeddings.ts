@@ -19,6 +19,7 @@
 import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import { embedAndStoreSkill } from "./embedding.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const moduleLog = createLogger("skills:backfill");
 
@@ -121,7 +122,7 @@ export async function backfillSkillEmbeddings(
       result.errors.push({
         skillId: row.skill_id,
         name: row.name,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: errMsg(err),
       });
     }
 

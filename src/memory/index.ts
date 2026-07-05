@@ -6,6 +6,7 @@
 
 import type { MemoryService } from "./types.js";
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
+import { errMsg } from "../lib/err-msg.js";
 
 let _service: MemoryService | null = null;
 
@@ -51,7 +52,7 @@ export async function initMemoryService(): Promise<MemoryService> {
       );
     } catch (err) {
       console.warn(
-        `[memory] Failed to init Hindsight: ${err instanceof Error ? err.message : err}; using SQLite`,
+        `[memory] Failed to init Hindsight: ${errMsg(err)}; using SQLite`,
       );
     }
   }

@@ -62,6 +62,7 @@ import "./runners/heavy-runner.js";
 import "./runners/nanoclaw-runner.js";
 import "./runners/swarm-runner.js";
 import "./runners/a2a-runner.js";
+import { errMsg } from "./lib/err-msg.js";
 
 /** Fail fast if the port is already in use (prevents silent 409 conflicts). */
 async function checkPort(port: number): Promise<void> {
@@ -294,7 +295,7 @@ async function main(): Promise<void> {
     .catch((err) => {
       console.warn(
         "[lesson-decay] Registration failed (non-fatal):",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     });
 
@@ -306,7 +307,7 @@ async function main(): Promise<void> {
     .catch((err) => {
       console.warn(
         "[s3] Cron registration failed (non-fatal):",
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     });
 

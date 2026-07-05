@@ -45,6 +45,7 @@ import {
   pointSkillAtVersion,
   recordVersion,
 } from "./storage.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const log = createLogger("skills:lifecycle");
 
@@ -201,7 +202,7 @@ export async function skillSave(
     // Defensive — embedAndStoreSkill swallows network errors already,
     // but any throw must not flip an accepted save into a failure.
     log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
+      { err: errMsg(err) },
       "embedding update failed (non-fatal)",
     );
   }

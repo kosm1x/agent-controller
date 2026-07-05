@@ -206,7 +206,7 @@ When adding a new tool whose authority is non-FS, add the prefix here so its wip
 
 ### Adding a new tool
 
-1. Create handler in `src/tools/builtin/`
+1. Create handler in `src/tools/builtin/` — new tools use `defineTool()` from `src/tools/define-tool.ts` (name declared once); failure returns are `{error}` JSON, never `"Error:"` strings or `success:false`
 2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface)
 3. Write tool descriptions following ACI principles above (describe edge cases, use enums, add `.describe()` to all params)
 4. Test with a real model call to verify the description guides correct usage

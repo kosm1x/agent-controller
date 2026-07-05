@@ -9,6 +9,7 @@ import { createHash } from "crypto";
 import { infer } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import type { TokenUsage } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -291,7 +292,7 @@ export async function condenseSearchResults(
     };
   } catch (err) {
     console.warn(
-      `[provenance] Condensation failed: ${err instanceof Error ? err.message : err}`,
+      `[provenance] Condensation failed: ${errMsg(err)}`,
     );
     return null;
   }

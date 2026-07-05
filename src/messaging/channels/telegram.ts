@@ -17,6 +17,7 @@ import {
   isTranscriptionConfigured,
   transcribeBuffer,
 } from "../../inference/transcription.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -65,7 +66,7 @@ async function extractFileContent(
     // For text-based files, download directly
     return await downloadRawText(telegramFileUrl);
   } catch (err) {
-    return `[Error al extraer contenido: ${err instanceof Error ? err.message : err}]`;
+    return `[Error al extraer contenido: ${errMsg(err)}]`;
   }
 }
 
@@ -176,7 +177,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
   /** True iff the error is a Telegram 409 Conflict from a competing getUpdates. */
   private static is409Conflict(err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errMsg(err);
     return (
       msg.includes("409: Conflict") &&
       msg.includes("terminated by other getUpdates")
@@ -257,7 +258,7 @@ export class TelegramAdapter implements ChannelAdapter {
             } else {
               console.error(
                 "[telegram] Polling loop died after restart:",
-                err instanceof Error ? err.message : err,
+                errMsg(err),
               );
             }
             this.pollingActive = false;
@@ -266,7 +267,7 @@ export class TelegramAdapter implements ChannelAdapter {
       } catch (err) {
         console.error(
           "[telegram] Polling restart failed:",
-          err instanceof Error ? err.message : err,
+          errMsg(err),
         );
         this.restartPolling(); // Retry with backoff
       }
@@ -321,7 +322,7 @@ export class TelegramAdapter implements ChannelAdapter {
         } else {
           console.error(
             "[telegram] Polling loop died:",
-            err instanceof Error ? err.message : err,
+            errMsg(err),
           );
         }
         this.pollingActive = false;

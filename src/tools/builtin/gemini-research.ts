@@ -255,7 +255,6 @@ EDGE CASES:
     const apiKey = getApiKey();
     if (!apiKey) {
       return JSON.stringify({
-        success: false,
         error:
           "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
       });
@@ -272,7 +271,6 @@ EDGE CASES:
       const urlError = validateOutboundUrl(source);
       if (urlError) {
         return JSON.stringify({
-          success: false,
           error: `Blocked source URL: ${urlError}`,
         });
       }
@@ -283,7 +281,6 @@ EDGE CASES:
         clearTimeout(timer);
         if (!resp.ok) {
           return JSON.stringify({
-            success: false,
             error: `Failed to download ${source}: HTTP ${resp.status}`,
           });
         }
@@ -295,7 +292,6 @@ EDGE CASES:
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return JSON.stringify({
-          success: false,
           error: msg.includes("aborted")
             ? `Download timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
             : `Download failed: ${msg}`,
@@ -308,7 +304,6 @@ EDGE CASES:
       const safety = validatePathSafety(source, "read");
       if (!safety.safe) {
         return JSON.stringify({
-          success: false,
           error: `Local source blocked: ${safety.reason}`,
         });
       }
@@ -322,7 +317,6 @@ EDGE CASES:
       fileBuffer = readFileSync(filePath);
     } catch (err) {
       return JSON.stringify({
-        success: false,
         error: `Cannot read file: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
@@ -355,7 +349,6 @@ EDGE CASES:
         // "Metadata part is too large"); .json() would mask the real message.
         const errText = await startResp.text();
         return JSON.stringify({
-          success: false,
           error: `Upload start failed (${startResp.status}): ${errText.slice(0, 300)}`,
         });
       }
@@ -363,7 +356,6 @@ EDGE CASES:
       const uploadUrl = startResp.headers.get("x-goog-upload-url");
       if (!uploadUrl) {
         return JSON.stringify({
-          success: false,
           error:
             "Upload start succeeded but no x-goog-upload-url header returned",
         });
@@ -381,13 +373,11 @@ EDGE CASES:
           !u.hostname.endsWith(".googleapis.com")
         ) {
           return JSON.stringify({
-            success: false,
             error: `Upload URL refused (not https://*.googleapis.com): ${uploadUrl.slice(0, 120)}`,
           });
         }
       } catch {
         return JSON.stringify({
-          success: false,
           error: `Upload URL invalid: ${uploadUrl.slice(0, 120)}`,
         });
       }
@@ -409,7 +399,6 @@ EDGE CASES:
 
       if (!resp.ok) {
         return JSON.stringify({
-          success: false,
           error: `Upload error ${resp.status}: ${rawText.slice(0, 300)}`,
         });
       }
@@ -419,7 +408,6 @@ EDGE CASES:
         data = JSON.parse(rawText) as Record<string, unknown>;
       } catch {
         return JSON.stringify({
-          success: false,
           error: `Upload returned non-JSON: ${rawText.slice(0, 200)}`,
         });
       }
@@ -474,7 +462,6 @@ EDGE CASES:
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return JSON.stringify({
-        success: false,
         error: msg.includes("aborted")
           ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
           : `Upload failed: ${msg}`,
@@ -571,7 +558,6 @@ EDGE CASES:
     const apiKey = getApiKey();
     if (!apiKey) {
       return JSON.stringify({
-        success: false,
         error:
           "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
       });
@@ -585,7 +571,6 @@ EDGE CASES:
     const files = resolveFiles(fileNames);
     if (files.length === 0) {
       return JSON.stringify({
-        success: false,
         error:
           "No active files available. Upload documents first with gemini_upload.",
         files_available: 0,
@@ -628,7 +613,6 @@ EDGE CASES:
         Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
-          success: false,
           error:
             "No response generated. The prompt may have been safety-filtered.",
         });
@@ -662,14 +646,12 @@ EDGE CASES:
         if (body) {
           const error = body.error as Record<string, unknown> | undefined;
           return JSON.stringify({
-            success: false,
             error: `Gemini error ${err.status}: ${(error?.message as string) ?? JSON.stringify(body).slice(0, 300)}`,
           });
         }
       }
       const msg = errMsg(err);
       return JSON.stringify({
-        success: false,
         error: msg.includes("aborted")
           ? `Timed out after ${GENERATE_TIMEOUT_MS / 1000}s. Try a shorter query or use gemini-2.5-flash.`
           : `Research failed: ${msg}`,
@@ -788,7 +770,6 @@ EDGE CASES:
     const apiKey = getApiKey();
     if (!apiKey) {
       return JSON.stringify({
-        success: false,
         error:
           "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
       });
@@ -802,7 +783,6 @@ EDGE CASES:
     const files = resolveFiles(fileNames);
     if (files.length === 0) {
       return JSON.stringify({
-        success: false,
         error:
           "No active files available. Upload documents first with gemini_upload.",
       });
@@ -853,7 +833,6 @@ EDGE CASES:
         Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
-          success: false,
           error: "No script generated. Content may have been safety-filtered.",
         });
       }
@@ -868,7 +847,6 @@ EDGE CASES:
       // Parse the JSON script
       if (!rawText) {
         return JSON.stringify({
-          success: false,
           error:
             "No script content returned from Gemini. Content may have been safety-filtered.",
         });
@@ -889,14 +867,12 @@ EDGE CASES:
         if (body) {
           const error = body.error as Record<string, unknown> | undefined;
           return JSON.stringify({
-            success: false,
             error: `Script generation failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
           });
         }
       }
       const msg = errMsg(err);
       return JSON.stringify({
-        success: false,
         error: msg.includes("aborted")
           ? `Script generation timed out after ${GENERATE_TIMEOUT_MS / 1000}s`
           : `Script generation failed: ${msg}`,
@@ -950,7 +926,6 @@ EDGE CASES:
         Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
-          success: false,
           transcript: scriptText,
           files_used: files.map((f) => f.display_name),
           error: "TTS returned no audio data.",
@@ -963,7 +938,6 @@ EDGE CASES:
       const audioPart = parts?.find((p) => p.inlineData);
       if (!audioPart) {
         return JSON.stringify({
-          success: false,
           transcript: scriptText,
           files_used: files.map((f) => f.display_name),
           error: "No audio data in TTS response.",
@@ -1007,7 +981,6 @@ EDGE CASES:
         if (body) {
           const error = body.error as Record<string, unknown> | undefined;
           return JSON.stringify({
-            success: false,
             transcript: scriptText,
             files_used: files.map((f) => f.display_name),
             error: `TTS failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
@@ -1017,7 +990,6 @@ EDGE CASES:
       }
       const msg = errMsg(err);
       return JSON.stringify({
-        success: false,
         transcript: scriptText,
         files_used: files.map((f) => f.display_name),
         error: msg.includes("aborted")

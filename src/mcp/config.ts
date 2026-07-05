@@ -5,6 +5,7 @@
 import { readFileSync, existsSync } from "fs";
 import { getConfig } from "../config.js";
 import type { McpConfig, McpServerConfig } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Load MCP server configuration from JSON file.
@@ -23,7 +24,7 @@ export function loadMcpConfig(): McpConfig | null {
     raw = readFileSync(configPath, "utf-8");
   } catch (err) {
     throw new Error(
-      `Failed to read MCP config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to read MCP config at ${configPath}: ${errMsg(err)}`,
     );
   }
 

@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { getDatabase } from "../db/index.js";
 import { getConfig } from "../config.js";
 import { calculateCost } from "./pricing.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface CostRecord {
   runId: string;
@@ -137,7 +138,7 @@ export function recordReflectionCost(input: {
   } catch (err) {
     console.error(
       "[budget] recordReflectionCost failed (non-fatal):",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }

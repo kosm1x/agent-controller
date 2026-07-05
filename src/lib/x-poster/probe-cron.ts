@@ -15,6 +15,7 @@ import { recordXBackendHealth } from "../../observability/prometheus.js";
 import { probeAllAccounts } from "./index.js";
 import { getXProbeCron } from "./config.js";
 import type { RouterProbe } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 export interface XProbeLog {
   info: (msg: string) => void;
@@ -119,8 +120,4 @@ export function stopXProbeCron(): void {
     scheduledJob.stop();
     scheduledJob = null;
   }
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

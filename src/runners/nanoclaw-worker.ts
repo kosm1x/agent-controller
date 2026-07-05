@@ -41,6 +41,7 @@ import {
   buildEnvironmentNote,
   emittedTargetNotInSandbox,
 } from "./nanoclaw-env-note.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Writable working copy the coding agent edits/commits/pushes from. */
 const WORKSPACE = "/workspace";
@@ -91,7 +92,7 @@ function setupCodingWorkspace(): string | null {
   } catch (err) {
     console.error(
       "[nanoclaw-worker] workspace setup failed (read-only tasks unaffected):",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return null;
   }
@@ -200,7 +201,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     const output = {
       type: "result",
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
       durationMs: Date.now() - start,
     };
     process.stdout.write(

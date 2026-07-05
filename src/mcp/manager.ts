@@ -14,6 +14,7 @@ import type { McpCallResult } from "./bridge.js";
 import { getMcpToolHints } from "./annotations.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Internal state for a connected MCP server. */
 interface ServerEntry {
@@ -102,7 +103,7 @@ export class McpManager {
         connected++;
         totalTools += toolCount;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errMsg(err);
         console.warn(`[mcp] ${serverId}: failed to connect — ${msg}`);
         this.failedServers.set(serverId, { config: serverConfig, attempts: 1 });
       }
@@ -318,7 +319,7 @@ export class McpManager {
       } catch (err) {
         // Reset so next call retries instead of replaying cached rejection
         lazy.connecting = undefined;
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errMsg(err);
         this.alert(`[mcp] ⚠️ ${serverId}: lazy activation failed — ${msg}`);
         throw err;
       }
@@ -391,7 +392,7 @@ export class McpManager {
         await entry.client.close();
       } catch (err) {
         console.warn(
-          `[mcp] ${serverId}: close failed — ${err instanceof Error ? err.message : String(err)}`,
+          `[mcp] ${serverId}: close failed — ${errMsg(err)}`,
         );
       }
     }

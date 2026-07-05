@@ -51,6 +51,7 @@ import {
   type DecompositionAngle,
   type EvidenceRef,
 } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:decompose");
 
@@ -196,7 +197,7 @@ export async function decomposeQuestion(
     // captured is a real call failure.
     if (!sink.captured) {
       throw new DecompositionError(
-        `decomposition call failed: ${e instanceof Error ? e.message : String(e)}`,
+        `decomposition call failed: ${errMsg(e)}`,
       );
     }
   } finally {
@@ -223,7 +224,7 @@ export async function decomposeQuestion(
     });
   } catch (e) {
     throw new DecompositionError(
-      `decomposition failed validation: ${e instanceof Error ? e.message : String(e)}`,
+      `decomposition failed validation: ${errMsg(e)}`,
     );
   }
 }
@@ -391,7 +392,7 @@ export function retrieveKbForQuery(
   } catch (e) {
     // FTS table absent / query rejected → degrade to task-only, never throw.
     log.debug(
-      { err: e instanceof Error ? e.message : String(e) },
+      { err: errMsg(e) },
       "decompose: KB retrieval unavailable (jarvis_files_fts) — task-only ledger",
     );
     return [];

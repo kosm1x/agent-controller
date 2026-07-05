@@ -18,6 +18,7 @@ import {
   describeXError,
 } from "./x-errors.js";
 import { createLogger } from "../logger.js";
+import { errMsg } from "../err-msg.js";
 
 const ME_URL = "https://api.x.com/2/users/me";
 const TWEETS_URL = "https://api.x.com/2/tweets";
@@ -60,7 +61,7 @@ export class ApiBackend implements XBackend {
       return {
         backend: this.name,
         ok: false,
-        detail: `probe error: ${err instanceof Error ? err.message : String(err)}`,
+        detail: `probe error: ${errMsg(err)}`,
         authExpired: false,
       };
     }
@@ -149,14 +150,14 @@ export class ApiBackend implements XBackend {
       log.warn(
         {
           account: this.account,
-          err: err instanceof Error ? err.message : String(err),
+          err: errMsg(err),
         },
         "x post error",
       );
       return {
         backend: this.name,
         ok: false,
-        error: `post error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `post error: ${errMsg(err)}`,
         authExpired: false,
         xErrorLabel: "unknown",
       };

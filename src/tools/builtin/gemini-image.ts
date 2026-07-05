@@ -121,7 +121,6 @@ async function tryGeminiNative(
       const code = error?.code as number | undefined;
       if (code === 429 || code === 400) return null; // fall through to Imagen
       return JSON.stringify({
-        success: false,
         error:
           `Gemini error ${err.status}: ${(error?.message as string) ?? ""}`.slice(
             0,
@@ -164,7 +163,6 @@ async function tryImagen(
       Array<Record<string, unknown>> | undefined;
     if (!predictions?.length) {
       return JSON.stringify({
-        success: false,
         error: "No image generated. Prompt may have been safety-filtered.",
       });
     }
@@ -172,14 +170,13 @@ async function tryImagen(
     const prediction = predictions[0];
     if (prediction.raiFilteredReason) {
       return JSON.stringify({
-        success: false,
         error: `Safety filtered: ${prediction.raiFilteredReason}. Try rephrasing.`,
       });
     }
 
     const base64Data = prediction.bytesBase64Encoded as string;
     if (!base64Data) {
-      return JSON.stringify({ success: false, error: "Empty image data." });
+      return JSON.stringify({ error: "Empty image data." });
     }
 
     return saveImage(base64Data, "image/png", prompt, aspectRatio);
@@ -194,14 +191,12 @@ async function tryImagen(
       if (body !== null) {
         const error = body.error as Record<string, unknown> | undefined;
         return JSON.stringify({
-          success: false,
           error: `Imagen error ${err.status}: ${(error?.message as string) ?? JSON.stringify(body).slice(0, 300)}`,
         });
       }
     }
     const message = errMsg(err);
     return JSON.stringify({
-      success: false,
       error: message.includes("aborted")
         ? `Timed out after ${TIMEOUT_MS / 1000}s.`
         : message,
@@ -280,7 +275,6 @@ DO NOT narrate image generation — call this tool. If it fails, report the actu
     const apiKey = getApiKey();
     if (!apiKey) {
       return JSON.stringify({
-        success: false,
         error:
           "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
       });

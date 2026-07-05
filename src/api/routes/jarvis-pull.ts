@@ -12,6 +12,7 @@
 import { Hono } from "hono";
 import { infer } from "../../inference/adapter.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const jarvisPull = new Hono();
 
@@ -114,7 +115,7 @@ jarvisPull.post("/jarvis-pull", async (c) => {
       tokens: result.usage.prompt_tokens + result.usage.completion_tokens,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return c.json({ error: `Jarvis inference failed: ${message}` }, 503);
   }
 });

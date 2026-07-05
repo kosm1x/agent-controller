@@ -8,6 +8,7 @@
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import type { Goal, GoalResult, OrchestratorConfig } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -164,7 +165,7 @@ export function pruneExpiredSnapshots(ttlMs: number = SNAPSHOT_TTL_MS): number {
     return result?.changes ?? 0;
   } catch (err) {
     console.warn(
-      `[snapshot] pruneExpiredSnapshots failed: ${err instanceof Error ? err.message : err}`,
+      `[snapshot] pruneExpiredSnapshots failed: ${errMsg(err)}`,
     );
     return 0;
   }

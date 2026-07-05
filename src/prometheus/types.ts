@@ -2,6 +2,8 @@
  * Prometheus Core — Shared types, enums, and utilities.
  */
 
+import { errMsg } from "../lib/err-msg.js";
+
 // ---------------------------------------------------------------------------
 // Enums (as const objects — idiomatic modern TS)
 // ---------------------------------------------------------------------------
@@ -347,7 +349,7 @@ export function parseLLMJson<T = unknown>(raw: string): T {
         throw new LLMJsonParseError({
           stage: "extracted-invalid",
           rawSample: extracted.slice(0, 500),
-          innerMessage: err instanceof Error ? err.message : String(err),
+          innerMessage: errMsg(err),
         });
       }
     }

@@ -5,25 +5,21 @@
  * Supports latest and historical rates.
  */
 
-import type { Tool } from "../types.js";
+import { defineTool } from "../define-tool.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const API_URL = "https://api.frankfurter.app";
 const TIMEOUT_MS = 10_000;
 
-export const currencyConvertTool: Tool = {
+export const currencyConvertTool = defineTool({
   name: "currency_convert",
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
   deferred: true,
-  definition: {
-    type: "function",
-    function: {
-      name: "currency_convert",
-      description: `Convert currencies using European Central Bank reference rates.
+  description: `Convert currencies using European Central Bank reference rates.
 
 USE WHEN:
 - User asks to convert money between currencies
@@ -37,28 +33,26 @@ DO NOT USE WHEN:
 
 Supports all major currencies (USD, EUR, MXN, GBP, JPY, BRL, etc.).
 Default: 1 USD to MXN.`,
-      parameters: {
-        type: "object",
-        properties: {
-          amount: {
-            type: "number",
-            description: "Amount to convert (default: 1)",
-          },
-          from: {
-            type: "string",
-            description: "Source currency ISO code (default: USD)",
-          },
-          to: {
-            type: "string",
-            description:
-              "Target currency codes, comma-separated (default: MXN,EUR)",
-          },
-          date: {
-            type: "string",
-            description:
-              "Historical date YYYY-MM-DD (optional, default: latest rates)",
-          },
-        },
+  parameters: {
+    type: "object",
+    properties: {
+      amount: {
+        type: "number",
+        description: "Amount to convert (default: 1)",
+      },
+      from: {
+        type: "string",
+        description: "Source currency ISO code (default: USD)",
+      },
+      to: {
+        type: "string",
+        description:
+          "Target currency codes, comma-separated (default: MXN,EUR)",
+      },
+      date: {
+        type: "string",
+        description:
+          "Historical date YYYY-MM-DD (optional, default: latest rates)",
       },
     },
   },
@@ -99,7 +93,7 @@ Default: 1 USD to MXN.`,
       });
     }
   },
-};
+});
 
 interface FrankfurterResponse {
   amount?: number;

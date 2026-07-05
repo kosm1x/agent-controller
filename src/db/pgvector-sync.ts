@@ -21,6 +21,7 @@ import {
   coerceKbQualifier,
   type KbQualifier,
 } from "./pgvector.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Sync a jarvis_files upsert to pgvector (fire-and-forget).
@@ -93,7 +94,7 @@ export function syncToPgvector(
     } catch (err) {
       console.warn(
         `[pgvector-sync] Failed for ${path}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   })();

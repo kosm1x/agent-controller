@@ -29,6 +29,7 @@ import {
   MAX_RETRIES_PER_GOAL,
 } from "./swarm-retry-policy.js";
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -253,7 +254,7 @@ function attemptSubtaskRetry(
     .catch((err) => {
       console.error(
         `[swarm-retry] respawn submitTask failed goal=${goalId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          `${errMsg(err)}`,
       );
       // Couldn't submit the retry — mark the goal FAILED now so the
       // parent doesn't hang waiting. Best-effort; if the tracker has
@@ -261,7 +262,7 @@ function attemptSubtaskRetry(
       const t = trackers.get(goalId);
       if (t && t.status === "pending") {
         t.status = "failed";
-        t.error = `Sub-task retry submission failed: ${err instanceof Error ? err.message : String(err)}`;
+        t.error = `Sub-task retry submission failed: ${errMsg(err)}`;
         graph.updateStatus(goalId, GoalStatus.FAILED);
       }
     });
@@ -497,7 +498,7 @@ export const swarmRunner: Runner = {
     } catch (err) {
       return {
         success: false,
-        error: `Swarm planning failed: ${err instanceof Error ? err.message : err}`,
+        error: `Swarm planning failed: ${errMsg(err)}`,
         durationMs: Date.now() - start,
       };
     }
@@ -604,7 +605,7 @@ export const swarmRunner: Runner = {
             goalId: goal.id,
             taskId: "",
             status: "failed",
-            error: `Failed to submit sub-task: ${err instanceof Error ? err.message : err}`,
+            error: `Failed to submit sub-task: ${errMsg(err)}`,
           });
         }
       }
@@ -641,7 +642,7 @@ export const swarmRunner: Runner = {
       reflectionResult = result;
     } catch (err) {
       console.warn(
-        `[swarm] Task ${input.taskId}: reflection failed: ${err instanceof Error ? err.message : err}`,
+        `[swarm] Task ${input.taskId}: reflection failed: ${errMsg(err)}`,
       );
       const heuristicScore =
         graph.summary().total > 0

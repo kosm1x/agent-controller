@@ -22,6 +22,7 @@ import { logger } from "../../lib/logger.js";
 import { searchFeedback } from "./feedback-grep.js";
 import { redactDeep } from "./redact.js";
 import type { McpDeps } from "./types.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,7 +52,7 @@ function toolErr(toolName: string, e: unknown): ToolResult {
     {
       tool: toolName,
       correlation_id: correlationId,
-      err: e instanceof Error ? e.message : String(e),
+      err: errMsg(e),
       stack: e instanceof Error ? e.stack : undefined,
     },
     "mcp_tool_failed",

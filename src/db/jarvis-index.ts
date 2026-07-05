@@ -8,6 +8,7 @@
 
 import { getDatabase } from "./index.js";
 import { upsertFile } from "./jarvis-fs.js";
+import { errMsg } from "../lib/err-msg.js";
 
 let dirtyTimer: ReturnType<typeof setTimeout> | null = null;
 const DEBOUNCE_MS = 5_000;
@@ -114,7 +115,7 @@ ${recentLines}
   } catch (err) {
     console.warn(
       "[jarvis-index] Failed to regenerate INDEX.md:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }

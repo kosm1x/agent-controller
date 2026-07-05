@@ -9,6 +9,7 @@ import cron, { type ScheduledTask } from "node-cron";
 
 import { runTasksRetention } from "./retention.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const RETENTION_CRON = "30 4 * * *";
 
@@ -65,7 +66,7 @@ export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
     }
   } catch (err) {
     log.warn("retention sweep threw (contract violation)", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     });
   }
 }

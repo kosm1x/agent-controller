@@ -31,6 +31,7 @@ import {
 } from "../timezone.js";
 import { canCall, recordCall } from "../rate-limit.js";
 import { recordBudget } from "../budget.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const BASE_URL = "https://www.alphavantage.co/query";
 
@@ -298,7 +299,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
         costUnits: opts.costUnits,
       });
       throw new Error(
-        redactApiKeys(err instanceof Error ? err.message : String(err)),
+        redactApiKeys(errMsg(err)),
       );
     }
 

@@ -28,6 +28,7 @@ import { createMarketEodScan } from "./market-eod-scan.js";
 import { createPmDailyRebalance } from "./pm-daily-rebalance.js";
 import { isNyseTradingDay } from "../finance/market-calendar.js";
 import { getConfig } from "../config.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
@@ -49,7 +50,7 @@ function recordRitualFailure(
   err: unknown,
   phase: "submit" | "execute",
 ): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errMsg(err);
   try {
     getEventBus().emitEvent("schedule.run_failed", {
       ritual_id: ritualId,
@@ -63,7 +64,7 @@ function recordRitualFailure(
     // SQLITE_MISUSE on a closed DB during shutdown, etc.). That turned the
     // enforcement gate into theater. Narrow swallow: still non-fatal, but
     // passthrough to console so the break is observable in journalctl.
-    const busMsg = busErr instanceof Error ? busErr.message : String(busErr);
+    const busMsg = errMsg(busErr);
     console.error(
       `[rituals] recordRitualFailure: event bus unavailable (${busMsg}) — original error: ${message}`,
     );
@@ -94,7 +95,7 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       } catch (err) {
         console.warn(
           "[rituals] S3 brief section load failed (brief proceeds without it):",
-          err instanceof Error ? err.message : err,
+          errMsg(err),
         );
       }
       return createMorningBriefing(date, alertSection);
@@ -257,7 +258,7 @@ export function startRitualScheduler(): void {
     scheduleCanary();
   } catch (err) {
     console.error(
-      `[rituals] Failed to schedule canary: ${err instanceof Error ? err.message : err}`,
+      `[rituals] Failed to schedule canary: ${errMsg(err)}`,
     );
   }
 }
@@ -561,7 +562,7 @@ function scheduleStaleArtifactPrune(): void {
           { timeout: 15_000, encoding: "utf-8" },
         ).trim();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errMsg(err);
         if (!DOCKER_UNAVAILABLE_RE.test(message)) {
           console.error("[rituals] stale-artifact-prune list failed:", message);
           recordRitualFailure("stale-artifact-prune", err, "execute");
@@ -586,7 +587,7 @@ function scheduleStaleArtifactPrune(): void {
           });
           removed++;
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errMsg(err);
           failures.push({ name, error: message.slice(0, 120) });
         }
       }
@@ -706,7 +707,7 @@ function scheduleHindsightCostPull(): void {
         }
       } catch (err) {
         console.error(
-          `[rituals] hindsight-cost-pull failed: ${err instanceof Error ? err.message : err}`,
+          `[rituals] hindsight-cost-pull failed: ${errMsg(err)}`,
         );
         recordRitualFailure("hindsight-cost-pull", err, "execute");
       }
@@ -748,7 +749,7 @@ function schedulePrometheusAlertPoller(): void {
         }
       } catch (err) {
         console.error(
-          `[rituals] prometheus-alert-notifier failed: ${err instanceof Error ? err.message : err}`,
+          `[rituals] prometheus-alert-notifier failed: ${errMsg(err)}`,
         );
         recordRitualFailure("prometheus-alert-notifier", err, "execute");
       }

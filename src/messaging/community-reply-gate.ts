@@ -21,6 +21,7 @@
  */
 
 import { infer } from "../inference/adapter.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Generic Spanish acknowledgement shipped in place of any reply that fails
@@ -185,7 +186,7 @@ export async function gateCommunityReply(
   } catch (e) {
     return {
       verdict: "fail",
-      critique: `critic call failed: ${e instanceof Error ? e.message : String(e)}`,
+      critique: `critic call failed: ${errMsg(e)}`,
       latencyMs: Date.now() - t0,
       error: true,
     };

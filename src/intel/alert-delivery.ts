@@ -10,6 +10,7 @@ import {
   markDelivered,
   type AlertTier,
 } from "./alert-router.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Deliver pending FLASH and PRIORITY alerts via the provided broadcast function.
@@ -49,7 +50,7 @@ export async function deliverPendingAlerts(
     } catch (err) {
       console.warn(
         `[intel-delivery] Failed to deliver ${tier} alerts:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }

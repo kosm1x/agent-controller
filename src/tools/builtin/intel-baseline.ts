@@ -56,7 +56,7 @@ frankfurter/MXN, cisa_kev/new_vulns, coingecko/bitcoin, treasury/10Y.`,
     const key = args.key as string;
 
     if (!source || !key) {
-      return "Error: source and key are required.";
+      return JSON.stringify({ error: "source and key are required." });
     }
 
     const baselines = getBaselines(source, key);

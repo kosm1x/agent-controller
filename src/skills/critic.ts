@@ -19,6 +19,7 @@
 import { infer } from "../inference/adapter.js";
 import { parseCriticVerdict } from "../lib/critic-verdict.js";
 import type { ParsedSkillFile } from "./frontmatter.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export const SKILL_CRITIC_SYSTEM_PROMPT = `You are the audit gate for a skill submission. Your job is to detect:
 
@@ -162,7 +163,7 @@ export async function runSkillCritic(
   } catch (e) {
     return {
       verdict: "fail",
-      critique: `critic call failed: ${e instanceof Error ? e.message : String(e)}`,
+      critique: `critic call failed: ${errMsg(e)}`,
       latencyMs: Date.now() - t0,
       error: true,
     };

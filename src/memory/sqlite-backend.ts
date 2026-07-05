@@ -28,6 +28,7 @@ import type {
   RecallOptions,
   ReflectOptions,
 } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Extract meaningful keywords from a query string for SQLite LIKE matching. */
 function extractKeywords(query: string): string[] {
@@ -230,7 +231,7 @@ export class SqliteMemoryBackend implements MemoryService {
         .catch((err) => {
           console.warn(
             "[memory] Embedding store failed:",
-            err instanceof Error ? err.message : err,
+            errMsg(err),
           );
         });
     } catch {

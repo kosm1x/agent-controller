@@ -20,6 +20,7 @@ import {
 import { fromPolygonUnixMs } from "../timezone.js";
 import { canCall, recordCall } from "../rate-limit.js";
 import { recordBudget } from "../budget.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 interface PolygonAggResponse {
   ticker?: string;
@@ -131,7 +132,7 @@ export class PolygonAdapter implements MarketDataAdapter {
         responseTimeMs: Date.now() - start,
       });
       throw new Error(
-        redactApiKeys(err instanceof Error ? err.message : String(err)),
+        redactApiKeys(errMsg(err)),
       );
     }
 

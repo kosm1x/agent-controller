@@ -27,6 +27,7 @@ import {
 import { loadEnabledSignalsByCadence, type Cadence } from "./registry.js";
 import { seedSignalsIdempotent } from "./seed-signals.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
+import { errMsg } from "../err-msg.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -65,7 +66,7 @@ export function registerS3CronJobs(): number {
     // find no signals to evaluate until a manual seed succeeds.
     console.error(
       `[s3] Seed signals failed (cron jobs still registered):`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 
@@ -139,7 +140,7 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
       // into P2 alerts; this catches errors in the evaluator itself.
       console.error(
         `[s3] evaluator threw on signal ${signal.signal_name}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       // S3-I2 fold (Bundle 2): also surface to Grafana via the Prom counter.
       // Dynamic import keeps the scheduler module independent of the
@@ -166,7 +167,7 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
     } catch (err) {
       console.error(
         `[s3] burst detection failed:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       try {
         const { recordS3EvaluatorError } =
@@ -202,7 +203,7 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
     } catch (err) {
       console.error(
         `[s3] push dispatch failed:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       try {
         const { recordS3PushError } =
@@ -236,7 +237,7 @@ export async function noticeError(
 ): Promise<void> {
   console.error(
     `[s3] cron tick threw (${cadence}):`,
-    err instanceof Error ? err.message : err,
+    errMsg(err),
   );
   // S3-I2 fold: tick-level failures (the cron callback itself, outside
   // per-signal isolation) also bump the Prom counter so Grafana sees them.

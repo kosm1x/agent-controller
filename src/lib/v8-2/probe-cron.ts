@@ -19,6 +19,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { runSycophancyProbe, checkSycophancyDrift } from "./sycophancy.js";
+import { errMsg } from "../err-msg.js";
 
 export interface ProbeCronLog {
   info: (msg: string, fields?: Record<string, unknown>) => void;
@@ -45,7 +46,7 @@ async function runProbeTick(log: ProbeCronLog): Promise<void> {
     });
   } catch (err) {
     log.warn("sycophancy probe tick failed (non-fatal)", {
-      err: err instanceof Error ? err.message : String(err),
+      err: errMsg(err),
     });
   }
 }

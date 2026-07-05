@@ -28,6 +28,7 @@ import type {
 import { getMemoryService } from "../memory/index.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 import { logReflectorGap } from "../db/reflector-gap.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // v7.9 Prometheus Sonnet port — see planner.ts for the rationale.
 function useSdkPath(): boolean {
@@ -201,7 +202,7 @@ export async function reflect(
       );
     } else {
       console.warn(
-        `[reflector] Failed to get LLM reflection: ${err instanceof Error ? err.message : err}; using heuristic`,
+        `[reflector] Failed to get LLM reflection: ${errMsg(err)}; using heuristic`,
       );
     }
     assessment = heuristicFallback(graph);

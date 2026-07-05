@@ -38,6 +38,7 @@ import { EXPERIMENT_TIMEOUT_MS } from "../config/constants.js";
 import { runGates, loadGateConfigFromEnv } from "./gates.js";
 import { classifyFailureSource } from "./failure-classifier.js";
 import { computeConfidenceProxy } from "./confidence.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -533,7 +534,7 @@ export async function runOvernightTuning(
         failure_source: classifyFailureSource({
           status: "error",
           mutation,
-          errorMessage: err instanceof Error ? err.message : String(err),
+          errorMessage: errMsg(err),
         }),
       });
       experimentsRun++;

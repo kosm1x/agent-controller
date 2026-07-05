@@ -14,6 +14,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import { recordCohortRollup } from "../observability/prometheus.js";
 import { type RollUpResult, rollUpCohort } from "./self-defining.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -78,7 +79,7 @@ export function runCohortRollup(
   } catch (err) {
     recordCohortRollup("error");
     log.warn("cohort roll-up failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
     });
     return null;
   }

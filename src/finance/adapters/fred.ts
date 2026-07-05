@@ -18,6 +18,7 @@ import {
 import { fromFredDate } from "../timezone.js";
 import { canCall, recordCall } from "../rate-limit.js";
 import { recordBudget } from "../budget.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const BASE_URL = "https://api.stlouisfed.org/fred/series/observations";
 
@@ -79,7 +80,7 @@ export class FredAdapter implements MacroAdapter {
         responseTimeMs: Date.now() - start,
       });
       throw new Error(
-        redactApiKeys(err instanceof Error ? err.message : String(err)),
+        redactApiKeys(errMsg(err)),
       );
     }
 

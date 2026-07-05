@@ -32,6 +32,7 @@ import type {
   EventType,
   Subscription,
 } from "./types";
+import { errMsg } from "../err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -560,7 +561,7 @@ export class PersistentEventBus extends EventEmitter {
       subscriber_id: subscriberId,
       event_id: event.id,
       event_type: event.type,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
   }

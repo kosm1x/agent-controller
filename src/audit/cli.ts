@@ -21,6 +21,7 @@ import {
   renderAuditResult,
   type AuditClaimRequest,
 } from "./self-audit.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const DEFAULT_DB =
   process.env.MC_DB_PATH ?? resolve(process.cwd(), "data/mc.db");
@@ -37,7 +38,7 @@ let req: AuditClaimRequest;
 try {
   req = JSON.parse(argvJson) as AuditClaimRequest;
 } catch (e) {
-  fail(`invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  fail(`invalid JSON: ${errMsg(e)}`);
 }
 
 if (!req.metric || !req.window) {
@@ -47,14 +48,14 @@ if (!req.metric || !req.window) {
 try {
   initDatabase(DEFAULT_DB);
 } catch (e) {
-  fail(`DB init failed: ${e instanceof Error ? e.message : String(e)}`);
+  fail(`DB init failed: ${errMsg(e)}`);
 }
 
 let result;
 try {
   result = runAudit(req);
 } catch (e) {
-  fail(`audit run failed: ${e instanceof Error ? e.message : String(e)}`);
+  fail(`audit run failed: ${errMsg(e)}`);
 }
 
 process.stdout.write(renderAuditResult(result) + "\n");

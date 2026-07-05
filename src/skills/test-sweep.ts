@@ -21,6 +21,7 @@ import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import { runSkillTests } from "./test-runner.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -58,7 +59,7 @@ export function registerSkillsTestSweepCron(
     () =>
       void runSkillsTestSweep(log).catch((err) => {
         log.warn("sweep tick failed", {
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg(err),
         });
       }),
     { timezone: SWEEP_TIMEZONE },
@@ -152,7 +153,7 @@ export async function runSkillsTestSweep(
       result.skipped++;
       log.warn("sweep run threw — skipping", {
         skill: skill.name,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg(err),
       });
     }
   }

@@ -17,6 +17,7 @@ import { getDatabase } from "../db/index.js";
 import { RateLimitedError, redactApiKeys } from "./types.js";
 import { canCall, recordCall } from "./rate-limit.js";
 import { recordBudget } from "./budget.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const GAMMA_BASE = "https://gamma-api.polymarket.com";
 const CLOB_BASE = "https://clob.polymarket.com";
@@ -192,7 +193,7 @@ export class PolymarketAdapter {
         responseTimeMs: Date.now() - start,
       });
       throw new Error(
-        redactApiKeys(err instanceof Error ? err.message : String(err)),
+        redactApiKeys(errMsg(err)),
       );
     }
     const responseTimeMs = Date.now() - start;

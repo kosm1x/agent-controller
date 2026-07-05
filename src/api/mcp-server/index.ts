@@ -32,6 +32,7 @@ import { mcpAuth } from "./auth.js";
 import { mcpRateLimit } from "./rate-limit.js";
 import { registerJarvisTools } from "./tools.js";
 import type { McpDeps } from "./types.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 100;
@@ -110,7 +111,7 @@ export function createMcpRouter(deps: McpDeps): Hono {
       // stays in server-side pino logs. Prevents information disclosure
       // (DB paths, stack-derivable strings, internal state) via the error
       // message channel while keeping debuggability intact.
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errMsg(e);
       logger.error(
         {
           correlation_id: correlationId,

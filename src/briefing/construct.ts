@@ -47,6 +47,7 @@ import {
   getRecentlyDiscardedSubjects,
   insertProposedBriefing,
 } from "./storage.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const MS_PER_DAY = 86_400_000;
 const SYSTEM_PROMPT =
@@ -223,7 +224,7 @@ export async function constructBriefing(
     return {
       ok: false,
       stage: "assembly",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errMsg(err),
     };
   }
   const {
@@ -271,7 +272,7 @@ export async function constructBriefing(
     return {
       ok: false,
       stage: "inference",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errMsg(err),
     };
   }
 
@@ -298,7 +299,7 @@ export async function constructBriefing(
     return {
       ok: false,
       stage: "parse",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errMsg(err),
     };
   }
 

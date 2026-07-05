@@ -12,6 +12,7 @@ import { generateEmbeddings } from "../inference/embeddings.js";
 import { pgBatchUpsert, contentHash, coerceKbQualifier } from "./pgvector.js";
 import type { KbEntry } from "./pgvector.js";
 import { qualifierToSalience } from "./pgvector-sync.js";
+import { errMsg } from "../lib/err-msg.js";
 
 interface JarvisFileRow {
   path: string;
@@ -73,7 +74,7 @@ export async function backfillToPgvector(): Promise<{
     } catch (err) {
       console.warn(
         `[backfill] Embedding generation failed for batch ${batchNum}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       embeddings = batch.map(() => []);
     }

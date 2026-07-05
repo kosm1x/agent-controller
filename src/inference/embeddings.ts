@@ -15,6 +15,8 @@
  * Default: Gemini if GEMINI_API_KEY is set, otherwise OpenAI-compatible.
  */
 
+import { errMsg } from "../lib/err-msg.js";
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ async function geminiEmbed(
   } catch (err) {
     console.warn(
       "[embeddings] Gemini error:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return texts.map(() => []);
   }
@@ -237,7 +239,7 @@ async function openaiEmbed(
   } catch (err) {
     console.warn(
       "[embeddings] OpenAI error:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return texts.map(() => []);
   }

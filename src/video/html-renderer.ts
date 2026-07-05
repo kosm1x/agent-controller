@@ -20,6 +20,7 @@ import { mkdirSync, rmSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import { formatFrameTime } from "./frame-clock.js";
 import type { ParsedHtmlComposition } from "./html-parser.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Playwright executable path — the ONLY path proven to survive on this VPS. */
 export const SNAP_CHROMIUM_PATH = "/snap/bin/chromium";
@@ -282,7 +283,7 @@ export async function renderHtmlComposition(
   } catch (err) {
     cleanupFramesOnError();
     throw new Error(
-      `ffmpeg concat failed: ${err instanceof Error ? err.message : String(err)}`,
+      `ffmpeg concat failed: ${errMsg(err)}`,
     );
   }
 

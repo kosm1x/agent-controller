@@ -24,6 +24,7 @@ import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -710,7 +711,7 @@ async function dispatchWithSlot(
         }
       } catch (err) {
         log.warn(
-          { taskId, err: err instanceof Error ? err.message : String(err) },
+          { taskId, err: errMsg(err) },
           "ritual persistResult: failed to store report",
         );
       }
@@ -774,7 +775,7 @@ async function dispatchWithSlot(
       // Event emission should not block
     }
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = errMsg(err);
     db.prepare(
       `
       UPDATE runs SET status = 'failed', error = @error, completed_at = datetime('now')

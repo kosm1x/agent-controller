@@ -9,6 +9,7 @@ import type { Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
 import { validateArgsUrls } from "../lib/url-safety.js";
 import { getMcpToolHints } from "./annotations.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** MCP tool info as returned by client.listTools(). */
 export interface McpToolInfo {
@@ -114,7 +115,7 @@ export function createMcpTool(
         return text;
       } catch (err) {
         return JSON.stringify({
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg(err),
         });
       }
     },

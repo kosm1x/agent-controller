@@ -31,6 +31,7 @@ import { z } from "zod";
 import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import { runSkillPrompt } from "./mini-runner.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const log = createLogger("skills:test-runner");
 
@@ -455,7 +456,7 @@ function writeTestRun(
     .then(({ recordSkillTestResult }) => recordSkillTestResult(outcome.result))
     .catch((err) => {
       log.warn(
-        { err: err instanceof Error ? err.message : String(err) },
+        { err: errMsg(err) },
         "counter import failed (counter not incremented)",
       );
     });

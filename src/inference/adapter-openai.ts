@@ -857,6 +857,7 @@ import {
   checkPersistentFailure,
   isTokenBudgetExceeded,
 } from "./guards.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Critical System Reminder — re-injected every 3 rounds to prevent drift
@@ -1448,10 +1449,10 @@ export async function inferWithToolsViaOpenAi(
         },
       );
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errText = errMsg(err);
 
       // 413 auto-compression: force-compress via pipeline and retry once
-      if (errMsg.includes("413") && !has413Retried) {
+      if (errText.includes("413") && !has413Retried) {
         has413Retried = true;
         console.log(
           `[inference] 413 payload too large at round ${round}, force-compressing`,
@@ -1469,7 +1470,7 @@ export async function inferWithToolsViaOpenAi(
 
       // Mid-loop inference failure — attempt toolless wrap-up instead of crashing
       console.log(
-        `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${errMsg}`,
+        `[inference] Round ${round + 1}/${maxRounds} failed, attempting wrap-up: ${errText}`,
       );
       try {
         // Collect tools called so far for honest wrap-up
@@ -1745,7 +1746,7 @@ export async function inferWithToolsViaOpenAi(
             }
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errMsg(err);
           result = JSON.stringify({ error: message });
           console.error(
             `[inference] Tool ${toolCall.function.name} failed: ${message}`,

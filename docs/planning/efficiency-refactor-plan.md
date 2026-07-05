@@ -50,7 +50,9 @@ deployed (PID 732154), and live-verified. Implementation deltas vs the audit:
 
 **Verify:** scoped vitest per touched file; deploy via `./scripts/deploy.sh`; trigger one video job end-to-end and confirm HTTP/Telegram stay responsive during assembly; `journalctl -u mission-control` clean.
 
-## Phase 1 — Dead code purge (−~1,900 LOC, low risk)
+## Phase 1 — Dead code purge (−~1,900 LOC, low risk) — ✅ SHIPPED 2026-07-05 (`19664cb`)
+
+Actual: −~4,700 LOC (tuning shelve folded in per operator). Deltas: meta-agent.ts KEPT (it is the core mutation proposer, not a bolt-on — auditor misclassified); resume.ts KEPT (operator: planned feature); ensureScopeTelemetryTable + resetDiscoveryRateLimit kept exported (live test-isolation callers); finance trio's aspirational composed.test.ts deleted with it.
 
 | #   | Kill                                                                                                                                                                                                | LOC  | Evidence                                                                                                      |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------- |
@@ -66,7 +68,9 @@ deployed (PID 732154), and live-verified. Implementation deltas vs the audit:
 
 **Verify:** `tsc --noEmit`; scoped vitest on each touched dir; full deploy + smoke (service active, one message round-trip).
 
-## Phase 2 — Shared tool infrastructure (−~4–6k LOC over time, incremental)
+## Phase 2 — Shared tool infrastructure — ✅ CORE SHIPPED 2026-07-05 (`19664cb` + Wave C)
+
+Helpers live (errMsg/fetchJson/parseJsonFromLlm/truncate/wp-client) with 15 consumers migrated; binary/protocol fetch sites left deliberately (http, web-read, chart, uploads); truncate replacements skipped on exact-semantics mismatch (documented); checks-framework demoted to plain module (−173); skills scope group wired. Error-convention converge + defineTool factory in Wave C. Remaining defineTool migration is new-tools-first by policy (CLAUDE.md updated).
 
 Order matters: helpers first, migration incremental (new code immediately, existing files opportunistically — never a big-bang rewrite of 189 tools).
 
@@ -83,7 +87,9 @@ Order matters: helpers first, migration incremental (new code immediately, exist
 
 **Verify:** registry tests from 0.8 act as the safety net for 2.5/2.6; scoped vitest per migrated file; one live tool invocation per migrated family.
 
-## Phase 3 — Hot-path allocation trims (needs cache-prefix care)
+## Phase 3 — Hot-path allocation trims — ✅ SHIPPED 2026-07-05 (`19664cb`)
+
+Deltas: consolidation went further than a hoist (single windowed DELETE, scratch-DB-verified); recall-utility per-row writeWithRetry deliberately kept (per-row error isolation is its design); router env-flags — only ONE build was actually in the tail (auditor overcounted; the other two are inside scopeToolsForMessage, untouched).
 
 | #   | Move                                                                                                                                                                                                                                                                                                       | Win                                                                   | Risk                                                                                                               |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -94,7 +100,9 @@ Order matters: helpers first, migration incremental (new code immediately, exist
 
 **Verify:** scoped vitest; post-deploy watch cache-read % (must hold ~82%) + message latency in journal.
 
-## Phase 4 — Structural refactors (the big maintainability wins)
+## Phase 4 — Structural refactors — ✅ SHIPPED 2026-07-05 (`19664cb`)
+
+4.1 handleInbound 895→34 (13 interceptors, 56/56 parity; feedbackTaskId threading required a signature deviation — destructive read). 4.2 adapter.ts 2347→451 + adapter-openai.ts 2005 (pure move, re-exports keep every importer working; CLAUDE.md quirks invariant updated). 4.3 user_version gate IN PLACE (probes wrapped, not moved — a moved probe would break fresh-DB boot at the model_tier index) + SCHEMA_MIGRATIONS list + validate-migration-runner.ts (fresh/migrated/reboot all green). 4.4 90d retention + daily 04:30 cron + 8 safety tests. 4.5 paper-persist-core: qualitative goals met (single-sited SQL + P&L, write-boundary rounding, 92/92 gate identical); LOC target missed honestly (+206 — typed export-preserving shims); integer-cents storage deferred (needs schema migration).
 
 | #   | Move                                                                                                                                                                                                                                                                         | Win                                                                       | Risk                                                                                                     |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

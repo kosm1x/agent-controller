@@ -31,6 +31,7 @@ import { recordSkillRun } from "../observability/prometheus.js";
 const log = createLogger("skills:dispatcher");
 import { runSkillPrompt, type MiniRunUsage } from "./mini-runner.js";
 import { validateSkillArgs } from "./inputs.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -553,7 +554,7 @@ function writeCostLedger(ctx: CostCtx): void {
   } catch (err) {
     // Cost ledger failure must not abort the skill run.
     log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
+      { err: errMsg(err) },
       "cost_ledger write failed",
     );
   }
@@ -567,7 +568,7 @@ function bumpRunCounter(name: string, result: string): void {
     .then(() => recordSkillRun(name, result))
     .catch((err) => {
       log.warn(
-        { err: err instanceof Error ? err.message : String(err) },
+        { err: errMsg(err) },
         "counter bump failed",
       );
     });

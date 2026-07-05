@@ -11,6 +11,7 @@
  */
 
 import type { Browser, BrowserContext } from "playwright";
+import { errMsg } from "./err-msg.js";
 
 /** Static fallback — matches the pre-fingerprinting STEALTH_CONTEXT_OPTIONS. */
 const STATIC_CONTEXT_OPTIONS = {
@@ -55,7 +56,7 @@ export async function createFingerprintedContext(
   } catch (err) {
     console.warn(
       "[stealth] Fingerprint injection unavailable, using static context:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
     return browser.newContext({
       ...STATIC_CONTEXT_OPTIONS,

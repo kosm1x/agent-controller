@@ -23,6 +23,7 @@
 
 import { getDatabase } from "../../db/index.js";
 import { formatRelativeTime } from "./delivery.js";
+import { errMsg } from "../err-msg.js";
 
 export interface PushAlertRow {
   id: number;
@@ -237,7 +238,7 @@ export async function dispatchPushAlerts(
       // .catch-wrapped sends), but if it does, route through the same path.
       console.error(
         `[s3-push] broadcast threw for alert ${msg.alertId}:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       try {
         const { recordS3PushError } =

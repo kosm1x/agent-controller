@@ -181,7 +181,7 @@ describe("git tools", () => {
         throw new Error("not logged in");
       });
       const result = await gitPushTool.execute({});
-      expect(result).toContain("Error");
+      expect(JSON.parse(result).error).toContain("GitHub auth not configured");
     });
 
     it("returns error on detached HEAD", async () => {

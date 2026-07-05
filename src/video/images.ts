@@ -5,6 +5,7 @@
 
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { errMsg } from "../lib/err-msg.js";
 
 const PEXELS_API_URL = "https://api.pexels.com/v1/search";
 const TIMEOUT_MS = 15_000;
@@ -62,7 +63,7 @@ export async function fetchImage(
     } catch (err) {
       console.warn(
         `[images] Pexels failed for "${query}":`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -106,7 +107,7 @@ export async function fetchImage(
     } catch (err) {
       console.warn(
         `[images] Gemini failed for "${query}":`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }
@@ -139,7 +140,7 @@ export async function fetchImage(
     } catch (err) {
       console.warn(
         `[images] HuggingFace failed for "${query}":`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
     }
   }

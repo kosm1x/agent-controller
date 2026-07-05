@@ -23,6 +23,7 @@ import {
   pointSkillAtVersion,
   recordVersion,
 } from "./storage.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface LoaderError {
   path: string;
@@ -119,7 +120,7 @@ export function loadSkillsFromJarvisFiles(log: LoaderLog): LoaderResult {
         });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       const issue: LoaderError = {
         path: entry.path,
         kind: "db",

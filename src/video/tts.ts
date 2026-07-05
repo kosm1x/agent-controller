@@ -15,6 +15,7 @@ import { execFileSync } from "child_process";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import type { VideoScene } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const TIMEOUT_MS = 30_000;
 const MAX_CHARS_PER_CHUNK = 2000;
@@ -275,7 +276,7 @@ export async function generateNarration(
   } catch (err) {
     console.warn(
       "[tts] edge-tts failed:",
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 
@@ -331,7 +332,7 @@ export async function generatePerSceneTTS(
     } catch (err) {
       console.warn(
         `[tts] Scene ${i} failed:`,
-        err instanceof Error ? err.message : err,
+        errMsg(err),
       );
       // Fallback: silent audio matching scene duration
       generateSilence(outputPath, scene.duration);

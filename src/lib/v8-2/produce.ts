@@ -63,6 +63,7 @@ import {
   type EvidenceRef,
   type ProposedOption,
 } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:produce");
 
@@ -247,7 +248,7 @@ async function runCriticAndFinalize(
       // A failed re-author degrades to the prior draft (no fabricated revision);
       // the loop runs its 2nd critic on the same prose, then escalates.
       log.warn(
-        { judgmentId, err: err instanceof Error ? err.message : String(err) },
+        { judgmentId, err: errMsg(err) },
         "re-author failed — keeping prior draft",
       );
       return {
@@ -484,10 +485,7 @@ export async function runJudgmentAssembly(
       log.error(
         {
           subject: selected[idx].subject,
-          err:
-            outcome.reason instanceof Error
-              ? outcome.reason.message
-              : String(outcome.reason),
+          err: errMsg(outcome.reason),
         },
         "judgment assembly failed for one judgment (non-fatal)",
       );

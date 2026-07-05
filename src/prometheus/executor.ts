@@ -27,6 +27,7 @@ import {
   classifySources,
   condenseSearchResults,
 } from "./provenance.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // v7.9 Prometheus Sonnet port — see planner.ts for the rationale.
 function useSdkPath(): boolean {
@@ -241,7 +242,7 @@ export async function selfAssess(
     return { assessment, usage };
   } catch (err) {
     console.warn(
-      `[executor] Self-assessment failed for ${goal.id}: ${err instanceof Error ? err.message : err}; assuming met`,
+      `[executor] Self-assessment failed for ${goal.id}: ${errMsg(err)}; assuming met`,
     );
     return {
       assessment: {
@@ -656,7 +657,7 @@ export async function executeGoal(
         }
       } catch (err) {
         console.warn(
-          `[executor] Provenance extraction failed for ${goal.id}: ${err instanceof Error ? err.message : err}`,
+          `[executor] Provenance extraction failed for ${goal.id}: ${errMsg(err)}`,
         );
       }
 
@@ -689,7 +690,7 @@ export async function executeGoal(
         },
       };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = errMsg(err);
       const strategy = classifyError(errorMsg, attempt, MAX_RETRIES);
 
       if (strategy === ErrorStrategy.RETRY) {

@@ -15,6 +15,7 @@ import { join, dirname, resolve } from "node:path";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 import type { DriveMetadata } from "./drive-sync.js";
 import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
@@ -104,7 +105,7 @@ export function syncDeleteFromKbMirror(path: string): void {
   } catch (err) {
     // Non-fatal. Same rationale as mirrorToDisk: SQLite is source of truth.
     console.warn(
-      `[jarvis-fs] syncDeleteFromKbMirror failed for ${path}: ${err instanceof Error ? err.message : err}`,
+      `[jarvis-fs] syncDeleteFromKbMirror failed for ${path}: ${errMsg(err)}`,
     );
   }
 }
@@ -123,7 +124,7 @@ export function mirrorToDisk(path: string, content: string): void {
     // recovers the FS→DB direction, not DB→FS, so silent mirror failures
     // would let DB and FS drift indefinitely without any operator signal.
     console.warn(
-      `[jarvis-fs] mirrorToDisk failed for ${path}: ${err instanceof Error ? err.message : err}`,
+      `[jarvis-fs] mirrorToDisk failed for ${path}: ${errMsg(err)}`,
     );
   }
 }

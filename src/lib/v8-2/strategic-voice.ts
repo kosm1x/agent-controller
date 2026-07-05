@@ -23,6 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { errMsg } from "../err-msg.js";
 
 /**
  * File id for the active principle version. Judgments record this string in
@@ -65,7 +66,7 @@ export function loadStrategicVoicePrinciple(): string {
   } catch (e) {
     throw new Error(
       `strategic-voice: cannot read principle file at ${path} — ${
-        e instanceof Error ? e.message : String(e)
+        errMsg(e)
       }`,
     );
   }

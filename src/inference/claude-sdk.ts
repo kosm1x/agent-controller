@@ -35,6 +35,7 @@ import type {
   ToolExecutor,
   OnTextChunk,
 } from "./adapter.js";
+import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
 // JSON Schema → Zod raw shape (for SDK tool() definitions)
@@ -131,7 +132,7 @@ function wrapTool(t: Tool) {
           content: [
             {
               type: "text",
-              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+              text: `Error: ${errMsg(err)}`,
             },
           ],
           isError: true,
@@ -262,7 +263,7 @@ export async function queryClaudeSdkComplexWithFallback<T>(
       err instanceof Error
         ? err.name
         : ((err as { name?: string })?.name ?? "");
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = errMsg(err);
     if (errorName === "AbortError" || /aborted/i.test(errorMsg)) {
       throw err;
     }
@@ -749,8 +750,7 @@ export async function queryClaudeSdk(opts: {
         resultText = streamingText;
       } else {
         providerOutcome = "failure";
-        const errMsg = err instanceof Error ? err.message : String(err);
-        resultText = `Error: query aborted — ${errMsg}`;
+        resultText = `Error: query aborted — ${errMsg(err)}`;
       }
     }
   }

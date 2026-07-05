@@ -134,11 +134,20 @@ export function createTaskExecutor(
     // Centralized here so individual tool handlers don't need modification.
     // Only records if the tool is a file-mutating tool and didn't return an error.
     try {
-      // Detect error results — don't record failed mutations (C1 audit fix)
+      // Detect error results — don't record failed mutations (C1 audit fix).
+      // "Error:" prefix = MCP-passthrough leg: MCP servers' plain-text outputs
+      // aren't ours to converge. Builtin tools no longer return "Error:"
+      // strings (converged on {error} JSON, 2026-07-05).
       let isError = result.startsWith("Error:");
       if (!isError) {
         try {
           const parsed = JSON.parse(result);
+          // {error: ...} is THE builtin failure convention. The
+          // `success === false` leg survives only for the remaining dynamic
+          // envelope producers: jarvis_files_batch_* (`success: errors === 0`,
+          // documented partial-error contract) and gemini_upload
+          // (`success: state === "ACTIVE"`). No literal {success:false}
+          // failure sites remain in src/tools.
           if (parsed.error || parsed.success === false) isError = true;
         } catch {
           // Non-JSON result — not an error

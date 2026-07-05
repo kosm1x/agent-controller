@@ -6,6 +6,7 @@
  */
 
 import { upsertFile, deleteFile, listFiles, getFile } from "../db/jarvis-fs.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const CHECKPOINT_PREFIX = "workspace/checkpoints/";
 const CHECKPOINT_TTL_MS = 30 * 60_000; // 30 minutes
@@ -90,7 +91,7 @@ export function writeCheckpoint(opts: {
   } catch (err) {
     console.warn(
       `[checkpoint] Failed to save:`,
-      err instanceof Error ? err.message : err,
+      errMsg(err),
     );
   }
 }
@@ -166,13 +167,13 @@ export function pruneExpiredCheckpoints(
         deleted++;
       } catch (err) {
         console.warn(
-          `[checkpoint] prune failed for ${f.path}: ${err instanceof Error ? err.message : err}`,
+          `[checkpoint] prune failed for ${f.path}: ${errMsg(err)}`,
         );
       }
     }
   } catch (err) {
     console.warn(
-      `[checkpoint] pruneExpiredCheckpoints listFiles failed: ${err instanceof Error ? err.message : err}`,
+      `[checkpoint] pruneExpiredCheckpoints listFiles failed: ${errMsg(err)}`,
     );
   }
   return deleted;

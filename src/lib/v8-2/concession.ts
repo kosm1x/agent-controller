@@ -50,6 +50,7 @@ import {
   type JudgmentRow,
 } from "./judgments-store.js";
 import type { EvidenceRef } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:concession");
 
@@ -202,7 +203,7 @@ export async function classifyReply(
   } catch (e) {
     if (!sink.captured) {
       log.warn(
-        { err: e instanceof Error ? e.message : String(e) },
+        { err: errMsg(e) },
         "classifyReply failed — falling back to legacy regex",
       );
       return { cls: null, judgmentId: null, rationale: "", error: true };

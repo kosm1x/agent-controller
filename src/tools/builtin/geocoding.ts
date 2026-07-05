@@ -5,7 +5,7 @@
  * Required User-Agent header per Nominatim ToS.
  */
 
-import type { Tool } from "../types.js";
+import { defineTool } from "../define-tool.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
@@ -13,18 +13,14 @@ const API_URL = "https://nominatim.openstreetmap.org/search";
 const TIMEOUT_MS = 10_000;
 const USER_AGENT = "AgentController/1.0";
 
-export const geocodeAddressTool: Tool = {
+export const geocodeAddressTool = defineTool({
   name: "geocode_address",
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
   deferred: true,
-  definition: {
-    type: "function",
-    function: {
-      name: "geocode_address",
-      description: `Look up geographic coordinates and address details for a location.
+  description: `Look up geographic coordinates and address details for a location.
 
 USE WHEN:
 - Need latitude/longitude for a place name or address
@@ -38,22 +34,20 @@ DO NOT USE WHEN:
 - Need driving directions or routes (use web_search)
 
 Uses OpenStreetMap Nominatim. Returns up to 5 matches with coordinates, display name, and type.`,
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description:
-              "Address or place name to geocode (e.g., 'Mexico City', '1600 Pennsylvania Ave, Washington DC')",
-          },
-          limit: {
-            type: "number",
-            description: "Max results (1-5, default: 3)",
-          },
-        },
-        required: ["query"],
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Address or place name to geocode (e.g., 'Mexico City', '1600 Pennsylvania Ave, Washington DC')",
+      },
+      limit: {
+        type: "number",
+        description: "Max results (1-5, default: 3)",
       },
     },
+    required: ["query"],
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -97,7 +91,7 @@ Uses OpenStreetMap Nominatim. Returns up to 5 matches with coordinates, display 
       return JSON.stringify({ error: `Geocoding failed: ${errMsg(err)}` });
     }
   },
-};
+});
 
 interface NominatimResult {
   lat: string;

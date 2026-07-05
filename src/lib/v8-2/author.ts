@@ -28,6 +28,7 @@ import {
 } from "./strategic-voice.js";
 import { createLogger } from "../logger.js";
 import type { EvidenceRef, ProposedOption } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:author");
 
@@ -162,11 +163,11 @@ export async function authorJudgment(
   } catch (e) {
     if (e instanceof AuthorError) throw e;
     log.warn(
-      { err: e instanceof Error ? e.message : String(e) },
+      { err: errMsg(e) },
       "author call failed",
     );
     throw new AuthorError(
-      `author call failed: ${e instanceof Error ? e.message : String(e)}`,
+      `author call failed: ${errMsg(e)}`,
     );
   } finally {
     clearTimeout(timeoutHandle);

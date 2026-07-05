@@ -48,6 +48,7 @@ import { createLogger } from "../logger.js";
 import { markClaimsContradicted, type ResolvedClaim } from "./cite.js";
 import type { UnresolvedClaim } from "./cite.js";
 import type { EvidenceRef } from "./types.js";
+import { errMsg } from "../err-msg.js";
 
 const log = createLogger("v8-2:critic");
 
@@ -232,7 +233,7 @@ export function runReadOnlySelect(db: Database.Database, sql: string): string {
       : "";
     return `${rows.length} row(s)${more}: ${json}`;
   } catch (e) {
-    return `sql_check error: ${e instanceof Error ? e.message : String(e)}`;
+    return `sql_check error: ${errMsg(e)}`;
   }
 }
 
@@ -282,7 +283,7 @@ export function runCostCheck(
       .get(...params);
     return JSON.stringify({ window_days: days, ...(row as object) });
   } catch (e) {
-    return `cost_check error: ${e instanceof Error ? e.message : String(e)}`;
+    return `cost_check error: ${errMsg(e)}`;
   }
 }
 
@@ -336,7 +337,7 @@ export function runRecallCheck(db: Database.Database, q: string): string {
     }
     return `top ${rows.length} (lexical bm25, lower=closer): ${JSON.stringify(rows)}`;
   } catch (e) {
-    return `recall_check unavailable (lexical jarvis_files_fts): ${e instanceof Error ? e.message : String(e)}`;
+    return `recall_check unavailable (lexical jarvis_files_fts): ${errMsg(e)}`;
   }
 }
 
@@ -383,7 +384,7 @@ export function runFileSha(repoRoot: string, p: string): string {
       bytes: st.size,
     });
   } catch (e) {
-    return `file_sha error: ${e instanceof Error ? e.message : String(e)}`;
+    return `file_sha error: ${errMsg(e)}`;
   }
 }
 
@@ -576,7 +577,7 @@ export async function runCritic(
     }
     return {
       verdict: "needs_revision",
-      critique: `critic call failed: ${e instanceof Error ? e.message : String(e)}`,
+      critique: `critic call failed: ${errMsg(e)}`,
       contradictedClaimIds: [],
       latencyMs: Date.now() - t0,
       error: true,
@@ -618,7 +619,7 @@ function finalize(
     } catch (e) {
       // A write failure must not erase the verdict — surface it, keep going.
       log.warn(
-        { err: e instanceof Error ? e.message : String(e), ids },
+        { err: errMsg(e), ids },
         "critic: markClaimsContradicted failed",
       );
     }

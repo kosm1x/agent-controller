@@ -11,6 +11,7 @@ import { A2ARpcClient, agentCardCache } from "../a2a/client.js";
 import { A2A_TERMINAL_STATES } from "../a2a/types.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
+import { errMsg } from "../lib/err-msg.js";
 
 const POLL_INITIAL_MS = 1_000;
 const POLL_MAX_MS = 15_000;
@@ -112,7 +113,7 @@ export const a2aRunner: Runner = {
     } catch (err) {
       return {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg(err),
         durationMs: Date.now() - start,
       };
     }

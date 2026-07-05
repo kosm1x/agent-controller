@@ -28,6 +28,7 @@ import {
 } from "./x-errors.js";
 import { authHeaders, withAuthedRequest } from "./authed-request.js";
 import { createLogger } from "../logger.js";
+import { errMsg } from "../err-msg.js";
 
 const NAV_TIMEOUT_MS = 30_000;
 const log = createLogger("x-poster");
@@ -74,7 +75,7 @@ export class CookieBackend implements XBackend {
       return {
         backend: this.name,
         ok: false,
-        detail: `probe error: ${err instanceof Error ? err.message : String(err)}`,
+        detail: `probe error: ${errMsg(err)}`,
         authExpired: false,
       };
     }
@@ -189,14 +190,14 @@ export class CookieBackend implements XBackend {
       log.warn(
         {
           account: this.account,
-          err: err instanceof Error ? err.message : String(err),
+          err: errMsg(err),
         },
         "x post error",
       );
       return {
         backend: this.name,
         ok: false,
-        error: `post error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `post error: ${errMsg(err)}`,
         authExpired: false,
         xErrorLabel: "unknown",
       };

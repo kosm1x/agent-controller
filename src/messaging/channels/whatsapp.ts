@@ -25,6 +25,7 @@ import type {
 } from "../types.js";
 import { formatForWhatsApp } from "../formatter.js";
 import { recordWhatsappDisconnect } from "../../observability/prometheus.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const AUTH_DIR = "./data/whatsapp-session";
 const OWNER_JID = process.env.WHATSAPP_OWNER_JID;
@@ -289,7 +290,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
               }
             } catch (err) {
               console.warn(
-                `[whatsapp] Voice transcription failed: ${err instanceof Error ? err.message : err}`,
+                `[whatsapp] Voice transcription failed: ${errMsg(err)}`,
               );
               text = `[Audio recibido — transcripción falló]`;
             }
@@ -321,7 +322,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
             }
           } catch (err) {
             console.warn(
-              `[whatsapp] Image download failed: ${err instanceof Error ? err.message : err}`,
+              `[whatsapp] Image download failed: ${errMsg(err)}`,
             );
           }
         }

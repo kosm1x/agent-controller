@@ -142,7 +142,7 @@ describe("gemini_upload", () => {
     const result = JSON.parse(
       await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("403");
     expect(result.error).toContain("Forbidden");
   });
@@ -171,7 +171,7 @@ describe("gemini_upload", () => {
     const result = JSON.parse(
       await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("Metadata part is too large");
     expect(result.error).not.toContain("Unexpected token");
   });
@@ -186,7 +186,7 @@ describe("gemini_upload", () => {
     const result = JSON.parse(
       await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("no x-goog-upload-url");
     expect(mockFetch).toHaveBeenCalledTimes(1); // never advanced to phase 2
   });
@@ -206,7 +206,7 @@ describe("gemini_upload", () => {
     const result = JSON.parse(
       await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("Upload URL refused");
     expect(result.error).toContain("googleapis.com");
     expect(mockFetch).toHaveBeenCalledTimes(1); // never sent the bytes
@@ -263,7 +263,7 @@ describe("gemini_upload", () => {
         source: "https://example.com/missing.pdf",
       }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("404");
   });
 });
@@ -313,7 +313,7 @@ describe("gemini_research", () => {
     const result = JSON.parse(
       await geminiResearchTool.execute({ query: "test" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("upload");
   });
 
@@ -331,7 +331,7 @@ describe("gemini_research", () => {
     const result = JSON.parse(
       await geminiResearchTool.execute({ query: "test" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("429");
   });
 });
@@ -441,7 +441,7 @@ describe("gemini_audio_overview", () => {
     const result = JSON.parse(
       await geminiAudioOverviewTool.execute({ length: "brief" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.transcript).toBeDefined();
     expect(result.transcript).toContain("Hello");
     expect(result.note).toContain("TTS failed");
@@ -453,7 +453,7 @@ describe("gemini_audio_overview", () => {
     const result = JSON.parse(
       await geminiAudioOverviewTool.execute({ length: "brief" }),
     );
-    expect(result.success).toBe(false);
+    expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("upload");
   });
 });
