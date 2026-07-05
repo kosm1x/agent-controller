@@ -1684,6 +1684,8 @@ usage() {
   echo -e "  ${GREEN}tasks${NC} [--status=X] [--limit=N]   List tasks (default 20)"
   echo -e "  ${GREEN}task${NC} <id>           Full task detail + runs + subtasks"
   echo -e "  ${GREEN}cancel${NC} <id>         Cancel task via API"
+  echo -e "  ${GREEN}smoke${NC} [timeoutS]    Post-deploy: run one real fast task, assert it completes"
+  echo -e "  ${GREEN}task-resume${NC} <id> [goalId] [--run]  Resume a failed heavy/swarm task from a goal (isolated; --run to fire)"
   echo ""
   echo -e "  ${BOLD}Analytics${NC}"
   echo -e "  ${GREEN}outcomes${NC} [--days=N]  Outcome stats by runner (default 7 days)"
@@ -2620,6 +2622,51 @@ cmd_resume() {
     npx --no-install tsx scripts/phase-ctl.ts )
 }
 
+# Post-deploy smoke: submit ONE trivial fast task through the live API and wait
+# for it to reach a terminal state. deploy.sh verifies pid-flip + is-active +
+# tool count but never executes a task — a deploy that boots yet can't complete
+# the 96%-of-traffic fast path would pass. This closes that gap.
+cmd_smoke() {
+  local key body task_id status waited timeout
+  key=$(api_key) || die "MC_API_KEY not found in .env"
+  timeout="${1:-45}"
+  echo -e "${CYAN}Smoke:${NC} submitting a trivial fast task..."
+  body=$(curl -sf --max-time 10 -X POST \
+    -H "X-Api-Key: ${key}" -H "Content-Type: application/json" \
+    -d '{"description":"Smoke test. Reply with exactly: OK","source":"mc-ctl-smoke"}' \
+    "${API_URL}/api/tasks" 2>/dev/null) || die "submit failed (API unreachable or auth rejected)"
+  task_id=$(echo "$body" | grep -oP '(?<="task_id":")[^"]+' | head -1)
+  [ -n "$task_id" ] || die "no task_id in response: $body"
+  echo "  task_id=$task_id — polling up to ${timeout}s..."
+  waited=0
+  while [ "$waited" -lt "$timeout" ]; do
+    sleep 3; waited=$((waited + 3))
+    status=$(sql_raw "SELECT status FROM tasks WHERE task_id='$task_id';" 2>/dev/null || echo "?")
+    printf '\r  status=%s t=%ss   ' "$status" "$waited"
+    case "$status" in
+      completed|completed_with_concerns)
+        echo -e "\n${GREEN}Smoke PASS${NC} — fast runner completed in ~${waited}s."; return 0 ;;
+      failed|cancelled)
+        echo -e "\n${RED}Smoke FAIL${NC} — task ended '$status'. Inspect: mc-ctl task $task_id"; return 1 ;;
+    esac
+  done
+  echo -e "\n${YELLOW}Smoke TIMEOUT${NC} — task still '$status' after ${timeout}s. Inspect: mc-ctl task $task_id"
+  return 1
+}
+
+# Prometheus partial re-execution (resume a failed heavy/swarm task from its
+# first failed goal). Distinct from `resume <phase>` (project-phase resume).
+# Runs against an ISOLATED copy of mc.db; --run required to fire real SDK calls.
+cmd_task_resume() {
+  local task_id="${1:-}"; shift || true
+  if [ -z "$task_id" ]; then
+    echo -e "${RED}Usage:${NC} mc-ctl task-resume <taskId> [goalId] [--run]"
+    echo -e "  ${DIM}DRY by default (lists resumable/failed goals). --run re-executes.${NC}"
+    return 2
+  fi
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/resume-run.ts "$task_id" "$@" )
+}
+
 cmd_audit_closure() {
   local doc="${1:-}"
   if [ -z "$doc" ]; then
@@ -2699,7 +2746,10 @@ case "$cmd" in
 
   close-phase)       cmd_close_phase "${1:-}" ;;
   resume)            cmd_resume "${1:-}" ;;
+  task-resume)       cmd_task_resume "$@" ;;
   audit-closure)     cmd_audit_closure "${1:-}" ;;
+
+  smoke)             cmd_smoke "${1:-}" ;;
 
   budget)            cmd_budget ;;
 

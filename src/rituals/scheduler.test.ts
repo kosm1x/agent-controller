@@ -45,11 +45,14 @@ vi.mock("../config.js", () => ({
 // (Dim-4 R5 fix). Without this mock getEventBus() throws because initEventBus
 // is never called in tests; the stub captures emission calls for assertion.
 const mockEmitEvent = vi.fn();
+const mockSubscribe = vi.fn();
 vi.mock("../lib/event-bus.js", () => ({
-  getEventBus: () => ({ emitEvent: mockEmitEvent }),
+  getEventBus: () => ({ emitEvent: mockEmitEvent, subscribe: mockSubscribe }),
 }));
 
 import {
+  _resetRitualFailureAlertState,
+  notifyRitualFailure,
   selectStaleContainersForPrune,
   startRitualScheduler,
   stopRitualScheduler,
@@ -241,6 +244,77 @@ describe("ritual failure events (Dim-4 R5 fix)", () => {
       "schedule.run_failed",
       expect.anything(),
     );
+  });
+});
+
+// Lane C: the schedule.run_failed event previously had ZERO consumers. These
+// pin (a) that startRitualScheduler subscribes a consumer, and (b) that the
+// consumer pages the operator once per ritual within the debounce window.
+describe("schedule.run_failed notifier", () => {
+  beforeEach(() => {
+    _resetRitualFailureAlertState();
+  });
+
+  it("startRitualScheduler subscribes a consumer to schedule.run_failed", () => {
+    startRitualScheduler();
+    expect(mockSubscribe).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.any(Function),
+    );
+  });
+
+  it("delivers an operator alert containing the ritual id + phase", async () => {
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0 });
+    await notifyRitualFailure(
+      { ritual_id: "kb-reindex", error: "boom", phase: "execute" },
+      { send, now: () => 1_000_000 },
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+    const text = send.mock.calls[0][0] as string;
+    expect(text).toContain("kb-reindex");
+    expect(text).toContain("execute");
+    expect(text).toContain("boom");
+  });
+
+  it("debounces repeat failures of the SAME ritual within the cooldown", async () => {
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0 });
+    const payload = {
+      ritual_id: "hindsight-cost-pull",
+      error: "x",
+      phase: "execute" as const,
+    };
+    await notifyRitualFailure(payload, { send, now: () => 1_000_000 });
+    // 1 minute later — still inside the 30-min cooldown → suppressed.
+    await notifyRitualFailure(payload, { send, now: () => 1_060_000 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-alerts a DIFFERENT ritual immediately (debounce is per ritual_id)", async () => {
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0 });
+    await notifyRitualFailure(
+      { ritual_id: "a", error: "x", phase: "execute" },
+      { send, now: () => 1_000_000 },
+    );
+    await notifyRitualFailure(
+      { ritual_id: "b", error: "y", phase: "submit" },
+      { send, now: () => 1_000_100 },
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("zero-delivery clears the debounce so the next failure retries", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ sent: 0, failed: 0 }) // nobody got it
+      .mockResolvedValueOnce({ sent: 1, failed: 0 });
+    const payload = {
+      ritual_id: "morning-briefing",
+      error: "x",
+      phase: "execute" as const,
+    };
+    await notifyRitualFailure(payload, { send, now: () => 1_000_000 });
+    await notifyRitualFailure(payload, { send, now: () => 1_060_000 });
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

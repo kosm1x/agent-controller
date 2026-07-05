@@ -16,6 +16,7 @@ import {
   checkFlailing,
   recordCall,
 } from "../flailing-guard.js";
+import { redactSecrets } from "../../api/mcp-server/redact.js";
 
 /**
  * Async command runner. Uses child_process.exec (not execSync) so it does NOT
@@ -67,6 +68,61 @@ export function resolveShellTimeout(
   const requested =
     typeof timeoutMsArg === "number" && timeoutMsArg > 0 ? timeoutMsArg : def;
   return Math.min(requested, max);
+}
+
+// ---------------------------------------------------------------------------
+// Child-process env scrubbing (H1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Substrings that mark a process.env key as secret-bearing (case-insensitive).
+ * execAsync would otherwise hand the shell_exec child mission-control's FULL
+ * process.env (~25 credentials: MC_API_KEY, INFERENCE_* keys, the Google
+ * refresh token, GH + Telegram tokens, the X/Twitter cookies, …), so a bare
+ * `env` / `printenv` / `echo $MC_API_KEY` inside a command would exfiltrate
+ * every one. We hand the child a scrubbed copy that DELETES these keys.
+ * Defense-in-depth: an owner task steered by injected web content cannot lift
+ * secrets it cannot see. Non-secret vars (PATH/HOME/LANG/TZ/USER/…) carry no
+ * keyword and survive, so commands still resolve binaries and run normally.
+ */
+const SECRET_ENV_KEYWORDS = [
+  "KEY",
+  "TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "PWD",
+  "CREDENTIAL",
+  "JWT",
+  "APIKEY",
+  "AUTH",
+];
+
+/**
+ * Env-key prefixes that hold a credential but contain none of the keywords
+ * above — the Twitter CSRF cookies `X_CT0__<account>`. Matched as startsWith.
+ */
+const SECRET_ENV_PREFIXES = ["X_CT0"];
+
+/** True if the env var NAME looks like it holds a credential. */
+export function isSecretEnvKey(name: string): boolean {
+  const upper = name.toUpperCase();
+  return (
+    SECRET_ENV_KEYWORDS.some((kw) => upper.includes(kw)) ||
+    SECRET_ENV_PREFIXES.some((p) => upper.startsWith(p))
+  );
+}
+
+/**
+ * A copy of process.env with every secret-looking key removed, for handing to
+ * the shell_exec child so it can't read mission-control's credentials.
+ */
+export function buildScrubbedEnv(): NodeJS.ProcessEnv {
+  const scrubbed: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(scrubbed)) {
+    if (isSecretEnvKey(key)) delete scrubbed[key];
+  }
+  return scrubbed;
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +590,9 @@ RESTRICTIONS:
     // Validate command before execution
     const validation = validateShellCommand(command);
     if (!validation.allowed) {
-      console.log(`[shell-guard] BLOCKED: ${command}`);
+      // Redact before logging: the journal must never hold plaintext keys that
+      // an `export FOO_KEY="…"` command carried into shell_exec (H6).
+      console.log(`[shell-guard] BLOCKED: ${redactSecrets(command)}`);
       return JSON.stringify({
         error: `Command blocked by security policy: ${validation.reason}`,
       });
@@ -545,8 +603,10 @@ RESTRICTIONS:
     // another variation. The LLM's next turn then escalates to the operator.
     const flail = checkFlailing(command);
     if (flail) {
+      // Redact both the command and the flailing token before logging (H6).
+      const safeCmd = redactSecrets(command);
       console.log(
-        `[shell-guard] FLAILING: token="${flail.token}" strikes=${flail.strikes} command="${command.length > 80 ? command.slice(0, 80) + "..." : command}"`,
+        `[shell-guard] FLAILING: token="${redactSecrets(flail.token)}" strikes=${flail.strikes} command="${safeCmd.length > 80 ? safeCmd.slice(0, 80) + "..." : safeCmd}"`,
       );
       // Do NOT record the blocked call — it never executed, so it isn't a 4th
       // strike. The history reflects real attempts only.
@@ -557,8 +617,11 @@ RESTRICTIONS:
       });
     }
 
+    // Redact before logging so a secret embedded in the command (e.g.
+    // `export GEMINI_API_KEY="…"`) never reaches the journal (H6).
+    const safeCmd = redactSecrets(command);
     console.log(
-      `[shell-guard] OK: ${command.length > 120 ? command.slice(0, 120) + "..." : command}`,
+      `[shell-guard] OK: ${safeCmd.length > 120 ? safeCmd.slice(0, 120) + "..." : safeCmd}`,
     );
 
     const timeout = resolveShellTimeout(command, args.timeout_ms);
@@ -568,6 +631,9 @@ RESTRICTIONS:
         timeout,
         maxBuffer: 1024 * 1024, // 1MB
         encoding: "utf-8",
+        // H1: hand the child a scrubbed env so `env`/`printenv`/`echo $VAR`
+        // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
+        env: buildScrubbedEnv(),
       });
 
       const trimmed =

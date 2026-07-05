@@ -1,0 +1,47 @@
+name: ci
+
+# The full test suite (6,600+ tests) previously had ONLY one gate: a machine-local,
+# unversioned pre-commit hook that self-skips on non-.ts changes and OOMs this VPS under
+# load. Any second machine, fresh clone, or `git -c core.hooksPath=` bypassed it entirely.
+# This job is the enforced, reproducible gate. Vitest is sharded to stay under the memory
+# ceiling that makes a single `vitest run` OOM.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - name: vitest (shard ${{ matrix.shard }}/3)
+        run: npx vitest run --shard=${{ matrix.shard }}/3 --reporter=dot
+        env:
+          CI: "true"

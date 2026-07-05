@@ -48,6 +48,7 @@ import {
   SONNET_MODEL_ID,
 } from "./claude-sdk.js";
 import type { ChatMessage, ToolDefinition } from "./adapter.js";
+import { providerMetrics } from "./adapter-openai.js";
 
 beforeEach(() => {
   mockMessages.value = [];
@@ -1628,5 +1629,99 @@ describe("wrapToolCached memoization", () => {
     const a = wrapToolCached(make() as never);
     const b = wrapToolCached(make() as never);
     expect(a).not.toBe(b); // fresh object → fresh wrap (no stale schema risk)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider-health metrics on the claude-sdk path (Lane D observability, 2026-07-05)
+//
+// Before this, providerMetrics.record fired ONLY from the dormant OpenAI-compat
+// path, so all mc_provider_* series were empty and /health.providers was {}.
+// These assert the SDK hot path now records under the SAME label the circuit
+// breaker buckets on, on BOTH success and failure.
+// ---------------------------------------------------------------------------
+describe("queryClaudeSdk provider metrics", () => {
+  it("records a success metric under the 'claude-sdk' label with SDK latency + tokens", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "done\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 100, output_tokens: 20 },
+        total_cost_usd: 0.001,
+        duration_ms: 500,
+      },
+    ];
+
+    await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [provider, entry, model] = spy.mock.calls[0];
+    expect(provider).toBe("claude-sdk");
+    expect(entry.success).toBe(true);
+    expect(entry.promptTokens).toBe(100);
+    expect(entry.completionTokens).toBe(20);
+    expect(entry.latencyMs).toBe(500); // SDK-reported durationMs
+    expect(model).toBe(SONNET_MODEL_ID);
+    spy.mockRestore();
+  });
+
+  it("records a failure metric when the SDK terminal result errors with zero output", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      { type: "result", subtype: "error_during_execution", errors: ["boom"] },
+    ];
+
+    await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toBe("claude-sdk");
+    expect(spy.mock.calls[0][1].success).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("labels the metric with the per-model breaker key (claude-sdk-opus)", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 5, output_tokens: 2 },
+        total_cost_usd: 0,
+        duration_ms: 10,
+      },
+    ];
+
+    await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+      model: OPUS_MODEL_ID,
+    });
+
+    expect(spy.mock.calls[0][0]).toBe("claude-sdk-opus");
+    spy.mockRestore();
+  });
+
+  it("falls back to wall-clock latency on the abort catch path (durationMs stays 0)", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const entry = spy.mock.calls[0][1];
+    expect(entry.success).toBe(false);
+    // durationMs never set (no terminal result) → wall-clock fallback, a real
+    // non-negative sample rather than a phantom that would skew avg latency.
+    expect(entry.latencyMs).toBeGreaterThanOrEqual(0);
+    spy.mockRestore();
   });
 });

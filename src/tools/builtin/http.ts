@@ -9,6 +9,7 @@ import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
+const MAX_REDIRECTS = 5; // cap the redirect chain (H3)
 
 export const httpTool: Tool = {
   name: "http_fetch",
@@ -90,24 +91,87 @@ BOUNDARIES:
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: method !== "GET" && method !== "DELETE" ? body : undefined,
-        signal: controller.signal,
-      });
+      // H3: manual redirect handling. undici's default `follow` would chase a
+      // 3xx Location UNCHECKED — a public URL could 302 to http://127.0.0.1:8100
+      // (local Supabase/Kong), :8080 (this control plane), :9090, and the body
+      // would come back to the LLM. The initial SSRF guard only saw the FIRST
+      // hop. Re-validate every hop's resolved Location against the same
+      // outbound guard (incl. DNS resolution) before following, and cap the
+      // chain so a redirect loop can't spin.
+      let currentUrl = url;
+      let currentMethod = method;
+      let currentBody =
+        method !== "GET" && method !== "DELETE" ? body : undefined;
 
-      const text = await response.text();
-      const trimmed =
-        text.length > MAX_BODY
-          ? text.slice(0, MAX_BODY) +
-            `\n... (truncated, ${text.length} total chars)`
-          : text;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const response = await fetch(currentUrl, {
+          method: currentMethod,
+          headers,
+          body: currentBody,
+          signal: controller.signal,
+          redirect: "manual",
+        });
+
+        const isRedirect =
+          response.status >= 300 &&
+          response.status < 400 &&
+          response.headers.has("location");
+
+        if (!isRedirect) {
+          const text = await response.text();
+          const trimmed =
+            text.length > MAX_BODY
+              ? text.slice(0, MAX_BODY) +
+                `\n... (truncated, ${text.length} total chars)`
+              : text;
+
+          return JSON.stringify({
+            status: response.status,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: trimmed,
+            // Surface the final URL when a redirect chain was followed.
+            ...(currentUrl !== url ? { finalUrl: currentUrl } : {}),
+          });
+        }
+
+        // Resolve the Location against the current URL (it may be relative).
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(
+            response.headers.get("location") as string,
+            currentUrl,
+          ).toString();
+        } catch {
+          return JSON.stringify({
+            error: "Invalid redirect Location header",
+            url: currentUrl,
+          });
+        }
+
+        const redirectErr = await validateOutboundUrlResolved(nextUrl);
+        if (redirectErr) {
+          return JSON.stringify({
+            error: `Blocked redirect: ${redirectErr}`,
+            url: nextUrl,
+          });
+        }
+
+        // Per HTTP semantics, 301/302/303 downgrade to GET and drop the body;
+        // 307/308 preserve method + body. Mirror browser behavior.
+        if (
+          response.status === 301 ||
+          response.status === 302 ||
+          response.status === 303
+        ) {
+          currentMethod = "GET";
+          currentBody = undefined;
+        }
+        currentUrl = nextUrl;
+      }
 
       return JSON.stringify({
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries()),
-        body: trimmed,
+        error: `Too many redirects (>${MAX_REDIRECTS})`,
+        url: currentUrl,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

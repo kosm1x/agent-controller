@@ -9,8 +9,11 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import client from "prom-client";
 import {
+  _resetRitualHeartbeats,
+  getRitualStaleness,
   recordRecallOutcomes,
   recordRetainOutcome,
+  recordRitualSuccess,
   recordSkillRun,
   recordSwarmSubtaskRetry,
 } from "./prometheus.js";
@@ -341,5 +344,58 @@ describe("recordSkillRun", () => {
     expect(
       getCounterValue("mc_skills_run_total", { name: "", result: "ok" }),
     ).toBe(1);
+  });
+});
+
+// Lane C: ritual heartbeat gauge + /health staleness reporter. The gauge name
+// `mc_ritual_last_success_timestamp` is a contract with monitoring/alerts.yml —
+// these pin the unix-second stamp and the 1.5×-interval staleness rule.
+const DAY_MS = 86_400_000;
+
+describe("recordRitualSuccess / getRitualStaleness", () => {
+  beforeEach(() => {
+    _resetRitualHeartbeats();
+  });
+
+  it("stamps mc_ritual_last_success_timestamp in unix seconds", () => {
+    const before = Math.floor(Date.now() / 1000);
+    recordRitualSuccess("morning-briefing", DAY_MS);
+    const v = getCounterValue("mc_ritual_last_success_timestamp", {
+      ritual_id: "morning-briefing",
+    });
+    expect(v).toBeGreaterThanOrEqual(before);
+    expect(v).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 1);
+  });
+
+  it("a fresh run is not stale and the report is healthy", () => {
+    recordRitualSuccess("morning-briefing", DAY_MS);
+    const report = getRitualStaleness();
+    const entry = report.rituals.find(
+      (r) => r.ritual_id === "morning-briefing",
+    );
+    expect(entry?.stale).toBe(false);
+    expect(entry?.staleAfterSeconds).toBe(Math.round((DAY_MS * 1.5) / 1000));
+    expect(report.healthy).toBe(true);
+  });
+
+  it("flags a ritual stale past 1.5x its interval → report unhealthy", () => {
+    recordRitualSuccess("nightly-close", DAY_MS);
+    const report = getRitualStaleness(Date.now() + 2 * DAY_MS); // 2d > 1.5d
+    const entry = report.rituals.find((r) => r.ritual_id === "nightly-close");
+    expect(entry?.stale).toBe(true);
+    expect(report.healthy).toBe(false);
+  });
+
+  it("within 1.5x its interval is NOT stale (no weekend false-positive)", () => {
+    recordRitualSuccess("signal-intelligence", DAY_MS);
+    const report = getRitualStaleness(Date.now() + 1.2 * DAY_MS); // 1.2d < 1.5d
+    const entry = report.rituals.find(
+      (r) => r.ritual_id === "signal-intelligence",
+    );
+    expect(entry?.stale).toBe(false);
+  });
+
+  it("empty heartbeat map (fresh boot) reports healthy", () => {
+    expect(getRitualStaleness()).toEqual({ healthy: true, rituals: [] });
   });
 });

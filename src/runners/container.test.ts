@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   generateContainerName,
   parsePayload,
+  buildDockerRunArgs,
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
 } from "./container.js";
@@ -127,5 +128,74 @@ describe("parsePayload", () => {
     expect(result.kind).toBe("result");
     expect(result.output?.status).toBe("success");
     expect(result.output?.result).toBe("not json at all");
+  });
+});
+
+// -------------------------------------------------------------------------
+// buildDockerRunArgs — H5 safe-set hardening + control-plane env neutralization.
+// -------------------------------------------------------------------------
+
+describe("buildDockerRunArgs — H5 hardening", () => {
+  const base = { image: "mission-control:latest", name: "mc-test-123" };
+
+  it("adds the safe-set resource + capability limits", () => {
+    const args = buildDockerRunArgs(base);
+    expect(args).toContain("--cap-drop=ALL");
+    expect(args).toContain("--security-opt=no-new-privileges");
+    // --memory 2g, --cpus 2, --pids-limit 512 (flag + value pairs)
+    expect(args).toContain("--memory");
+    expect(args[args.indexOf("--memory") + 1]).toBe("2g");
+    expect(args).toContain("--cpus");
+    expect(args[args.indexOf("--cpus") + 1]).toBe("2");
+    expect(args).toContain("--pids-limit");
+    expect(args[args.indexOf("--pids-limit") + 1]).toBe("512");
+  });
+
+  it("does NOT add --network none or --read-only (would break nanoclaw)", () => {
+    const joined = buildDockerRunArgs(base).join(" ");
+    expect(joined).not.toContain("--read-only");
+    expect(joined).not.toContain("--network");
+  });
+
+  it("neutralizes MC_API_KEY but passes INFERENCE_PRIMARY_KEY through", () => {
+    const args = buildDockerRunArgs({
+      ...base,
+      envVars: {
+        MC_API_KEY: "REAL-control-plane-secret",
+        INFERENCE_PRIMARY_KEY: "sk-inference-value",
+        MC_DB_PATH: "/tmp/mc.db",
+      },
+    });
+    const joined = args.join(" ");
+    // Real control-plane key never reaches the container.
+    expect(joined).not.toContain("REAL-control-plane-secret");
+    expect(joined).toContain("MC_API_KEY=sandbox-no-control-plane-access");
+    // The inference key the SDK needs inside is preserved verbatim.
+    expect(joined).toContain("INFERENCE_PRIMARY_KEY=sk-inference-value");
+    expect(joined).toContain("MC_DB_PATH=/tmp/mc.db");
+  });
+
+  it("still enforces the volume host-path allowlist", () => {
+    const args = buildDockerRunArgs({
+      ...base,
+      volumes: [
+        "/tmp/ok:/work:rw", // allowed
+        "/etc/passwd:/x:ro", // blocked — outside allowlist
+      ],
+    });
+    const joined = args.join(" ");
+    expect(joined).toContain("/tmp/ok:/work:rw");
+    expect(joined).not.toContain("/etc/passwd");
+  });
+
+  it("appends image last, before any command", () => {
+    const args = buildDockerRunArgs({
+      ...base,
+      command: ["node", "dist/runners/heavy-worker.js"],
+    });
+    const imageIdx = args.indexOf("mission-control:latest");
+    expect(imageIdx).toBeGreaterThan(-1);
+    expect(args[imageIdx + 1]).toBe("node");
+    expect(args[imageIdx + 2]).toBe("dist/runners/heavy-worker.js");
   });
 });

@@ -17,6 +17,7 @@ import { toolMetrics } from "../../observability/tool-metrics.js";
 import { eventMetrics } from "../../observability/event-metrics.js";
 import { getKbHealthStats } from "../../memory/lesson-decay.js";
 import { getMessagingStatus } from "../../messaging/index.js";
+import { getRitualStaleness } from "../../observability/prometheus.js";
 import { hasValidApiKey, isPrivatePeer } from "../auth.js";
 
 const health = new Hono();
@@ -45,8 +46,7 @@ health.get("/health", async (c) => {
   try {
     const db = getDatabase();
     const row = db.prepare("SELECT 1 as ok").get() as
-      | { ok: number }
-      | undefined;
+      { ok: number } | undefined;
     dbOk = row?.ok === 1;
   } catch {
     // DB not available
@@ -96,6 +96,14 @@ health.get("/health", async (c) => {
   const budgetCfg = getConfig();
   const kbStats = await getKbHealthStats().catch(() => null);
 
+  // Cron-liveness: per-ritual last-success age from the in-memory heartbeat map
+  // (cheap — no DB/registry read). `ritualsHealthy` lets healthcheck.sh assert
+  // the ritual loop is alive; /health otherwise says nothing about it and a
+  // wedged node-cron loop would stay invisible behind a 200. Does NOT gate the
+  // top-level status/HTTP code — a stale ritual shouldn't mark the whole
+  // service down; the boolean + per-ritual ages carry the signal.
+  const ritualStaleness = getRitualStaleness();
+
   return c.json(
     {
       status,
@@ -126,6 +134,8 @@ health.get("/health", async (c) => {
       commitEvents: eventMetrics.getSummary(),
       circuitBreakers: circuitRegistry.getAllStatus(),
       messaging: getMessagingStatus(),
+      ritualsHealthy: ritualStaleness.healthy,
+      rituals: ritualStaleness.rituals,
       ...(kbStats && { knowledgeBase: kbStats }),
     },
     code,

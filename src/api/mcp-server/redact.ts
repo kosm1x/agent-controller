@@ -31,6 +31,21 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
     /\b(sk-[A-Za-z0-9_-]{16,}|pk-[A-Za-z0-9_-]{16,}|xoxb-[A-Za-z0-9-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{16,}|jrvs_[A-Fa-f0-9]{32,})\b/g,
     "[REDACTED_KEY]",
   ],
+  // Google / Gemini API keys (AIza + 35 chars). Added 2026-07-05 hardening
+  // sweep — the shell-guard journal-leak (H6) was exactly this shape, and the
+  // prefix set above did NOT cover it.
+  [/\bAIza[0-9A-Za-z_-]{35}\b/g, "[REDACTED_KEY]"],
+  // Telegram bot tokens (<bot_id digits>:<35-char secret>). Same sweep.
+  [/\b\d{6,10}:[A-Za-z0-9_-]{35}\b/g, "[REDACTED_KEY]"],
+  // Secret-named shell/env assignments: NAME=value where NAME ends in a secret
+  // keyword (GEMINI_API_KEY="AIza…", BRAVE_API_KEY=…, X_AUTH_TOKEN__acct=…).
+  // Catches keys with no recognizable value prefix — the common `export KEY=val`
+  // shape in shell_exec logs. Value redacted, name kept. Over-redaction here is
+  // safe (this runs on logs + MCP output, never on executed commands).
+  [
+    /\b([A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|JWT|AUTH))=\S+/gi,
+    "$1=[REDACTED]",
+  ],
   // JSON fields with obvious secret names
   [
     /"(password|passphrase|secret|api_?key|apikey|client_secret|access_token|refresh_token|id_token|bearer_token|private_key|token_hash)"\s*:\s*"[^"]+"/gi,

@@ -16,6 +16,14 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { sanitizeToolResult } from "./guards.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
+// Shared provider-health singleton (defined in adapter-openai.ts). Imported
+// here so the claude-sdk hot path records latency/success/token metrics too —
+// since the 2026-05-10 SDK cutover, providerMetrics was written ONLY from the
+// dormant OpenAI-compat path, so every mc_provider_* series exported zero
+// samples and /health.providers was {}. Import from adapter-openai.js directly
+// (not the adapter.js re-export) — adapter-openai does not import claude-sdk,
+// so no static cycle; the singleton is used only at call time regardless.
+import { providerMetrics } from "./adapter-openai.js";
 import type {
   Options as SdkOptions,
   SDKResultSuccess,
@@ -565,6 +573,12 @@ export async function queryClaudeSdk(opts: {
       ? buildVisionPromptStream(safePromptText, opts.images)
       : safePromptText;
 
+  // Wall-clock fallback for providerMetrics latency. The SDK-reported
+  // `durationMs` is authoritative on terminal-result paths but stays 0 on the
+  // abort/timeout catch path (no `result` message fires) — mirror the infer
+  // shim's `durationMs || Date.now() - start` pattern so a timed-out call still
+  // records its real elapsed time instead of a phantom 0ms latency sample.
+  const queryStart = Date.now();
   const q = query({ prompt: sdkPrompt, options });
 
   try {
@@ -774,6 +788,25 @@ export async function queryClaudeSdk(opts: {
   } else {
     breaker.recordFailure();
   }
+
+  // Provider-health metric on BOTH success and failure paths, under the SAME
+  // label the circuit breaker buckets on (`claude-sdk` / `claude-sdk-haiku` /
+  // `claude-sdk-opus` — see `breakerKey` above) so the Prometheus provider
+  // series and /health.providers finally reflect SDK traffic (latency
+  // degradation, error storms, Sonnet→Haiku fallback rate). `success` mirrors
+  // the breaker's outcome classification exactly. Mirrors the LatencyEntry
+  // shape recorded on the OpenAI-compat path (adapter-openai.ts:433/565).
+  providerMetrics.record(
+    breakerKey,
+    {
+      timestamp: Date.now(),
+      latencyMs: durationMs || Date.now() - queryStart,
+      success: providerOutcome === "success",
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+    },
+    actualModel,
+  );
 
   // If the loop ended without a "result" success message but streaming text
   // exists (e.g. abort signaled externally), fall back to streamed text.

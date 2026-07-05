@@ -203,6 +203,100 @@ export function recordKbReindex(result: {
   kbReindexErrored.set(result.errored);
 }
 
+// --- Ritual heartbeat (cron-liveness observability) ---
+//
+// Biggest gap before this: a wedged node-cron loop silences every in-process
+// detector while /health stays 200. `schedule.run_failed` only fires on an
+// EXCEPTION — a ritual that simply STOPS firing (loop starved, handler hung)
+// emits nothing at all. This gauge is the positive-signal counterpart: each
+// ritual stamps its last SUCCESSFUL run here, so staleness (now - value) past
+// the ritual's cadence proves the loop is dead even though nothing threw.
+//
+// Downstream contract: monitoring/alerts.yml keys a staleness rule off this
+// EXACT name — `time() - mc_ritual_last_success_timestamp{...} > <interval>`.
+// The name and the 1.5×-interval rule (RITUAL_STALE_FACTOR below) are the
+// contract with that rule; do not rename without updating alerts.yml.
+const ritualLastSuccessTimestamp = new client.Gauge({
+  name: "mc_ritual_last_success_timestamp",
+  help: "Unix seconds of each ritual's most recent SUCCESSFUL run, labelled by ritual_id. Staleness (now - value past its cadence) signals a wedged cron loop.",
+  labelNames: ["ritual_id"] as const,
+});
+
+// Mirror the gauge in a plain map so /health can report per-ritual staleness
+// cheaply — no async prom-client registry read, no DB scan. `intervalMs` is the
+// ritual's expected cadence, carried here only to size the staleness window; it
+// is deliberately NOT a metric label (that would add cardinality for no gain).
+interface RitualHeartbeatEntry {
+  lastSuccessSec: number;
+  intervalMs: number;
+}
+const ritualHeartbeats = new Map<string, RitualHeartbeatEntry>();
+
+/** A ritual is stale once its heartbeat is older than this multiple of its
+ *  expected interval. Shared with the alerts.yml staleness rule. */
+const RITUAL_STALE_FACTOR = 1.5;
+
+/**
+ * Stamp a ritual's successful run. Called from scheduler.ts on the SUCCESS path
+ * only (failures already flow through schedule.run_failed). `intervalMs` is the
+ * ritual's expected cadence, used only to size the /health staleness window.
+ */
+export function recordRitualSuccess(
+  ritualId: string,
+  intervalMs: number,
+): void {
+  const nowSec = Math.floor(Date.now() / 1000);
+  ritualLastSuccessTimestamp.set({ ritual_id: ritualId }, nowSec);
+  ritualHeartbeats.set(ritualId, { lastSuccessSec: nowSec, intervalMs });
+}
+
+export interface RitualHeartbeatStatus {
+  ritual_id: string;
+  lastSuccessSec: number;
+  ageSeconds: number;
+  staleAfterSeconds: number;
+  stale: boolean;
+}
+
+export interface RitualStalenessReport {
+  /** True when no instrumented ritual is stale (also true before any ran). */
+  healthy: boolean;
+  rituals: RitualHeartbeatStatus[];
+}
+
+/**
+ * Per-ritual staleness snapshot for /health. Cheap: iterates the in-memory
+ * heartbeat map, no DB or registry read. A ritual is `stale` when its last
+ * success is older than RITUAL_STALE_FACTOR × its cadence. An empty map (fresh
+ * boot, nothing has fired yet) → healthy:true, so a restart doesn't false-alarm.
+ */
+export function getRitualStaleness(
+  nowMs: number = Date.now(),
+): RitualStalenessReport {
+  const nowSec = Math.floor(nowMs / 1000);
+  const rituals: RitualHeartbeatStatus[] = [];
+  for (const [ritual_id, hb] of ritualHeartbeats) {
+    const staleAfterSeconds = Math.round(
+      (hb.intervalMs * RITUAL_STALE_FACTOR) / 1000,
+    );
+    const ageSeconds = nowSec - hb.lastSuccessSec;
+    rituals.push({
+      ritual_id,
+      lastSuccessSec: hb.lastSuccessSec,
+      ageSeconds,
+      staleAfterSeconds,
+      stale: ageSeconds > staleAfterSeconds,
+    });
+  }
+  rituals.sort((a, b) => a.ritual_id.localeCompare(b.ritual_id));
+  return { healthy: rituals.every((r) => !r.stale), rituals };
+}
+
+/** Test helper: clear the in-memory ritual heartbeat map between cases. */
+export function _resetRitualHeartbeats(): void {
+  ritualHeartbeats.clear();
+}
+
 // --- Outcome totals (queue #7 part 3, 2026-05-07) ---
 // Counters bumped at logRecall / retain time so outcome distribution is
 // observable in Prometheus without scrape-time SQL. Drives the

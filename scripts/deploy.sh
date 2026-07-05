@@ -33,6 +33,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Migration preflight (2026-07-05 hardening sweep) — the schema-version gate
+# (SCHEMA_MIGRATIONS in src/db/index.ts) previously had NO enforcement: an
+# engineer had to remember to run scripts/validate-migration-runner.ts. Boot a
+# FRESH throwaway DB through initDatabase and assert the expected signature
+# (user_version=2, baseline_history dropped). A broken/next migration fails the
+# deploy here instead of on the live DB. Cheap (no live-DB copy). Skip only for
+# a known-safe emergency deploy via MC_SKIP_MIGRATION_GATE=1.
+if [[ "${MC_SKIP_MIGRATION_GATE:-0}" != "1" ]]; then
+  echo "[deploy] Migration preflight (fresh-boot schema gate)..."
+  MIG_TMP="$(mktemp -d)"
+  if npx tsx scripts/validate-migration-runner.ts fresh "$MIG_TMP/fresh.db" > "$MIG_TMP/out.json" 2> "$MIG_TMP/err.log"; then
+    if grep -qE '"userVersion": *2' "$MIG_TMP/out.json" && ! grep -q 'baseline_history' "$MIG_TMP/out.json"; then
+      echo "[deploy] Migration gate OK — fresh boot → user_version=2, baseline_history absent."
+    else
+      echo "[deploy] FAILED — fresh-boot schema signature unexpected (want user_version=2, no baseline_history):"
+      cat "$MIG_TMP/out.json"
+      rm -rf "$MIG_TMP"; exit 1
+    fi
+  else
+    echo "[deploy] FAILED — migration validator errored:"
+    cat "$MIG_TMP/err.log"
+    rm -rf "$MIG_TMP"; exit 1
+  fi
+  rm -rf "$MIG_TMP"
+fi
+
 echo "[deploy] Building..."
 npm run build
 
@@ -111,6 +137,20 @@ fi
 if systemctl is-active --quiet "$SERVICE"; then
   TOOLS=$(journalctl -u "$SERVICE" --since '60 sec ago' --no-pager 2>/dev/null | grep -o 'totalTools":[0-9]*' | head -1)
   echo "[deploy] OK — newPid=$NEW_PID (was $OLD_PID), oldPid dead, transition took ${ELAPSED}s. ${TOOLS}"
+
+  # Post-deploy degradation watch (2026-07-05 sweep): a deploy that boots but
+  # immediately errors passes every check above (pid flip + is-active + tool
+  # count). Sample the startup window for error/fatal-level log lines and warn
+  # loudly — non-fatal (the service IS up; rollback is the operator's call).
+  ERR_COUNT=$(journalctl -u "$SERVICE" --since "${ELAPSED} sec ago" --no-pager 2>/dev/null \
+    | grep -cE '"level":(50|60)|FATAL|Uncaught|unhandledRejection' || true)
+  if [[ "${ERR_COUNT:-0}" -gt 5 ]]; then
+    echo "[deploy] ⚠ WARNING — ${ERR_COUNT} error-level log lines in the startup window; service is up but may be degraded."
+    echo "[deploy]   Inspect:  journalctl -u $SERVICE --since '2 min ago' | grep -E '\"level\":(50|60)'"
+    echo "[deploy]   Rollback: git log --oneline -5 ; git checkout <good-sha> -- . ; MC_SKIP_MIGRATION_GATE=0 ./scripts/deploy.sh"
+  else
+    echo "[deploy] Post-deploy watch OK — ${ERR_COUNT} error line(s) in startup window."
+  fi
 else
   echo "[deploy] FAILED — service inactive after PID transition."
   journalctl -u "$SERVICE" --since "${ELAPSED} sec ago" --no-pager | tail -10

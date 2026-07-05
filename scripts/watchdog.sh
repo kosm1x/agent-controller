@@ -36,14 +36,16 @@ alert() {
   fi
 }
 
-# Helper: alert once per 24h per state file
+# Helper: alert at most once per cooldown (default 24h) per state file.
+# Optional 3rd arg overrides the cooldown in seconds (e.g. 3600 for hourly).
 maybe_alert() {
   local state_file="$1"
   local msg="$2"
+  local ttl="${3:-86400}"
   local now last
   now=$(date +%s)
   last=$(cat "$state_file" 2>/dev/null || echo 0)
-  if [ $((now - last)) -gt 86400 ]; then
+  if [ $((now - last)) -gt "$ttl" ]; then
     alert "$msg"
     echo "$now" > "$state_file"
   fi
@@ -87,12 +89,18 @@ fi
 # fire/alert forever against a container that no longer exists.
 
 # --- Check 5: Disk usage ---
+# Real reclaim levers only. scripts/retention.sh was DELETED in Session 104; DB
+# retention is now a node cron (src/db/retention.ts), NOT a shell script, so we do
+# not try to invoke it here. Levers: vacuum systemd journals, prune Supabase
+# pg_dumps past the 7-day retention, and reclaim docker layer/build cache.
 DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
 if [ "$DISK_PCT" -gt 90 ]; then
-  /root/claude/mission-control/scripts/retention.sh > /dev/null 2>&1 || true
+  journalctl --vacuum-size=200M > /dev/null 2>&1 || true
+  find /opt/supabase/backups -maxdepth 1 -name '*.sql.gz' -mtime +7 -delete 2>/dev/null || true
   docker system prune -f > /dev/null 2>&1 || true
+  docker buildx prune -f > /dev/null 2>&1 || true
   NEW_DISK=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
-  alert "Disk at ${DISK_PCT}%, ran cleanup. Now ${NEW_DISK}%"
+  alert "Disk at ${DISK_PCT}%, ran cleanup (journal vacuum→200M, pruned pg_dumps >7d, docker system+buildx prune). Now ${NEW_DISK}%"
 fi
 
 # --- Check 6 (CRM container prerequisites) REMOVED 2026-06-15 ---
@@ -101,22 +109,20 @@ fi
 # which actively fought the teardown — recreating crm-net and re-tagging
 # agentic-crm-agent/nanoclaw-agent every 5 min. Intentionally gone.
 
-# --- Check 7: MC DB size (alert-only, NO auto-retention) ---
-# Policy (decided 2026-04-24): preserve ALL telemetry for traceability.
-# 500 MB is the agreed decision point — when crossed, alert loudly so the
-# operator can define a retention policy manually. NEVER auto-delete.
+# --- Check 7: MC DB size (alert-only, VACUUM reminder) ---
+# Retention is AUTOMATED as of 2026-07-05 (src/db/retention.ts node cron
+# auto-archives + deletes tasks/runs at 90d) — the old "manual policy required /
+# no auto-deletion" alert from 2026-04-24 is obsolete. mc.db no longer grows
+# unbounded, but 90d deletes leave dead pages on the SQLite freelist (~77 MB as of
+# this writing) that only VACUUM reclaims. When the file crosses 500 MB, remind the
+# operator to reclaim via `VACUUM INTO` — the safe hot lever. NEVER auto-VACUUM
+# here: it rewrites the whole irreplaceable DB and needs ~2x disk.
 MC_DB=/root/claude/mission-control/data/mc.db
 if [ -f "$MC_DB" ]; then
   MC_DB_MB=$(du -m "$MC_DB" | cut -f1)
   if [ "$MC_DB_MB" -ge 500 ]; then
-    # Cooldown: only alert once per 24h (state file in /var/lib)
-    STATE=/var/lib/mc-watchdog-db-alert
-    NOW=$(date +%s)
-    LAST=$(cat "$STATE" 2>/dev/null || echo 0)
-    if [ $((NOW - LAST)) -gt 86400 ]; then
-      alert "mc.db at ${MC_DB_MB} MB — retention decision point reached. Manual policy required (see docs/PROJECT-STATUS.md §retention). No auto-deletion."
-      echo "$NOW" > "$STATE"
-    fi
+    maybe_alert /var/lib/mc-watchdog-db-alert \
+      "mc.db at ${MC_DB_MB} MB. Retention auto-prunes tasks/runs at 90d, but freelist dead pages accumulate — reclaim with: sqlite3 ${MC_DB} \"VACUUM INTO '/tmp/mc-vacuumed.db'\" then swap it in during a restart window. No auto-VACUUM (rewrites the whole DB, needs 2x disk)."
   fi
 fi
 
@@ -167,6 +173,47 @@ else
   alert "/opt/supabase/backups directory missing — Supabase backup path broken"
 fi
 
+# --- Check 8b: MC state bundle freshness ---
+# scripts/backup-state-bundle.sh writes mission-control-YYYYMMDD.tar.gz into the
+# same /opt/supabase/backups dir at 02:30 UTC daily (the offsite rsync then carries
+# it). That bundle is the only offsite copy of irreplaceable Jarvis state (hot mc.db
+# snapshot + stateful subdirs + retention archives). Alert if the newest is stale
+# (>30h ⇒ missed a daily run) or suspiciously small (<50 MB ⇒ truncated/failed
+# snapshot). Young-file (<15min) size check is skipped: tar -czf grows the archive
+# in place, the same in-flight race handled in Check 8.
+if [ -d "$SB_DIR" ]; then
+  MB_LATEST=$(find "$SB_DIR" -maxdepth 1 -name 'mission-control-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -z "$MB_LATEST" ]; then
+    maybe_alert /var/lib/mc-watchdog-bundle-alert \
+      "MC state bundle missing — no mission-control-*.tar.gz in $SB_DIR. backup-state-bundle.sh (02:30 UTC cron) has never run or all bundles were removed"
+  else
+    MB_AGE_S=$(( $(date +%s) - $(stat -c %Y "$MB_LATEST") ))
+    MB_AGE_H=$(( MB_AGE_S / 3600 ))
+    MB_SIZE=$(stat -c %s "$MB_LATEST")
+    MB_NAME=$(basename "$MB_LATEST")
+    if [ "$MB_AGE_H" -gt 30 ]; then
+      maybe_alert /var/lib/mc-watchdog-bundle-alert \
+        "MC state bundle is ${MB_AGE_H}h old (${MB_NAME}, threshold 30h) — 02:30 UTC backup-state-bundle cron may have failed"
+    elif [ "$MB_AGE_S" -ge 0 ] && [ "$MB_AGE_S" -lt 900 ]; then
+      : # bundle likely still writing (file <15min old); next tick re-checks.
+    elif [ "$MB_SIZE" -lt 52428800 ]; then
+      maybe_alert /var/lib/mc-watchdog-bundle-alert \
+        "MC state bundle suspiciously small: ${MB_NAME} is ${MB_SIZE} bytes (expected >=50 MB) — snapshot may be truncated"
+    fi
+  fi
+fi
+
+# --- Check 8c: mc-prometheus container liveness ---
+# Every Prometheus-scraped check below (9a cost, 9b heap, 9c latency) silently
+# no-ops when localhost:9090 is unreachable, so a dead mc-prometheus blinds the
+# watchdog with no alert. Surface it explicitly. Alert-only (no auto-restart) —
+# `docker restart mc-prometheus` is the operator lever.
+PROM_RUNNING=$(docker inspect -f '{{.State.Running}}' mc-prometheus 2>/dev/null || echo "missing")
+if [ "$PROM_RUNNING" != "true" ]; then
+  maybe_alert /var/lib/mc-watchdog-prometheus-alert \
+    "mc-prometheus container is not running (state: ${PROM_RUNNING}) — all Prometheus-based watchdog checks (cost/heap/latency) are blind. Restart: docker restart mc-prometheus"
+fi
+
 # --- Check 9: MC observability thresholds (Prometheus-scraped) ---
 # Replaces Grafana alerting (stopped) for signals not already covered by earlier checks:
 # cost anomaly, provider latency breach, heap pressure. 24h cooldown per sub-alert.
@@ -175,11 +222,16 @@ HOURLY_LIMIT=$(prom_query "mc_budget_hourly_limit_usd")
 HEAP_USED=$(prom_query "mc_nodejs_heap_size_used_bytes")
 P95=$(prom_query "max(mc_provider_latency_p95_ms)")
 
-# 9a. Hourly spend > 80% of hourly limit
+# 9a. Hourly spend near/at the hourly cap (>=95%). The hourly limit hard-binds
+# (~$2), so brushing 80% is routine operation, not an anomaly — only a nearly
+# exhausted hourly budget signals a genuine retry-storm / runaway. Mute is 1h (not
+# the 24h default) so a real second-hour spike re-surfaces instead of being folded
+# into one daily ping; it still won't cry wolf every 5-minute tick.
 if [ -n "$HOURLY_SPEND" ] && [ -n "$HOURLY_LIMIT" ]; then
-  if awk -v s="$HOURLY_SPEND" -v l="$HOURLY_LIMIT" 'BEGIN{exit !(l>0 && s/l > 0.8)}'; then
+  if awk -v s="$HOURLY_SPEND" -v l="$HOURLY_LIMIT" 'BEGIN{exit !(l>0 && s/l >= 0.95)}'; then
     maybe_alert /var/lib/mc-watchdog-hourly-alert \
-      "MC hourly spend at \$${HOURLY_SPEND} of \$${HOURLY_LIMIT} limit (>80%) — cost anomaly"
+      "MC hourly spend \$${HOURLY_SPEND} of \$${HOURLY_LIMIT} limit (>=95%, hourly budget nearly exhausted) — cost anomaly / possible retry-storm" \
+      3600
   fi
 fi
 

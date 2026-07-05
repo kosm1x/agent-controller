@@ -77,6 +77,7 @@ import {
   listTasks,
   cancelTask,
   extractPersistText,
+  isPhantomZeroCostRow,
 } from "./dispatcher.js";
 
 beforeEach(() => {
@@ -309,5 +310,63 @@ describe("extractPersistText", () => {
     expect(extractPersistText(null)).toBeNull();
     expect(extractPersistText(undefined)).toBeNull();
     expect(extractPersistText(42)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isPhantomZeroCostRow — cost-ledger phantom-turns guard (open since 2026-05-23)
+// ---------------------------------------------------------------------------
+
+describe("isPhantomZeroCostRow", () => {
+  it("flags a timed-out/aborted run with zero usage and no authoritative cost (the phantom row)", () => {
+    // The SDK query aborted before any assistant turn streamed: usage stays
+    // all-zeros, costAuthoritative=false so the shim omits actualCostUsd. This
+    // is the row that would otherwise land in cost_ledger as $0.00 / tokens=0.
+    expect(
+      isPhantomZeroCostRow({
+        success: false,
+        tokenUsage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          // actualCostUsd omitted — abort/timeout catch path
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves a legitimate $0 row from a real no-op task (success=true)", () => {
+    expect(
+      isPhantomZeroCostRow({
+        success: true,
+        tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves an abort that streamed partial usage (nonzero tokens → real calculateCost)", () => {
+    expect(
+      isPhantomZeroCostRow({
+        success: false,
+        tokenUsage: { promptTokens: 1200, completionTokens: 300 },
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves a Max-auth authoritative $0 (actualCostUsd=0 is defined, not undefined)", () => {
+    expect(
+      isPhantomZeroCostRow({
+        success: false,
+        tokenUsage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          actualCostUsd: 0,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("is a no-op when the run reported no tokenUsage at all", () => {
+    expect(isPhantomZeroCostRow({ success: false })).toBe(false);
+    expect(isPhantomZeroCostRow({ success: true })).toBe(false);
   });
 });

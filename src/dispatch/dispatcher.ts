@@ -717,8 +717,18 @@ async function dispatchWithSlot(
       }
     }
 
-    // Record cost in ledger (if budget feature is available and we have token data)
-    if (result.tokenUsage) {
+    // Record cost in ledger (if budget feature is available and we have token
+    // data). Phantom-zero guard (open since 2026-05-23): an aborted/timed-out
+    // SDK query that streamed no assistant turn yields all-zero usage with no
+    // authoritative cost; recording it writes a $0.00 / tokens=0 row that
+    // pollutes cost accounting. Skip it — but preserve legitimate $0 rows from
+    // real no-op tasks (success=true). See isPhantomZeroCostRow.
+    if (result.tokenUsage && isPhantomZeroCostRow(result)) {
+      log.info(
+        { taskId, runId, agentType, status: result.status ?? null },
+        "cost-ledger: skipping phantom zero-cost row (aborted run, zero usage)",
+      );
+    } else if (result.tokenUsage) {
       try {
         // Prefer the model ID the inference layer actually invoked over the
         // config-derived label — under claude-sdk, cfg.inferencePrimaryModel
@@ -832,6 +842,46 @@ function getModelFromTask(taskId: string): string {
   if (tier === "flash" && cfg.inferenceFallbackModel)
     return cfg.inferenceFallbackModel;
   return cfg.inferencePrimaryModel;
+}
+
+/**
+ * True when a run's cost row would be a phantom zero-cost entry that pollutes
+ * cost accounting instead of recording real spend.
+ *
+ * Open since 2026-05-23: an SDK query that ABORTS / TIMES OUT before any
+ * assistant message streams leaves `usage` at all-zeros and `costAuthoritative`
+ * false — the shim then omits `actualCostUsd`, so `recordCost` falls back to
+ * `calculateCost(model, 0, 0)` = $0 and writes a `$0.00 / tokens=0` row despite
+ * real subprocess work having happened. The 2026-05-23 `costAuthoritative`
+ * mechanism only fixed aborts that streamed PARTIAL usage (nonzero tokens →
+ * a real calculateCost); the zero-usage abort still slips through to a phantom
+ * row. This predicate catches exactly that residue.
+ *
+ * Phantom iff ALL hold:
+ *   - the run did NOT complete normally (`success === false`), AND
+ *   - both token counts are zero, AND
+ *   - no provider-authoritative cost was reported (`actualCostUsd === undefined`
+ *     — the abort/timeout catch path; a legitimate Max-auth $0 sets it to 0).
+ *
+ * A real no-op task (`success === true`, zero tokens) is NOT phantom — its $0
+ * row is legitimate and is preserved.
+ */
+export function isPhantomZeroCostRow(result: {
+  success: boolean;
+  tokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    actualCostUsd?: number;
+  };
+}): boolean {
+  const tu = result.tokenUsage;
+  if (!tu) return false;
+  return (
+    !result.success &&
+    tu.promptTokens === 0 &&
+    tu.completionTokens === 0 &&
+    tu.actualCostUsd === undefined
+  );
 }
 
 // ---------------------------------------------------------------------------

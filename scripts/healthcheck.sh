@@ -32,17 +32,29 @@ fi
 echo "[$(date)] healthcheck: FAILED (HTTP $RESP)"
 send_telegram "⚠️ Jarvis health check FAILED (HTTP $RESP). Attempting restart..."
 
-# Rebuild and restart — ensures compiled dist/ has latest source
-cd /root/claude/mission-control && npm run build >> /var/log/mc-healthcheck.log 2>&1
-systemctl restart mission-control 2>/dev/null
-sleep 10
+# Restart-only recovery. Deploys belong to ./scripts/deploy.sh — the worktree is
+# SHARED with the operator + Jarvis and routinely holds uncommitted mid-session
+# edits, so building here would silently deploy half-finished source with no
+# typecheck/test gate. Just restart the compiled service; if dist/ is stale that
+# is a deploy problem, not a healthcheck problem.
+#
+# Non-blocking lock on watchdog.sh's lock file: watchdog holds it for its whole
+# run and its Checks 1/2 also restart mission-control, so grabbing it here means a
+# healthcheck restart can't race a concurrent watchdog restart of the same service.
+# If we can't get it, watchdog is already handling recovery — defer quietly (no
+# false "still down" alarm).
+(
+  flock -n 9 || { echo "[$(date)] healthcheck: watchdog restart in progress, deferring"; exit 0; }
+  systemctl restart mission-control 2>/dev/null
+  sleep 10
 
-# Verify recovery
-RESP2=$(curl -s -o /dev/null -w "%{http_code}" -m 10 "$HC_URL" 2>/dev/null)
-if [ "$RESP2" = "200" ]; then
-  echo "[$(date)] healthcheck: recovered after restart"
-  send_telegram "✅ Jarvis recovered after restart."
-else
-  echo "[$(date)] healthcheck: STILL DOWN (HTTP $RESP2)"
-  send_telegram "🔴 Jarvis STILL DOWN after restart (HTTP $RESP2). Manual intervention needed."
-fi
+  # Verify recovery
+  RESP2=$(curl -s -o /dev/null -w "%{http_code}" -m 10 "$HC_URL" 2>/dev/null)
+  if [ "$RESP2" = "200" ]; then
+    echo "[$(date)] healthcheck: recovered after restart"
+    send_telegram "✅ Jarvis recovered after restart."
+  else
+    echo "[$(date)] healthcheck: STILL DOWN (HTTP $RESP2)"
+    send_telegram "🔴 Jarvis STILL DOWN after restart (HTTP $RESP2). Manual intervention needed."
+  fi
+) 9>/var/lock/watchdog.lock

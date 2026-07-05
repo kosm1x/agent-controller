@@ -19,6 +19,7 @@ import type {
 import { executeGraph } from "./executor.js";
 import { reflect } from "./reflector.js";
 import { resolveUseOpus } from "./model-tier.js";
+import { loadResumableRun } from "./resume-loader.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -155,4 +156,47 @@ export async function resumeFromGoal(
     })(),
     iterationsUsed: budget.consumed,
   };
+}
+
+/**
+ * Convenience entry point: load a prior run from the DB by task id, then resume
+ * from a specific goal. This is the clean programmatic seam a CLI/mc-ctl entry
+ * point calls (the CLI wiring itself is the integrator's job).
+ *
+ * Returns `null` when the task has no resumable run (missing row, no persisted
+ * goal_graph, or malformed graph — see loadResumableRun); otherwise returns the
+ * resumed OrchestratorResult.
+ *
+ * Cost accounting: the returned OrchestratorResult.tokenUsage is the MERGED
+ * usage (executor + reflect) produced by resumeFromGoal. We deliberately do NOT
+ * write to cost_ledger here — the dispatcher owns that seam. The caller records
+ * `result.tokenUsage` (and `actualCostUsd`/`actualModel` if present) after this
+ * returns, exactly as the dispatcher does for a normal run.
+ */
+export async function resumeFromRun(
+  taskId: string,
+  taskDescription: string,
+  goalId: string,
+  config?: Partial<OrchestratorConfig>,
+  toolNames?: string[],
+): Promise<OrchestratorResult | null> {
+  const loaded = loadResumableRun(taskId);
+  if (!loaded) {
+    console.log(
+      `[resume] Task ${taskId}: no resumable run (missing/failed/unpersisted graph)`,
+    );
+    return null;
+  }
+
+  // resumeFromGoal reconstructs its own graph from priorResult.goalGraph, so we
+  // pass priorResult straight through (loaded.graph is for the caller to inspect
+  // / pick a goalId, not to be re-threaded here).
+  return resumeFromGoal(
+    taskId,
+    taskDescription,
+    goalId,
+    loaded.priorResult,
+    config,
+    toolNames,
+  );
 }

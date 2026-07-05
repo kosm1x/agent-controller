@@ -12,6 +12,7 @@ import { scheduleCanary, stopCanary } from "./canary.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
 import { getEventBus } from "../lib/event-bus.js";
+import type { ScheduleRunFailedPayload } from "../lib/events/types.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { createMorningBriefing } from "./morning.js";
 import { composeMorningBriefDriftSection } from "../lib/s3/delivery.js";
@@ -67,6 +68,116 @@ function recordRitualFailure(
     const busMsg = errMsg(busErr);
     console.error(
       `[rituals] recordRitualFailure: event bus unavailable (${busMsg}) — original error: ${message}`,
+    );
+  }
+}
+
+/**
+ * Coarse UPPER bound on the wall-clock gap between two fires of a config
+ * ritual's cron, in ms — used only to size the /health staleness window, never
+ * for scheduling. Deliberately generous on day-of-week-restricted crons (a
+ * weekday-only ritual has a ~3-day Fri→Mon gap; a single-DOW ritual is weekly)
+ * so a legitimate weekend/holiday idle isn't misread as a wedged loop.
+ */
+function estimateRitualIntervalMs(cron: string): number {
+  const dow = cron.trim().split(/\s+/)[4] ?? "*";
+  const DAY_MS = 86_400_000;
+  if (dow !== "*") return /^\d+$/.test(dow) ? 7 * DAY_MS : 3 * DAY_MS;
+  return DAY_MS; // every config ritual with dow='*' fires at least daily
+}
+
+/**
+ * Stamp the ritual heartbeat gauge on a SUCCESSFUL run. Isolated + best-effort
+ * (its own try/catch) so a heartbeat-record hiccup is never misattributed as a
+ * ritual failure. Dynamic import mirrors the kb-reindex path — keeps the
+ * prom-client graph out of scheduler's static load (and out of the unit-test
+ * module graph unless a success path actually fires).
+ */
+async function recordRitualHeartbeat(ritual: RitualDefinition): Promise<void> {
+  try {
+    const { recordRitualSuccess } =
+      await import("../observability/prometheus.js");
+    recordRitualSuccess(ritual.id, estimateRitualIntervalMs(ritual.cron));
+  } catch (err) {
+    console.warn(
+      `[rituals] ${ritual.id}: heartbeat record failed (non-fatal): ${errMsg(err)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// schedule.run_failed → operator notifier
+//
+// recordRitualFailure() has EMITTED schedule.run_failed since Dim-4 R5, but
+// nothing ever consumed it — the comment there about "reaction rules can catch
+// systemic ritual outages" was aspirational. This is the missing consumer:
+// a failed ritual pages the operator over the same owner channels the
+// prometheus-alert-poller uses (router.sendBriefingToOwner → Telegram /
+// WhatsApp owner). Debounced per-ritual so a wedged minute-cadence ritual
+// (alert-poller @ */2, hindsight-cost-pull @ */5) can't spam the channel.
+// ---------------------------------------------------------------------------
+
+/** Minimum gap between operator alerts for the SAME ritual. */
+const RITUAL_FAILURE_ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 min
+let lastRitualFailureAlert = new Map<string, number>();
+
+/** Test helper: clear the per-ritual failure-alert debounce state. */
+export function _resetRitualFailureAlertState(): void {
+  lastRitualFailureAlert = new Map();
+}
+
+export interface RitualFailureNotifyDeps {
+  /** Delivers one alert to the operator; returns the per-channel send tally.
+   *  Defaults to router.sendBriefingToOwner (owner Telegram / WhatsApp). */
+  send?: (text: string) => Promise<{ sent: number; failed: number }>;
+  /** Current-time source (injected in tests for the debounce clock). */
+  now?: () => number;
+}
+
+/**
+ * Notify the operator that a ritual failed. Debounced per ritual_id: a repeated
+ * failure within RITUAL_FAILURE_ALERT_COOLDOWN_MS is suppressed. If delivery
+ * reaches ZERO channels (no owner configured) or throws, the debounce entry is
+ * cleared so the next occurrence retries rather than swallowing an alert nobody
+ * saw — same "zero delivery ≠ committed" stance as the prometheus-alert-poller.
+ */
+export async function notifyRitualFailure(
+  payload: ScheduleRunFailedPayload,
+  deps: RitualFailureNotifyDeps = {},
+): Promise<void> {
+  const now = deps.now?.() ?? Date.now();
+  const last = lastRitualFailureAlert.get(payload.ritual_id);
+  // `undefined` = never alerted this ritual → always fire (don't rely on a
+  // 0 sentinel, which would wrongly debounce near epoch / in tests).
+  if (last !== undefined && now - last < RITUAL_FAILURE_ALERT_COOLDOWN_MS) {
+    return; // debounce
+  }
+  lastRitualFailureAlert.set(payload.ritual_id, now);
+
+  const send =
+    deps.send ??
+    (async (text: string) => {
+      const router = getRouter();
+      if (!router) return { sent: 0, failed: 0 };
+      return router.sendBriefingToOwner(text);
+    });
+
+  const text =
+    `⚠️ Ritual failed: ${payload.ritual_id} (${payload.phase})\n` +
+    payload.error.slice(0, 500);
+
+  try {
+    const { sent } = await send(text);
+    if (sent === 0) {
+      lastRitualFailureAlert.delete(payload.ritual_id);
+      console.error(
+        `[rituals] ritual-failure alert not delivered to any operator channel (${payload.ritual_id}) — check WHATSAPP_OWNER_JID / TELEGRAM_OWNER_CHAT_ID`,
+      );
+    }
+  } catch (err) {
+    lastRitualFailureAlert.delete(payload.ritual_id);
+    console.error(
+      `[rituals] ritual-failure alert send threw for ${payload.ritual_id}: ${errMsg(err)}`,
     );
   }
 }
@@ -165,6 +276,7 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
   // It needs 25+ cycles with state carried across them, exceeding fast-runner limits.
   if (ritual.id === "overnight-tuning") {
     await executeOvernightTuning();
+    await recordRitualHeartbeat(ritual);
     return;
   }
 
@@ -186,6 +298,10 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
     if (router) {
       router.watchRitualTask(result.taskId, ritual.id);
     }
+
+    // Cron-liveness heartbeat: the loop fired and this ritual dispatched
+    // successfully. Recorded on the SUCCESS path only (never the catch).
+    await recordRitualHeartbeat(ritual);
   } catch (err) {
     console.error(`[rituals] ${ritual.id}: failed to submit —`, err);
     recordRitualFailure(ritual.id, err, "submit");
@@ -257,8 +373,23 @@ export function startRitualScheduler(): void {
   try {
     scheduleCanary();
   } catch (err) {
+    console.error(`[rituals] Failed to schedule canary: ${errMsg(err)}`);
+  }
+
+  // Wire the missing consumer for schedule.run_failed (see notifyRitualFailure).
+  // The event bus is initialized before startRitualScheduler() at boot, but keep
+  // this best-effort so a boot-ordering edge can't crash scheduler startup.
+  try {
+    getEventBus().subscribe<"schedule.run_failed">(
+      "schedule.run_failed",
+      (event) => {
+        void notifyRitualFailure(event.data);
+      },
+    );
+    console.log("[rituals] schedule.run_failed → operator notifier wired");
+  } catch (err) {
     console.error(
-      `[rituals] Failed to schedule canary: ${errMsg(err)}`,
+      `[rituals] failed to wire ritual-failure notifier: ${errMsg(err)}`,
     );
   }
 }
@@ -706,9 +837,7 @@ function scheduleHindsightCostPull(): void {
           );
         }
       } catch (err) {
-        console.error(
-          `[rituals] hindsight-cost-pull failed: ${errMsg(err)}`,
-        );
+        console.error(`[rituals] hindsight-cost-pull failed: ${errMsg(err)}`);
         recordRitualFailure("hindsight-cost-pull", err, "execute");
       }
     },

@@ -18,6 +18,27 @@ export const OUTPUT_END_MARKER = "---NANOCLAW_OUTPUT_END---";
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const GRACEFUL_STOP_TIMEOUT_MS = 10_000; // 10 seconds
 
+/**
+ * Control-plane credentials that must never reach a sandboxed agent (H5). The
+ * container can reach the host API via host-gateway:8080, so a real MC_API_KEY
+ * would let a compromised agent drive the control plane. We SUBSTITUTE a
+ * neutral placeholder rather than DROP the var: the worker's loadConfig() calls
+ * required("MC_API_KEY") and throws on an empty value, but nothing inside ever
+ * reads the real value — only its presence matters. Keep INFERENCE_PRIMARY_KEY
+ * intact (the SDK/inference path needs it inside the container).
+ */
+const SANDBOX_NEUTRALIZED_ENV = new Map<string, string>([
+  ["MC_API_KEY", "sandbox-no-control-plane-access"],
+]);
+
+/** Host paths a container volume mount is allowed to source from. */
+const VOLUME_ALLOWED_PREFIXES = [
+  "/root/claude/",
+  "/tmp/",
+  "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)
+  "/root/.claude/.credentials.json", // Claude Agent SDK auth (read-only, Sonnet runner path)
+];
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -142,8 +163,7 @@ export function parsePayload(jsonStr: string): ParsedPayload {
       output: {
         status: err ? "error" : "success",
         result: (parsed.result ?? parsed.output ?? JSON.stringify(parsed)) as
-          | string
-          | null,
+          string | null,
         ...(typeof err === "string" ? { error: err } : {}),
       },
     };
@@ -158,6 +178,78 @@ export function parsePayload(jsonStr: string): ParsedPayload {
       },
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Docker argument construction
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the full `docker run …` argument vector. Extracted from spawnContainer
+ * so the H5 hardening flags + env neutralization + volume allowlist can be
+ * unit-tested without spawning a real docker subprocess.
+ *
+ * SAFE-SET resource/security limits only — deliberately NOT `--network none`
+ * or `--read-only`, which break the working nanoclaw coding path (git clone,
+ * npm install, /tmp writes, host-gateway inference). The container image runs
+ * as root by design (it reads the mode-600 root-owned Claude SDK credentials
+ * and mounts root-owned /root paths — a `--user 1000:1000` process could read
+ * neither), so we drop capabilities and forbid privilege escalation instead of
+ * switching users.
+ */
+export function buildDockerRunArgs(opts: {
+  image: string;
+  name: string;
+  envVars?: Record<string, string>;
+  volumes?: string[];
+  command?: string[];
+}): string[] {
+  const args: string[] = [
+    "run",
+    "-i",
+    "--rm",
+    "--name",
+    opts.name,
+    // H5 safe-set hardening:
+    "--cap-drop=ALL", // drop every Linux capability
+    "--security-opt=no-new-privileges", // block setuid privilege escalation
+    "--memory",
+    "2g", // OOM-kill a runaway before it starves the host
+    "--cpus",
+    "2", // cap CPU shares
+    "--pids-limit",
+    "512", // fork-bomb guard
+  ];
+
+  // Environment variables (control-plane creds neutralized — see
+  // SANDBOX_NEUTRALIZED_ENV).
+  if (opts.envVars) {
+    for (const [key, value] of Object.entries(opts.envVars)) {
+      const safeValue = SANDBOX_NEUTRALIZED_ENV.get(key) ?? value;
+      args.push("-e", `${key}=${safeValue}`);
+    }
+  }
+
+  // Volume mounts (validated: host path must be in the allowlist).
+  if (opts.volumes) {
+    for (const vol of opts.volumes) {
+      const hostPath = vol.split(":")[0];
+      if (!VOLUME_ALLOWED_PREFIXES.some((p) => hostPath.startsWith(p))) {
+        console.warn(
+          `[container] Blocked volume mount outside allowed paths: ${vol}`,
+        );
+        continue;
+      }
+      args.push("-v", vol);
+    }
+  }
+
+  args.push(opts.image);
+
+  // Append custom command if provided (e.g. worker entrypoint).
+  if (opts.command) args.push(...opts.command);
+
+  return args;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,40 +273,14 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   const name = opts.name ?? generateContainerName();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  // Build docker args
-  const args: string[] = ["run", "-i", "--rm", "--name", name];
-
-  // Add environment variables
-  if (opts.envVars) {
-    for (const [key, value] of Object.entries(opts.envVars)) {
-      args.push("-e", `${key}=${value}`);
-    }
-  }
-
-  // Add volume mounts (validated: host path must be in allowlist)
-  if (opts.volumes) {
-    const allowedPrefixes = [
-      "/root/claude/",
-      "/tmp/",
-      "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)
-      "/root/.claude/.credentials.json", // Claude Agent SDK auth (read-only, Sonnet runner path)
-    ];
-    for (const vol of opts.volumes) {
-      const hostPath = vol.split(":")[0];
-      if (!allowedPrefixes.some((p) => hostPath.startsWith(p))) {
-        console.warn(
-          `[container] Blocked volume mount outside allowed paths: ${vol}`,
-        );
-        continue;
-      }
-      args.push("-v", vol);
-    }
-  }
-
-  args.push(image);
-
-  // Append custom command if provided (e.g. worker entrypoint)
-  if (opts.command) args.push(...opts.command);
+  // Build docker args (H5 hardening + env neutralization + volume allowlist).
+  const args = buildDockerRunArgs({
+    image,
+    name,
+    envVars: opts.envVars,
+    volumes: opts.volumes,
+    command: opts.command,
+  });
 
   // Spawn the container process
   const proc = spawn("docker", args, {

@@ -156,6 +156,63 @@ groups:
           summary: "Retain concerns ratio above 25% for 24h+"
           description: 'concerns / total = {{ $value | printf "%.2f" }}. High concerns ratio means failure narratives are entering memory faster than success. Run mc-ctl outcome-distribution 7d.'
 
+      # Ritual loop wedged — the single most dangerous silent failure (2026-07-05
+      # hardening sweep). Every in-process detector (rituals, canary, alert-poller)
+      # shares ONE node-cron event loop; one wedge silences all of them while
+      # /health stays 200. mc_ritual_last_success_timestamp{ritual_id} is stamped
+      # on each ritual's SUCCESS path (src/rituals/scheduler.ts). This fires when
+      # even the FRESHEST ritual hasn't succeeded in 26h — i.e. the whole loop is
+      # dead, not just one slow ritual (min-over-series keeps false positives near
+      # zero; a single rarely-run ritual can't trip it). 26h > the slowest daily
+      # cadence (nightly-close→morning ≈ 24h). Per-ritual sub-thresholds for the
+      # 4×/day scans are a future refinement. Complements the out-of-band
+      # schedule.run_failed Telegram notifier (catches THROWS; this catches silent
+      # wedges) and watchdog.sh's mc-prometheus liveness check.
+      - alert: MCRitualLoopStale
+        expr: min(time() - mc_ritual_last_success_timestamp) > 93600
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mission Control ritual loop appears wedged"
+          description: "Even the most-recently-successful ritual last ran {{ $value | humanizeDuration }} ago. The shared node-cron loop is likely dead — signal intel, briefings, retention, and the alert-poller are all silent. Check journalctl -u mission-control for a cron-boundary throw."
+
+      # Scrape target down — monitoring-of-monitoring (2026-07-05 sweep). If MC
+      # stops being scraped (process dead OR prometheus can't reach :8080), every
+      # mission-control rule above stops evaluating silently. Only salones-wa had
+      # an up==0 rule before this.
+      - alert: MCScrapeDown
+        expr: up{job="mission-control"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus cannot scrape Mission Control"
+          description: "up{job=mission-control}==0 for 3m. Either MC is down or the metrics endpoint is unreachable — all MC alerts are blind until this clears."
+
+  # Monitoring-of-monitoring: the exporters every vps-system + postgres rule
+  # depends on. If node-exporter dies, CPU/mem/disk rules go dark with no alert;
+  # this makes that visible (2026-07-05 sweep).
+  - name: monitoring-meta
+    rules:
+      - alert: NodeExporterDown
+        expr: up{job="node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "node-exporter is down"
+          description: "up{job=node}==0 for 5m. All CPU/memory/disk alerts are now blind."
+
+      - alert: PostgresExporterDown
+        expr: up{job="postgres"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "postgres-exporter is down"
+          description: "up{job=postgres}==0 for 5m. Postgres alerts are now blind."
+
   # --- "hindsight" alert group REMOVED 2026-06-15 ---
   # The crm-hindsight scrape job was removed from prometheus.yml in the
   # Azteca-Aura clean-start (container torn down). All 3 rules here referenced

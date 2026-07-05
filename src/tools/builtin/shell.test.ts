@@ -9,6 +9,8 @@ import {
   validateShellCommand,
   isDbOp,
   resolveShellTimeout,
+  isSecretEnvKey,
+  buildScrubbedEnv,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
 
@@ -44,6 +46,54 @@ describe("resolveShellTimeout — DB ops get a larger budget; cap is a real hard
     expect(resolveShellTimeout(GEN, -5)).toBe(30_000);
     expect(resolveShellTimeout(GEN, "60000")).toBe(30_000);
     expect(resolveShellTimeout(GEN, null)).toBe(30_000);
+  });
+});
+
+describe("env scrub — shell_exec child cannot inherit secrets (H1)", () => {
+  it("flags secret-shaped env keys (incl. mid-name and no-keyword cases)", () => {
+    const secret = [
+      "MC_API_KEY",
+      "INFERENCE_PRIMARY_KEY",
+      "TELEGRAM_BOT_TOKEN",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_REFRESH_TOKEN",
+      "EMAIL_COMUNIDADES_PASSWORD",
+      "X_AUTH_TOKEN__iooking4ward", // _TOKEN is mid-name, not a suffix
+      "X_CT0__mexiconecesario", // no secret keyword at all — prefix rule
+    ];
+    for (const k of secret) expect(isSecretEnvKey(k)).toBe(true);
+  });
+
+  it("leaves plain operational vars alone", () => {
+    const plain = [
+      "PATH",
+      "HOME",
+      "LANG",
+      "TZ",
+      "USER",
+      "MC_DB_PATH",
+      "MC_PORT",
+    ];
+    for (const k of plain) expect(isSecretEnvKey(k)).toBe(false);
+  });
+
+  it("removes secret keys from the child env but preserves PATH/HOME", () => {
+    const priorKey = process.env.MC_API_KEY;
+    const priorTok = process.env.SOME_FAKE_TOKEN;
+    process.env.MC_API_KEY = "real-control-plane-key";
+    process.env.SOME_FAKE_TOKEN = "abc123";
+    try {
+      const env = buildScrubbedEnv();
+      expect(env.MC_API_KEY).toBeUndefined();
+      expect(env.SOME_FAKE_TOKEN).toBeUndefined();
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.HOME).toBe(process.env.HOME);
+    } finally {
+      if (priorKey === undefined) delete process.env.MC_API_KEY;
+      else process.env.MC_API_KEY = priorKey;
+      if (priorTok === undefined) delete process.env.SOME_FAKE_TOKEN;
+      else process.env.SOME_FAKE_TOKEN = priorTok;
+    }
   });
 });
 
