@@ -81,7 +81,7 @@ USE WHEN:
 - A reply in a thread (pass reply_to_id).
 
 DO NOT USE FOR:
-- Other platforms (use social_publish).
+- Other platforms — this tool posts to X/Twitter only.
 - Drafting only — this PUBLISHES (confirms on the interactive path).
 
 THIS IS THE ONLY SUPPORTED X PATH. Do NOT use shell_exec, Playwright/.cjs scripts,

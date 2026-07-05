@@ -622,7 +622,7 @@ export const seoPageAuditTool: Tool = {
     type: "function",
     function: {
       name: "seo_page_audit",
-      description: `Technical SEO audit of a single URL. Fetches the page, parses title/meta/headings/schema/images/content, and scores 0-100 against a rubric with prioritized findings. Persists results to the seo_audits table for trend tracking.
+      description: `Technical SEO audit of a single URL. Fetches the page, parses title/meta/headings/schema/images/content, and scores 0-100 against a rubric with prioritized findings. Also writes the result to the seo_audits table for the operator's records.
 
 USE WHEN:
 - User asks to audit/analyze/review the SEO of a specific URL
@@ -646,7 +646,7 @@ RUBRIC (100 points):
 - H2 section structure for long content (10pt)
 - Target keyword in title + H1 (10pt — only if target_keyword provided)
 
-Returns score, prioritized issues (critical first), and a list of what's already good. Audit is persisted with an audit_id you can reference later.`,
+Returns score, prioritized issues (critical first), and a list of what's already good — all in-band in this result, so read them here now. The audit is also written to seo_audits for the operator's records, but no tool can fetch that row back, so do not tell the user to "reference it later" or promise a follow-up lookup.`,
       parameters: {
         type: "object",
         properties: {

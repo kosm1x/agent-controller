@@ -6,8 +6,9 @@
  * framework across 7 platforms. Returns a graded report with prioritized
  * findings and optional industry-benchmark context.
  *
- * Part of v7.3 Phase 4 — Digital Marketing Buyer (P4a slice). Persists to
- * `ads_audits` for trend tracking.
+ * Part of v7.3 Phase 4 — Digital Marketing Buyer (P4a slice). Returns the full
+ * graded report in-band; also persists to `ads_audits` for the operator's
+ * records (write-only — no reader tool fetches the row back yet).
  */
 
 import type { Tool } from "../types.js";
@@ -226,7 +227,7 @@ INPUT: one account snapshot with whatever fields the operator has. Partial data 
 
 PLATFORMS: google_ads, meta_ads, linkedin_ads, tiktok_ads, youtube_ads, microsoft_ads, apple_search_ads.
 
-Audit is persisted to ads_audits with an audit_id you can reference later.`,
+The full graded report (score, category scores, prioritized findings, benchmark notes) is returned in-band in this result — read it here now. The audit is also written to ads_audits for the operator's records, but no tool can fetch that row back, so do not tell the user to "reference it later" or promise a follow-up lookup.`,
       parameters: {
         type: "object",
         properties: {

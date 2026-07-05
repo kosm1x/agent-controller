@@ -135,11 +135,6 @@ import {
 } from "../builtin/video.js";
 import { screenshotElementTool } from "../builtin/screenshot.js";
 import {
-  socialPublishTool,
-  socialAccountsListTool,
-  socialPublishStatusTool,
-} from "../builtin/social.js";
-import {
   tweetPostTool,
   tweetProbeTool,
   tweetMentionsTool,
@@ -375,13 +370,6 @@ export const BUILTIN_TOOLS: Tool[] = [
   ...TEACHING_TOOL_OBJECTS,
 ];
 
-// Social publishing tools — conditionally registered when SOCIAL_PUBLISH_ENABLED is configured
-export const SOCIAL_TOOLS: Tool[] = [
-  socialPublishTool,
-  socialAccountsListTool,
-  socialPublishStatusTool,
-];
-
 // CRM tools — conditionally registered when CRM_API_TOKEN is configured
 export const CRM_TOOLS: Tool[] = [crmQueryTool];
 
@@ -436,14 +424,6 @@ export class BuiltinToolSource implements ToolSource {
         registry.register(tool);
       }
       registered.push(...CRM_TOOLS.map((t) => t.name));
-    }
-
-    // Register social publishing tools when enabled
-    if (process.env.SOCIAL_PUBLISH_ENABLED === "true") {
-      for (const tool of SOCIAL_TOOLS) {
-        registry.register(tool);
-      }
-      registered.push(...SOCIAL_TOOLS.map((t) => t.name));
     }
 
     // Register gws dispatch tool only when Google OAuth is configured.

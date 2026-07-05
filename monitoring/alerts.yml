@@ -190,6 +190,38 @@ groups:
           summary: "Prometheus cannot scrape Mission Control"
           description: "up{job=mission-control}==0 for 3m. Either MC is down or the metrics endpoint is unreachable — all MC alerts are blind until this clears."
 
+      # Budget daily spend high — OBSERVABILITY-ONLY anomaly signal (2026-07-05
+      # hardening sweep). Enforcement is OFF (budgetEnabled=false): this NEVER
+      # blocks or throttles a task. It fires when today's spend crosses 80% of
+      # the daily limit and stays there for an hour — a sustained-burn signal,
+      # not a spike. Ratio uses the mc_budget_daily_* gauges (set at scrape from
+      # getBudgetStatus). Daily limit default raised 10→50 to match the live env
+      # override. Complements the faster hourly BudgetHourlySpike + watchdog 9a.
+      - alert: BudgetDailyHigh
+        expr: mc_budget_daily_spend_usd / mc_budget_daily_limit_usd > 0.8
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mission Control daily spend above 80% of limit for 1h"
+          description: 'Daily spend is {{ $value | printf "%.2f" }}× the daily limit, sustained 1h. Enforcement is OFF — this is an anomaly signal, not a block. Check mc-ctl stats for a runaway model/task.'
+
+      # Budget hourly spend spike — OBSERVABILITY-ONLY retry-storm detector
+      # (2026-07-05 sweep). Enforcement is OFF: never blocks. Fires when the
+      # current hour's spend crosses 95% of the hourly limit for 10m. The hourly
+      # limit default was raised 2→20 (config.budgetHourlyLimitUsd; live bursts
+      # run ~$8) so this is a TRUE anomaly, not the every-hour cry-wolf of the
+      # stale $2 default. Same signal watchdog.sh Check 9a reads off /health's
+      # hourly window — both key off config.budgetHourlyLimitUsd.
+      - alert: BudgetHourlySpike
+        expr: mc_budget_hourly_spend_usd / mc_budget_hourly_limit_usd > 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mission Control hourly spend above 95% of limit for 10m"
+          description: 'Hourly spend is {{ $value | printf "%.2f" }}× the hourly limit — likely a retry-storm or runaway loop. Enforcement is OFF; this is an anomaly signal, not a block. Check journalctl -u mission-control for a provider retry loop.'
+
   # Monitoring-of-monitoring: the exporters every vps-system + postgres rule
   # depends on. If node-exporter dies, CPU/mem/disk rules go dark with no alert;
   # this makes that visible (2026-07-05 sweep).

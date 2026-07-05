@@ -1,7 +1,13 @@
 /**
- * Budget enforcement service.
+ * Budget accounting + observability service.
  *
- * Records per-run costs and checks daily spend against a configurable limit.
+ * Records per-run costs and computes spend across three windows
+ * (hourly / daily / monthly) against configurable limits. Those limits are
+ * OBSERVABILITY thresholds, not hard caps: while `config.budgetEnabled=false`
+ * (the operator default) nothing here blocks or throttles a task — the
+ * `exceeded` flags only drive /health, the Prometheus budget gauges, and the
+ * alert rules. Actual enforcement (blocking a dispatch on breach) is a
+ * separate, currently-off dispatcher gate (`budgetEnabled` + `budgetEnforce`).
  * All queries use the indexed `created_at` column for fast lookups.
  */
 

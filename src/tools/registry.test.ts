@@ -8,7 +8,6 @@ import { getToolAnnotations } from "./types.js";
 import type { Tool } from "./types.js";
 import {
   BUILTIN_TOOLS,
-  SOCIAL_TOOLS,
   CRM_TOOLS,
   GWS_TOOLS,
   WP_TOOLS,
@@ -229,7 +228,7 @@ describe("deferred tool expansion", () => {
 // the unannotated population's collapse to "destructiveHint=true /
 // readOnlyHint=false".
 //
-// Sources covered: builtin, WP, CRM, GWS, social. The MCP source registers
+// Sources covered: builtin, WP, CRM, GWS. The MCP source registers
 // upstream-defined schemas at runtime (xpoz/browser/etc.) — those are out
 // of scope for this file because their hints come from the upstream
 // definition, not our codebase.
@@ -242,7 +241,6 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
   const ALL_TOOLS: Tool[] = [
     // BuiltinToolSource family
     ...BUILTIN_TOOLS,
-    ...SOCIAL_TOOLS,
     ...CRM_TOOLS,
     ...GWS_TOOLS,
     ...WP_TOOLS,
@@ -383,7 +381,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     //                        native replacement for ad-hoc Playwright X scripts).
     // 2026-06-23: 194 → 195 (X read path — tweet_mentions added).
     // 2026-07-05: 195 → 194 (efficiency-audit Phase 1 — jarvis_init one-shot removed).
-    expect(ALL_TOOLS.length).toBe(194);
+    // 2026-07-05: 194 → 191 (hardening sweep — SOCIAL_PUBLISH stub removed: 3 tools).
+    expect(ALL_TOOLS.length).toBe(191);
   });
 
   // ──────────────────────────────────────────────────────────────────

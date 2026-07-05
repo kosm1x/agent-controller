@@ -5,8 +5,10 @@
  * the selected framework's prompt template with brand voice cues, and asks the
  * LLM for N creative variants (headline + body + CTA per variant).
  *
- * Output is persisted to `ads_creatives` so variants can be revisited, A/B
- * results logged, or fed back into ads_audit as the creative inventory.
+ * The generated variants are returned in-band. Output is also persisted to
+ * `ads_creatives` for the operator's records — write-only, no reader tool
+ * fetches variants back yet, so they can't be revisited or A/B-compared later
+ * from within the agent.
  *
  * Part of v7.3 Phase 4 — Digital Marketing Buyer (P4a slice).
  */

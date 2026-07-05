@@ -14,7 +14,9 @@
     "tune:baseline": "tsx src/tuning/baseline.ts --seed",
     "tune:baseline:dry": "tsx src/tuning/baseline.ts --seed --dry-run",
     "tune:run": "tsx src/tuning/run.ts --seed",
-    "tune:run:dry": "tsx src/tuning/run.ts --seed --dry-run"
+    "tune:run:dry": "tsx src/tuning/run.ts --seed --dry-run",
+    "eval:gate": "tsx scripts/eval-gate.ts",
+    "eval:gate:dry": "tsx scripts/eval-gate.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.101",

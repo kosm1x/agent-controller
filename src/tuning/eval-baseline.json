@@ -1,0 +1,10 @@
+{
+  "overall": 63.35,
+  "epsilon": 2.0,
+  "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk (Sonnet primary / Haiku fallback), prod default as of 2026-07-05",
+  "capturedAt": "2026-07-04T07:16:53Z",
+  "nCases": 416,
+  "toolSelectionCases": 55,
+  "source": "PROVISIONAL / NOT-YET-COMPARABLE — seeded from nightly tune_runs row tune-1783148400126 (last real full run, $5.99, ~16min). The nightly runs as a ritual INSIDE the live process, where toolRegistry holds ~257 tools (builtin+MCP+Google+Memory+Skills). eval-gate runs standalone and registers ONLY the builtin source (~160 tools), so its absolute composite is NOT comparable to this number.",
+  "note": "BEFORE this gate's PASS/FAIL means anything, capture a gate-native incumbent against the CURRENT prod config: `npm run eval:gate -- --run --update-baseline`. That measures incumbent and every future candidate under the IDENTICAL harness (same builtin registry, same 416 cases, same scorer), which is what makes the relative comparison valid. epsilon is in composite points on the 0-100 scale (the brief's 0.02 on a 0-1 scale = 2.0 here). Observed nightly incumbents drifted 66.9 -> 63.3 over 2026-06-27..07-04 — flagged for the operator, out of this gate's scope."
+}

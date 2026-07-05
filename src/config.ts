@@ -101,9 +101,23 @@ export interface Config {
    * enforcement (the pre-2026-05-24 behavior).
    */
   budgetEnforce: boolean;
-  /** Daily spend limit in USD (default: 10.0). */
+  /**
+   * Daily spend limit in USD (default: 50.0). Observability threshold, NOT a
+   * hard cap while `budgetEnabled=false` (the operator default): it never
+   * blocks a task — it only sizes the /health `daily.exceeded` flag and the
+   * BudgetDailyHigh alert (spend/limit > 0.8 for 1h). The 50.0 default matches
+   * the live env override so an unset env doesn't silently under-limit.
+   */
   budgetDailyLimitUsd: number;
-  /** Hourly spend limit in USD (default: 2.0). */
+  /**
+   * Hourly spend limit in USD (default: 20.0). Soft observability threshold,
+   * NOT a binding cap — with `budgetEnabled=false` it does NOT block or
+   * throttle anything; it only sizes the /health `hourly.exceeded` flag, the
+   * BudgetHourlySpike alert, and watchdog.sh Check 9a. Sized to catch a true
+   * retry-storm (live hourly bursts run ~$8) without daily false-positives —
+   * it replaces the stale $2 default, which cried wolf every hour because it
+   * was set to bind back when enforcement was intended.
+   */
   budgetHourlyLimitUsd: number;
   /** Monthly spend limit in USD (default: 400.0). */
   budgetMonthlyLimitUsd: number;
@@ -225,8 +239,8 @@ export function loadConfig(): Config {
     // Soft-cap mode by default: gate logs + emits when exceeded but does
     // NOT block tasks. Flip to "true" to restore hard enforcement.
     budgetEnforce: process.env.BUDGET_ENFORCE === "true",
-    budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 10.0),
-    budgetHourlyLimitUsd: float("BUDGET_HOURLY_LIMIT_USD", 2.0),
+    budgetDailyLimitUsd: float("BUDGET_DAILY_LIMIT_USD", 50.0),
+    budgetHourlyLimitUsd: float("BUDGET_HOURLY_LIMIT_USD", 20.0),
     budgetMonthlyLimitUsd: float("BUDGET_MONTHLY_LIMIT_USD", 400.0),
     budgetPricingJson: optional("BUDGET_PRICING_JSON"),
 

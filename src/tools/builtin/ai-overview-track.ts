@@ -5,7 +5,9 @@
  * AI-Overview markers (text + DOM heuristics — markers change frequently so
  * we use multiple signals), extracts top-10 organic results + cited sources.
  *
- * Persists to `ai_overview_tracking` for time-series + attribution monitoring.
+ * Returns the presence snapshot + cited sources in-band; also persists to
+ * `ai_overview_tracking` for the operator's records (write-only — no reader
+ * tool fetches snapshots back yet).
  *
  * Part of v7.3 Phase 3 — AI Overview Monitoring.
  *
@@ -245,7 +247,7 @@ export const aiOverviewTrackTool: Tool = {
     type: "function",
     function: {
       name: "ai_overview_track",
-      description: `Track Google AI Overview presence for a search query. Fetches the SERP via stealth browser, detects AI-Overview panel via text + structural heuristics, returns presence + cited sources + top-10 organic results. Persists to ai_overview_tracking.
+      description: `Track Google AI Overview presence for a search query. Fetches the SERP via stealth browser, detects AI-Overview panel via text + structural heuristics, returns presence + cited sources + top-10 organic results in-band. Each call is a point-in-time check; the snapshot is also written to ai_overview_tracking for the operator's records, but no tool fetches those rows back yet, so do not promise historical trend retrieval or tell the user you'll "track it over time".
 
 USE WHEN: user asks "is there an AI overview for…", "track AI overview", "who's getting cited in AI search", "SGE tracking", "generative search panel".
 
