@@ -214,7 +214,8 @@ export function buildDockerRunArgs(opts: {
     "--cap-drop=ALL", // drop every Linux capability
     "--security-opt=no-new-privileges", // block setuid privilege escalation
     "--memory",
-    "2g", // OOM-kill a runaway before it starves the host
+    "4g", // OOM-kill a runaway before it starves the host; 4g leaves headroom
+    // for a real build (tsc/webpack on a large repo) — closure-audit I1.
     "--cpus",
     "2", // cap CPU shares
     "--pids-limit",

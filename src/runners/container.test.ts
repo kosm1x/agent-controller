@@ -142,9 +142,9 @@ describe("buildDockerRunArgs — H5 hardening", () => {
     const args = buildDockerRunArgs(base);
     expect(args).toContain("--cap-drop=ALL");
     expect(args).toContain("--security-opt=no-new-privileges");
-    // --memory 2g, --cpus 2, --pids-limit 512 (flag + value pairs)
+    // --memory 4g, --cpus 2, --pids-limit 512 (flag + value pairs)
     expect(args).toContain("--memory");
-    expect(args[args.indexOf("--memory") + 1]).toBe("2g");
+    expect(args[args.indexOf("--memory") + 1]).toBe("4g");
     expect(args).toContain("--cpus");
     expect(args[args.indexOf("--cpus") + 1]).toBe("2");
     expect(args).toContain("--pids-limit");

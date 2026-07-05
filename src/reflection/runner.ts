@@ -10,8 +10,11 @@
  *
  * PHASE 4 IS THE HARNESS. Judgment construction and the `proposed_briefings`
  * write path are V8.1 Phase 6 — the prompt below is an honest placeholder and
- * the tool allowlist is read-only-only. Nothing triggers `runReflection` yet
- * (triggers are Phase 7), so it has zero production cost until then.
+ * the tool allowlist is read-only-only. `runReflection` now FIRES in production
+ * via the Phase-7 triggers (n-turn.ts + idle-detect.ts) — so it runs live on the
+ * Phase-6 placeholder judgment prompt below until Phase 6 ships real judgment
+ * construction. (Updated 2026-07-05: the prior "nothing triggers it yet" note
+ * drifted once the triggers were wired.)
  *
  * Cursor contract: a successful pass advances the cursor to the scope's
  * `lastProcessedEventId`; a failed pass leaves it, so the next pass retries

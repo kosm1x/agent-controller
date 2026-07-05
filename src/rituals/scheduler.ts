@@ -46,7 +46,7 @@ const scheduledJobs: ScheduledTask[] = [];
  * before initEventBus ran), we swallow the throw rather than mask the real
  * failure. console.error still fires at the caller for tail-the-log diagnosis.
  */
-function recordRitualFailure(
+export function recordRitualFailure(
   ritualId: string,
   err: unknown,
   phase: "submit" | "execute",
@@ -871,6 +871,18 @@ function schedulePrometheusAlertPoller(): void {
         const { runPrometheusAlertPoll } =
           await import("./prometheus-alert-poller.js");
         const summary = await runPrometheusAlertPoll();
+        // Heartbeat the ONE always-on */2 ritual (closure-audit W1): config
+        // rituals stamp mc_ritual_last_success_timestamp only when they fire
+        // (some daily), so after a restart the gauge can be empty for hours and
+        // MCRitualLoopStale's min() over an empty series can't fire — a boot-time
+        // wedge would be invisible. Stamping here means a fresh heartbeat series
+        // exists within ~2min of every boot, so the staleness alert is armed
+        // continuously. Best-effort — never let a metrics hiccup break the poll.
+        void import("../observability/prometheus.js")
+          .then((m) =>
+            m.recordRitualSuccess("prometheus-alert-notifier", 120_000),
+          )
+          .catch(() => {});
         if (summary.sent) {
           console.log(
             `[rituals] prometheus-alert-notifier: firing=${summary.firing} newly=${summary.newlyFiring} reminders=${summary.reminders} resolved=${summary.resolved} → notified operator`,

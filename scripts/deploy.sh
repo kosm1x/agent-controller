@@ -44,10 +44,17 @@ if [[ "${MC_SKIP_MIGRATION_GATE:-0}" != "1" ]]; then
   echo "[deploy] Migration preflight (fresh-boot schema gate)..."
   MIG_TMP="$(mktemp -d)"
   if npx tsx scripts/validate-migration-runner.ts fresh "$MIG_TMP/fresh.db" > "$MIG_TMP/out.json" 2> "$MIG_TMP/err.log"; then
-    if grep -qE '"userVersion": *2' "$MIG_TMP/out.json" && ! grep -q 'baseline_history' "$MIG_TMP/out.json"; then
+    # The validator prints `[db] schema migration …` log lines to stdout ahead of
+    # the JSON signature — and one of them literally says "drop baseline_history".
+    # Isolate the JSON line and test baseline_history's absence as a TABLE KEY
+    # ("baseline_history":), never as a loose substring (which the log line trips).
+    MIG_JSON=$(grep '"mode":"fresh"' "$MIG_TMP/out.json" | tail -1)
+    if [[ -n "$MIG_JSON" ]] \
+      && grep -qE '"userVersion": *2' <<<"$MIG_JSON" \
+      && ! grep -q '"baseline_history":' <<<"$MIG_JSON"; then
       echo "[deploy] Migration gate OK — fresh boot → user_version=2, baseline_history absent."
     else
-      echo "[deploy] FAILED — fresh-boot schema signature unexpected (want user_version=2, no baseline_history):"
+      echo "[deploy] FAILED — fresh-boot schema signature unexpected (want user_version=2, no baseline_history table):"
       cat "$MIG_TMP/out.json"
       rm -rf "$MIG_TMP"; exit 1
     fi

@@ -14,6 +14,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import { getDatabase } from "../db/index.js";
 import { getRouter } from "../messaging/index.js";
 import { errMsg } from "../lib/err-msg.js";
+import { recordRitualFailure } from "./scheduler.js";
 
 const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 
@@ -180,9 +181,13 @@ export function scheduleCanary(): void {
           );
         }
       } catch (err) {
-        console.error(
-          `[canary] Check failed: ${errMsg(err)}`,
-        );
+        console.error(`[canary] Check failed: ${errMsg(err)}`);
+        // Closure-audit W2: the canary is the detector meant to catch silent
+        // degradation, but a throw here (or a failed alert broadcast) previously
+        // only hit the log. Route it through the same schedule.run_failed →
+        // operator-notifier path every other ritual uses, so the watchdog of
+        // silent failures can't itself fail silently.
+        recordRitualFailure("canary", err, "execute");
       }
     },
     { timezone: TIMEZONE },

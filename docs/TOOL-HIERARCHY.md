@@ -83,7 +83,7 @@ Typical message sees ~27 tools. Of those, ~9 have full schemas, ~18 are deferred
 | `research`          | analiza, investiga, estudio                                                 | Gemini upload/research/audio, knowledge maps                                           | 5     |
 | `specialty`         | gráfica, RSS, genera imagen                                                 | Chart, RSS, Gemini image, HuggingFace, batch                                           | 6     |
 | `intel`             | señales, mercado, alertas, depot                                            | Query, status, alert history, baseline                                                 | 4     |
-| `social`            | redes, Instagram, publica en redes                                          | Publish, accounts, status                                                              | 3     |
+| `social`            | redes, X/Twitter, publica, tweet, menciones                                 | X/Twitter post, probe, mentions (SOCIAL_PUBLISH stub removed 2026-07-05)               | 3     |
 | `schedule`          | programa, reportes, cron, cada hora                                         | Schedule task, delete schedule                                                         | 2     |
 | `utility`           | clima, weather, moneda, currency, tipo de cambio, geocode                   | weather_forecast, currency_convert, geocode_address                                    | 3     |
 | `crm`               | CRM, Azteca (explicit only)                                                 | crm_query                                                                              | 1     |
@@ -151,7 +151,6 @@ Tools only registered at startup if their service is configured:
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | 20 Google Workspace tools                       |
 | `WP_SITES`                                  | 10 WordPress tools                              |
 | `CRM_API_TOKEN`                             | 1 CRM tool                                      |
-| `SOCIAL_PUBLISH_ENABLED=true`               | 3 social tools                                  |
 | Lightpanda MCP server running               | 10 browser tools                                |
 | Playwright MCP server running               | 21 Playwright tools (lazy connect on first use) |
 
