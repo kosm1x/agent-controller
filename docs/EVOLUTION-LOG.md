@@ -526,3 +526,157 @@ Three distinct friction clusters: (1) `mcp__supabase__query` scope denials — r
 
 ### Research notes
 Day illustrates a maturing "multi-project switchboard" usage pattern: Fede treats Jarvis as a stateful context switcher across 5–6 active repos in a single session, with KB sync as the primary continuity mechanism. The EurekaMS ecosystem is expanding structurally (VLCRM extracted as independent repo, intelligence-ops-mcp at Phase 3/4 boundary) — the operator is actively building the scaffolding for a demo-ready intelligence layer, with MiniSu as the synthetic proving ground.
+
+## 2026-06-28
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 49 |
+| Total tasks | 6,916 (5405 completed + 1220 completed_with_concerns + 275 failed + 13 cancelled + 2 needs_context + 1 running) |
+| Conversations today | 40 (telegram: 40) |
+| Streak days | 60+ active days |
+
+### Interactions summary
+The day split into two parallel arcs: (1) a multi-hour mass SKU image generation campaign for MiniSu, using Gemini to produce 500×500 px product photos in batches of 3, ultimately automating the loop with a background script targeting 150 total SKUs; (2) EurekaMS project housekeeping — KB deduplication for intelligence-ops-mcp, a 45-commit KB catch-up for agent-controller (V8.3), and registering all 4 official repos in the EurekaMS project DB record. The day also saw a web catalog for MiniSu published at `https://uncharted.eurekamd.cloud/minisu-catalog/` with an HTML gallery backed by live DB data.
+
+### What Jarvis learned
+The MiniSu image loop introduced a new class of long-running background automation: unattended overnight scripts with no failure alerting, surfacing as silent death at 03:56 that required manual rearranque at 09:15. The flailing guard (token "minisu") fired during bug diagnosis, reinforcing that compound session tokens can trigger false positives mid-task. Duplicate KB files can persist undetected across sessions — the orphan `projects/intelligence-ops-mcp/README.md` was only found when the user probed explicitly, suggesting the need for KB coherence checks at session start.
+
+### Friction points
+Security policy blocked direct writes to project repos and Caddyfile edits, forcing multi-step workarounds (KB → shell → alternate paths). Port 8085 was occupied by Gilda, causing the MiniSu catalog to silently fail for the user until migrated to 8088 via nip.io. The `kill`/`pkill` block prevented immediate loop reconfiguration; the turn limit (55 turns) cut off the automation script session mid-task. The flailing guard on "minisu" interrupted diagnosis flow.
+
+### Research notes
+Day 60+ of continuous active use. The session shows the system being used as a semi-autonomous infrastructure operator: not just answering queries but owning long-running background processes (image generation loop), managing KB hygiene, and maintaining multi-repo project metadata. The operator's primary pattern is parallel-track sessions — infrastructure maintenance + creative/data production — with Jarvis expected to context-switch cleanly between them.
+
+## 2026-06-29
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 9 (telegram: 9) |
+| Streak days | — |
+
+### Interactions summary
+Two parallel tracks defined the day: completing the MiniSu product image catalog (a multi-day interrupted loop) and diagnosing a critical bug in the @MexicoNecesario weekly tweet schedule. The catalog closed successfully at 152 PNGs across all SKU prefixes. The tweet issue exposed a `dayOfWeek` miscalculation where the agent classified Monday June 29 as Sunday and applied editorial silence — the fix was initiated but the `max_turns: 55` ceiling cut off multiple afternoon sessions before confirming deployment. A final manual publication attempt at 17:58 was likely blocked by accumulated X API rate-limit consumption from the day's earlier retries.
+
+### What Jarvis learned
+The `max_turns: 55` ceiling is a recurring structural bottleneck: it hit at least twice in the afternoon (14:20 and 15:18), fragmenting what should have been a single fix-and-publish session into four separate continuation requests. Shell scope availability remains inconsistently surface-dependent — the operator had to explicitly invoke `shell_exec` for a task where that capability should have been assumed. The day-of-week bug in the tweet scheduler is a precision failure in a time-critical, one-shot task: the consequence of a wrong calculation is a missed publish window, not a retry opportunity.
+
+### Friction points
+`max_turns: 55` reached repeatedly, fragmenting the afternoon fix into at least 4 continuation turns with two sessions (15:25, 15:41) showing user messages with no recorded Jarvis response. Shell unavailability in the initial morning scope required explicit operator intervention. X API rate limit was exhausted by accumulated retry attempts, blocking the final manual publication at 17:58.
+
+### Research notes
+Day 60+ of continuous operation. Today highlights a tension between agent autonomy and bounded execution: the operator delegates multi-step tasks (bug fix + deploy + publish) expecting single-session completion, but the turn ceiling forces fragmentation that increases operator re-engagement cost. The rate-limit cascade — where retries from failed automation consume the daily quota and block subsequent manual recovery — is a new failure mode worth tracking: agent retries can poison the human fallback path.
+
+## 2026-06-30
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 20 (14 completed, 4 completed_with_concerns, 2 failed) |
+| Total tasks | 6,964 (all-time, all statuses) |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | Not available this session (no streak-snapshot source surfaced; not fabricated) |
+
+### Interactions summary
+Low-intensity but varied day, per the day-narrative: a technical introduction to Pulso-Aura-Upfront (CRM agentic B2B on WhatsApp, forked from crm-azteca), diagnosis and manual recovery of a failed @mexiconecesario daily tweet (schedule ran but hit X's error 344 `daily_limit`, so Jarvis re-read the editorial calendar and published manually via `tweet_post`), a Minisu SKU-catalog image audit (worked around a Supabase scope block by cross-referencing the canonical catalog against the generated-image directory), and three KB-sync passes against live repos (intelligence-ops-mcp, eurekams-intelligence-ui, agent-controller — the last one twice in one day after a new commit landed).
+
+### What Jarvis learned
+The operational highlight was catching and documenting a real fix: commit `391c135` on agent-controller reserves the critic's "unfixable" verdict for genuine contradictions (not incorrigible citations), unblocking the §17 activation gate that had been stuck at a 50% `unfixable` rate. No new user-preference patterns were surfaced via memory_reflect today (that tool was not reachable in this session; the day-narrative was used as the primary interaction record instead).
+
+### Friction points
+Two operational frictions surfaced: (1) the @mexiconecesario schedule's automatic tweet publish failed in production on X's daily-limit error, requiring manual intervention; (2) a Supabase query needed for the Minisu SKU audit was blocked by scope, forcing a file/directory cross-reference workaround instead.
+
+### Research notes
+Day fits the established pattern of low-volume, high-diversity operator engagement (KB hygiene, content-ops recovery, catalog QA) rather than net-new feature work. The agent-controller commit is a good example of the KB-sync loop catching and narrating a real production fix (gate-unblocking) same-day, which is the kind of ground-truth documentation the co-evolution record is meant to capture.
+
+## 2026-07-01
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 30 (22 completed, 7 completed_with_concerns, 1 failed) |
+| Total tasks | 6,990 (all-time, all statuses) |
+| Conversations today | 13 (telegram: 13) |
+| Streak days | Not available this session (no streak-snapshot source surfaced; not fabricated) |
+
+### Interactions summary
+Day of technical maintenance and information management across four sessions. The most significant thread was the diagnosis and fix of a false positive in mission-control's `hasHighStakesDataSignal` guardrail (`classifier.ts` / `fast-runner.ts`), which had blocked the scheduled pharma/cancer report — the cron fired correctly, but the advisory variant of the guardrail incorrectly inhibited report tasks that only need `web_search` + `gmail_send`. Three KB sync passes ran (agent-controller, Pulso-Aura-Upfront, VLCRM), a literary request surfaced a LOW prompt-injection warning from poetseers.org (confirmed false positive), and the operator reviewed and updated Paper portfolio positions (ABT, SYY on ex-div day, LMT).
+
+### What Jarvis learned
+The `hasHighStakesDataSignal` false positive reveals a precision gap in the guardrail classification: the advisory scope-check fires on surface-level description keywords ("pharma", "cancer") without considering which tools the task actually requires — a report task using only read+send tools is not high-stakes in the same way as one using shell or HTTP fetch. No new user-preference patterns were surfaced via memory_reflect today (the day-narrative was the primary interaction record).
+
+### Friction points
+The guardrail false positive blocked an automated scheduled report — requiring operator-initiated diagnosis, root-cause tracing, and a manual fix. The prompt-injection warning on poetseers.org triggered a secondary investigation for a false positive that had no operational consequence. A clarification was needed when the operator asked to "clean" the warning — Jarvis had to explain there is no dismiss mechanism for historical warnings.
+
+### Research notes
+Day 62+ of continuous operation. Today illustrates a recurring pattern: guardrails and classifiers tuned for one threat model create collateral friction on legitimate workflows — the fix required surgical scalpel work rather than broad signal suppression. The literary+security sequence (Rumi poem → prompt-injection warning → investigation) is an interesting co-evolution data point: the system's safety infrastructure surfaced itself as a conversational object, requiring the operator to reason about it rather than just consuming the output.
+
+## 2026-07-02
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 5 (telegram: 5) |
+| Streak days | — |
+
+### Interactions summary
+Today was a light day with two distinct themes across ~6 exchanges in three short sessions. The first was a clarification about the morning ritual's stalled-project detector — Fede asked why EurekaMS was being flagged; Jarvis confirmed the cause (no day-log entries) and explained the detection mechanism, which the operator accepted without further action. The second theme was a scheduling failure for the @mexiconecesario daily tweet: X returned a `daily_limit` error at the 13:00 slot, triggering two rescheduling attempts — the second of which produced a behavioral correction before a one-shot cron was successfully set for 18:28 CDMX.
+
+### What Jarvis learned
+A behavioral correction was issued: when asked to schedule an automated action, Jarvis must not offer the user a manual fallback. Autonomy is the contract — externalizing automation work to the operator defeats the purpose. This is a recurring tension in the co-evolution arc (agent defaulting to user as escape hatch rather than owning the task). The @mexiconecesario project was the active project today via the tweet retry workflow.
+
+### Friction points
+Jarvis responded to a scheduling request by offering the operator a manual option (publish the tweet yourself). The operator explicitly corrected this — the agent should always use scheduler/cron rather than delegating to the user. Minor but recurrent friction class: learned helplessness toward user, rather than ownership of automation.
+
+### Research notes
+Day 63+ of continuous operation. Today's behavioral correction is a clean signal in the co-evolution dataset: the agent has a learned default of offering the user a manual escape hatch when automation is uncertain, and the operator is actively shaping this away. The pattern — agent→correction→cron success — is the typical micro-calibration loop. The EurekaMS stall-detector clarification shows the operator's increasing literacy with the system's internal detection logic, a marker of advancing co-evolution phase.
+
+## 2026-07-03
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 28 |
+| Total tasks | — |
+| Conversations today | 28 (telegram: 28) |
+| Streak days | — |
+
+### Interactions summary
+High-intensity day anchored on **EurekaMS**: the project's fourth pillar (Lead Intelligence CRM) was formalized, the founding document rewritten to v2.0, and the landing site updated across multiple commits with live deploys. A morning block addressed a recurring Google Calendar API failure (third occurrence since June 30) and a strategic briefing on corporatizing Pulso Aura with Azteca/Grupo Salinas. The day closed with a VLCRM database query. Secondary topics included GitHub vs GitLab comparison, LLM model benchmarking (Qwen2.5-Coder-32B vs Qwen3.6-27B), and a philosophical detour through Schopenhauer, Nietzsche, and Freud on human nature.
+
+### What Jarvis learned
+EurekaMS is now a four-pillar product: the Lead Intelligence CRM concept emerged and was immediately integrated into both the KB README and the live landing. The architectural decision to pursue AWS EC2 + Bedrock over GitLab for Pulso Aura corporatization was recorded — GitLab explicitly discarded. The operator's disambiguation that Pulso Aura and Gilda.mx are separate projects (not EurekaMS pillars) was codified in the KB.
+
+### Friction points
+Three friction events logged: (1) Jarvis misread "10x más barato" as a price value rather than a display label at 21:47, requiring explicit user correction; (2) `git_commit` tool's allowlist blocked the first EurekaMS-Landing deploy — fallback to shell was required but the structural gap (missing allowlist entry) remains unresolved; (3) `file_read` with numeric line ranges returned incorrect content at 21:49, forcing the operator to enable shell access for a grep-based workaround.
+
+### Research notes
+The day illustrates a mature co-evolution pattern: product definition (4th pillar) and deployment (live landing commits) happen within the same session, mediated entirely through Jarvis. The tool-allowlist friction on `git_commit` is a recurring operational tax — its structural resolution would reduce session interruptions measurably.
+
+## 2026-07-04
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 30 |
+| Total tasks | — |
+| Conversations today | 30 (telegram: 30) |
+| Streak days | — |
+
+### Interactions summary
+High-density technical and creative day. The dominant theme was the vlCRM seed engine for a "Club Longevidad" (ages 50-60) demo: Fede designed lead fields, distribution logic, and schema, then deployed a live second instance of the EurekaMS Intelligence UI backed by Postgres (`longevidad-demo.*.nip.io`). In parallel, the EurekaMS Landing → vlCRM form integration (`POST /ingest/web`) was completed end-to-end, and two Substack posts (#5 "The Compound Life" and #6 "The Last Instinct") were written and published. A strategic note was also recorded: a successful first meeting with DSI, establishing a weekly cadence and marking the beginning of a corporate hardening path for Pulso Aura.
+
+### What Jarvis learned
+Brand separation was corrected with force: Pulso Aura = TV Azteca exclusive; vlCRM = the operator's own CRM — Jarvis had conflated the two when wiring the EurekaMS Landing integration, and the correction was explicit and emphatic ("Jamás", "Regístralo y no lo olvides nunca"). A correction of this strength signals a high-salience boundary that must not erode across sessions; it was recorded in user_facts and KB. The PipeSong cost model was also updated with confirmed voice AI benchmarks (<$0.03/min).
+
+### Friction points
+The 35-turn session limit was hit three times (seed F1, seed F3, EurekaMS form integration), each requiring an explicit "continúa" or "usa shell" from the operator to resume — a recurring pattern in intensive coding sessions. On seed F1, deferred tool scope blocked a `jarvis_file_write` call before Jarvis fell back to `shell_exec`; the operator had to issue the explicit instruction, indicating the scope-activation heuristic didn't fire early enough for this workflow.
+
+### Research notes
+Day marks F3 milestone density: three independent sub-projects (vlCRM seed, EurekaMS Landing integration, Substack publishing) each crossed a completion threshold in the same session. The brand-confusion correction (Pulso Aura / vlCRM) is a calibration event — the longitudinal log should track whether this boundary holds or degrades in future sessions as a measure of persistent preference encoding reliability.
