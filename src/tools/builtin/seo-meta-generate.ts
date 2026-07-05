@@ -9,6 +9,7 @@
 
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { webReadTool } from "./web-read.js";
 import {
   CHAR_LIMITS,
@@ -217,17 +218,10 @@ Returns JSON with 3 variants and each variant's validation warnings.`,
       });
 
       const text = (response.content ?? "").trim();
-      const jsonMatch =
-        text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
-      const rawJson = jsonMatch
-        ? Array.isArray(jsonMatch)
-          ? (jsonMatch[1] ?? jsonMatch[0])
-          : jsonMatch
-        : text;
 
       let parsed: { variants?: unknown };
       try {
-        parsed = JSON.parse(typeof rawJson === "string" ? rawJson : text);
+        parsed = parseJsonFromLlm(text);
       } catch {
         return JSON.stringify({
           error: "LLM returned non-JSON response",

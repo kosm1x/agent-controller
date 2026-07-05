@@ -46,13 +46,12 @@ describe("runConsolidation", () => {
     const runFn = vi.fn().mockReturnValue({ changes: 0 });
     mockDb.prepare.mockReturnValue({ all: allFn, get: getFn, run: runFn });
 
-    // First call: orient (GROUP BY bank)
+    // First call: orient (GROUP BY bank). Dedup is a single windowed DELETE
+    // (a .run(), not .all()) since 2026-07-05 — no group-list stub needed.
     allFn.mockReturnValueOnce([
       { bank: "mc-operational", cnt: 30 },
       { bank: "mc-jarvis", cnt: 12 },
     ]);
-    // Second call: consolidate duplicates (no groups)
-    allFn.mockReturnValueOnce([]);
 
     const report = await runConsolidation();
     expect(report.orient).toEqual({
@@ -69,8 +68,6 @@ describe("runConsolidation", () => {
 
     // orient
     allFn.mockReturnValueOnce([{ bank: "mc-operational", cnt: 5 }]);
-    // consolidate (no dups)
-    allFn.mockReturnValueOnce([]);
     // stale count
     getFn.mockReturnValueOnce({ cnt: 3 });
     // remaining
@@ -84,17 +81,13 @@ describe("runConsolidation", () => {
   it("calls VACUUM when entries were removed", async () => {
     const allFn = vi.fn().mockReturnValue([]);
     const getFn = vi.fn().mockReturnValue({ cnt: 0 });
-    const runFn = vi.fn();
+    const runFn = vi.fn().mockReturnValue({ changes: 0 });
     mockDb.prepare.mockReturnValue({ all: allFn, get: getFn, run: runFn });
 
     // orient
     allFn.mockReturnValueOnce([]);
-    // consolidate (no dups)
-    allFn.mockReturnValueOnce([]);
-    // prune: simulate 2 deletions
-    runFn
-      .mockReturnValueOnce({ changes: 2 })
-      .mockReturnValueOnce({ changes: 0 });
+    // dedup (first .run since the 2026-07-05 windowed DELETE): 2 removed
+    runFn.mockReturnValueOnce({ changes: 2 });
 
     await runConsolidation();
     expect(mockDb.exec).toHaveBeenCalledWith("VACUUM");

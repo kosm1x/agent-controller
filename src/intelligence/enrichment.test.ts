@@ -33,13 +33,12 @@ vi.mock("../skills/retrieval.js", () => ({
   retrieveSkills: vi.fn().mockResolvedValue([]),
 }));
 
-import { enrichContext, clearEnrichmentCache } from "./enrichment.js";
+import { enrichContext } from "./enrichment.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 
 describe("enrichment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearEnrichmentCache();
   });
 
   it("should return context block with recalled user context", async () => {

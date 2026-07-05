@@ -366,6 +366,18 @@ export const DIAGRAM_TOOLS = ["diagram_generate"];
 export const CHART_TOOLS = ["market_chart_render", "market_chart_patterns"];
 
 /**
+ * v7.7 Spine 3 skill-dispatch surface (L1 describe / L2 load / execute).
+ * Wired 2026-07-05 (efficiency-audit Phase 0.8 found the trio registered but
+ * absent from every scope group — unreachable from chat since it shipped;
+ * operator approved wiring). skill_save/skill_list stay in CORE_TOOLS.
+ */
+export const SKILL_DISPATCH_TOOLS = [
+  "skill_describe",
+  "skill_load",
+  "skill_run",
+];
+
+/**
  * v7.11 teaching module — learning plans, adaptive quizzes, explain-back,
  * spaced-repetition learner model. Scope-gated on teach-me / quiz-me /
  * review-today vocabulary (EN + ES).
@@ -1073,6 +1085,17 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "teaching",
   },
   {
+    // v7.7 skill-dispatch surface (wired 2026-07-05). "skill(s)" is
+    // unambiguous operator vocabulary here — skill_save/skill_list have been
+    // CORE (always on) since v7.7, so mentioning skills already implies the
+    // skills system; this just completes the flow with describe/load/run.
+    // ES: "habilidad(es)" only with a usage verb to avoid generic-speech
+    // false positives ("tiene la habilidad de…").
+    pattern:
+      /\b(skills?\b|(?:usa|ejecuta|corre|lista|describe|carga)\s+(?:la\s+|el\s+|una?\s+)?habilidad(?:es)?)/i,
+    group: "skills",
+  },
+  {
     // Meta: user asks about tools, capabilities, or diagnostics → load ALL groups
     // so the LLM can give an accurate inventory instead of reporting tools as missing.
     pattern:
@@ -1486,6 +1509,9 @@ export function scopeToolsForMessage(
   if (activeGroups.has("teaching")) {
     tools.push(...TEACHING_TOOLS);
   }
+  if (activeGroups.has("skills")) {
+    tools.push(...SKILL_DISPATCH_TOOLS);
+  }
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
   }
@@ -1517,7 +1543,16 @@ export function scopeToolsForMessage(
  * becomes useful (e.g., for prompt-budget analytics), parameterize the
  * universe by activeGroups, not just options.
  */
+// Universe memoization (2026-07-05 efficiency audit): the result depends only
+// on the 4 env flags (process-stable), yet the router recomputed this ~150-name
+// Set on EVERY message just to log a denominator. Callers must treat the
+// returned Set as immutable (all current callers only read: .size / .has).
+const universeCache = new Map<string, Set<string>>();
+
 export function getAllAvailableTools(options: ScopeOptions): Set<string> {
+  const cacheKey = `${options.hasGoogle}|${options.hasWordpress}|${options.hasMemory}|${options.hasCrm}`;
+  const cached = universeCache.get(cacheKey);
+  if (cached) return cached;
   const all = new Set<string>([
     ...CORE_TOOLS,
     ...MISC_TOOLS,
@@ -1553,6 +1588,7 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     ...DIAGRAM_TOOLS,
     ...CHART_TOOLS,
     ...TEACHING_TOOLS,
+    ...SKILL_DISPATCH_TOOLS,
   ]);
   if (options.hasGoogle) {
     for (const t of GOOGLE_TOOLS) all.add(t);
@@ -1569,6 +1605,7 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     all.add("memory_store");
     all.add("memory_reflect");
   }
+  universeCache.set(cacheKey, all);
   return all;
 }
 

@@ -14,7 +14,6 @@ import {
 import {
   MASTERY_ADVANCE_THRESHOLD,
   type LearningPlanUnitRow,
-  type UnitStatus,
 } from "./schema-types.js";
 
 export interface AdvanceResult {
@@ -155,12 +154,4 @@ export function targetDifficulty(
   if (mastery_score < 0.3) return "easy";
   if (mastery_score > 0.7) return "hard";
   return "medium";
-}
-
-export function markUnitStatus(
-  plan_id: string,
-  unit_index: number,
-  status: UnitStatus,
-): void {
-  updateUnitStatus(plan_id, unit_index, status);
 }

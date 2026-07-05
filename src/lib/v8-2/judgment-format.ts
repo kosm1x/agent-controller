@@ -5,6 +5,11 @@
  * importing the self-executing script. No I/O, no DB.
  */
 
+import { truncate } from "../truncate.js";
+
+// Re-exported for existing importers; canonical home is src/lib/truncate.ts.
+export { truncate };
+
 const CONF_SHORT: Record<string, string> = {
   green: "grn",
   yellow: "yel",
@@ -33,12 +38,6 @@ export function relAge(iso: string, now: number = Date.now()): string {
 /** Right-pad to a fixed width (never truncates — layout only). */
 export function pad(s: string, n: number): string {
   return s.length >= n ? s : s + " ".repeat(n - s.length);
-}
-
-/** Collapse whitespace and cap at n chars (… elision). */
-export function truncate(s: string, n: number): string {
-  const flat = s.replace(/\s+/g, " ").trim();
-  return flat.length <= n ? flat : flat.slice(0, n - 1) + "…";
 }
 
 /** Parse the producer's `critic_trail_json` for its terminal verdict (mirrors

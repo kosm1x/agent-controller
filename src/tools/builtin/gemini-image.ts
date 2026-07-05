@@ -13,6 +13,8 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Tool } from "../types.js";
 import { getUserFacts } from "../../db/user-facts.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const TIMEOUT_MS = 60_000;
 const IMAGE_DIR = "/tmp/gemini_images";
@@ -67,12 +69,11 @@ async function tryGeminiNative(
   aspectRatio: string,
 ): Promise<string | null> {
   const url = `${API_BASE}/models/${GEMINI_NATIVE_MODEL}:generateContent?key=${apiKey}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(url, {
+    const data = (await fetchJson(url, {
       method: "POST",
+      timeoutMs: TIMEOUT_MS,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: `Generate an image: ${prompt}` }] }],
@@ -81,40 +82,21 @@ async function tryGeminiNative(
           imageConfig: { aspectRatio },
         },
       }),
-      signal: controller.signal,
-    });
-
-    const data = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok) {
-      const error = data.error as Record<string, unknown> | undefined;
-      const code = error?.code as number | undefined;
-      if (code === 429 || code === 400) return null; // fall through to Imagen
-      return JSON.stringify({
-        success: false,
-        error:
-          `Gemini error ${response.status}: ${(error?.message as string) ?? ""}`.slice(
-            0,
-            300,
-          ),
-      });
-    }
+      label: "Gemini",
+    })) as Record<string, unknown>;
 
     const candidates = data.candidates as
-      | Array<Record<string, unknown>>
-      | undefined;
+      Array<Record<string, unknown>> | undefined;
     if (!candidates?.length) return null;
 
     const content = candidates[0].content as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const parts = content?.parts as Array<Record<string, unknown>> | undefined;
     if (!parts) return null;
 
     for (const part of parts) {
       const inlineData = part.inlineData as
-        | { mimeType: string; data: string }
-        | undefined;
+        { mimeType: string; data: string } | undefined;
       if (inlineData?.data) {
         return saveImage(
           inlineData.data,
@@ -126,10 +108,28 @@ async function tryGeminiNative(
     }
 
     return null;
-  } catch {
+  } catch (err) {
+    if (err instanceof HttpStatusError) {
+      let body: Record<string, unknown> | null;
+      try {
+        body = JSON.parse(err.bodyText) as Record<string, unknown> | null;
+      } catch {
+        return null;
+      }
+      if (body === null) return null;
+      const error = body.error as Record<string, unknown> | undefined;
+      const code = error?.code as number | undefined;
+      if (code === 429 || code === 400) return null; // fall through to Imagen
+      return JSON.stringify({
+        success: false,
+        error:
+          `Gemini error ${err.status}: ${(error?.message as string) ?? ""}`.slice(
+            0,
+            300,
+          ),
+      });
+    }
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -151,30 +151,17 @@ async function tryImagen(
   };
   if (negativePrompt) parameters.negativePrompt = negativePrompt;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
   try {
-    const response = await fetch(url, {
+    const data = (await fetchJson(url, {
       method: "POST",
+      timeoutMs: TIMEOUT_MS,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ instances: [{ prompt }], parameters }),
-      signal: controller.signal,
-    });
-
-    const data = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok) {
-      const error = data.error as Record<string, unknown> | undefined;
-      return JSON.stringify({
-        success: false,
-        error: `Imagen error ${response.status}: ${(error?.message as string) ?? JSON.stringify(data).slice(0, 300)}`,
-      });
-    }
+      label: "Imagen",
+    })) as Record<string, unknown>;
 
     const predictions = data.predictions as
-      | Array<Record<string, unknown>>
-      | undefined;
+      Array<Record<string, unknown>> | undefined;
     if (!predictions?.length) {
       return JSON.stringify({
         success: false,
@@ -197,15 +184,28 @@ async function tryImagen(
 
     return saveImage(base64Data, "image/png", prompt, aspectRatio);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof HttpStatusError) {
+      let body: Record<string, unknown> | null;
+      try {
+        body = JSON.parse(err.bodyText) as Record<string, unknown> | null;
+      } catch {
+        body = null;
+      }
+      if (body !== null) {
+        const error = body.error as Record<string, unknown> | undefined;
+        return JSON.stringify({
+          success: false,
+          error: `Imagen error ${err.status}: ${(error?.message as string) ?? JSON.stringify(body).slice(0, 300)}`,
+        });
+      }
+    }
+    const message = errMsg(err);
     return JSON.stringify({
       success: false,
       error: message.includes("aborted")
         ? `Timed out after ${TIMEOUT_MS / 1000}s.`
         : message,
     });
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

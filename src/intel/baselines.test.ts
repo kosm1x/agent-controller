@@ -34,7 +34,6 @@ vi.mock("./delta-engine.js", () => ({
 import {
   computeBaseline,
   computeAllBaselines,
-  getBaseline,
   getBaselines,
   computeZScore,
   type BaselineRow,
@@ -110,10 +109,10 @@ describe("baselines", () => {
 
       computeBaseline("test", "metric1");
 
-      // Should call prepare for both 24h and 7d windows
-      expect(mockDb.prepare).toHaveBeenCalled();
-      // Should upsert for each window (2 SELECT + 2 UPSERT = 4 prepare calls)
-      expect(mockStmt.run).toHaveBeenCalled();
+      // SELECT + UPSERT statements prepared once, reused per window
+      expect(mockDb.prepare).toHaveBeenCalledTimes(2);
+      // Should upsert for each window
+      expect(mockStmt.run).toHaveBeenCalledTimes(2);
     });
 
     it("skips window with insufficient samples", () => {
@@ -141,31 +140,6 @@ describe("baselines", () => {
         sample_count: 10,
       });
       expect(() => computeAllBaselines()).not.toThrow();
-    });
-  });
-
-  describe("getBaseline", () => {
-    it("returns baseline row when found", () => {
-      const row: BaselineRow = {
-        source: "test",
-        key: "metric1",
-        window: "24h",
-        mean: 50,
-        stddev: 5,
-        min_val: 40,
-        max_val: 60,
-        sample_count: 10,
-        computed_at: "2026-04-03",
-      };
-      mockStmt.get.mockReturnValue(row);
-
-      const result = getBaseline("test", "metric1", "24h");
-      expect(result).toEqual(row);
-    });
-
-    it("returns undefined when not found", () => {
-      mockStmt.get.mockReturnValue(undefined);
-      expect(getBaseline("unknown", "key")).toBeUndefined();
     });
   });
 

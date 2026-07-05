@@ -126,34 +126,39 @@ export async function runHindsightCostPull(): Promise<PullSummary> {
   let skipped = 0;
   let costSum = 0;
 
-  for (const key of allKeys) {
-    const inp = inputBy.get(key);
-    const out = outputBy.get(key);
-    const metric = inp?.metric ?? out?.metric ?? {};
-    const promptTokens = Math.round(inp?.tokens ?? 0);
-    const completionTokens = Math.round(out?.tokens ?? 0);
+  // One transaction for the batch (2026-07-05): each bare .run() outside a tx
+  // is its own commit, so N-series buckets did N commits. INSERT OR IGNORE
+  // keeps rerun-idempotency, so all-or-nothing is safe for this backfill.
+  db.transaction(() => {
+    for (const key of allKeys) {
+      const inp = inputBy.get(key);
+      const out = outputBy.get(key);
+      const metric = inp?.metric ?? out?.metric ?? {};
+      const promptTokens = Math.round(inp?.tokens ?? 0);
+      const completionTokens = Math.round(out?.tokens ?? 0);
 
-    const scope = metric.scope ?? "unknown";
-    const model = metric.model ?? "unknown";
-    const runId = `hindsight-${scope}-${shortHash(key)}-${bucketIso}`;
-    const cost = calculateCost(model, promptTokens, completionTokens);
+      const scope = metric.scope ?? "unknown";
+      const model = metric.model ?? "unknown";
+      const runId = `hindsight-${scope}-${shortHash(key)}-${bucketIso}`;
+      const cost = calculateCost(model, promptTokens, completionTokens);
 
-    const result = insert.run(
-      runId,
-      runId,
-      "hindsight",
-      model,
-      promptTokens,
-      completionTokens,
-      cost,
-    );
-    if (result.changes === 0) {
-      skipped += 1;
-    } else {
-      recorded += 1;
-      costSum += cost;
+      const result = insert.run(
+        runId,
+        runId,
+        "hindsight",
+        model,
+        promptTokens,
+        completionTokens,
+        cost,
+      );
+      if (result.changes === 0) {
+        skipped += 1;
+      } else {
+        recorded += 1;
+        costSum += cost;
+      }
     }
-  }
+  })();
 
   return {
     bucket: bucketIso,

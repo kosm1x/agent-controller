@@ -147,14 +147,6 @@ export function getSignalCounts(
     .all(hours) as Array<{ source: string; count: number }>;
 }
 
-/** Get all snapshots (for mc-ctl status). */
-export function getAllSnapshots(): SnapshotRow[] {
-  const db = getDatabase();
-  return db
-    .prepare("SELECT * FROM signal_snapshots ORDER BY snapshot_at DESC")
-    .all() as SnapshotRow[];
-}
-
 // ---------------------------------------------------------------------------
 // Maintenance
 // ---------------------------------------------------------------------------

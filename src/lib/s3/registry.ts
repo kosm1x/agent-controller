@@ -5,8 +5,9 @@
  * (evaluator + cron walks enabled signals); writes happen at seed time + when
  * an operator enables/disables a signal or updates its baseline.
  *
- * Signal updates that change baseline_value_json also write a baseline_history
- * row per spec §6 (audit trail).
+ * NOTE: spec §6 called for baseline_value_json updates to also write a
+ * baseline_history audit row — that was never implemented. No code writes
+ * baseline_history (its boot DDL was removed 2026-07-05).
  */
 
 import type Database from "better-sqlite3";

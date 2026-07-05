@@ -11,7 +11,7 @@ import {
   checksForPlatform,
   ALL_CHECKS,
   type AdAccountSnapshot,
-} from "./ads-references/checks-framework.js";
+} from "./ads-references/checks.js";
 
 describe("ads_audit", () => {
   beforeEach(() => {
@@ -188,22 +188,14 @@ describe("ads_audit", () => {
   });
 
   it("checksForPlatform includes cross_platform + platform-specific", () => {
-    const google = checksForPlatform("google_ads");
-    const meta = checksForPlatform("meta_ads");
-    // Both lists include cross-platform + their own.
-    expect(google.some((c) => c.platforms.includes("cross_platform"))).toBe(
-      true,
-    );
-    expect(google.some((c) => c.platforms.includes("google_ads"))).toBe(true);
-    expect(meta.some((c) => c.platforms.includes("meta_ads"))).toBe(true);
+    const googleIds = checksForPlatform("google_ads").map((c) => c.id);
+    const metaIds = checksForPlatform("meta_ads").map((c) => c.id);
+    // Both lists include cross-platform ("xp_") + their own.
+    expect(googleIds).toContain("xp_roas_below_1");
+    expect(googleIds).toContain("g_quality_score_min");
+    expect(metaIds).toContain("m_quality_score_min");
     // But google list does not include meta-specific.
-    expect(
-      google.some(
-        (c) =>
-          c.platforms.includes("meta_ads") &&
-          !c.platforms.includes("cross_platform"),
-      ),
-    ).toBe(false);
+    expect(googleIds.some((id) => id.startsWith("m_"))).toBe(false);
   });
 
   it("scoreAudit returns deterministic categories", () => {

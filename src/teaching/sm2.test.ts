@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextReview, masteryFromSm2, masteryToQuality } from "./sm2.js";
+import { nextReview, masteryFromSm2 } from "./sm2.js";
 import { DEFAULT_EF, EF_FLOOR } from "./schema-types.js";
 
 const NOW = 1_700_000_000; // fixed unix-sec anchor
@@ -136,22 +136,5 @@ describe("masteryFromSm2", () => {
   it("always clamped to [0,1]", () => {
     expect(masteryFromSm2(10, 100, 365)).toBeLessThanOrEqual(1);
     expect(masteryFromSm2(0, 0, 0)).toBeGreaterThanOrEqual(0);
-  });
-});
-
-describe("masteryToQuality", () => {
-  it("0 → 0", () => {
-    expect(masteryToQuality(0)).toBe(0);
-  });
-  it("1 → 5", () => {
-    expect(masteryToQuality(1)).toBe(5);
-  });
-  it("0.5 → 3 (passing)", () => {
-    expect(masteryToQuality(0.5)).toBeGreaterThanOrEqual(2);
-    expect(masteryToQuality(0.5)).toBeLessThanOrEqual(3);
-  });
-  it("clamps out-of-range input", () => {
-    expect(masteryToQuality(-1)).toBe(0);
-    expect(masteryToQuality(2)).toBe(5);
   });
 });

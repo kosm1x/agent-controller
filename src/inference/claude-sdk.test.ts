@@ -1582,3 +1582,51 @@ describe("queryClaudeSdk abort/timeout preserves usage + omits authoritative cos
     expect(result.usage.completionTokens).toBe(500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// wrapToolCached memoization contract (2026-07-05 efficiency audit, Phase 3)
+// ---------------------------------------------------------------------------
+
+describe("wrapToolCached memoization", () => {
+  it("returns the SAME wrapped instance for the same Tool object (no re-wrap per query)", async () => {
+    const { wrapToolCached } = await import("./claude-sdk.js");
+    const tool = {
+      name: "memo_probe",
+      definition: {
+        type: "function" as const,
+        function: {
+          name: "memo_probe",
+          description: "probe",
+          parameters: {
+            type: "object",
+            properties: { q: { type: "string", description: "query" } },
+            required: ["q"],
+          },
+        },
+      },
+      execute: async () => "ok",
+    };
+    const a = wrapToolCached(tool as never);
+    const b = wrapToolCached(tool as never);
+    expect(a).toBe(b); // identity — Zod shape built exactly once
+  });
+
+  it("re-wraps when a source re-registers a NEW Tool object (identity key, not name)", async () => {
+    const { wrapToolCached } = await import("./claude-sdk.js");
+    const make = () => ({
+      name: "memo_probe2",
+      definition: {
+        type: "function" as const,
+        function: {
+          name: "memo_probe2",
+          description: "probe",
+          parameters: { type: "object", properties: {} },
+        },
+      },
+      execute: async () => "ok",
+    });
+    const a = wrapToolCached(make() as never);
+    const b = wrapToolCached(make() as never);
+    expect(a).not.toBe(b); // fresh object → fresh wrap (no stale schema risk)
+  });
+});

@@ -105,8 +105,6 @@ export class ToolRegistry {
     const maxDist = Math.ceil(normalized.length * 0.3);
 
     for (const registered of this.tools.keys()) {
-      // Never fuzzy-match to destructive tools — defense in depth
-      if (ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(registered)) continue;
       const dist = levenshtein(normalized, registered);
       if (dist < bestDist && dist <= maxDist) {
         bestDist = dist;
@@ -163,14 +161,6 @@ export class ToolRegistry {
     return `[DEFERRED TOOLS] The following tools are available but their full schemas are not loaded. Call any of them by name — the system will return the parameter schema so you can retry with correct arguments.\n\n${lines.join("\n")}`;
   }
 
-  /** MCP tools that require confirmation (can't be tagged via interface). */
-  private static readonly DESTRUCTIVE_MCP_TOOLS = new Set<string>([]);
-
-  /** Check if a tool is in the hard-blocked destructive MCP set. */
-  isDestructiveMcp(name: string): boolean {
-    return ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name);
-  }
-
   // Blocking responsibility lives in task-executor (CCP5+CCP9).
   // Registry only handles execution + audit logging.
 
@@ -183,7 +173,6 @@ export class ToolRegistry {
     if (!tool) return "low";
     if (tool.riskTier) return tool.riskTier;
     if (tool.requiresConfirmation) return "high";
-    if (ToolRegistry.DESTRUCTIVE_MCP_TOOLS.has(name)) return "high";
     return "low";
   }
 

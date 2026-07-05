@@ -63,50 +63,29 @@ function orient(): Record<string, number> {
 function consolidateDuplicates(): number {
   const db = getDatabase();
 
-  // Find groups with duplicate content prefixes in the same bank
-  const groups = db
-    .prepare(
-      `SELECT bank, SUBSTR(content, 1, 100) as prefix, COUNT(*) as cnt,
-              MIN(id) as keep_id, MAX(trust_tier) as best_tier
-       FROM conversations
-       WHERE bank NOT IN (${[...PROTECTED_BANKS].map(() => "?").join(",")})
-       GROUP BY bank, prefix
-       HAVING cnt > 1`,
-    )
-    .all(...PROTECTED_BANKS) as Array<{
-    bank: string;
-    prefix: string;
-    cnt: number;
-    keep_id: number;
-    best_tier: number;
-  }>;
-
-  let removed = 0;
-  for (const group of groups) {
-    // Keep the entry with highest trust_tier (or most recent if tied)
-    const keep = db
+  // Single-pass windowed dedup (2026-07-05 efficiency audit): the previous
+  // per-group loop re-prepared two statements per duplicate group, and each
+  // ran a full table scan (SUBSTR(content,1,100) is non-sargable — no index
+  // helps). One windowed DELETE keeps the identical survivor per group
+  // (highest trust_tier, then most recent) in a single scan.
+  const bankExclusions = [...PROTECTED_BANKS].map(() => "?").join(",");
+  const result = writeWithRetry(() =>
+    db
       .prepare(
-        `SELECT id FROM conversations
-         WHERE bank = ? AND SUBSTR(content, 1, 100) = ?
-         ORDER BY trust_tier DESC, created_at DESC LIMIT 1`,
+        `DELETE FROM conversations WHERE id IN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (
+               PARTITION BY bank, SUBSTR(content, 1, 100)
+               ORDER BY trust_tier DESC, created_at DESC
+             ) AS rn
+             FROM conversations
+             WHERE bank NOT IN (${bankExclusions})
+           ) WHERE rn > 1
+         )`,
       )
-      .get(group.bank, group.prefix) as { id: number } | undefined;
-
-    if (!keep) continue;
-
-    // Delete all others in this group
-    const result = writeWithRetry(() =>
-      db
-        .prepare(
-          `DELETE FROM conversations
-           WHERE bank = ? AND SUBSTR(content, 1, 100) = ? AND id != ?`,
-        )
-        .run(group.bank, group.prefix, keep.id),
-    );
-    removed += result.changes;
-  }
-
-  return removed;
+      .run(...PROTECTED_BANKS),
+  );
+  return result.changes;
 }
 
 /**

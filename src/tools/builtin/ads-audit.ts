@@ -18,7 +18,7 @@ import {
   type AdAccountSnapshot,
   type AdPlatform,
   type ScoredAudit,
-} from "./ads-references/checks-framework.js";
+} from "./ads-references/checks.js";
 import {
   lookupBenchmark,
   type Industry,

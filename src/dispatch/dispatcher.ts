@@ -238,7 +238,20 @@ function drainContainerQueue(): void {
  * take effect immediately. Length-gated ≥4 to avoid spurious short-slug matches.
  * Never throws — routing must not break on a project-table read.
  */
+// TTL cache (2026-07-05 efficiency audit): this fed the classifier's
+// foreign-repo guard with a synchronous SELECT on EVERY task-creating message,
+// over a ≤30-row table that changes rarely (project add/rename). 30s staleness
+// is acceptable — a just-registered project's misroute window is one refresh.
+const FOREIGN_PROJECTS_TTL_MS = 30_000;
+let foreignProjectsCache: { at: number; names: string[] } | null = null;
+
 function getForeignProjectNames(db: ReturnType<typeof getDatabase>): string[] {
+  if (
+    foreignProjectsCache &&
+    Date.now() - foreignProjectsCache.at < FOREIGN_PROJECTS_TTL_MS
+  ) {
+    return foreignProjectsCache.names;
+  }
   try {
     const rows = db
       .prepare(
@@ -254,8 +267,10 @@ function getForeignProjectNames(db: ReturnType<typeof getDatabase>): string[] {
       if (slug && slug.length >= 4) out.add(slug);
       if (name && name.length >= 4) out.add(name);
     }
-    return [...out];
+    foreignProjectsCache = { at: Date.now(), names: [...out] };
+    return foreignProjectsCache.names;
   } catch {
+    // Don't cache the failure — retry on the next message.
     return [];
   }
 }

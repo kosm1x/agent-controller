@@ -6,94 +6,7 @@
  */
 
 import type { Tool } from "../types.js";
-
-const TIMEOUT_MS = 30_000;
-
-interface WpSiteConfig {
-  url: string;
-  username: string;
-  app_password: string;
-}
-
-type WpSitesMap = Record<string, WpSiteConfig>;
-
-function getSites(): WpSitesMap {
-  const raw = process.env.WP_SITES;
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as WpSitesMap;
-  } catch {
-    return {};
-  }
-}
-
-function resolveSite(
-  siteName?: string,
-): { baseUrl: string; authHeader: string; name: string } | string {
-  const sites = getSites();
-  const names = Object.keys(sites);
-  if (names.length === 0)
-    return "WordPress not configured. Set WP_SITES env var.";
-  const key = siteName ?? (names.length === 1 ? names[0] : undefined);
-  if (!key) return `Multiple sites. Specify "site": ${names.join(", ")}`;
-  const config = sites[key];
-  if (!config) return `Site "${key}" not found. Available: ${names.join(", ")}`;
-  const clean = config.url.replace(/\/+$/, "");
-  return {
-    baseUrl: `${clean}/wp-json/wp/v2`,
-    authHeader: `Basic ${Buffer.from(`${config.username}:${config.app_password}`).toString("base64")}`,
-    name: key,
-  };
-}
-
-/** Resolve site but return the raw URL (no /wp-json/wp/v2 suffix) for raw API calls. */
-function resolveSiteRaw(
-  siteName?: string,
-): { siteUrl: string; authHeader: string; name: string } | string {
-  const sites = getSites();
-  const names = Object.keys(sites);
-  if (names.length === 0)
-    return "WordPress not configured. Set WP_SITES env var.";
-  const key = siteName ?? (names.length === 1 ? names[0] : undefined);
-  if (!key) return `Multiple sites. Specify "site": ${names.join(", ")}`;
-  const config = sites[key];
-  if (!config) return `Site "${key}" not found. Available: ${names.join(", ")}`;
-  const clean = config.url.replace(/\/+$/, "");
-  return {
-    siteUrl: clean,
-    authHeader: `Basic ${Buffer.from(`${config.username}:${config.app_password}`).toString("base64")}`,
-    name: key,
-  };
-}
-
-async function wpFetch(
-  site: { baseUrl?: string; authHeader: string },
-  fullUrl: string,
-  options: RequestInit = {},
-): Promise<{ status: number; data: unknown }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const response = await fetch(fullUrl, {
-      ...options,
-      headers: {
-        Authorization: site.authHeader,
-        ...options.headers,
-      },
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-    return { status: response.status, data };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+import { resolveSite, resolveSiteRaw, wpFetch } from "./wp-client.js";
 
 // ---------------------------------------------------------------------------
 // wp_pages — list and manage pages
@@ -154,10 +67,7 @@ treats pages similarly to posts for create/update operations.`,
     });
     if (args.search) params.set("search", args.search as string);
 
-    const { status, data } = await wpFetch(
-      resolved,
-      `${resolved.baseUrl}/pages?${params}`,
-    );
+    const { status, data } = await wpFetch(resolved, `/pages?${params}`);
 
     if (status >= 200 && status < 300 && Array.isArray(data)) {
       const items = data.map((p: Record<string, unknown>) => ({
@@ -256,10 +166,7 @@ COMMON PLUGINS for script injection:
     if (action === "list") {
       const params = new URLSearchParams();
       if (args.search) params.set("search", args.search as string);
-      const { status, data } = await wpFetch(
-        resolved,
-        `${resolved.baseUrl}/plugins?${params}`,
-      );
+      const { status, data } = await wpFetch(resolved, `/plugins?${params}`);
       if (status >= 200 && status < 300 && Array.isArray(data)) {
         const items = data.map((p: Record<string, unknown>) => ({
           plugin: p.plugin,
@@ -299,7 +206,7 @@ COMMON PLUGINS for script injection:
       const newStatus = action === "activate" ? "active" : "inactive";
       const { status, data } = await wpFetch(
         resolved,
-        `${resolved.baseUrl}/plugins/${encodeURIComponent(plugin)}`,
+        `/plugins/${encodeURIComponent(plugin)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -331,15 +238,11 @@ COMMON PLUGINS for script injection:
           error:
             'Missing "slug" parameter (e.g. "insert-headers-and-footers").',
         });
-      const { status, data } = await wpFetch(
-        resolved,
-        `${resolved.baseUrl}/plugins`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug, status: "active" }),
-        },
-      );
+      const { status, data } = await wpFetch(resolved, `/plugins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, status: "active" }),
+      });
       if (status >= 200 && status < 300) {
         const d = data as Record<string, unknown>;
         return JSON.stringify({
@@ -415,7 +318,7 @@ For reading, call without any update fields. For updating, include the fields to
 
     const { status, data } = await wpFetch(
       resolved,
-      `${resolved.baseUrl}/settings`,
+      `/settings`,
       hasUpdates
         ? {
             method: "POST",
@@ -511,8 +414,10 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
     const params = force ? "?force=true" : "";
     const { status, data } = await wpFetch(
       resolved,
-      `${resolved.baseUrl}/${type}/${id}${params}`,
-      { method: "DELETE" },
+      `/${type}/${id}${params}`,
+      {
+        method: "DELETE",
+      },
     );
 
     if (status >= 200 && status < 300) {
@@ -606,10 +511,10 @@ The path is appended to the site's /wp-json/ base URL.`,
     const body = args.body as Record<string, unknown> | undefined;
     const query = args.query as Record<string, string> | undefined;
 
-    let url = `${resolved.siteUrl}/wp-json${path}`;
+    let fullPath = path;
     if (query) {
       const params = new URLSearchParams(query);
-      url += `?${params}`;
+      fullPath += `?${params}`;
     }
 
     const options: RequestInit = { method };
@@ -618,7 +523,14 @@ The path is appended to the site's /wp-json/ base URL.`,
       options.body = JSON.stringify(body);
     }
 
-    const { status, data } = await wpFetch(resolved, url, options);
+    const { status, data } = await wpFetch(
+      {
+        baseUrl: `${resolved.siteUrl}/wp-json`,
+        authHeader: resolved.authHeader,
+      },
+      fullPath,
+      options,
+    );
 
     return JSON.stringify({
       success: status >= 200 && status < 300,

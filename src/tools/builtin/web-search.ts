@@ -7,6 +7,8 @@
  */
 
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search";
 const TIMEOUT_MS = 10_000;
@@ -82,27 +84,14 @@ AFTER SEARCHING: Cite specific sources (title + URL) when reporting findings. Ne
     );
     const url = `${BRAVE_API_URL}?q=${encodeURIComponent(query)}&count=${count}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
     try {
-      const response = await fetch(url, {
+      const data = (await fetchJson(url, {
+        timeoutMs: TIMEOUT_MS,
         headers: {
-          Accept: "application/json",
           "Accept-Encoding": "gzip",
           "X-Subscription-Token": apiKey,
         },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        return JSON.stringify({
-          error: `Brave Search API error: ${response.status} ${text}`,
-        });
-      }
-
-      const data = (await response.json()) as BraveSearchResponse;
+      })) as BraveSearchResponse;
 
       // Extract web results
       const results = (data.web?.results ?? []).slice(0, count).map((r) => ({
@@ -135,10 +124,12 @@ AFTER SEARCHING: Cite specific sources (title + URL) when reporting findings. Ne
       }
       return lines.join("\n");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ error: `Search failed: ${message}` });
-    } finally {
-      clearTimeout(timeout);
+      if (err instanceof HttpStatusError) {
+        return JSON.stringify({
+          error: `Brave Search API error: ${err.status} ${err.bodyText}`,
+        });
+      }
+      return JSON.stringify({ error: `Search failed: ${errMsg(err)}` });
     }
   },
 };

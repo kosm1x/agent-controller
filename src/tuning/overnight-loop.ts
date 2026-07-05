@@ -12,7 +12,6 @@ import type {
   EvalResult,
   TuneRun,
   CaseScore,
-  ParentSelectionStrategy,
 } from "./types.js";
 import {
   insertRun,
@@ -21,7 +20,6 @@ import {
   insertVariant,
   getExperimentsByRun,
   getRecentExperiments,
-  getValidVariantsWithChildren,
 } from "./schema.js";
 import { runEvaluation, type InferFunction } from "./eval-runner.js";
 import {
@@ -34,22 +32,12 @@ import { generateReport } from "./report.js";
 import { computeCompositeScore } from "./scorer.js";
 import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { toolRegistry } from "../tools/registry.js";
-import { selectParent } from "./parent-selection.js";
-import { serializeSandbox, deserializeSandbox } from "./variant-store.js";
+import { serializeSandbox } from "./variant-store.js";
 import { getDatabase } from "../db/index.js";
 import { EXPERIMENT_TIMEOUT_MS } from "../config/constants.js";
 import { runGates, loadGateConfigFromEnv } from "./gates.js";
 import { classifyFailureSource } from "./failure-classifier.js";
 import { computeConfidenceProxy } from "./confidence.js";
-import { runSelfReview } from "./self-review.js";
-import { mineTrajectory } from "./trajectory-miner.js";
-import {
-  isPredictiveConsistencyEnabled,
-  makeDefaultPredictionInfer,
-  runPredictiveCheck,
-  type PredictionInferFn,
-} from "./predictive-consistency.js";
-import { getActiveTestCases } from "./test-cases.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -62,21 +50,12 @@ export interface TuningConfig {
   minDeltaToKeep: number;
   stalledAfterN: number;
   surfaces: TuningSurface[];
-  /** Parent selection strategy for variant archive (HyperAgents pattern). */
-  parentSelection: ParentSelectionStrategy;
   /** Enable cheap scope+classification gate before expensive tool_selection eval. */
   stagedGate: boolean;
   /** Injectable inference for tool_selection evals (testing). */
   evalInferFn?: InferFunction;
   /** Injectable inference for meta-agent (testing). */
   metaInferFn?: MetaInferFunction;
-  /**
-   * Injectable predict-from-hypothesis inference for the predictive
-   * consistency gate (v7.5 L3). Activated only when
-   * `TUNING_PREDICTIVE_CONSISTENCY=true`. Tests inject a deterministic
-   * stub; production wiring uses `makeDefaultPredictionInfer`.
-   */
-  predictionInferFn?: PredictionInferFn;
 }
 
 const DEFAULT_CONFIG: TuningConfig = {
@@ -86,13 +65,6 @@ const DEFAULT_CONFIG: TuningConfig = {
   minDeltaToKeep: 0.5,
   stalledAfterN: 5,
   surfaces: ["tool_description", "scope_rule"],
-  parentSelection:
-    (process.env.TUNING_PARENT_SELECTION as
-      | "best"
-      | "latest"
-      | "score_prop"
-      | "score_child_prop"
-      | undefined) ?? "score_child_prop",
   stagedGate: true,
 };
 
@@ -351,22 +323,6 @@ export async function runOvernightTuning(
   };
   insertRun(run);
 
-  // --- Step 0: Load parent variant from archive ---
-  const parentVariant = selectParent(
-    cfg.parentSelection,
-    getValidVariantsWithChildren(50),
-  );
-  const parentId = parentVariant?.variant_id ?? null;
-  const generation = (parentVariant?.generation ?? -1) + 1;
-
-  if (parentVariant) {
-    console.log(
-      `[tuning] Parent variant: ${parentVariant.variant_id} (gen ${parentVariant.generation}, score ${parentVariant.composite_score.toFixed(1)})`,
-    );
-  } else {
-    console.log("[tuning] No parent variant — starting from scratch");
-  }
-
   // --- Step 1: Baseline evaluation ---
   console.log("[tuning] Running baseline evaluation...");
   const baseline = await runEvaluation({}, undefined, cfg.evalInferFn);
@@ -385,9 +341,7 @@ export async function runOvernightTuning(
   // --- Step 2: Experiment loop ---
   let bestScore = baseline.compositeScore;
   let bestResult: EvalResult = baseline; // Tracks evolving best for regression detection
-  let bestSandbox: SandboxConfig = parentVariant
-    ? deserializeSandbox(parentVariant.config_json)
-    : {};
+  let bestSandbox: SandboxConfig = {};
   let consecutiveRegressions = 0;
   let experimentsRun = 0;
   let experimentsWon = 0;
@@ -482,35 +436,6 @@ export async function runOvernightTuning(
       consecutiveRegressions++;
       continue;
     }
-
-    // v7.5 F: inline self-review (opt-in via TUNING_SELF_REVIEW=true)
-    const review = await runSelfReview(mutation, originalValue);
-    if (!review.passed) {
-      console.log(`[tuning] ✗ SELF-REVIEW: ${review.reason}`);
-      cost.recordMetaAgent(review.tokensUsed);
-      const expId = `${runId}-exp-${i}`;
-      insertExperiment({
-        experiment_id: expId,
-        run_id: runId,
-        surface: mutation.surface,
-        target: mutation.target,
-        mutation_type: "rejected",
-        hypothesis: mutation.hypothesis,
-        original_value: originalValue,
-        mutated_value: mutation.mutated_value,
-        baseline_score: bestScore,
-        mutated_score: bestScore,
-        status: "rejected",
-        failure_source: classifyFailureSource({
-          status: "rejected",
-          mutation,
-        }),
-      });
-      experimentsRun++;
-      consecutiveRegressions++;
-      continue;
-    }
-    if (review.tokensUsed > 0) cost.recordMetaAgent(review.tokensUsed);
 
     // Apply mutation to sandbox
     const sandbox = applySandbox(bestSandbox, mutation);
@@ -628,71 +553,15 @@ export async function runOvernightTuning(
     // but breaks 1 is still unacceptable — the broken case will cause user-visible issues.
     const regressions = detectPerCaseRegressions(bestResult, merged);
 
-    // v7.5 L3: predictive consistency gate (RationalRewards / PARROT phase 2).
-    // Even if scores improved, reject mutations whose hypothesis can't predict
-    // per-case outcomes — those are post-hoc rationalisations, not causal claims.
-    // Opt-in via TUNING_PREDICTIVE_CONSISTENCY=true. Skip on regressions (the
-    // mutation is already going to be rejected; an extra LLM call buys nothing).
-    let predictiveCheckFailed = false;
-    let predictiveCheckReason: string | undefined;
-    if (
-      isPredictiveConsistencyEnabled() &&
-      !regressions.length &&
-      delta >= cfg.minDeltaToKeep
-    ) {
-      const inferFn: PredictionInferFn =
-        cfg.predictionInferFn ??
-        makeDefaultPredictionInfer(async (sys, user) => {
-          const { infer } = await import("../inference/adapter.js");
-          const r = await infer({
-            messages: [
-              { role: "system", content: sys },
-              { role: "user", content: user },
-            ],
-            temperature: 0.2,
-          });
-          return {
-            content: r.content ?? "",
-            tokensUsed:
-              (r.usage?.prompt_tokens ?? 0) + (r.usage?.completion_tokens ?? 0),
-          };
-        });
-      try {
-        const probe = await runPredictiveCheck(
-          mutation,
-          affectedCaseIds,
-          getActiveTestCases(),
-          targeted.perCase,
-          inferFn,
-        );
-        if (probe.tokensUsed > 0) cost.recordMetaAgent(probe.tokensUsed);
-        if (!probe.passed) {
-          predictiveCheckFailed = true;
-          predictiveCheckReason = probe.reason ?? "predictive consistency gate";
-          console.log(
-            `[tuning] ✗ PREDICTIVE-CONSISTENCY: ${predictiveCheckReason}`,
-          );
-        }
-      } catch (err) {
-        // Non-fatal: gate failure is opt-in instrumentation, never blocks.
-        console.warn(
-          `[tuning] predictive-consistency probe error: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
     // Record experiment
     const expId = `${runId}-exp-${i}`;
     const hasRegressions = regressions.length > 0;
-    const passed =
-      delta >= cfg.minDeltaToKeep && !hasRegressions && !predictiveCheckFailed;
+    const passed = delta >= cfg.minDeltaToKeep && !hasRegressions;
     const status = hasRegressions
       ? "regressed"
-      : predictiveCheckFailed
-        ? "rejected"
-        : passed
-          ? "passed"
-          : "regressed";
+      : passed
+        ? "passed"
+        : "regressed";
 
     const confidence = computeConfidenceProxy(targeted.perCase);
     insertExperiment({
@@ -734,15 +603,6 @@ export async function runOvernightTuning(
         `[tuning] ✗ REGRESSION: ${regressions.length} case(s) degraded — ${regressions.map((r) => `${r.caseId}: ${r.before.toFixed(2)}→${r.after.toFixed(2)}`).join(", ")}`,
       );
       consecutiveRegressions++;
-    } else if (predictiveCheckFailed) {
-      // Predictive-gate failure ≠ regression. Don't bump
-      // consecutiveRegressions — that counter trips stalledAfterN, and we
-      // don't want fluent-but-vague hypotheses on winning mutations to halt
-      // the entire run as if cases were degrading. The mutation is simply
-      // discarded; the parent stays best; the next iteration tries again.
-      console.log(
-        `[tuning] ✗ REJECT (predictive): hypothesis did not predict outcomes (${predictiveCheckReason ?? "n/a"})`,
-      );
     } else {
       console.log(
         `[tuning] ✗ DISCARD: ${newScore.toFixed(1)} (delta ${delta.toFixed(1)} < ${cfg.minDeltaToKeep})`,
@@ -766,9 +626,9 @@ export async function runOvernightTuning(
     db.transaction(() => {
       insertVariant({
         variant_id: variantId,
-        parent_id: parentId,
+        parent_id: null,
         run_id: runId,
-        generation,
+        generation: 0,
         config_json: serializeSandbox(bestSandbox),
         composite_score: bestScore,
         subscores_json: null,
@@ -784,22 +644,8 @@ export async function runOvernightTuning(
       });
     })();
     console.log(
-      `[tuning] Persisted variant ${variantId} (gen ${generation}, score ${bestScore.toFixed(1)})`,
+      `[tuning] Persisted variant ${variantId} (score ${bestScore.toFixed(1)})`,
     );
-
-    // v7.5 E: trajectory miner — opt-in stable-failure promotion to mined_test_cases
-    try {
-      const mineResult = mineTrajectory({ runId });
-      if (mineResult.candidateCount > 0) {
-        console.log(
-          `[tuning] trajectory mine: ${mineResult.promotedCount}/${mineResult.candidateCount} candidate(s) promoted`,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[tuning] trajectory miner error (non-fatal): ${err instanceof Error ? err.message : err}`,
-      );
-    }
   }
 
   // --- Step 3: Generate report ---

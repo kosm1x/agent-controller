@@ -1,5 +1,5 @@
 /**
- * Ad account audit — weighted check framework.
+ * Ad account audit checks + weighted scoring (used only by ads-audit.ts).
  *
  * Clean-room port of AgriciDaniel/claude-ads audit scoring: 7 platforms,
  * weighted checks by severity (critical 5.0× → info 0.5×), 5 categories.
@@ -7,10 +7,6 @@
  * Scoring: raw score = sum(weight × severity_multiplier) for passing checks
  * out of max possible for the applicable check set. Normalized 0-100 with
  * A-F grade. Category breakdown preserved.
- *
- * Scope note: this is v1 — ~70 checks across 7 platforms. claude-ads ships
- * 225+; we keep scaffolding that scales and add checks as real ad accounts
- * expose gaps. Adding a check is a data-only change, not code.
  */
 
 export type AdPlatform =
@@ -26,17 +22,13 @@ export type AdPlatform =
 export type AdCheckSeverity = "critical" | "high" | "medium" | "low" | "info";
 
 export type AdCheckCategory =
-  | "targeting"
-  | "budget"
-  | "creative"
-  | "technical"
-  | "tracking";
+  "targeting" | "budget" | "creative" | "technical" | "tracking";
 
 /**
  * Severity → weight multiplier. Scoring uses these to prioritize fixes.
  * Mirrors claude-ads (Critical 5.0× → Low 0.5×).
  */
-export const SEVERITY_WEIGHT: Record<AdCheckSeverity, number> = {
+const SEVERITY_WEIGHT: Record<AdCheckSeverity, number> = {
   critical: 5.0,
   high: 3.0,
   medium: 2.0,
@@ -44,29 +36,19 @@ export const SEVERITY_WEIGHT: Record<AdCheckSeverity, number> = {
   info: 0.5,
 };
 
-/**
- * An account snapshot field path (dot notation) the check evaluates against.
- * Handlers receive the raw snapshot + reads a resolved value; this string is
- * surfaced in output so operators know what field drove a failure.
- */
-export type SnapshotFieldPath = string;
-
 export interface AdCheck {
   /** Stable ID — the only thing tests should assert against. */
   id: string;
-  /** Which platforms this check applies to. `cross_platform` → all. */
-  platforms: AdPlatform[];
   category: AdCheckCategory;
   severity: AdCheckSeverity;
   /** Short operator-facing title. */
   title: string;
-  /** One-sentence explanation of what the check is looking for. */
+  /** One-sentence explanation of what the check is looking for. Docs only. */
   rationale: string;
-  /** Which snapshot fields the check reads. For operator transparency only. */
-  fields_read: SnapshotFieldPath[];
   /**
-   * Check function. Returns `null` if not applicable (skipped, not counted),
-   * `true` if the account passes, `false` (with optional message) if it fails.
+   * Check function. Returns `not_applicable` if a required snapshot field is
+   * missing (skipped, not counted), `pass` if the account passes, `fail`
+   * (with a message) otherwise.
    */
   run: (snapshot: AdAccountSnapshot) => AdCheckOutcome;
 }
@@ -143,6 +125,12 @@ export interface AdAccountSnapshot {
   notes?: string;
 }
 
+const pass: AdCheckOutcome = { status: "pass" };
+
+function fail(message: string): AdCheckOutcome {
+  return { status: "fail", message };
+}
+
 /**
  * Apply-if-field-present guard. Returns `not_applicable` when any of the
  * listed fields is `undefined` — keeps the ratio honest when operators
@@ -168,218 +156,176 @@ function requires(
 const CROSS_PLATFORM_CHECKS: AdCheck[] = [
   {
     id: "xp_roas_below_1",
-    platforms: ["cross_platform"],
     category: "budget",
     severity: "critical",
     title: "Account ROAS below 1.0× — losing money on every dollar",
     rationale:
       "If revenue/spend < 1, ads are unprofitable before factoring in COGS or overhead. Immediate investigation needed.",
-    fields_read: ["roas"],
     run: (s) =>
       requires(s, ["roas"], () =>
         s.roas! >= 1.0
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `ROAS ${s.roas!.toFixed(2)}× is below breakeven (1.0×). Pause unprofitable campaigns or investigate attribution gaps.`,
-            },
+          ? pass
+          : fail(
+              `ROAS ${s.roas!.toFixed(2)}× is below breakeven (1.0×). Pause unprofitable campaigns or investigate attribution gaps.`,
+            ),
       ),
   },
   {
     id: "xp_roas_below_2",
-    platforms: ["cross_platform"],
     category: "budget",
     severity: "high",
     title: "ROAS below 2.0× — unlikely to be profitable post-COGS",
     rationale:
       "For most D2C brands a 2× ROAS leaves no room for product cost + overhead. Review creative + targeting.",
-    fields_read: ["roas"],
     run: (s) =>
       requires(s, ["roas"], () =>
         s.roas! >= 2.0
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `ROAS ${s.roas!.toFixed(2)}× is below the 2× minimum profitability floor.`,
-            },
+          ? pass
+          : fail(
+              `ROAS ${s.roas!.toFixed(2)}× is below the 2× minimum profitability floor.`,
+            ),
       ),
   },
   {
     id: "xp_conversion_tracking_enabled",
-    platforms: ["cross_platform"],
     category: "tracking",
     severity: "critical",
     title: "Conversion tracking must be enabled",
     rationale:
       "Without conversion tracking the platform cannot learn; smart bidding degenerates and you are paying for clicks blind.",
-    fields_read: ["conversion_tracking_enabled"],
     run: (s) =>
       requires(s, ["conversion_tracking_enabled"], () =>
         s.conversion_tracking_enabled
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "Conversion tracking is disabled at the account level.",
-            },
+          ? pass
+          : fail("Conversion tracking is disabled at the account level."),
       ),
   },
   {
     id: "xp_pixel_installed",
-    platforms: ["cross_platform"],
     category: "tracking",
     severity: "critical",
     title: "Tracking pixel / tag installed on destination",
     rationale:
       "No pixel = no retargeting, no lookalikes, no optimization feedback.",
-    fields_read: ["pixel_installed"],
     run: (s) =>
       requires(s, ["pixel_installed"], () =>
         s.pixel_installed
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "Destination pages are missing the platform pixel/tag.",
-            },
+          ? pass
+          : fail("Destination pages are missing the platform pixel/tag."),
       ),
   },
   {
     id: "xp_enhanced_conversions",
-    platforms: ["cross_platform"],
     category: "tracking",
     severity: "high",
     title: "Server-side / enhanced conversions enabled",
     rationale:
       "iOS 14+ and privacy regulations degrade client-side tracking. Enhanced conversions (Google) or CAPI (Meta) restore ~15-25% of lost signal.",
-    fields_read: ["enhanced_conversions_enabled"],
     run: (s) =>
       requires(s, ["enhanced_conversions_enabled"], () =>
         s.enhanced_conversions_enabled
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                "Enhanced conversions / server-side tagging is not enabled.",
-            },
+          ? pass
+          : fail("Enhanced conversions / server-side tagging is not enabled."),
       ),
   },
   {
     id: "xp_zero_conversion_campaigns",
-    platforms: ["cross_platform"],
     category: "budget",
     severity: "high",
     title: "More than 25% of campaigns have zero conversions",
     rationale:
       "A zero-conversion campaign is bleeding budget. Pause-and-investigate or merge audiences.",
-    fields_read: ["zero_conversion_campaigns", "active_campaigns"],
     run: (s) =>
       requires(s, ["zero_conversion_campaigns", "active_campaigns"], () => {
         if (s.active_campaigns! === 0) return { status: "not_applicable" };
         const ratio = s.zero_conversion_campaigns! / s.active_campaigns!;
         return ratio <= 0.25
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `${s.zero_conversion_campaigns}/${s.active_campaigns} campaigns (${(ratio * 100).toFixed(0)}%) have no conversions.`,
-            };
+          ? pass
+          : fail(
+              `${s.zero_conversion_campaigns}/${s.active_campaigns} campaigns (${(ratio * 100).toFixed(0)}%) have no conversions.`,
+            );
       }),
   },
   {
     id: "xp_stale_creatives",
-    platforms: ["cross_platform"],
     category: "creative",
     severity: "medium",
     title: "At least one creative refreshed in the last 30 days",
     rationale:
       "Creative fatigue is the #1 cause of rising CPA over time. Fresh assets should rotate in monthly.",
-    fields_read: ["stale_creatives", "active_creatives"],
     run: (s) =>
       requires(s, ["stale_creatives", "active_creatives"], () => {
         if (s.active_creatives! === 0) return { status: "not_applicable" };
         const ratio = s.stale_creatives! / s.active_creatives!;
         return ratio < 1.0
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `All ${s.active_creatives} active creatives are 30+ days old.`,
-            };
+          ? pass
+          : fail(
+              `All ${s.active_creatives} active creatives are 30+ days old.`,
+            );
       }),
   },
   {
     id: "xp_active_creatives_min",
-    platforms: ["cross_platform"],
     category: "creative",
     severity: "medium",
     title: "At least 3 active creatives per account for testing",
     rationale:
       "Platforms need a minimum set to run learning phases and winner-selection.",
-    fields_read: ["active_creatives"],
     run: (s) =>
       requires(s, ["active_creatives"], () =>
         s.active_creatives! >= 3
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Only ${s.active_creatives} active creative(s) — insufficient for A/B learning.`,
-            },
+          ? pass
+          : fail(
+              `Only ${s.active_creatives} active creative(s) — insufficient for A/B learning.`,
+            ),
       ),
   },
   {
     id: "xp_audience_exclusions",
-    platforms: ["cross_platform"],
     category: "targeting",
     severity: "medium",
     title: "Converted users / existing customers excluded where appropriate",
     rationale:
       "Spending on already-converted users dilutes prospecting budget. Retention needs its own journey.",
-    fields_read: ["audience_exclusions_configured"],
     run: (s) =>
       requires(s, ["audience_exclusions_configured"], () =>
         s.audience_exclusions_configured
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                "No audience exclusions on prospecting campaigns — you are re-paying for existing customers.",
-            },
+          ? pass
+          : fail(
+              "No audience exclusions on prospecting campaigns — you are re-paying for existing customers.",
+            ),
       ),
   },
   {
     id: "xp_geo_presence_targeting",
-    platforms: ["cross_platform"],
     category: "targeting",
     severity: "low",
     title: "Geo targeting uses 'presence' (not interest)",
     rationale:
       'Interest-based geo ("people interested in Paris") pulls in far-flung users and dilutes relevance.',
-    fields_read: ["geo_presence_targeting"],
     run: (s) =>
       requires(s, ["geo_presence_targeting"], () =>
         s.geo_presence_targeting
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                'Geo targeting is set to "interest". Switch to "presence" unless you intentionally target travelers.',
-            },
+          ? pass
+          : fail(
+              'Geo targeting is set to "interest". Switch to "presence" unless you intentionally target travelers.',
+            ),
       ),
   },
   {
     id: "xp_frequency_over_5",
-    platforms: ["cross_platform"],
     category: "creative",
     severity: "medium",
     title: "Frequency at or below 5 impressions per user",
     rationale:
       "Above ~5 impressions per user per week, response degrades and you are burning budget on the same eyeballs.",
-    fields_read: ["frequency"],
     run: (s) =>
       requires(s, ["frequency"], () =>
         s.frequency! <= 5
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Frequency ${s.frequency!.toFixed(1)} exceeds the 5-impression saturation threshold.`,
-            },
+          ? pass
+          : fail(
+              `Frequency ${s.frequency!.toFixed(1)} exceeds the 5-impression saturation threshold.`,
+            ),
       ),
   },
 ];
@@ -391,91 +337,76 @@ const CROSS_PLATFORM_CHECKS: AdCheck[] = [
 const GOOGLE_CHECKS: AdCheck[] = [
   {
     id: "g_quality_score_min",
-    platforms: ["google_ads"],
     category: "creative",
     severity: "high",
     title: "Avg quality score at or above 6/10",
     rationale:
       "Quality score below 6 signals poor keyword-ad-landing alignment and pushes CPC up 30-50%.",
-    fields_read: ["quality_score"],
     run: (s) =>
       requires(s, ["quality_score"], () =>
         s.quality_score! >= 6
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Quality score ${s.quality_score}/10 is below the 6/10 health threshold.`,
-            },
+          ? pass
+          : fail(
+              `Quality score ${s.quality_score}/10 is below the 6/10 health threshold.`,
+            ),
       ),
   },
   {
     id: "g_negative_keywords",
-    platforms: ["google_ads"],
     category: "targeting",
     severity: "high",
     title: "Negative keyword list of at least 20 terms",
     rationale:
       "Search campaigns without a robust negative list waste budget on irrelevant queries.",
-    fields_read: ["negative_keywords_count"],
     run: (s) =>
       requires(s, ["negative_keywords_count"], () =>
         s.negative_keywords_count! >= 20
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Only ${s.negative_keywords_count} negative keywords. Target 20+ for a mature account.`,
-            },
+          ? pass
+          : fail(
+              `Only ${s.negative_keywords_count} negative keywords. Target 20+ for a mature account.`,
+            ),
       ),
   },
   {
     id: "g_brand_separation",
-    platforms: ["google_ads"],
     category: "targeting",
     severity: "medium",
     title: "Brand and non-brand separated into distinct campaigns",
     rationale:
       "Mixing brand and non-brand dilutes your ROAS signal and hides non-brand inefficiency.",
-    fields_read: ["brand_separation"],
     run: (s) =>
       requires(s, ["brand_separation"], () =>
         s.brand_separation
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                "Brand and non-brand keywords share campaigns — separate them for clean ROAS attribution.",
-            },
+          ? pass
+          : fail(
+              "Brand and non-brand keywords share campaigns — separate them for clean ROAS attribution.",
+            ),
       ),
   },
   {
     id: "g_ad_extensions",
-    platforms: ["google_ads"],
     category: "creative",
     severity: "medium",
     title: "At least 4 active ad extensions",
     rationale:
       "Sitelinks, callouts, structured snippets, and call extensions each lift CTR 10-15%.",
-    fields_read: ["ad_extensions_count"],
     run: (s) =>
       requires(s, ["ad_extensions_count"], () =>
         s.ad_extensions_count! >= 4
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Only ${s.ad_extensions_count} ad extensions — add sitelinks, callouts, structured snippets.`,
-            },
+          ? pass
+          : fail(
+              `Only ${s.ad_extensions_count} ad extensions — add sitelinks, callouts, structured snippets.`,
+            ),
       ),
   },
   {
     id: "g_bidding_auto_for_conv",
-    platforms: ["google_ads"],
     category: "budget",
     severity: "medium",
     title:
       "Smart bidding (tCPA / tROAS / Max Conversions) on performance campaigns",
     rationale:
       "Manual CPC with conversion tracking leaves 20-30% of lift on the table. Smart bidding uses auction-time signals humans can't see.",
-    fields_read: ["bidding_strategy"],
     run: (s) =>
       requires(s, ["bidding_strategy"], () => {
         const strat = String(s.bidding_strategy).toLowerCase();
@@ -488,11 +419,10 @@ const GOOGLE_CHECKS: AdCheck[] = [
           strat.includes("troas") ||
           strat.includes("smart");
         return smart
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Bidding strategy "${s.bidding_strategy}" is not a smart-bidding strategy.`,
-            };
+          ? pass
+          : fail(
+              `Bidding strategy "${s.bidding_strategy}" is not a smart-bidding strategy.`,
+            );
       }),
   },
 ];
@@ -504,51 +434,41 @@ const GOOGLE_CHECKS: AdCheck[] = [
 const META_CHECKS: AdCheck[] = [
   {
     id: "m_quality_score_min",
-    platforms: ["meta_ads"],
     category: "creative",
     severity: "high",
     title: "Relevance / quality ranking at or above 6/10 equivalent",
     rationale:
       "Meta's quality/engagement/conversion rankings gate auction competitiveness. Below-average rankings cap reach.",
-    fields_read: ["quality_score"],
     run: (s) =>
       requires(s, ["quality_score"], () =>
         s.quality_score! >= 6
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Relevance score ${s.quality_score}/10 is below the 6/10 floor.`,
-            },
+          ? pass
+          : fail(
+              `Relevance score ${s.quality_score}/10 is below the 6/10 floor.`,
+            ),
       ),
   },
   {
     id: "m_capi_enabled",
-    platforms: ["meta_ads"],
     category: "tracking",
     severity: "critical",
     title: "Conversions API (CAPI) enabled alongside pixel",
     rationale:
       "iOS 14+ / ad-blockers mute browser pixel events. CAPI restores 15-25% of conversion signal from the server.",
-    fields_read: ["enhanced_conversions_enabled"],
     run: (s) =>
       requires(s, ["enhanced_conversions_enabled"], () =>
         s.enhanced_conversions_enabled
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "Conversions API (CAPI) is not enabled.",
-            },
+          ? pass
+          : fail("Conversions API (CAPI) is not enabled."),
       ),
   },
   {
     id: "m_bidding_auto_for_conv",
-    platforms: ["meta_ads"],
     category: "budget",
     severity: "medium",
     title: "Lowest cost / cost cap / bid cap tied to a conversion event",
     rationale:
       "Automated bidding with a conversion goal outperforms reach/clicks objectives for direct-response accounts.",
-    fields_read: ["bidding_strategy"],
     run: (s) =>
       requires(s, ["bidding_strategy"], () => {
         const strat = String(s.bidding_strategy).toLowerCase();
@@ -559,68 +479,56 @@ const META_CHECKS: AdCheck[] = [
           strat.includes("conversion") ||
           strat.includes("roas");
         return dr
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Bidding strategy "${s.bidding_strategy}" is not tied to a conversion event.`,
-            };
+          ? pass
+          : fail(
+              `Bidding strategy "${s.bidding_strategy}" is not tied to a conversion event.`,
+            );
       }),
   },
   {
     id: "m_frequency_over_3",
-    platforms: ["meta_ads"],
     category: "creative",
     severity: "medium",
     title: "Frequency at or below 3 on prospecting audiences",
     rationale:
       "Meta prospecting decays fast above frequency 3 — creative fatigue kills CTR and drives CPA up.",
-    fields_read: ["frequency"],
     run: (s) =>
       requires(s, ["frequency"], () =>
         s.frequency! <= 3
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Frequency ${s.frequency!.toFixed(1)} is above the 3-impression prospecting ceiling.`,
-            },
+          ? pass
+          : fail(
+              `Frequency ${s.frequency!.toFixed(1)} is above the 3-impression prospecting ceiling.`,
+            ),
       ),
   },
   {
     id: "m_audience_exclusions",
-    platforms: ["meta_ads"],
     category: "targeting",
     severity: "medium",
     title: "Existing customer list excluded on prospecting campaigns",
     rationale:
       "Without exclusions, lookalikes and interest targeting will re-serve existing customers at higher CPA.",
-    fields_read: ["audience_exclusions_configured"],
     run: (s) =>
       requires(s, ["audience_exclusions_configured"], () =>
         s.audience_exclusions_configured
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "No audience exclusions on prospecting ad sets.",
-            },
+          ? pass
+          : fail("No audience exclusions on prospecting ad sets."),
       ),
   },
   {
     id: "m_creative_rotation_min_3",
-    platforms: ["meta_ads"],
     category: "creative",
     severity: "medium",
     title: "At least 3 active creatives per ad set for learning",
     rationale:
       "Below 3 creatives, Meta's dynamic creative optimization has nothing to rotate.",
-    fields_read: ["active_creatives"],
     run: (s) =>
       requires(s, ["active_creatives"], () =>
         s.active_creatives! >= 3
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Only ${s.active_creatives} active creatives. Upload at least 3 to enable DCO.`,
-            },
+          ? pass
+          : fail(
+              `Only ${s.active_creatives} active creatives. Upload at least 3 to enable DCO.`,
+            ),
       ),
   },
 ];
@@ -632,59 +540,48 @@ const META_CHECKS: AdCheck[] = [
 const LINKEDIN_CHECKS: AdCheck[] = [
   {
     id: "l_insight_tag_installed",
-    platforms: ["linkedin_ads"],
     category: "tracking",
     severity: "critical",
     title: "LinkedIn Insight Tag installed",
     rationale:
       "No Insight Tag = no retargeting, no conversion tracking, no matched audiences.",
-    fields_read: ["pixel_installed"],
     run: (s) =>
       requires(s, ["pixel_installed"], () =>
         s.pixel_installed
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "LinkedIn Insight Tag is not installed.",
-            },
+          ? pass
+          : fail("LinkedIn Insight Tag is not installed."),
       ),
   },
   {
     id: "l_cpa_ceiling",
-    platforms: ["linkedin_ads"],
     category: "budget",
     severity: "high",
     title: "CPA below $150 ceiling for typical B2B lead-gen",
     rationale:
       "LinkedIn lead-gen median CPA is $75-120. Above $150 indicates targeting is too broad or creative is weak.",
-    fields_read: ["cpa"],
     run: (s) =>
       requires(s, ["cpa"], () =>
         s.cpa! <= 150
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `CPA $${s.cpa!.toFixed(0)} is above the $150 B2B lead-gen ceiling.`,
-            },
+          ? pass
+          : fail(
+              `CPA $${s.cpa!.toFixed(0)} is above the $150 B2B lead-gen ceiling.`,
+            ),
       ),
   },
   {
     id: "l_ctr_min",
-    platforms: ["linkedin_ads"],
     category: "creative",
     severity: "medium",
     title: "CTR at or above 0.4% (LinkedIn feed median)",
     rationale:
       "Below-median CTR on LinkedIn pushes CPC to the campaign ceiling. Rework creative hook.",
-    fields_read: ["ctr"],
     run: (s) =>
       requires(s, ["ctr"], () =>
         s.ctr! >= 0.004
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `CTR ${(s.ctr! * 100).toFixed(2)}% is below the 0.4% LinkedIn median.`,
-            },
+          ? pass
+          : fail(
+              `CTR ${(s.ctr! * 100).toFixed(2)}% is below the 0.4% LinkedIn median.`,
+            ),
       ),
   },
 ];
@@ -696,61 +593,48 @@ const LINKEDIN_CHECKS: AdCheck[] = [
 const TIKTOK_CHECKS: AdCheck[] = [
   {
     id: "t_pixel_installed",
-    platforms: ["tiktok_ads"],
     category: "tracking",
     severity: "critical",
     title: "TikTok Pixel (and/or Events API) installed",
     rationale:
       "TikTok relies heavily on pixel signal for creative optimization. Without it, smart performance campaigns degenerate.",
-    fields_read: ["pixel_installed"],
     run: (s) =>
       requires(s, ["pixel_installed"], () =>
-        s.pixel_installed
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "TikTok Pixel is not installed.",
-            },
+        s.pixel_installed ? pass : fail("TikTok Pixel is not installed."),
       ),
   },
   {
     id: "t_ctr_min",
-    platforms: ["tiktok_ads"],
     category: "creative",
     severity: "high",
     title: "CTR at or above 1% (TikTok feed median)",
     rationale:
       "TikTok feed median CTR is 1-1.5%. Below 1% signals creative does not feel native to the platform.",
-    fields_read: ["ctr"],
     run: (s) =>
       requires(s, ["ctr"], () =>
         s.ctr! >= 0.01
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `CTR ${(s.ctr! * 100).toFixed(2)}% is below the 1% TikTok floor.`,
-            },
+          ? pass
+          : fail(
+              `CTR ${(s.ctr! * 100).toFixed(2)}% is below the 1% TikTok floor.`,
+            ),
       ),
   },
   {
     id: "t_creative_refresh",
-    platforms: ["tiktok_ads"],
     category: "creative",
     severity: "high",
     title: "TikTok creatives refreshed at least every 14 days",
     rationale:
       "TikTok creative fatigue is the fastest of any platform — a high-performing UGC video can die in 10-14 days.",
-    fields_read: ["stale_creatives"],
     run: (s) =>
       requires(s, ["stale_creatives", "active_creatives"], () => {
         if (s.active_creatives! === 0) return { status: "not_applicable" };
         const ratio = s.stale_creatives! / s.active_creatives!;
         return ratio <= 0.5
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `${(ratio * 100).toFixed(0)}% of TikTok creatives are stale. Refresh every 14 days.`,
-            };
+          ? pass
+          : fail(
+              `${(ratio * 100).toFixed(0)}% of TikTok creatives are stale. Refresh every 14 days.`,
+            );
       }),
   },
 ];
@@ -762,41 +646,34 @@ const TIKTOK_CHECKS: AdCheck[] = [
 const YOUTUBE_CHECKS: AdCheck[] = [
   {
     id: "y_conversion_tracking",
-    platforms: ["youtube_ads"],
     category: "tracking",
     severity: "critical",
     title: "Google Ads conversion tracking connected to YouTube campaigns",
     rationale:
       "YouTube campaigns without conversion tracking cannot use smart bidding — you are running them blind.",
-    fields_read: ["conversion_tracking_enabled"],
     run: (s) =>
       requires(s, ["conversion_tracking_enabled"], () =>
         s.conversion_tracking_enabled
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                "YouTube campaigns are not connected to Google Ads conversion tracking.",
-            },
+          ? pass
+          : fail(
+              "YouTube campaigns are not connected to Google Ads conversion tracking.",
+            ),
       ),
   },
   {
     id: "y_frequency_cap",
-    platforms: ["youtube_ads"],
     category: "targeting",
     severity: "medium",
     title: "Frequency cap at or below 4 impressions per user per week",
     rationale:
       "YouTube frequency above 4/week exhausts audiences fast and degrades memorability per impression.",
-    fields_read: ["frequency"],
     run: (s) =>
       requires(s, ["frequency"], () =>
         s.frequency! <= 4
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `YouTube frequency ${s.frequency!.toFixed(1)}/week exceeds the 4-impression cap.`,
-            },
+          ? pass
+          : fail(
+              `YouTube frequency ${s.frequency!.toFixed(1)}/week exceeds the 4-impression cap.`,
+            ),
       ),
   },
 ];
@@ -808,60 +685,42 @@ const YOUTUBE_CHECKS: AdCheck[] = [
 const MICROSOFT_CHECKS: AdCheck[] = [
   {
     id: "ms_uet_installed",
-    platforms: ["microsoft_ads"],
     category: "tracking",
     severity: "critical",
     title: "UET tag installed for conversion tracking",
     rationale:
       "The UET tag is Microsoft's conversion pixel. Without it, no smart bidding, no retargeting, no CPL reporting.",
-    fields_read: ["pixel_installed"],
     run: (s) =>
       requires(s, ["pixel_installed"], () =>
-        s.pixel_installed
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "UET tag is not installed.",
-            },
+        s.pixel_installed ? pass : fail("UET tag is not installed."),
       ),
   },
   {
     id: "ms_negative_keywords",
-    platforms: ["microsoft_ads"],
     category: "targeting",
     severity: "high",
     title: "Negative keyword list of at least 20 terms",
     rationale:
       "Microsoft search share on older audiences includes many mis-queries; negatives are critical for QoS.",
-    fields_read: ["negative_keywords_count"],
     run: (s) =>
       requires(s, ["negative_keywords_count"], () =>
         s.negative_keywords_count! >= 20
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `Only ${s.negative_keywords_count} negative keywords.`,
-            },
+          ? pass
+          : fail(`Only ${s.negative_keywords_count} negative keywords.`),
       ),
   },
   {
     id: "ms_import_from_google",
-    platforms: ["microsoft_ads"],
     category: "creative",
     severity: "info",
     title: "Google Ads import enabled for parallel reach",
     rationale:
       "Microsoft Ads reaches ~10-15% incremental audience at often-lower CPC. Google Import is the fastest lift.",
-    fields_read: ["active_campaigns"],
     run: (s) =>
       requires(s, ["active_campaigns"], () =>
         s.active_campaigns! >= 1
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message:
-                "No active Microsoft campaigns — import from Google Ads.",
-            },
+          ? pass
+          : fail("No active Microsoft campaigns — import from Google Ads."),
       ),
   },
 ];
@@ -873,57 +732,54 @@ const MICROSOFT_CHECKS: AdCheck[] = [
 const APPLE_CHECKS: AdCheck[] = [
   {
     id: "a_skadn_enabled",
-    platforms: ["apple_search_ads"],
     category: "tracking",
     severity: "critical",
     title: "SKAdNetwork / attribution API configured",
     rationale:
       "iOS 14.5+ requires SKAN for attribution. Without it, ASA conversion data is missing on most installs.",
-    fields_read: ["conversion_tracking_enabled"],
     run: (s) =>
       requires(s, ["conversion_tracking_enabled"], () =>
         s.conversion_tracking_enabled
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: "SKAdNetwork attribution is not configured.",
-            },
+          ? pass
+          : fail("SKAdNetwork attribution is not configured."),
       ),
   },
   {
     id: "a_cpa_ceiling",
-    platforms: ["apple_search_ads"],
     category: "budget",
     severity: "medium",
     title: "CPA below $5 for typical mobile app install",
     rationale:
       "ASA typical CPA for app installs is $1.50-3.50. Above $5 indicates keyword bloat or wrong match types.",
-    fields_read: ["cpa"],
     run: (s) =>
       requires(s, ["cpa"], () =>
         s.cpa! <= 5
-          ? { status: "pass" }
-          : {
-              status: "fail",
-              message: `CPA $${s.cpa!.toFixed(2)} is above the $5 ASA ceiling.`,
-            },
+          ? pass
+          : fail(`CPA $${s.cpa!.toFixed(2)} is above the $5 ASA ceiling.`),
       ),
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Aggregate
+// Platform selection + scoring
 // ---------------------------------------------------------------------------
+
+const PLATFORM_CHECKS: Record<
+  Exclude<AdPlatform, "cross_platform">,
+  AdCheck[]
+> = {
+  google_ads: GOOGLE_CHECKS,
+  meta_ads: META_CHECKS,
+  linkedin_ads: LINKEDIN_CHECKS,
+  tiktok_ads: TIKTOK_CHECKS,
+  youtube_ads: YOUTUBE_CHECKS,
+  microsoft_ads: MICROSOFT_CHECKS,
+  apple_search_ads: APPLE_CHECKS,
+};
 
 export const ALL_CHECKS: AdCheck[] = [
   ...CROSS_PLATFORM_CHECKS,
-  ...GOOGLE_CHECKS,
-  ...META_CHECKS,
-  ...LINKEDIN_CHECKS,
-  ...TIKTOK_CHECKS,
-  ...YOUTUBE_CHECKS,
-  ...MICROSOFT_CHECKS,
-  ...APPLE_CHECKS,
+  ...Object.values(PLATFORM_CHECKS).flat(),
 ];
 
 /**
@@ -955,12 +811,10 @@ const SUPERSEDED_CHECK_IDS_PER_PLATFORM: Partial<
 export function checksForPlatform(platform: AdPlatform): AdCheck[] {
   const superseded =
     SUPERSEDED_CHECK_IDS_PER_PLATFORM[platform] ?? new Set<string>();
-  return ALL_CHECKS.filter(
-    (c) =>
-      !superseded.has(c.id) &&
-      (c.platforms.includes(platform) ||
-        c.platforms.includes("cross_platform")),
-  );
+  return [
+    ...CROSS_PLATFORM_CHECKS.filter((c) => !superseded.has(c.id)),
+    ...(platform === "cross_platform" ? [] : PLATFORM_CHECKS[platform]),
+  ];
 }
 
 export interface CheckResult {
@@ -983,6 +837,14 @@ export interface ScoredAudit {
   checks_not_applicable: number;
 }
 
+const CATEGORIES: AdCheckCategory[] = [
+  "targeting",
+  "budget",
+  "creative",
+  "technical",
+  "tracking",
+];
+
 function grade(score: number): "A" | "B" | "C" | "D" | "F" {
   if (score >= 90) return "A";
   if (score >= 80) return "B";
@@ -1002,13 +864,8 @@ export function scoreAudit(snapshot: AdAccountSnapshot): ScoredAudit {
   const results: CheckResult[] = [];
   let raw = 0;
   let max = 0;
-  const cat: Record<AdCheckCategory, { raw: number; max: number }> = {
-    targeting: { raw: 0, max: 0 },
-    budget: { raw: 0, max: 0 },
-    creative: { raw: 0, max: 0 },
-    technical: { raw: 0, max: 0 },
-    tracking: { raw: 0, max: 0 },
-  };
+  const cat = {} as Record<AdCheckCategory, { raw: number; max: number }>;
+  for (const c of CATEGORIES) cat[c] = { raw: 0, max: 0 };
   const failures: Record<AdCheckSeverity, CheckResult[]> = {
     critical: [],
     high: [],
@@ -1040,46 +897,16 @@ export function scoreAudit(snapshot: AdAccountSnapshot): ScoredAudit {
   }
 
   const score = max > 0 ? Math.round((raw / max) * 100) : 0;
-  const category_scores: Record<
+  const category_scores = {} as Record<
     AdCheckCategory,
     { score: number; weight: number }
-  > = {
-    targeting: {
-      score:
-        cat.targeting.max > 0
-          ? Math.round((cat.targeting.raw / cat.targeting.max) * 100)
-          : 0,
-      weight: cat.targeting.max,
-    },
-    budget: {
-      score:
-        cat.budget.max > 0
-          ? Math.round((cat.budget.raw / cat.budget.max) * 100)
-          : 0,
-      weight: cat.budget.max,
-    },
-    creative: {
-      score:
-        cat.creative.max > 0
-          ? Math.round((cat.creative.raw / cat.creative.max) * 100)
-          : 0,
-      weight: cat.creative.max,
-    },
-    technical: {
-      score:
-        cat.technical.max > 0
-          ? Math.round((cat.technical.raw / cat.technical.max) * 100)
-          : 0,
-      weight: cat.technical.max,
-    },
-    tracking: {
-      score:
-        cat.tracking.max > 0
-          ? Math.round((cat.tracking.raw / cat.tracking.max) * 100)
-          : 0,
-      weight: cat.tracking.max,
-    },
-  };
+  >;
+  for (const c of CATEGORIES) {
+    category_scores[c] = {
+      score: cat[c].max > 0 ? Math.round((cat[c].raw / cat[c].max) * 100) : 0,
+      weight: cat[c].max,
+    };
+  }
 
   return {
     platform: snapshot.platform,

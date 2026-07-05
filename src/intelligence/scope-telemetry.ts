@@ -237,39 +237,6 @@ export function getTelemetryWithRepairs(
     .all(`-${hours}`) as ScopeTelemetryRow[];
 }
 
-/** Get tool chain success rates for the mc-ctl dashboard. */
-export function getToolChainStats(days: number = 7): Array<{
-  tool_chain: string;
-  total: number;
-  positive: number;
-  negative: number;
-  neutral: number;
-}> {
-  const db = getDatabase();
-  return db
-    .prepare(
-      `SELECT
-         tool_chain,
-         COUNT(*) as total,
-         SUM(CASE WHEN feedback_signal IN ('positive', 'implicit_positive') THEN 1 ELSE 0 END) as positive,
-         SUM(CASE WHEN feedback_signal IN ('negative', 'rephrase', 'implicit_rephrase') THEN 1 ELSE 0 END) as negative,
-         SUM(CASE WHEN feedback_signal IN ('none', 'neutral') THEN 1 ELSE 0 END) as neutral
-       FROM scope_telemetry
-       WHERE tool_chain != ''
-         AND created_at > datetime('now', ? || ' days')
-       GROUP BY tool_chain
-       ORDER BY total DESC
-       LIMIT 20`,
-    )
-    .all(`-${days}`) as Array<{
-    tool_chain: string;
-    total: number;
-    positive: number;
-    negative: number;
-    neutral: number;
-  }>;
-}
-
 export function getTelemetryWithNegativeFeedback(
   days: number = 7,
 ): ScopeTelemetryRow[] {

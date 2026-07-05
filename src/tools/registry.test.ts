@@ -382,7 +382,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-06-23: 192 → 194 (X backend-router — tweet_post + tweet_probe added,
     //                        native replacement for ad-hoc Playwright X scripts).
     // 2026-06-23: 194 → 195 (X read path — tweet_mentions added).
-    expect(ALL_TOOLS.length).toBe(195);
+    // 2026-07-05: 195 → 194 (efficiency-audit Phase 1 — jarvis_init one-shot removed).
+    expect(ALL_TOOLS.length).toBe(194);
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -620,11 +621,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       // deliberate scope/product decision, not test hygiene:
       // - skill_describe/skill_load: the v7.7 Spine 3 L1/L2 dispatch surface
       //   shipped registered+deferred but NO scope group ever wired them.
-      // - jarvis_init: one-shot KB bootstrap, long since completed; zero
-      //   references anywhere. Phase 1 kill candidate.
       skill_describe: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
       skill_load: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
-      jarvis_init: "AUDIT GAP 2026-07-05: completed one-shot, zero references",
     };
     const universe = getAllAvailableTools({
       hasGoogle: true,

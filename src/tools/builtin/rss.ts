@@ -6,6 +6,8 @@
  */
 
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const API_URL = "https://api.rss2json.com/v1/api.json";
 const TIMEOUT_MS = 10_000;
@@ -70,22 +72,10 @@ Common feeds: BBC (https://feeds.bbci.co.uk/news/rss.xml), Reuters, TechCrunch, 
       count: String(count),
     });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
     try {
-      const response = await fetch(`${API_URL}?${params}`, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        return JSON.stringify({
-          error: `RSS API error: ${response.status}`,
-        });
-      }
-
-      const data = (await response.json()) as RssResponse;
+      const data = (await fetchJson(`${API_URL}?${params}`, {
+        timeoutMs: TIMEOUT_MS,
+      })) as RssResponse;
 
       if (data.status !== "ok") {
         return JSON.stringify({
@@ -112,10 +102,12 @@ Common feeds: BBC (https://feeds.bbci.co.uk/news/rss.xml), Reuters, TechCrunch, 
         total: items.length,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ error: `RSS fetch failed: ${message}` });
-    } finally {
-      clearTimeout(timeout);
+      if (err instanceof HttpStatusError) {
+        return JSON.stringify({
+          error: `RSS API error: ${err.status}`,
+        });
+      }
+      return JSON.stringify({ error: `RSS fetch failed: ${errMsg(err)}` });
     }
   },
 };

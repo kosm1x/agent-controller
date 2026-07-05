@@ -13,6 +13,7 @@
 
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { webSearchTool } from "./web-search.js";
 import {
   classifyIntent,
@@ -181,13 +182,9 @@ async function extractCandidates(
   });
 
   const text = (response.content ?? "").trim();
-  const jsonMatch =
-    text.match(/```json\s*([\s\S]*?)\s*```/)?.[1] ??
-    text.match(/\{[\s\S]*\}/)?.[0] ??
-    text;
 
   try {
-    const parsed = JSON.parse(jsonMatch) as { keywords?: unknown };
+    const parsed = parseJsonFromLlm<{ keywords?: unknown }>(text);
     if (!Array.isArray(parsed.keywords)) return [];
     return parsed.keywords
       .filter((k): k is string => typeof k === "string" && k.trim().length > 0)

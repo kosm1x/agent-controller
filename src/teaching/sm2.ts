@@ -54,9 +54,3 @@ export function masteryFromSm2(
   const score = 0.6 * base * efFactor + 0.4 * longTerm;
   return Math.max(0, Math.min(1, score));
 }
-
-/** Map a mastery estimate (0..1) from summary LLM to SM-2 quality (0..5). */
-export function masteryToQuality(mastery: number): number {
-  const m = Math.max(0, Math.min(1, mastery));
-  return Math.round(m * 5);
-}

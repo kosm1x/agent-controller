@@ -21,9 +21,7 @@ export type {
   TuneVariant,
   TuningSurface,
   EvalFilter,
-  ParentSelectionStrategy,
 } from "./types.js";
 export { METRIC_WEIGHTS, EST_COST_PER_INFERENCE_USD } from "./types.js";
 export { activateBestVariant } from "./activation.js";
-export { selectParent } from "./parent-selection.js";
 export { serializeSandbox, deserializeSandbox } from "./variant-store.js";

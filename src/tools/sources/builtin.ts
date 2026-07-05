@@ -84,7 +84,6 @@ import {
   jarvisFilesBatchWriteTool,
   jarvisFilesBatchDeleteTool,
 } from "../builtin/jarvis-files.js";
-import { jarvisInitTool } from "../builtin/jarvis-init.js";
 import { northstarSyncTool } from "../builtin/northstar-sync.js";
 import {
   knowledgeMapTool,
@@ -307,7 +306,6 @@ export const BUILTIN_TOOLS: Tool[] = [
   jarvisFileSearchTool,
   jarvisFilesBatchWriteTool,
   jarvisFilesBatchDeleteTool,
-  jarvisInitTool,
   northstarSyncTool,
   knowledgeMapTool,
   knowledgeMapExpandTool,

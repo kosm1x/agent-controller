@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import type { Tool } from "../types.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 
 const DASHBOARD_DIR = "/tmp/dashboards";
 
@@ -158,12 +159,7 @@ Serve via: GET /dashboard/{id}`,
 
       let config: unknown;
       try {
-        // Strip markdown code fences if present
-        const raw = (result.content ?? "")
-          .replace(/```json\s*/g, "")
-          .replace(/```\s*/g, "")
-          .trim();
-        config = JSON.parse(raw);
+        config = parseJsonFromLlm(result.content ?? "");
       } catch {
         return JSON.stringify({
           error:

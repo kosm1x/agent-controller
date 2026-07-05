@@ -183,13 +183,14 @@ The overlay engine uses per-scene TTS with individual timing, so each image appe
           "SELECT job_id FROM video_jobs WHERE expires_at < datetime('now') AND status IN ('completed','failed')",
         )
         .all() as Array<{ job_id: string }>;
+      const deleteJob = getDatabase().prepare(
+        "DELETE FROM video_jobs WHERE job_id = ?",
+      );
       for (const { job_id } of expired) {
         import("../../video/composer.js")
           .then((m) => m.cleanupJob(job_id))
           .catch(() => {});
-        getDatabase()
-          .prepare("DELETE FROM video_jobs WHERE job_id = ?")
-          .run(job_id);
+        deleteJob.run(job_id);
       }
     } catch {
       /* non-fatal */
@@ -1296,6 +1297,7 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
     // even though createJob currently always writes UUID slices.
     const SAFE_JOB_ID = /^[a-f0-9-]{4,36}$/;
 
+    const deleteJob = db.prepare("DELETE FROM video_jobs WHERE job_id = ?");
     for (const { job_id } of candidates) {
       if (!SAFE_JOB_ID.test(job_id)) continue;
       const workDir = join("/tmp", "video-jobs", job_id);
@@ -1318,7 +1320,7 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
         }
       }
       try {
-        db.prepare("DELETE FROM video_jobs WHERE job_id = ?").run(job_id);
+        deleteJob.run(job_id);
         removedCount++;
       } catch {
         /* non-fatal */

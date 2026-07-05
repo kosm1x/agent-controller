@@ -7,6 +7,7 @@
  */
 
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import {
   slugify,
   isStale,
@@ -84,14 +85,8 @@ interface LLMNode {
 }
 
 function parseLLMNodes(content: string): LLMNode[] {
-  // Strip markdown fences if present
-  const cleaned = content
-    .replace(/^```(?:json)?\s*/m, "")
-    .replace(/\s*```\s*$/m, "")
-    .trim();
-
-  const parsed = JSON.parse(cleaned);
-  const nodes: LLMNode[] = parsed.nodes ?? parsed;
+  const parsed = parseJsonFromLlm<{ nodes?: unknown }>(content);
+  const nodes = (parsed.nodes ?? parsed) as LLMNode[];
 
   if (!Array.isArray(nodes)) throw new Error("Expected nodes array");
 

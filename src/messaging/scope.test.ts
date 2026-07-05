@@ -23,6 +23,7 @@ import {
   ADS_TOOLS,
   CHART_TOOLS,
   TEACHING_TOOLS,
+  SKILL_DISPATCH_TOOLS,
   VIDEO_TOOLS,
   PM_ALPHA_TOOLS,
   PM_PAPER_TOOLS,
@@ -3264,5 +3265,36 @@ describe("applyCommunityChannelScopeOverride", () => {
     expect(out.tools.length).toBeGreaterThan(0);
     // Sanity: web_search is always available, so should always appear.
     expect(out.tools).toContain("web_search");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skills dispatch scope group (wired 2026-07-05 — efficiency-audit Phase 2d)
+// ---------------------------------------------------------------------------
+
+describe("skills dispatch scope group", () => {
+  it("activates on 'skill' mentions (EN/ES-neutral)", () => {
+    const tools = scope("usa el skill de weekly-report");
+    expect(hasAll(tools, SKILL_DISPATCH_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'qué skills tienes'", () => {
+    const tools = scope("qué skills tienes disponibles?");
+    expect(hasAll(tools, SKILL_DISPATCH_TOOLS)).toBe(true);
+  });
+
+  it("activates on 'ejecuta la habilidad X' (ES with usage verb)", () => {
+    const tools = scope("ejecuta la habilidad de resumen semanal");
+    expect(hasAll(tools, SKILL_DISPATCH_TOOLS)).toBe(true);
+  });
+
+  it("does NOT activate on generic 'habilidad' speech (no usage verb)", () => {
+    const tools = scope("Pedro tiene la habilidad de negociar muy bien");
+    expect(tools).not.toContain("skill_run");
+  });
+
+  it("the trio is in the chat universe (reachability invariant feed)", () => {
+    const universe = getAllAvailableTools(ALL_ON);
+    for (const t of SKILL_DISPATCH_TOOLS) expect(universe.has(t)).toBe(true);
   });
 });

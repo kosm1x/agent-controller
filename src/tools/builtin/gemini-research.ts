@@ -13,6 +13,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 import { validateOutboundUrl } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { getUserFacts } from "../../db/user-facts.js";
@@ -112,11 +114,10 @@ async function pollFileState(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     try {
-      const resp = await fetch(`${FILE_GET_URL(fileName)}?key=${apiKey}`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!resp.ok) continue;
-      const data = (await resp.json()) as Record<string, unknown>;
+      const data = (await fetchJson(`${FILE_GET_URL(fileName)}?key=${apiKey}`, {
+        timeoutMs: 10_000,
+        label: "Gemini file poll",
+      })) as Record<string, unknown>;
       const state = data.state as string;
       if (state === "ACTIVE" || state === "FAILED") {
         return { state, uri: (data.uri as string) ?? "" };
@@ -614,31 +615,17 @@ EDGE CASES:
       },
     };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS);
-
     try {
-      const resp = await fetch(`${GENERATE_URL(model)}?key=${apiKey}`, {
+      const data = (await fetchJson(`${GENERATE_URL(model)}?key=${apiKey}`, {
         method: "POST",
+        timeoutMs: GENERATE_TIMEOUT_MS,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      const data = (await resp.json()) as Record<string, unknown>;
-
-      if (!resp.ok) {
-        const error = data.error as Record<string, unknown> | undefined;
-        return JSON.stringify({
-          success: false,
-          error: `Gemini error ${resp.status}: ${(error?.message as string) ?? JSON.stringify(data).slice(0, 300)}`,
-        });
-      }
+        label: "Gemini",
+      })) as Record<string, unknown>;
 
       const candidates = data.candidates as
-        | Array<Record<string, unknown>>
-        | undefined;
+        Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
           success: false,
@@ -665,8 +652,22 @@ EDGE CASES:
         tokens_used: usage?.totalTokenCount ?? null,
       });
     } catch (err) {
-      clearTimeout(timer);
-      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof HttpStatusError) {
+        let body: Record<string, unknown> | undefined;
+        try {
+          body = JSON.parse(err.bodyText) as Record<string, unknown>;
+        } catch {
+          /* non-JSON error body — fall through to the generic path */
+        }
+        if (body) {
+          const error = body.error as Record<string, unknown> | undefined;
+          return JSON.stringify({
+            success: false,
+            error: `Gemini error ${err.status}: ${(error?.message as string) ?? JSON.stringify(body).slice(0, 300)}`,
+          });
+        }
+      }
+      const msg = errMsg(err);
       return JSON.stringify({
         success: false,
         error: msg.includes("aborted")
@@ -833,37 +834,23 @@ EDGE CASES:
       },
     };
 
-    const scriptController = new AbortController();
-    const scriptTimer = setTimeout(
-      () => scriptController.abort(),
-      GENERATE_TIMEOUT_MS,
-    );
-
     let scriptText: string;
     let turns: Array<{ speaker: string; text: string }>;
 
     try {
-      const resp = await fetch(`${GENERATE_URL(DEFAULT_MODEL)}?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(scriptBody),
-        signal: scriptController.signal,
-      });
-      clearTimeout(scriptTimer);
-
-      const data = (await resp.json()) as Record<string, unknown>;
-
-      if (!resp.ok) {
-        const error = data.error as Record<string, unknown> | undefined;
-        return JSON.stringify({
-          success: false,
-          error: `Script generation failed (${resp.status}): ${(error?.message as string) ?? "Unknown error"}`,
-        });
-      }
+      const data = (await fetchJson(
+        `${GENERATE_URL(DEFAULT_MODEL)}?key=${apiKey}`,
+        {
+          method: "POST",
+          timeoutMs: GENERATE_TIMEOUT_MS,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(scriptBody),
+          label: "Gemini script",
+        },
+      )) as Record<string, unknown>;
 
       const candidates = data.candidates as
-        | Array<Record<string, unknown>>
-        | undefined;
+        Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
           success: false,
@@ -892,8 +879,22 @@ EDGE CASES:
       turns = parsed.turns;
       scriptText = turns.map((t) => `[${t.speaker}] ${t.text}`).join("\n\n");
     } catch (err) {
-      clearTimeout(scriptTimer);
-      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof HttpStatusError) {
+        let body: Record<string, unknown> | undefined;
+        try {
+          body = JSON.parse(err.bodyText) as Record<string, unknown>;
+        } catch {
+          /* non-JSON error body — fall through to the generic path */
+        }
+        if (body) {
+          const error = body.error as Record<string, unknown> | undefined;
+          return JSON.stringify({
+            success: false,
+            error: `Script generation failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
+          });
+        }
+      }
+      const msg = errMsg(err);
       return JSON.stringify({
         success: false,
         error: msg.includes("aborted")
@@ -933,34 +934,20 @@ EDGE CASES:
       },
     };
 
-    const ttsController = new AbortController();
-    const ttsTimer = setTimeout(() => ttsController.abort(), TTS_TIMEOUT_MS);
-
     try {
-      const resp = await fetch(`${GENERATE_URL(TTS_MODEL)}?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ttsBody),
-        signal: ttsController.signal,
-      });
-      clearTimeout(ttsTimer);
-
-      const data = (await resp.json()) as Record<string, unknown>;
-
-      if (!resp.ok) {
-        const error = data.error as Record<string, unknown> | undefined;
-        return JSON.stringify({
-          success: false,
-          transcript: scriptText,
-          files_used: files.map((f) => f.display_name),
-          error: `TTS failed (${resp.status}): ${(error?.message as string) ?? "Unknown error"}`,
-          note: "Script generated but TTS failed. Transcript available above.",
-        });
-      }
+      const data = (await fetchJson(
+        `${GENERATE_URL(TTS_MODEL)}?key=${apiKey}`,
+        {
+          method: "POST",
+          timeoutMs: TTS_TIMEOUT_MS,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ttsBody),
+          label: "Gemini TTS",
+        },
+      )) as Record<string, unknown>;
 
       const candidates = data.candidates as
-        | Array<Record<string, unknown>>
-        | undefined;
+        Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
           success: false,
@@ -1010,8 +997,25 @@ EDGE CASES:
         files_used: files.map((f) => f.display_name),
       });
     } catch (err) {
-      clearTimeout(ttsTimer);
-      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof HttpStatusError) {
+        let body: Record<string, unknown> | undefined;
+        try {
+          body = JSON.parse(err.bodyText) as Record<string, unknown>;
+        } catch {
+          /* non-JSON error body — fall through to the generic path */
+        }
+        if (body) {
+          const error = body.error as Record<string, unknown> | undefined;
+          return JSON.stringify({
+            success: false,
+            transcript: scriptText,
+            files_used: files.map((f) => f.display_name),
+            error: `TTS failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
+            note: "Script generated but TTS failed. Transcript available above.",
+          });
+        }
+      }
+      const msg = errMsg(err);
       return JSON.stringify({
         success: false,
         transcript: scriptText,

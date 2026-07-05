@@ -45,12 +45,27 @@ export function initDatabase(dbPath: string): Database.Database {
   const schema = readFileSync(schemaPath, "utf-8");
   _db.exec(schema);
 
-  // Additive migrations (safe to re-run)
-  const skillCols = _db.prepare("PRAGMA table_info(skills)").all() as Array<{
-    name: string;
-  }>;
-  if (!skillCols.some((c) => c.name === "last_used")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN last_used TEXT");
+  // ── Schema version gate (2026-07-05 efficiency audit, Phase 4.3) ─────────
+  // PRAGMA user_version marks how far this DB's COLUMN migrations have run.
+  // The legacy ALTER-probe blocks below (34 ALTERs + 7 table_info scans,
+  // accreted 2026-03→07) are wrapped in `if (schemaVersion < 1)` IN PLACE —
+  // original execution order is preserved by construction, and once a DB is
+  // stamped v1 every later boot skips them all. Fresh DBs run everything once
+  // (identical to the old behavior), then get stamped.
+  // POLICY for future schema changes: do NOT add new bare ALTER probes here —
+  // append a numbered entry to SCHEMA_MIGRATIONS (end of this function).
+  const schemaVersion = _db.pragma("user_version", {
+    simple: true,
+  }) as number;
+
+  // Additive migrations (v0 legacy probes — see version gate above)
+  if (schemaVersion < 1) {
+    const skillCols = _db.prepare("PRAGMA table_info(skills)").all() as Array<{
+      name: string;
+    }>;
+    if (!skillCols.some((c) => c.name === "last_used")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN last_used TEXT");
+    }
   }
 
   // Cost ledger for budget enforcement (v2.21)
@@ -80,18 +95,20 @@ export function initDatabase(dbPath: string): Database.Database {
   );
 
   // v8 S4: cache breakdown for cache-hit ratio observability
-  const ledgerCols = _db
-    .prepare("PRAGMA table_info(cost_ledger)")
-    .all() as Array<{ name: string }>;
-  if (!ledgerCols.some((c) => c.name === "cache_read_tokens")) {
-    _db.exec(
-      "ALTER TABLE cost_ledger ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
-    );
-  }
-  if (!ledgerCols.some((c) => c.name === "cache_creation_tokens")) {
-    _db.exec(
-      "ALTER TABLE cost_ledger ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0",
-    );
+  if (schemaVersion < 1) {
+    const ledgerCols = _db
+      .prepare("PRAGMA table_info(cost_ledger)")
+      .all() as Array<{ name: string }>;
+    if (!ledgerCols.some((c) => c.name === "cache_read_tokens")) {
+      _db.exec(
+        "ALTER TABLE cost_ledger ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!ledgerCols.some((c) => c.name === "cache_creation_tokens")) {
+      _db.exec(
+        "ALTER TABLE cost_ledger ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0",
+      );
+    }
   }
 
   // v8 S4 follow-up: recall utility audit (was_used instrumentation)
@@ -127,44 +144,46 @@ export function initDatabase(dbPath: string): Database.Database {
   // 2026-04-30 Ship B: dual-signal was_used matching (verbatim OR token-
   // overlap). match_type ∈ {verbatim, token-overlap, none}. overlap_score
   // ∈ [0,1] = best overlap fraction across snippets (1.0 for verbatim).
-  const recallAuditCols = _db
-    .prepare("PRAGMA table_info(recall_audit)")
-    .all() as Array<{ name: string }>;
-  if (!recallAuditCols.some((c) => c.name === "excluded_count")) {
-    _db.exec(
-      "ALTER TABLE recall_audit ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0",
-    );
-  }
-  if (!recallAuditCols.some((c) => c.name === "match_type")) {
-    _db.exec("ALTER TABLE recall_audit ADD COLUMN match_type TEXT");
-  }
-  if (!recallAuditCols.some((c) => c.name === "overlap_score")) {
-    _db.exec("ALTER TABLE recall_audit ADD COLUMN overlap_score REAL");
-  }
-  // 2026-05-07 queue #7 part 2: per-recall distribution of outcome tags
-  // (success / concerns / failed / unknown counts) persisted as JSON so
-  // ratio queries don't have to re-parse snippets. Additive — null on old rows.
-  if (!recallAuditCols.some((c) => c.name === "outcome_breakdown")) {
-    _db.exec("ALTER TABLE recall_audit ADD COLUMN outcome_breakdown TEXT");
-  }
-  // 2026-05-07 queue #8: top_k_ids — stable Hindsight memory IDs returned by
-  // the recall call. JSON array. Lets per-memory utility analysis cross-
-  // reference recall_audit rows against retain history without snippet
-  // matching. Populated on the hindsight path; null on sqlite paths (no
-  // stable per-row IDs upstream of FTS5).
-  if (!recallAuditCols.some((c) => c.name === "top_k_ids")) {
-    _db.exec("ALTER TABLE recall_audit ADD COLUMN top_k_ids TEXT");
-  }
+  if (schemaVersion < 1) {
+    const recallAuditCols = _db
+      .prepare("PRAGMA table_info(recall_audit)")
+      .all() as Array<{ name: string }>;
+    if (!recallAuditCols.some((c) => c.name === "excluded_count")) {
+      _db.exec(
+        "ALTER TABLE recall_audit ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!recallAuditCols.some((c) => c.name === "match_type")) {
+      _db.exec("ALTER TABLE recall_audit ADD COLUMN match_type TEXT");
+    }
+    if (!recallAuditCols.some((c) => c.name === "overlap_score")) {
+      _db.exec("ALTER TABLE recall_audit ADD COLUMN overlap_score REAL");
+    }
+    // 2026-05-07 queue #7 part 2: per-recall distribution of outcome tags
+    // (success / concerns / failed / unknown counts) persisted as JSON so
+    // ratio queries don't have to re-parse snippets. Additive — null on old rows.
+    if (!recallAuditCols.some((c) => c.name === "outcome_breakdown")) {
+      _db.exec("ALTER TABLE recall_audit ADD COLUMN outcome_breakdown TEXT");
+    }
+    // 2026-05-07 queue #8: top_k_ids — stable Hindsight memory IDs returned by
+    // the recall call. JSON array. Lets per-memory utility analysis cross-
+    // reference recall_audit rows against retain history without snippet
+    // matching. Populated on the hindsight path; null on sqlite paths (no
+    // stable per-row IDs upstream of FTS5).
+    if (!recallAuditCols.some((c) => c.name === "top_k_ids")) {
+      _db.exec("ALTER TABLE recall_audit ADD COLUMN top_k_ids TEXT");
+    }
 
-  // v7.7 Spine 6 (Conway Pattern 3): the named recall mode this recall ran
-  // under — coherence | correspondence | unfiltered. NULL on rows written
-  // before this column landed. The CHECK is permitted on ADD COLUMN
-  // because existing rows take NULL and the predicate admits NULL. The
-  // weekly correspondence-audit drift signal reads this column.
-  if (!recallAuditCols.some((c) => c.name === "mode")) {
-    _db.exec(
-      "ALTER TABLE recall_audit ADD COLUMN mode TEXT CHECK (mode IS NULL OR mode IN ('coherence','correspondence','unfiltered'))",
-    );
+    // v7.7 Spine 6 (Conway Pattern 3): the named recall mode this recall ran
+    // under — coherence | correspondence | unfiltered. NULL on rows written
+    // before this column landed. The CHECK is permitted on ADD COLUMN
+    // because existing rows take NULL and the predicate admits NULL. The
+    // weekly correspondence-audit drift signal reads this column.
+    if (!recallAuditCols.some((c) => c.name === "mode")) {
+      _db.exec(
+        "ALTER TABLE recall_audit ADD COLUMN mode TEXT CHECK (mode IS NULL OR mode IN ('coherence','correspondence','unfiltered'))",
+      );
+    }
   }
 
   // v4.0 S1: composite indexes for query performance
@@ -179,21 +198,23 @@ export function initDatabase(dbPath: string): Database.Database {
   );
 
   // S5: Add model_tier column to task_outcomes (additive migration)
-  try {
-    _db.exec(
-      "ALTER TABLE task_outcomes ADD COLUMN model_tier TEXT DEFAULT NULL",
-    );
-  } catch {
-    /* column already exists */
-  }
-  // Phase 0 (Jarvis execution-improvement plan): attribute concerns so the
-  // completed_with_concerns rate becomes actionable instead of an opaque ~1/3.
-  try {
-    _db.exec(
-      "ALTER TABLE task_outcomes ADD COLUMN concern_reason TEXT DEFAULT NULL",
-    );
-  } catch {
-    /* column already exists */
+  if (schemaVersion < 1) {
+    try {
+      _db.exec(
+        "ALTER TABLE task_outcomes ADD COLUMN model_tier TEXT DEFAULT NULL",
+      );
+    } catch {
+      /* column already exists */
+    }
+    // Phase 0 (Jarvis execution-improvement plan): attribute concerns so the
+    // completed_with_concerns rate becomes actionable instead of an opaque ~1/3.
+    try {
+      _db.exec(
+        "ALTER TABLE task_outcomes ADD COLUMN concern_reason TEXT DEFAULT NULL",
+      );
+    } catch {
+      /* column already exists */
+    }
   }
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_outcomes_feedback ON task_outcomes(created_at, feedback_signal, ran_on, model_tier)",
@@ -259,10 +280,12 @@ export function initDatabase(dbPath: string): Database.Database {
   );
   // user_edit_time — distinct from updated_at which is bumped by any write (including sync).
   // Only real user edits (file_write/file_edit/jarvis_file_update) bump this.
-  try {
-    _db.exec("ALTER TABLE jarvis_files ADD COLUMN user_edit_time TEXT");
-  } catch {
-    /* column already exists */
+  if (schemaVersion < 1) {
+    try {
+      _db.exec("ALTER TABLE jarvis_files ADD COLUMN user_edit_time TEXT");
+    } catch {
+      /* column already exists */
+    }
   }
 
   // 2026-05-07: FTS5 index on jarvis_files. Before this, searchFiles() used
@@ -489,9 +512,10 @@ export function initDatabase(dbPath: string): Database.Database {
   );
 
   // v7.7 Spine 2 (S3 substrate): out-of-band drift detector.
-  // Three tables: drift_signals (registry), drift_alerts (history),
-  // baseline_history (audit trail of baseline evolution). See
-  // docs/planning/v8-substrate-s3-spec.md §5/§6/§8 for schemas.
+  // Two tables: drift_signals (registry), drift_alerts (history). See
+  // docs/planning/v8-substrate-s3-spec.md §5/§6 for schemas.
+  // (baseline_history DDL removed 2026-07-05 — spec'd audit trail was never
+  // written to; the live table is dropped by a separate migration.)
   _db.exec(`CREATE TABLE IF NOT EXISTS drift_signals (
     id                         INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_name                TEXT NOT NULL UNIQUE,
@@ -555,86 +579,77 @@ export function initDatabase(dbPath: string): Database.Database {
     "CREATE INDEX IF NOT EXISTS idx_drift_alerts_bundle ON drift_alerts(bundle_id) WHERE bundle_id IS NOT NULL",
   );
 
-  _db.exec(`CREATE TABLE IF NOT EXISTS baseline_history (
-    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-    signal_name                TEXT NOT NULL,
-    baseline_value_json        TEXT NOT NULL,
-    established_at             TEXT NOT NULL,
-    established_by             TEXT NOT NULL,
-    retired_at                 TEXT,
-    retired_reason             TEXT
-  )`);
-  _db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_baseline_history_signal ON baseline_history(signal_name)",
-  );
-
   // v7.7 Spine 3 (S5 substrate): skills as stored procedures.
   // Phase 1 — additive migrations on `skills` + 3 new tables (versions /
   // test_runs / failures). See docs/planning/v8-substrate-s5-spec.md §5 for
   // the canonical schema. Anti-mission: Phase 1 REGISTERS skills, does NOT
   // author. The 57 existing rows continue to work via DEFAULT values; backfill
   // of frontmatter bodies is a separate later task.
-  const skillColsExt = _db.prepare("PRAGMA table_info(skills)").all() as Array<{
-    name: string;
-  }>;
-  const skillColNames = new Set(skillColsExt.map((c) => c.name));
-  if (!skillColNames.has("version")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
-    );
-  }
-  if (!skillColNames.has("inputs_json")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN inputs_json TEXT NOT NULL DEFAULT '[]'",
-    );
-  }
-  if (!skillColNames.has("output_type")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN output_type TEXT NOT NULL DEFAULT 'text'",
-    );
-  }
-  if (!skillColNames.has("trigger_examples_json")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN trigger_examples_json TEXT NOT NULL DEFAULT '[]'",
-    );
-  }
-  if (!skillColNames.has("tests_json")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN tests_json TEXT NOT NULL DEFAULT '[]'",
-    );
-  }
-  if (!skillColNames.has("body_path")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN body_path TEXT");
-  }
-  if (!skillColNames.has("consecutive_failures")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
-    );
-  }
-  if (!skillColNames.has("last_failure_at")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN last_failure_at TEXT");
-  }
-  if (!skillColNames.has("is_certified")) {
-    _db.exec(
-      "ALTER TABLE skills ADD COLUMN is_certified INTEGER NOT NULL DEFAULT 0",
-    );
-  }
-  if (!skillColNames.has("current_version_id")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN current_version_id INTEGER");
-  }
-  if (!skillColNames.has("registry_sha")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN registry_sha TEXT");
-  }
-  // v7.7 Spine 3 Phase 3: vector retrieval. Per spec §6, description +
-  // trigger_examples concatenated and embedded into the skills row's
-  // BLOB column. JS-based cosine over BLOBs for Phase 3 — sqlite-vec
-  // virtual table deferred (additive future; current scale is 67 rows).
-  // Dim matches `src/memory/embeddings.ts:EMBED_DIMS` (Gemini 1536d
-  // by default). Backfill is operator-triggered via `mc-ctl skills
-  // backfill-embeddings`.
-  if (!skillColNames.has("description_embedding")) {
-    _db.exec("ALTER TABLE skills ADD COLUMN description_embedding BLOB");
-  }
+  if (schemaVersion < 1) {
+    const skillColsExt = _db
+      .prepare("PRAGMA table_info(skills)")
+      .all() as Array<{
+      name: string;
+    }>;
+    const skillColNames = new Set(skillColsExt.map((c) => c.name));
+    if (!skillColNames.has("version")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
+      );
+    }
+    if (!skillColNames.has("inputs_json")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN inputs_json TEXT NOT NULL DEFAULT '[]'",
+      );
+    }
+    if (!skillColNames.has("output_type")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN output_type TEXT NOT NULL DEFAULT 'text'",
+      );
+    }
+    if (!skillColNames.has("trigger_examples_json")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN trigger_examples_json TEXT NOT NULL DEFAULT '[]'",
+      );
+    }
+    if (!skillColNames.has("tests_json")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN tests_json TEXT NOT NULL DEFAULT '[]'",
+      );
+    }
+    if (!skillColNames.has("body_path")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN body_path TEXT");
+    }
+    if (!skillColNames.has("consecutive_failures")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!skillColNames.has("last_failure_at")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN last_failure_at TEXT");
+    }
+    if (!skillColNames.has("is_certified")) {
+      _db.exec(
+        "ALTER TABLE skills ADD COLUMN is_certified INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!skillColNames.has("current_version_id")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN current_version_id INTEGER");
+    }
+    if (!skillColNames.has("registry_sha")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN registry_sha TEXT");
+    }
+    // v7.7 Spine 3 Phase 3: vector retrieval. Per spec §6, description +
+    // trigger_examples concatenated and embedded into the skills row's
+    // BLOB column. JS-based cosine over BLOBs for Phase 3 — sqlite-vec
+    // virtual table deferred (additive future; current scale is 67 rows).
+    // Dim matches `src/memory/embeddings.ts:EMBED_DIMS` (Gemini 1536d
+    // by default). Backfill is operator-triggered via `mc-ctl skills
+    // backfill-embeddings`.
+    if (!skillColNames.has("description_embedding")) {
+      _db.exec("ALTER TABLE skills ADD COLUMN description_embedding BLOB");
+    }
+  } // end schemaVersion < 1 (skills column probes)
 
   // skill_versions — write-only history. Natural key (skill_id, version).
   // INSERT OR IGNORE on (skill_id, version) collision; body drift on the
@@ -897,7 +912,7 @@ export function initDatabase(dbPath: string): Database.Database {
   // un-delivered briefings spuriously promoted by an unrelated operator reply.
   // Additive ALTER for DBs created before Phase 8 (the CREATE above carries it
   // for fresh DBs).
-  {
+  if (schemaVersion < 1) {
     const pbCols = _db
       .prepare("PRAGMA table_info(proposed_briefings)")
       .all() as Array<{ name: string }>;
@@ -1077,6 +1092,39 @@ export function initDatabase(dbPath: string): Database.Database {
 
   // Activate best variant from archive (v2.28 — HyperAgents pattern)
   activateBestVariant();
+
+  // ── Versioned migrations (2026-07-05, Phase 4.3) ──────────────────────────
+  // Runs AFTER all CREATE/ensure DDL so every migration can assume the full
+  // current schema exists. Each entry runs at most once per DB (user_version
+  // gate). Append-only: new schema changes get the next number — never edit
+  // or reorder shipped entries, and never add bare ALTER probes above.
+  const SCHEMA_MIGRATIONS: Array<{
+    version: number;
+    description: string;
+    up: (db: Database.Database) => void;
+  }> = [
+    {
+      version: 1,
+      description:
+        "legacy column probes applied (marker only — the v0 blocks above ran)",
+      up: () => {},
+    },
+    {
+      version: 2,
+      description:
+        "drop baseline_history — created-but-never-written (2026-07-05 audit); its boot CREATE is already removed",
+      up: (db) => db.exec("DROP TABLE IF EXISTS baseline_history"),
+    },
+  ];
+  for (const m of SCHEMA_MIGRATIONS) {
+    if (schemaVersion < m.version) {
+      m.up(_db);
+      _db.pragma(`user_version = ${m.version}`);
+      console.log(
+        `[db] schema migration v${m.version} applied: ${m.description}`,
+      );
+    }
+  }
 
   return _db;
 }

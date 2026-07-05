@@ -10,6 +10,7 @@
 
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { webReadTool } from "./web-read.js";
 import {
   CONTENT_OUTLINES,
@@ -19,17 +20,9 @@ import {
 import { GEO_TACTICS } from "./seo-references/geo-signals.js";
 
 type ContentIntent =
-  | "informational"
-  | "commercial"
-  | "transactional"
-  | "navigational";
+  "informational" | "commercial" | "transactional" | "navigational";
 type ContentFormat =
-  | "how_to"
-  | "comparison"
-  | "review"
-  | "pillar"
-  | "landing"
-  | "blog_post";
+  "how_to" | "comparison" | "review" | "pillar" | "landing" | "blog_post";
 
 const MAX_REFRESH_CONTENT = 3000;
 
@@ -252,10 +245,6 @@ OUTPUT:
       });
 
       const text = (response.content ?? "").trim();
-      const jsonMatch =
-        text.match(/```json\s*([\s\S]*?)\s*```/)?.[1] ??
-        text.match(/\{[\s\S]*\}/)?.[0] ??
-        text;
 
       let llmBrief: {
         title_options?: unknown;
@@ -264,7 +253,7 @@ OUTPUT:
         key_questions?: unknown;
       };
       try {
-        llmBrief = JSON.parse(jsonMatch);
+        llmBrief = parseJsonFromLlm(text);
       } catch {
         return JSON.stringify({
           error: "LLM returned non-JSON response",

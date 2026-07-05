@@ -1,57 +1,66 @@
 /**
  * F8.1b — persistence helpers for Polymarket paper trading.
  *
- * Parallel to F8's `paper-persist.ts` but keyed by `(market_id, outcome)`
- * instead of `symbol`. USDC-denominated. Tables: `pm_paper_balance`,
- * `pm_paper_portfolio`, `pm_paper_fills`. Thesis rows reuse `trade_theses`
- * with `entry_signal='pm_weekly_rebalance'` + `symbol='PORTFOLIO'` sentinel.
+ * Thin PM-venue wrapper over `paper-persist-core.ts` (Phase 4.5): keyed by
+ * `(market_id, outcome)` instead of `symbol`, USDC-denominated. Tables:
+ * `pm_paper_balance`, `pm_paper_portfolio`, `pm_paper_fills`. Thesis rows
+ * reuse `trade_theses` with `entry_signal='pm_weekly_rebalance'` +
+ * `symbol='PORTFOLIO'` sentinel. Realized P&L is cents-rounded at the
+ * ledger-write boundary — see `roundMoney` in the core. PM-specific
+ * multi-outcome logic (marketOutcomeCount, complementOutcome) lives in
+ * `pm-paper-executor.ts`.
  */
 
-import { getDatabase } from "../db/index.js";
+import {
+  type BalanceRowBase,
+  type FillInsertBase,
+  type FillRowBase,
+  type PortfolioRowBase,
+  type VenueConfig,
+  applyBuyCore,
+  applySellCore,
+  initAccountCore,
+  insertFillCore,
+  insertThesisRow,
+  linkFillsToThesisCore,
+  readBalanceCore,
+  readFillsCore,
+  readPortfolioCore,
+  readPositionCore,
+  updateCashCore,
+} from "./paper-persist-core.js";
 
 export const DEFAULT_PM_ACCOUNT = "default";
 export const DEFAULT_PM_INITIAL_CASH = 10_000; // USDC
+
+const PM: VenueConfig = {
+  balanceTable: "pm_paper_balance",
+  cashColumn: "cash_usdc",
+  portfolioTable: "pm_paper_portfolio",
+  fillsTable: "pm_paper_fills",
+  keyColumns: ["market_id", "outcome"],
+  sellLabel: "applyPmSellToPortfolio",
+};
 
 // ---------------------------------------------------------------------------
 // Row shapes
 // ---------------------------------------------------------------------------
 
-export interface PmPaperBalanceRow {
-  account: string;
+export interface PmPaperBalanceRow extends BalanceRowBase {
   cash_usdc: number;
-  initial_cash: number;
-  last_updated: string;
 }
 
-export interface PmPaperPortfolioRow {
-  id: number;
-  account: string;
+export interface PmPaperPortfolioRow extends PortfolioRowBase {
   market_id: string;
   outcome: string;
   token_id: string | null;
   slug: string | null;
-  shares: number;
-  avg_cost: number;
-  opened_at: string;
-  last_updated: string;
 }
 
-export interface PmPaperFillRow {
-  id: number;
-  fill_id: string;
-  thesis_id: number | null;
-  account: string;
+export interface PmPaperFillRow extends FillRowBase {
   market_id: string;
   outcome: string;
   token_id: string | null;
-  side: "buy" | "sell";
-  shares: number;
-  fill_price: number;
-  gross_notional: number;
-  slippage_bps: number;
-  realized_pnl: number | null;
-  filled_at: string;
-  created_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,22 +71,13 @@ export function initPmAccount(
   account: string = DEFAULT_PM_ACCOUNT,
   initialCash: number = DEFAULT_PM_INITIAL_CASH,
 ): PmPaperBalanceRow {
-  const db = getDatabase();
-  db.prepare(
-    `INSERT OR IGNORE INTO pm_paper_balance (account, cash_usdc, initial_cash)
-     VALUES (?, ?, ?)`,
-  ).run(account, initialCash, initialCash);
-  return readPmBalance(account)!;
+  return initAccountCore<PmPaperBalanceRow>(PM, account, initialCash);
 }
 
 export function readPmBalance(
   account: string = DEFAULT_PM_ACCOUNT,
 ): PmPaperBalanceRow | null {
-  const db = getDatabase();
-  const row = db
-    .prepare(`SELECT * FROM pm_paper_balance WHERE account = ?`)
-    .get(account) as PmPaperBalanceRow | undefined;
-  return row ?? null;
+  return readBalanceCore<PmPaperBalanceRow>(PM, account);
 }
 
 export function updatePmCash(
@@ -85,10 +85,7 @@ export function updatePmCash(
   newCash: number,
   nowIso: string,
 ): void {
-  const db = getDatabase();
-  db.prepare(
-    `UPDATE pm_paper_balance SET cash_usdc = ?, last_updated = ? WHERE account = ?`,
-  ).run(newCash, nowIso, account);
+  updateCashCore(PM, account, newCash, nowIso);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,14 +95,7 @@ export function updatePmCash(
 export function readPmPortfolio(
   account: string = DEFAULT_PM_ACCOUNT,
 ): PmPaperPortfolioRow[] {
-  const db = getDatabase();
-  return db
-    .prepare(
-      `SELECT * FROM pm_paper_portfolio
-         WHERE account = ?
-         ORDER BY market_id ASC, outcome ASC`,
-    )
-    .all(account) as PmPaperPortfolioRow[];
+  return readPortfolioCore<PmPaperPortfolioRow>(PM, account);
 }
 
 export function readPmPosition(
@@ -113,20 +103,13 @@ export function readPmPosition(
   marketId: string,
   outcome: string,
 ): PmPaperPortfolioRow | null {
-  const db = getDatabase();
-  const row = db
-    .prepare(
-      `SELECT * FROM pm_paper_portfolio
-         WHERE account = ? AND market_id = ? AND outcome = ?`,
-    )
-    .get(account, marketId, outcome) as PmPaperPortfolioRow | undefined;
-  return row ?? null;
+  return readPositionCore<PmPaperPortfolioRow>(PM, account, [
+    marketId,
+    outcome,
+  ]);
 }
 
-/**
- * Upsert a position after a buy. Weighted-average cost:
- *   new_avg = (old_shares × old_avg + fill_qty × fill_price) / (old_shares + fill_qty)
- */
+/** Upsert a position after a buy — weighted-average cost math in `applyBuyCore`. */
 export function applyPmBuyToPortfolio(opts: {
   account: string;
   marketId: string;
@@ -137,49 +120,17 @@ export function applyPmBuyToPortfolio(opts: {
   fillPrice: number;
   nowIso: string;
 }): void {
-  const db = getDatabase();
-  const existing = readPmPosition(opts.account, opts.marketId, opts.outcome);
-  if (!existing) {
-    db.prepare(
-      `INSERT INTO pm_paper_portfolio
-        (account, market_id, outcome, token_id, slug, shares, avg_cost,
-         opened_at, last_updated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      opts.account,
-      opts.marketId,
-      opts.outcome,
-      opts.tokenId,
-      opts.slug,
-      opts.shares,
-      opts.fillPrice,
-      opts.nowIso,
-      opts.nowIso,
-    );
-    return;
-  }
-  const oldCost = existing.shares * existing.avg_cost;
-  const newCost = opts.shares * opts.fillPrice;
-  const newShares = existing.shares + opts.shares;
-  const newAvg = newShares > 0 ? (oldCost + newCost) / newShares : 0;
-  db.prepare(
-    `UPDATE pm_paper_portfolio
-       SET shares = ?, avg_cost = ?, last_updated = ?
-     WHERE account = ? AND market_id = ? AND outcome = ?`,
-  ).run(
-    newShares,
-    newAvg,
-    opts.nowIso,
-    opts.account,
-    opts.marketId,
-    opts.outcome,
-  );
+  applyBuyCore(PM, {
+    account: opts.account,
+    key: [opts.marketId, opts.outcome],
+    insertExtras: { token_id: opts.tokenId, slug: opts.slug },
+    shares: opts.shares,
+    fillPrice: opts.fillPrice,
+    nowIso: opts.nowIso,
+  });
 }
 
-/**
- * Apply a sell. Returns realized P&L. On full exit (remaining ≤ EXIT_TOL),
- * the row is deleted so no stale avg_cost carries forward.
- */
+/** Apply a sell — realized P&L (cents-rounded) + full-exit semantics in `applySellCore`. */
 export function applyPmSellToPortfolio(opts: {
   account: string;
   marketId: string;
@@ -188,72 +139,34 @@ export function applyPmSellToPortfolio(opts: {
   fillPrice: number;
   nowIso: string;
 }): { realizedPnl: number; fullyExited: boolean } {
-  const db = getDatabase();
-  const existing = readPmPosition(opts.account, opts.marketId, opts.outcome);
-  if (!existing || existing.shares < opts.shares - 1e-9) {
-    throw new Error(
-      `applyPmSellToPortfolio: insufficient shares for ${opts.marketId}/${opts.outcome} ` +
-        `(held=${existing?.shares ?? 0}, asked=${opts.shares})`,
-    );
-  }
-  const realizedPnl = (opts.fillPrice - existing.avg_cost) * opts.shares;
-  const remaining = existing.shares - opts.shares;
-  const EXIT_TOL = 1e-9;
-  if (remaining <= EXIT_TOL) {
-    db.prepare(
-      `DELETE FROM pm_paper_portfolio
-         WHERE account = ? AND market_id = ? AND outcome = ?`,
-    ).run(opts.account, opts.marketId, opts.outcome);
-    return { realizedPnl, fullyExited: true };
-  }
-  db.prepare(
-    `UPDATE pm_paper_portfolio
-       SET shares = ?, last_updated = ?
-     WHERE account = ? AND market_id = ? AND outcome = ?`,
-  ).run(remaining, opts.nowIso, opts.account, opts.marketId, opts.outcome);
-  return { realizedPnl, fullyExited: false };
+  return applySellCore(PM, {
+    account: opts.account,
+    key: [opts.marketId, opts.outcome],
+    shares: opts.shares,
+    fillPrice: opts.fillPrice,
+    nowIso: opts.nowIso,
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Fills
 // ---------------------------------------------------------------------------
 
-export function insertPmFill(row: {
-  fillId: string;
-  thesisId: number | null;
-  account: string;
-  marketId: string;
-  outcome: string;
-  tokenId: string | null;
-  side: "buy" | "sell";
-  shares: number;
-  fillPrice: number;
-  grossNotional: number;
-  slippageBps: number;
-  realizedPnl: number | null;
-  filledAt: string;
-}): void {
-  const db = getDatabase();
-  db.prepare(
-    `INSERT INTO pm_paper_fills
-      (fill_id, thesis_id, account, market_id, outcome, token_id, side, shares,
-       fill_price, gross_notional, slippage_bps, realized_pnl, filled_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    row.fillId,
-    row.thesisId,
-    row.account,
-    row.marketId,
-    row.outcome,
-    row.tokenId,
-    row.side,
-    row.shares,
-    row.fillPrice,
-    row.grossNotional,
-    row.slippageBps,
-    row.realizedPnl,
-    row.filledAt,
-  );
+export function insertPmFill(
+  row: FillInsertBase & {
+    marketId: string;
+    outcome: string;
+    tokenId: string | null;
+  },
+): void {
+  insertFillCore(PM, {
+    ...row,
+    instrument: {
+      market_id: row.marketId,
+      outcome: row.outcome,
+      token_id: row.tokenId,
+    },
+  });
 }
 
 export interface ReadPmFillsOpts {
@@ -265,48 +178,20 @@ export interface ReadPmFillsOpts {
 }
 
 export function readPmFills(opts: ReadPmFillsOpts = {}): PmPaperFillRow[] {
-  const db = getDatabase();
-  const conds: string[] = [`account = ?`];
-  const params: unknown[] = [opts.account ?? DEFAULT_PM_ACCOUNT];
-  if (opts.marketId) {
-    conds.push(`market_id = ?`);
-    params.push(opts.marketId);
-  }
-  if (opts.outcome) {
-    conds.push(`outcome = ?`);
-    params.push(opts.outcome);
-  }
-  if (opts.since) {
-    conds.push(`filled_at >= ?`);
-    params.push(opts.since);
-  }
-  const limit = Math.max(1, Math.min(1000, opts.limit ?? 50));
-  const sql = `SELECT * FROM pm_paper_fills
-               WHERE ${conds.join(" AND ")}
-               ORDER BY filled_at DESC
-               LIMIT ${limit}`;
-  return db.prepare(sql).all(...params) as PmPaperFillRow[];
+  return readFillsCore<PmPaperFillRow>(PM, {
+    account: opts.account ?? DEFAULT_PM_ACCOUNT,
+    filters: { market_id: opts.marketId, outcome: opts.outcome },
+    since: opts.since,
+    limit: opts.limit,
+  });
 }
 
-/**
- * Back-link a set of PM fills to a thesis row by fill_id UUID. Same
- * concurrent-safe pattern as F8 equity's `linkFillsToThesis`.
- */
+/** Back-link PM fills to a thesis row by fill_id UUID — see `linkFillsToThesisCore`. */
 export function linkPmFillsToThesis(
   thesisId: number,
   fillIds: string[],
 ): number {
-  if (fillIds.length === 0) return 0;
-  const db = getDatabase();
-  const placeholders = fillIds.map(() => "?").join(",");
-  const result = db
-    .prepare(
-      `UPDATE pm_paper_fills
-         SET thesis_id = ?
-       WHERE fill_id IN (${placeholders})`,
-    )
-    .run(thesisId, ...fillIds);
-  return result.changes;
+  return linkFillsToThesisCore(PM, thesisId, fillIds);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +217,6 @@ export function insertPmPortfolioThesis(
   input: PmPortfolioThesisInput,
   nowIso: string,
 ): number {
-  const db = getDatabase();
   const thesisText = JSON.stringify({
     kind: "pm",
     account: input.account,
@@ -344,21 +228,13 @@ export function insertPmPortfolioThesis(
     target_weights: input.targetWeights,
     aborted: input.aborted === true,
   });
-  const result = db
-    .prepare(
-      `INSERT INTO trade_theses
-        (symbol, thesis_text, entry_signal, entry_time, exit_condition,
-         outcome, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      "PORTFOLIO",
+  return insertThesisRow(
+    {
       thesisText,
-      `pm_${input.cadence ?? "weekly"}_rebalance`,
-      nowIso,
-      "next_pm_rebalance",
-      "open",
+      entrySignal: `pm_${input.cadence ?? "weekly"}_rebalance`,
+      exitCondition: "next_pm_rebalance",
       metadata,
-    );
-  return result.lastInsertRowid as number;
+    },
+    nowIso,
+  );
 }

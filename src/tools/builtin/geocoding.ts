@@ -6,6 +6,8 @@
  */
 
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const API_URL = "https://nominatim.openstreetmap.org/search";
 const TIMEOUT_MS = 10_000;
@@ -67,25 +69,11 @@ Uses OpenStreetMap Nominatim. Returns up to 5 matches with coordinates, display 
       limit: String(limit),
     });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
     try {
-      const response = await fetch(`${API_URL}?${params}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": USER_AGENT,
-        },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        return JSON.stringify({
-          error: `Nominatim API error: ${response.status}`,
-        });
-      }
-
-      const data = (await response.json()) as NominatimResult[];
+      const data = (await fetchJson(`${API_URL}?${params}`, {
+        timeoutMs: TIMEOUT_MS,
+        headers: { "User-Agent": USER_AGENT },
+      })) as NominatimResult[];
 
       const results = data.map((r) => ({
         latitude: parseFloat(r.lat),
@@ -101,10 +89,12 @@ Uses OpenStreetMap Nominatim. Returns up to 5 matches with coordinates, display 
         total: results.length,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ error: `Geocoding failed: ${message}` });
-    } finally {
-      clearTimeout(timeout);
+      if (err instanceof HttpStatusError) {
+        return JSON.stringify({
+          error: `Nominatim API error: ${err.status}`,
+        });
+      }
+      return JSON.stringify({ error: `Geocoding failed: ${errMsg(err)}` });
     }
   },
 };

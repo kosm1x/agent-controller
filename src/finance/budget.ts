@@ -67,14 +67,13 @@ export function budgetSummary(): {
 export function seedRateLimitersFromHistory(): void {
   const db = getDatabase();
   const providers: Provider[] = ["alpha_vantage", "polygon", "fred"];
+  const recentCalls = db.prepare(
+    `SELECT call_time FROM api_call_budget
+     WHERE provider=? AND call_time > datetime('now','-1 minute')
+     ORDER BY call_time ASC`,
+  );
   for (const provider of providers) {
-    const rows = db
-      .prepare(
-        `SELECT call_time FROM api_call_budget
-         WHERE provider=? AND call_time > datetime('now','-1 minute')
-         ORDER BY call_time ASC`,
-      )
-      .all(provider) as { call_time: string }[];
+    const rows = recentCalls.all(provider) as { call_time: string }[];
     seedFromHistory(
       provider,
       rows.map((r) => r.call_time),

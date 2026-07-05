@@ -15,7 +15,6 @@ import type {
   FailureSource,
   TuneRun,
   TuneVariant,
-  TuneVariantWithChildren,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -462,30 +461,6 @@ export function getValidVariants(limit = 50): TuneVariant[] {
        ORDER BY composite_score DESC LIMIT ?`,
     )
     .all(limit) as Array<Omit<TuneVariant, "valid"> & { valid: number }>;
-  return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
-}
-
-/**
- * Valid variants joined with their child count — used by `score_child_prop`
- * parent selection (HyperAgents). Children are counted via `parent_id` edges.
- */
-export function getValidVariantsWithChildren(
-  limit = 50,
-): TuneVariantWithChildren[] {
-  const db = getDatabase();
-  const rows = db
-    .prepare(
-      `SELECT v.*, (
-         SELECT COUNT(*) FROM tune_variants c
-         WHERE c.parent_id = v.variant_id AND c.valid = 1
-       ) AS child_count
-       FROM tune_variants v
-       WHERE v.valid = 1
-       ORDER BY v.composite_score DESC LIMIT ?`,
-    )
-    .all(limit) as Array<
-    Omit<TuneVariantWithChildren, "valid"> & { valid: number }
-  >;
   return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
 }
 

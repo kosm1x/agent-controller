@@ -1214,13 +1214,11 @@ export class MessageRouter {
     }
   }
 
-  /** Handle an inbound message from any channel → create task. */
-  async handleInbound(msg: IncomingMessage): Promise<void> {
-    this.lastMessageTime = Date.now();
-
-    // Day log: record user message (mechanical, no LLM)
-    appendDayLog("USER", msg.text);
-
+  /**
+   * V8.1/V8.2 briefing resolution on the operator's reply — fire-and-forget
+   * (isOwnerChannel guard inside); never blocks or stops the pipeline.
+   */
+  private resolveBriefingOnReply(msg: IncomingMessage): void {
     // V8.1 Phase 8: the operator's reply promotes or discards a delivered
     // briefing (spec §10). Owner channels only — a briefing is operator-
     // private. The call is self-contained and never throws, so it cannot
@@ -1247,7 +1245,10 @@ export class MessageRouter {
           /* defense-in-depth: the handler never throws, but guard the chain */
         });
     }
+  }
 
+  /** Prompt-enhancer toggle commands (checkToggle). Returns true when a toggle was handled (stop). */
+  private interceptEnhancerToggle(msg: IncomingMessage): boolean {
     // Prompt enhancer toggle commands
     const toggleResult = checkToggle(msg.text);
     if (toggleResult !== null) {
@@ -1256,23 +1257,19 @@ export class MessageRouter {
         msg.from,
         `🔍 Prompt enhancer: ${toggleResult ? "ACTIVADO" : "DESACTIVADO"}`,
       );
-      return;
+      return true;
     }
+    return false;
+  }
 
+  /**
+   * Context-clear phrase. Returns true when fully handled (no remainder);
+   * false when remainder text was left in msg.text (mutated) for the pipeline.
+   */
+  private interceptContextClear(msg: IncomingMessage, tk: string): boolean {
     // Context clear: "limpia tu contexto", "clear context", "contexto limpio"
     // Mechanical: purges in-memory thread buffer + strips poisoned DB entries.
     // If the message continues after the phrase, process the rest as a fresh task.
-    const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
-    // Pass the channel adapter's email mode so threadKey can per-sender isolate
-    // community-manager mailboxes (each external sender gets their own buffer +
-    // scope-inheritance bag). Owner-only email and non-email channels keep the
-    // channel-only key (backward-compat with existing persisted conversations).
-    const tk = threadKey(
-      msg.channel,
-      msg.from,
-      senderJid,
-      this.channels.get(msg.channel)?.mode,
-    );
     // Strip WhatsApp group prefix before matching (same pattern as feedback/fast-path)
     const textForClear = msg.text.replace(/^\[Grupo:.*?\]\n?/i, "").trim();
     if (CONTEXT_CLEAR_RE.test(textForClear)) {
@@ -1293,10 +1290,20 @@ export class MessageRouter {
           msg.from,
           "Contexto limpio. ¿En qué te ayudo?",
         );
-        return;
+        return true;
       }
     }
+    return false;
+  }
 
+  /**
+   * Background-agent spawn (BACKGROUND_AGENT_RE). Returns true whenever the
+   * trigger matched (spawned, capped, empty task, or errored — all handled).
+   */
+  private async interceptBackgroundAgentSpawn(
+    msg: IncomingMessage,
+    tk: string,
+  ): Promise<boolean> {
     // Background agents: "lanza un agente", "investiga en background"
     if (BACKGROUND_AGENT_RE.test(msg.text)) {
       try {
@@ -1313,7 +1320,7 @@ export class MessageRouter {
             msg.from,
             "⚠�� Ya hay 3 agentes activos. Espera a que terminen o cancela uno con 'cancela agente'.",
           );
-          return;
+          return true;
         }
 
         // Strip the trigger phrase to get the actual task
@@ -1328,7 +1335,7 @@ export class MessageRouter {
             msg.from,
             "¿Qué quieres que investigue el agente? Ejemplo: 'lanza un agente e investiga el tráfico de livingjoyfully.art'",
           );
-          return;
+          return true;
         }
 
         const { tools: scopedTools } = scopeToolsForMessage(taskText, []);
@@ -1395,7 +1402,7 @@ export class MessageRouter {
         console.log(
           `[router] Background agent spawned: ${result.taskId} — "${taskText.slice(0, 60)}"`,
         );
-        return;
+        return true;
       } catch (err) {
         console.error("[router] Background agent spawn failed:", err);
         this.sendToChannel(
@@ -1403,10 +1410,14 @@ export class MessageRouter {
           msg.from,
           "Error lanzando agente. Intenta de nuevo.",
         );
-        return;
+        return true;
       }
     }
+    return false;
+  }
 
+  /** Background-agent list ("mis agentes"/"agentes"/"agents"). Returns true when handled (stop). */
+  private interceptAgentList(msg: IncomingMessage): boolean {
     // Background agent management commands
     const agentMgmtText = msg.text.trim().toLowerCase();
     if (
@@ -1453,9 +1464,14 @@ export class MessageRouter {
       } catch {
         this.sendToChannel(msg.channel, msg.from, "Error consultando agentes.");
       }
-      return;
+      return true;
     }
+    return false;
+  }
 
+  /** Background-agent cancel (/^cancela\s+agente/). Returns true when handled (stop). */
+  private interceptAgentCancel(msg: IncomingMessage): boolean {
+    const agentMgmtText = msg.text.trim().toLowerCase();
     if (/^cancela\s+agente/i.test(agentMgmtText)) {
       try {
         const db = getDatabase();
@@ -1486,9 +1502,13 @@ export class MessageRouter {
       } catch {
         this.sendToChannel(msg.channel, msg.from, "Error cancelando agente.");
       }
-      return;
+      return true;
     }
+    return false;
+  }
 
+  /** Task-cancel intent (CANCEL_INTENT_RE) — aborts the active task for this channel. Returns true when handled (stop). */
+  private interceptTaskCancel(msg: IncomingMessage, tk: string): boolean {
     // --- v6.2 S2: Task cancellation from Telegram ---
     // Detect cancel intent: "cancela", "detente", "para", "stop", "cancel"
     // Aborts the running task for this channel, extracts partial result, notifies user.
@@ -1533,9 +1553,20 @@ export class MessageRouter {
           "No hay tarea activa para cancelar.",
         );
       }
-      return;
+      return true;
     }
+    return false;
+  }
 
+  /**
+   * Prompt enhancer — waiting-for-answers branch + shouldEnhance branch.
+   * Returns true when SPLIT/ASK was sent (stop); false on answer-built,
+   * SKIP, ASSUME and PASS paths (msg.text may be mutated) — pipeline continues.
+   */
+  private async interceptEnhancer(
+    msg: IncomingMessage,
+    tk: string,
+  ): Promise<boolean> {
     // Prompt enhancer: if waiting for answers, build enhanced prompt or skip
     if (isWaitingForAnswers(msg.channel)) {
       const original = getOriginalMessage(msg.channel)!;
@@ -1607,7 +1638,7 @@ export class MessageRouter {
         console.log(
           "[enhancer] SPLIT — proposing decomposition, awaiting confirmation",
         );
-        return;
+        return true;
       } else if (analysis !== "PASS") {
         // ASK path — actual clarifying questions
         setWaiting(msg.channel, msg.text, analysis);
@@ -1624,12 +1655,22 @@ export class MessageRouter {
           .split("\n")
           .filter((l) => /^\s*\d+[\.\)]\s/.test(l)).length;
         console.log(`[enhancer] Asking ${qCount} question(s)`);
-        return;
+        return true;
       } else {
         console.log("[enhancer] PASS — message is clear enough");
       }
     }
+    return false;
+  }
 
+  /**
+   * Pending high-risk tool confirmation. Returns true on confirm/decline
+   * (handled); false when nothing pending or response unclear (stale cleared).
+   */
+  private async interceptPendingConfirmation(
+    msg: IncomingMessage,
+    tk: string,
+  ): Promise<boolean> {
     // Pending confirmation check — user confirms/declines a high-risk tool operation.
     // Must be before feedback/fast-path/full pipeline — this is a direct tool execution.
     const pendingConf = getPendingConfirmation(tk);
@@ -1688,19 +1729,30 @@ export class MessageRouter {
           const errMsg = `Error ejecutando ${pendingConf.toolName}: ${err instanceof Error ? err.message : String(err)}`;
           this.sendToChannel(msg.channel, msg.from, errMsg);
         }
-        return;
+        return true;
       } else if (confResponse === "decline") {
         console.log(`[router] Confirmation declined: ${pendingConf.toolName}`);
         clearPendingConfirmation(tk);
         this.sendToChannel(msg.channel, msg.from, "Cancelado.");
         // USER line already day-logged at the top of handleInbound.
         appendDayLog("JARVIS", "Cancelado.");
-        return;
+        return true;
       }
       // Not a clear confirm/decline — clear stale pending and process normally
       clearPendingConfirmation(tk);
     }
+    return false;
+  }
 
+  /**
+   * checkFeedbackWindow block — records explicit feedback signals. Side-effect
+   * only (always falls through). Returns the destructively-consumed
+   * feedbackTaskId for submitInboundTask's implicit-feedback block.
+   */
+  private recordFeedbackWindowSignal(
+    msg: IncomingMessage,
+    tk: string,
+  ): string | null {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
@@ -1723,7 +1775,11 @@ export class MessageRouter {
         }
       }
     }
+    return feedbackTaskId;
+  }
 
+  /** Pure feedback ("excelente", "gracias", "no") — ack without spawning a task. Returns true when intercepted (stop). */
+  private interceptPureFeedback(msg: IncomingMessage, tk: string): boolean {
     // Pure feedback ("excelente", "gracias", "perfecto", "no") → ack and skip task creation.
     // Runs UNCONDITIONALLY — even without a feedback window, these messages
     // should never spawn a 21K-token task. Record the signal so Jarvis knows.
@@ -1756,9 +1812,19 @@ export class MessageRouter {
       console.log(
         `[router] Feedback intercepted from ${msg.channel}: ${signal}`,
       );
-      return;
+      return true;
     }
+    return false;
+  }
 
+  /**
+   * Conversational fast-path (direct LLM, no tools). Returns true when
+   * answered; false when not applicable or on error (falls through to full pipeline).
+   */
+  private async interceptConversationalFastPath(
+    msg: IncomingMessage,
+    tk: string,
+  ): Promise<boolean> {
     // Fast-path: simple conversational messages → direct LLM, no tools, ~2s
     if (!msg.imageUrl && isConversationalFastPath(msg.text)) {
       try {
@@ -1792,17 +1858,38 @@ export class MessageRouter {
           /* non-fatal */
         }
 
-        return;
+        return true;
       } catch (err) {
         console.error("[router] Fast-path failed, falling through:", err);
         // Fall through to full pipeline
       }
     }
+    return false;
+  }
+
+  /**
+   * Full-pipeline tail: streaming setup, scope classification, system-prompt
+   * build, task submission, pending-reply tracking. Always the final step.
+   */
+  private async submitInboundTask(
+    msg: IncomingMessage,
+    tk: string,
+    feedbackTaskId: string | null,
+  ): Promise<void> {
+    // Phase 4.1/Phase 3 hoists: the channel adapter and the env-flag reads
+    // were each fetched/built multiple times across this tail — resolve once.
+    const chan = this.channels.get(msg.channel);
+    const envFlags = {
+      hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
+      hasWordpress: !!process.env.WP_SITES,
+      hasMemory: getMemoryService().backend === "hindsight",
+      hasCrm: !!process.env.CRM_API_TOKEN,
+    };
 
     // Streaming setup for Telegram — progressive message updates as LLM generates
     let streamController: TelegramStreamController | null = null;
     if (msg.channel === "telegram") {
-      const telegramAdapter = this.channels.get("telegram") as
+      const telegramAdapter = chan as
         | (ChannelAdapter & { getBot?(): import("grammy").Bot | null })
         | undefined;
       const bot = telegramAdapter?.getBot?.();
@@ -1885,18 +1972,13 @@ export class MessageRouter {
     // (undefined adapter, undefined mode, or community-manager) gets the
     // restricted allowlist. Owner-only mailboxes and non-email channels pass
     // through unchanged.
-    const adapter = this.channels.get(msg.channel);
+    const adapter = chan;
     const override = applyCommunityChannelScopeOverride({
       isEmail: isEmailChannel(msg.channel),
       mode: adapter?.mode,
       baseTools: tools,
       baseActiveGroups: activeGroups,
-      envFlags: {
-        hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
-        hasWordpress: !!process.env.WP_SITES,
-        hasMemory: getMemoryService().backend === "hindsight",
-        hasCrm: !!process.env.CRM_API_TOKEN,
-      },
+      envFlags,
     });
     tools = override.tools;
     activeGroups = override.activeGroups;
@@ -1960,7 +2042,7 @@ export class MessageRouter {
     // The system prompt stays byte-stable across calls (no timestamps) so the
     // Anthropic SDK's prompt cache can hit. Time context is injected into the
     // user message below via `timeContextLine()`.
-    const spChannel = this.channels.get(msg.channel);
+    const spChannel = chan;
     const { stable: stableSP, variable: variableSP } = buildJarvisSystemPrompt(
       tools,
       userFactsBlock,
@@ -2109,6 +2191,42 @@ export class MessageRouter {
     console.log(
       `[router] Inbound from ${msg.channel} → task ${result.taskId} (${result.agentType})`,
     );
+  }
+
+  /** Handle an inbound message from any channel → create task. */
+  async handleInbound(msg: IncomingMessage): Promise<void> {
+    this.lastMessageTime = Date.now();
+
+    // Day log: record user message (mechanical, no LLM)
+    appendDayLog("USER", msg.text);
+
+    this.resolveBriefingOnReply(msg);
+
+    if (this.interceptEnhancerToggle(msg)) return;
+
+    const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
+    // Pass the channel adapter's email mode so threadKey can per-sender isolate
+    // community-manager mailboxes (each external sender gets their own buffer +
+    // scope-inheritance bag). Owner-only email and non-email channels keep the
+    // channel-only key (backward-compat with existing persisted conversations).
+    const tk = threadKey(
+      msg.channel,
+      msg.from,
+      senderJid,
+      this.channels.get(msg.channel)?.mode,
+    );
+
+    if (this.interceptContextClear(msg, tk)) return;
+    if (await this.interceptBackgroundAgentSpawn(msg, tk)) return;
+    if (this.interceptAgentList(msg)) return;
+    if (this.interceptAgentCancel(msg)) return;
+    if (this.interceptTaskCancel(msg, tk)) return;
+    if (await this.interceptEnhancer(msg, tk)) return;
+    if (await this.interceptPendingConfirmation(msg, tk)) return;
+    const feedbackTaskId = this.recordFeedbackWindowSignal(msg, tk);
+    if (this.interceptPureFeedback(msg, tk)) return;
+    if (await this.interceptConversationalFastPath(msg, tk)) return;
+    await this.submitInboundTask(msg, tk, feedbackTaskId);
   }
 
   /** Watch a ritual task for completion → broadcast result to all channels. */

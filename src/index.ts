@@ -365,6 +365,21 @@ async function main(): Promise<void> {
       );
     });
 
+  // Daily tasks/runs retention (04:30 local, 90d window — operator-approved
+  // 2026-07-05). Archives to data/archive/*.jsonl.gz then deletes in batched
+  // transactions; in-flight tasks and parents with surviving children are
+  // never touched (see db/retention.ts). Non-fatal if registration fails.
+  import("./db/retention-cron.js")
+    .then(({ registerRetentionCron }) =>
+      registerRetentionCron({
+        info: (msg, fields) => log.info(fields ?? {}, msg),
+        warn: (msg, fields) => log.warn(fields ?? {}, msg),
+      }),
+    )
+    .catch((err) => {
+      log.warn({ err }, "[retention] cron registration failed (non-fatal)");
+    });
+
   // V8.2 §14 nightly sycophancy probe (02:30 MX). Registered only when the
   // judgment-assembly producer is armed (V82_JUDGMENT_PRODUCER_ENABLED=true);
   // dormant even then until judgments exist (zero LLM calls on an empty window).

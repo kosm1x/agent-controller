@@ -6,6 +6,8 @@
  */
 
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const API_URL = "https://api.frankfurter.app";
 const TIMEOUT_MS = 10_000;
@@ -74,22 +76,10 @@ Default: 1 USD to MXN.`,
       amount: String(amount),
     });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
     try {
-      const response = await fetch(`${API_URL}/${path}?${params}`, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        return JSON.stringify({
-          error: `Frankfurter API error: ${response.status}`,
-        });
-      }
-
-      const data = (await response.json()) as FrankfurterResponse;
+      const data = (await fetchJson(`${API_URL}/${path}?${params}`, {
+        timeoutMs: TIMEOUT_MS,
+      })) as FrankfurterResponse;
 
       return JSON.stringify({
         amount: data.amount ?? amount,
@@ -99,12 +89,14 @@ Default: 1 USD to MXN.`,
         source: "ECB/Frankfurter",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof HttpStatusError) {
+        return JSON.stringify({
+          error: `Frankfurter API error: ${err.status}`,
+        });
+      }
       return JSON.stringify({
-        error: `Currency conversion failed: ${message}`,
+        error: `Currency conversion failed: ${errMsg(err)}`,
       });
-    } finally {
-      clearTimeout(timeout);
     }
   },
 };

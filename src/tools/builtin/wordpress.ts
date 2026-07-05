@@ -16,96 +16,10 @@ import { join, resolve } from "node:path";
 import type { Tool } from "../types.js";
 import { validateOutboundUrl } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
+import { getSiteNames, resolveSite, wpFetch } from "./wp-client.js";
 
 const TIMEOUT_MS = 30_000;
 const WP_TEMP_DIR = "/tmp/wp_content";
-
-interface WpSiteConfig {
-  url: string;
-  username: string;
-  app_password: string;
-}
-
-type WpSitesMap = Record<string, WpSiteConfig>;
-
-function getSites(): WpSitesMap {
-  const raw = process.env.WP_SITES;
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as WpSitesMap;
-  } catch {
-    return {};
-  }
-}
-
-function getSiteNames(): string[] {
-  return Object.keys(getSites());
-}
-
-function resolveSite(
-  siteName?: string,
-): { baseUrl: string; authHeader: string; name: string } | string {
-  const sites = getSites();
-  const names = Object.keys(sites);
-
-  if (names.length === 0) {
-    return "WordPress not configured. Set the WP_SITES environment variable with site credentials.";
-  }
-
-  // If no site specified and only one exists, use it
-  const key = siteName ?? (names.length === 1 ? names[0] : undefined);
-  if (!key) {
-    return `Multiple sites configured. You MUST specify the "site" parameter. Available: ${names.join(", ")}`;
-  }
-
-  const config = sites[key];
-  if (!config) {
-    return `Site "${key}" not found. Available: ${names.join(", ")}`;
-  }
-
-  const clean = config.url.replace(/\/+$/, "");
-  const encoded = Buffer.from(
-    `${config.username}:${config.app_password}`,
-  ).toString("base64");
-
-  return {
-    baseUrl: `${clean}/wp-json/wp/v2`,
-    authHeader: `Basic ${encoded}`,
-    name: key,
-  };
-}
-
-async function wpFetch(
-  site: { baseUrl: string; authHeader: string },
-  path: string,
-  options: RequestInit = {},
-): Promise<{ status: number; data: unknown }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    const response = await fetch(`${site.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        Authorization: site.authHeader,
-        ...options.headers,
-      },
-      signal: controller.signal,
-    });
-
-    const text = await response.text();
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-
-    return { status: response.status, data };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 /** Build a dynamic site description snippet for tool descriptions. */
 function siteParamDescription(): string {

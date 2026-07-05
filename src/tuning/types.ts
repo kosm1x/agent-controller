@@ -11,9 +11,7 @@
 // ---------------------------------------------------------------------------
 
 export type TestCaseCategory =
-  | "tool_selection"
-  | "scope_accuracy"
-  | "classification";
+  "tool_selection" | "scope_accuracy" | "classification";
 
 export interface TestCaseInput {
   message: string;
@@ -91,17 +89,10 @@ export interface SandboxConfig {
 // ---------------------------------------------------------------------------
 
 export type TuningSurface =
-  | "tool_description"
-  | "scope_rule"
-  | "classifier"
-  | "prompt";
+  "tool_description" | "scope_rule" | "classifier" | "prompt";
 
 export type ExperimentStatus =
-  | "pending"
-  | "passed"
-  | "regressed"
-  | "rejected"
-  | "error";
+  "pending" | "passed" | "regressed" | "rejected" | "error";
 
 export interface Mutation {
   surface: TuningSurface;
@@ -189,12 +180,6 @@ export interface TuneVariant {
   created_at: string;
 }
 
-export type ParentSelectionStrategy =
-  | "best"
-  | "latest"
-  | "score_prop"
-  | "score_child_prop";
-
 // ---------------------------------------------------------------------------
 // v7.5 additions — failure classification + confidence signals
 // ---------------------------------------------------------------------------
@@ -206,12 +191,3 @@ export type ParentSelectionStrategy =
  * or infra failed (env).
  */
 export type FailureSource = "skill" | "agent" | "env";
-
-/**
- * Variant with child count — needed for `score_child_prop` parent selection
- * (HyperAgents pattern: probability ∝ score / (1 + child_count) to prefer
- * under-explored branches).
- */
-export interface TuneVariantWithChildren extends TuneVariant {
-  child_count: number;
-}

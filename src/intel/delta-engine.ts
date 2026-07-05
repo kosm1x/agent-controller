@@ -262,11 +262,3 @@ export function processSignals(signals: Signal[]): Delta[] {
 
   return deltas;
 }
-
-/** Get the metric definition for a source+key, if it exists. */
-export function getMetric(
-  source: string,
-  key: string,
-): MetricDefinition | undefined {
-  return METRIC_MAP.get(`${source}:${key}`);
-}

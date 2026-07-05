@@ -13,6 +13,7 @@
 
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
 import {
   ALL_FRAMEWORK_IDS,
@@ -338,11 +339,7 @@ Produce ${nVariants} distinct variants. Return ONLY valid JSON, no prose, no mar
         max_tokens: 1800,
       });
       const text = (response.content ?? "").trim();
-      const jsonText =
-        text.match(/```json\s*([\s\S]*?)\s*```/)?.[1] ??
-        text.match(/\{[\s\S]*\}/)?.[0] ??
-        text;
-      const parsed = JSON.parse(jsonText) as { variants?: unknown };
+      const parsed = parseJsonFromLlm<{ variants?: unknown }>(text);
       variants = coerceVariants(parsed.variants);
       if (variants.length === 0) {
         return JSON.stringify({

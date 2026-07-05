@@ -12,6 +12,9 @@ vi.mock("../db/index.js", () => ({
     prepare: () => ({
       run: mocks.insertRun,
     }),
+    // The insert batch runs inside one db.transaction (2026-07-05) — mirror
+    // better-sqlite3's shape: transaction(fn) returns a callable.
+    transaction: (fn: (...args: unknown[]) => unknown) => fn,
   }),
 }));
 

@@ -8,6 +8,8 @@
  */
 
 import type { Tool } from "../types.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 
 const EXA_API_URL = "https://api.exa.ai/search";
 const TIMEOUT_MS = 15_000;
@@ -126,29 +128,16 @@ Leave empty for general semantic search across all categories.`,
       body.contents = { text: { max_characters: 3000 } };
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
     try {
-      const response = await fetch(EXA_API_URL, {
+      const data = (await fetchJson(EXA_API_URL, {
         method: "POST",
+        timeoutMs: TIMEOUT_MS,
         headers: {
-          Accept: "application/json",
           "Content-Type": "application/json",
           "x-api-key": apiKey,
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        return JSON.stringify({
-          error: `Exa API error: ${response.status} ${text.slice(0, 300)}`,
-        });
-      }
-
-      const data = (await response.json()) as ExaSearchResponse;
+      })) as ExaSearchResponse;
 
       const results = (data.results ?? []).map((r) => ({
         title: r.title,
@@ -166,10 +155,12 @@ Leave empty for general semantic search across all categories.`,
         total: results.length,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ error: `Exa search failed: ${message}` });
-    } finally {
-      clearTimeout(timeout);
+      if (err instanceof HttpStatusError) {
+        return JSON.stringify({
+          error: `Exa API error: ${err.status} ${err.bodyText.slice(0, 300)}`,
+        });
+      }
+      return JSON.stringify({ error: `Exa search failed: ${errMsg(err)}` });
     }
   },
 };

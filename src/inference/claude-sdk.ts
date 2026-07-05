@@ -85,6 +85,26 @@ function jsonSchemaToZodShape(
 // Tool wrapping: our Tool → SDK MCP tool
 // ---------------------------------------------------------------------------
 
+/**
+ * Wrap-cache (2026-07-05 efficiency audit): tool definitions are static after
+ * registration, yet every query() rebuilt ~30 tools' Zod shapes (~150 zod
+ * allocations per message) through wrapTool. Keyed by Tool OBJECT identity
+ * (WeakMap), so a source that re-registers a tool under the same name gets a
+ * fresh wrap automatically — no invalidation policy to maintain. The handler
+ * closes over the registry lookup by name, so execution behavior is identical.
+ */
+const wrappedToolCache = new WeakMap<Tool, ReturnType<typeof wrapTool>>();
+
+/** @internal exported for the memoization contract test only. */
+export function wrapToolCached(t: Tool): ReturnType<typeof wrapTool> {
+  let wrapped = wrappedToolCache.get(t);
+  if (!wrapped) {
+    wrapped = wrapTool(t);
+    wrappedToolCache.set(t, wrapped);
+  }
+  return wrapped;
+}
+
 function wrapTool(t: Tool) {
   const params = t.definition.function.parameters as Record<string, unknown>;
   const shape = jsonSchemaToZodShape(params);
@@ -162,7 +182,7 @@ export function buildMcpServer(
   const registryTools = toolNames
     .map((n) => toolRegistry.get(n))
     .filter((t): t is Tool => t !== undefined)
-    .map(wrapTool);
+    .map(wrapToolCached);
 
   return createSdkMcpServer({
     name: "jarvis",

@@ -14,6 +14,7 @@
 
 import type { Tool } from "../types.js";
 import { infer } from "../../inference/adapter.js";
+import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { webReadTool } from "./web-read.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
 import { validateOutboundUrl } from "../../lib/url-safety.js";
@@ -318,12 +319,8 @@ OUTPUT: a JSON brand profile + brief_id you can pass to ads_creative_gen.`,
         max_tokens: 1200,
       });
       const text = (response.content ?? "").trim();
-      const jsonText =
-        text.match(/```json\s*([\s\S]*?)\s*```/)?.[1] ??
-        text.match(/\{[\s\S]*\}/)?.[0] ??
-        text;
       try {
-        llmProfile = JSON.parse(jsonText) as Record<string, unknown>;
+        llmProfile = parseJsonFromLlm<Record<string, unknown>>(text);
       } catch {
         return JSON.stringify({
           error: "LLM returned non-JSON response",

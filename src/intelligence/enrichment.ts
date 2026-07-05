@@ -558,8 +558,3 @@ function getToolFirstReminder(messageText: string): string | null {
     `NO respondas basándote en tu memoria conversacional — la fuente de la verdad es la herramienta.`
   );
 }
-
-/** Clear enrichment state (for testing). */
-export function clearEnrichmentCache(): void {
-  // No cache to clear after switching from mental models to direct recall
-}
