@@ -2633,7 +2633,7 @@ cmd_smoke() {
   echo -e "${CYAN}Smoke:${NC} submitting a trivial fast task..."
   body=$(curl -sf --max-time 10 -X POST \
     -H "X-Api-Key: ${key}" -H "Content-Type: application/json" \
-    -d '{"description":"Smoke test. Reply with exactly: OK","source":"mc-ctl-smoke"}' \
+    -d '{"title":"mc-ctl smoke","description":"Smoke test. Reply with exactly: OK","source":"mc-ctl-smoke"}' \
     "${API_URL}/api/tasks" 2>/dev/null) || die "submit failed (API unreachable or auth rejected)"
   task_id=$(echo "$body" | grep -oP '(?<="task_id":")[^"]+' | head -1)
   [ -n "$task_id" ] || die "no task_id in response: $body"
