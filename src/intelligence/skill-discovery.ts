@@ -142,7 +142,15 @@ Instructions:
 3. If a similar skill already exists, do nothing
 
 Be conservative — only save genuinely reusable workflows.`,
-      agentType: "auto",
+      // MUST be "fast" (a HOST runner), NOT "auto". The task's ACTION is a host
+      // DB write (skill_save/skill_list → getDatabase() = host mc.db), but its
+      // DESCRIPTION names the detected coding tool-pattern (e.g. "file edit + git
+      // commit + git push"), so "auto" lets the classifier match \bgit\b and route
+      // it to the mission-control-only nanoclaw SANDBOX — where skill_save/skill_list
+      // aren't registered and mc.db is a throwaway /tmp copy, so the skill can NEVER
+      // persist (0 skills saved 2026-06-28..07-06, all runs failed/no-op). Explicit
+      // "fast" pins it to the in-process host runner. See feedback_skill_discovery_host_tool_misroute.
+      agentType: "fast",
       tools: ["skill_save", "skill_list"],
       tags: ["internal", "skill-suggestion"],
     });

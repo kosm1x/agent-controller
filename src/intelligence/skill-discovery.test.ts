@@ -2,7 +2,7 @@
  * Skill discovery tests.
  */
 
-import { describe, it, expect, vi, beforeEach , afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../db/task-outcomes.js", () => ({
   queryOutcomes: vi.fn().mockReturnValue([]),
@@ -19,15 +19,26 @@ vi.mock("../memory/index.js", () => ({
   }),
 }));
 
+vi.mock("../dispatch/dispatcher.js", () => ({
+  submitTask: vi.fn().mockResolvedValue({
+    taskId: "auto-skill-test",
+    agentType: "fast",
+    classification: {},
+  }),
+}));
+
 import { queryOutcomes } from "../db/task-outcomes.js";
 import { listSkills } from "../db/skills.js";
+import { submitTask } from "../dispatch/dispatcher.js";
 import {
   detectRecurringPatterns,
   resetDiscoveryRateLimit,
 } from "./skill-discovery.js";
 
 describe("skill-discovery", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     resetDiscoveryRateLimit();
@@ -82,6 +93,20 @@ describe("skill-discovery", () => {
       expect.stringContaining("[skill-discovery] Proposing skill"),
     );
     consoleSpy.mockRestore();
+
+    // The Auto-skill task MUST go to the fast HOST runner — skill_save/skill_list
+    // are host-only tools (write the host mc.db) and are NOT registered in the
+    // nanoclaw sandbox, so "auto" (which the coding-signal "git" in the pattern
+    // would route to nanoclaw) can never persist a skill. Regression guard for
+    // feedback_skill_discovery_host_tool_misroute.
+    expect(submitTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: expect.stringContaining("Auto-skill:"),
+        agentType: "fast",
+        tools: ["skill_save", "skill_list"],
+        tags: ["internal", "skill-suggestion"],
+      }),
+    );
   });
 
   it("should not propose if skill already exists with same tools", async () => {
