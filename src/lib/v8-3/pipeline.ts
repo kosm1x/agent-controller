@@ -41,6 +41,7 @@ import {
   type ReversalOp,
   type SqlPreState,
 } from "./reversal.js";
+import { reversalStrategyForCapability } from "./seed.js";
 
 export type DecisionRoute = "confirm" | "autonomous";
 
@@ -202,19 +203,41 @@ export async function runDecisionPipeline(
   if (trigger.sqlMutation) {
     const pre = captureSqlPreState(db, trigger.sqlMutation.targets, nowIso);
     capturedPreState = pre;
+    // Seam (a): the capability's CANONICAL reversal strategy is authoritative — a
+    // caller/trigger can NEVER override it. Bind the builder to the immutable seed,
+    // not `trigger.sqlMutation.strategy`; else a compensating-only capability
+    // (`northstar_sync`) could request `sql_inverse` and a local inverse would be
+    // built + stored = the 2026-05-12 resurrection risk. A trigger that declares a
+    // different strategy is a wiring bug — fail loud rather than build the wrong op.
+    const capabilityStrategy = reversalStrategyForCapability(cap.capability);
+    if (trigger.sqlMutation.strategy !== capabilityStrategy) {
+      throw new Error(
+        `V8.3 pipeline: trigger declared reversal strategy '${trigger.sqlMutation.strategy}' ` +
+          `for '${cap.capability}', but its canonical strategy is '${capabilityStrategy}' (authoritative)`,
+      );
+    }
     reversalOp = buildReversalOp({
-      strategy: trigger.sqlMutation.strategy,
+      strategy: capabilityStrategy,
       preState: pre,
       allowedTables: trigger.sqlMutation.allowedTables,
       level: effectiveLevel,
       reversibleRequired: gateConfig.reversible_required,
       compensatingProposal: trigger.sqlMutation.compensatingProposal,
     });
-    if (effectiveLevel >= 3 && reversalOp.kind !== "sql_inverse") {
-      const from = effectiveLevel;
-      effectiveLevel = 2;
-      demotions.push({ from, to: 2, reason: "not_reversible" });
-    }
+  }
+
+  // Seam (b): §7 structural invariant — an autonomous (L≥3) action MUST carry a
+  // proven, replayable inverse (`sql_inverse`). ANY other case demotes to confirm
+  // (L2). This now fires GENERALLY, not just inside the `sqlMutation` branch:
+  // previously an L≥3 trigger that declared NO sqlMutation reached the autonomous
+  // route with `reversalOp === null` and `reversible_required` unenforced. Now a
+  // missing/non-sql_inverse inverse always demotes — no autonomous path without a
+  // proven undo. (Non-reversible capabilities are already max_level≤2 by the seed
+  // invariant, so this only bites a mis-wired L≥3 trigger — the safe direction.)
+  if (effectiveLevel >= 3 && reversalOp?.kind !== "sql_inverse") {
+    const from = effectiveLevel;
+    effectiveLevel = 2;
+    demotions.push({ from, to: 2, reason: "not_reversible" });
   }
   const demoted = demotions.length > 0;
 

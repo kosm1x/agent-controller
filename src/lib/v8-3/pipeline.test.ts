@@ -43,6 +43,27 @@ function trigger(
   };
 }
 
+/**
+ * A trigger declaring a valid `sql_inverse` mutation — the ONLY strategy that
+ * keeps an L≥3 decision on the autonomous path (§7 seam b). The capability must
+ * be canonically `sql_inverse` (`task_edit`) or seam (a) refuses it. Targets a
+ * non-existent `tasks` row so `captureSqlPreState` snapshots `before:null` (an
+ * INSERT-inverse = DELETE) without needing seeded data.
+ */
+function sqlTrigger(
+  capability: string,
+  context: Record<string, unknown> = { ok: true },
+): DecisionTrigger {
+  return {
+    ...trigger(capability, context),
+    sqlMutation: {
+      targets: [{ table: "tasks", pk: { task_id: "svc-nonexistent" } }],
+      strategy: "sql_inverse",
+      allowedTables: ["tasks"],
+    },
+  };
+}
+
 const OPEN_GATE: GateConfig = { reversible_required: true, max_level: 5 };
 
 beforeEach(() => {
@@ -70,33 +91,71 @@ describe("runDecisionPipeline", () => {
     expect(r.status).toBe("committed");
   });
 
-  it("L4 in-ODD → autonomous, no approve, no demote", async () => {
+  it("L4 in-ODD WITH a proven sql_inverse reversal → autonomous, no approve, no demote", async () => {
     seedCapability({
-      capability: "c_l4",
+      capability: "task_edit",
       level: 4,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(trigger("c_l4"));
+    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
     expect(r.route).toBe("autonomous");
     expect(r.inODD).toBe(true);
     expect(r.demoted).toBe(false);
     expect(r.effectiveLevel).toBe(4);
+    expect(r.reversal).toBe("sql_inverse");
     expect(r.events).toEqual(["proposed", "executed"]);
   });
 
-  it("L4 out-of-ODD → demote to L3 (still autonomous), emits autonomy_demoted", async () => {
+  it("L4 out-of-ODD (sql_inverse) → demote to L3 (still autonomous), emits autonomy_demoted", async () => {
     seedCapability({
-      capability: "c_l4o",
+      capability: "task_edit",
       level: 4,
       odd: ALWAYS_OUT,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(trigger("c_l4o"));
+    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
     expect(r.demoted).toBe(true);
-    expect(r.effectiveLevel).toBe(3);
+    expect(r.effectiveLevel).toBe(3); // ODD demote 4→3; sql_inverse keeps it autonomous
     expect(r.route).toBe("autonomous");
     expect(r.events).toEqual(["proposed", "autonomy_demoted", "executed"]);
+  });
+
+  it("seam (b): an L≥3 trigger with NO reversible mutation demotes to confirm — no autonomous path without a proven inverse", async () => {
+    seedCapability({
+      capability: "c_l4nr",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    // no sqlMutation → reversalOp stays null; previously this reached the
+    // autonomous route with reversible_required unenforced.
+    const r = await runDecisionPipeline(trigger("c_l4nr"));
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+    expect(r.demoted).toBe(true);
+    expect(r.reversal).toBeNull();
+    expect(r.events).toContain("autonomy_demoted");
+  });
+
+  it("seam (a): a trigger whose declared strategy ≠ the capability's canonical strategy is refused (a compensating-only cap cannot build a local sql_inverse)", async () => {
+    seedCapability({
+      capability: "northstar_sync", // canonically compensating (see CAPABILITY_SEEDS)
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const badTrigger: DecisionTrigger = {
+      ...trigger("northstar_sync"),
+      sqlMutation: {
+        targets: [{ table: "tasks", pk: { task_id: "x" } }],
+        strategy: "sql_inverse",
+        allowedTables: ["tasks"],
+      },
+    };
+    await expect(runDecisionPipeline(badTrigger)).rejects.toThrow(
+      /canonical strategy is 'compensating'/,
+    );
   });
 
   it("L3 out-of-ODD → demote to L2 → confirm route", async () => {
@@ -131,16 +190,16 @@ describe("runDecisionPipeline", () => {
     expect(r.events).toEqual(["proposed", "approved", "executed"]);
   });
 
-  it("ux_confirm_flag forces confirm even for an L4 in-ODD capability", async () => {
+  it("ux_confirm_flag forces confirm even for an L4 in-ODD (sql_inverse) capability", async () => {
     seedCapability({
-      capability: "c_ux",
+      capability: "task_edit",
       level: 4,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
       uxConfirm: true,
     });
-    const r = await runDecisionPipeline(trigger("c_ux"));
-    expect(r.effectiveLevel).toBe(4);
+    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
+    expect(r.effectiveLevel).toBe(4); // reversible, so not demoted; ux_confirm forces route
     expect(r.route).toBe("confirm");
     expect(r.events).toContain("approved");
   });
@@ -209,14 +268,14 @@ describe("runDecisionPipeline", () => {
     expect(r.events).toEqual(["proposed", "approved", "executed"]);
   });
 
-  it("base L5 in-ODD → autonomous (silent), no approve", async () => {
+  it("base L5 in-ODD (sql_inverse) → autonomous (silent), no approve", async () => {
     seedCapability({
-      capability: "c_l5",
+      capability: "task_edit",
       level: 5,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(trigger("c_l5"));
+    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
     expect(r.effectiveLevel).toBe(5);
     expect(r.route).toBe("autonomous");
     expect(r.inODD).toBe(true);
@@ -358,12 +417,12 @@ describe("runDecisionPipeline — Phase 3 reversibility", () => {
   it("a sqlMutation trigger records a real sql_inverse reversal op + captured pre-state", async () => {
     makeWidgets();
     seedCapability({
-      capability: "c_sql",
+      capability: "task_edit", // canonically sql_inverse (seam a)
       level: 4,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(triggerSql("c_sql", { id: 1 }));
+    const r = await runDecisionPipeline(triggerSql("task_edit", { id: 1 }));
     expect(r.reversal).toBe("sql_inverse");
     expect(r.route).toBe("autonomous");
     expect(r.status).toBe("committed");
@@ -382,13 +441,13 @@ describe("runDecisionPipeline — Phase 3 reversibility", () => {
   it("§7: an autonomous (L4) action with a non-reversible (compensating) op demotes to confirm", async () => {
     makeWidgets();
     seedCapability({
-      capability: "c_comp",
+      capability: "gmail_send", // canonically compensating (seam a)
       level: 4,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
     const r = await runDecisionPipeline(
-      triggerSql("c_comp", { id: 1 }, "compensating"),
+      triggerSql("gmail_send", { id: 1 }, "compensating"),
     );
     expect(r.demoted).toBe(true);
     expect(r.effectiveLevel).toBe(2);
@@ -406,12 +465,12 @@ describe("runDecisionPipeline — Phase 3 reversibility", () => {
   it("auto-reverts on execution failure and restores the mutated row", async () => {
     makeWidgets();
     seedCapability({
-      capability: "c_rev",
+      capability: "task_edit", // canonically sql_inverse (seam a)
       level: 1,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(triggerSql("c_rev", { id: 1 }), {
+    const r = await runDecisionPipeline(triggerSql("task_edit", { id: 1 }), {
       // simulate a partial mutation that then fails
       execute: () => {
         getDatabase()
@@ -441,12 +500,12 @@ describe("runDecisionPipeline — Phase 3 reversibility", () => {
   it("a failed auto-revert (replay errors) stays pending and is NOT mislabeled reverted", async () => {
     makeWidgets();
     seedCapability({
-      capability: "c_revfail",
+      capability: "task_edit", // canonically sql_inverse (seam a)
       level: 1,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(triggerSql("c_revfail", { id: 1 }), {
+    const r = await runDecisionPipeline(triggerSql("task_edit", { id: 1 }), {
       // mutate, then destroy the table so the inverse replay throws → not restored
       execute: () => {
         getDatabase()

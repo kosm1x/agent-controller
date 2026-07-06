@@ -27,7 +27,7 @@
 import type Database from "better-sqlite3";
 import type { ToolRegistry } from "../../tools/registry.js";
 import { getToolAnnotations } from "../../tools/types.js";
-import type { CapabilitySeed } from "./types.js";
+import type { CapabilitySeed, ReversalStrategy } from "./types.js";
 import { deriveReversibleDefault } from "./types.js";
 
 /**
@@ -137,6 +137,31 @@ export const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
       "Schedule a future task (self-blast, delete_schedule inverse; natural first-flipper).",
   },
 ] as const;
+
+/**
+ * Canonical per-capability reversal strategy — the STRUCTURAL invariant the
+ * decision pipeline binds `buildReversalOp` to. Sourced from the IMMUTABLE seed
+ * constant, NOT a mutable `capability_autonomy` column: a reversal strategy is a
+ * compile-time property of a capability (a sent email is compensating-only,
+ * forever), so persisting it as runtime state would only invite drift. The
+ * pipeline reads this — never the caller's trigger — so a caller can never coax
+ * a compensating-only capability (e.g. `northstar_sync`) into building a local
+ * `sql_inverse` (the 2026-05-12 resurrection risk).
+ */
+const REVERSAL_STRATEGY_BY_CAPABILITY: ReadonlyMap<string, ReversalStrategy> =
+  new Map(CAPABILITY_SEEDS.map((s) => [s.capability, s.reversal_strategy]));
+
+export function reversalStrategyForCapability(
+  capability: string,
+): ReversalStrategy {
+  const strategy = REVERSAL_STRATEGY_BY_CAPABILITY.get(capability);
+  if (!strategy) {
+    throw new Error(
+      `V8.3: no canonical reversal strategy for capability '${capability}' (not in CAPABILITY_SEEDS)`,
+    );
+  }
+  return strategy;
+}
 
 /**
  * Validate a seed's structural-safety invariants. Returns the first violation
