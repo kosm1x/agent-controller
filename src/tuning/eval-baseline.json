@@ -1,10 +1,10 @@
 {
-  "overall": 63.35,
+  "overall": 60.35,
   "epsilon": 2.0,
   "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk (Sonnet primary / Haiku fallback), prod default as of 2026-07-05",
-  "capturedAt": "2026-07-04T07:16:53Z",
+  "capturedAt": "2026-07-06T21:44:00Z",
   "nCases": 416,
   "toolSelectionCases": 55,
-  "source": "PROVISIONAL / NOT-YET-COMPARABLE — seeded from nightly tune_runs row tune-1783148400126 (last real full run, $5.99, ~16min). The nightly runs as a ritual INSIDE the live process, where toolRegistry holds ~257 tools (builtin+MCP+Google+Memory+Skills). eval-gate runs standalone and registers ONLY the builtin source (~160 tools), so its absolute composite is NOT comparable to this number.",
-  "note": "BEFORE this gate's PASS/FAIL means anything, capture a gate-native incumbent against the CURRENT prod config: `npm run eval:gate -- --run --update-baseline`. That measures incumbent and every future candidate under the IDENTICAL harness (same builtin registry, same 416 cases, same scorer), which is what makes the relative comparison valid. epsilon is in composite points on the 0-100 scale (the brief's 0.02 on a 0-1 scale = 2.0 here). Observed nightly incumbents drifted 66.9 -> 63.3 over 2026-06-27..07-04 — flagged for the operator, out of this gate's scope."
+  "source": "GATE-NATIVE incumbent — measured 2026-07-06 by `npm run eval:gate --run` under the standalone harness (builtin-only tool source, ~160 tools). SUPERSEDES the prior PROVISIONAL 63.35 seed, which came from a nightly run INSIDE the live process (~257 tools) and was explicitly NOT comparable to the gate's 160-tool composite (see git history of this file). Deterministic: the eval scored composite 60.35 on THREE runs — 2x on the truncated-title PR-misroute fix candidate and 1x on the pristine incumbent (that fix stashed) — so the fix is provably NEUTRAL to the gate (byte-identical breakdown to the incumbent).",
+  "note": "Breakdown at capture: tool_selection 25.18 (weight 50%), scope_accuracy 92.54 (30%), classification 100.00 (20%). tool_selection is structurally lower here than the nightly because the standalone gate registers only the builtin tool source (~160), not the full in-process registry (~257 incl. MCP/Google/Memory/Skills) — so this number is only comparable to OTHER gate runs, never to nightly tune_runs. Recapture with `npm run eval:gate -- --run --update-baseline` after any prod model / system-prompt / tool-description change."
 }

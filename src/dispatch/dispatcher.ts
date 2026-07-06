@@ -47,6 +47,14 @@ export interface TaskSubmission {
   tags?: string[];
   tools?: string[];
   input?: unknown;
+  /**
+   * Full, UNTRUNCATED user text for runner-classification of messaging tasks.
+   * `title` is truncated to 60 chars for display and a mid-word cut can forge a
+   * coding signal ("precio"→"pr") that misroutes a chat into the nanoclaw sandbox
+   * (2026-07-06). Chat callers set this to the raw inbound message; the classifier
+   * detects on it instead of the truncated title. See ClassificationInput.
+   */
+  detectionText?: string;
   parentTaskId?: string;
   spawnType?: "root" | "subtask" | "user-background";
   /** Prior conversation turns for thread continuity (chat tasks). */
@@ -304,6 +312,9 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     tags: submission.tags,
     priority: submission.priority,
     agentType: submission.agentType,
+    // Full untruncated inbound for messaging detection (chat titles are truncated
+    // to 60 chars → a mid-word cut can forge a coding signal). See classifier.
+    detectionText: submission.detectionText,
     // Sibling projects named (not just path-referenced) keep a coding task off
     // the mission-control-only nanoclaw sandbox. Resolved fresh per submission.
     foreignProjectNames: getForeignProjectNames(db),
@@ -563,6 +574,15 @@ async function dispatchWithSlot(
   };
 
   taskStarted(agentType);
+  // The runner that ultimately ANSWERS this task. Starts as the classified type
+  // but is re-stamped to "fast" if the nanoclaw→fast misroute fallback below
+  // succeeds, so cost + outcome are attributed to the runner that actually ran
+  // (not the sandbox that failed). See the fallback block for the rationale.
+  let effectiveAgentType: AgentType = agentType;
+  // W2: the caller acquired a container slot for a container runner; normally the
+  // `finally` releases it. The fallback releases it EARLY (before the container-
+  // less fast re-run) and sets this so the `finally` doesn't double-release.
+  let containerSlotReleased = false;
   try {
     const start = Date.now();
     // Ritual tasks: wrap the runner's entire async execution in ritualContext
@@ -570,9 +590,80 @@ async function dispatchWithSlot(
     // the LLM loop. Non-ritual submissions skip the wrap entirely, preserving
     // the original process-global guard behavior for normal traffic.
     const ritualId = submission.ritualId;
-    const result = await (ritualId
+    let result = await (ritualId
       ? ritualContext.run({ ritualId }, () => runner.execute(input))
       : runner.execute(input));
+
+    // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
+    // failed there WITHOUT an error. The sandbox mounts ONLY mission-control, so a
+    // plain question — or any non-mc-coding chat that slips classification — has
+    // nothing to author and self-assesses failure (success:false, no error). We
+    // re-run ONCE on the fast runner IN-PROCESS: the taskId is unchanged, so the
+    // router's pending reply still delivers, and `input` (persona + messaging
+    // tools + history) is already assembled. The classifier fix (detectionText,
+    // 2026-07-06) prevents the truncation misroute at the source; this is the net
+    // for any OTHER no-op nanoclaw chat failure. R1: gated on `!result.error` so
+    // an ERROR-bearing nanoclaw failure (container crash, real coding error)
+    // surfaces honestly instead of being masked by a confident fast non-answer.
+    // Loop-free: a single inline fast.execute, gated on agentType==='nanoclaw'.
+    if (
+      !result.success &&
+      !result.error &&
+      agentType === "nanoclaw" &&
+      (submission.tags ?? []).includes("messaging")
+    ) {
+      const fastRunner = runners.get("fast");
+      if (fastRunner) {
+        log.warn(
+          { taskId },
+          "nanoclaw chat failed (no-op/scope) — falling back to fast runner",
+        );
+        // W2: the nanoclaw container already spawned + exited inside the runner;
+        // free the scarce container slot before the container-less fast re-run so
+        // other queued nanoclaw tasks aren't blocked by the extra round-trip.
+        if (needsContainer(agentType) && !containerSlotReleased) {
+          releaseContainerSlot();
+          containerSlotReleased = true;
+        }
+        // W1: record the failed nanoclaw attempt's own token spend before `result`
+        // is overwritten, so it isn't dropped from the cost ledger. Same phantom-
+        // zero guard as the main cost block (skip aborted/zero-usage rows).
+        if (result.tokenUsage && !isPhantomZeroCostRow(result)) {
+          try {
+            recordCost({
+              runId,
+              taskId,
+              agentType: "nanoclaw",
+              model: result.tokenUsage.actualModel ?? getModelFromTask(taskId),
+              promptTokens: result.tokenUsage.promptTokens,
+              completionTokens: result.tokenUsage.completionTokens,
+              ...(result.tokenUsage.actualCostUsd !== undefined && {
+                costUsdOverride: result.tokenUsage.actualCostUsd,
+              }),
+            });
+          } catch {
+            // Cost recording must never block completion
+          }
+        }
+        try {
+          const fb = await fastRunner.execute(input);
+          if (fb.success) {
+            result = fb;
+            // W1: attribute the rescued task to the runner that actually answered.
+            // Without this, the outcome tracker books a fast success as a nanoclaw
+            // success, and the classifier's outcome signal then nudges future
+            // similar chats BACK toward the sandbox — a self-reinforcing misroute.
+            effectiveAgentType = "fast";
+            db.prepare(
+              "UPDATE tasks SET agent_type = 'fast' WHERE task_id = ?",
+            ).run(taskId);
+          }
+        } catch (err) {
+          log.error({ err, taskId }, "fast-runner fallback threw");
+        }
+      }
+    }
+
     const durationMs = Date.now() - start;
 
     // Update run
@@ -737,7 +828,9 @@ async function dispatchWithSlot(
         recordCost({
           runId,
           taskId,
-          agentType,
+          // effectiveAgentType so a nanoclaw→fast rescue books its cost as "fast"
+          // (the failed nanoclaw attempt's cost was already recorded separately).
+          agentType: effectiveAgentType,
           model,
           promptTokens: result.tokenUsage.promptTokens,
           completionTokens: result.tokenUsage.completionTokens,
@@ -768,7 +861,7 @@ async function dispatchWithSlot(
       if (result.success) {
         getEventBus().emitEvent("task.completed", {
           task_id: taskId,
-          agent_id: agentType,
+          agent_id: effectiveAgentType,
           result: result.output,
           duration_ms: durationMs,
         });
@@ -796,7 +889,9 @@ async function dispatchWithSlot(
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
   } finally {
     taskCompleted(agentType);
-    if (needsContainer(agentType)) {
+    // The fast-fallback may have already released the container slot early (W2);
+    // guard against a double-release.
+    if (needsContainer(agentType) && !containerSlotReleased) {
       releaseContainerSlot();
     }
   }

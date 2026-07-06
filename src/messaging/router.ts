@@ -1374,6 +1374,9 @@ export class MessageRouter {
             `\n\n${timeContextLine(mxDate, mxTime)}\n` +
             `\nTarea del agente (background):\n${taskText}\n\n` +
             BACKGROUND_AGENT_BOILERPLATE,
+          // Classify on the full agent task text, not the 50-char title (see
+          // classifier `detectionText` — truncation can forge a coding signal).
+          detectionText: taskText,
           agentType: "auto",
           tools: scopedTools,
           spawnType: "user-background",
@@ -2114,6 +2117,10 @@ export class MessageRouter {
     const result = await submitTask({
       title: `Chat: ${titleText}`,
       description: taskDescription,
+      // Classify on the FULL message, not the 60-char-truncated title — a mid-word
+      // cut can forge a coding signal ("precio"→"pr") and misroute this chat into
+      // the nanoclaw sandbox (2026-07-06). See classifier `detectionText`.
+      detectionText: msg.text,
       agentType: "auto",
       tools,
       conversationHistory: historyForRunner,

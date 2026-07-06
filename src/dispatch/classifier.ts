@@ -65,6 +65,16 @@ export interface ClassificationInput {
    * prior behavior. See `referencesForeignProject`.
    */
   foreignProjectNames?: string[];
+  /**
+   * Full, UNTRUNCATED text to run runner-detection against for messaging tasks.
+   * Chat `title`s are truncated to 60 chars for display (router.ts), and a
+   * mid-word cut can forge a spurious coding signal (e.g. "precio"→"pr" matching
+   * \bPR\b) that misroutes a plain question into the nanoclaw sandbox. When set,
+   * the messaging branch detects on this instead of `title`. Falls back to
+   * `title` when absent, so non-messaging callers/tests are unaffected. See
+   * feedback_truncated_title_pr_misroute.
+   */
+  detectionText?: string;
 }
 
 export interface ClassificationResult {
@@ -187,7 +197,15 @@ const STRONG_CODING_PATTERNS: readonly RegExp[] = [
   /\b(refactor|refactoriza|debug|depura|hotfix)\b/i,
   /\bship[- ]?it\b/i,
   // git is unambiguous; "merge" only with a code context (NOT "merge the cells")
-  /\bgit\b|\bpull request\b|\bPR\b|\bmerge\s+(branch|conflict|request|main|master|rama)\b/i,
+  /\bgit\b|\bpull request\b|\bmerge\s+(branch|conflict|request|main|master|rama)\b/i,
+  // "PR" (pull-request abbreviation) is matched CASE-SENSITIVELY on its own —
+  // NOT folded into the /i pattern above. With /i, a 60-char-truncated Spanish
+  // word ("precio"→"pr", "propuesta"→"pr", "primero"→"pr") false-matches \bPR\b
+  // and misroutes a plain chat to the mission-control-only nanoclaw sandbox,
+  // which then fails it (UUUU investment-thesis question → "[Task failed]",
+  // 2026-07-06). Real pull requests are written "PR"; lowercase "pr" is never a
+  // coding signal. See feedback_truncated_title_pr_misroute.
+  /\bPR\b/,
   // A LONE "repo"/"repositorio" is NOT here: in chat, "guarda esto en el repo"
   // means save to the KB/project store (host-only jarvis_file_write), not
   // authoring code — forcing it to nanoclaw (no KB tools) silently evaporated the
@@ -404,10 +422,16 @@ export function classify(input: ClassificationInput): ClassificationResult {
 
   const tags = new Set((input.tags ?? []).map((t) => t.toLowerCase()));
   const isMessaging = tags.has("messaging");
-  // Detection text: messaging uses the clean TITLE (description is inflated by
-  // persona + memories → false positives); non-messaging uses title+description.
+  // Detection text: messaging uses the clean, FULL user message — `detectionText`
+  // (the untruncated inbound) when the router supplies it, else the `title`. The
+  // title is truncated to 60 chars for display and a mid-word cut can forge a
+  // coding signal ("precio"→"pr"), so detecting on it misroutes chats to the
+  // nanoclaw sandbox (2026-07-06). Description is deliberately NOT used for
+  // messaging (inflated by persona + memories → false positives). Non-messaging
+  // uses title+description as before.
+  const messagingText = input.detectionText ?? input.title;
   const detectText = isMessaging
-    ? input.title
+    ? messagingText
     : `${input.title} ${input.description}`;
   // Kill switch scoped to messaging: MESSAGING_HEAVY_ESCALATION=false reverts
   // messaging to fast-for-all. Non-messaging routing is always active (rituals
@@ -444,7 +468,10 @@ export function classify(input: ClassificationInput): ClassificationResult {
   // repo and git_*/shell_exec actually exist.
 
   if (isMessaging) {
-    const isFanOut = isFanOutTask(input.title);
+    // Detect fan-out / heavy-reasoning / tier on the full message (`messagingText`),
+    // not the truncated title — a fan-out quantifier or heavy-reasoning cue can sit
+    // past char 60, and the title cut can also forge signals (see detectText above).
+    const isFanOut = isFanOutTask(messagingText);
     // A per-item fan-out ("un archivo para cada prospecto") parallelizes cleanly:
     // swarm decomposes the goal graph and runs the independent items concurrently,
     // avoiding fast's silent-partial-on-budget-exhaustion (validated end-to-end
@@ -463,7 +490,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
     // Non-coding chat: a genuinely challenging request — or a fan-out when swarm is
     // disabled — gets heavy's PER loop; everything else stays on fast (MCP tools,
     // no container).
-    if (advancedRouting && (needsHeavyReasoning(input.title) || isFanOut)) {
+    if (advancedRouting && (needsHeavyReasoning(messagingText) || isFanOut)) {
       return {
         agentType: "heavy",
         score: 6,
@@ -479,7 +506,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
       score: 0,
       reason: "messaging task → fast",
       explicit: false,
-      modelTier: computeMessagingTier(input.title, input.description),
+      modelTier: computeMessagingTier(messagingText, input.description),
     };
   }
 

@@ -286,6 +286,80 @@ describe("classifier", () => {
     expect(result.agentType).toBe("fast");
   });
 
+  // ----- Truncated-title \bPR\b misroute (UUUU investment question, 2026-07-06) -----
+  // The router truncates chat titles to 60 chars for display; a mid-word cut split
+  // a Spanish word ("precio"→"pr") into a token that the case-INSENSITIVE \bPR\b
+  // pattern (pull-request abbrev) matched, misrouting a plain question into the
+  // nanoclaw sandbox where it failed with "[Task failed]". Two fixes: \bPR\b is now
+  // case-SENSITIVE, and messaging classifies on the untruncated `detectionText`.
+  // See feedback_truncated_title_pr_misroute.
+  it("keeps a truncated 'precio'→'pr' chat OFF nanoclaw (the UUUU bug, fix A)", () => {
+    const result = classify({
+      title:
+        "Chat: Hace tiempo revisamos la tesis de inversión para UUUU. Su pr...",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging", "telegram"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("still detects a REAL 'PR' (uppercase) as coding → nanoclaw", () => {
+    const result = classify({
+      title: "Chat: revisa el PR #42 y haz merge a main",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("does NOT treat a lowercase 'pr' token as a coding signal", () => {
+    const result = classify({
+      title: "Chat: dame el pr de ventas de este mes",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  // fix B discrimination: title and detectionText must classify DIFFERENTLY so the
+  // test fails if classify() ever reverts to detecting on the truncated title.
+  it("detectionText OVERRIDES a coding-looking title (title→nanoclaw, full→fast)", () => {
+    const shared = {
+      // Uppercase "PR" in the (truncated) title WOULD route to nanoclaw on its own…
+      title: "Chat: revisa el PR de accion...",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging", "telegram"],
+    };
+    // control: title alone (no detectionText) → nanoclaw
+    expect(classify(shared).agentType).toBe("nanoclaw");
+    // …but the untruncated message is a benign price question → fast
+    expect(
+      classify({
+        ...shared,
+        detectionText: "revisa el precio de la acción de UUUU hoy",
+      }).agentType,
+    ).toBe("fast");
+  });
+
+  it("detectionText SURFACES coding hidden past the title's 60-char cut", () => {
+    const shared = {
+      // Benign-looking truncated title → fast on its own…
+      title: "Chat: oye una cosa rápida sobre el proyecto que...",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    };
+    // control: title alone → fast
+    expect(classify(shared).agentType).toBe("fast");
+    // …but the full message asks for code work → nanoclaw
+    expect(
+      classify({
+        ...shared,
+        detectionText:
+          "oye una cosa rápida sobre el proyecto que necesito: implementa el endpoint de retry y agrega un test",
+      }).agentType,
+    ).toBe("nanoclaw");
+  });
+
   // ----- Foreign-repo git ops stay on the HOST, never nanoclaw (2026-06-20) -----
   // The nanoclaw sandbox only mounts /root/claude/mission-control. A git/file op on
   // a sibling repo (e.g. the Williams Journal) routed to nanoclaw silently never
