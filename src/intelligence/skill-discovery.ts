@@ -134,10 +134,12 @@ Related tasks: ${titles.join(", ") || "N/A"}
 
 Instructions:
 1. Use skill_list to check if a similar skill already exists
-2. If no similar skill exists, use skill_save with:
-   - name: a descriptive Spanish name for this workflow
-   - trigger_text: keywords that would trigger this skill
-   - steps: describe the logical steps of the workflow
+2. If no similar skill exists, use skill_save. ALL of these params are REQUIRED
+   (each maps to a NOT NULL column — omitting one makes the save fail):
+   - name: a short snake_case name for this workflow
+   - description: ONE sentence describing what the skill does
+   - trigger: natural-language description of the request that should activate it
+   - steps: an ORDERED ARRAY of step descriptions (one string per step)
    - tools: ${JSON.stringify(tools)}
 3. If a similar skill already exists, do nothing
 
