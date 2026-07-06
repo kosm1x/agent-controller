@@ -1717,6 +1717,7 @@ usage() {
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
   echo -e "                          metrics: utility | cache-hit | latency | cost"
   echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
+  echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2682,6 +2683,12 @@ cmd_audit_closure() {
 # V8.1 §13 activation gate (Phase 9)
 # ---------------------------------------------------------------------------
 
+cmd_v83_gate() {
+  # mc-ctl v83-gate — evaluate the V8.3 §14 v1 activation gate (substrate +
+  # 7-day shadow readiness for the operator's first L1→L2 promotion). Read-only.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/v83-gate.ts )
+}
+
 cmd_briefing_gate() {
   # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
   # ratio over reflection inference + morning-brief promote-rate). Read-only.
@@ -2742,6 +2749,7 @@ case "$cmd" in
   cohort)            cmd_cohort "$@" ;;
   recall-modes)      cmd_recall_modes ;;
   briefing-gate)     cmd_briefing_gate ;;
+  v83-gate)          cmd_v83_gate ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;
