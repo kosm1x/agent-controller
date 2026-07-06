@@ -5,7 +5,10 @@ import {
   combineVerdicts,
   briefConfidenceColor,
 } from "./v82-activation-gate.js";
-import { CRITIC_UNVERIFIED_MARKER } from "../lib/v8-2/critic.js";
+import {
+  CRITIC_UNVERIFIED_MARKER,
+  CRITIC_NO_TOOL_CALL_MSG,
+} from "../lib/v8-2/critic.js";
 
 const NOW = new Date().toISOString();
 
@@ -336,6 +339,32 @@ describe("evaluateV82Gate", () => {
     const g = evaluateV82Gate();
     expect(g.criticUnverified).toBe(1);
     expect(g.unfixablePct).toBe(0); // the only unfixable was infra → excluded
+  });
+
+  it("retro-classifies an OLDER-vintage infra row that lacks the escalation marker (the #38 gap)", () => {
+    const b = insertBrief("promoted");
+    for (let i = 0; i < 9; i++) {
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    // Pre-2026-07-01 infra row: escalated critique carries the inner no-tool-call
+    // message but NOT the "(critic could not verify)" suffix (added later).
+    const u = insertJudgment({
+      briefingId: b,
+      confidence: "green",
+      verdict: "unfixable",
+      critique: `escalated to unfixable after 2 needs_revision iterations — last critique: ${CRITIC_NO_TOOL_CALL_MSG}`,
+    });
+    insertClaim(u, "resolved");
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.criticUnverified).toBe(1); // caught despite the missing suffix
+    expect(g.unfixablePct).toBe(0);
   });
 
   it("measures acceptance at BRIEF grain — a mixed-color brief counts once by its lead color, not once per judgment", () => {

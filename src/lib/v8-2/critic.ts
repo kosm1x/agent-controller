@@ -75,12 +75,19 @@ export type CriticVerdict = (typeof CRITIC_VERDICTS)[number];
 export type UnfixableReason = "contradicted" | "unverified" | "unsupported";
 
 /**
- * Machine-emitted marker appended to an escalated critique when the critic never
- * produced a verdict. Exported so the §17 gate can retro-classify trail rows
- * written before `unfixableReason` was persisted — it matches THIS module's own
- * constant, not free-form LLM text, and self-retires as old rows age out.
+ * Machine-emitted markers that identify a critic INFRA failure (never verified)
+ * inside a persisted critique. Exported so the §17 gate can retro-classify trail
+ * rows written before `unfixableReason` was persisted — they match THIS module's
+ * own constants, not free-form LLM text, and self-retire as old rows age out.
+ *
+ * TWO markers because there are two critique vintages: the escalation suffix
+ * `CRITIC_UNVERIFIED_MARKER` was only added 2026-07-01, but the inner no-tool-call
+ * message `CRITIC_NO_TOOL_CALL_MSG` (emitted since S2) survives in BOTH vintages'
+ * `tail`. Matching either catches every infra row regardless of when it was written.
  */
 export const CRITIC_UNVERIFIED_MARKER = "(critic could not verify)";
+export const CRITIC_NO_TOOL_CALL_MSG =
+  "critic did not call submit_critic_verdict — model output was free text without a tool call";
 
 /** Single-source-of-truth tool name (a typo would silently drift the prompt). */
 export const SUBMIT_CRITIC_VERDICT_TOOL_NAME = "submit_critic_verdict";
@@ -580,8 +587,7 @@ export async function runCritic(
     // failure → conservative needs_revision so the loop can retry/escalate.
     return {
       verdict: "needs_revision",
-      critique:
-        "critic did not call submit_critic_verdict — model output was free text without a tool call",
+      critique: CRITIC_NO_TOOL_CALL_MSG,
       contradictedClaimIds: [],
       latencyMs,
       costUsd,
@@ -697,8 +703,9 @@ export interface CriticLoopResult extends CriticResult {
  * ONLY a pass that VERIFIED, contradicted nothing, AND left no unsupported
  * sentence is `approved` — that residual is a CORRECTABLE citation/sourcing nit on
  * RESOLVED claims that the re-author couldn't fully fix, usually because the right
- * source isn't in the frozen task-only ledger (the critic verifies against task +
- * KB recall, so it can demand a marker the author has no ledger entry for). That
+ * source isn't in the author's ledger (tasks + a subject-keyed KB pass + recent
+ * day-logs) while the critic verifies against a broader surface (arbitrary recall
+ * + SQL over 6 tables), so it can demand a marker the author has no entry for. That
  * judgment is substantively sound, so `approved` beats mislabeling it "contradicted
  * by ground truth" (which also structurally caps the §17 unfixable rate). The
  * residual critique is preserved in the critic trail — visible in the AUDIT trail

@@ -24,6 +24,7 @@ import {
   retrieveForAngle,
   retrieveTasksForBoundaries,
   retrieveKbForQuery,
+  retrieveRecentDayLogs,
   gatherEvidence,
   saveDecomposition,
   MAX_ANGLE_LIMIT,
@@ -446,6 +447,114 @@ describe("retrieveKbForQuery + gatherEvidence KB pass (Phase 2 — ledger↔cita
       retrieveKbForQuery("pipesong", { db: getDatabase() }),
     ).not.toThrow();
     expect(retrieveKbForQuery("pipesong", { db: getDatabase() })).toEqual([]);
+  });
+});
+
+describe("retrieveRecentDayLogs + gatherEvidence day-log pass (staleness gap)", () => {
+  beforeEach(() => {
+    initDatabase(":memory:");
+    const db = getDatabase();
+    const kb = db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    );
+    // Three day-logs mention the subject (varying dates) + one that does not +
+    // one non-day-log KB file that mentions it (must NOT be picked by this pass).
+    kb.run(
+      "d1",
+      "logs/day-logs/2026-06-17.md",
+      "day 06-17",
+      "Kicked off salon-voice-outreach scoping.",
+    );
+    kb.run(
+      "d2",
+      "logs/day-logs/2026-06-27.md",
+      "day 06-27",
+      "Actualiza el kb de salon-voice-outreach con el repo. Stage 1 shipped.",
+    );
+    kb.run(
+      "d3",
+      "logs/day-logs/2026-06-28.md",
+      "day 06-28",
+      "vlcrm extraction for salon-voice-outreach.",
+    );
+    kb.run(
+      "d4",
+      "logs/day-logs/2026-06-20.md",
+      "day 06-20",
+      "Worked on an unrelated project only.",
+    );
+    kb.run(
+      "k-readme",
+      "projects/salon-voice-outreach/README.md",
+      "SVO",
+      "salon-voice-outreach README.",
+    );
+    // A non-date file INSIDE the day-log namespace (kb-reindex could ingest one).
+    // Must be excluded: in DESC order 'R' > '2', so an unanchored GLOB would sort
+    // it above every date and displace the newest real logs (W1 regression guard).
+    kb.run(
+      "dl-readme",
+      "logs/day-logs/README.md",
+      "index",
+      "day-log index for salon-voice-outreach and others.",
+    );
+  });
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  it("returns day-logs mentioning the subject, NEWEST-first, honoring the limit", () => {
+    const refs = retrieveRecentDayLogs("salon-voice-outreach", {
+      db: getDatabase(),
+      nowIso: NOW,
+      limit: 2,
+    });
+    expect(refs.map((r) => r.id)).toEqual([
+      "logs/day-logs/2026-06-28.md",
+      "logs/day-logs/2026-06-27.md",
+    ]); // newest 2; 06-17 dropped by limit
+    expect(refs.every((r) => r.kind === "kb_entry")).toBe(true);
+    expect(refs[0].excerpt.startsWith("day-log 2026-06-28")).toBe(true);
+    expect(refs[0].retrieved_at).toBe(NOW);
+  });
+
+  it("excludes day-logs that do NOT mention the subject, and non-day-log paths", () => {
+    const ids = retrieveRecentDayLogs("salon-voice-outreach", {
+      db: getDatabase(),
+    }).map((r) => r.id);
+    expect(ids).not.toContain("logs/day-logs/2026-06-20.md"); // no mention
+    expect(ids).not.toContain("projects/salon-voice-outreach/README.md"); // not a day-log
+    expect(ids).not.toContain("logs/day-logs/README.md"); // non-date file in the namespace
+  });
+
+  it("returns [] on a blank subject", () => {
+    expect(retrieveRecentDayLogs("   ", { db: getDatabase() })).toEqual([]);
+  });
+
+  it("gatherEvidence appends the day-log pass when a subject is set", () => {
+    const decomposition: Decomposition = {
+      question: "state of svo?",
+      angles: [angle({ boundaries: { status_in: ["blocked"] } })],
+      generated_at: NOW,
+    };
+    const ledger = gatherEvidence(decomposition, {
+      db: getDatabase(),
+      nowIso: NOW,
+      subject: "salon-voice-outreach",
+    });
+    expect(ledger.some((r) => r.id === "logs/day-logs/2026-06-28.md")).toBe(
+      true,
+    );
+  });
+
+  it("degrades to [] (never throws) when jarvis_files is absent", () => {
+    getDatabase().exec("DROP TABLE jarvis_files_fts; DROP TABLE jarvis_files;");
+    expect(() =>
+      retrieveRecentDayLogs("salon-voice-outreach", { db: getDatabase() }),
+    ).not.toThrow();
+    expect(
+      retrieveRecentDayLogs("salon-voice-outreach", { db: getDatabase() }),
+    ).toEqual([]);
   });
 });
 

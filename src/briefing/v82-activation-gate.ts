@@ -22,7 +22,10 @@
  */
 
 import { getDatabase } from "../db/index.js";
-import { CRITIC_UNVERIFIED_MARKER } from "../lib/v8-2/critic.js";
+import {
+  CRITIC_UNVERIFIED_MARKER,
+  CRITIC_NO_TOOL_CALL_MSG,
+} from "../lib/v8-2/critic.js";
 import type { ActivationGateCheck } from "./activation-gate.js";
 
 /** spec §17 thresholds. */
@@ -228,13 +231,19 @@ export function evaluateV82Gate(): V82GateResult {
       if (typeof t.verdict !== "string") continue;
       verdictsTotal++;
       if (t.verdict !== "unfixable") continue;
-      // Structured field wins; fall back to the critic's own marker for rows
+      // Structured field wins; fall back to the critic's own markers for rows
       // written before `unfixableReason` was persisted (self-retires in ≤7d).
+      // Two markers: the newer escalation suffix AND the inner no-tool-call
+      // message that survives in both critique vintages (see critic.ts) — an
+      // older infra row (#38 vintage) carries only the latter.
+      const isInfraCritique =
+        typeof t.critique === "string" &&
+        (t.critique.includes(CRITIC_UNVERIFIED_MARKER) ||
+          t.critique.includes(CRITIC_NO_TOOL_CALL_MSG));
       const reason =
         typeof t.unfixableReason === "string"
           ? t.unfixableReason
-          : typeof t.critique === "string" &&
-              t.critique.includes(CRITIC_UNVERIFIED_MARKER)
+          : isInfraCritique
             ? "unverified"
             : "contradicted";
       if (reason === "unverified") criticUnverified++;

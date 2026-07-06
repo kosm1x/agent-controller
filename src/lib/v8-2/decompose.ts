@@ -196,9 +196,7 @@ export async function decomposeQuestion(
     // critic.ts:261 abort-during-handler handling). Only a throw with NOTHING
     // captured is a real call failure.
     if (!sink.captured) {
-      throw new DecompositionError(
-        `decomposition call failed: ${errMsg(e)}`,
-      );
+      throw new DecompositionError(`decomposition call failed: ${errMsg(e)}`);
     }
   } finally {
     clearTimeout(timeoutHandle);
@@ -265,6 +263,10 @@ export interface RetrievalOptions {
  *  tokens (more so under the Sonnet-5 tokenizer). */
 export const DEFAULT_KB_LIMIT = 5;
 export const MAX_KB_LIMIT = 8;
+
+/** Recent day-logs pulled per gather. Kept tiny — freshest few are enough to
+ *  ground a "last activity" claim, and each ref costs author + critic tokens. */
+export const DEFAULT_DAYLOG_LIMIT = 3;
 
 type TaskEvidenceRow = {
   task_id: string;
@@ -360,12 +362,14 @@ type KbEvidenceRow = { path: string; title: string; snippet: string };
 
 /**
  * Retrieve KB (`jarvis_files`) rows matching a free-text query → evidence refs
- * (`kind='kb_entry'`, `id`=path). Mirrors the critic's `recall_check` surface
- * (lexical `jarvis_files_fts`, bm25 ranked) so the AUTHOR can cite the SAME KB
- * the critic VERIFIES against. This closes the ledger↔citation asymmetry that
- * capped the §17 unfixable rate: before Phase 2 the ledger was task-only, so the
- * critic could demand a `projects/<subject>/README.md` / timestamp the author
- * had no `[K]` marker for → a correct-but-mis-cited judgment it could never fix.
+ * (`kind='kb_entry'`, `id`=path). Approximates ONE of the critic's `recall_check`
+ * queries (lexical `jarvis_files_fts`, bm25 ranked) so the AUTHOR can cite the KB
+ * the critic VERIFIES against — before this the ledger was task-only, so the
+ * critic could demand a `projects/<subject>/README.md` / timestamp the author had
+ * no `[K]` marker for → a correct-but-mis-cited judgment it could never fix. This
+ * only NARROWS the asymmetry: it's a single subject-keyed query, whereas the
+ * critic runs up to 5 arbitrary recall queries + SQL over 6 tables, so a residual
+ * gap remains (a recent-day-log pass in `gatherEvidence` narrows it further).
  * Never throws: if `jarvis_files_fts` is absent (a bare in-memory db) the pass
  * degrades to empty and the ledger stays task-only.
  */
@@ -414,16 +418,93 @@ export function retrieveKbForQuery(
   }));
 }
 
+type DayLogEvidenceRow = { path: string; snippet: string };
+
+/**
+ * Recent day-log entries (`jarvis_files` under `logs/day-logs/`) that MENTION the
+ * subject, newest-first → evidence refs (`kind='kb_entry'`, id=path, same shape as
+ * KB so they dedup with the KB pass). Day-logs are the operator's declared
+ * work-truth source, so putting the freshest ones in the ledger lets the author
+ * cite live activity instead of propagating a stale "no work since <date>" /
+ * wrong-phase claim out of the uncited briefing narrative — the exact
+ * contradiction class the critic disproves against these SAME logs (judgment #46:
+ * prose said "no execution since 2026-06-17" while day-logs 06-27/06-28 existed).
+ *
+ * Deterministic base-table scan with `instr` (literal substring, case-folded)
+ * rather than `jarvis_files_fts`, for two reasons: (1) recency is the point here,
+ * and we order by filename date DESC — FTS gives bm25 RELEVANCE, which buries the
+ * newest log under the README; (2) the KB pass sanitizes the subject to a noisy
+ * token-OR (`salon OR voice OR outreach`), whereas an exact-phrase `instr` match
+ * keeps precision. `instr` also sidesteps LIKE-wildcard escaping. The path GLOB is
+ * anchored to the `YYYY-MM-DD.md` date shape so `ORDER BY path DESC` is a true
+ * recency sort — a stray `README.md`/nested dir in the namespace (kb-reindex
+ * auto-ingests any FS `.md`) would otherwise sort ABOVE all dates and displace the
+ * newest logs. Never throws: a missing table degrades to empty. Caveat: matches
+ * the raw subject, so a display-name subject ("PipeSong - Voice AI Infrastructure")
+ * matches fewer/staler logs than its slug ("pipesong") would — threading the
+ * project slug is the follow-up.
+ */
+export function retrieveRecentDayLogs(
+  subject: string,
+  options: RetrievalOptions & { limit?: number } = {},
+): EvidenceRef[] {
+  const needle = subject.trim();
+  if (!needle) return [];
+  const db = options.db ?? getDatabase();
+  const retrievedAt = options.nowIso ?? new Date().toISOString();
+  const limit = Math.min(options.limit ?? DEFAULT_DAYLOG_LIMIT, MAX_KB_LIMIT);
+
+  let rows: DayLogEvidenceRow[];
+  try {
+    rows = db
+      .prepare(
+        `SELECT path,
+                substr(content, MAX(1, instr(lower(content), lower(?)) - 30), 160) AS snippet
+           FROM jarvis_files
+          WHERE path GLOB 'logs/day-logs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md'
+            AND instr(lower(content), lower(?)) > 0
+          ORDER BY path DESC LIMIT ?`,
+      )
+      .all(needle, needle, limit) as DayLogEvidenceRow[];
+  } catch (e) {
+    // jarvis_files absent (bare in-memory db) → skip, never throw.
+    log.debug(
+      { err: errMsg(e) },
+      "decompose: day-log retrieval unavailable (jarvis_files) — skipped",
+    );
+    return [];
+  }
+
+  if (rows.length === limit) {
+    log.debug(
+      { limit, subject: needle },
+      "decompose: day-log retrieval hit the row limit — older mentions unseen",
+    );
+  }
+
+  return rows.map((r) => {
+    const date = r.path.slice("logs/day-logs/".length).replace(/\.md$/, "");
+    return {
+      kind: "kb_entry" as const,
+      id: r.path,
+      excerpt: `day-log ${date}: …${r.snippet.trim()}…`.slice(0, 200),
+      retrieved_at: retrievedAt,
+    };
+  });
+}
+
 /**
  * Run every angle's retrieval and return the deduplicated evidence ledger.
  * Dedup key is `kind:id` — the same task surfaced by two angles is one ledger
  * entry (the FIRST retrieval wins, preserving its excerpt/timestamp).
  *
- * Phase 2: when `options.subject` is set, a KB (`jarvis_files`) pass keyed on the
- * subject is appended, so the ledger the author cites includes the same identity
- * / grounding files the critic verifies against (`recall_check`). Subject-keyed
- * because the diagnosed failures were the critic demanding `projects/<subject>/`
- * README/snapshot sources that a task-only ledger could never carry.
+ * When `options.subject` is set, two supplemental `jarvis_files` passes are
+ * appended so the ledger the author cites approaches the surface the critic
+ * VERIFIES against (`recall_check` + day-log SQL): (1) a subject-keyed KB pass
+ * for identity/grounding files (`projects/<subject>/` README/snapshot); (2) a
+ * recent-day-log pass for live activity. Note this only NARROWS the asymmetry —
+ * the critic still runs up to 5 arbitrary recall queries + SQL over 6 tables, so
+ * a residual gap remains (see `retrieveRecentDayLogs` caveat + critic.ts).
  */
 export function gatherEvidence(
   decomposition: Decomposition,
@@ -442,6 +523,8 @@ export function gatherEvidence(
   }
   if (options.subject) {
     for (const ref of retrieveKbForQuery(options.subject, options)) push(ref);
+    for (const ref of retrieveRecentDayLogs(options.subject, options))
+      push(ref);
   }
   return ledger;
 }
