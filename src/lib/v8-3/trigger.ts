@@ -120,6 +120,15 @@ export async function executeGatedCapability(
     // No `sqlMutation`: jarvis_file_delete's reversal is tri_restore (DEFERRED),
     // so v1 is audit-ledger only (Phase-2 mock pre-state, no reversal op). A
     // sql_inverse capability (task_edit) declares sqlMutation at ITS own seam.
+    //
+    // No `externalContent` (Phase 5 §8): this seam is OBSERVABILITY-ONLY and must
+    // never block a confirmed action, so it deliberately does not feed the
+    // injection scanner. WIRING CONTRACT — before any caller sets `externalContent`
+    // here, this wrapper MUST handle a `status:"interrupted"` result: the pipeline
+    // RETURNS (does not throw) on an injection hit, so the `execute` callback never
+    // runs and `output` stays undefined → the `return output ?? ""` below would
+    // hand the operator a SILENT empty string. An interrupted decision must be
+    // surfaced ("blocked: possible prompt injection"), not swallowed as success.
   };
 
   try {

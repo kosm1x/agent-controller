@@ -42,6 +42,10 @@ import {
   type SqlPreState,
 } from "./reversal.js";
 import { reversalStrategyForCapability } from "./seed.js";
+import {
+  scanExternalContent,
+  type ExternalContent,
+} from "./external-content.js";
 
 export type DecisionRoute = "confirm" | "autonomous";
 
@@ -78,6 +82,15 @@ export interface DecisionTrigger {
     allowedTables: string[];
     compensatingProposal?: string;
   };
+  /**
+   * §8 — external (non-Jarvis) content this action consumes (operator message,
+   * kb_entry, scraped web, API response). When present, the pipeline runs the
+   * DETERMINISTIC injection heuristic before execute; a hit HALTS the decision as
+   * `interrupted` (never executes) + logs `interrupted`/`prompt_injection_suspected`.
+   * Absent ⇒ a purely internal action ⇒ no scan (dormant for the current canary,
+   * whose trigger declares none).
+   */
+  externalContent?: ExternalContent[];
 }
 
 export interface RunPipelineOptions {
@@ -99,7 +112,7 @@ export interface PipelineResult {
   /** ODD verdict, or null when not evaluated (L1-L2 always sync-confirm). */
   inODD: boolean | null;
   demoted: boolean;
-  status: "pending" | "committed" | "reverted";
+  status: "pending" | "committed" | "reverted" | "interrupted";
   /** Kind of the recorded reversal op, or null when none was declared. */
   reversal: ReversalOp["kind"] | null;
   /**
@@ -290,6 +303,39 @@ export async function runDecisionPipeline(
   });
   for (const demotion of demotions) {
     emit("autonomy_demoted", demotion);
+  }
+
+  // 4b. §8 prompt-injection defense. Scan any external content this action
+  //     consumes with the DETERMINISTIC heuristic (R2 #6 — no LLM). A hit HALTS
+  //     the decision as `interrupted` BEFORE any confirm/execute. This is a
+  //     TRIPWIRE in front of the real boundaries (the confirm gate / the ODD +
+  //     reversibility gate), NOT itself a guarantee — the heuristic is best-effort.
+  //     The interrupted row stays in the ledger (feeds the §8 metric).
+  //     DEFERRED (§8 "escalate to stricter mode FOR THE SESSION"): this halts the
+  //     individual decision only; session-level escalation state is not yet built.
+  if (trigger.externalContent && trigger.externalContent.length > 0) {
+    const flagged = scanExternalContent(trigger.externalContent);
+    if (flagged.length > 0) {
+      emit("interrupted", {
+        reason: "prompt_injection_suspected",
+        sources: flagged.map((f) => f.source),
+        matches: [...new Set(flagged.flatMap((f) => f.matches))],
+      });
+      updateDecisionStatus(decisionId, "interrupted", nowIso, db);
+      return {
+        decisionId,
+        capability: cap.capability,
+        baseLevel,
+        effectiveLevel,
+        route,
+        inODD,
+        demoted,
+        status: "interrupted",
+        reversal: reversalOp?.kind ?? null,
+        restored: null,
+        events,
+      };
+    }
   }
 
   // 5. Confirm path: production hands off to the existing router confirm flow
