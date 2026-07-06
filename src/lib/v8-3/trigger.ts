@@ -129,6 +129,14 @@ export async function executeGatedCapability(
     // runs and `output` stays undefined → the `return output ?? ""` below would
     // hand the operator a SILENT empty string. An interrupted decision must be
     // surfaced ("blocked: possible prompt injection"), not swallowed as success.
+    //
+    // No `judgmentId` / L≥3 path either: this wrapper only ever produces L1-L2
+    // decisions. The catch below degrades a pipeline THROW to a direct, unlogged
+    // execute — safe for an observability-only L1-L2 seam, but it FAILS OPEN. Any
+    // future L≥3 (autonomous) wiring MUST NOT reuse that degrade: a pipeline
+    // failure on an autonomous decision (incl. a throw from the §12 linkage /
+    // reversibility gates) must fail CLOSED (block or drop to confirm), never
+    // direct-execute — else the consent/reversibility gates are bypassed on error.
   };
 
   try {

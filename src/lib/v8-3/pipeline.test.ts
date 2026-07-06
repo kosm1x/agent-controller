@@ -66,6 +66,31 @@ function sqlTrigger(
 
 const OPEN_GATE: GateConfig = { reversible_required: true, max_level: 5 };
 
+/**
+ * Seed the §12 consent linkage an autonomous (L≥3) decision now requires: a
+ * green + CRITIC-approved V8.2 judgment surfaced in a PRIOR delivered brief.
+ * Returns the judgment id to pass as `trigger.judgmentId`.
+ */
+function seedLinkedJudgment(
+  confidence = "green",
+  verdict = "approved",
+): number {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT OR IGNORE INTO proposed_briefings
+       (briefing_id, surface, generated_at, briefing_json, status, expires_at, delivered_at)
+     VALUES ('b-link', 'morning', datetime('now'), '{}', 'promoted', datetime('now','+1 day'), datetime('now','-1 day'))`,
+  ).run();
+  const info = db
+    .prepare(
+      `INSERT INTO judgments
+         (briefing_id, subject, posture, prose, confidence, created_at, critic_trail_json)
+       VALUES ('b-link', 's', 'at_risk', 'p', ?, datetime('now'), ?)`,
+    )
+    .run(confidence, JSON.stringify({ verdict, iterations: 1, critique: "x" }));
+  return Number(info.lastInsertRowid);
+}
+
 beforeEach(() => {
   initDatabase(":memory:");
 });
@@ -98,7 +123,11 @@ describe("runDecisionPipeline", () => {
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
     expect(r.route).toBe("autonomous");
     expect(r.inODD).toBe(true);
     expect(r.demoted).toBe(false);
@@ -114,9 +143,13 @@ describe("runDecisionPipeline", () => {
       odd: ALWAYS_OUT,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
     expect(r.demoted).toBe(true);
-    expect(r.effectiveLevel).toBe(3); // ODD demote 4→3; sql_inverse keeps it autonomous
+    expect(r.effectiveLevel).toBe(3); // ODD demote 4→3; sql_inverse + linkage keep it autonomous
     expect(r.route).toBe("autonomous");
     expect(r.events).toEqual(["proposed", "autonomy_demoted", "executed"]);
   });
@@ -198,8 +231,12 @@ describe("runDecisionPipeline", () => {
       gate: OPEN_GATE,
       uxConfirm: true,
     });
-    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
-    expect(r.effectiveLevel).toBe(4); // reversible, so not demoted; ux_confirm forces route
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
+    expect(r.effectiveLevel).toBe(4); // reversible + linked, so not demoted; ux_confirm forces route
     expect(r.route).toBe("confirm");
     expect(r.events).toContain("approved");
   });
@@ -275,7 +312,11 @@ describe("runDecisionPipeline", () => {
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(sqlTrigger("task_edit"));
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
     expect(r.effectiveLevel).toBe(5);
     expect(r.route).toBe("autonomous");
     expect(r.inODD).toBe(true);
@@ -422,7 +463,11 @@ describe("runDecisionPipeline — Phase 3 reversibility", () => {
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
-    const r = await runDecisionPipeline(triggerSql("task_edit", { id: 1 }));
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline({
+      ...triggerSql("task_edit", { id: 1 }),
+      judgmentId: jid,
+    });
     expect(r.reversal).toBe("sql_inverse");
     expect(r.route).toBe("autonomous");
     expect(r.status).toBe("committed");
@@ -607,5 +652,105 @@ describe("runDecisionPipeline — Phase 5 injection defense", () => {
     });
     expect(r.status).toBe("committed");
     expect(r.events).toEqual(["proposed", "approved", "executed"]);
+  });
+});
+
+// ── Phase 6: §12 consent linkage (V8.2 → V8.3) ────────────────────────────────
+describe("runDecisionPipeline — Phase 6 §12 consent linkage", () => {
+  it("§12: an autonomous (L≥3, sql_inverse) decision with NO linked judgment demotes to confirm", async () => {
+    seedCapability({
+      capability: "task_edit",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(sqlTrigger("task_edit")); // judgmentId undefined
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+    expect(r.demoted).toBe(true);
+    const reasons = (
+      getDatabase()
+        .prepare(
+          "SELECT payload_json FROM decision_events WHERE decision_id=? AND event_kind='autonomy_demoted'",
+        )
+        .all(r.decisionId) as { payload_json: string }[]
+    ).map((e) => JSON.parse(e.payload_json).reason);
+    expect(reasons).toContain("no_linked_judgment");
+  });
+
+  it("§12: a RED linked judgment can never autonomous-execute", async () => {
+    seedCapability({
+      capability: "task_edit",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const jid = seedLinkedJudgment("red", "approved");
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+  });
+
+  it("§12: an un-approved (CRITIC unfixable) linked judgment demotes to confirm", async () => {
+    seedCapability({
+      capability: "task_edit",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const jid = seedLinkedJudgment("green", "unfixable");
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: jid,
+    });
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+  });
+
+  it("§12: a green/approved judgment whose brief was NOT delivered in a prior cycle demotes to confirm", async () => {
+    seedCapability({
+      capability: "task_edit",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    // valid judgment, but its briefing was never delivered → not a "prior brief"
+    const db = getDatabase();
+    db.prepare(
+      `INSERT OR IGNORE INTO proposed_briefings
+         (briefing_id, surface, generated_at, briefing_json, status, expires_at, delivered_at)
+       VALUES ('b-undel', 'morning', datetime('now'), '{}', 'pending', datetime('now','+1 day'), NULL)`,
+    ).run();
+    const info = db
+      .prepare(
+        `INSERT INTO judgments
+           (briefing_id, subject, posture, prose, confidence, created_at, critic_trail_json)
+         VALUES ('b-undel', 's', 'at_risk', 'p', 'green', datetime('now'), ?)`,
+      )
+      .run(
+        JSON.stringify({ verdict: "approved", iterations: 1, critique: "x" }),
+      );
+    const r = await runDecisionPipeline({
+      ...sqlTrigger("task_edit"),
+      judgmentId: Number(info.lastInsertRowid),
+    });
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.route).toBe("confirm");
+  });
+
+  it("§12: an L1 operator-pull (judgment_id NULL) never consults linkage — R2 #9, unaffected", async () => {
+    seedCapability({
+      capability: "c_l1link",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(trigger("c_l1link")); // no judgment, L1
+    expect(r.effectiveLevel).toBe(1);
+    expect(r.route).toBe("confirm");
+    expect(r.status).toBe("committed"); // executes normally; linkage not applied at L≤2
   });
 });

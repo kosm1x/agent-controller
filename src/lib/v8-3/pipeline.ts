@@ -46,6 +46,7 @@ import {
   scanExternalContent,
   type ExternalContent,
 } from "./external-content.js";
+import { checkJudgmentLinkage } from "./judgment-linkage.js";
 
 export type DecisionRoute = "confirm" | "autonomous";
 
@@ -251,6 +252,20 @@ export async function runDecisionPipeline(
     const from = effectiveLevel;
     effectiveLevel = 2;
     demotions.push({ from, to: 2, reason: "not_reversible" });
+  }
+
+  // §12/§14 consent linkage (Phase 6): a decision still autonomous (L≥3) after the
+  // reversibility gate MUST be backed by a linked V8.2 judgment that is green/yellow,
+  // CRITIC-approved, and surfaced in a PRIOR delivered brief. Otherwise demote to
+  // confirm (L2). L≤2 never reaches here, so an operator-pull with judgment_id NULL
+  // (R2 #9) is unaffected — this gates ONLY the autonomous path.
+  if (effectiveLevel >= 3) {
+    const linkage = checkJudgmentLinkage(trigger.judgmentId, nowIso, db);
+    if (!linkage.ok) {
+      const from = effectiveLevel;
+      effectiveLevel = 2;
+      demotions.push({ from, to: 2, reason: linkage.reason });
+    }
   }
   const demoted = demotions.length > 0;
 
