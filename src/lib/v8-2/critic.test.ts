@@ -463,6 +463,8 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     const r = await runCriticLoop(INPUT, { reAuthor });
     expect(r.verdict).toBe("unfixable");
     expect(r.critique).toMatch(/escalated to unfixable/);
+    // a real contradiction is a judgment defect the §17 gate must count
+    expect(r.unfixableReason).toBe("contradicted");
   });
 
   it("escalates to unfixable when the critic could not verify on the last pass (infra error)", async () => {
@@ -477,6 +479,8 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     const r = await runCriticLoop(INPUT, { reAuthor });
     expect(r.verdict).toBe("unfixable");
     expect(r.critique).toMatch(/could not verify/);
+    // infra failure, NOT a judgment defect — the §17 gate excludes this
+    expect(r.unfixableReason).toBe("unverified");
   });
 
   it("is terminal on a first-pass unfixable without re-authoring", async () => {
@@ -485,6 +489,8 @@ describe("runCriticLoop — 2-loop (Self-Refine)", () => {
     const r = await runCriticLoop(INPUT, { reAuthor });
     expect(r.verdict).toBe("unfixable");
     expect(r.iterations).toBe(1);
+    // a DIRECT critic unfixable = the model verified a contradiction
+    expect(r.unfixableReason).toBe("contradicted");
     expect(reAuthor).not.toHaveBeenCalled();
   });
 });
@@ -504,6 +510,7 @@ describe("escalationDisposition — §11 terminal semantics", () => {
     );
     expect(d.verdict).toBe("unfixable");
     expect(d.critique).toMatch(/could not verify/);
+    expect(d.unfixableReason).toBe("unverified");
   });
 
   it("a contradicted claim → unfixable (a claim proven false by the tools)", () => {
@@ -513,6 +520,7 @@ describe("escalationDisposition — §11 terminal semantics", () => {
     );
     expect(d.verdict).toBe("unfixable");
     expect(d.critique).toMatch(/escalated to unfixable/);
+    expect(d.unfixableReason).toBe("contradicted");
   });
 
   it("a surviving unsupported sentence → unfixable (unresolved has no claim_id, so the discriminator is blind to it — qa-W1)", () => {
@@ -522,11 +530,13 @@ describe("escalationDisposition — §11 terminal semantics", () => {
     );
     expect(d.verdict).toBe("unfixable");
     expect(d.critique).toMatch(/unsupported sentence still unresolved/);
+    expect(d.unfixableReason).toBe("unsupported");
   });
 
   it("verified + nothing contradicted + no unsupported sentence → approved-with-caveat (correctable citation nit only)", () => {
     const d = escalationDisposition({ ...base, verdict: "needs_revision" }, 0);
     expect(d.verdict).toBe("approved");
+    expect(d.unfixableReason).toBeUndefined();
     expect(d.critique).toMatch(
       /approved with residual citation\/sourcing caveat/,
     );

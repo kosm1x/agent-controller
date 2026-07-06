@@ -61,6 +61,27 @@ export const CRITIC_VERDICTS = [
 ] as const;
 export type CriticVerdict = (typeof CRITIC_VERDICTS)[number];
 
+/**
+ * WHY a terminal verdict is `unfixable`. Only two of these are judgment-quality
+ * defects the §17 gate must catch:
+ *   - `contradicted` — a claim is contradicted by ground truth (the critic's own
+ *     §11 definition; a direct critic verdict or the contradicted-claims branch).
+ *   - `unsupported`  — a factual sentence survived with no resolvable citation.
+ *   - `unverified`   — the critic INFRA-FAILED (no tool call / timeout) and never
+ *     actually verified; escalated to `unfixable` conservatively so it can't
+ *     auto-approve. This is a critic-reliability problem, NOT a bad judgment, so
+ *     the §17 unfixable rate excludes it (see `v82-activation-gate.ts` check 4).
+ */
+export type UnfixableReason = "contradicted" | "unverified" | "unsupported";
+
+/**
+ * Machine-emitted marker appended to an escalated critique when the critic never
+ * produced a verdict. Exported so the §17 gate can retro-classify trail rows
+ * written before `unfixableReason` was persisted — it matches THIS module's own
+ * constant, not free-form LLM text, and self-retires as old rows age out.
+ */
+export const CRITIC_UNVERIFIED_MARKER = "(critic could not verify)";
+
 /** Single-source-of-truth tool name (a typo would silently drift the prompt). */
 export const SUBMIT_CRITIC_VERDICT_TOOL_NAME = "submit_critic_verdict";
 
@@ -447,6 +468,9 @@ export interface CriticResult {
   /** true on infra failure (timeout, no tool call) — verdict is the
    *  conservative `needs_revision` so the loop retries then escalates. */
   error: boolean;
+  /** Set ONLY when `verdict==='unfixable'`: why it is unfixable, so the §17 gate
+   *  can separate a real judgment defect from a critic that never verified. */
+  unfixableReason?: UnfixableReason;
 }
 
 function renderCriticPrompt(input: CriticInput): string {
@@ -687,21 +711,28 @@ export function escalationDisposition(
 ): {
   verdict: CriticVerdict;
   critique: string;
+  unfixableReason?: UnfixableReason;
 } {
   const tail = `after ${CRITIC_MAX_LOOP} needs_revision iterations — last critique: ${last.critique}`;
   if (last.error) {
     return {
       verdict: "unfixable",
-      critique: `escalated to unfixable ${tail} (critic could not verify)`,
+      critique: `escalated to unfixable ${tail} ${CRITIC_UNVERIFIED_MARKER}`,
+      unfixableReason: "unverified",
     };
   }
   if (last.contradictedClaimIds.length > 0) {
-    return { verdict: "unfixable", critique: `escalated to unfixable ${tail}` };
+    return {
+      verdict: "unfixable",
+      critique: `escalated to unfixable ${tail}`,
+      unfixableReason: "contradicted",
+    };
   }
   if (unresolvedCount > 0) {
     return {
       verdict: "unfixable",
       critique: `escalated to unfixable ${tail} (unsupported sentence still unresolved)`,
+      unfixableReason: "unsupported",
     };
   }
   return {
@@ -731,7 +762,14 @@ export async function runCriticLoop(
     last = await runCritic(current, options);
 
     if (last.verdict === "approved" || last.verdict === "unfixable") {
-      return { ...last, iterations: i };
+      // A DIRECT critic `unfixable` means the model verified and found a
+      // ground-truth contradiction (an infra failure returns needs_revision, not
+      // unfixable), so it is a real judgment defect — reason `contradicted`.
+      const unfixableReason =
+        last.verdict === "unfixable"
+          ? ("contradicted" as UnfixableReason)
+          : undefined;
+      return { ...last, unfixableReason, iterations: i };
     }
     // needs_revision
     if (i === CRITIC_MAX_LOOP) {

@@ -304,6 +304,9 @@ async function runCriticAndFinalize(
         verdict: loop.verdict,
         iterations: loop.iterations,
         critique: loop.critique,
+        // present only on an unfixable verdict; JSON.stringify drops it otherwise.
+        // Lets the §17 gate separate a real defect from a critic that never verified.
+        unfixableReason: loop.unfixableReason,
       }),
     },
     db,

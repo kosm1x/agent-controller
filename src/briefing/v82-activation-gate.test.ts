@@ -5,6 +5,7 @@ import {
   combineVerdicts,
   briefConfidenceColor,
 } from "./v82-activation-gate.js";
+import { CRITIC_UNVERIFIED_MARKER } from "../lib/v8-2/critic.js";
 
 const NOW = new Date().toISOString();
 
@@ -30,13 +31,21 @@ function insertJudgment(opts: {
   briefingId: string;
   confidence?: "green" | "yellow" | "red";
   verdict?: "approved" | "needs_revision" | "unfixable";
+  unfixableReason?: "contradicted" | "unverified" | "unsupported";
+  critique?: string;
   createdAt?: string;
   posture?: "at_risk" | "momentum" | "highest_leverage" | "noted";
 }): number {
   const trail =
     opts.verdict === undefined
       ? null
-      : JSON.stringify({ verdict: opts.verdict, iterations: 1, critique: "x" });
+      : JSON.stringify({
+          verdict: opts.verdict,
+          iterations: 1,
+          critique: opts.critique ?? "x",
+          // omitted from JSON when undefined — mirrors a pre-`unfixableReason` row.
+          unfixableReason: opts.unfixableReason,
+        });
   const info = getDatabase()
     .prepare(
       `INSERT INTO judgments
@@ -240,6 +249,93 @@ describe("evaluateV82Gate", () => {
     const g = evaluateV82Gate();
     expect(g.unfixablePct).toBe(10); // 1 of 10
     expect(g.checks.unfixable.pass).toBe(false); // ≥5%
+  });
+
+  it("excludes critic-infra 'unverified' escalations from the rate (numerator AND denominator)", () => {
+    const b = insertBrief("promoted");
+    for (let i = 0; i < 9; i++) {
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    // 1 genuine defect (contradicted) + 2 critic-infra failures (unverified)
+    const c = insertJudgment({
+      briefingId: b,
+      confidence: "green",
+      verdict: "unfixable",
+      unfixableReason: "contradicted",
+    });
+    insertClaim(c, "resolved");
+    for (let i = 0; i < 2; i++) {
+      const u = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "unfixable",
+        unfixableReason: "unverified",
+      });
+      insertClaim(u, "resolved");
+    }
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.criticUnverified).toBe(2);
+    // 1 defect over 10 MEASURED verdicts (12 − 2 unverified), not 3/12.
+    expect(g.unfixablePct).toBe(10);
+    expect(g.checks.unfixable.detail).toContain("2 critic-unverified excluded");
+  });
+
+  it("an all-unverified window never PASSES — measuredVerdicts=0 → insufficient_data, not a false green", () => {
+    const b = insertBrief("promoted");
+    // 10 verdicts, ALL critic-infra failures — clears the ≥10 volume gate but
+    // measures zero judgment quality. Must NOT read as pass (a broken critic
+    // must not make the gate look green).
+    for (let i = 0; i < 10; i++) {
+      const u = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "unfixable",
+        unfixableReason: "unverified",
+      });
+      insertClaim(u, "resolved");
+    }
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.criticUnverified).toBe(10);
+    expect(g.unfixablePct).toBeNull(); // 0 measured → no rate
+    expect(g.checks.unfixable.pass).toBe(false);
+    expect(g.verdict).not.toBe("pass");
+    expect(g.checks.unfixable.detail).toContain(
+      "10 critic-unverified excluded",
+    );
+  });
+
+  it("retro-classifies a pre-`unfixableReason` row via the critic's own marker (backward-compat)", () => {
+    const b = insertBrief("promoted");
+    for (let i = 0; i < 9; i++) {
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    // OLD-format row: no unfixableReason field, but the machine marker is present.
+    const u = insertJudgment({
+      briefingId: b,
+      confidence: "green",
+      verdict: "unfixable",
+      critique: `escalated to unfixable after 2 needs_revision iterations — last critique: timed out ${CRITIC_UNVERIFIED_MARKER}`,
+    });
+    insertClaim(u, "resolved");
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.criticUnverified).toBe(1);
+    expect(g.unfixablePct).toBe(0); // the only unfixable was infra → excluded
   });
 
   it("measures acceptance at BRIEF grain — a mixed-color brief counts once by its lead color, not once per judgment", () => {

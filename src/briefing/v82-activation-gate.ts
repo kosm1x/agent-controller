@@ -22,6 +22,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { CRITIC_UNVERIFIED_MARKER } from "../lib/v8-2/critic.js";
 import type { ActivationGateCheck } from "./activation-gate.js";
 
 /** spec §17 thresholds. */
@@ -57,8 +58,13 @@ export interface V82GateResult {
   judgments7d: number;
   /** Citation resolver hit-rate (%) over those judgments' claims; null = none. */
   resolverPct: number | null;
-  /** CRITIC unfixable rate (%) over judgments with a critic trail; null = none. */
+  /** CRITIC judgment-unfixable rate (%) over verdicts that measured quality
+   *  (contradicted/unsupported ÷ measured verdicts); null = none measured.
+   *  EXCLUDES critic-infra `unverified` escalations — see `criticUnverified`. */
   unfixablePct: number | null;
+  /** Count of `unfixable` trail rows that were critic-infra failures (no tool
+   *  call / timeout), not judgment defects — excluded from `unfixablePct`. */
+  criticUnverified: number;
   /** Sycophancy concede-without-evidence rate (%) over 30d probes; null = none. */
   sycophancyPct: number | null;
   /** green/red BRIEF promote-rate ratio (acceptance 6a, brief-grain); null =
@@ -192,7 +198,16 @@ export function evaluateV82Gate(): V82GateResult {
   const resolverPass =
     resolverPct !== null && resolverPct >= GATE_V82_RESOLVER_PCT;
 
-  // --- Check 4: CRITIC unfixable rate < 5% (parsed from critic_trail_json).
+  // --- Check 4: CRITIC judgment-unfixable rate < 5% (parsed from critic_trail_json).
+  // "unfixable" conflates two failures: a real judgment defect (a claim
+  // `contradicted` by ground truth, or an `unsupported` sentence with no citation)
+  // and a critic INFRA failure that never produced a verdict (`unverified` — no
+  // tool call / timeout, escalated to unfixable only so it can't auto-approve).
+  // The latter is a critic-reliability problem, not a bad judgment, so it is
+  // EXCLUDED from both the numerator and the denominator here and surfaced
+  // separately (no silent drop). Excluding it from the denominator too matters:
+  // otherwise a rash of critic tool-call failures would dilute the rate toward
+  // passing — a perverse incentive where a broken critic makes the gate look green.
   const trailRows = db
     .prepare(
       `SELECT critic_trail_json FROM judgments
@@ -202,19 +217,36 @@ export function evaluateV82Gate(): V82GateResult {
     .all() as { critic_trail_json: string }[];
   let verdictsTotal = 0;
   let unfixable = 0;
+  let criticUnverified = 0;
   for (const r of trailRows) {
     try {
-      const t: unknown = JSON.parse(r.critic_trail_json);
-      if (t && typeof (t as { verdict?: unknown }).verdict === "string") {
-        verdictsTotal++;
-        if ((t as { verdict: string }).verdict === "unfixable") unfixable++;
-      }
+      const t = JSON.parse(r.critic_trail_json) as {
+        verdict?: unknown;
+        unfixableReason?: unknown;
+        critique?: unknown;
+      };
+      if (typeof t.verdict !== "string") continue;
+      verdictsTotal++;
+      if (t.verdict !== "unfixable") continue;
+      // Structured field wins; fall back to the critic's own marker for rows
+      // written before `unfixableReason` was persisted (self-retires in ≤7d).
+      const reason =
+        typeof t.unfixableReason === "string"
+          ? t.unfixableReason
+          : typeof t.critique === "string" &&
+              t.critique.includes(CRITIC_UNVERIFIED_MARKER)
+            ? "unverified"
+            : "contradicted";
+      if (reason === "unverified") criticUnverified++;
+      else unfixable++;
     } catch {
       /* a malformed trail blob is not a verdict — skip it */
     }
   }
+  // Denominator = verdicts that actually MEASURED judgment quality.
+  const measuredVerdicts = verdictsTotal - criticUnverified;
   const unfixablePct =
-    verdictsTotal > 0 ? round1((100 * unfixable) / verdictsTotal) : null;
+    measuredVerdicts > 0 ? round1((100 * unfixable) / measuredVerdicts) : null;
   const unfixablePass =
     unfixablePct !== null && unfixablePct < GATE_V82_UNFIXABLE_MAX_PCT;
 
@@ -300,7 +332,7 @@ export function evaluateV82Gate(): V82GateResult {
   const insufficient =
     judgments7d < GATE_V82_MIN_JUDGMENTS ||
     claimAgg.total === 0 ||
-    verdictsTotal === 0 ||
+    measuredVerdicts === 0 ||
     probeAgg.total === 0 ||
     promoteRatio === null;
 
@@ -324,6 +356,7 @@ export function evaluateV82Gate(): V82GateResult {
     judgments7d,
     resolverPct,
     unfixablePct,
+    criticUnverified,
     sycophancyPct,
     promoteRatio,
     checks: {
@@ -346,8 +379,14 @@ export function evaluateV82Gate(): V82GateResult {
         pass: unfixablePass,
         detail:
           unfixablePct === null
-            ? "no critic verdicts in the 7d window yet"
-            : `unfixable ${unfixablePct}% over ${verdictsTotal} verdict(s) (need <${GATE_V82_UNFIXABLE_MAX_PCT}%)`,
+            ? "no measured critic verdicts in the 7d window yet" +
+              (criticUnverified > 0
+                ? ` (${criticUnverified} critic-unverified excluded — critic never verified any)`
+                : "")
+            : `unfixable ${unfixablePct}% over ${measuredVerdicts} verdict(s) (need <${GATE_V82_UNFIXABLE_MAX_PCT}%)` +
+              (criticUnverified > 0
+                ? `; ${criticUnverified} critic-unverified excluded`
+                : ""),
       },
       sycophancy: {
         pass: sycophancyPass,
