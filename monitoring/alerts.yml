@@ -71,15 +71,23 @@ groups:
           summary: "Load average above 4 for 10 minutes (2-core VPS)"
           description: '5-min load avg: {{ $value | printf "%.1f" }}'
 
-      # Swap usage above 50%
+      # Swap high AND available memory low = real memory pressure.
+      # (2026-07-06) Swap% alone false-fired on benign parked idle pages: with
+      # swappiness=10 the kernel parks idle pages (e.g. the dormant hindsight
+      # container, ~700MB) in swap even when RAM is abundant — that is swap doing
+      # its job, not pressure. Gate on MemAvailable < 15% so this only fires when
+      # swap is filling AND the system is actually short on RAM.
       - alert: HighSwapUsage
-        expr: (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes * 100 > 50
+        expr: |
+          (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes * 100 > 50
+          and
+          node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100 < 15
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Swap usage above 50%"
-          description: 'Swap used: {{ $value | printf "%.0f" }}%'
+          summary: "Memory pressure: swap >50% AND available RAM <15%"
+          description: "Swap used high while available RAM is low — real pressure, not parked idle pages."
 
       # High steal time (hypervisor overcommit)
       - alert: HighStealTime

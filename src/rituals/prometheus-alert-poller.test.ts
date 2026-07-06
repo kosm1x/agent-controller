@@ -290,6 +290,42 @@ describe("runPrometheusAlertPoll", () => {
     expect(send).toHaveBeenCalledTimes(1); // not re-sent
   });
 
+  it("on a (re)start, seeds still-firing WARNINGS (not re-announced) but still announces criticals", async () => {
+    // Simulates a restart with two alerts already firing (activeAt predates this
+    // process) — the "barrage on repeated deploys" scenario.
+    const warn = {
+      ...alert("HighSwapUsage", "warning", {}, "Swap high"),
+      activeAt: "2000-01-01T00:00:00Z", // already firing before startup
+    };
+    const crit = alert("RitualLoopStale", "critical", {}, "Ritual loop wedged");
+    const send = vi.fn(async (_t: string) => {});
+    const r = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [warn, crit],
+      send,
+    });
+    // only the critical re-surfaces after restart; the warning is seeded (silent)
+    expect(r.newlyFiring).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    const msg = send.mock.calls[0]![0];
+    expect(msg).toContain("Ritual loop wedged");
+    expect(msg).not.toContain("Swap high");
+  });
+
+  it("a warning that starts firing AFTER startup is still announced (seed is startup-only)", async () => {
+    const send = vi.fn(async (_t: string) => {});
+    // startup poll: nothing firing → seed set is empty
+    await runPrometheusAlertPoll({ fetchAlerts: async () => [], send });
+    expect(send).not.toHaveBeenCalled();
+    // a warning now transitions to firing → announced, NOT suppressed
+    const warn = alert("HighSwapUsage", "warning", {}, "Swap high");
+    const r = await runPrometheusAlertPoll({
+      fetchAlerts: async () => [warn],
+      send,
+    });
+    expect(r.newlyFiring).toBe(1);
+    expect(send.mock.calls[0]![0]).toContain("Swap high");
+  });
+
   it("announces a resolution when the alert clears", async () => {
     const a = alert("A", "warning");
     const send = vi.fn(async (_text: string) => {});

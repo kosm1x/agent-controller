@@ -246,6 +246,10 @@ export interface AlertPollSummary {
 // In-memory announced-set. Resets on restart (acceptable — see module doc).
 let notifiedState = new Map<string, NotifiedAlert>();
 
+// This process's start time. A warning whose `activeAt` predates it was already
+// firing before this (re)start — see the restart-seed in runPrometheusAlertPoll.
+const POLLER_START_MS = Date.now();
+
 /** Test helper: clear the in-memory announced-set between cases. */
 export function _resetAlertNotifierState(): void {
   notifiedState = new Map();
@@ -301,6 +305,25 @@ export async function runPrometheusAlertPoll(
   const reNotifyMs = resolveReNotifyMs();
 
   const firing = await fetchAlerts();
+
+  // Restart-seed: the in-memory announced-set is lost on restart, so without this
+  // every still-firing alert re-announces on each restart — the "constant barrage
+  // during a deploy storm" failure. Suppress that for a WARNING that was ALREADY
+  // firing before this process started (`activeAt < POLLER_START_MS`): seed it as
+  // already-announced so it is not re-sent. A warning that STARTS firing after
+  // startup (activeAt ≥ start, or no activeAt) is announced normally. Criticals
+  // are NEVER seeded — a still-firing critical SHOULD re-surface after a restart
+  // (the intended safety behavior, module doc above).
+  for (const a of firing) {
+    if (RENOTIFY_SEVERITIES.has(a.labels?.severity ?? "")) continue;
+    const activeAtMs = a.activeAt ? Date.parse(a.activeAt) : NaN;
+    if (Number.isFinite(activeAtMs) && activeAtMs < POLLER_START_MS) {
+      const n = toNotified(a, now);
+      if (!notifiedState.has(n.fingerprint))
+        notifiedState.set(n.fingerprint, n);
+    }
+  }
+
   const plan = planAlertNotifications(firing, notifiedState, {
     now,
     reNotifyMs,
