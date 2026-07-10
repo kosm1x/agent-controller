@@ -508,6 +508,116 @@ describe("queryClaudeSdkAsInfer (openai-path compatibility)", () => {
   });
 });
 
+describe("queryClaudeSdkAsInfer selection probe (2026-07-10 eval fix)", () => {
+  const webSearchDef: ToolDefinition = {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Search the web",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  };
+
+  it("registers tools as probe stubs, forces maxTurns=1, returns tool_use as tool_calls", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__jarvis__web_search",
+              input: { query: "clima cdmx" },
+            },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "",
+        num_turns: 1,
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+    ];
+
+    const response = await queryClaudeSdkAsInfer(
+      [{ role: "user", content: "¿Cómo está el clima en CDMX?" }],
+      { tools: [webSearchDef] },
+    );
+
+    // The model's first-turn tool_use surfaces as openai-shape tool_calls —
+    // this is the channel the tuning eval reads. It was structurally absent
+    // (tools dropped, no tool_calls key) from 2026-05-10 to 2026-07-10,
+    // which pinned the eval's tool_selection subscore at its silence floor.
+    expect(response.tool_calls).toHaveLength(1);
+    expect(response.tool_calls?.[0].function.name).toBe("web_search");
+    expect(JSON.parse(response.tool_calls![0].function.arguments)).toEqual({
+      query: "clima cdmx",
+    });
+
+    const opts = lastQueryArgs.value?.options as {
+      maxTurns: number;
+      allowedTools: string[];
+      mcpServers: { jarvis: { config: { tools: Array<{ name: string }> } } };
+    };
+    // Probe = selection only: one turn, never a tool-result round-trip.
+    expect(opts.maxTurns).toBe(1);
+    // The definition reached the model (registered + allow-listed).
+    expect(opts.allowedTools).toContain("mcp__jarvis__web_search");
+    expect(opts.mcpServers.jarvis.config.tools.map((t) => t.name)).toContain(
+      "web_search",
+    );
+  });
+
+  it("without tools keeps legacy behavior: no tool_calls key, maxTurns default", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "hola",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    ];
+
+    const response = await queryClaudeSdkAsInfer([
+      { role: "user", content: "hola" },
+    ]);
+
+    expect(response.tool_calls).toBeUndefined();
+    const opts = lastQueryArgs.value?.options as { maxTurns: number };
+    expect(opts.maxTurns).toBe(3);
+  });
+
+  it("probe with no tool_use in the reply omits tool_calls (silence stays representable)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "No necesito buscar." }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "No necesito buscar.",
+        num_turns: 1,
+        usage: { input_tokens: 50, output_tokens: 8 },
+      },
+    ];
+
+    const response = await queryClaudeSdkAsInfer(
+      [{ role: "user", content: "hola" }],
+      { tools: [webSearchDef] },
+    );
+
+    expect(response.tool_calls).toBeUndefined();
+  });
+});
+
 describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
   const fakeTool: ToolDefinition = {
     type: "function",
@@ -918,6 +1028,94 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
 
     const breaker = circuitRegistry.get("claude-sdk");
     expect(breaker.getStatus().state).toBe("CLOSED");
+
+    circuitRegistry.reset();
+  });
+
+  it("does NOT count tool_use-only turns with error_max_turns as failures (probe pattern, 2026-07-10)", async () => {
+    // A selection probe (maxTurns=1) whose model goes STRAIGHT to a tool
+    // call — the correct behavior — ends in error_max_turns with zero
+    // streamed prose. That is a healthy provider, not an outage. Before the
+    // fix, 51 consecutive eval probes tripped the claude-sdk breaker open
+    // mid-run and cascaded every remaining case onto the Haiku retry leg.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+
+    for (let i = 0; i < 5; i++) {
+      mockMessages.value = [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                name: "mcp__jarvis__web_search",
+                input: { query: "x" },
+              },
+            ],
+          },
+        },
+        {
+          type: "result",
+          subtype: "error_max_turns",
+          errors: ["turn limit"],
+        },
+      ];
+      await queryClaudeSdk({
+        prompt: "probe",
+        systemPrompt: "sys",
+        toolNames: [],
+        maxTurns: 1,
+      });
+    }
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("CLOSED");
+
+    circuitRegistry.reset();
+  });
+
+  it("MULTI-turn zero-prose tool loops hitting max_turns still count as failures (qa-audit W1)", async () => {
+    // A 20-turn run that looped tool calls to the ceiling without emitting
+    // any prose is a wedge, not a healthy provider. The probe exemption
+    // above is scoped to maxTurns===1 — this pins that a doom-looping
+    // fast-runner task keeps its BLOCKED/breaker-failure classification
+    // instead of reporting soft-success.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    const { CB_FAILURE_THRESHOLD } = await import("../config/constants.js");
+    circuitRegistry.reset();
+
+    for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+      mockMessages.value = [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                name: "mcp__jarvis__web_search",
+                input: { query: "loop" },
+              },
+            ],
+          },
+        },
+        {
+          type: "result",
+          subtype: "error_max_turns",
+          errors: ["turn limit"],
+        },
+      ];
+      const result = await queryClaudeSdk({
+        prompt: "long task",
+        systemPrompt: "sys",
+        toolNames: [],
+        maxTurns: 20,
+      });
+      expect(result.text).toContain("STATUS: BLOCKED");
+    }
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("OPEN");
 
     circuitRegistry.reset();
   });

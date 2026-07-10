@@ -264,6 +264,47 @@ describe("infer() with request.model override (queue #228)", () => {
     }
   });
 
+  it("forwards request.tools to the SDK shim on BOTH legs (probe passthrough, 2026-07-10)", async () => {
+    // Regression pin: request.tools was silently dropped on the claude-sdk
+    // path from the 2026-05-10 cutover to 2026-07-10, so infer()-with-tools
+    // callers (the tuning eval runner) scored tool_selection against a model
+    // that never saw the tools. The primary leg AND the Haiku retry leg must
+    // both forward them.
+    const probeTools = [
+      {
+        type: "function" as const,
+        function: {
+          name: "web_search",
+          description: "Search the web",
+          parameters: { type: "object", properties: {} },
+        },
+      },
+    ];
+
+    sonnetShouldThrow = true; // force primary failure so the retry leg runs too
+    haikuShouldThrow = false;
+    await infer({
+      messages: [{ role: "user", content: "clima cdmx" }],
+      tools: probeTools,
+    });
+
+    const sdkMock = await import("./claude-sdk.js");
+    const calls = (
+      sdkMock.queryClaudeSdkAsInfer as unknown as {
+        mock: { calls: Array<[unknown, { tools?: unknown }]> };
+      }
+    ).mock.calls;
+    // Mock call history accumulates across specs in this file — assert on
+    // the final two calls (this spec's Sonnet attempt + Haiku retry).
+    expect(sdkCalls.slice(-2).map((c) => c.model)).toEqual([
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5-20251001",
+    ]);
+    const lastTwo = calls.slice(-2);
+    expect(lastTwo[0][1].tools).toBe(probeTools);
+    expect(lastTwo[1][1].tools).toBe(probeTools);
+  });
+
   it("undefined request.model preserves the prior Sonnet default (back-compat)", async () => {
     // Critical for the ~33 existing callers that never set `model`.
     const r = await infer({ messages: [{ role: "user", content: "hi" }] });

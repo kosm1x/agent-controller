@@ -253,6 +253,24 @@ if [ -n "$P95" ]; then
   fi
 fi
 
+# 9d. Ritual-loop wedge, detected OUT-OF-BAND (2026-07-10, hardening-sweep
+# residual). The in-process poller heartbeat stamps
+# mc_ritual_last_success_timestamp every 2 min, and MCRitualLoopStale +
+# schedule.run_failed→Telegram cover in-process failures — but their DELIVERY
+# rides the same process that could be wedged. min staleness across rituals =
+# time() - max(timestamp): if even the freshest ritual heartbeat is >30 min
+# old, the scheduler loop (or its event loop) is stuck, and only this external
+# path can say so. Metric absent → skip (Checks 1/8c cover a dead service or
+# dead Prometheus).
+RITUAL_FRESHEST_AGE=$(prom_query "time()%20-%20max(mc_ritual_last_success_timestamp)")
+if [ -n "$RITUAL_FRESHEST_AGE" ]; then
+  RITUAL_AGE_INT=$(awk -v a="$RITUAL_FRESHEST_AGE" 'BEGIN{print int(a)}')
+  if [ "$RITUAL_AGE_INT" -gt 1800 ]; then
+    maybe_alert /var/lib/mc-watchdog-ritual-wedge-alert \
+      "MC ritual loop wedged: freshest ritual success is ${RITUAL_AGE_INT}s old (threshold 1800s; the */2min poller heartbeat should stamp continuously) — scheduler/event-loop stuck, restart mission-control"
+  fi
+fi
+
 # --- Check 10: Disk soft-cap (alert-only forecasting) ---
 # Budget: 200 GB hard / 150 GB soft. Fires before Check 5 (90% / 174 GB) so the
 # operator gets a months-out heads-up to trim, not a panic alarm.

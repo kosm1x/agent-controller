@@ -228,6 +228,12 @@ async function inferViaClaudeSdk(
     return await queryClaudeSdkAsInfer(request.messages, {
       signal: options?.signal,
       model: primaryModel,
+      // Selection-probe passthrough (2026-07-10): request.tools was silently
+      // DROPPED on this path since the 05-10 cutover, so infer()-with-tools
+      // callers (the tuning eval runner) got a model that never saw the
+      // tools and a response with no tool_calls. The SDK shim registers
+      // these as no-op stubs and returns first-turn tool_use as tool_calls.
+      tools: request.tools,
     });
   } catch (err) {
     console.warn(
@@ -239,6 +245,7 @@ async function inferViaClaudeSdk(
       // last-line provider. If primaryModel WAS already Haiku we're just
       // retrying it (provider-level transient).
       model: HAIKU_MODEL_ID,
+      tools: request.tools,
     });
   }
 }

@@ -2443,8 +2443,10 @@ describe("scope pattern regression suite (v6.4 OH2)", () => {
       "| Feature | Status |\n| blog post tracker | done |",
     ]);
     // Should NOT activate social just from 'post' in prior context
+    // (tweet_* are the live SOCIAL_TOOLS — the social_publish stubs were
+    // pruned 2026-07-10, so asserting on them would be vacuously false.)
     expect(
-      tools.includes("social_publish") || tools.includes("social_accounts"),
+      tools.includes("tweet_post") || tools.includes("tweet_mentions"),
     ).toBe(false);
   });
 

@@ -248,15 +248,11 @@ export const VIDEO_TOOLS = [
   "screenshot_element",
 ];
 
-/** Social publishing tools — scope-gated: only when social/publish keywords detected. */
-export const SOCIAL_TOOLS = [
-  "social_publish",
-  "social_accounts_list",
-  "social_publish_status",
-  "tweet_post",
-  "tweet_probe",
-  "tweet_mentions",
-];
+/** Social publishing tools — scope-gated: only when social/publish keywords detected.
+ * (2026-07-10: pruned social_publish/_accounts_list/_publish_status — the
+ * SOCIAL_PUBLISH stub was deleted in the 2026-07-05 hardening sweep, so the dead
+ * names only inflated the getAllAvailableTools denominator.) */
+export const SOCIAL_TOOLS = ["tweet_post", "tweet_probe", "tweet_mentions"];
 
 /** Intelligence Depot tools — scope-gated: only when signal/alert/intel keywords detected. */
 export const INTEL_TOOLS = [

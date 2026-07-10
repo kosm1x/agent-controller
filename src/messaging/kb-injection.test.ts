@@ -80,7 +80,7 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
 
   it("matches social only when an X/social tool (e.g. tweet_post) is scoped", () => {
     expect(conditionMatches("social", ["tweet_post"])).toBe(true);
-    expect(conditionMatches("social", ["social_publish"])).toBe(true);
+    expect(conditionMatches("social", ["tweet_mentions"])).toBe(true);
     expect(conditionMatches("social", ["shell_exec", "web_search"])).toBe(
       false,
     );

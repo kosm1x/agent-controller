@@ -1,10 +1,15 @@
 {
-  "overall": 60.35,
-  "epsilon": 2.0,
-  "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk (Sonnet primary / Haiku fallback), prod default as of 2026-07-05",
-  "capturedAt": "2026-07-06T21:44:00Z",
-  "nCases": 416,
-  "toolSelectionCases": 55,
-  "source": "GATE-NATIVE incumbent — measured 2026-07-06 by `npm run eval:gate --run` under the standalone harness (builtin-only tool source, ~160 tools). SUPERSEDES the prior PROVISIONAL 63.35 seed, which came from a nightly run INSIDE the live process (~257 tools) and was explicitly NOT comparable to the gate's 160-tool composite (see git history of this file). Deterministic: the eval scored composite 60.35 on THREE runs — 2x on the truncated-title PR-misroute fix candidate and 1x on the pristine incumbent (that fix stashed) — so the fix is provably NEUTRAL to the gate (byte-identical breakdown to the incumbent).",
-  "note": "Breakdown at capture: tool_selection 25.18 (weight 50%), scope_accuracy 92.54 (30%), classification 100.00 (20%). tool_selection is structurally lower here than the nightly because the standalone gate registers only the builtin tool source (~160), not the full in-process registry (~257 incl. MCP/Google/Memory/Skills) — so this number is only comparable to OTHER gate runs, never to nightly tune_runs. Recapture with `npm run eval:gate -- --run --update-baseline` after any prod model / system-prompt / tool-description change."
+  "overall": 76.8822,
+  "epsilon": 2,
+  "subscores": {
+    "toolSelection": 57.9457,
+    "scopeAccuracy": 93.0312,
+    "classification": 100
+  },
+  "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk",
+  "capturedAt": "2026-07-10T23:50:29.185Z",
+  "nCases": 404,
+  "toolSelectionCases": 51,
+  "source": "Captured by eval-gate --update-baseline (builtin-only registry). Gate-native incumbent under the PROBE-FIXED harness (2026-07-10): infer() on the claude-sdk path now passes tools as a selection probe and returns first-turn tool_use as tool_calls. SUPERSEDES the 2026-07-06 incumbent (60.35), which was measured while infer() silently DROPPED tools — its toolSelection 25.18 was the arithmetic 'silence floor' (only not_tools cases can pass when the model never sees tools), not a measurement. Deterministic: two consecutive gate runs scored composite 76.88 with identical subscores (the second with zero circuit-breaker events after the probe-outcome fix).",
+  "note": "Refresh with `npm run eval:gate -- --run --update-baseline` after a confirmed-good model swap. epsilon is composite points on the 0-100 scale."
 }

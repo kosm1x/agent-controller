@@ -150,6 +150,28 @@ function wrapTool(t: Tool) {
   );
 }
 
+/**
+ * Wrap raw tool definitions as SELECTION-PROBE stubs: the model sees the real
+ * name/description/schema, but the handler never executes anything. Used by
+ * `queryClaudeSdkAsInfer` when a caller passes `tools` — the eval runner's
+ * tool_selection cases need "which tool WOULD you call", never the side
+ * effects. Callers pair this with `maxTurns: 1`, so in practice the query
+ * ends at the model's first tool_use turn and the stub handler is dead code —
+ * it exists so a handler is present if the SDK ever executes within the turn.
+ */
+function buildProbeTools(defs: ToolDefinition[]): InlineSdkTool[] {
+  return defs.map((d) =>
+    sdkTool(
+      d.function.name,
+      d.function.description,
+      jsonSchemaToZodShape(d.function.parameters as Record<string, unknown>),
+      async (): Promise<CallToolResult> => ({
+        content: [{ type: "text", text: "PROBE — tool not executed" }],
+      }),
+    ),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MCP server builder
 // ---------------------------------------------------------------------------
@@ -175,15 +197,19 @@ export function buildMcpServer(
   extraTools: InlineSdkTool[] = [],
 ) {
   // Audit-R2: guard against inline tools whose name collides with a
-  // registry tool. The SDK's `createSdkMcpServer` accepts duplicate names
-  // with undefined merge behavior (last-wins, first-wins, or runtime
-  // error depending on SDK version). Surface the collision loudly here so
-  // a future caller that re-uses a registry name gets a clear error
-  // instead of a silent override of (e.g.) `shell_exec`.
+  // registry tool BEING REGISTERED IN THIS SERVER. The SDK's
+  // `createSdkMcpServer` accepts duplicate names with undefined merge
+  // behavior (last-wins, first-wins, or runtime error depending on SDK
+  // version). Surface the collision loudly here so a caller that re-uses a
+  // name from `toolNames` gets a clear error instead of a silent override
+  // of (e.g.) `shell_exec`. Scoped to this server's contents (2026-07-10):
+  // the original registry-wide check also rejected probe stubs that
+  // deliberately mirror registry tool names while NO registry tool is
+  // registered — a case with no duplicate and no override.
   for (const t of extraTools) {
-    if (toolRegistry.get(t.name) !== undefined) {
+    if (toolNames.includes(t.name)) {
       throw new Error(
-        `inline tool name '${t.name}' collides with a registry tool — pick a distinct name`,
+        `inline tool name '${t.name}' collides with a registry tool in this server — pick a distinct name`,
       );
     }
   }
@@ -732,11 +758,23 @@ export async function queryClaudeSdk(opts: {
           costAuthoritative = true;
           durationMs =
             (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
-          if (streamingText) {
+          if (
+            streamingText ||
+            (opts.maxTurns === 1 && toolCallNames.length > 0)
+          ) {
             // Partial content counts as a working provider — the turn/budget
             // limit is an SDK-internal guard, not a provider outage. Avoids
             // tripping the breaker on legitimate long-running queries that
             // ran out of maxTurns while the model was still responsive.
+            // Single-turn tool_use counts the same as text (2026-07-10): a
+            // selection probe (maxTurns=1, see queryClaudeSdkAsInfer) whose
+            // model went STRAIGHT to a tool call — the correct behavior —
+            // ends here with zero prose; without this clause every good
+            // probe recorded a breaker failure and the eval run tripped the
+            // claude-sdk breaker open mid-flight. Deliberately scoped to
+            // maxTurns===1 (qa-audit W1): a MULTI-turn run that looped tool
+            // calls to the ceiling with zero prose is a wedge and must keep
+            // its BLOCKED text + breaker-failure classification.
             providerOutcome = "success";
             resultText =
               `${marker} Partial response below — turn/budget limit hit before completion.\n\n${streamingText}\n\n` +
@@ -990,24 +1028,56 @@ export function flattenMessagesForSdk(messages: ChatMessage[]): {
  * shape as `InferenceResponse` so existing Prometheus call sites (planner,
  * reflector, selfAssess) can branch on config with one line instead of
  * being rewritten.
+ *
+ * TOOL SEMANTICS (2026-07-10): when `options.tools` is non-empty, the call
+ * becomes a SELECTION PROBE — the definitions are registered as no-op stubs,
+ * `maxTurns` is forced to 1, and the model's first-turn tool_use blocks come
+ * back as `tool_calls` (openai shape) WITHOUT any tool executing. This
+ * restored the eval runner's tool_selection signal, which had silently
+ * measured "no tools ever offered" since the 2026-05-10 cutover (`infer()`
+ * dropped `request.tools` on this path — §13-adjacent postmortem in
+ * docs/PROJECT-STATUS.md). A caller that wants tools EXECUTED belongs on
+ * `queryClaudeSdkAsInferWithTools`, not here.
  */
 export async function queryClaudeSdkAsInfer(
   messages: ChatMessage[],
-  options?: { signal?: AbortSignal; maxTurns?: number; model?: string },
+  options?: {
+    signal?: AbortSignal;
+    maxTurns?: number;
+    model?: string;
+    tools?: ToolDefinition[];
+  },
 ): Promise<InferenceResponse> {
   const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
   const start = Date.now();
+  const probing = (options?.tools?.length ?? 0) > 0;
   const result = await queryClaudeSdk({
     prompt: userPrompt,
     systemPrompt,
     toolNames: [],
-    maxTurns: options?.maxTurns ?? 3,
+    extraTools: probing ? buildProbeTools(options!.tools!) : undefined,
+    maxTurns: probing ? 1 : (options?.maxTurns ?? 3),
     model: options?.model,
     abortSignal: options?.signal,
   });
 
+  // Map captured tool_use blocks to the openai `tool_calls` shape the
+  // infer() contract exposes. Prefer toolCallsWithArgs (has inputs); fall
+  // back to bare names if a future path populates only `toolCalls`.
+  const probeCalls = !probing
+    ? undefined
+    : (
+        result.toolCallsWithArgs ??
+        result.toolCalls.map((name) => ({ name, input: {} }))
+      ).map((c, i) => ({
+        id: `probe_${i}`,
+        type: "function" as const,
+        function: { name: c.name, arguments: JSON.stringify(c.input ?? {}) },
+      }));
+
   return {
     content: result.text,
+    ...(probeCalls && probeCalls.length > 0 && { tool_calls: probeCalls }),
     usage: {
       prompt_tokens: result.usage.promptTokens,
       completion_tokens: result.usage.completionTokens,
