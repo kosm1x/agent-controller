@@ -4,12 +4,12 @@
  * Evaluates whether V8.1's Proactive Context Engine is ready to be declared
  * active, per spec §13:
  *   - cache-read ratio ≥ 80% over a rolling 24h window of CACHEABLE inference
- *     (everything except `reflection:%` — see "Spec correction" note below);
+ *     (everything except `reflection:%` and `heavy` — see the two notes below);
  *   - ≥ 20 cacheable runs in that window — enough signal to trust the ratio;
  *   - morning-surface briefing promote-rate ≥ 60% over the last 7 days.
  *
- * Reads two ledgers: `cost_ledger` rows where `agent_type NOT LIKE 'reflection:%'`
- * and `proposed_briefings`. Pure read — no writes, no side effects. Surfaced to
+ * Reads two ledgers: `cost_ledger` rows that clear the cacheable filter, and
+ * `proposed_briefings`. Pure read — no writes, no side effects. Surfaced to
  * the operator via `mc-ctl briefing-gate` (→ `scripts/briefing-gate.ts`).
  *
  * Spec correction (2026-05-27):
@@ -20,8 +20,28 @@
  *   fires ~hourly — every adjacent-run gap exceeds the TTL, so cache-read is
  *   ~0% by structural design, not by regression. The intent of the check
  *   (verify caching is wired in the substrate V8.1 sits on) is preserved by
- *   measuring the high-frequency path (`fast`, `heavy`, etc.) where TTL
- *   actually covers inter-run gaps. See feedback_gate_target_must_match_cadence.
+ *   measuring the high-frequency path where TTL actually covers inter-run
+ *   gaps. See feedback_gate_target_must_match_cadence.
+ *
+ * Spec correction (2026-07-10) — `heavy` is NOT a high-frequency path:
+ *   The 2026-05-27 note assumed `heavy` sat on the high-frequency side. Live
+ *   `cost_ledger` says otherwise: `heavy` fires EXACTLY ONCE PER DAY (14/14
+ *   days, one run each), so every run is a cold start whose first turn must
+ *   pay `cache_creation` — the same TTL argument that excluded `reflection:%`.
+ *   Worse, its ratio is capped by turn count, not prefix health: a cold N-turn
+ *   run creates the prefix once and reads it N-1 times, so cache-read ≤
+ *   (N-1)/N. The ratio therefore tracks TURN COUNT, not cache health: on
+ *   recent days `heavy` runs ~1.7-1.9 turns (prompt/cache_creation) → a ~43-48%
+ *   ceiling, which is exactly what it measures; on 2026-06-27/28 it ran ~4.5
+ *   turns and measured 75.7-77.6% with no cache change. Including it dragged
+ *   the 24h aggregate to ~78.3% while `fast` — the path this check actually
+ *   exists to watch — sat at 80.5% (87.2% over 14d). Note the ceiling is
+ *   INDEPENDENT of prefix size: shrinking `heavy`'s ~350k-token cold prefix
+ *   would cut cost but move the ratio by ~0, so no prompt-prefix work can lift
+ *   it. Excluded here to keep §13 measuring what it claims to measure.
+ *   Trade-off: `heavy`'s cold start (~$8/run) no longer gates §13 — it stays
+ *   visible, non-gating, via `excludedColdStart` (rendered by `mc-ctl
+ *   briefing-gate`) and `mc-ctl audit-claim cache-hit --stratify-by=agent_type`.
  */
 
 import { getDatabase } from "../db/index.js";
@@ -31,6 +51,19 @@ import { REFLECTION_AGENT_TYPE_PREFIX } from "../budget/service.js";
 export const GATE_CACHE_READ_PCT = 80;
 export const GATE_MIN_CACHEABLE_RUNS = 20;
 export const GATE_MORNING_PROMOTE_PCT = 60;
+
+/**
+ * Agent types excluded from the §13 cache-read ratio because they fire less
+ * often than the prompt cache's 5-min TTL, so every run is a cold start that
+ * MUST pay `cache_creation` — a structural floor, not a cache regression.
+ * `reflection:%` is matched by prefix (see `REFLECTION_AGENT_TYPE_PREFIX`);
+ * this list is the exact-match half. See the 2026-07-10 spec-correction note.
+ *
+ * MUST stay non-empty: it is interpolated into `NOT IN (...)`, and SQLite
+ * rejects `NOT IN ()` as a syntax error. Fail-loud by design — an empty list
+ * would mean the exclusion silently stopped applying.
+ */
+export const GATE_COLD_START_AGENT_TYPES = ["heavy"] as const;
 
 export interface BriefingSurfaceHealth {
   surface: string;
@@ -51,10 +84,26 @@ export interface ActivationGateCheck {
 export interface ActivationGateResult {
   /** Cache-read ratio (%) over cacheable inference, last 24h. null = no rows. */
   cacheReadPct: number | null;
-  /** Count of cacheable inference runs (agent_type NOT LIKE 'reflection:%') in 24h. */
+  /**
+   * Count of cacheable inference runs in 24h — i.e. rows surviving BOTH the
+   * `reflection:%` prefix filter and the `GATE_COLD_START_AGENT_TYPES` filter.
+   */
   cacheableRuns: number;
   /** Total cost ($) of those cacheable runs in 24h. */
   cacheableCostUsd: number;
+  /**
+   * The cold-start rows this gate deliberately does NOT score (`heavy`), last
+   * 24h. Reported for observability ONLY — never gates. Exists so the
+   * exclusion can't silently hide a regression: if `runs` climbs well past 1/day
+   * the cold-start premise has lapsed and `heavy` belongs back in the ratio; if
+   * `cacheReadPct` collapses toward 0 (vs its ~(N-1)/N turn ceiling) its caching
+   * is genuinely broken. `null` pct = no such rows in the window.
+   */
+  excludedColdStart: {
+    runs: number;
+    cacheReadPct: number | null;
+    costUsd: number;
+  };
   briefingHealth: BriefingSurfaceHealth[];
   checks: {
     cacheRead: ActivationGateCheck;
@@ -97,9 +146,10 @@ export function evaluateActivationGate(): ActivationGateResult {
   const db = getDatabase();
 
   // §13 query 1 — cache-read ratio over CACHEABLE inference, rolling 24h.
-  // Filter excludes `reflection:%` because those rows fire too infrequently
-  // for the 5-min prompt-cache TTL to cover inter-run gaps (see "Spec
-  // correction" note in the module docstring). Also filters `prompt_tokens
+  // Filter excludes `reflection:%` AND `GATE_COLD_START_AGENT_TYPES` (`heavy`)
+  // because those rows fire too infrequently for the 5-min prompt-cache TTL to
+  // cover inter-run gaps (see both "Spec correction" notes in the module
+  // docstring). Also filters `prompt_tokens
   // > 0` to skip null-usage rows that would otherwise pollute the ratio.
   //
   // `cost_ledger.created_at` defaults to `datetime('now')` (UTC); the window
@@ -109,6 +159,9 @@ export function evaluateActivationGate(): ActivationGateResult {
   // Reuse `REFLECTION_AGENT_TYPE_PREFIX` (the same constant the writer in
   // budget/service.ts uses to label these rows) so a future rename of that
   // prefix can't silently break the gate by leaving stale rows uncounted.
+  const coldStartPlaceholders = GATE_COLD_START_AGENT_TYPES.map(() => "?").join(
+    ",",
+  );
   const cache = db
     .prepare(
       `SELECT SUM(cache_read_tokens)    AS cache_read,
@@ -117,10 +170,29 @@ export function evaluateActivationGate(): ActivationGateResult {
               COALESCE(SUM(cost_usd),0) AS cost
          FROM cost_ledger
         WHERE agent_type NOT LIKE ?
+          AND agent_type NOT IN (${coldStartPlaceholders})
           AND prompt_tokens > 0
           AND created_at > datetime('now','-1 day')`,
     )
-    .get(`${REFLECTION_AGENT_TYPE_PREFIX}%`) as CacheRow;
+    .get(
+      `${REFLECTION_AGENT_TYPE_PREFIX}%`,
+      ...GATE_COLD_START_AGENT_TYPES,
+    ) as CacheRow;
+
+  // The mirror of query 1: the cold-start rows we just excluded. Never gates —
+  // rendered by `mc-ctl briefing-gate` so the exclusion stays auditable (W1).
+  const excluded = db
+    .prepare(
+      `SELECT SUM(cache_read_tokens)    AS cache_read,
+              SUM(prompt_tokens)        AS prompt,
+              COUNT(*)                  AS runs,
+              COALESCE(SUM(cost_usd),0) AS cost
+         FROM cost_ledger
+        WHERE agent_type IN (${coldStartPlaceholders})
+          AND prompt_tokens > 0
+          AND created_at > datetime('now','-1 day')`,
+    )
+    .get(...GATE_COLD_START_AGENT_TYPES) as CacheRow;
 
   const cacheableRuns = cache.runs;
   const cacheReadPct =
@@ -193,6 +265,14 @@ export function evaluateActivationGate(): ActivationGateResult {
     cacheReadPct,
     cacheableRuns,
     cacheableCostUsd: Math.round(cache.cost * 10000) / 10000,
+    excludedColdStart: {
+      runs: excluded.runs,
+      cacheReadPct:
+        excluded.prompt && excluded.prompt > 0
+          ? round1((100 * (excluded.cache_read ?? 0)) / excluded.prompt)
+          : null,
+      costUsd: Math.round(excluded.cost * 10000) / 10000,
+    },
     briefingHealth,
     checks: {
       cacheRead: { pass: cacheReadPass, detail: cacheDetail },

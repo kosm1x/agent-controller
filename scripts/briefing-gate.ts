@@ -12,7 +12,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initDatabase } from "../src/db/index.js";
-import { evaluateActivationGate } from "../src/briefing/activation-gate.js";
+import {
+  evaluateActivationGate,
+  GATE_COLD_START_AGENT_TYPES,
+} from "../src/briefing/activation-gate.js";
 import {
   evaluateV82Gate,
   combineVerdicts,
@@ -54,6 +57,14 @@ function main(): number {
   console.log(
     `  cacheable runs: ${g.cacheableRuns}   cacheable cost: $${g.cacheableCostUsd}`,
   );
+  // Non-gating: keeps the cold-start exclusion auditable rather than invisible.
+  if (g.excludedColdStart.runs > 0) {
+    const { runs, cacheReadPct, costUsd } = g.excludedColdStart;
+    console.log(
+      `  ℹ excluded cold-start (${GATE_COLD_START_AGENT_TYPES.join(", ")}): ` +
+        `${runs} run(s), cache-read ${cacheReadPct ?? "n/a"}%, cost $${costUsd} — not scored`,
+    );
+  }
   console.log("");
 
   console.log("Morning briefing promote-rate (last 7d):");

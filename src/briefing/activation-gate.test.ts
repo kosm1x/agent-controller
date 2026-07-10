@@ -160,6 +160,43 @@ describe("evaluateActivationGate", () => {
     expect(r.checks.cacheRead.pass).toBe(true);
   });
 
+  it("EXCLUDES once-daily `heavy` cold-start rows from the cache-read ratio", () => {
+    // Mirrors the live 2026-07-10 shape that failed §13: `fast` sits ABOVE the
+    // 80% bar, and a single once-daily `heavy` cold start (~47%, a (N-1)/N
+    // ceiling at ~1.9 turns) is heavy enough in TOKENS to drag the weighted
+    // aggregate under it. Without the exclusion this is 20,960/30,000 = 69.9%
+    // → FAIL; with it, 81% → PASS.
+    insertCacheableRuns(20, 1000, 810); // fast: 81%, above the bar
+    insertCacheableCost(10_000, 4_760, "heavy"); // heavy: 47.6%, cold start
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate();
+    expect(r.cacheableRuns).toBe(20); // heavy row excluded from the count
+    expect(r.cacheReadPct).toBe(81); // ratio undragged by heavy's cold start
+    expect(r.checks.cacheRead.pass).toBe(true);
+
+    // ...but the excluded row stays VISIBLE and non-gating, so the exclusion
+    // can't silently hide a heavy cache regression (audit W1).
+    expect(r.excludedColdStart).toEqual({
+      runs: 1,
+      cacheReadPct: 47.6,
+      costUsd: 0,
+    });
+  });
+
+  it("reports excludedColdStart as zero/null when no heavy rows are in the window", () => {
+    insertCacheableRuns(20, 1000, 900);
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate();
+    expect(r.excludedColdStart).toEqual({
+      runs: 0,
+      cacheReadPct: null,
+      costUsd: 0,
+    });
+    expect(r.checks.cacheRead.pass).toBe(true); // absence never gates
+  });
+
   it("EXCLUDES rows with prompt_tokens = 0 (null-usage pollution)", () => {
     insertCacheableRuns(20, 1000, 900);
     // 5 null-usage rows that would otherwise count as 0% reads.
