@@ -99,9 +99,9 @@ describe("resolveBriefingOnOperatorReply", () => {
     expect(getProposedBriefing(b.briefing_id)!.status).toBe("pending");
   });
 
-  it("PROMOTES on any non-rejecting reply and bumps the triage counter", async () => {
+  it("PROMOTES on an explicit accept verdict and bumps the triage counter", async () => {
     const id = deliverNew();
-    const result = await resolveBriefingOnOperatorReply("gracias, lo reviso");
+    const result = await resolveBriefingOnOperatorReply("sirve");
     expect(result).toMatchObject({ briefingId: id, resolution: "promoted" });
     expect(getProposedBriefing(id)!.status).toBe("promoted");
     expect(triagePolicy("morning")).toMatchObject({
@@ -111,9 +111,91 @@ describe("resolveBriefingOnOperatorReply", () => {
     });
   });
 
+  it("LEAVES PENDING an unrelated message — engagement is not endorsement", async () => {
+    // The 2026-07-10 root cause: `resolveBriefingOnOperatorReply` fires on EVERY
+    // inbound owner message, so texting Jarvis about another project used to
+    // promote that morning's brief. Acceptance must be an explicit act.
+    const id = deliverNew();
+    const result = await resolveBriefingOnOperatorReply(
+      "Hoy nos concentramos en subir el sitio de EurekaMS a eurekams.net",
+    );
+    expect(result).toBeNull();
+    expect(getProposedBriefing(id)!.status).toBe("pending");
+    expect(triagePolicy("morning")).toBeUndefined();
+  });
+
+  it("LEAVES PENDING an unrelated instruction that the LLM would call a discard", async () => {
+    // Verbatim: the message that falsely DISCARDED the 2026-07-09 brief. It is
+    // about the DENUE project, not the brief. No judgments here, so no LLM runs
+    // at all — but it must not match DISCARD_RE either.
+    const id = deliverNew();
+    const result = await resolveBriefingOnOperatorReply(
+      "Dejamos para después el Denue americano. No es urgente ni estratégico. Cierra ese tema.",
+    );
+    expect(result).toBeNull();
+    expect(getProposedBriefing(id)!.status).toBe("pending");
+  });
+
+  it("LEAVES PENDING everyday Spanish that merely CONTAINS a verdict-ish word (audit C1)", async () => {
+    // A substring allow-list is not enough: `resolveBriefingOnOperatorReply`
+    // sees EVERY owner message, so any token that is also an ordinary word
+    // resolves the brief from an unrelated instruction. The verdict must be the
+    // WHOLE message. Each of these promoted the brief before the anchoring fix.
+    for (const text of [
+      "dale prioridad al tema del CRM hoy",
+      "listo, ya subí el sitio",
+      "ok, mando el correo",
+      "confirmo la reunión de las 3",
+      "todo listo por aquí",
+      "sirve mucho para el CRM que armamos",
+      "¿te sirve el reporte?",
+      "no estoy de acuerdo con el punto 2",
+      // A QUESTION is not a verdict. Punctuation-stripping would otherwise
+      // reduce these to the bare accept token.
+      "¿sirve?",
+      "sirve?",
+      "¿útil?",
+    ]) {
+      const id = deliverNew();
+      expect(await resolveBriefingOnOperatorReply(text), text).toBeNull();
+      expect(getProposedBriefing(id)!.status, text).toBe("pending");
+    }
+  });
+
+  it("ACCEPTS the accented 'útil' as well as bare/punctuated verdicts (audit W2)", async () => {
+    // Without the `u` flag, `\b[uú]til` never fired on a leading accented `ú`,
+    // so the CORRECTLY spelled word was silently dropped.
+    for (const text of [
+      "útil",
+      "util",
+      "sirve.",
+      "¡sirve!",
+      "sirve, gracias",
+      "sí sirve",
+      "es útil",
+    ]) {
+      const id = deliverNew();
+      expect(await resolveBriefingOnOperatorReply(text), text).toMatchObject({
+        resolution: "promoted",
+      });
+      expect(getProposedBriefing(id)!.status, text).toBe("promoted");
+    }
+  });
+
+  it("DISCARDS a negated accept token ('no sirve') rather than promoting it", async () => {
+    // DISCARD_RE is tested BEFORE ACCEPT_RE precisely so `\bsirve\b` cannot
+    // capture "no sirve" / "no me sirve" / "no es útil".
+    for (const text of ["no sirve", "no me sirve", "no es útil"]) {
+      const id = deliverNew();
+      const result = await resolveBriefingOnOperatorReply(text);
+      expect(result, text).toMatchObject({ resolution: "discarded" });
+      expect(getProposedBriefing(id)!.status, text).toBe("discarded");
+    }
+  });
+
   it("DISCARDS on an explicit rejection phrase", async () => {
     const id = deliverNew();
-    const result = await resolveBriefingOnOperatorReply("descartar por ahora");
+    const result = await resolveBriefingOnOperatorReply("descartar");
     expect(result).toMatchObject({ briefingId: id, resolution: "discarded" });
     expect(getProposedBriefing(id)!.status).toBe("discarded");
     expect(triagePolicy("morning")).toMatchObject({
@@ -122,13 +204,16 @@ describe("resolveBriefingOnOperatorReply", () => {
     });
   });
 
-  it("PROMOTES an engagement reply that merely defers ('lo veo más tarde')", async () => {
-    // audit W5 — "más tarde" / "no ahora" are engagement, not rejection.
+  it("LEAVES PENDING a reply that merely defers ('lo veo más tarde')", async () => {
+    // audit W5 — "más tarde" / "no ahora" are engagement, not rejection. They
+    // are ALSO not an endorsement: since 2026-07-10 they leave the brief pending
+    // rather than promoting it (was: `resolution: "promoted"`).
     const id = deliverNew();
     const result = await resolveBriefingOnOperatorReply(
       "gracias, lo veo más tarde con calma",
     );
-    expect(result).toMatchObject({ briefingId: id, resolution: "promoted" });
+    expect(result).toBeNull();
+    expect(getProposedBriefing(id)!.status).toBe("pending");
   });
 
   it("EXPIRES a delivered briefing whose expiry has passed, regardless of reply", async () => {
@@ -142,7 +227,7 @@ describe("resolveBriefingOnOperatorReply", () => {
 
   it("is a no-op on the second reply — the briefing is already resolved", async () => {
     deliverNew();
-    expect((await resolveBriefingOnOperatorReply("gracias"))!.resolution).toBe(
+    expect((await resolveBriefingOnOperatorReply("sirve"))!.resolution).toBe(
       "promoted",
     );
     expect(await resolveBriefingOnOperatorReply("otra cosa")).toBeNull();
@@ -170,7 +255,7 @@ describe("resolveBriefingOnOperatorReply — §13 concession path", () => {
   it("DORMANT: a brief with no judgments never invokes the classifier", async () => {
     deliverNew();
     const classify = vi.fn(); // would throw if called with no impl
-    const result = await resolveBriefingOnOperatorReply("gracias", {
+    const result = await resolveBriefingOnOperatorReply("sirve", {
       classify: classify as never,
     });
     expect(classify).not.toHaveBeenCalled();
@@ -217,7 +302,10 @@ describe("resolveBriefingOnOperatorReply — §13 concession path", () => {
     expect(getProposedBriefing(id)!.status).toBe("pending");
   });
 
-  it("a classified promote on a judgment-bearing brief delegates to the V8.1 promote", async () => {
+  it("a classified promote CANNOT resolve a brief without an explicit operator verdict", async () => {
+    // The classifier's opinion is advisory, never authoritative. This is the
+    // exact path that promoted 28/28 briefs on unrelated messages: an LLM said
+    // "engaged" and the brief was booked as accepted.
     const id = deliverNew();
     addJudgment(id);
     const result = await resolveBriefingOnOperatorReply("gracias", {
@@ -228,8 +316,54 @@ describe("resolveBriefingOnOperatorReply — §13 concession path", () => {
         error: false,
       }),
     });
+    expect(result).toBeNull();
+    expect(getProposedBriefing(id)!.status).toBe("pending");
+  });
+
+  it("an explicit accept on a judgment-bearing brief delegates to the V8.1 promote", async () => {
+    const id = deliverNew();
+    addJudgment(id);
+    const result = await resolveBriefingOnOperatorReply("sirve", {
+      classify: async () => ({
+        cls: "promote",
+        judgmentId: null,
+        rationale: "engaged",
+        error: false,
+      }),
+    });
     expect(result).toMatchObject({ resolution: "promoted" });
     expect(getProposedBriefing(id)!.status).toBe("promoted");
+  });
+
+  it("the classifier may ESCALATE an accept to a discard, but never the reverse", async () => {
+    // Escalate: operator said "sirve" but the classifier read a rejection.
+    const a = deliverNew();
+    addJudgment(a);
+    expect(
+      await resolveBriefingOnOperatorReply("sirve", {
+        classify: async () => ({
+          cls: "discard",
+          judgmentId: null,
+          rationale: "",
+          error: false,
+        }),
+      }),
+    ).toMatchObject({ resolution: "discarded" });
+
+    // Never the reverse: an explicit "descarta" cannot be promoted by an LLM.
+    const b = deliverNew();
+    addJudgment(b);
+    expect(
+      await resolveBriefingOnOperatorReply("descarta", {
+        classify: async () => ({
+          cls: "promote",
+          judgmentId: null,
+          rationale: "",
+          error: false,
+        }),
+      }),
+    ).toMatchObject({ resolution: "discarded" });
+    expect(getProposedBriefing(b)!.status).toBe("discarded");
   });
 
   it("a classifier failure (cls=null) falls back to the legacy DISCARD_RE", async () => {

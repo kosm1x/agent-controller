@@ -64,7 +64,13 @@ function printList(windowDays: number, limit: number): number {
   console.log(`§17 gate: ${verdictLabel}  ·  ${g.checks.volume.detail}`);
   console.log(
     `          resolver ${g.resolverPct ?? "—"}%  ·  unfixable ${g.unfixablePct ?? "—"}%  ·  ` +
-      `sycophancy ${g.sycophancyPct ?? "—"}%  ·  acceptance ${g.promoteRatio === null ? "—" : g.promoteRatio + "×"}`,
+      `sycophancy ${g.sycophancyPct ?? "—"}%  ·  acceptance ${
+        g.promoteRatio === null
+          ? "—"
+          : g.promoteRatio === Number.POSITIVE_INFINITY
+            ? "∞" // every red brief rejected — perfect discrimination
+            : g.promoteRatio + "×"
+      }`,
   );
   console.log("          (full gate: mc-ctl briefing-gate)\n");
 

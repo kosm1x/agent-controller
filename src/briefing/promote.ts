@@ -43,8 +43,94 @@ const log = createLogger("briefing:promote");
  * "omit*" — "lo veo más tarde" is engagement (keep the brief), not rejection,
  * and the broad stems false-matched unrelated words ("ignoraba", "saltamos").
  */
-const DISCARD_RE =
-  /\b(desc[aá]rt\w*|arch[ií]v\w*|no me interesa|no me sirve|sk[ií]p)\b/i;
+/**
+ * A verdict must be the ENTIRE message, not a token found somewhere inside it.
+ *
+ * This anchoring is the load-bearing part, and a substring allow-list is NOT a
+ * substitute (qa-auditor C1, 2026-07-10). `resolveBriefingOnOperatorReply` runs
+ * on EVERY inbound owner message while a brief is pending, so any token that is
+ * also an ordinary Spanish word silently resolves the brief from an unrelated
+ * instruction: "dale prioridad al CRM", "listo, ya subí el sitio", "ok, mando el
+ * correo", "confirmo la reunión de las 3" would all have PROMOTED that morning's
+ * brief. An allow-list only helps when its tokens are rare OUTSIDE the intended
+ * act — these are not. So: match the whole message, and keep the vocabulary to
+ * words that are meaningless except as a ruling on a brief.
+ *
+ * Leading/trailing punctuation, emoji and an optional courtesy "gracias" are
+ * tolerated; anything more substantive leaves the brief `pending` (fails closed
+ * — a missed accept is a lost data point, a false accept poisons §17 6a, which
+ * gates V8.3 autonomy).
+ *
+ * The `u` flag matters: without it `\b` is ASCII-only, so `\bútil` never fires on
+ * a leading accented `ú` and the CORRECTLY spelled "útil" was silently dropped
+ * (qa-auditor W2). Anchoring removes the `\b` dependency entirely.
+ */
+const VERDICT_STRIP_RE = /^[\s\p{P}\p{S}]+|[\s\p{P}\p{S}]+$/gu;
+const COURTESY_RE = /\s*,?\s*(gracias|thanks|grax)\s*$/iu;
+
+/**
+ * A QUESTION is never a verdict. Punctuation stripping would otherwise reduce
+ * "¿sirve?" — the operator ASKING whether something is useful — to the bare
+ * accept token "sirve". Checked against the RAW text, before any stripping.
+ */
+const INTERROGATIVE_RE = /[?¿]/u;
+
+const DISCARD_WHOLE_RE =
+  /^(desc[aá]rt\w*|arch[ií]v\w*|no\s+(me\s+)?(interesa|sirve)|no\s+es\s+[uú]til|sk[ií]p)$/iu;
+const ACCEPT_WHOLE_RE = /^(s[ií]\s+)?(sirve|es\s+[uú]til|[uú]til)$/iu;
+
+/**
+ * The operator's explicit verdict on the delivered brief, or `null` when the
+ * message says nothing about it.
+ *
+ * WHY THIS EXISTS (2026-07-10). Until today a brief was resolved by ANY inbound
+ * owner message: `router.ts` calls `resolveBriefingOnOperatorReply` on the
+ * messaging chokepoint, and the old rule was "anything that isn't a discard
+ * promotes" (the rendered footer even said so: _"Responde lo que sea para
+ * conservar este resumen"_). Two consequences, both observed live:
+ *
+ *   1. FALSE PROMOTE — texting Jarvis about an unrelated project promoted that
+ *      morning's brief. 28/28 promotions in the 30d window were of this kind;
+ *      not one was a reply to a brief (`promoted_by_message_id` is NULL on all).
+ *   2. FALSE DISCARD — on 2026-07-09 the operator wrote "Dejamos para después el
+ *      Denue americano… Cierra ese tema" (about the DENUE project). It misses
+ *      DISCARD_RE, so the V8.2 LLM classifier judged it — and discarded the
+ *      morning brief.
+ *
+ * So `status` recorded WHETHER THE OPERATOR TEXTED JARVIS, uncorrelated with the
+ * brief's content. That destroyed §17 check 6a, whose whole job is to prove the
+ * green/red confidence labels discriminate: green and red both scored 100%
+ * acceptance. Since 6a is a documented blocker on V8.3's L≥3 autonomous
+ * execution, a meaningless 6a is a safety problem, not a cosmetic one.
+ *
+ * Fix: resolution requires the message to BE a verdict (see the anchoring note
+ * above). An unrelated message returns `null` → the brief stays `pending` and a
+ * later verdict (or the TTL → `expired`) resolves it. Deterministic, no LLM.
+ * Fails closed: when in doubt, `null`.
+ *
+ * NOTE this is a keyword contract, not a reply-binding one. The robust fix is to
+ * bind resolution to an actual reply to the brief's message
+ * (`proposed_briefings.promoted_by_message_id` exists for exactly this and is
+ * NULL on every row — `IncomingMessage.replyTo` is declared in `messaging/
+ * types.ts` but no adapter populates it). Until that is wired, anchoring is what
+ * keeps an unrelated instruction from resolving a brief.
+ * See feedback_briefing_acceptance_was_engagement.
+ */
+export function classifyOperatorVerdict(
+  replyText: string,
+): "promoted" | "discarded" | null {
+  if (INTERROGATIVE_RE.test(replyText)) return null;
+  const normalized = replyText
+    .replace(COURTESY_RE, "")
+    .replace(VERDICT_STRIP_RE, "")
+    .trim();
+  if (normalized === "") return null;
+  // DISCARD is tested first so the negated forms ("no sirve", "no es útil")
+  // can never fall through to the `sirve` / `útil` accept branch.
+  if (DISCARD_WHOLE_RE.test(normalized)) return "discarded";
+  if (ACCEPT_WHOLE_RE.test(normalized)) return "promoted";
+  return null;
+}
 
 export type BriefingResolution =
   | "promoted"
@@ -130,6 +216,13 @@ function applyBinaryResolution(
 async function resolveWithJudgments(
   pending: { briefingId: string; surface: string },
   replyText: string,
+  /**
+   * The operator's deterministic verdict, or `null` when the message carries
+   * none. A `null` verdict can still be a PUSHBACK (which holds the brief
+   * pending), but it can never resolve the brief — the classifier's own
+   * promote/discard opinion is NOT authoritative.
+   */
+  verdict: "promoted" | "discarded" | null,
   deps: ResolveDeps,
 ): Promise<ResolveResult | null> {
   const classify = deps.classify ?? classifyReply;
@@ -151,15 +244,19 @@ async function resolveWithJudgments(
     };
   }
 
-  // promote / discard / classifier-failed → V8.1 binary outcome. A failed
-  // classify (cls=null) defers to the same legacy regex the no-judgment path
-  // uses, so the worst case degrades to V8.1 behavior, never a fabricated hold.
+  // No deterministic verdict → the message was not a ruling on this brief. The
+  // classifier's promote/discard opinion is deliberately IGNORED here: it is what
+  // discarded the 2026-07-09 brief on an unrelated DENUE instruction. Leave the
+  // brief `pending`; a later "sirve"/"descarta" (or the TTL → `expired`) rules.
+  if (verdict === null) return null;
+
+  // The operator's DETERMINISTIC verdict is authoritative. The classifier may
+  // only ESCALATE an accept into a discard (it read a rejection the regex
+  // missed), never the reverse — an LLM must not overturn an explicit
+  // "descarta" into a promote. A failed classify (cls=null) falls back to
+  // `verdict`, so a classifier outage can never fabricate an acceptance.
   const resolution: "promoted" | "discarded" =
-    c.cls === "discard"
-      ? "discarded"
-      : c.cls === null && DISCARD_RE.test(replyText)
-        ? "discarded"
-        : "promoted";
+    c.cls === "discard" ? "discarded" : verdict;
   return applyBinaryResolution(pending.briefingId, pending.surface, resolution);
 }
 
@@ -199,20 +296,23 @@ export async function resolveBriefingOnOperatorReply(
         : null;
     }
 
-    // V8.2 §13: judgment-bearing briefs go through the concession evidence gate.
+    // An EXPLICIT verdict is required to RESOLVE the brief. A message that says
+    // nothing about it leaves it `pending` — that is neither an acceptance nor a
+    // rejection. (Was: "anything that isn't a discard promotes".)
+    const verdict = classifyOperatorVerdict(replyText);
+
+    // V8.2 §13: judgment-bearing briefs still reach the concession gate even
+    // with a null verdict, because a PUSHBACK ("no estoy de acuerdo con X") is
+    // neither accept nor reject and must still be classified — it feeds the §17
+    // sycophancy check. `resolveWithJudgments` will hold the brief pending
+    // unless `verdict` is non-null, so the classifier can never resolve it.
     if (countJudgmentsForBriefing(pending.briefingId, deps.db) > 0) {
-      return await resolveWithJudgments(pending, replyText, deps);
+      return await resolveWithJudgments(pending, replyText, verdict, deps);
     }
 
-    // V8.1 legacy binary path (no judgments) — unchanged.
-    const resolution: "promoted" | "discarded" = DISCARD_RE.test(replyText)
-      ? "discarded"
-      : "promoted";
-    return applyBinaryResolution(
-      pending.briefingId,
-      pending.surface,
-      resolution,
-    );
+    // V8.1 binary path (no judgments): without a verdict there is nothing to do.
+    if (verdict === null) return null;
+    return applyBinaryResolution(pending.briefingId, pending.surface, verdict);
   } catch (err) {
     log.warn({ err }, "resolveBriefingOnOperatorReply error (swallowed)");
     return null;

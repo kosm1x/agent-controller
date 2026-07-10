@@ -70,7 +70,8 @@ describe("evaluateActivationGate", () => {
 
   it("PASSES when cache-read ≥80% over ≥20 runs and morning promote-rate ≥60%", () => {
     insertCacheableRuns(20, 1000, 850); // 85% cache-read
-    // 7 morning briefs, 5 promoted → 71% promote-rate.
+    // 7 morning briefs; 5 promoted + 1 discarded = 6 RULED → 83% promote-rate.
+    // The `expired` brief is unruled and excluded from the denominator.
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
     insertBriefing("morning", "discarded");
     insertBriefing("morning", "expired");
@@ -98,7 +99,8 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "promoted");
     insertBriefing("morning", "discarded");
     insertBriefing("morning", "discarded");
-    insertBriefing("morning", "expired"); // 2/5 resolved promoted = 40%
+    insertBriefing("morning", "expired"); // unruled → excluded
+    // 2 promoted / 4 RULED = 50%, below the 60% bar.
 
     const r = evaluateActivationGate();
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -123,7 +125,7 @@ describe("evaluateActivationGate", () => {
 
     const r = evaluateActivationGate();
     expect(r.checks.promoteRate.pass).toBe(false);
-    expect(r.checks.promoteRate.detail).toContain("none resolved");
+    expect(r.checks.promoteRate.detail).toContain("only 0 ruled on");
     expect(r.verdict).toBe("insufficient_data");
   });
 
@@ -232,6 +234,53 @@ describe("evaluateActivationGate", () => {
     const morning = health.find((h) => h.surface === "morning")!;
     expect(morning.generated).toBe(2);
     expect(morning.promoted).toBe(1);
-    expect(morning.promoteRatePct).toBe(50);
+    // promote-rate is over RULED briefs (promoted + discarded), not generated.
+    // The `pending` brief carries no verdict, so it neither helps nor hurts:
+    // 1/1 = 100%, not 1/2 = 50%. Silence is not a rejection.
+    expect(morning.ruled).toBe(1);
+    expect(morning.promoteRatePct).toBe(100);
+  });
+
+  it("does NOT let an EXPIRED (unanswered) brief count as a rejection", () => {
+    // Since promotion requires an explicit "sirve"/"descarta", an unanswered
+    // brief expires. Charging that silence against the promote-rate would fail
+    // §13 for a reason unrelated to briefing quality.
+    insertCacheableRuns(20, 1000, 900);
+    for (let i = 0; i < 3; i++) insertBriefing("morning", "promoted"); // ≥ floor
+    insertBriefing("morning", "expired");
+    insertBriefing("morning", "expired");
+
+    const r = evaluateActivationGate();
+    const morning = r.briefingHealth.find((h) => h.surface === "morning")!;
+    expect(morning.expired).toBe(2);
+    expect(morning.ruled).toBe(3);
+    expect(morning.promoteRatePct).toBe(100); // 3/3 ruled, NOT 3/5 generated
+    expect(r.checks.promoteRate.pass).toBe(true);
+  });
+
+  it("does NOT let a single ruled brief decide the gate (audit W-B)", () => {
+    // One discarded brief in a quiet week is 0/1 = 0% → would FAIL §13 on n=1.
+    // Below the floor the check must be insufficient_data, never fail.
+    insertCacheableRuns(20, 1000, 900);
+    insertBriefing("morning", "discarded");
+    insertBriefing("morning", "expired");
+    insertBriefing("morning", "pending");
+
+    const r = evaluateActivationGate();
+    expect(r.checks.promoteRate.pass).toBe(false);
+    expect(r.checks.promoteRate.detail).toContain("only 1 ruled on");
+    expect(r.verdict).toBe("insufficient_data"); // NOT "fail"
+  });
+
+  it("is insufficient_data when every morning brief expired unanswered", () => {
+    // Zero rulings → the rate is unknowable, not zero. Cadence trap: never fail.
+    insertCacheableRuns(20, 1000, 900);
+    insertBriefing("morning", "expired");
+    insertBriefing("morning", "expired");
+
+    const r = evaluateActivationGate();
+    expect(r.checks.promoteRate.pass).toBe(false);
+    expect(r.checks.promoteRate.detail).toContain("only 0 ruled on");
+    expect(r.verdict).toBe("insufficient_data"); // NOT "fail"
   });
 });

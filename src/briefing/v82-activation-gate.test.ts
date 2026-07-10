@@ -124,8 +124,11 @@ describe("evaluateV82Gate", () => {
 
   it("passes when all six checks are met", () => {
     // 6 green judgments on promoted briefs (promote-rate 1.0); 4 red on 2
-    // promoted + 2 expired (rate 0.5) → ratio 2.0×. 10 judgments total, all
+    // promoted + 2 DISCARDED (rate 0.5) → ratio 2.0×. 10 judgments total, all
     // approved (0% unfixable), all claims resolved (100%), 0 sycophancy.
+    // NB: the red losers must be `discarded`, not `expired` — since 2026-07-10
+    // only briefs the operator actually RULED ON are scored; `expired` is the
+    // absence of a verdict, not a rejection. Both colors clear the ≥3 minimum.
     for (let i = 0; i < 6; i++) {
       const b = insertBrief("promoted");
       const id = insertJudgment({
@@ -136,7 +139,7 @@ describe("evaluateV82Gate", () => {
       insertClaim(id, "resolved");
     }
     for (let i = 0; i < 4; i++) {
-      const b = insertBrief(i < 2 ? "promoted" : "expired");
+      const b = insertBrief(i < 2 ? "promoted" : "discarded");
       const id = insertJudgment({
         briefingId: b,
         confidence: "red",
@@ -169,7 +172,7 @@ describe("evaluateV82Gate", () => {
       insertClaim(id, "resolved");
     }
     for (let i = 0; i < 4; i++) {
-      const b = insertBrief(i < 2 ? "promoted" : "expired");
+      const b = insertBrief(i < 2 ? "promoted" : "discarded");
       const id = insertJudgment({
         briefingId: b,
         confidence: "red",
@@ -385,7 +388,7 @@ describe("evaluateV82Gate", () => {
       insertJudgment({ briefingId: b, confidence: "red", posture: "at_risk" });
     }
     for (let i = 0; i < 3; i++) {
-      const b = insertBrief(i < 1 ? "promoted" : "expired");
+      const b = insertBrief(i < 1 ? "promoted" : "discarded");
       insertJudgment({
         briefingId: b,
         confidence: "red",
@@ -398,6 +401,71 @@ describe("evaluateV82Gate", () => {
     expect(g.promoteRatio).toBe(3); // 1.0 / (1/3) = 3.0 — NOT the 1.0 collapse
     expect(g.checks.acceptance.pass).toBe(true); // ≥1.5×
     expect(g.checks.acceptance.detail).toContain("3 green / 3 red brief(s)");
+  });
+
+  // ── 6a repairs, 2026-07-10 ──────────────────────────────────────────────────
+
+  it("6a EXCLUDES superseded/expired/pending briefs — they are not verdicts", () => {
+    // The live bug: two green briefs were auto-`superseded` on 2026-06-24 and
+    // counted as REJECTIONS, dragging green to 9/11 = 81.8% when the operator
+    // had ruled on 9 briefs and accepted all 9.
+    for (let i = 0; i < 3; i++)
+      insertJudgment({
+        briefingId: insertBrief("promoted"),
+        confidence: "green",
+      });
+    for (const nonVerdict of ["superseded", "expired", "pending"])
+      insertJudgment({
+        briefingId: insertBrief(nonVerdict),
+        confidence: "green",
+      });
+    for (let i = 0; i < 3; i++)
+      insertJudgment({
+        briefingId: insertBrief("discarded"),
+        confidence: "red",
+      });
+
+    const g = evaluateV82Gate();
+    // green 3/3 = 1.0 (the 3 non-verdicts dropped, NOT counted as rejections),
+    // red 0/3 = 0 → every red rejected → ∞.
+    expect(g.checks.acceptance.detail).toContain("3 green / 3 red brief(s)");
+    expect(g.promoteRatio).toBe(Number.POSITIVE_INFINITY);
+    expect(g.checks.acceptance.pass).toBe(true);
+  });
+
+  it("6a treats redRate=0 (every red rejected) as PERFECT discrimination, not no-signal", () => {
+    // Previously `redRate > 0` was required, so the ideal outcome fell through
+    // to promoteRatio=null → insufficient_data: 6a could never pass on the very
+    // behavior it exists to reward.
+    for (let i = 0; i < 3; i++)
+      insertJudgment({
+        briefingId: insertBrief("promoted"),
+        confidence: "green",
+      });
+    for (let i = 0; i < 3; i++)
+      insertJudgment({
+        briefingId: insertBrief("discarded"),
+        confidence: "red",
+      });
+
+    const g = evaluateV82Gate();
+    expect(g.promoteRatio).toBe(Number.POSITIVE_INFINITY);
+    expect(g.checks.acceptance.pass).toBe(true);
+    expect(g.checks.acceptance.detail).toContain("every red brief rejected");
+  });
+
+  it("6a needs a per-color minimum sample — one red brief cannot decide the ratio", () => {
+    for (let i = 0; i < 5; i++)
+      insertJudgment({
+        briefingId: insertBrief("promoted"),
+        confidence: "green",
+      });
+    insertJudgment({ briefingId: insertBrief("discarded"), confidence: "red" });
+
+    const g = evaluateV82Gate();
+    expect(g.promoteRatio).toBeNull(); // would have been ∞ on n=1
+    expect(g.checks.acceptance.pass).toBe(false);
+    expect(g.checks.acceptance.detail).toContain("need ≥3 of each");
   });
 
   it("acceptance is insufficient when there is no red-led brief to compare against", () => {

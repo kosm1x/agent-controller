@@ -114,9 +114,16 @@ export function renderBriefing(
     lines.push("");
   }
 
+  // The footer IS the affordance — it must state the exact verdict vocabulary
+  // `classifyOperatorVerdict` accepts. It previously read "responde lo que sea
+  // para conservar este resumen", which made acceptance mean "the operator sent
+  // a message", not "the operator endorsed this brief" — destroying §17's 6a
+  // calibration check. Any edit here must stay in sync with ACCEPT_RE/DISCARD_RE
+  // in `promote.ts`.
   lines.push("—");
   lines.push(
-    "_Responde lo que sea para conservar este resumen; responde *descartar* para archivarlo._",
+    "_¿Te sirvió para enfocar el día? Responde *sirve* o *descarta*. " +
+      "Cualquier otra respuesta lo deja pendiente._",
   );
   return lines.join("\n").trim();
 }

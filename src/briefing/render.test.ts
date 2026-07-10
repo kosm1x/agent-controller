@@ -63,7 +63,8 @@ describe("renderBriefing", () => {
     expect(out).toContain("Resumen matutino");
     expect(out).toContain("Para tu radar"); // 'noted' posture label
     expect(out).toContain("t-1");
-    expect(out).toContain("descartar"); // footer
+    expect(out).toContain("descarta"); // footer (verdict vocabulary)
+    expect(out).toContain("sirve"); // the accept token must be advertised too
   });
 
   it("features the highest-leverage judgment first", () => {
@@ -111,7 +112,7 @@ describe("renderBriefing", () => {
     expect(out).toContain("foo-bar-strategic");
     // The strategic section appears BEFORE the footer, keeping it last.
     expect(out.indexOf("foo-bar-strategic")).toBeLessThan(
-      out.indexOf("descartar"),
+      out.indexOf("descarta"),
     );
   });
 

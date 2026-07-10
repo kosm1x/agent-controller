@@ -77,9 +77,12 @@ function main(): number {
     console.log("Briefing health by surface (last 7d):");
     for (const h of g.briefingHealth) {
       console.log(
+        // "of ruled" is load-bearing: the denominator is `promoted + discarded`,
+        // NOT `generated` (expired/pending carry no verdict). Without the label a
+        // reader comparing against historical output would misread the %.
         `  ${h.surface}: ${h.generated} generated · ${h.promoted} promoted · ` +
           `${h.discarded} discarded · ${h.expired} expired · ${h.pending} pending ` +
-          `· ${h.promoteRatePct}% promote-rate`,
+          `· ${h.promoteRatePct}% promote-rate (of ${h.ruled} ruled)`,
       );
     }
   } else {

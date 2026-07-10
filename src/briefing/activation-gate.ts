@@ -53,6 +53,18 @@ export const GATE_MIN_CACHEABLE_RUNS = 20;
 export const GATE_MORNING_PROMOTE_PCT = 60;
 
 /**
+ * Minimum morning briefs carrying a real operator verdict before check 2's
+ * promote-rate is trusted. Mirrors §17 6a's `GATE_V82_MIN_ACCEPTANCE_BRIEFS`.
+ *
+ * Without a floor, `ruled > 0` lets a SINGLE ruling decide the gate: one
+ * discarded brief in a quiet week is `0/1 = 0%` → measurable → §13 FAIL. That
+ * became reachable the moment promotion started requiring an explicit verdict
+ * (most briefs now expire unruled), so the floor ships with it. Below it →
+ * `insufficient_data`, never `fail`. (qa-auditor W-B, 2026-07-10.)
+ */
+export const GATE_MIN_RULED_BRIEFS = 3;
+
+/**
  * Agent types excluded from the §13 cache-read ratio because they fire less
  * often than the prompt cache's 5-min TTL, so every run is a cold start that
  * MUST pay `cache_creation` — a structural floor, not a cache regression.
@@ -72,7 +84,10 @@ export interface BriefingSurfaceHealth {
   discarded: number;
   expired: number;
   pending: number;
-  /** promoted / generated, as a percentage. */
+  /** Briefs carrying a real operator verdict: `promoted + discarded`. */
+  ruled: number;
+  /** promoted / RULED, as a percentage (0 when nothing was ruled on). Excludes
+   *  `expired`/`pending` — the absence of a verdict is not a rejection. */
   promoteRatePct: number;
 }
 
@@ -222,8 +237,15 @@ export function evaluateActivationGate(): ActivationGateResult {
     discarded: r.discarded,
     expired: r.expired,
     pending: r.pending,
+    // RULED = the briefs the operator actually gave a verdict on. `expired`
+    // (never answered) and `pending` (not yet answered) are the ABSENCE of a
+    // verdict, not rejections — silence is ambiguous, so it cannot count against
+    // the promote-rate. See the 2026-07-10 note on `promoteRatePct`.
+    ruled: r.promoted + r.discarded,
     promoteRatePct:
-      r.generated > 0 ? round1((100 * r.promoted) / r.generated) : 0,
+      r.promoted + r.discarded > 0
+        ? round1((100 * r.promoted) / (r.promoted + r.discarded))
+        : 0,
   }));
   const morning = briefingHealth.find((h) => h.surface === "morning");
 
@@ -239,18 +261,32 @@ export function evaluateActivationGate(): ActivationGateResult {
         ? `only ${cacheableRuns} cacheable run(s) in 24h (need ≥${GATE_MIN_CACHEABLE_RUNS})`
         : `cache-read ${cacheReadPct}% over ${cacheableRuns} runs (need ≥${GATE_CACHE_READ_PCT}%)`;
 
-  // --- Check 2: morning promote-rate (judgeable only once briefs resolved).
-  const morningResolved = morning
-    ? morning.promoted + morning.discarded + morning.expired
-    : 0;
-  const promoteMeasurable = morning !== undefined && morningResolved > 0;
+  // --- Check 2: morning promote-rate over RULED briefs (2026-07-10).
+  //
+  // Was `promoted / generated`, with `expired` counted as "resolved". That held
+  // only while ANY inbound owner message promoted the pending brief, so briefs
+  // were effectively never expired-unread. Now that promotion requires an
+  // explicit "sirve"/"descarta" (see `promote.ts` `classifyOperatorVerdict`), an
+  // unanswered brief EXPIRES — and the old formula would read that silence as a
+  // rejection, collapsing the rate below 60% and failing §13 for a reason that
+  // has nothing to do with briefing quality.
+  //
+  // Silence is ambiguous (the operator may be busy, or the brief may have been
+  // read and simply not answered), so an unruled brief is excluded rather than
+  // charged against the rate. With zero rulings the check is `insufficient_data`,
+  // never `fail` — the same cadence-trap discipline as §17. Note `expired` no
+  // longer makes the check measurable; only a real verdict does.
+  const morningRuled = morning?.ruled ?? 0;
+  const promoteMeasurable =
+    morning !== undefined && morningRuled >= GATE_MIN_RULED_BRIEFS;
   const promoteRatePass =
     promoteMeasurable && morning.promoteRatePct >= GATE_MORNING_PROMOTE_PCT;
   const promoteDetail = !morning
     ? "no morning briefings generated in the last 7 days"
-    : morningResolved === 0
-      ? `${morning.generated} morning brief(s) generated, none resolved yet`
-      : `morning promote-rate ${morning.promoteRatePct}% (need ≥${GATE_MORNING_PROMOTE_PCT}%)`;
+    : morningRuled < GATE_MIN_RULED_BRIEFS
+      ? `${morning.generated} morning brief(s) generated, only ${morningRuled} ruled on ` +
+        `(need ≥${GATE_MIN_RULED_BRIEFS}; ${morning.expired} expired unanswered, ${morning.pending} pending)`
+      : `morning promote-rate ${morning.promoteRatePct}% over ${morningRuled} ruled brief(s) (need ≥${GATE_MORNING_PROMOTE_PCT}%)`;
 
   let verdict: ActivationGateResult["verdict"];
   if (!cacheReadMeasurable || !promoteMeasurable) {
