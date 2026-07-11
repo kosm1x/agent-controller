@@ -10,7 +10,10 @@ import {
   markBriefingDelivered,
   getProposedBriefing,
 } from "./storage.js";
-import { resolveBriefingOnOperatorReply } from "./promote.js";
+import {
+  isExclusivelyBriefVerdict,
+  resolveBriefingOnOperatorReply,
+} from "./promote.js";
 
 // Dynamic, not a hardcoded date: insertProposedBriefing() defaults expires_at
 // to generated_at + 24h, so a fixed past date silently rots — every briefing
@@ -202,6 +205,50 @@ describe("resolveBriefingOnOperatorReply", () => {
       promote_count: 0,
       discard_count: 1,
     });
+  });
+
+  it("carries a deterministic operator ack on binary outcomes, none on expiry", async () => {
+    // 2026-07-11 incident: the old "router sends nothing for binary outcomes"
+    // design left the operator in total silence after "sirve" (the parallel
+    // chat task answered with an empty STATUS: DONE). The ruling itself must
+    // confirm. Expiry stays reply-less — it fires on ANY owner message past
+    // the TTL, where an interjection would be out-of-context noise.
+    deliverNew();
+    expect((await resolveBriefingOnOperatorReply("sirve"))!.reply).toBe(
+      "✓ Brief conservado.",
+    );
+    deliverNew();
+    expect((await resolveBriefingOnOperatorReply("descartar"))!.reply).toBe(
+      "🗑️ Brief descartado.",
+    );
+    deliverNew("2020-01-01T00:00:00.000Z");
+    expect(
+      (await resolveBriefingOnOperatorReply("sirve"))!.reply,
+    ).toBeUndefined();
+  });
+
+  it("isExclusivelyBriefVerdict: pure rulings swallow, imperatives and non-verdicts don't (qa-audit W1)", () => {
+    // Pure rulings — meaningless except as a verdict on the brief: the
+    // router may consume the message.
+    for (const text of [
+      "sirve",
+      "útil",
+      "sí sirve",
+      "no sirve",
+      "no me interesa",
+      "¡Sirve!",
+    ]) {
+      expect(isExclusivelyBriefVerdict(text), text).toBe(true);
+    }
+    // Imperative-shaped verdicts double as instructions about prior context
+    // ("archívalo" = archive that email) — still verdicts, never swallowed.
+    for (const text of ["descártalo", "archívalo", "skip", "descartar"]) {
+      expect(isExclusivelyBriefVerdict(text), text).toBe(false);
+    }
+    // Non-verdicts.
+    for (const text of ["¿sirve?", "dale prioridad al CRM", "hola"]) {
+      expect(isExclusivelyBriefVerdict(text), text).toBe(false);
+    }
   });
 
   it("LEAVES PENDING a reply that merely defers ('lo veo más tarde')", async () => {

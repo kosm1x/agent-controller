@@ -63,7 +63,11 @@ import {
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
-import { resolveBriefingOnOperatorReply } from "../briefing/promote.js";
+import {
+  isExclusivelyBriefVerdict,
+  resolveBriefingOnOperatorReply,
+} from "../briefing/promote.js";
+import { getResolvablePendingBriefing } from "../briefing/storage.js";
 import { isV82ProducerEnabled } from "../lib/v8-2/flags.js";
 import { reRunJudgment } from "../lib/v8-2/produce.js";
 import {
@@ -1216,36 +1220,86 @@ export class MessageRouter {
   }
 
   /**
-   * V8.1/V8.2 briefing resolution on the operator's reply — fire-and-forget
-   * (isOwnerChannel guard inside); never blocks or stops the pipeline.
+   * V8.1/V8.2 briefing resolution on the operator's reply (owner channels
+   * only — a briefing is operator-private).
+   *
+   * PURE VERDICT ("sirve" / "no sirve" / "útil"… — `isExclusivelyBriefVerdict`,
+   * i.e. a whole-message verdict that can mean nothing but a ruling on the
+   * brief) with a resolvable brief pending: handled HERE, synchronously —
+   * resolve, send the deterministic ack, and return true so the chat pipeline
+   * is skipped. Dispatching such a message as a chat task cost ~$0.65 in LLM
+   * calls and produced an empty STATUS: DONE that the router dropped silently
+   * (2026-07-11 incident — operator saw Jarvis "stuck" after answering the
+   * morning brief).
+   *
+   * ANYTHING ELSE — including IMPERATIVE-shaped verdicts ("archívalo",
+   * "descártalo", "skip"), which may be instructions about prior context
+   * (qa-audit W1): fire-and-forget, never blocks the pipeline — returns
+   * false immediately, so the instruction still executes while the brief
+   * resolution (+ ack, via `res.reply`) happens in the background. This also
+   * keeps the V8.2 §13 pushback classification (a pushback is not a verdict
+   * but must still reach the concession gate) and the TTL → expired sweep.
+   * The per-judgment re-run (`reRunJudgment`) is injected ONLY when the V8.2
+   * producer is armed — otherwise no `judgments` rows exist, so
+   * countJudgmentsForBriefing === 0 keeps this the pure V8.1 regex path
+   * (zero new LLM calls) for all current traffic.
+   *
+   * Runs AFTER `interceptPendingConfirmation` (qa-audit W2): while a
+   * destructive-tool confirmation is pending, a decline like "no sirve" must
+   * reach the confirmation flow, not be consumed as a brief discard.
    */
-  private resolveBriefingOnReply(msg: IncomingMessage): void {
-    // V8.1 Phase 8: the operator's reply promotes or discards a delivered
-    // briefing (spec §10). Owner channels only — a briefing is operator-
-    // private. The call is self-contained and never throws, so it cannot
-    // disrupt message handling; it is a no-op until a briefing is actually
-    // delivered (delivery is flag-gated off until Phase 9 activation).
-    //
-    // V8.2 §13: when the brief carries judgments, the reply may be a pushback;
-    // the handler classifies it, applies the evidence gate, and returns a
-    // re-delivery `reply` (held restatement / "updating on your input" update).
-    // The per-judgment re-run (`reRunJudgment`) is injected ONLY when the V8.2
-    // producer is armed — otherwise no `judgments` rows exist, so
-    // countJudgmentsForBriefing === 0 keeps this the pure V8.1 regex path
-    // (byte-identical, zero new LLM calls) for all current traffic.
-    // Fire-and-forget; the handler swallows its own errors.
-    if (isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
-      void resolveBriefingOnOperatorReply(
-        msg.text,
-        isV82ProducerEnabled() ? { reRunJudgment } : {},
-      )
+  private async interceptBriefingVerdict(
+    msg: IncomingMessage,
+    tk: string,
+  ): Promise<boolean> {
+    if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+      return false;
+    }
+    const deps = isV82ProducerEnabled() ? { reRunJudgment } : {};
+
+    let isPureVerdict = false;
+    try {
+      isPureVerdict =
+        isExclusivelyBriefVerdict(msg.text) &&
+        getResolvablePendingBriefing() !== null;
+    } catch {
+      // DB unavailable — treat as non-verdict; the resolver below no-ops too
+    }
+
+    if (!isPureVerdict) {
+      void resolveBriefingOnOperatorReply(msg.text, deps)
         .then((res) => {
           if (res?.reply) this.sendToChannel(msg.channel, msg.from, res.reply);
         })
         .catch(() => {
           /* defense-in-depth: the handler never throws, but guard the chain */
         });
+      return false;
     }
+
+    const res = await resolveBriefingOnOperatorReply(msg.text, deps).catch(
+      () => null,
+    );
+    // Raced away (another path resolved it first) — let the chat pipeline
+    // have the message rather than answering about a brief we didn't rule on.
+    if (!res) return false;
+
+    // Binary + concession outcomes carry `reply`; `expired` deliberately
+    // doesn't (see ResolveResult) — the verdict arrived too late, say so
+    // instead of silently swallowing the operator's ruling.
+    const ack =
+      res.reply ??
+      (res.resolution === "expired"
+        ? "⏰ El brief ya había expirado — veredicto no registrado."
+        : "✓");
+    this.sendToChannel(msg.channel, msg.from, ack);
+    appendDayLog("JARVIS", ack);
+
+    // Record the exchange in the conversation thread: without it the next
+    // inbound sees a prompt where the operator's ruling never happened (the
+    // 14:14 resend hit a byte-identical 100%-cached prompt).
+    pushToThread(tk, `User: ${msg.text}\nJarvis: ${ack}`);
+    return true;
   }
 
   /** Prompt-enhancer toggle commands (checkToggle). Returns true when a toggle was handled (stop). */
@@ -2209,8 +2263,6 @@ export class MessageRouter {
     // Day log: record user message (mechanical, no LLM)
     appendDayLog("USER", msg.text);
 
-    this.resolveBriefingOnReply(msg);
-
     if (this.interceptEnhancerToggle(msg)) return;
 
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
@@ -2232,6 +2284,7 @@ export class MessageRouter {
     if (this.interceptTaskCancel(msg, tk)) return;
     if (await this.interceptEnhancer(msg, tk)) return;
     if (await this.interceptPendingConfirmation(msg, tk)) return;
+    if (await this.interceptBriefingVerdict(msg, tk)) return;
     const feedbackTaskId = this.recordFeedbackWindowSignal(msg, tk);
     if (this.interceptPureFeedback(msg, tk)) return;
     if (await this.interceptConversationalFastPath(msg, tk)) return;
@@ -2728,6 +2781,30 @@ export class MessageRouter {
       }
 
       // Track outcome for adaptive intelligence
+      trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
+    } else {
+      // COMPLETED chat task with empty text — the model answered with a bare
+      // "STATUS: DONE" and no prose (7-token reply, 2026-07-11 "sirve"
+      // incident). All timers are already cleared above, so without this the
+      // operator gets total silence. A minimal ack is honest (the task DID
+      // complete) and pushes the exchange into the thread so the next
+      // inbound doesn't replay a byte-identical prompt.
+      console.warn(
+        `[router] Task ${taskId} completed with empty text — sending fallback ack`,
+      );
+      const fallback = "✓";
+      if (pending.streamController) {
+        pending.streamController.finalize(fallback).catch(() => {
+          this.sendToChannel(pending.channel, pending.to, fallback);
+        });
+      } else {
+        this.sendToChannel(pending.channel, pending.to, fallback);
+      }
+      pushToThread(
+        pending.tk,
+        `User: ${pending.originalText}\nJarvis: ${fallback}`,
+        pending.imageUrl,
+      );
       trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
     }
   }

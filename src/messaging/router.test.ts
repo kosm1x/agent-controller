@@ -63,6 +63,28 @@ vi.mock("../observability/prometheus.js", () => ({
   recordCommunityGateVerdict: vi.fn(),
 }));
 
+// 2026-07-11 briefing-verdict intercept: mock the resolver + pending-brief
+// lookup so inbound specs can steer interception without real briefing rows.
+// NOTE (qa-audit W3): specs queue with *Once, but a short-circuited check can
+// leave a Once UNCONSUMED and clearAllMocks does not drain the queue — the
+// intercept describe block mockReset()s both in beforeEach AND afterEach.
+const briefingMocks = vi.hoisted(() => ({
+  getResolvablePendingBriefing: vi.fn().mockReturnValue(null),
+  resolveBriefingOnOperatorReply: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("../briefing/storage.js", () => ({
+  getResolvablePendingBriefing: briefingMocks.getResolvablePendingBriefing,
+}));
+vi.mock("../briefing/promote.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../briefing/promote.js")>();
+  return {
+    ...actual, // classifyOperatorVerdict stays REAL (pure; behavior owned by promote.test.ts)
+    resolveBriefingOnOperatorReply:
+      briefingMocks.resolveBriefingOnOperatorReply,
+  };
+});
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({ get: dbStatusGet }),
@@ -268,6 +290,123 @@ describe("MessageRouter", () => {
     });
   });
 
+  describe("briefing verdict intercept (2026-07-11)", () => {
+    const owner = (text: string): IncomingMessage => ({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text,
+      timestamp: new Date(),
+    });
+
+    // qa-audit W3: a short-circuited check (e.g. interrogative text never
+    // reaches getResolvablePendingBriefing) leaves queued *Once values
+    // unconsumed, and clearAllMocks does NOT drain them — reset around every
+    // spec so nothing leaks in either direction.
+    const resetBriefingMocks = () => {
+      briefingMocks.getResolvablePendingBriefing.mockReset();
+      briefingMocks.getResolvablePendingBriefing.mockReturnValue(null);
+      briefingMocks.resolveBriefingOnOperatorReply.mockReset();
+      briefingMocks.resolveBriefingOnOperatorReply.mockResolvedValue(null);
+    };
+    beforeEach(resetBriefingMocks);
+    afterEach(resetBriefingMocks);
+
+    it("a bare verdict with a pending brief is acked deterministically and NEVER dispatched as a chat task", async () => {
+      briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
+        briefingId: "b1",
+      });
+      briefingMocks.resolveBriefingOnOperatorReply.mockResolvedValueOnce({
+        briefingId: "b1",
+        surface: "morning",
+        resolution: "promoted",
+        reply: "✓ Brief conservado.",
+      });
+
+      await router.handleInbound(owner("Sirve"));
+
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toBe("✓ Brief conservado.");
+      expect(submitTask).not.toHaveBeenCalled();
+    });
+
+    it("an expired brief gets an explicit too-late note, not silence", async () => {
+      briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
+        briefingId: "b1",
+      });
+      briefingMocks.resolveBriefingOnOperatorReply.mockResolvedValueOnce({
+        briefingId: "b1",
+        surface: "morning",
+        resolution: "expired",
+      });
+
+      await router.handleInbound(owner("sirve"));
+
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toContain("expirado");
+      expect(submitTask).not.toHaveBeenCalled();
+    });
+
+    it("a bare verdict with NO pending brief flows to the normal chat pipeline", async () => {
+      await router.handleInbound(owner("sirve"));
+
+      expect(submitTask).toHaveBeenCalled();
+      // fire-and-forget resolver still ran (expiry sweep / pushback path)
+      expect(briefingMocks.resolveBriefingOnOperatorReply).toHaveBeenCalledWith(
+        "sirve",
+        expect.anything(),
+      );
+    });
+
+    it("an IMPERATIVE verdict ('descártalo') resolves fire-and-forget but is NOT swallowed (qa-audit W1)", async () => {
+      // "archívalo"/"descártalo" can be instructions about prior context
+      // ("archive that email"), not rulings on the brief — the instruction
+      // must still reach the chat pipeline.
+      briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
+        briefingId: "b1",
+      });
+      briefingMocks.resolveBriefingOnOperatorReply.mockResolvedValueOnce({
+        briefingId: "b1",
+        surface: "morning",
+        resolution: "discarded",
+        reply: "🗑️ Brief descartado.",
+      });
+
+      await router.handleInbound(owner("descártalo"));
+
+      expect(submitTask).toHaveBeenCalled();
+      expect(briefingMocks.resolveBriefingOnOperatorReply).toHaveBeenCalledWith(
+        "descártalo",
+        expect.anything(),
+      );
+    });
+
+    it("a non-verdict message with a pending brief is NOT intercepted", async () => {
+      briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
+        briefingId: "b1",
+      });
+
+      await router.handleInbound(owner("Cómo van mis tareas?"));
+
+      expect(submitTask).toHaveBeenCalled();
+    });
+
+    it("a resolver race (null result despite pending brief) falls through to dispatch", async () => {
+      briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
+        briefingId: "b1",
+      });
+      briefingMocks.resolveBriefingOnOperatorReply.mockResolvedValueOnce(null);
+
+      await router.handleInbound(owner("sirve"));
+
+      // The normal pipeline sends its own inbound ack; the point is that NO
+      // verdict ack was fabricated for a brief we didn't actually resolve.
+      for (const m of waAdapter.sentMessages) {
+        expect(m.text).not.toContain("Brief");
+      }
+      expect(submitTask).toHaveBeenCalled();
+    });
+  });
+
   describe("outbound", () => {
     it("should send result on task.completed event", async () => {
       const msg: IncomingMessage = {
@@ -296,6 +435,36 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages).toHaveLength(2);
       expect(waAdapter.sentMessages[0].text).toContain("Recibido");
       expect(waAdapter.sentMessages[1].text).toBe("Aquí están tus tareas...");
+      expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
+    });
+
+    it("sends a fallback ack when a chat task completes with EMPTY text (2026-07-11)", async () => {
+      // The model can answer a contentless ack ("sirve") with a bare
+      // "STATUS: DONE" → parseRunnerStatus strips it → output.text === "".
+      // extractResultText returns null and the old code dropped the reply
+      // entirely — timers already cleared, operator got total silence.
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "test",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: { text: "", toolCalls: [] },
+          duration_ms: 500,
+        },
+      });
+
+      // [0] = inbound ack, [1] = fallback
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toBe("✓");
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
     });
 

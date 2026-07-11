@@ -132,6 +132,31 @@ export function classifyOperatorVerdict(
   return null;
 }
 
+/**
+ * Verdict forms that double as standalone IMPERATIVES. "archívalo" /
+ * "descártalo" / "skip" can be instructions about prior conversation context
+ * ("archive that email we discussed"), not rulings on the brief (qa-audit W1,
+ * 2026-07-11). The router must NOT consume the message for those — it resolves
+ * the brief fire-and-forget (old behavior + ack) and lets the chat pipeline
+ * act on the instruction too. Tested against the same normalization
+ * `classifyOperatorVerdict` uses.
+ */
+const IMPERATIVE_VERDICT_RE = /^(desc[aá]rt|arch[ií]v|sk[ií]p)/iu;
+
+/**
+ * True when the message is a verdict AND can mean nothing but a ruling on the
+ * brief ("sirve", "útil", "no sirve", "no me interesa"…) — safe for the router
+ * to swallow. False for non-verdicts and for imperative-shaped verdicts.
+ */
+export function isExclusivelyBriefVerdict(replyText: string): boolean {
+  if (classifyOperatorVerdict(replyText) === null) return false;
+  const normalized = replyText
+    .replace(COURTESY_RE, "")
+    .replace(VERDICT_STRIP_RE, "")
+    .trim();
+  return !IMPERATIVE_VERDICT_RE.test(normalized);
+}
+
 export type BriefingResolution =
   | "promoted"
   | "discarded"
@@ -145,9 +170,14 @@ export interface ResolveResult {
   briefingId: string;
   surface: string;
   resolution: BriefingResolution;
-  /** §13 concession path only: the operator-facing re-delivery / restatement
-   *  text the caller (router) should send back on the same channel. Undefined
-   *  for every V8.1 binary outcome, so the router sends nothing for those. */
+  /** Operator-facing text the caller (router) should send back on the same
+   *  channel. §13 concession outcomes carry their re-delivery / restatement;
+   *  binary outcomes carry a short deterministic ack (2026-07-11: the old
+   *  "router sends nothing for binary" design assumed the parallel chat task
+   *  would acknowledge — live, the model answered a bare "sirve" with an
+   *  empty STATUS: DONE and the operator got total silence). Only `expired`
+   *  stays reply-less: it fires on ANY owner message after the TTL, and an
+   *  out-of-context interjection there would be noise. */
   reply?: string;
 }
 
@@ -199,7 +229,15 @@ function applyBinaryResolution(
   if (!changed) return null; // raced — already resolved by another path
   recordTriageOutcome(surface, resolution);
   log.info({ briefingId, resolution }, "briefing resolved by operator reply");
-  return { briefingId, surface, resolution };
+  return {
+    briefingId,
+    surface,
+    resolution,
+    reply:
+      resolution === "promoted"
+        ? "✓ Brief conservado."
+        : "🗑️ Brief descartado.",
+  };
 }
 
 /**
