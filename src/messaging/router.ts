@@ -2875,17 +2875,65 @@ export class MessageRouter {
     // Background-agent-aware failure notification
     let failMsg =
       "No pude completar eso. Revisa el dashboard para más detalles.";
+    // 2026-07-11: a NEEDS_CONTEXT/BLOCKED runner produced real text (the
+    // clarifying question / blocker description) — deliver THAT, not the
+    // generic line. "?" → "No hay pregunta en tu mensaje. ¿Qué necesitas?"
+    // was swallowed into "No pude completar eso" before this.
+    let deliveredRunnerText = false;
     try {
       const task = getDatabase()
-        .prepare("SELECT spawn_type, title FROM tasks WHERE task_id = ?")
-        .get(taskId) as { spawn_type: string; title: string } | undefined;
+        .prepare(
+          "SELECT spawn_type, title, status FROM tasks WHERE task_id = ?",
+        )
+        .get(taskId) as
+        | { spawn_type: string; title: string; status: string | null }
+        | undefined;
       if (task?.spawn_type === "user-background") {
         failMsg = `🤖❌ **Agente falló:** ${task.title.replace("🤖 Agente: ", "")}\nError: ${data.error ?? "desconocido"}`;
+      } else if (
+        task?.status === "needs_context" ||
+        task?.status === "blocked"
+      ) {
+        // qa-audit W1: only accept results that carry an actual text field —
+        // extractResultText's JSON.stringify fallback must never reach the
+        // operator on this path (a text-less output object would otherwise
+        // send raw JSON where the generic line is correct).
+        const r = data.result;
+        const hasTextField =
+          typeof r === "string" ||
+          (r !== null &&
+            typeof r === "object" &&
+            ["text", "output", "result", "finalAnswer", "content"].some(
+              (k) => typeof (r as Record<string, unknown>)[k] === "string",
+            ));
+        const runnerText = hasTextField ? this.extractResultText(r) : null;
+        if (runnerText) {
+          failMsg = runnerText;
+          deliveredRunnerText = true;
+        }
       }
     } catch {
       // DB not available — use generic message
     }
     this.sendToChannel(pending.channel, pending.to, failMsg);
+
+    // When the runner's own question was delivered, record the exchange in
+    // the thread buffer — the operator's next message answers that question,
+    // and without this record the follow-up prompt has no trace of it (same
+    // missing-exchange class as the 2026-07-11 'sirve' silence loop).
+    if (deliveredRunnerText) {
+      // qa-audit I3: cap like the completed path — a long `blocked`
+      // description must not enter the thread buffer uncapped.
+      const cappedMsg =
+        failMsg.length > THREAD_RESPONSE_CAP
+          ? safeSlice(failMsg, THREAD_RESPONSE_CAP) + "..."
+          : failMsg;
+      pushToThread(
+        pending.tk,
+        `User: ${pending.originalText}\nJarvis: ${cappedMsg}`,
+        pending.imageUrl,
+      );
+    }
 
     // Outcome-aware retain (queue item #7 part 1, 2026-05-07): close the
     // failed-task gap so outcome:failed rows actually populate in
@@ -2895,7 +2943,11 @@ export class MessageRouter {
       const errorText = (data.error ?? "Unknown error").slice(0, 500);
       // W8 audit fix: cap user text at 2000 to prevent oversized rows.
       const userText = safeSlice(pending.originalText, 2000);
-      const exchange = `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
+      // Retain what the operator actually saw: the runner's delivered
+      // question, or the failure marker otherwise.
+      const exchange = deliveredRunnerText
+        ? `User: ${userText}\nJarvis: ${safeSlice(failMsg, 2000)}`
+        : `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
       getMemoryService()
         .retain(exchange, {
           bank: "mc-jarvis",
@@ -3104,6 +3156,17 @@ export class MessageRouter {
       if (typeof obj.text === "string") text = obj.text;
       else if (typeof obj.output === "string") text = obj.output;
       else if (typeof obj.result === "string") text = obj.result;
+      // heavy-runner output carries BOTH `content` (the reflector's
+      // meta-summary about the work) and `finalAnswer` (the agent's actual
+      // report). Deliver the report — the 2026-07-11 Azteca chat sent the
+      // operator "Single-goal chat task completed successfully: ..." while
+      // the real answer sat unread in finalAnswer. Falls back to `content`
+      // when collectFinalAnswer produced null/empty.
+      else if (
+        typeof obj.finalAnswer === "string" &&
+        obj.finalAnswer.trim().length > 0
+      )
+        text = obj.finalAnswer;
       else if (typeof obj.content === "string") text = obj.content;
       else text = JSON.stringify(result);
     }

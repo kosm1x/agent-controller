@@ -872,6 +872,10 @@ async function dispatchWithSlot(
           error: result.error ?? "Unknown error",
           recoverable: false,
           attempts: 1,
+          // NEEDS_CONTEXT/BLOCKED runners still produced text (the clarifying
+          // question / blocker description) — carry it so the router can
+          // deliver it instead of the generic failure message.
+          result: result.output,
         });
       }
     } catch {

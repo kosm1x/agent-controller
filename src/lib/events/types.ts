@@ -59,9 +59,7 @@ export type AgentEventType =
 
 /** Chat/messaging events. */
 export type ChatEventType =
-  | "chat.message_sent"
-  | "chat.message_received"
-  | "chat.broadcast";
+  "chat.message_sent" | "chat.message_received" | "chat.broadcast";
 
 /** UI/user notification events. */
 export type NotificationEventType =
@@ -72,16 +70,11 @@ export type NotificationEventType =
 
 /** Activity log events (user/system actions). */
 export type ActivityEventType =
-  | "activity.user_action"
-  | "activity.system_action"
-  | "activity.config_changed";
+  "activity.user_action" | "activity.system_action" | "activity.config_changed";
 
 /** Audit trail events for compliance/debugging. */
 export type AuditEventType =
-  | "audit.access"
-  | "audit.modification"
-  | "audit.dispatch"
-  | "audit.escalation";
+  "audit.access" | "audit.modification" | "audit.dispatch" | "audit.escalation";
 
 /** Security events. */
 export type SecurityEventType =
@@ -181,6 +174,14 @@ export interface TaskFailedPayload {
   error: string;
   recoverable: boolean;
   attempts: number;
+  /**
+   * Runner output, when the runner produced text despite not succeeding.
+   * NEEDS_CONTEXT/BLOCKED outcomes carry the model's clarifying question
+   * here so the router can deliver it instead of a generic failure line
+   * (2026-07-11: "?" → "No hay pregunta en tu mensaje. ¿Qué necesitas?"
+   * was swallowed into "No pude completar eso").
+   */
+  result?: unknown;
 }
 
 /** Payload for task.cancelled */
