@@ -3,16 +3,24 @@
  * to determine implicit user satisfaction signals.
  *
  * Signals:
- * - positive: "gracias", "perfecto", "exacto", etc.
+ * - positive: "excelente" — the operator's SINGLE eval word (contract below)
  * - negative: "no", "incorrecto", "mal", "otra vez", etc.
  * - rephrase: short message that overlaps significantly with previous (>40% words)
  * - neutral: no detectable signal
  *
- * Short feedback-like messages (< 15 words with a signal) can be intercepted
- * by the router to avoid spawning a full task for a simple "gracias".
+ * OPERATOR CONTRACT (ruled 2026-07-12): "excelente" — alone or embedded in
+ * any message — is praise for Jarvis's work and reinforces the pattern that
+ * produced it. It is the ONLY eval word the operator uses; do not treat other
+ * praise vocabulary ("perfecto", "gracias", "genial") as an eval signal.
+ * Detection is therefore anywhere-in-message, not prefix-anchored.
+ *
+ * Interception (skip task creation) is a SEPARATE, stricter gate: only
+ * messages that are exclusively praise get swallowed — "Excelente. Ahora haz
+ * X" must record the positive signal AND still execute the instruction
+ * (intercept-and-swallow lesson, feedback_never_silent_reply_floor #4).
  */
 
-const POSITIVE_PATTERNS = /^(excelente)\b/i;
+const POSITIVE_PATTERNS = /\bexcelente\b/i;
 
 const NEGATIVE_PATTERNS =
   /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;
@@ -27,9 +35,7 @@ export type FeedbackSignal = "positive" | "negative" | "rephrase" | "neutral";
 
 /** All feedback signal types including implicit (scope-transition-based). */
 export type AnyFeedbackSignal =
-  | FeedbackSignal
-  | "implicit_positive"
-  | "implicit_rephrase";
+  FeedbackSignal | "implicit_positive" | "implicit_rephrase";
 
 /**
  * Detect feedback signal from message text.
@@ -40,8 +46,10 @@ export function detectFeedbackSignal(
 ): FeedbackSignal {
   const trimmed = stripGroupPrefix(text);
 
-  if (POSITIVE_PATTERNS.test(trimmed)) return "positive";
+  // Negative first: with anywhere-matching on "excelente", a leading negation
+  // ("no quedó excelente") must win over the embedded praise word.
   if (NEGATIVE_PATTERNS.test(trimmed)) return "negative";
+  if (POSITIVE_PATTERNS.test(trimmed)) return "positive";
 
   // Check for rephrase: high word overlap with previous message
   if (previousMessage && isRephrase(trimmed, previousMessage)) {
@@ -52,17 +60,50 @@ export function detectFeedbackSignal(
 }
 
 /**
+ * Praise vocabulary that can accompany "excelente" without turning the
+ * message into a command ("excelente trabajo", "muy bien, excelente").
+ */
+const PRAISE_ADJUNCTS =
+  /\b(excelente|trabajo|muy|bien|bueno|buen[íi]simo|gracias|perfecto|genial|bravo|crack|as[íi]|eso|es)\b/gi;
+
+/** Articles/determiners that carry no command meaning ("excelente el fix"). */
+const STOPWORDS =
+  /\b(el|la|lo|los|las|un|una|unos|unas|de|del|al|ese|esa|este|esta|esto|que|qu[eé]|con|por|para|tu|su|mi)\b/gi;
+
+/**
+ * True when the message is praise and nothing else: after removing the
+ * praise vocabulary and all non-letters (punctuation, emoji, digits), at
+ * most one stray word remains ("excelente el fix" → "fix" → still praise).
+ * Two or more leftover words = there is a payload beyond praise; the
+ * message must NOT be intercepted.
+ */
+export function isExclusivelyPraise(text: string): boolean {
+  if (!POSITIVE_PATTERNS.test(stripGroupPrefix(text))) return false;
+  const leftover = stripGroupPrefix(text)
+    .replace(PRAISE_ADJUNCTS, " ")
+    .replace(STOPWORDS, " ")
+    .replace(/[^\p{L}]+/gu, " ")
+    .trim();
+  return leftover === "" || leftover.split(/\s+/).length <= 1;
+}
+
+/**
  * Is this message short enough and signal-bearing to be pure feedback
  * rather than a new command? If true, the router can skip task creation.
+ *
+ * Positive branch: exclusively-praise messages only (see contract above) —
+ * an embedded instruction alongside "excelente" falls through to normal
+ * processing while the feedback window still records the positive signal.
  */
 export function isFeedbackMessage(text: string): boolean {
   const trimmed = stripGroupPrefix(text);
   const wordCount = trimmed.split(/\s+/).length;
 
-  // Only intercept very short messages with clear signal
-  if (wordCount > 8) return false;
+  if (isExclusivelyPraise(trimmed)) return true;
 
-  return POSITIVE_PATTERNS.test(trimmed) || NEGATIVE_PATTERNS.test(trimmed);
+  // Negative signals keep the original short-message gate.
+  if (wordCount > 8) return false;
+  return NEGATIVE_PATTERNS.test(trimmed);
 }
 
 /**

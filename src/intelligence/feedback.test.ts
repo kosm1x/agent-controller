@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectFeedbackSignal,
   detectImplicitFeedback,
+  isExclusivelyPraise,
   isFeedbackMessage,
 } from "./feedback.js";
 
@@ -48,6 +49,49 @@ describe("feedback", () => {
       const prev = "muéstrame las tareas pendientes";
       const curr = "crea una nueva meta para el CRM";
       expect(detectFeedbackSignal(curr, prev)).toBe("neutral");
+    });
+  });
+
+  // Operator contract (2026-07-12): "excelente" alone or WITH ANY WORDS is
+  // praise — the single eval word. Detection is anywhere-in-message; the
+  // intercept (skip task) fires only on exclusively-praise messages so an
+  // embedded instruction is never swallowed.
+  describe("excelente eval-word contract (2026-07-12)", () => {
+    it("detects embedded excelente as positive, not just prefix", () => {
+      expect(detectFeedbackSignal("El fix quedó excelente")).toBe("positive");
+      expect(detectFeedbackSignal("Excelente trabajo con el mirror")).toBe(
+        "positive",
+      );
+      expect(
+        detectFeedbackSignal("Excelente. Ahora actualiza el KB de TMN"),
+      ).toBe("positive");
+    });
+
+    it("leading negation outranks the embedded praise word", () => {
+      expect(detectFeedbackSignal("no quedó excelente")).toBe("negative");
+    });
+
+    it("intercepts exclusively-praise messages", () => {
+      expect(isFeedbackMessage("Excelente")).toBe(true);
+      expect(isFeedbackMessage("Excelente trabajo 🔥")).toBe(true);
+      expect(isFeedbackMessage("Muy bien, excelente!")).toBe(true);
+      expect(isFeedbackMessage("excelente el fix")).toBe(true);
+    });
+
+    it("does NOT intercept praise carrying an instruction — the payload must execute", () => {
+      expect(isFeedbackMessage("Excelente. Ahora actualiza el KB de TMN")).toBe(
+        false,
+      );
+      expect(
+        isFeedbackMessage("Excelente, ahora corre los tests y haz deploy"),
+      ).toBe(false);
+      expect(isExclusivelyPraise("Excelente, guárdalo en el proyecto")).toBe(
+        false,
+      );
+    });
+
+    it("isExclusivelyPraise requires the eval word", () => {
+      expect(isExclusivelyPraise("muy bien gracias")).toBe(false);
     });
   });
 
