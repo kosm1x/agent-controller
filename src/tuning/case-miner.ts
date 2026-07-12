@@ -80,6 +80,13 @@ interface MinedCase {
   input: { message: string };
   expected: Record<string, unknown>;
   mined_from: string;
+  /** Score weight — defaults to the table default (0.8) when unset.
+   *  Positive-mined selection cases use 0.6: they encode "what a clean run
+   *  did", weaker ground truth than a human-authored expectation. */
+  weight?: number;
+  /** Case provenance — 'mined' (nightly miner, 90d retention) or
+   *  'flywheel' (operator-pinned regression, retention-exempt). */
+  source?: "mined" | "flywheel";
 }
 
 function mineScopeMisses(hours: number = 24): MinedCase[] {
@@ -231,6 +238,78 @@ function mineTierMismatches(days: number = 14): MinedCase[] {
     }
   } catch {
     // model_tier column may not exist yet — non-fatal
+  }
+
+  return cases;
+}
+
+// ---------------------------------------------------------------------------
+// Mine positive tool selections (V8.5 Phase 4.3 — corpus growth)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mine tool_selection cases from CLEAN production runs: tool calls happened,
+ * nothing failed, no negative/rephrase feedback. Expected = the tools the run
+ * actually used — status-quo ground truth, so these carry weight 0.6 (vs 1.0
+ * manual seeds) and exist for BREADTH: the 55-case corpus made the 50%-weight
+ * gate axis flap within run-to-run noise (epsilon 2.0 vs ±2.2 observed);
+ * eval-gate.ts documents ≥150 cases as the precondition for tightening.
+ *
+ * Filters, in order:
+ *  - focused runs only (1-3 distinct tools) — a 10-tool run has ambiguous
+ *    ground truth for "which tool should this message select";
+ *  - message ≥5 words — flash-tier one-liners select on thread context the
+ *    eval can't reproduce;
+ *  - dedup by message hash across the window AND against already-stored
+ *    case_ids (INSERT OR IGNORE backstops this).
+ */
+/** @internal exported for tests */
+export function minePositiveSelections(
+  days: number = 30,
+  cap: number = 120,
+): MinedCase[] {
+  const db = getDatabase();
+  const cases: MinedCase[] = [];
+  const seen = new Set<string>();
+
+  const rows = db
+    .prepare(
+      `SELECT message, tools_called
+       FROM scope_telemetry
+       WHERE created_at >= datetime('now', '-' || ? || ' days')
+         AND tools_called != '[]'
+         AND tools_failed = '[]'
+         AND feedback_signal NOT IN ('negative', 'rephrase', 'implicit_rephrase')
+       ORDER BY created_at DESC`,
+    )
+    .all(days) as Array<{ message: string; tools_called: string }>;
+
+  for (const row of rows) {
+    if (cases.length >= cap) break;
+
+    let tools: string[];
+    try {
+      tools = [...new Set(JSON.parse(row.tools_called) as string[])];
+    } catch {
+      continue;
+    }
+    if (tools.length < 1 || tools.length > 3) continue;
+
+    const msg = row.message.trim();
+    if (msg.split(/\s+/).length < 5) continue;
+
+    const h = hashMessage(msg);
+    if (seen.has(h)) continue;
+    seen.add(h);
+
+    cases.push({
+      case_id: `mined-positive-${h}`,
+      category: "tool_selection",
+      input: { message: msg },
+      expected: { tools },
+      mined_from: `positive_selection:${tools.join(",")}`,
+      weight: 0.6,
+    });
   }
 
   return cases;
