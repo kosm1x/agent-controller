@@ -263,6 +263,16 @@ function mineTierMismatches(days: number = 14): MinedCase[] {
  *  - dedup by message hash across the window AND against already-stored
  *    case_ids (INSERT OR IGNORE backstops this).
  */
+/**
+ * Ceiling on ACTIVE positive-mined cases (audit W2, 2026-07-12): every
+ * tool_selection case is one real LLM call per eval:gate run, so the
+ * cost-bearing axis needs a hard bound, not just the per-run cap + 90d
+ * prune (worst case without this: ~120/night × 90d ≈ 10.8k cases). 140
+ * positive + 39 seed + negatives + flywheel keeps the corpus in the
+ * 150-200 band the gate design targets.
+ */
+const POSITIVE_CASE_CEILING = 140;
+
 /** @internal exported for tests */
 export function minePositiveSelections(
   days: number = 30,
@@ -271,6 +281,23 @@ export function minePositiveSelections(
   const db = getDatabase();
   const cases: MinedCase[] = [];
   const seen = new Set<string>();
+
+  // Remaining room under the ceiling — counts previously-stored actives.
+  let existing = 0;
+  try {
+    existing = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM mined_test_cases
+           WHERE case_id LIKE 'mined-positive-%' AND active = 1`,
+        )
+        .get() as { n: number }
+    ).n;
+  } catch {
+    // Table may not exist yet (first run) — full room available.
+  }
+  const room = Math.min(cap, Math.max(0, POSITIVE_CASE_CEILING - existing));
+  if (room === 0) return [];
 
   const rows = db
     .prepare(
@@ -285,7 +312,7 @@ export function minePositiveSelections(
     .all(days) as Array<{ message: string; tools_called: string }>;
 
   for (const row of rows) {
-    if (cases.length >= cap) break;
+    if (cases.length >= room) break;
 
     let tools: string[];
     try {
@@ -350,12 +377,16 @@ export function mineTestCases(): {
     ...mineScopeWaste(),
     ...mineNegativeFeedback(),
     ...mineTierMismatches(),
+    // V8.5 Phase 4.3: breadth for the 50%-weight tool_selection axis
+    // (corpus ≥150 is eval-gate.ts's named precondition for tightening
+    // epsilon). Weight 0.6 per case — see minePositiveSelections.
+    ...minePositiveSelections(),
   ];
 
   const insertStmt = db.prepare(`
     INSERT OR IGNORE INTO mined_test_cases
-      (case_id, category, input, expected, source, mined_from)
-    VALUES (?, ?, ?, ?, 'mined', ?)
+      (case_id, category, input, expected, weight, source, mined_from)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const c of allCases) {
@@ -365,6 +396,8 @@ export function mineTestCases(): {
         c.category,
         JSON.stringify(c.input),
         JSON.stringify(c.expected),
+        c.weight ?? 0.8,
+        c.source ?? "mined",
         c.mined_from,
       );
       if (result.changes > 0) {
@@ -377,9 +410,14 @@ export function mineTestCases(): {
     }
   }
 
-  // Prune old mined cases (>90 days) to prevent unbounded growth
+  // Prune old mined cases (>90 days) to prevent unbounded growth.
+  // Flywheel cases are operator-pinned regressions — retention-EXEMPT:
+  // the 90d decay silently shrinking the corpus is the eval-silence-floor
+  // failure class (2026-07-10); a pinned production bug must stay pinned.
   db.exec(
-    `DELETE FROM mined_test_cases WHERE created_at < datetime('now', '-90 days')`,
+    `DELETE FROM mined_test_cases
+     WHERE created_at < datetime('now', '-90 days')
+       AND source != 'flywheel'`,
   );
 
   console.log(

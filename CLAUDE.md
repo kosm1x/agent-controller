@@ -13,7 +13,7 @@ npm run dev          # tsx watch (hot reload)
 npm run build        # tsc → dist/
 npm run tune:baseline:dry  # run free eval (scope + classification)
 npm run tune:run:dry       # mock overnight loop (3 experiments)
-npm run eval:gate -- --run # model-swap gate: score vs committed incumbent (~$1.65, ~55 LLM calls)
+npm run eval:gate -- --run # model-swap gate: score vs committed incumbent (~$5, ~172 LLM calls since the 4.3 corpus growth; ~13 min)
 ```
 
 Always run `typecheck` + `test` after changes before reporting completion.
