@@ -2055,6 +2055,35 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(r.text).not.toContain("[refusal]");
   });
 
-  // (An alwaysLoad-pinning spec belongs here when the SDK 0.3.x migration is
-  // re-attempted — the option does not exist on 0.2.x. See buildMcpServer.)
+  it("pins settingSources: [] — Jarvis must never load operator CLAUDE.md/rules (2026-07-12 leak)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as { settingSources?: string[] };
+    expect(opts.settingSources).toEqual([]);
+  });
+
+  it("pins alwaysLoad: true on the jarvis MCP server (0.3.x defers tools behind tool search)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as {
+      mcpServers: { jarvis: { config: { alwaysLoad?: boolean } } };
+    };
+    expect(opts.mcpServers.jarvis.config.alwaysLoad).toBe(true);
+  });
 });

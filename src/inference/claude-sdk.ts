@@ -223,13 +223,12 @@ export function buildMcpServer(
     name: "jarvis",
     version: "1.0.0",
     tools: [...registryTools, ...extraTools],
-    // NOTE for the next SDK 0.3.x attempt (V8.5 Phase 1, FAILED 2026-07-12 —
-    // see PROJECT-STATUS): on 0.3.x add `alwaysLoad: true` here. It pins
-    // turn-1 tool availability (0.3.x connects MCP servers non-blocking and
-    // may defer tools behind SDK tool search). Verified working on 0.3.207
-    // via scripts/validate-sdk-tool-visibility.ts — the gate FAIL was NOT
-    // tool visibility; root cause unresolved (bisect plan in PROJECT-STATUS).
-    // The option does not exist on 0.2.x and fails tsc.
+    // SDK 0.3.x connects MCP servers non-blocking and may defer tools behind
+    // SDK tool search. Mission-control runs its OWN deferral/scope system and
+    // every allowed tool must be in the prompt when turn 1 is built (eval
+    // selection probes + fast-runner assume it). alwaysLoad pins that;
+    // verified via scripts/validate-sdk-tool-visibility.ts (30/30 visible).
+    alwaysLoad: true,
   });
 }
 
@@ -544,6 +543,18 @@ export async function queryClaudeSdk(opts: {
     // dontAsk + allowedTools: auto-approve listed tools, deny unlisted.
     // bypassPermissions crashes with MCP servers (exit code 1).
     permissionMode: "dontAsk",
+    // EXPLICIT isolation (2026-07-12, V8.5 Phase 1b root cause). With
+    // settingSources UNSET, the 0.2.x CLI loaded the OPERATOR'S Claude Code
+    // config into every Jarvis call — ~/.claude/CLAUDE.md, ~/.claude/rules/*,
+    // /root/CLAUDE.md, repo CLAUDE.md, auto-memory MEMORY.md: ~23k tokens of
+    // someone else's operating rules silently coupled to Jarvis's behavior,
+    // eval scores (tool_selection 57.95 contaminated vs ~54 clean) and cache
+    // economics. Explicit [] is REQUIRED for isolation — per the installed
+    // 0.3.207 types, OMITTING settingSources still loads all sources (CLI
+    // defaults); do not trust any "lean default" to isolate. Do NOT remove:
+    // Jarvis's context comes from its own systemPrompt/KB, never from
+    // operator dotfiles. Pinned by spec in claude-sdk.test.ts.
+    settingSources: [],
     maxTurns: opts.maxTurns ?? 20,
     abortController,
     persistSession: false, // Ephemeral — Jarvis manages its own sessions

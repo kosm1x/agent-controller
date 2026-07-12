@@ -1,15 +1,15 @@
 {
-  "overall": 76.8822,
+  "overall": 74.7934,
   "epsilon": 2,
   "subscores": {
-    "toolSelection": 57.9457,
-    "scopeAccuracy": 93.0312,
+    "toolSelection": 53.5853,
+    "scopeAccuracy": 93.3359,
     "classification": 100
   },
   "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk",
-  "capturedAt": "2026-07-10T23:50:29.185Z",
+  "capturedAt": "2026-07-12T05:17:05.319Z",
   "nCases": 404,
   "toolSelectionCases": 51,
-  "source": "Captured by eval-gate --update-baseline (builtin-only registry). Gate-native incumbent under the PROBE-FIXED harness (2026-07-10): infer() on the claude-sdk path now passes tools as a selection probe and returns first-turn tool_use as tool_calls. SUPERSEDES the 2026-07-06 incumbent (60.35), which was measured while infer() silently DROPPED tools — its toolSelection 25.18 was the arithmetic 'silence floor' (only not_tools cases can pass when the model never sees tools), not a measurement. Deterministic: two consecutive gate runs scored composite 76.88 with identical subscores (the second with zero circuit-breaker events after the probe-outcome fix).",
+  "source": "Captured by eval-gate --update-baseline (builtin-only registry) on SDK 0.3.207 + settingSources:[] (V8.5 Phase 1b, 2026-07-12). SUPERSEDES the 2026-07-10 incumbent (76.88/toolSelection 57.95), which was measured with the operator's Claude Code config (~/.claude/CLAUDE.md + rules + MEMORY.md, ~23k tokens) leaked into every call via unset settingSources \u2014 that score was contamination-flattered and is unreachable by the isolated system. Clean population runs to date: 53.20/53.59/54.46/56.01/51.65 (+-~2.2 run-to-run; epsilon 2.0 is TIGHT until tool_selection grows to >=150 cases).",
   "note": "Refresh with `npm run eval:gate -- --run --update-baseline` after a confirmed-good model swap. epsilon is composite points on the 0-100 scale."
 }
