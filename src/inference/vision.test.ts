@@ -40,7 +40,7 @@ describe("resolveVisionModel", () => {
     expect(resolveVisionModel()).toBe("glm-4v-plus");
 
     mockConfig.mockReturnValue({ inferencePrimaryModel: "claude-sonnet-4-6" });
-    expect(resolveVisionModel()).toBe("claude-sonnet-4-20250514");
+    expect(resolveVisionModel()).toBe("claude-sonnet-4-6");
   });
 
   it("falls back to qwen-vl-max for unknown-prefix primary models (audit R5)", () => {

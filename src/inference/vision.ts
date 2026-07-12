@@ -47,8 +47,8 @@ export function resolveVisionModel(): string {
   if (primary.startsWith("deepseek")) return "deepseek-ai/deepseek-vl2";
   // OpenAI
   if (primary.startsWith("gpt-")) return "gpt-4o";
-  // Claude
-  if (primary.startsWith("claude-")) return "claude-sonnet-4-20250514";
+  // Claude — claude-sonnet-4-20250514 retired 2026-06-15; 4-6 is vision-capable
+  if (primary.startsWith("claude-")) return "claude-sonnet-4-6";
 
   return "qwen-vl-max";
 }
