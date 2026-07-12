@@ -672,6 +672,22 @@ function tierToProvider(tier?: string): string | undefined {
   return "primary";
 }
 
+/**
+ * Map classifier model tier to reasoning effort (V8.5 Phase 2.3). Until now
+ * the modelTier signal was dead on the SDK path — every fast task ran at the
+ * SDK default ("high"). 2026 doctrine: effort is the primary cost/latency
+ * knob. flash = greetings/confirmations (low), standard = routine chat/tool
+ * work (medium), capable = research/high-stakes (high, the prior behavior).
+ * Undefined tier (rituals constructing RunnerInput directly) → undefined →
+ * SDK default "high": fail toward quality, never toward a silent downgrade.
+ */
+function tierToEffort(tier?: string): "low" | "medium" | "high" | undefined {
+  if (tier === "flash") return "low";
+  if (tier === "standard") return "medium";
+  if (tier === "capable") return "high";
+  return undefined;
+}
+
 export const fastRunner: Runner = {
   type: "fast",
 
@@ -1292,6 +1308,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       const result = await inferWithTools(messages, definitions, taskExecutor, {
         maxRounds,
         providerName,
+        effort: tierToEffort(input.modelTier),
         tokenBudget,
         onTextChunk: input.onTextChunk,
         signal: input.signal,
@@ -1570,6 +1587,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             {
               maxRounds: 5,
               providerName: tierToProvider(input.modelTier),
+              effort: tierToEffort(input.modelTier),
               tokenBudget,
             },
           );

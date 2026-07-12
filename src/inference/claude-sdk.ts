@@ -437,6 +437,14 @@ export async function queryClaudeSdk(opts: {
   toolNames: string[];
   maxTurns?: number;
   model?: string;
+  /**
+   * Reasoning-effort knob (V8.5 Phase 2.3). Maps to SDK Options.effort;
+   * unset = SDK default ("high"). Callers thread the classifier's modelTier
+   * here (flash→low, standard→medium, capable→high). Do NOT pass on Haiku
+   * legs — Haiku 4.5 has no effort support (the SDK silently downgrades,
+   * but the fallback leg should carry the minimal request).
+   */
+  effort?: "low" | "medium" | "high" | "max";
   abortSignal?: AbortSignal;
   /** Optional vision payloads. When present, the SDK receives a streaming
    *  user message whose content is [text, image, image, ...] so the model
@@ -560,6 +568,10 @@ export async function queryClaudeSdk(opts: {
     // operator dotfiles. Pinned by spec in claude-sdk.test.ts.
     settingSources: [],
     maxTurns: opts.maxTurns ?? 20,
+    // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
+    // cached prompt prefix. Omitted when unset so the SDK default ("high")
+    // applies — matters because effort semantics may drift across SDK bumps.
+    ...(opts.effort && { effort: opts.effort }),
     abortController,
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
@@ -1125,6 +1137,7 @@ export async function queryClaudeSdkAsInfer(
     maxTurns?: number;
     model?: string;
     tools?: ToolDefinition[];
+    effort?: "low" | "medium" | "high" | "max";
   },
 ): Promise<InferenceResponse> {
   const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
@@ -1137,6 +1150,7 @@ export async function queryClaudeSdkAsInfer(
     extraTools: probing ? buildProbeTools(options!.tools!) : undefined,
     maxTurns: probing ? 1 : (options?.maxTurns ?? 3),
     model: options?.model,
+    effort: options?.effort,
     abortSignal: options?.signal,
   });
 
@@ -1216,6 +1230,7 @@ export async function queryClaudeSdkAsInferWithTools(
     compressionContext?: string;
     providerName?: string;
     model?: string;
+    effort?: "low" | "medium" | "high" | "max";
   },
 ): Promise<{
   content: string;
@@ -1262,6 +1277,7 @@ export async function queryClaudeSdkAsInferWithTools(
     toolNames,
     maxTurns: options?.maxRounds ?? 20,
     model: options?.model,
+    effort: options?.effort,
     abortSignal: options?.signal,
   });
 

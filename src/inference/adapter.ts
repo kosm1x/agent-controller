@@ -234,6 +234,9 @@ async function inferViaClaudeSdk(
       // tools and a response with no tool_calls. The SDK shim registers
       // these as no-op stubs and returns first-turn tool_use as tool_calls.
       tools: request.tools,
+      // Effort passthrough (V8.5 Phase 2.3): request.effort was honored only
+      // on the openai path since 05-10 — the SDK path dropped it.
+      effort: request.effort,
     });
   } catch (err) {
     console.warn(
@@ -246,6 +249,8 @@ async function inferViaClaudeSdk(
       // retrying it (provider-level transient).
       model: HAIKU_MODEL_ID,
       tools: request.tools,
+      // effort deliberately NOT forwarded: Haiku 4.5 has no effort support;
+      // the last-line fallback carries the minimal request.
     });
   }
 }
@@ -293,6 +298,9 @@ async function inferWithToolsViaClaudeSdk(
     compressionContext: options?.compressionContext,
     providerName: options?.providerName,
   };
+  // Effort rides outside `passthrough`: the Haiku retry leg must not carry
+  // it (Haiku 4.5 has no effort support — minimal request on the fallback).
+  const effort = options?.effort;
   // Honor `options.model` (added 2026-05-23, queue #228); no override → Sonnet.
   // No production caller opts in yet; field is here for symmetry with infer().
   const primaryModel = options?.model ?? SONNET_MODEL_ID;
@@ -300,6 +308,7 @@ async function inferWithToolsViaClaudeSdk(
     return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
       ...passthrough,
       model: primaryModel,
+      effort,
     });
   } catch (err) {
     console.warn(
@@ -354,6 +363,14 @@ export interface InferWithToolsOptions {
   onTextChunk?: OnTextChunk;
   signal?: AbortSignal;
   providerName?: string;
+  /**
+   * Reasoning-effort knob (V8.5 Phase 2.3), honored on the claude-sdk path
+   * only. Fast-runner maps the classifier's modelTier here (flash→low,
+   * standard→medium, capable→high); unset = SDK default ("high"). The
+   * openai path ignores it (per-provider request shaping lives in
+   * adapter-openai.ts).
+   */
+  effort?: "low" | "medium" | "high" | "max";
   /**
    * Per-round prompt token ceiling. If any single round's prompt_tokens
    * exceeds this, the loop wraps up before the next round. This prevents

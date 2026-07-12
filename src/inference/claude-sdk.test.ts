@@ -2087,3 +2087,58 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(opts.mcpServers.jarvis.config.alwaysLoad).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Effort wiring (V8.5 Phase 2.3) — the classifier's modelTier maps to the SDK
+// effort knob at this seam. Contract: effort passes through verbatim when set,
+// and the key is ABSENT (not undefined/null) when unset so the SDK default
+// ("high") applies without us hardcoding it.
+// ---------------------------------------------------------------------------
+
+describe("effort wiring (V8.5 Phase 2.3)", () => {
+  beforeEach(async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+  });
+
+  const successResult = () => [
+    {
+      type: "result",
+      subtype: "success",
+      result: "ok",
+      num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  ];
+
+  it("queryClaudeSdk forwards effort to SDK options when provided", async () => {
+    mockMessages.value = successResult();
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+      effort: "medium",
+    });
+    const opts = lastQueryArgs.value?.options as { effort?: string };
+    expect(opts.effort).toBe("medium");
+  });
+
+  it("queryClaudeSdk omits the effort key entirely when unset (SDK default applies)", async () => {
+    mockMessages.value = successResult();
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect("effort" in opts).toBe(false);
+  });
+
+  it("queryClaudeSdkAsInferWithTools threads options.effort through to the SDK", async () => {
+    mockMessages.value = successResult();
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { effort: "low" },
+    );
+    const opts = lastQueryArgs.value?.options as { effort?: string };
+    expect(opts.effort).toBe("low");
+  });
+});
