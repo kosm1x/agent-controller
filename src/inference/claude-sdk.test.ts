@@ -1923,3 +1923,138 @@ describe("queryClaudeSdk provider metrics", () => {
     spy.mockRestore();
   });
 });
+
+describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
+  // The breaker registry is shared module state — earlier spec blocks can
+  // leave a breaker OPEN (same trap documented at the Dim-4 R2 block above).
+  beforeEach(async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+  });
+
+  it("structural refusal with zero prose → deterministic [refusal] BLOCKED text, never empty", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          stop_reason: "refusal",
+          stop_details: { category: "cyber" },
+          content: [],
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        errors: ["refusal"],
+      },
+    ];
+    const r = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+    expect(r.text).toContain("[refusal]");
+    expect(r.text).toContain("category: cyber");
+    expect(r.text).toContain("STATUS: BLOCKED");
+  });
+
+  it("a refused turn does NOT trip the circuit breaker (working provider, not an outage)", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+
+    for (let i = 0; i < 5; i++) {
+      mockMessages.value = [
+        {
+          type: "assistant",
+          message: { stop_reason: "refusal", content: [] },
+        },
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          errors: ["refusal"],
+        },
+      ];
+      await queryClaudeSdk({
+        prompt: "p",
+        systemPrompt: "sys",
+        toolNames: [],
+      });
+    }
+
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("CLOSED");
+  });
+
+  it("a crash with zero content AFTER a refusal turn is still a provider failure (qa-audit W2)", async () => {
+    // The refusal override must not mask a real outage that follows the
+    // refused turn in the same query — subprocess death lands in the catch
+    // block with no streamed text; that failure classification outranks
+    // sawRefusal. (The analogous timeout precedence uses the real 15-min
+    // timer and is documented in the source rather than simulated here.)
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+
+    let lastText = "";
+    for (let i = 0; i < 5; i++) {
+      mockMessages.value = [
+        {
+          type: "assistant",
+          message: { stop_reason: "refusal", content: [] },
+        },
+      ];
+      mockThrowAfterYield.value = new Error(
+        "Claude Code process exited with code 1",
+      );
+      const r = await queryClaudeSdk({
+        prompt: "p",
+        systemPrompt: "sys",
+        toolNames: [],
+      });
+      lastText = r.text;
+    }
+    expect(lastText).toContain("query aborted");
+    expect(lastText).not.toContain("[refusal]");
+
+    // 5 crash-classified failures = threshold — had sawRefusal masked them,
+    // the breaker would still be CLOSED.
+    const breaker = circuitRegistry.get("claude-sdk");
+    expect(breaker.getStatus().state).toBe("OPEN");
+    circuitRegistry.reset();
+  });
+
+  it("refusal followed by real streamed text keeps the text (fallback-model retry succeeded)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { stop_reason: "refusal", content: [] },
+      },
+      {
+        type: "system",
+        subtype: "model_refusal_fallback",
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Fallback model answered fine." }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Fallback model answered fine.",
+        num_turns: 2,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.01,
+        duration_ms: 100,
+      },
+    ];
+    const r = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+    expect(r.text).toBe("Fallback model answered fine.");
+    expect(r.text).not.toContain("[refusal]");
+  });
+
+  // (An alwaysLoad-pinning spec belongs here when the SDK 0.3.x migration is
+  // re-attempted — the option does not exist on 0.2.x. See buildMcpServer.)
+});

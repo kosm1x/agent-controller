@@ -223,6 +223,13 @@ export function buildMcpServer(
     name: "jarvis",
     version: "1.0.0",
     tools: [...registryTools, ...extraTools],
+    // NOTE for the next SDK 0.3.x attempt (V8.5 Phase 1, FAILED 2026-07-12 —
+    // see PROJECT-STATUS): on 0.3.x add `alwaysLoad: true` here. It pins
+    // turn-1 tool availability (0.3.x connects MCP servers non-blocking and
+    // may defer tools behind SDK tool search). Verified working on 0.3.207
+    // via scripts/validate-sdk-tool-visibility.ts — the gate FAIL was NOT
+    // tool visibility; root cause unresolved (bisect plan in PROJECT-STATUS).
+    // The option does not exist on 0.2.x and fails tsc.
   });
 }
 
@@ -577,6 +584,11 @@ export async function queryClaudeSdk(opts: {
   const toolCallsWithArgs: Array<{ name: string; input: unknown }> = [];
   let numTurns = 0;
   let assistantTurns = 0;
+  /** Structural refusal signal (assistant stop_reason — see comment below). */
+  let sawRefusal = false;
+  let refusalCategory: string | null = null;
+  /** Catch-path crash with zero content — outranks the refusal override. */
+  let crashedWithoutContent = false;
   let usage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -611,6 +623,19 @@ export async function queryClaudeSdk(opts: {
     for await (const message of q) {
       if (message.type === "assistant") {
         assistantTurns++;
+        // SDK 0.3.162: safety refusals surface structurally as
+        // stop_reason "refusal" (+ stop_details.category) instead of only as
+        // error text. Track it so a refused query produces a deterministic
+        // explanation below rather than empty text or a breaker failure —
+        // never-silent-reply floor at the SDK seam.
+        const stopMeta = message.message as {
+          stop_reason?: string;
+          stop_details?: { category?: string | null };
+        };
+        if (stopMeta?.stop_reason === "refusal") {
+          sawRefusal = true;
+          refusalCategory = stopMeta.stop_details?.category ?? null;
+        }
         // Accumulate per-turn usage so abort/timeout paths capture partial
         // spend instead of writing $0/0-tokens to cost_ledger. The `result`
         // message at end carries the SDK's authoritative cumulative total
@@ -675,6 +700,15 @@ export async function queryClaudeSdk(opts: {
             `[claude-sdk] progress: ${assistantTurns} turns, ${toolCallNames.length} tool calls, ${streamingText.length} chars`,
           );
         }
+      } else if (
+        message.type === "system" &&
+        (message as { subtype?: string }).subtype === "model_refusal_fallback"
+      ) {
+        // SDK-side one-shot retry of a refused turn on a fallback model —
+        // log it so a quality dip on a task is attributable to the swap.
+        console.log(
+          `[claude-sdk] model_refusal_fallback: refused turn retried on fallback model`,
+        );
       } else if (message.type === "result") {
         if (message.subtype === "success") {
           providerOutcome = "success";
@@ -802,6 +836,7 @@ export async function queryClaudeSdk(opts: {
         resultText = streamingText;
       } else {
         providerOutcome = "failure";
+        crashedWithoutContent = true;
         resultText = `Error: query aborted — ${errMsg(err)}`;
       }
     }
@@ -814,6 +849,35 @@ export async function queryClaudeSdk(opts: {
   // answer within 15 minutes.
   if (timedOut && !streamingText) {
     providerOutcome = "failure";
+  }
+
+  // A refused turn is a WORKING provider making a safety decision, not an
+  // outage — it must not trip the circuit breaker (which would cascade
+  // healthy traffic onto the Haiku leg), and it must never reach the caller
+  // as empty text or a generic zero-output error. Live-capable on 0.2.x too:
+  // `stop_reason: "refusal"` is a typed BetaStopReason on the bundled
+  // Anthropic API ("streaming classifiers intervene"), formalized on the
+  // agent-SDK surface in 0.3.162 (qa-audit 2026-07-12: not merely dormant).
+  // When the refusal produced no real prose, replace whatever marker the
+  // error branch set with a deterministic explanation (never-silent floor at
+  // the SDK seam). Runs BEFORE the breaker record below so the
+  // classification wins. Two failure signals keep precedence (qa-audit W2):
+  // a hard timeout, and a catch-path crash with zero content — a refusal
+  // turn followed by a subprocess death in the same query is still an outage.
+  if (sawRefusal && !timedOut && !crashedWithoutContent) {
+    // Substitute the deterministic text only when the query produced no real
+    // answer (pre-override outcome was failure with nothing streamed) — a
+    // populated success result must never be clobbered (qa-audit Info-2).
+    const hadRealAnswer =
+      (providerOutcome === "success" && resultText.trim().length > 0) ||
+      streamingText.trim().length > 0;
+    providerOutcome = "success";
+    if (!hadRealAnswer) {
+      const cat = refusalCategory ? ` (category: ${refusalCategory})` : "";
+      resultText =
+        `[refusal] The model declined to complete this request${cat}.\n\n` +
+        `STATUS: BLOCKED — safety refusal from the model; rephrasing or narrowing the request may help.`;
+    }
   }
 
   // Dim-4 round-2 M-RES-4 fix: default null → failure. The prior inversion
