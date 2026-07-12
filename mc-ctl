@@ -1718,6 +1718,7 @@ usage() {
   echo -e "                          metrics: utility | cache-hit | latency | cost"
   echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
   echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
+  echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2689,6 +2690,12 @@ cmd_v83_gate() {
   ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/v83-gate.ts )
 }
 
+cmd_v83_promote() {
+  # mc-ctl v83-promote <capability> [--confirm] — the operator's first L1→L2
+  # promotion. Dry run by default; --confirm writes + renders the ADR.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/v83-promote.ts "$@" )
+}
+
 cmd_briefing_gate() {
   # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
   # ratio over reflection inference + morning-brief promote-rate). Read-only.
@@ -2750,6 +2757,7 @@ case "$cmd" in
   recall-modes)      cmd_recall_modes ;;
   briefing-gate)     cmd_briefing_gate ;;
   v83-gate)          cmd_v83_gate ;;
+  v83-promote)       cmd_v83_promote "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

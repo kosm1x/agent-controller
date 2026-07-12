@@ -95,7 +95,7 @@ describe("getMcpToolHints — playwright server", () => {
     "playwright__browser_select_option",
     "playwright__browser_resize",
     "playwright__browser_handle_dialog",
-    "playwright__browser_run_code",
+    "playwright__browser_run_code_unsafe",
     "playwright__browser_evaluate",
     "playwright__browser_file_upload",
   ])("%s is write-class", (name) => {

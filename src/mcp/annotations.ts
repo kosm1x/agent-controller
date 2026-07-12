@@ -149,7 +149,7 @@ const WRITE_VERBS: ReadonlyArray<string> = [
   "browser_select_option",
   "browser_resize",
   "browser_handle_dialog",
-  "browser_run_code",
+  "browser_run_code_unsafe",
   "browser_evaluate",
   "browser_file_upload",
 ];
