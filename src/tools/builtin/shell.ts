@@ -5,7 +5,7 @@
  * The guard prevents accidental destructive commands — not an adversarial sandbox.
  */
 
-import { exec, execFileSync } from "child_process";
+import { exec, execFileSync, spawn } from "child_process";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath } from "./immutable-core.js";
@@ -26,6 +26,93 @@ import { redactSecrets } from "../../api/mcp-server/redact.js";
  * in-process `curl http://localhost:8080/...` self-deadlock and return HTTP 000.
  */
 const execAsync = promisify(exec);
+void execAsync; // superseded by execGroupKill (group-kill on timeout); kept for import parity
+
+/**
+ * exec-compatible runner that kills the ENTIRE process group on timeout.
+ *
+ * Why: `promisify(exec)`'s timeout SIGTERMs only the direct child (the
+ * shell). Grandchildren survive — 2026-07-12 incident: Jarvis ran
+ * `timeout 90 npx vitest run` repeatedly; each timeout killed the parent
+ * and ORPHANED the vitest worker pool. 13 stacked node workers, 8.3 GB
+ * RAM, load 10+, event loop starved → operator saw "Jarvis stopped
+ * completely". `detached: true` makes the child a group leader so
+ * `kill(-pid)` reaps every descendant.
+ *
+ * Error shape mirrors promisify(exec) where the caller depends on it:
+ * numeric `code` for non-zero exits, `killed: true` + non-numeric code on
+ * timeout, `stdout`/`stderr` accumulated either way. Output caps at
+ * maxBuffer by truncation (exec would reject; truncation is kinder to the
+ * agent and the incident class here is runaway output, not protocol).
+ */
+function execGroupKill(
+  command: string,
+  opts: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/sh", ["-c", command], {
+      detached: true,
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let killedByTimeout = false;
+
+    const append = (buf: string, chunk: Buffer): string =>
+      buf.length >= opts.maxBuffer
+        ? buf
+        : buf + chunk.toString("utf-8").slice(0, opts.maxBuffer - buf.length);
+
+    child.stdout.on("data", (c: Buffer) => (stdout = append(stdout, c)));
+    child.stderr.on("data", (c: Buffer) => (stderr = append(stderr, c)));
+
+    const killGroup = (): void => {
+      killedByTimeout = true;
+      try {
+        process.kill(-child.pid!, "SIGKILL"); // negative pid = whole group
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    };
+    const timer = setTimeout(killGroup, opts.timeout);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(Object.assign(err, { stdout, stderr }));
+    });
+
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (killedByTimeout) {
+        reject(
+          Object.assign(new Error(`timed out after ${opts.timeout}ms`), {
+            killed: true,
+            signal: signal ?? "SIGKILL",
+            stdout,
+            stderr,
+          }),
+        );
+      } else if (code !== 0) {
+        reject(
+          Object.assign(new Error(`exit ${code}`), {
+            code: code ?? 1,
+            signal,
+            stdout,
+            stderr,
+          }),
+        );
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+  });
+}
 
 const MAX_OUTPUT = 10_000; // chars
 const TIMEOUT_MS = 30_000; // 30 seconds — default for general commands
@@ -368,6 +455,51 @@ function stripQuotedHeredocs(command: string): string {
 }
 
 /**
+ * Unscoped full-suite test runs are banned on this VPS (2026-07-12 incident:
+ * repeated `timeout 90 npx vitest run` orphaned worker pools — 13 stacked
+ * node processes, 8.3 GB RAM, load 10+, event loop starved, service looked
+ * dead to the operator). This is the shell-tool mirror of the operator
+ * session's vitest-scope-guard hook, which does not protect this code path.
+ *
+ * A vitest invocation must carry a scope: an explicit file/dir argument,
+ * `-t`/`--testNamePattern`, `--changed`, or the `related` mode. `npm test`
+ * (package script = bare `vitest run`) is blocked outright.
+ *
+ * @internal exported for tests
+ */
+export function checkUnscopedTestRun(segment: string): string | null {
+  const SCOPED_HINT =
+    'unscoped full-suite test runs exhaust VPS memory. Scope it: `npx vitest run <path/to/file.test.ts>`, `npx vitest run --changed`, or `npx vitest run -t "<name>"`';
+
+  // npm test / npm run test — resolves to a bare full-suite run.
+  if (/(?:^|\s)npm\s+(?:run\s+)?test(?::\S+)?(?:\s|$)/.test(segment)) {
+    return `\`npm test\` runs the FULL vitest suite — ${SCOPED_HINT}`;
+  }
+
+  // vitest must be the segment's INVOCATION — the base command, or preceded
+  // only by wrapper commands (`npx`, `timeout 90`, `env`, `nice`). An
+  // argument occurrence (`grep vitest package.json`) is data, not a run.
+  const tokens = segment.trim().split(/\s+/);
+  const WRAPPERS = /^(npx|timeout|env|nice|node)$/;
+  let i = 0;
+  while (
+    i < tokens.length &&
+    (WRAPPERS.test(tokens[i].replace(/^.*\//, "")) ||
+      /^\d+[smh]?$/.test(tokens[i]))
+  ) {
+    i++;
+  }
+  if (tokens[i]?.replace(/^.*\//, "") !== "vitest") return null;
+
+  const invocation = tokens.slice(i).join(" ");
+  const scoped =
+    /(?:\s\S*\/\S+|\.test\.|\.spec\.|\s-t\s|--testNamePattern|--changed|\srelated(?:\s|$))/.test(
+      invocation,
+    );
+  return scoped ? null : `unscoped \`vitest\` run — ${SCOPED_HINT}`;
+}
+
+/**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
  */
@@ -423,6 +555,12 @@ export function validateShellCommand(command: string): {
 
     if (DENY_COMMANDS.has(baseName)) {
       return { allowed: false, reason: `command '${baseName}' is blocked` };
+    }
+
+    // Resource guard: unscoped full-suite test runs (2026-07-12 incident).
+    const testRunViolation = checkUnscopedTestRun(trimmed);
+    if (testRunViolation) {
+      return { allowed: false, reason: testRunViolation };
     }
   }
 
@@ -627,10 +765,9 @@ RESTRICTIONS:
     const timeout = resolveShellTimeout(command, args.timeout_ms);
 
     try {
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout, stderr } = await execGroupKill(command, {
         timeout,
         maxBuffer: 1024 * 1024, // 1MB
-        encoding: "utf-8",
         // H1: hand the child a scrubbed env so `env`/`printenv`/`echo $VAR`
         // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
         env: buildScrubbedEnv(),

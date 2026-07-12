@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import {
   shellTool,
   validateShellCommand,
+  checkUnscopedTestRun,
   isDbOp,
   resolveShellTimeout,
   isSecretEnvKey,
@@ -134,7 +135,6 @@ describe("validateShellCommand", () => {
     const allowed = [
       "ls /root",
       "node --version",
-      "npm test",
       "cat /etc/hostname",
       "echo hello",
       "pwd",
@@ -156,6 +156,13 @@ describe("validateShellCommand", () => {
   });
 
   describe("blocked commands", () => {
+    // 2026-07-12 vitest-saturation incident: npm test = bare full-suite run.
+    it("blocks `npm test` (unscoped full-suite, deliberate change)", () => {
+      const r = validateShellCommand("npm test");
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toMatch(/FULL vitest suite/);
+    });
+
     const blocked: [string, string][] = [
       ["rm -rf /", "command 'rm' is blocked"],
       ["rm file.txt", "command 'rm' is blocked"],
@@ -842,4 +849,77 @@ describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-0
     const result = validateShellCommand(`echo x | tee ${LOG}`);
     expect(result.allowed).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Unscoped test-run guard (2026-07-12 vitest-saturation incident)
+// ---------------------------------------------------------------------------
+
+describe("checkUnscopedTestRun — the shell-tool mirror of vitest-scope-guard", () => {
+  it("blocks bare vitest runs, including the incident's exact commands", () => {
+    expect(checkUnscopedTestRun("npx vitest run")).toMatch(/unscoped/);
+    expect(checkUnscopedTestRun("vitest run")).toMatch(/unscoped/);
+    expect(
+      checkUnscopedTestRun("timeout 90 npx vitest run --reporter=verbose 2>&1"),
+    ).toMatch(/unscoped/);
+    expect(checkUnscopedTestRun("npm test")).toMatch(/FULL vitest suite/);
+    expect(checkUnscopedTestRun("npm run test")).toMatch(/FULL vitest suite/);
+  });
+
+  it("allows scoped runs", () => {
+    expect(
+      checkUnscopedTestRun("npx vitest run src/lib/deliverable.test.ts"),
+    ).toBeNull();
+    expect(checkUnscopedTestRun("npx vitest run --changed")).toBeNull();
+    expect(checkUnscopedTestRun('npx vitest run -t "extractor"')).toBeNull();
+    expect(
+      checkUnscopedTestRun("vitest related src/db/drive-sync.ts"),
+    ).toBeNull();
+  });
+
+  it("does not false-positive on non-invocations", () => {
+    expect(checkUnscopedTestRun("cat vitest.config.ts")).toBeNull();
+    expect(checkUnscopedTestRun("grep vitest package.json")).toBeNull();
+    expect(checkUnscopedTestRun("npm run test-health-report")).toBeNull();
+  });
+
+  it("is wired into validateShellCommand per segment", () => {
+    const blocked = validateShellCommand(
+      "timeout 90 npx vitest run 2>&1",
+    );
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toMatch(/unscoped/);
+
+    const ok = validateShellCommand(
+      "cd /root/claude/mission-control && npx vitest run src/db/drive-sync.test.ts",
+    );
+    expect(ok.allowed).toBe(true);
+  });
+});
+
+describe("execGroupKill — timeout reaps the whole process group", () => {
+  it("kills backgrounded grandchildren on timeout (no orphan survives)", async () => {
+    const marker = `orphan-probe-${Date.now()}`;
+    const result = JSON.parse(
+      await shellTool.execute({
+        // A grandchild that would outlive a naive parent-only kill.
+        command: `sh -c "sleep 30 #${marker}" & echo started; sleep 30`,
+        timeout_ms: 1000,
+      }),
+    ) as { exit_code: number; stderr: string };
+
+    expect(result.exit_code).toBe(-2); // timeout signature
+    expect(result.stderr).toMatch(/timed out/);
+
+    // Give the SIGKILL a beat, then assert no survivor from our group.
+    await new Promise((r) => setTimeout(r, 300));
+    const { execSync } = await import("node:child_process");
+    // Bracket trick: the checker's own cmdline contains "orphan[-]probe",
+    // which the regex does not match — only the true survivor would.
+    const bracketed = marker.replace("orphan-probe", "orphan[-]probe");
+    const survivors = execSync(`pgrep -f "${bracketed}" | wc -l`, {
+      encoding: "utf-8",
+    }).trim();
+    expect(Number(survivors)).toBe(0);
+  }, 15_000);
 });
