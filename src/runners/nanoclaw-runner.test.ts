@@ -242,6 +242,44 @@ describe("nanoclawRunner", () => {
     });
   });
 
+  // Regression (2026-07-12, tasks 7413/7416): the worker's `content` is the
+  // reflector's third-person meta-summary; the agent's actual answer travels
+  // in `finalAnswer`, which the router prefers for operator delivery. The
+  // runner used to DROP the field, so the operator received English audit
+  // verdicts instead of answers. Pin the passthrough.
+  it("passes finalAnswer through so delivery prefers the agent's answer over the reflector verdict", async () => {
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({
+        success: true,
+        content: "Correctly scoped the task and delivered a concrete response.",
+        score: 0.9,
+        learnings: [],
+        finalAnswer:
+          "El mirror funciona así: jarvis_files es la fuente de verdad y /root/claude/jarvis-kb/ es el espejo FS.",
+      }),
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-fa",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    const result = await nanoclawRunner.execute({
+      taskId: "task-fa",
+      runId: "run-fa",
+      title: "Chat",
+      description: "Explica el mirror",
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.output as { finalAnswer?: string }).finalAnswer).toContain(
+      "fuente de verdad",
+    );
+  });
+
   it("returns error on container failure", async () => {
     const containerOutput: ContainerOutput = {
       status: "error",

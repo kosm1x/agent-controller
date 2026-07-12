@@ -145,6 +145,7 @@ export const nanoclawRunner: Runner = {
         content?: string;
         score?: number;
         learnings?: string[];
+        finalAnswer?: string | null;
         toolCalls?: string[];
         tokenUsage?: {
           promptTokens: number;
@@ -172,6 +173,12 @@ export const nanoclawRunner: Runner = {
           content: parsed.content,
           score: parsed.score,
           learnings: parsed.learnings,
+          // Agent's actual report — the router prefers this over `content`
+          // (the reflector meta-summary) for operator delivery. Without the
+          // passthrough the worker's field is dropped and the operator gets
+          // the English third-person verdict (07-11 heavy fix, nanoclaw
+          // sibling swept 2026-07-12).
+          finalAnswer: parsed.finalAnswer,
         },
         toolCalls: parsed.toolCalls,
         tokenUsage: parsed.tokenUsage,

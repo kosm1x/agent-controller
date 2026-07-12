@@ -34,6 +34,7 @@ import {
 import { rebuildIndex } from "../tools/builtin/code-index.js";
 
 import { orchestrate } from "../prometheus/orchestrator.js";
+import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
 
 import {
@@ -179,7 +180,18 @@ async function main(): Promise<void> {
     // dispatcher/operator sees the miss instead of a confabulated "done". The
     // advisory prompt alone is the defense class that failed in the incident.
     const summary = result.reflection.summary ?? "";
-    const targetMissing = emittedTargetNotInSandbox(summary);
+    // Agent's actual report (joined per-goal answers), distinct from the
+    // reflector meta-summary in `content`. Missing here since the 07-11
+    // heavy-worker fix (b0fa5c4) — the unswept sibling: without it the
+    // router's finalAnswer-preference falls back to `content` and delivers
+    // the third-person English verdict to the operator instead of the
+    // agent's answer (tasks 7413/7416, 2026-07-12).
+    const finalAnswer = collectFinalAnswer(result.executionResults);
+    // Check BOTH texts for the sandbox sentinel: the agent emits it in its
+    // answer; the reflector summary only sometimes quotes it.
+    const targetMissing =
+      emittedTargetNotInSandbox(summary) ||
+      (finalAnswer !== null && emittedTargetNotInSandbox(finalAnswer));
 
     const output = {
       type: "result",
@@ -187,6 +199,7 @@ async function main(): Promise<void> {
       content: summary,
       score: result.reflection.score,
       learnings: result.reflection.learnings,
+      finalAnswer,
       toolCalls: result.executionResults.totalToolNames,
       tokenUsage: result.tokenUsage,
       goalGraph: result.goalGraph,
