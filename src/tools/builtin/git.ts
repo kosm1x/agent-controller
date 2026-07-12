@@ -15,6 +15,14 @@ import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
 const GITHUB_ORG = "EurekaMD-net";
 const MC_DIR = "/root/claude/mission-control/";
+// P1 fix (2026-07-12): Jarvis's mission-control git work happens in a
+// DEDICATED linked worktree, never the primary checkout. On 07-12 his
+// staging + branch checkouts on the shared tree contaminated two operator
+// commits and flipped the branch under an active session. Git itself
+// guarantees a branch can only be checked out in ONE worktree, so the
+// split is structural, not advisory. The jarvis/* branch rule continues
+// to apply inside the worktree.
+export const JARVIS_MC_WORKTREE = "/root/claude/mission-control-jarvis/";
 // Every EurekaMD/Jarvis project lives under /root/claude/ — some at the top level
 // (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …), some under projects/
 // (EurekaMS-Landing, …). A single prefix covers them all and cannot drift, which the
@@ -65,21 +73,35 @@ export function getCurrentBranch(cwd: string): string {
 }
 
 /**
- * Check if cwd is mission-control and enforce branch safety.
+ * Check if cwd is mission-control and enforce worktree + branch safety.
  * Returns true if allowed, throws if blocked.
  */
 function checkMissionControlAccess(resolved: string): boolean {
   const withSlash = resolved.endsWith("/") ? resolved : resolved + "/";
+
+  // Jarvis's dedicated worktree: allowed, subject to the jarvis/* branch
+  // rule below. (Checked FIRST — it is not under MC_DIR.)
+  if (withSlash.startsWith(JARVIS_MC_WORKTREE)) {
+    const branch = getCurrentBranch(resolved);
+    if (!JARVIS_BRANCH_RE.test(branch)) {
+      throw new Error(
+        `Git operations in the jarvis worktree blocked on branch "${branch}". ` +
+          `Use jarvis_dev to create a jarvis/{feat|fix|refactor}/{slug} branch first.`,
+      );
+    }
+    return true;
+  }
+
   if (!withSlash.startsWith(MC_DIR)) return true; // not MC, allow
 
-  const branch = getCurrentBranch(resolved);
-  if (!JARVIS_BRANCH_RE.test(branch)) {
-    throw new Error(
-      `Git operations on mission-control blocked on branch "${branch}". ` +
-        `Use jarvis_dev to create a jarvis/{feat|fix|refactor}/{slug} branch first.`,
-    );
-  }
-  return true;
+  // The PRIMARY mission-control checkout is operator territory — no git
+  // operations here at all (P1, 2026-07-12). Read state via shell
+  // `git status`/`log` if needed; do all work in the worktree.
+  throw new Error(
+    `Git operations on the primary mission-control checkout are blocked — ` +
+      `it is shared with operator sessions. Work in ${JARVIS_MC_WORKTREE} ` +
+      `(jarvis_dev manages it; create a jarvis/{feat|fix|refactor}/{slug} branch there).`,
+  );
 }
 
 function resolveWorkDir(cwd?: string): string {

@@ -7,12 +7,38 @@
 
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
 
-const MC_DIR = "/root/claude/mission-control";
+// P1 (2026-07-12): jarvis_dev operates in a DEDICATED linked worktree, never
+// the primary checkout — his branch creation/staging on the shared tree
+// collided with live operator sessions (two contaminated commits, branch
+// flipped underfoot). Git guarantees one-branch-one-worktree, so the split
+// is structural. The primary stays operator-only.
+const PRIMARY_DIR = "/root/claude/mission-control";
+const MC_DIR = "/root/claude/mission-control-jarvis";
 const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
+
+/**
+ * Bootstrap the worktree on first use: create it detached from the primary
+ * repo and share the primary's node_modules via symlink (the test/typecheck
+ * actions need binaries; Jarvis never npm-installs under a live service, so
+ * the shared install is read-only in practice).
+ */
+export function ensureJarvisWorktree(): void {
+  if (!existsSync(MC_DIR)) {
+    execFileSync(
+      "git",
+      ["-C", PRIMARY_DIR, "worktree", "add", "--detach", MC_DIR],
+      { timeout: 60_000, encoding: "utf-8" },
+    );
+  }
+  const nm = join(MC_DIR, "node_modules");
+  if (!existsSync(nm)) {
+    symlinkSync(join(PRIMARY_DIR, "node_modules"), nm, "dir");
+  }
+}
 // Full suite runs ~105s on an idle VPS. 120s left <15% headroom, so any
 // concurrent inference/swap pressure pushed it over and ETIMEDOUT was then
 // misparsed as "tests failed" by the catch-branch regex. 300s is 3x headroom.
@@ -24,7 +50,9 @@ const GIT_TIMEOUT_MS = 60_000;
 // action=test caches its result so action=pr can skip re-running the full
 // suite when nothing has changed since. Tests take 136s+ and that alone can
 // exceed the caller's per-query budget.
-const TEST_CACHE_FILE = join(MC_DIR, ".git", "jarvis-test-cache.json");
+// Cache lives in the PRIMARY repo's .git (a real directory) — in a linked
+// worktree `.git` is a pointer FILE, so join(MC_DIR, ".git", ...) breaks.
+const TEST_CACHE_FILE = join(PRIMARY_DIR, ".git", "jarvis-test-cache.json");
 export const TEST_CACHE_TTL_MS = 15 * 60 * 1000;
 
 export interface TestCacheEntry {
@@ -629,6 +657,14 @@ AFTER USING: Report the branch name, action taken, and next step.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const action = args.action as string;
+
+    try {
+      ensureJarvisWorktree();
+    } catch (err) {
+      return JSON.stringify({
+        error: `jarvis worktree bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
 
     switch (action) {
       case "branch":

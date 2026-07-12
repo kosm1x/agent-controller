@@ -58,16 +58,27 @@ prom_query() {
 }
 
 # --- Check 1: Services alive ---
+# P2 fix (2026-07-12): NEVER restart on a single probe. On 07-05 and 07-12
+# (both at exactly 10:00:01) a transient blip made one probe fail while the
+# service was healthy mid-task — the restart killed in-flight work
+# (pm_paper_rebalance died mid-run on 07-12). Confirm with a second probe
+# 10s later before touching the service.
 for svc in mission-control; do
   # A masked/disabled unit is intentionally down — don't fight the operator.
   if ! systemctl is-enabled --quiet "$svc" 2>/dev/null; then
     continue
   fi
   if ! systemctl is-active --quiet "$svc"; then
+    echo "$LOG_PREFIX probe 1: $svc not active — re-probing in 10s before restart"
+    sleep 10
+    if systemctl is-active --quiet "$svc"; then
+      echo "$LOG_PREFIX probe 2: $svc active — transient blip, NO restart"
+      continue
+    fi
     systemctl restart "$svc"
     sleep 5
     if systemctl is-active --quiet "$svc"; then
-      alert "$svc was down, restarted successfully"
+      alert "$svc was down (2 probes, 10s apart), restarted successfully"
     else
       alert "$svc is DOWN and restart FAILED — manual intervention needed"
     fi
@@ -75,12 +86,25 @@ for svc in mission-control; do
 done
 
 # --- Check 2: MC health endpoint ---
-MC_HEALTH=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
+# Same double-probe rule; --max-time so a blocked event loop can't wedge
+# curl (the 07-05 HTTP 000 signature).
+mc_probe() {
+  curl -sf --max-time 10 -o /dev/null -w "%{http_code}" \
+    http://localhost:8080/health 2>/dev/null || echo "000"
+}
+MC_HEALTH=$(mc_probe)
 if [ "$MC_HEALTH" != "200" ]; then
-  systemctl restart mission-control
-  sleep 5
-  MC_HEALTH2=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
-  alert "MC health failed (HTTP $MC_HEALTH), restarted. Now: HTTP $MC_HEALTH2"
+  echo "$LOG_PREFIX probe 1: MC health HTTP $MC_HEALTH — re-probing in 10s before restart"
+  sleep 10
+  MC_HEALTH_RETRY=$(mc_probe)
+  if [ "$MC_HEALTH_RETRY" = "200" ]; then
+    echo "$LOG_PREFIX probe 2: MC health 200 — transient blip, NO restart"
+  else
+    systemctl restart mission-control
+    sleep 5
+    MC_HEALTH2=$(mc_probe)
+    alert "MC health failed twice (HTTP $MC_HEALTH then $MC_HEALTH_RETRY, 10s apart), restarted. Now: HTTP $MC_HEALTH2"
+  fi
 fi
 
 # --- Checks 3 & 4 (Hindsight health/CPU) REMOVED 2026-06-15 ---

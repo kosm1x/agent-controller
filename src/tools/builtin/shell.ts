@@ -512,6 +512,71 @@ export function checkUnscopedTestRun(segment: string): string | null {
 }
 
 /**
+ * P1 (2026-07-12): mutating git on the PRIMARY mission-control checkout is
+ * blocked at the shell layer too — it is shared with live operator sessions
+ * (Jarvis's staging/checkouts contaminated two operator commits and flipped
+ * the branch under an active session). His git work belongs in the dedicated
+ * worktree (/root/claude/mission-control-jarvis, jarvis_dev bootstraps it).
+ * Read-only git (status/log/diff/show/branch listing) stays allowed anywhere.
+ *
+ * A segment is blocked when a mutating git subcommand targets the primary:
+ * via `-C /root/claude/mission-control`, a `cd` to it earlier in the COMMAND,
+ * or NO repo path at all (shell_exec's default cwd IS the primary checkout).
+ *
+ * @internal exported for tests
+ */
+const GIT_MUTATING_RE =
+  /^(add|commit|checkout|switch|restore|reset|stash|merge|rebase|clean|cherry-pick|am|apply|worktree|push|pull|mv|rm)$/;
+
+export function checkPrimaryMcGitMutation(
+  segment: string,
+  fullCommand: string,
+): string | null {
+  const tokens = segment.trim().split(/\s+/);
+  const gitIdx = tokens.findIndex((t) => t.replace(/^.*\//, "") === "git");
+  if (gitIdx === -1) return null;
+
+  // Locate the subcommand (skip -C <path> and -c key=val option pairs).
+  let i = gitIdx + 1;
+  let explicitRepo: string | null = null;
+  while (i < tokens.length) {
+    if (tokens[i] === "-C") {
+      explicitRepo = tokens[i + 1] ?? null;
+      i += 2;
+    } else if (tokens[i] === "-c") {
+      i += 2;
+    } else if (tokens[i]?.startsWith("-")) {
+      i++;
+    } else {
+      break;
+    }
+  }
+  const sub = tokens[i];
+  if (!sub || !GIT_MUTATING_RE.test(sub)) return null;
+
+  const PRIMARY = "/root/claude/mission-control";
+  const targetsPrimary = (p: string | null): boolean =>
+    p !== null &&
+    (p === PRIMARY || p.startsWith(PRIMARY + "/")) &&
+    !p.startsWith(PRIMARY + "-jarvis");
+
+  // Explicit -C wins; otherwise the last `cd <path>` in the full command;
+  // otherwise the default cwd — which IS the primary checkout.
+  let repo: string | null = explicitRepo;
+  if (repo === null) {
+    const cds = [...fullCommand.matchAll(/\bcd\s+(\S+)/g)];
+    repo = cds.length > 0 ? cds[cds.length - 1][1] : PRIMARY;
+  }
+  if (!targetsPrimary(repo)) return null;
+
+  return (
+    `mutating git (\`${sub}\`) on the primary mission-control checkout is blocked — ` +
+    `it is shared with operator sessions. Use the jarvis worktree ` +
+    `(/root/claude/mission-control-jarvis, jarvis_dev bootstraps it) or the git_* tools.`
+  );
+}
+
+/**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
  */
@@ -573,6 +638,12 @@ export function validateShellCommand(command: string): {
     const testRunViolation = checkUnscopedTestRun(trimmed);
     if (testRunViolation) {
       return { allowed: false, reason: testRunViolation };
+    }
+
+    // Worktree guard: mutating git on the shared primary checkout (P1).
+    const gitViolation = checkPrimaryMcGitMutation(trimmed, sanitized);
+    if (gitViolation) {
+      return { allowed: false, reason: gitViolation };
     }
   }
 

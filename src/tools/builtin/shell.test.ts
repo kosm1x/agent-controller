@@ -263,7 +263,7 @@ describe("validateShellCommand", () => {
     it("blocks git push", () => {
       const result = validateShellCommand("git push -u origin main");
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain("git operations blocked");
+      expect(result.reason).toMatch(/git operations blocked|mutating git/);
     });
 
     it("blocks git commit", () => {
@@ -281,7 +281,7 @@ describe("validateShellCommand", () => {
         "git -C /root/claude/cuatro-flor push",
       );
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain("git operations blocked");
+      expect(result.reason).toMatch(/git operations blocked|mutating git/);
     });
 
     it("blocks git -C /path commit", () => {
@@ -310,7 +310,7 @@ describe("validateShellCommand", () => {
         "git --work-tree=/root/claude/cuatro-flor push",
       );
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain("git operations blocked");
+      expect(result.reason).toMatch(/git operations blocked|mutating git/);
     });
 
     it("blocks git --no-verify commit (long-flag bypass)", () => {
@@ -942,4 +942,63 @@ describe("execGroupKill — timeout reaps the whole process group", () => {
     }).trim();
     expect(Number(survivors)).toBe(0);
   }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
+// P1 (2026-07-12): mutating git on the shared primary mc checkout is blocked
+// ---------------------------------------------------------------------------
+
+describe("checkPrimaryMcGitMutation — shared-worktree protection", () => {
+  it("blocks mutating git with no cd (default cwd IS the primary)", () => {
+    expect(validateShellCommand("git add src/foo.ts").allowed).toBe(false);
+    expect(validateShellCommand("git checkout -b jarvis/feat/x").allowed).toBe(
+      false,
+    );
+    expect(validateShellCommand("git stash").allowed).toBe(false);
+  });
+
+  it("blocks mutating git explicitly targeting the primary", () => {
+    expect(
+      validateShellCommand(
+        "git commit -m x src/a.ts",
+      ).allowed,
+    ).toBe(false);
+    expect(
+      validateShellCommand(
+        "git -C /root/claude/mission-control reset --hard HEAD",
+      ).allowed,
+    ).toBe(false);
+  });
+
+  it("allows worktree-state git (checkout/stash/reset) in the jarvis worktree and other repos", () => {
+    // push/commit/add stay blanket-blocked by the pre-existing DENY pattern
+    // (git_commit/git_push tools are the sanctioned path); this guard governs
+    // the worktree-STATE gap: checkout/switch/reset/stash/etc.
+    expect(
+      validateShellCommand(
+        "cd /root/claude/mission-control-jarvis && git checkout jarvis/feat/x",
+      ).allowed,
+    ).toBe(true);
+    expect(
+      validateShellCommand("cd /root/claude/vlved && git stash").allowed,
+    ).toBe(true);
+    expect(
+      validateShellCommand(
+        "git -C /root/claude/mission-control-jarvis reset --hard HEAD",
+      ).allowed,
+    ).toBe(true);
+  });
+
+  it("allows read-only git anywhere, including the primary", () => {
+    expect(validateShellCommand("git status --short").allowed).toBe(true);
+    expect(validateShellCommand("git log --oneline -5").allowed).toBe(true);
+    expect(
+      validateShellCommand(
+        "cd /root/claude/mission-control && git diff HEAD~1",
+      ).allowed,
+    ).toBe(true);
+    expect(validateShellCommand("git branch --show-current").allowed).toBe(
+      true,
+    );
+  });
 });
