@@ -23,7 +23,7 @@ let haikuShouldThrow = false;
 vi.mock("./claude-sdk.js", () => {
   const SONNET_MODEL_ID = "claude-sonnet-4-6";
   const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
-  const OPUS_MODEL_ID = "claude-opus-4-7";
+  const OPUS_MODEL_ID = "claude-opus-4-8";
   const stamp = (fn: "infer" | "inferWithTools", model: string | undefined) => {
     sdkCalls.push({ fn, model, attempt: sdkCalls.length + 1 });
   };

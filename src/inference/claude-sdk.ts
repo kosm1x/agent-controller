@@ -264,7 +264,11 @@ export function buildMcpServer(
  */
 export const SONNET_MODEL_ID = "claude-sonnet-4-6";
 export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
-export const OPUS_MODEL_ID = "claude-opus-4-7";
+// 2026-07-12 (V8.5 Phase 2.1): claude-opus-4-7 → claude-opus-4-8. Same request
+// surface and tokenizer as 4-7 (no Sonnet-5-style cache re-baseline); affects
+// Prometheus complex paths only. 4.8 flags uncertainties more readily — targets
+// the confabulation-guard class.
+export const OPUS_MODEL_ID = "claude-opus-4-8";
 
 /**
  * Opus→Sonnet fallback wrapper for Prometheus complex paths.

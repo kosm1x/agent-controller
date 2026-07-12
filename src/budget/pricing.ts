@@ -59,6 +59,7 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "claude-sonnet-4-6": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-sonnet-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-opus-4-7": { promptCostPer1k: 0, completionCostPer1k: 0 },
+  "claude-opus-4-8": { promptCostPer1k: 0, completionCostPer1k: 0 },
   "claude-haiku-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
 };
 
