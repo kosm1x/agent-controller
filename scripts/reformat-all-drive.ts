@@ -11,7 +11,16 @@
  * Run `tail -f /tmp/reformat-drive-progress.log` in another terminal to watch.
  */
 
+import { loadConfig } from "../src/config.js";
+import { initDatabase } from "../src/db/index.js";
 import { reformatDriveFiles } from "../src/db/drive-sync.js";
+
+// Standalone-harness bootstrap (review fold 2026-07-12): reformatDriveFiles
+// reads jarvis_files/drive_file_map via getDatabase(), which throws without
+// this. Reads the LIVE DB deliberately — the pass must cover the real KB;
+// it only reads SQLite and PATCHes Drive.
+loadConfig();
+initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
 
 const LOG_FILE = "/tmp/reformat-drive-progress.log";
 
