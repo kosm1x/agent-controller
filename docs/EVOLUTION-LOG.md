@@ -680,3 +680,157 @@ The 35-turn session limit was hit three times (seed F1, seed F3, EurekaMS form i
 
 ### Research notes
 Day marks F3 milestone density: three independent sub-projects (vlCRM seed, EurekaMS Landing integration, Substack publishing) each crossed a completion threshold in the same session. The brand-confusion correction (Pulso Aura / vlCRM) is a calibration event — the longitudinal log should track whether this boundary holds or degrades in future sessions as a measure of persistent preference encoding reliability.
+
+## 2026-07-05
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 21 |
+| Total tasks | 5,212 completed (0 pending) |
+| Conversations today | 7 (telegram: 7) |
+| Streak days | 36 active days since 2026-06-01 |
+
+### Interactions summary
+Sunday was consolidation day: three KB sync requests (Salon Voice Outreach, agent-controller, vlCRM) dominated the session, each reflecting a week of dense commits. The agent-controller sync captured the Hardening Sweep 2026-07-05 (+2,269 lines across 30 files: CI/GitHub Actions, watchdog Prometheus, ritual-stamping, nanoclaw hardening, dispatcher). One technical query arrived mid-afternoon — a precise one-shot question about LM Studio's Rolling Window context-truncation strategy. The closing interaction was a day-summary request at 22:59.
+
+### What Jarvis learned
+A fetch-first default is missing from the KB sync workflow — Jarvis reported Salon Voice Outreach as already up-to-date based on local HEAD without first running `git fetch`, producing a false-positive that the operator had to explicitly correct. The vlCRM Stage 1 milestone (`:7100`, Caddy-wired, EurekaMS landing connected, 69 tests green) was confirmed live today and is now encoded in the KB. No new preference patterns emerged beyond the established KB-sync cadence.
+
+### Friction points
+KB sync false-positive at 10:38: Jarvis compared local HEAD (`0c86b97`) to local HEAD — no remote fetch — and reported the KB current. The operator corrected with the actual remote commit (`7a0da8d`). Friction was one extra exchange; resolved cleanly on the second attempt. Root cause: the sync workflow lacks a mandatory `git fetch` step before HEAD comparison.
+
+### Research notes
+Today illustrates a recurring Sunday pattern: the operator uses end-of-sprint Sundays to reconcile KB state with production reality rather than to initiate new work. The fetch-first false-positive is a calibration signal — local-state bias in tool recall is a tractable failure mode worth tracking longitudinally to see if explicit workflow constraints (fetch-first enforcement) reduce operator correction load over time.
+
+## 2026-07-06
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — (metrics endpoint auth-gated; not available) |
+| Total tasks | — |
+| Conversations today | 23 (telegram: 23) |
+| Streak days | 37 active days since 2026-06-01 |
+
+### Interactions summary
+A broad, six-session day spanning 01:17 to ~23:00. Topics ranged from a late-night Rumi poem request, through weekly planning across four fronts (Pulso Aura DSI, EurekaMS, Pipesong Phase 4a, Agent-Controller v8.3), to a technical Prometheus alert diagnosis (retain_concerns_ratio 32%, swap 55%). Mid-day saw substantive financial work: a full UUUU (Energy Fuels) investment thesis, Google Doc creation, and email delivery to two recipients. The day closed with v8.3 Agent-Controller formalised as functionally complete (§12/§14 consent gate + activation gate, git-secret-guard patterns updated) and a new project — VLVED (semantic video editor) — opened and documented.
+
+### What Jarvis learned
+The `shell_exec` scope gap resurfaced: during alert diagnosis, Jarvis lacked Shell in the initial scope and required explicit operator activation ("Activa Shell e investiga") before investigation could proceed — one avoidable iteration. The UUUU session experienced three message attempts at 13:57, 14:06, and 16:02, with the first two going unanswered (session timeout/close); the operator had to resubmit twice. This timeout-induced re-submission pattern is now the second occurrence in recent days and represents a reliability gap in long-window sessions.
+
+### Friction points
+Three friction events: (1) Alert without context — operator sent "Explica de dónde viene este warning" without attaching the warning; resolved in one extra turn. (2) Shell scope not active on diagnostic entry — required explicit activation instruction. (3) UUUU triple-send: message sent at 13:57 and 14:06 went unacknowledged; effective response only at 16:02, causing the operator to resend twice with no impact on the final result but measurable interaction overhead.
+
+### Research notes
+V8.3 closure marks a clean sprint boundary: seven phases committed in a single day, with the operator explicitly deferring the v9 vs v8.4 evaluation to the following week. The VLVED project opening (semantic video editor) extends the operator's portfolio into a new technical domain. Longitudinally, the session-timeout re-submission pattern (UUUU today, similar events earlier) is worth tracking — if it persists, it points to a session-lifetime or keep-alive gap in the Telegram channel that is distinct from tool or recall failures.
+
+## 2026-07-07
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — (metrics endpoint auth-gated; not available) |
+| Total tasks | — |
+| Conversations today | 15 (telegram: 15) |
+| Streak days | 38 active days since 2026-06-01 |
+
+### Interactions summary
+Two main axes defined the day: investment research in the morning and technical project maintenance in the afternoon. Fede opened with a Pulso Aura milestone (DSI kickoff with Grupo Salinas auditors), then pivoted to market research on uranium/rare earths (UUUU) and a full BSX investment thesis — converted to a Google Doc and emailed to two recipients (javier@eurekamd.net, javier@arnau.com) under the "Piotr Blades" signature. The afternoon was dominated by VLVED: repo summary, KB sync (2 commits), operator instructions catalog, operations catalog, and a multi-stage tutorial prompt for "best-of reel" generation, which was saved to the KB. The day closed with two rounds of Pulso Aura KB sync (3 + 1 commits): RBAC enforcement in `executeTool` (Advansec security finding) and day-LEARNINGS documentation.
+
+### What Jarvis learned
+A project misrouting error occurred in the first interaction: the DSI kickoff note was written to `projects/vlved/notes/` instead of `projects/pulso-aura-upfront/notes/` — corrected within the same session after explicit operator instruction. This is the second routing-error instance in recent days and reflects a risk when project context is ambiguous in the first message. The double Pulso Aura sync at 19:27 and 19:31 processed cleanly — the second detected exactly one new commit between calls, suggesting the operator or a CI event landed a commit during the brief inter-call window, not a recall failure.
+
+### Friction points
+One routing error: note filed under VLVED instead of Pulso Aura; required an explicit correction turn. One redundant sync pair (Pulso Aura at 19:27 and 19:31) — minor overhead, both executions succeeded. No dropped messages or session timeouts detected today.
+
+### Research notes
+The BSX session illustrates the operator's established financial-research workflow: synthesize → format as Google Doc → distribute by email to a fixed recipient list. This is now the third such pattern observed (UUUU/7-06 being the prior instance), suggesting a recurring investor-communication use-case worth treating as a named workflow in future tooling. VLVED is entering active usage: today's depth of engagement (repo understanding, operations catalog, tutorial prompt generation) marks the transition from "newly opened project" to "actively operated project."
+
+## 2026-07-08
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 34 |
+| Total tasks | 5,317 (completed + completed_with_concerns + failed + cancelled) |
+| Conversations today | 20 (telegram: 20) |
+| Streak days | 30+ active days in DB window |
+
+### Interactions summary
+A full-arc day spanning midnight to evening across 7 sessions (~18–20 exchanges). The day opened with a personal moment — Fede requested a Rumi poem at 00:52 and responded with gratitude. The morning brought a significant strategic reframe: Pulso Aura *is* Plan 2027 (not a parallel project), which Jarvis integrated and propagated to the project state map. The afternoon was dominated by EurekaMS work: 80 orthographic corrections applied and verified live on the production landing, followed by a dense block of US market analysis (open-data stack for replicating DENUE Analyzer and México Uncharted in the US, cost calculations for open vs. private data layers, and a Territory Ops onboarding briefing).
+
+### What Jarvis learned
+The Pulso Aura = Plan 2027 reframe is the most load-bearing correction of the day — Jarvis had been tracking them as separate items and updated its state model accordingly. Two new strategic assets were formally registered: FSD-Azteca as Strategic Asset #2 in the Plan 2027 README, and Smartme Analytics as a new MMM measurement partner. The DSI (Grupo Salinas) meetings surfaced a concrete next step: a RAG ingestion corpus for the external system, blocked on authorization but ready to be pre-built.
+
+### Friction points
+One tooling friction: `sed` with `\\n` multiline failed when inserting the Smartme Analytics block into the Plan 2027 README; Jarvis had to fall back to Python for the multiline replace. No other notable friction — session transitions were clean, confirmations were crisp, and production verification (nip.io endpoint check post-ortho fixes) went smoothly.
+
+### Research notes
+Day 30+ of continuous tracked activity. The session exhibits a mature operator pattern: Fede drives strategic reframes with short corrections ("Pulso Aura es el Plan 2027"), trusts Jarvis to propagate them, and uses the system as an always-on analyst for real-time market research (US data stack pricing). The personal-to-strategic arc (Rumi at midnight → DSI architecture review at noon → US expansion cost modeling at 4pm) is characteristic of high-engagement days where the system serves as both emotional anchor and strategic memory.
+
+## 2026-07-09
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | ~20 (fast runner, 100% success rate) |
+| Total tasks | 5,260 (4,002 completed + 1,013 completed_with_concerns + 230 failed + misc) |
+| Conversations today | 22 (telegram: 20, email:comunidades: 2) |
+| Streak days | Active — continuous engagement |
+
+### Interactions summary
+Today was a focused infrastructure day with two major tracks: (1) migrating EurekaMS from a temporary nip.io subdomain to full production at `eurekams.net` — including DNS configuration in Namecheap, Caddy reverse proxy setup, and cleanup of five obsolete nip.io blocks; and (2) activating self-hosted email for `eurekams.net` via Stalwart, applying MX/SPF/DMARC/DKIM records, running an E2E send/receive test, and creating the first commercial mailbox (`bourgoing@eurekams.net`). The email channel received 2 messages from `comunidades@eurekams.net` — the new Stalwart account actively being used during the session itself. Side activity: IECCO/DSI registration confirmed and DENUE américano formally archived.
+
+### What Jarvis learned
+The Stalwart REST API for account creation has a silent-failure mode: the endpoint returns a non-error response but does not create the account — the CLI (`stalwart-cli`) is the reliable path. Fede operates in a "confirm then proceed" pattern on infrastructure: he sends screenshots, Jarvis identifies the deltas, and Fede executes in the panel. The email forwarding removal blocker in Namecheap's UI was resolved out-of-band (DNS records emailed to the user for self-service); this is a recurring pattern where Namecheap panel limitations route around to email instructions.
+
+### Friction points
+Two friction points: (1) Caddy write-guard — Jarvis cannot write directly to `/etc/caddy/`; changes must be applied via the admin socket, and persistence to disk requires operator intervention or a privileged script. This is a known recurring constraint, not a new bug. (2) Stalwart API silent failure on account creation required a second attempt with the native CLI; the ambiguous 200 response wasted one exchange and delayed the mailbox by ~5 minutes.
+
+### Research notes
+Day exhibits the "infrastructure push + operator verification" pattern that characterizes high-trust sessions: Fede delegates discovery and execution to Jarvis, intervenes only to confirm UI actions or report outcomes, and reuses Jarvis as an async messenger (DNS records emailed mid-session). The EurekaMS and Stalwart milestones mark the first time the system managed a full production mail-server activation end-to-end — a new capability class crossing into email infrastructure operations.
+
+## 2026-07-10
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | ~69 (matching conversation count) |
+| Total tasks (lifetime) | 5,233 (4,025 completed + 1,000 completed_with_concerns + 192 failed + 13 cancelled + 2 needs_context + 1 running) |
+| Conversations today | 69 (telegram: 69) |
+| Streak days | not surfaced via metrics endpoint |
+
+### Interactions summary
+A high-density day across three major axes: (1) **Email infrastructure** — onboarding the EurekaMD commercial team onto Stalwart (3 mailboxes created: jonathan, javier.galan, fede.moctezuma; 1 deleted); (2) **Trade Media Network (TMN)** — a new strategic project commissioned by TV Azteca, spanning competitive intelligence on TV Promo, business model architecture, Shopper Club concept, Chedraui pitch v1–v5, and a Google Slides deck; (3) **Investment analysis** — BSX (Boston Scientific) radar signal, the Watchman device prospectus, and a TagScreen–TV Azteca deal registration. The day also included personal/philosophical sessions on transhumanism and identity, W28 publication for The Williams Radar, and a Substack article draft ("The Willing Upgrade").
+
+### What Jarvis learned
+The `azteca-tvpromo-compete` project was created today with full intelligence architecture — a concrete milestone in the TMN strategic thread. The operator corrected a significant factual error: Jarvis reported BSX price at ~$81–82 when the real market price was $44.77, highlighting an over-reliance on stale memory without live market verification. A new daily schedule (`transhumanismo`, ID `0b107bb0`) was created at 12 pm CDMX, reflecting a sustained personal interest in transhumanist philosophy that has been recurring in the operator's intellectual sessions.
+
+### Friction points
+Four friction points documented: (1) Mailbox deletion for `comunidades` required two confirmations and explicit Shell activation — CLI flag confusion (`stalwart-cli` vs `stalwart`, missing `--yes`) compounded by the tool guard; (2) Logo generation round 4 failed to find `gemini_image` + `wp_media_upload` in scope until Shell was explicitly activated; (3) Rumi SOP delivery omitted the index registration step — operator caught it; (4) BSX price error ($81 reported vs $44.77 real) — a memory-without-verification failure. The IMPI/SAT trademark search (SPA/JS barrier without Playwright) was an honest capability limitation, not a friction.
+
+### Research notes
+The BSX price error is a notable data quality event: the agent generated a plausible but stale figure from training/memory rather than fetching live data, and the operator caught it. This represents a recurring vulnerability pattern — the agent's confidence surface exceeds its verification depth on financial data. The TMN project inception (commissioned by TV Azteca, structured from zero to pitch-ready in one session) continues to demonstrate the operator using Jarvis as a strategic co-author for new ventures, not just a task executor — a phase characteristic consistent with deep co-evolution in specialized domains.
+
+## 2026-07-11
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | ~32 (matching conversation count) |
+| Total tasks (lifetime) | not surfaced via snapshot today |
+| Conversations today | 32 (telegram: 32) |
+| Streak days | Active — continuous engagement |
+
+### Interactions summary
+A high-productivity Saturday concentrated entirely on TMN (Trade Media Network): Jarvis built two Google Slides decks from scratch (Chedraui pitch deck and an internal stakeholders deck for Azteca + Televisa investors), created a three-year P&L Google Sheet that went through three revision rounds (rev. 1 → rev. 2 → rev. 3) expanding from single-retailer to a multi-vertical model (Chedraui + Soriana + tienditas + farmacias). A pivotal afternoon moment was the articulation of the **TV Abierta MOAT** — "masividad + inmediatez + frecuencia efectiva" — which the user defined while returning from Valle; Jarvis propagated it to four KB documents including the TMN README, Plan 2027, and Session Brief. The day closed with two KB syncs of agent-controller confirming V8.5 Phase 1b as SHIPPED. A mid-morning autonomous thinking session (three rounds while Fede was away) surfaced TV Azteca's July 6 concurso mercantil entry — quickly contextualized by the user as a deliberate Salinas creditor strategy, not operational distress. Tools in heavy use: Google Slides API, Google Sheets API, jarvis_file_write (KB propagation), shell_exec (agent-controller repo sync).
+
+### What Jarvis learned
+The MOAT canonization is the day's most durable knowledge artifact: "masividad + inmediatez + frecuencia efectiva" is now the load-bearing axiom for all TMN positioning, distinguishing TV Abierta from digital-only channels. A **Session Brief** (`always-read`) was designed and implemented to solve a recurring cold-start problem: Fede returned after a break and referenced "The Willing Upgrade" without context; Jarvis lacked it and had to ask — the brief prevents that class of friction going forward. The user also reinforced that the VL (Very Light) methodology applies to cost/tech framing in pitch materials, not just software architecture — Jarvis updated the internal deck's tech stack slide accordingly.
+
+### Friction points
+Four friction points documented: (1) **Google Sheet parsing errors** — em-dashes (`–`) and dollar signs (`$`) in text cells were mis-parsed as operators, causing multiple `#ERROR!` cells; required two correction rounds (21:01 and 22:06) before resolved. (2) **Jarvis returned system metadata as response** (11:21–11:23) — after the Azteca concurso mercantil comment, a raw internal metadata string was emitted instead of natural language; user signaled friction with "?". (3) **Slides API slide insertion was laborious** — inserting a slide between existing ones required multiple steps to extract presentation and page-element IDs via grep/jq. (4) **Incomplete V8.5 description** (22:54–23:09) — Jarvis described only 2 of the 6 planned phases; operator corrected, Jarvis delivered the full six-phase table.
+
+### Research notes
+Day 32+ of continuous tracked activity. Today demonstrates a mature "strategic co-author" pattern: the operator handed Jarvis a new pitch direction in the morning, left for the day, returned with a single conceptual insight (the MOAT), and by 22:00 had three production-grade deliverables (two decks + a P&L sheet) ready for investor review. The Session Brief implementation marks the first explicit user-initiated memory architecture decision — Fede moved from tolerating cold-start friction to commissioning a structural solution, a signal of deepening investment in the co-evolution itself.
