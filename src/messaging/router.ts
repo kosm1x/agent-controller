@@ -135,6 +135,10 @@ import {
 import { autoPersistConversation } from "../memory/auto-persist.js";
 import { getOutcomeTag } from "../memory/outcome-tag.js";
 import { errMsg } from "../lib/err-msg.js";
+import {
+  extractDeliverableText,
+  hasDeliverableField,
+} from "../lib/deliverable.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -2899,14 +2903,9 @@ export class MessageRouter {
         // operator on this path (a text-less output object would otherwise
         // send raw JSON where the generic line is correct).
         const r = data.result;
-        const hasTextField =
-          typeof r === "string" ||
-          (r !== null &&
-            typeof r === "object" &&
-            ["text", "output", "result", "finalAnswer", "content"].some(
-              (k) => typeof (r as Record<string, unknown>)[k] === "string",
-            ));
-        const runnerText = hasTextField ? this.extractResultText(r) : null;
+        const runnerText = hasDeliverableField(r)
+          ? this.extractResultText(r)
+          : null;
         if (runnerText) {
           failMsg = runnerText;
           deliveredRunnerText = true;
@@ -3136,39 +3135,24 @@ export class MessageRouter {
   }
 
   private extractResultText(result: unknown): string | null {
-    let text: string | null = null;
+    // V8.5 Phase 4.2: field preference is owned by the canonical extractor
+    // (src/lib/deliverable.ts) — this method keeps only router-specific
+    // post-processing. Do NOT re-introduce inline field walks here; the
+    // 07-11/07-12 meta-summary deliveries came from divergent copies.
+    let text = extractDeliverableText(result);
 
-    if (typeof result === "string") {
-      // Try to parse JSON strings that wrap a { text } object (fast-runner output)
-      if (result.startsWith("{")) {
-        try {
-          const parsed = JSON.parse(result);
-          if (typeof parsed.text === "string") {
-            text = parsed.text;
-          }
-        } catch {
-          // Not JSON — return as-is
-        }
-      }
-      if (text === null) text = result;
-    } else if (result && typeof result === "object") {
-      const obj = result as Record<string, unknown>;
-      if (typeof obj.text === "string") text = obj.text;
-      else if (typeof obj.output === "string") text = obj.output;
-      else if (typeof obj.result === "string") text = obj.result;
-      // heavy-runner output carries BOTH `content` (the reflector's
-      // meta-summary about the work) and `finalAnswer` (the agent's actual
-      // report). Deliver the report — the 2026-07-11 Azteca chat sent the
-      // operator "Single-goal chat task completed successfully: ..." while
-      // the real answer sat unread in finalAnswer. Falls back to `content`
-      // when collectFinalAnswer produced null/empty.
-      else if (
-        typeof obj.finalAnswer === "string" &&
-        obj.finalAnswer.trim().length > 0
-      )
-        text = obj.finalAnswer;
-      else if (typeof obj.content === "string") text = obj.content;
-      else text = JSON.stringify(result);
+    // Historical router behavior: an object of UNKNOWN shape (no canonical
+    // field at all) falls back to its JSON dump. An object whose deliverable
+    // fields exist but are EMPTY must stay null — that feeds the never-silent
+    // "✓" fallback / generic failure line instead of raw JSON (2026-07-11
+    // empty-completion class; pinned by router.test).
+    if (
+      text === null &&
+      result &&
+      typeof result === "object" &&
+      !hasDeliverableField(result)
+    ) {
+      text = JSON.stringify(result);
     }
 
     // Strip CJK characters that leak from Qwen model responses

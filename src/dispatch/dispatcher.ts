@@ -25,6 +25,7 @@ import { ritualContext } from "../tools/flailing-guard.js";
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { extractDeliverableText } from "../lib/deliverable.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -489,21 +490,11 @@ async function dispatchTask(
  * the router's `extractResultText` reads, then to null when nothing is usable.
  */
 export function extractPersistText(output: unknown): string | null {
-  if (typeof output === "string") return output.trim() || null;
-  if (output && typeof output === "object") {
-    const o = output as Record<string, unknown>;
-    for (const key of [
-      "finalAnswer",
-      "content",
-      "text",
-      "result",
-      "output",
-    ] as const) {
-      const v = o[key];
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-  }
-  return null;
+  // V8.5 Phase 4.2: delegates to the canonical extractor — this used to be
+  // a divergent copy with its own preference order (content SECOND, ahead
+  // of text), the exact smell that produced the 07-11/07-12 meta-summary
+  // deliveries on the router side. One order, one module.
+  return extractDeliverableText(output)?.trim() || null;
 }
 
 /**

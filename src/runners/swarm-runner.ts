@@ -31,6 +31,7 @@ import {
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
+import { collectFinalAnswer } from "../prometheus/final-answer.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -673,6 +674,11 @@ export const swarmRunner: Runner = {
         score: reflectionResult.score,
         learnings: reflectionResult.learnings,
         goalSummary: summary,
+        // Agent's actual report (joined per-goal answers) — the deliverable.
+        // Without it, chat-routed swarm tasks (isFanOutTask) deliver the
+        // reflector meta-summary (same class as the 07-11 heavy / 07-12
+        // nanoclaw incidents; swarm was the last unswept producer).
+        finalAnswer: collectFinalAnswer(executionResults),
       },
       durationMs: Date.now() - start,
       goalGraph: graph.toJSON(),

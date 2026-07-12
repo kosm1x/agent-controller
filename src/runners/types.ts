@@ -43,6 +43,31 @@ export interface RunnerInput {
   interactive?: boolean;
 }
 
+/**
+ * Canonical structured result shape (V8.5 Phase 4.2). Field semantics are a
+ * CONTRACT with the delivery layer (src/lib/deliverable.ts):
+ *
+ * - `finalAnswer` — the agent's actual report; THE deliverable. Runners
+ *   whose loop separates work from reflection (heavy/nanoclaw/swarm) MUST
+ *   set it (null when no goal produced text).
+ * - `text`       — fast-runner / fast-path deliverable.
+ * - `content`    — reflector meta-summary ABOUT the work. Never user-facing
+ *   while a deliverable field exists; last-resort fallback only.
+ *
+ * History: three delivery incidents (07-11 heavy, 07-12 nanoclaw ×2) came
+ * from producers omitting `finalAnswer` or consumers walking these fields
+ * in ad-hoc orders. New runners: populate `finalAnswer` or `text`, never
+ * only `content`.
+ */
+export interface RunnerStructuredOutput {
+  text?: string;
+  content?: string;
+  finalAnswer?: string | null;
+  score?: number;
+  learnings?: string[];
+  [extra: string]: unknown;
+}
+
 /** Output returned by a runner after execution. */
 export interface RunnerOutput {
   /** Whether the task succeeded. */
@@ -51,8 +76,8 @@ export interface RunnerOutput {
   status?: RunnerStatus;
   /** Concerns when status is DONE_WITH_CONCERNS. */
   concerns?: string[];
-  /** Result content (text, structured data). */
-  output?: unknown;
+  /** Result content — a string deliverable or the canonical structured shape. */
+  output?: RunnerStructuredOutput | string;
   /** Error message if failed. */
   error?: string;
   /**

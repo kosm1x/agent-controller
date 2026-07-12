@@ -34,9 +34,91 @@ export interface DriveMetadata {
 }
 
 /**
+ * Infer the KB section from a file path.
+ * Used to populate the `section` frontmatter field for Obsidian filtering.
+ */
+export function inferSection(path: string): string {
+  const top = path.split("/")[0];
+  const sectionMap: Record<string, string> = {
+    projects: "projects",
+    knowledge: "knowledge",
+    NorthStar: "NorthStar",
+    directives: "directives",
+    logs: "logs",
+    workspace: "workspace",
+    skills: "skills",
+    tuning: "tuning",
+    inbox: "inbox",
+    VPS: "VPS",
+  };
+  return sectionMap[top] ?? "root";
+}
+
+/**
+ * Infer the parent path for a file — used to auto-generate a parent wikilink.
+ *
+ * Rules:
+ * - `projects/{slug}/notes/x.md`   → `projects/{slug}/README`
+ * - `projects/{slug}/x.md`         → `projects/{slug}/README`  (unless IS the README)
+ * - `knowledge/{sub}/x.md`         → `knowledge/{sub}`  (virtual folder node)
+ * - `NorthStar/{sub}/x.md`         → `NorthStar/{sub}`
+ * - top-level or no parent logic   → null
+ */
+export function inferParentPath(path: string): string | null {
+  const parts = path.replace(/\.md$/, "").split("/");
+  if (parts.length < 2) return null;
+
+  const [top, slug, ...rest] = parts;
+
+  // projects/{slug}/README.md — no parent (IS the root of the project)
+  if (top === "projects" && rest.length === 0 && slug === "README") return null;
+
+  // projects/{slug}/anything → README of that project
+  if (top === "projects" && slug) {
+    const readmePath = `projects/${slug}/README`;
+    // Don't link to self
+    if (path === `projects/${slug}/README.md`) return null;
+    return readmePath;
+  }
+
+  // knowledge/{sub}/x.md → knowledge/{sub}  (use folder name as virtual node)
+  if (top === "knowledge" && rest.length > 0) {
+    return `knowledge/${slug}`;
+  }
+
+  // NorthStar/{sub}/x.md → NorthStar/{sub}
+  if (top === "NorthStar" && rest.length > 0) {
+    return `NorthStar/${slug}`;
+  }
+
+  return null;
+}
+
+/**
+ * Scan the file content for bare KB paths (e.g. "projects/foo/README.md") and
+ * convert any that are NOT already inside a [[wikilink]] to [[wikilink]] format.
+ * This makes implicit cross-references visible in the Obsidian graph.
+ *
+ * Only activates for paths that look like real KB paths (contain "/" and end
+ * with ".md"). Avoids false positives on URLs (http/https) and existing wikilinks.
+ */
+export function injectContentWikilinks(content: string): string {
+  // Match bare KB paths not already inside [[ ]]
+  const KB_PATH_RE =
+    /(?<!\[\[)((?:projects|knowledge|NorthStar|directives|logs|workspace|skills|tuning|inbox)\/[a-zA-Z0-9_\-./]+\.md)(?!\]\])/g;
+
+  return content.replace(KB_PATH_RE, (match) => {
+    const withoutExt = match.replace(/\.md$/, "");
+    const display = withoutExt.split("/").pop() ?? withoutExt;
+    return `[[${withoutExt}|${display}]]`;
+  });
+}
+
+/**
  * Transform content into Obsidian-native markdown:
- * - Prepend YAML frontmatter (title, tags, qualifier, priority, date)
- * - Append [[wikilinks]] section from related_to references
+ * - Prepend YAML frontmatter (title, qualifier, priority, section, parent, tags, path, updated)
+ * - Inject [[wikilinks]] for bare KB paths found in the content body
+ * - Append ## Related section: inferred parent + explicit relatedTo entries
  *
  * Exported for testing. Only applied to Drive copies — SQLite content is untouched.
  */
@@ -52,11 +134,17 @@ export function toObsidianContent(
   const date = new Date().toLocaleDateString("en-CA", {
     timeZone: "America/Mexico_City",
   });
+  const section = inferSection(path);
+  const parentPath = inferParentPath(path);
 
   let yaml = "---\n";
   yaml += `title: "${title.replace(/"/g, '\\"')}"\n`;
   yaml += `qualifier: ${qualifier}\n`;
   yaml += `priority: ${priority}\n`;
+  yaml += `section: ${section}\n`;
+  if (parentPath) {
+    yaml += `parent: "[[${parentPath}]]"\n`;
+  }
   if (metadata?.tags?.length) {
     yaml += `tags: [${metadata.tags.join(", ")}]\n`;
   }
@@ -67,17 +155,37 @@ export function toObsidianContent(
   yaml += `updated: ${date}\n`;
   yaml += "---\n\n";
 
-  let result = yaml + content;
+  // --- Inject wikilinks for bare KB paths in content ---
+  const enrichedContent = injectContentWikilinks(content);
 
-  // --- Wikilinks from related_to ---
+  let result = yaml + enrichedContent;
+
+  // --- Related section: inferred parent + explicit relatedTo ---
+  const relatedLinks: string[] = [];
+
+  // Inferred parent first (if not already in relatedTo)
+  if (parentPath) {
+    const parentMd = `${parentPath}.md`;
+    const alreadyIncluded = metadata?.relatedTo?.some(
+      (r) => r === parentMd || r === parentPath,
+    );
+    if (!alreadyIncluded) {
+      const display = parentPath.split("/").pop() ?? parentPath;
+      relatedLinks.push(`- [[${parentPath}|${display}]]`);
+    }
+  }
+
+  // Explicit relatedTo entries
   if (metadata?.relatedTo?.length) {
-    const links = metadata.relatedTo
-      .map((p) => {
-        const display = p.replace(/\.md$/, "").split("/").pop() ?? p;
-        return `- [[${p.replace(/\.md$/, "")}|${display}]]`;
-      })
-      .join("\n");
-    result += `\n\n## Related\n${links}\n`;
+    for (const p of metadata.relatedTo) {
+      const withoutExt = p.replace(/\.md$/, "");
+      const display = withoutExt.split("/").pop() ?? withoutExt;
+      relatedLinks.push(`- [[${withoutExt}|${display}]]`);
+    }
+  }
+
+  if (relatedLinks.length > 0) {
+    result += `\n\n## Related\n${relatedLinks.join("\n")}\n`;
   }
 
   return result;
