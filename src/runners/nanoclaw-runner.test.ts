@@ -131,6 +131,44 @@ describe("nanoclawRunner", () => {
     );
   });
 
+  // Regression (2026-07-12, task 7416): chat tasks carry the CURRENT user
+  // message as the last conversationHistory turn; the container prompt used
+  // to be title+description only, so the agent's instruction was just the
+  // 60-char truncated title ("unactionable prompt").
+  it("appends conversationHistory to the container prompt so the full instruction reaches the agent", async () => {
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({ success: true, content: "ok" }),
+    };
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-convo",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    await nanoclawRunner.execute({
+      taskId: "task-convo",
+      runId: "run-convo",
+      title: "Chat: Primero establece el protocolo como debe ser, después...",
+      description: "PERSONA BLOB (no user message here)",
+      conversationHistory: [
+        { role: "assistant", content: "El mirror ya existe." },
+        {
+          role: "user",
+          content:
+            "Primero establece el protocolo como debe ser, después haz un pase completo del KB agregando wikilinks",
+        },
+      ],
+    });
+
+    const call = mockSpawnContainer.mock.calls[0][0];
+    expect(call.input.prompt).toContain("Conversación del hilo");
+    expect(call.input.prompt).toContain(
+      "después haz un pase completo del KB agregando wikilinks",
+    );
+  });
+
   it("mounts credentials + HOME + provider env when provider is claude-sdk", async () => {
     mockGetConfig.mockReturnValue({
       ...makeConfig(),

@@ -23,6 +23,7 @@ import {
 import type { ContainerHandle } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { renderConversationContext } from "./conversation-context.js";
 
 export const nanoclawRunner: Runner = {
   type: "nanoclaw",
@@ -63,8 +64,11 @@ export const nanoclawRunner: Runner = {
       // Build container input — include tools so the worker knows what to register
       // v8 S1: strip cache-break marker (nanoclaw uses description as a single
       // prompt blob; only fast-runner chat splits for cache-friendly emission).
+      // 2026-07-12 (task 7416): chat tasks carry the CURRENT user message as
+      // the last conversationHistory turn — without appending it, the agent
+      // sees only the 60-char truncated title as its instruction.
       const containerInput = {
-        prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
+        prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}${renderConversationContext(input.conversationHistory)}`,
         taskId: input.taskId,
         tools: input.tools,
       };

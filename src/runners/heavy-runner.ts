@@ -20,6 +20,7 @@ import {
 import type { ContainerHandle } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { renderConversationContext } from "./conversation-context.js";
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
@@ -27,8 +28,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   try {
     // Check for resumable snapshot from a prior early exit
     let snapshot:
-      | import("../prometheus/snapshot.js").PrometheusSnapshot
-      | undefined;
+      import("../prometheus/snapshot.js").PrometheusSnapshot | undefined;
     try {
       const { loadSnapshot } = await import("../prometheus/snapshot.js");
       snapshot = loadSnapshot(input.taskId) ?? undefined;
@@ -47,7 +47,10 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
     // from splitting; heavy/nanoclaw/swarm treat description as one piece.
     const result = await orchestrate(
       input.taskId,
-      `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
+      // 2026-07-12 (task 7416 class): chat tasks carry the CURRENT user
+      // message as the last conversationHistory turn — append it or the
+      // agent's instruction is just the truncated title.
+      `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}${renderConversationContext(input.conversationHistory)}`,
       undefined,
       input.tools,
       snapshot,
@@ -105,7 +108,8 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
 
   const stdinPayload = {
     // v8 S1: strip cache-break marker (see in-process branch above for context).
-    prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`,
+    // conversationHistory appended for the same reason as the in-process branch.
+    prompt: `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}${renderConversationContext(input.conversationHistory)}`,
     taskId: input.taskId,
     tools: input.tools,
   };

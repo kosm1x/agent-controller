@@ -30,6 +30,7 @@ import {
 } from "./swarm-retry-policy.js";
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { renderConversationContext } from "./conversation-context.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -463,7 +464,9 @@ export const swarmRunner: Runner = {
     const start = Date.now();
     // v8 S1: strip cache-break marker — swarm uses description as a single
     // blob fed to plan() and as text for sub-task descriptions.
-    const taskDescription = `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}`;
+    // 2026-07-12 (task 7416 class): chat-routed swarm tasks (isFanOutTask)
+    // carry the current user message in conversationHistory, not description.
+    const taskDescription = `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}${renderConversationContext(input.conversationHistory)}`;
 
     // Model tier for swarm's own plan/reflect LLM calls (sub-tasks re-enter
     // dispatch and tier themselves). Swarm is the top complexity tier, so this
