@@ -877,6 +877,26 @@ describe("checkUnscopedTestRun — the shell-tool mirror of vitest-scope-guard",
     ).toBeNull();
   });
 
+  // Audit W2 fold (2026-07-12): a slash inside a FLAG is not a scope.
+  it("blocks slash-bearing flags that don't scope the run", () => {
+    expect(
+      checkUnscopedTestRun("npx vitest run --config ./vitest.config.ts"),
+    ).toMatch(/unscoped/);
+    expect(
+      checkUnscopedTestRun(
+        "npx vitest run --reporter=json --outputFile=./out.json",
+      ),
+    ).toMatch(/unscoped/);
+  });
+
+  it("still allows a real positional path next to flags", () => {
+    expect(
+      checkUnscopedTestRun(
+        "npx vitest run --reporter=dot src/lib/deliverable.test.ts",
+      ),
+    ).toBeNull();
+  });
+
   it("does not false-positive on non-invocations", () => {
     expect(checkUnscopedTestRun("cat vitest.config.ts")).toBeNull();
     expect(checkUnscopedTestRun("grep vitest package.json")).toBeNull();

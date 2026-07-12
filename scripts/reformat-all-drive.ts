@@ -11,16 +11,35 @@
  * Run `tail -f /tmp/reformat-drive-progress.log` in another terminal to watch.
  */
 
+import { copyFileSync, existsSync, mkdtempSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.js";
 import { initDatabase } from "../src/db/index.js";
 import { reformatDriveFiles } from "../src/db/drive-sync.js";
 
-// Standalone-harness bootstrap (review fold 2026-07-12): reformatDriveFiles
-// reads jarvis_files/drive_file_map via getDatabase(), which throws without
-// this. Reads the LIVE DB deliberately — the pass must cover the real KB;
-// it only reads SQLite and PATCHes Drive.
+// Standalone-harness bootstrap per the CLAUDE.md validate-harness doctrine
+// (audit W3 fold 2026-07-12): initDatabase is a WRITE path (WAL pragma +
+// schema probes) — never point it at the live mc.db while the service runs.
+// This pass only READS SQLite (writes go to Drive), so a snapshot is exact.
+// Paths resolve from the repo root, not cwd — a cwd-relative default
+// silently created a fresh empty DB and reported success doing nothing.
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const LIVE_DB = process.env.MC_DB_PATH ?? join(ROOT, "data", "mc.db");
+if (!existsSync(LIVE_DB)) {
+  console.error(`FATAL: DB not found at ${LIVE_DB}`);
+  process.exit(1);
+}
 loadConfig();
-initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
+const snapDir = mkdtempSync(join(tmpdir(), "reformat-drive-"));
+for (const suffix of ["", "-wal", "-shm"]) {
+  if (existsSync(LIVE_DB + suffix)) {
+    copyFileSync(LIVE_DB + suffix, join(snapDir, `mc.db${suffix}`));
+    chmodSync(join(snapDir, `mc.db${suffix}`), 0o600);
+  }
+}
+initDatabase(join(snapDir, "mc.db"));
 
 const LOG_FILE = "/tmp/reformat-drive-progress.log";
 

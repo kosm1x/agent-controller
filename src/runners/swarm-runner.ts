@@ -32,6 +32,7 @@ import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
+import { extractDeliverableText } from "../lib/deliverable.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -414,7 +415,15 @@ function buildExecutionResults(
     goalResults[goalId] = {
       goalId,
       ok,
-      result: tracker.output,
+      // Audit W1 (2026-07-12): tracker.output is the sub-task's PERSISTED
+      // output — a JSON.stringify'd RunnerOutput.output blob (dispatcher
+      // writes tasks.output that way). Joining raw blobs made finalAnswer
+      // deliver `{"text":"..."}` fragments to the operator. Extract the
+      // deliverable text per sub-task; fall back to the raw string only
+      // when no canonical field exists.
+      result: tracker.output
+        ? (extractDeliverableText(tracker.output) ?? tracker.output)
+        : tracker.output,
       error: tracker.error,
       durationMs: 0, // Not tracked per sub-task
       toolCalls: 0,

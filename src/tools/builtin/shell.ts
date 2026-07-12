@@ -491,11 +491,23 @@ export function checkUnscopedTestRun(segment: string): string | null {
   }
   if (tokens[i]?.replace(/^.*\//, "") !== "vitest") return null;
 
-  const invocation = tokens.slice(i).join(" ");
-  const scoped =
-    /(?:\s\S*\/\S+|\.test\.|\.spec\.|\s-t\s|--testNamePattern|--changed|\srelated(?:\s|$))/.test(
-      invocation,
-    );
+  // Scope check over the ARGUMENT tokens (audit W2 fold 2026-07-12: a
+  // slash inside a FLAG — `--config ./vitest.config.ts`,
+  // `--outputFile=./out.json` — is not a scope; only a positional path
+  // argument, a name filter, --changed, or the `related` mode count).
+  const argTokens = tokens.slice(i + 1);
+  const scoped = argTokens.some((tok, idx) => {
+    if (tok === "--changed" || tok === "--testNamePattern" || tok === "-t")
+      return true;
+    if (tok.startsWith("--testNamePattern=")) return true;
+    if (tok === "related") return true;
+    if (tok.startsWith("-")) return false; // flags never scope
+    // Skip the value of a flag that consumes one (--config x, -t "name") —
+    // a path there configures the run, it doesn't scope it.
+    const prev = argTokens[idx - 1];
+    if (prev === "--config" || prev === "-c" || prev === "-t") return false;
+    return tok.includes("/") || /\.test\.|\.spec\./.test(tok);
+  });
   return scoped ? null : `unscoped \`vitest\` run — ${SCOPED_HINT}`;
 }
 
