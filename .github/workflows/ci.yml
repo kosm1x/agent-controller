@@ -42,6 +42,16 @@ jobs:
           cache: "npm"
       - run: npm ci
       - name: vitest (shard ${{ matrix.shard }}/3)
-        run: npx vitest run --shard=${{ matrix.shard }}/3 --reporter=dot
+        # Video tests require host binaries GitHub runners don't have (snap
+        # Chromium, edge-tts, ffmpeg) — they had CI red on EVERY push since
+        # at least 2026-07-11, which (a) spammed failure mail per push and
+        # (b) killed CI as an instrument: a red gate nobody reads catches
+        # nothing. They still run locally via the pre-commit hook, where the
+        # binaries exist. If a video test must gate here, it needs a
+        # runner-installable substitute first.
+        run: >
+          npx vitest run --shard=${{ matrix.shard }}/3 --reporter=dot
+          --exclude "src/video/**"
+          --exclude "src/tools/builtin/video.test.ts"
         env:
           CI: "true"
