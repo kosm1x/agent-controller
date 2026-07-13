@@ -22,6 +22,7 @@ import {
 describe("git tools", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     mockExecSync.mockReturnValue("");
     mockExecFileSync.mockReturnValue("");
   });
@@ -121,7 +122,27 @@ describe("git tools", () => {
       );
       expect(commitCall![1]).toContain("--no-verify");
       expect(commitCall![1]).toContain("--author");
-      vi.unstubAllEnvs();
+    });
+
+    it("still uses --no-verify on jarvis/* branches without JARVIS_GH_TOKEN (no --author)", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "");
+      vi.resetModules();
+      const { gitCommitTool: freshCommitTool } = await import("./git.js");
+      mockExecFileSync
+        .mockReturnValueOnce("") // git add
+        .mockReturnValueOnce("jarvis/feat/jme-phase0") // getCurrentBranch
+        .mockReturnValueOnce("[jarvis/feat/jme-phase0 aaa9999] test"); // git commit
+      mockExecSync.mockReturnValueOnce("1 file changed"); // git diff --cached --stat
+      const result = await freshCommitTool.execute({
+        files: ["src/foo.ts"],
+        message: "test commit",
+      });
+      expect(result).toContain("aaa9999");
+      const commitCall = mockExecFileSync.mock.calls.find(
+        (c) => Array.isArray(c[1]) && (c[1] as string[])[0] === "commit",
+      );
+      expect(commitCall![1]).toContain("--no-verify");
+      expect(commitCall![1]).not.toContain("--author");
     });
   });
 

@@ -331,19 +331,21 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
       if (!staged)
         return "Nothing staged to commit. Did you specify the right files?";
 
-      // Commit — on jarvis/* branches, use Piotr's identity as author.
-      // Committer stays as root (VPS operator), author shows as PiotrCoderDroid.
       // --no-verify on jarvis/* branches: the pre-commit hook runs the full
       // vitest suite (~3-5 min) but this tool's timeout is 30s, so a hooked
       // commit can NEVER succeed from here (task 7489 burned its 55-turn
       // budget fighting exactly this). CI on push/PR is the enforced gate.
+      // Gated on the branch alone — the hook-timeout problem is a function of
+      // branch+hook, not of the push identity token.
       const commitArgs = ["commit", "-m", message];
-      if (isJarvisBranch(cwd)) {
-        commitArgs.push(
-          "--no-verify",
-          "--author",
-          `${JARVIS_GH_USER} <${JARVIS_GH_EMAIL}>`,
-        );
+      const branch = getCurrentBranch(cwd ?? DEFAULT_CWD);
+      if (JARVIS_BRANCH_RE.test(branch)) {
+        commitArgs.push("--no-verify");
+        // Piotr's identity as author when configured. Committer stays as
+        // root (VPS operator), author shows as PiotrCoderDroid.
+        if (JARVIS_GH_TOKEN) {
+          commitArgs.push("--author", `${JARVIS_GH_USER} <${JARVIS_GH_EMAIL}>`);
+        }
       }
       const result = runArgs("git", commitArgs, 30_000, cwd);
       return result;
