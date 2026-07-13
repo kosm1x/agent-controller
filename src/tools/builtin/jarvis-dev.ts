@@ -43,6 +43,12 @@ export function ensureJarvisWorktree(): void {
 // concurrent inference/swap pressure pushed it over and ETIMEDOUT was then
 // misparsed as "tests failed" by the catch-branch regex. 300s is 3x headroom.
 const TIMEOUT_MS = 300_000;
+// execFileSync's default maxBuffer is 1 MiB per stream and a breach SIGTERMs
+// the child — indistinguishable from a timeout in the catch. The full suite's
+// routine dot-reporter stdout measured 774 KB (2026-07-13), so one flaky
+// failure dump tipped it over and killed Jarvis's action=pr at ~107s while
+// reporting "exceeded 300s". 32 MiB gives ~40x headroom.
+const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 // Git ops (status/add/commit/push) can take longer than 10s on a loaded box.
 // `push` in particular hits the network and does pre-commit hooks.
 const GIT_TIMEOUT_MS = 60_000;
@@ -293,6 +299,7 @@ function actionTest(): string {
       timeout: TIMEOUT_MS,
       encoding: "utf-8",
       stdio: "pipe",
+      maxBuffer: EXEC_MAX_BUFFER,
     });
     results.typecheck = "PASS";
   } catch (err) {
@@ -310,6 +317,7 @@ function actionTest(): string {
       timeout: TIMEOUT_MS,
       encoding: "utf-8",
       stdio: "pipe",
+      maxBuffer: EXEC_MAX_BUFFER,
     });
     const summaryMatch = output.match(/Tests\s+(\d+)\s+passed/);
     results.tests = summaryMatch ? `PASS (${summaryMatch[1]} tests)` : "PASS";
@@ -331,8 +339,10 @@ function actionTest(): string {
       e.code === "ETIMEDOUT" ||
       e.signal === "SIGTERM" ||
       e.signal === "SIGKILL";
-    if (timedOut) {
-      results.tests = `TIMEOUT: vitest exceeded ${TIMEOUT_MS / 1000}s. Re-run locally; if the suite passes in isolation, the gate was killed by load.`;
+    if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+      results.tests = `KILLED: vitest output exceeded maxBuffer (${EXEC_MAX_BUFFER / (1024 * 1024)} MiB) — a huge failure dump usually means many tests failed. Run a scoped vitest on the touched files to see the real failures.`;
+    } else if (timedOut) {
+      results.tests = `TIMEOUT/KILLED (code=${e.code ?? "?"} signal=${e.signal ?? "?"}): vitest died before finishing (limit ${TIMEOUT_MS / 1000}s). Re-run locally; if the suite passes in isolation, the gate was killed by load.`;
     } else {
       const msg = e.stdout ?? e.message ?? String(err);
       const summaryMatch = msg.match(
