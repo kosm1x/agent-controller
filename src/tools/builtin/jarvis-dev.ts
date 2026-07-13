@@ -359,8 +359,17 @@ async function actionTest(): Promise<string> {
       const summaryMatch = msg.match(
         /Tests\s+(\d+)\s+failed(?:\s+\|\s+(\d+)\s+passed)?/,
       );
+      // Name the failures (up to 10) — a bare count forced blind re-debugging
+      // on 2026-07-13 ("17 failed" with no way to know which; the load-flake
+      // vs real-failure call needed the names).
+      const failedNames = [...msg.matchAll(/^\s*(?:FAIL|×|✗)\s+(.+)$/gm)]
+        .map((m) => m[1].trim())
+        .slice(0, 10);
+      const namesSuffix = failedNames.length
+        ? ` — failing: ${failedNames.join("; ")}`
+        : "";
       results.tests = summaryMatch
-        ? `FAIL: ${summaryMatch[1]} failed, ${summaryMatch[2] ?? "?"} passed`
+        ? `FAIL: ${summaryMatch[1]} failed, ${summaryMatch[2] ?? "?"} passed${namesSuffix}`
         : `FAIL: ${msg.slice(0, 500)}`;
     }
   }
