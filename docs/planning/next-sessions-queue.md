@@ -120,6 +120,8 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 
 ## BUDGET_ENFORCE arming pre-flight (V8.5 Phase 3.3 audit deferrals, 2026-07-13)
 
+> **PARKED — operator ruling 2026-07-13 (same day): "No hard-cap enforcement in the near future. Viewability and accountability are enough."** The hard-cap thread is CLOSED until the operator reopens it. Do not propose arming, do not schedule these items, do not count them as open work. The enforcement code stays dormant in the tree (zero-cost, fully tested); if arming is ever wanted, this section is the mandatory pre-flight.
+
 **Trigger: BEFORE flipping `BUDGET_ENFORCE=true`** (it stays dormant until then — both items are latent, not live). From the 3.3 R1 audit:
 
 1. **W1 — budget refusal has no messaging floor.** Verbatim: "`BudgetExhaustedError` is a new throw with zero messaging-layer handling. `router.ts:1924` catches the fast-path throw and falls through to the full pipeline, which re-throws (same exhausted window) → generic task-`failed`. No dedicated 'budget exhausted' user reply." When armed, Telegram chat under an exhausted window must produce a deterministic "presupuesto agotado, se restablece a la hora en punto" reply + one operator notification — never silence (never-silent-reply floor). Fix belongs in router.ts/fast-path error handling; deferred because router.ts is outside the 3.3 diff.
