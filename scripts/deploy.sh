@@ -37,7 +37,7 @@ done
 # (SCHEMA_MIGRATIONS in src/db/index.ts) previously had NO enforcement: an
 # engineer had to remember to run scripts/validate-migration-runner.ts. Boot a
 # FRESH throwaway DB through initDatabase and assert the expected signature
-# (user_version=2, baseline_history dropped). A broken/next migration fails the
+# (user_version=3, baseline_history dropped). A broken/next migration fails the
 # deploy here instead of on the live DB. Cheap (no live-DB copy). Skip only for
 # a known-safe emergency deploy via MC_SKIP_MIGRATION_GATE=1.
 if [[ "${MC_SKIP_MIGRATION_GATE:-0}" != "1" ]]; then
@@ -50,11 +50,11 @@ if [[ "${MC_SKIP_MIGRATION_GATE:-0}" != "1" ]]; then
     # ("baseline_history":), never as a loose substring (which the log line trips).
     MIG_JSON=$(grep '"mode":"fresh"' "$MIG_TMP/out.json" | tail -1)
     if [[ -n "$MIG_JSON" ]] \
-      && grep -qE '"userVersion": *2' <<<"$MIG_JSON" \
+      && grep -qE '"userVersion": *3' <<<"$MIG_JSON" \
       && ! grep -q '"baseline_history":' <<<"$MIG_JSON"; then
-      echo "[deploy] Migration gate OK — fresh boot → user_version=2, baseline_history absent."
+      echo "[deploy] Migration gate OK — fresh boot → user_version=3, baseline_history absent."
     else
-      echo "[deploy] FAILED — fresh-boot schema signature unexpected (want user_version=2, no baseline_history table):"
+      echo "[deploy] FAILED — fresh-boot schema signature unexpected (want user_version=3, no baseline_history table):"
       cat "$MIG_TMP/out.json"
       rm -rf "$MIG_TMP"; exit 1
     fi

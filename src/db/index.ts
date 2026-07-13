@@ -16,6 +16,7 @@ import { ensureIntelTables } from "./intel-schema.js";
 import { ensureVideoTables } from "./video-schema.js";
 import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
 import { ensureV83Tables } from "../lib/v8-3/schema.js";
+
 import { activateBestVariant } from "../tuning/activation.js";
 import { errMsg } from "../lib/err-msg.js";
 
@@ -1090,7 +1091,6 @@ export function initDatabase(dbPath: string): Database.Database {
   // pipeline reads/writes them yet. The V8.2 hard-dependency check is a boot
   // precondition run from src/index.ts (assertV82Dependencies), not here.
   ensureV83Tables(_db);
-
   // Activate best variant from archive (v2.28 — HyperAgents pattern)
   activateBestVariant();
 
@@ -1115,6 +1115,74 @@ export function initDatabase(dbPath: string): Database.Database {
       description:
         "drop baseline_history — created-but-never-written (2026-07-05 audit); its boot CREATE is already removed",
       up: (db) => db.exec("DROP TABLE IF EXISTS baseline_history"),
+    },
+    {
+      version: 3,
+      description:
+        "JME Phase 0 — jme_turns (episodic) + jme_facts (semantic) tables for conversation memory",
+      up: (db) => {
+        // jme_turns — episodic store (raw conversation turns)
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS jme_turns (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id    TEXT NOT NULL,
+            ts         INTEGER NOT NULL,
+            role       TEXT NOT NULL CHECK(role IN ('user', 'jarvis')),
+            content    TEXT NOT NULL,
+            channel    TEXT DEFAULT 'unknown'
+          )
+        `);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_turns_task ON jme_turns(task_id)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_turns_ts   ON jme_turns(ts DESC)`);
+
+        // jme_facts — semantic store (extracted facts + embeddings)
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS jme_facts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_task TEXT NOT NULL,
+            ts          INTEGER NOT NULL,
+            fact_text   TEXT NOT NULL,
+            category    TEXT NOT NULL
+                          CHECK(category IN ('decision','preference','event','emotion','project')),
+            embedding   BLOB,
+            expires_at  INTEGER,
+            confidence  REAL NOT NULL DEFAULT 1.0
+          )
+        `);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_task     ON jme_facts(source_task)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_ts       ON jme_facts(ts DESC)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_category ON jme_facts(category)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_expires  ON jme_facts(expires_at)`);
+
+        // FTS5 virtual table for keyword fallback
+        db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS jme_facts_fts USING fts5(
+            fact_text,
+            content='jme_facts',
+            content_rowid='id'
+          )
+        `);
+
+        // FTS sync triggers (one exec each — SQLite validates trigger bodies per-statement)
+        db.exec(`
+          CREATE TRIGGER IF NOT EXISTS jme_facts_ai AFTER INSERT ON jme_facts BEGIN
+            INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (new.id, new.fact_text);
+          END
+        `);
+        db.exec(`
+          CREATE TRIGGER IF NOT EXISTS jme_facts_ad AFTER DELETE ON jme_facts BEGIN
+            INSERT INTO jme_facts_fts(jme_facts_fts, rowid, fact_text)
+              VALUES('delete', old.id, old.fact_text);
+          END
+        `);
+        db.exec(`
+          CREATE TRIGGER IF NOT EXISTS jme_facts_au AFTER UPDATE ON jme_facts BEGIN
+            INSERT INTO jme_facts_fts(jme_facts_fts, rowid, fact_text)
+              VALUES('delete', old.id, old.fact_text);
+            INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (new.id, new.fact_text);
+          END
+        `);
+      },
     },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
