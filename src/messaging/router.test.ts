@@ -897,6 +897,87 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages).toHaveLength(1);
       expect(waAdapter.sentMessages[0].text).toBe("Buenos días, Fede...");
     });
+
+    // 2026-07-13 operator request: skill-evolution's full report arrived as
+    // 5 Telegram chunks — digest rituals broadcast the reflector summary +
+    // a mc-ctl pointer instead of the multi-chunk artifact.
+    it("broadcasts a digest (not the full report) for digest rituals", () => {
+      router.watchRitualTask("evo-task-1", "skill-evolution");
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "evo-task-1",
+          agent_id: "heavy",
+          result: {
+            content: "Resumen corto de la corrida de evolución.",
+            finalAnswer: "# EVOLUTION REPORT\n" + "x".repeat(15000),
+          },
+          duration_ms: 5000,
+        },
+      });
+
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      const text = waAdapter.sentMessages[0].text;
+      expect(text).toContain("Resumen corto de la corrida de evolución.");
+      expect(text).toContain("mc-ctl task evo-task-1");
+      expect(text).not.toContain("xxxx");
+    });
+
+    it("non-digest rituals still broadcast the full deliverable", () => {
+      router.watchRitualTask("brief-task-1", "morning-briefing");
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      const full = {
+        content: "meta-resumen",
+        finalAnswer: "Buenos días — informe completo del briefing.",
+      };
+      completedHandler!({
+        data: {
+          task_id: "brief-task-1",
+          agent_id: "heavy",
+          result: full,
+          duration_ms: 5000,
+        },
+      });
+
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toBe(
+        "Buenos días — informe completo del briefing.",
+      );
+    });
+  });
+
+  describe("buildRitualDigest", () => {
+    it("prefers result.content and appends the task pointer", async () => {
+      const { buildRitualDigest } = await import("./router.js");
+      const out = buildRitualDigest(
+        "abc-123",
+        { content: "Resumen.", finalAnswer: "reporte largo" },
+        "reporte largo",
+      );
+      expect(out).toBe("Resumen.\n\n📄 Reporte completo: mc-ctl task abc-123");
+    });
+
+    it("falls back to the full text when content is absent or empty", async () => {
+      const { buildRitualDigest } = await import("./router.js");
+      expect(buildRitualDigest("t1", { content: "  " }, "cuerpo")).toContain(
+        "cuerpo",
+      );
+      expect(buildRitualDigest("t1", "string result", "cuerpo")).toContain(
+        "cuerpo",
+      );
+    });
+
+    it("truncates bodies longer than the digest cap", async () => {
+      const { buildRitualDigest } = await import("./router.js");
+      const out = buildRitualDigest("t1", { content: "y".repeat(5000) }, "z");
+      expect(out.length).toBeLessThan(1400);
+      expect(out).toContain("…");
+      expect(out).toContain("mc-ctl task t1");
+    });
   });
 
   describe("no reply for unknown task", () => {

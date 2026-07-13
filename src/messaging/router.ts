@@ -215,6 +215,33 @@ export function stripCacheMarker(text: string): string {
 }
 
 /**
+ * Rituals whose full deliverable is a long multi-chunk report. Their
+ * broadcast is trimmed to a digest — the reflector's short run summary
+ * (`result.content`) plus a pointer to the persisted task — instead of the
+ * full artifact. Operator request 2026-07-13: the 07-12 skill-evolution
+ * report landed as 5 Telegram chunks. The full report stays retrievable via
+ * `mc-ctl task <task_id>` and the mc-operational memory bank (the ritual's
+ * `persistResult` writes it deterministically, so the digest loses nothing).
+ */
+export const DIGEST_RITUAL_IDS = new Set(["skill-evolution"]);
+
+const RITUAL_DIGEST_MAX_CHARS = 1200;
+
+export function buildRitualDigest(
+  taskId: string,
+  result: unknown,
+  fullText: string,
+): string {
+  const content = (result as { content?: unknown } | null)?.content;
+  let body =
+    typeof content === "string" && content.trim() ? content.trim() : fullText;
+  if (body.length > RITUAL_DIGEST_MAX_CHARS) {
+    body = `${body.slice(0, RITUAL_DIGEST_MAX_CHARS).trimEnd()}…`;
+  }
+  return `${body}\n\n📄 Reporte completo: mc-ctl task ${taskId}`;
+}
+
+/**
  * Build the static (byte-identical across calls) portion of the Jarvis system
  * prompt. The current date/time is deliberately NOT included here — it goes
  * into the user message via `timeContextLine()` so the SDK's prompt cache
@@ -2478,7 +2505,10 @@ export class MessageRouter {
     const ritualId = this.ritualWatches.get(taskId);
     if (ritualId) {
       this.ritualWatches.delete(taskId);
-      const resultText = this.extractResultText(data.result);
+      let resultText = this.extractResultText(data.result);
+      if (resultText && DIGEST_RITUAL_IDS.has(ritualId)) {
+        resultText = buildRitualDigest(taskId, data.result, resultText);
+      }
       if (resultText) {
         this.broadcastToAll(resultText).catch((err) => {
           console.error(`[router] Ritual broadcast failed:`, err);
