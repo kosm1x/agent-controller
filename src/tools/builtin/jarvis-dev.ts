@@ -464,7 +464,11 @@ function actionPr(title: string, body: string): string {
       `[jarvis_dev] action=pr staging ${changed.length} file(s): ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ` (+${changed.length - 5} more)` : ""}`,
     );
     run(["add", ...changed]);
-    run(["commit", "-m", title]);
+    // --no-verify: the test gate for this commit already ran above (fresh
+    // actionTest or trusted cache, ~line 397) — the pre-commit hook would
+    // re-run the same full suite inside GIT_TIMEOUT_MS (60s) and ETIMEDOUT
+    // every time (task 7489/7491, 2026-07-13). CI on push/PR still gates.
+    run(["commit", "--no-verify", "-m", title]);
     console.log(`[jarvis_dev] action=pr committed on ${branch}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

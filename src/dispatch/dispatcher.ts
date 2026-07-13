@@ -636,6 +636,14 @@ async function dispatchWithSlot(
             // Cost recording must never block completion
           }
         }
+        // Restart the stuck-task clock for the fallback attempt: the watchdog
+        // fails any running task with started_at older than 15 min, and the
+        // dead nanoclaw attempt may have eaten most of that window (task
+        // fda02e04: 14 min in the sandbox left the fast fallback 2 minutes
+        // before the watchdog killed it mid-work).
+        db.prepare(
+          "UPDATE tasks SET started_at = datetime('now') WHERE task_id = ? AND status = 'running'",
+        ).run(taskId);
         try {
           const fb = await fastRunner.execute(input);
           if (fb.success) {
