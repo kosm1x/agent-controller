@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 type MockMessage = Record<string, unknown>;
 
@@ -43,6 +43,7 @@ import {
   queryClaudeSdkAsInfer,
   queryClaudeSdkAsInferWithTools,
   queryClaudeSdkComplexWithFallback,
+  dominantModel,
   HAIKU_MODEL_ID,
   OPUS_MODEL_ID,
   SONNET_MODEL_ID,
@@ -2140,5 +2141,121 @@ describe("effort wiring (V8.5 Phase 2.3)", () => {
     );
     const opts = lastQueryArgs.value?.options as { effort?: string };
     expect(opts.effort).toBe("low");
+  });
+});
+
+describe("dominantModel attribution (2026-07-13 Phase 3.1)", () => {
+  const usage = (costUSD: number, tokens = 0) => ({
+    inputTokens: tokens,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    webSearchRequests: 0,
+    costUSD,
+    contextWindow: 200000,
+    maxOutputTokens: 8192,
+  });
+
+  it("returns undefined for an empty map", () => {
+    expect(dominantModel({})).toBeUndefined();
+  });
+
+  it("returns the single entry when only one model was invoked (0.2.x shape)", () => {
+    expect(dominantModel({ [SONNET_MODEL_ID]: usage(0.42) })).toBe(
+      SONNET_MODEL_ID,
+    );
+  });
+
+  it("picks the higher-cost model even when the aux model is listed first (0.3.x binary shape)", () => {
+    // Key order is Haiku-first — exactly the misattribution observed in
+    // cost_ledger from the 07-12 SDK cutover.
+    expect(
+      dominantModel({
+        [HAIKU_MODEL_ID]: usage(0.03),
+        [SONNET_MODEL_ID]: usage(0.55),
+      }),
+    ).toBe(SONNET_MODEL_ID);
+  });
+
+  it("breaks cost ties (e.g. Max-plan 0-cost reporting) by total token volume", () => {
+    expect(
+      dominantModel({
+        [HAIKU_MODEL_ID]: usage(0, 1200),
+        [SONNET_MODEL_ID]: usage(0, 480000),
+      }),
+    ).toBe(SONNET_MODEL_ID);
+  });
+
+  it("counts cache tokens toward the volume tiebreak", () => {
+    const sonnet = {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadInputTokens: 900000,
+      cacheCreationInputTokens: 60000,
+      webSearchRequests: 0,
+      costUSD: 0,
+      contextWindow: 200000,
+      maxOutputTokens: 8192,
+    };
+    expect(
+      dominantModel({
+        [HAIKU_MODEL_ID]: usage(0, 5000),
+        [SONNET_MODEL_ID]: sonnet,
+      }),
+    ).toBe(SONNET_MODEL_ID);
+  });
+});
+
+describe("taskBudget pacing flag (V8.5 Phase 3.4)", () => {
+  const successResult = {
+    type: "result",
+    subtype: "success",
+    result: "ok",
+    num_turns: 1,
+    usage: { input_tokens: 5, output_tokens: 2 },
+  };
+
+  afterEach(() => {
+    delete process.env.TASK_BUDGET_PACING_ENABLED;
+  });
+
+  it("maps tokenBudget to SDK taskBudget when TASK_BUDGET_PACING_ENABLED=true", async () => {
+    process.env.TASK_BUDGET_PACING_ENABLED = "true";
+    mockMessages.value = [successResult];
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { tokenBudget: 120000 },
+    );
+    const opts = lastQueryArgs.value?.options as {
+      taskBudget?: { total: number };
+    };
+    expect(opts.taskBudget).toEqual({ total: 120000 });
+  });
+
+  it("omits taskBudget entirely when the flag is unset (dormant default)", async () => {
+    mockMessages.value = [successResult];
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { tokenBudget: 120000 },
+    );
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect("taskBudget" in opts).toBe(false);
+  });
+
+  it("omits taskBudget when the flag is on but no tokenBudget was passed", async () => {
+    process.env.TASK_BUDGET_PACING_ENABLED = "true";
+    mockMessages.value = [successResult];
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      {},
+    );
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect("taskBudget" in opts).toBe(false);
   });
 });

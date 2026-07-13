@@ -30,6 +30,7 @@ import type {
   SDKResultError,
   SDKUserMessage,
   SdkMcpToolDefinition,
+  ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
@@ -445,6 +446,15 @@ export async function queryClaudeSdk(opts: {
    * but the fallback leg should carry the minimal request).
    */
   effort?: "low" | "medium" | "high" | "max";
+  /**
+   * API-side task budget in tokens (V8.5 Phase 3.4, beta
+   * task-budgets-2026-03-13). When set, the model sees its remaining token
+   * budget and paces tool use / wraps up gracefully instead of hitting a
+   * hard maxTurns or timeout cutoff — targets the §13 cold-start/token-
+   * blowout class. Callers gate this behind TASK_BUDGET_PACING_ENABLED;
+   * this function just forwards it.
+   */
+  taskBudgetTokens?: number;
   abortSignal?: AbortSignal;
   /** Optional vision payloads. When present, the SDK receives a streaming
    *  user message whose content is [text, image, image, ...] so the model
@@ -572,6 +582,12 @@ export async function queryClaudeSdk(opts: {
     // cached prompt prefix. Omitted when unset so the SDK default ("high")
     // applies — matters because effort semantics may drift across SDK bumps.
     ...(opts.effort && { effort: opts.effort }),
+    // Task-budget pacing (V8.5 Phase 3.4): request-level like effort, no
+    // cache-prefix impact. Only forwarded when a caller passed a value —
+    // the flag gate lives at the call sites (inferWithTools seam).
+    ...(opts.taskBudgetTokens && {
+      taskBudget: { total: opts.taskBudgetTokens },
+    }),
     abortController,
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
@@ -772,11 +788,16 @@ export async function queryClaudeSdk(opts: {
           costUsd = success.total_cost_usd ?? 0;
           costAuthoritative = true;
           durationMs = success.duration_ms ?? 0;
-          // modelUsage keys are the exact model IDs the SDK invoked. First
-          // key is the primary model; keep as a readable attribution string.
-          const modelKeys = Object.keys(success.modelUsage ?? {});
-          if (modelKeys.length > 0) {
-            actualModel = modelKeys[0];
+          // modelUsage keys are the exact model IDs the SDK invoked. Under
+          // SDK 0.2.x (in-process) the only key was the requested model, so
+          // keys[0] was safe. The 0.3.x native binary adds its own internal
+          // aux calls (Haiku) to modelUsage and key order is NOT
+          // primary-first — from the 07-12 cutover every fast run was
+          // misattributed to Haiku in cost_ledger while zero Haiku retry
+          // legs fired. Attribute to the dominant model instead.
+          const dominant = dominantModel(success.modelUsage ?? {});
+          if (dominant) {
+            actualModel = dominant;
           }
         } else {
           // SDK reported a non-success terminal result (error_max_turns,
@@ -819,6 +840,14 @@ export async function queryClaudeSdk(opts: {
           costAuthoritative = true;
           durationMs =
             (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
+          // Attribution parity with the success branch (audit I1, 2026-07-13):
+          // SDKResultError also carries modelUsage — without this an
+          // error_max_turns on an Opus heavy run stayed labeled Sonnet
+          // (the `actualModel` default) in cost_ledger.
+          const errDominant = dominantModel(error.modelUsage ?? {});
+          if (errDominant) {
+            actualModel = errDominant;
+          }
           if (
             streamingText ||
             (opts.maxTurns === 1 && toolCallNames.length > 0)
@@ -1050,6 +1079,39 @@ function normalizeContent(content: unknown): string {
  * by emitting the content as a `role: "user"` message instead).
  * Surfaced 2026-05-23 (qa-audit W2). Intentional for the current call sites.
  */
+/**
+ * Pick the model a run should be attributed to from the SDK's per-model
+ * usage map. The 0.3.x native binary includes its internal aux calls
+ * (Haiku title/summarization work) alongside the primary model, and the
+ * Record's key order is not primary-first — cost_ledger attribution must
+ * therefore pick the DOMINANT entry: highest costUSD, ties broken by
+ * total token volume. Returns undefined for an empty map.
+ * Surfaced 2026-07-13 (V8.5 Phase 3.1 re-measure): every fast run since
+ * the 07-12 SDK cutover was attributed to Haiku while the Sonnet primary
+ * leg served it (zero Haiku retry legs in the journal).
+ */
+export function dominantModel(
+  modelUsage: Record<string, ModelUsage>,
+): string | undefined {
+  let best: string | undefined;
+  let bestCost = -1;
+  let bestTokens = -1;
+  for (const [model, u] of Object.entries(modelUsage)) {
+    const cost = u.costUSD ?? 0;
+    const tokens =
+      (u.inputTokens ?? 0) +
+      (u.outputTokens ?? 0) +
+      (u.cacheReadInputTokens ?? 0) +
+      (u.cacheCreationInputTokens ?? 0);
+    if (cost > bestCost || (cost === bestCost && tokens > bestTokens)) {
+      best = model;
+      bestCost = cost;
+      bestTokens = tokens;
+    }
+  }
+  return best;
+}
+
 export function flattenMessagesForSdk(messages: ChatMessage[]): {
   systemPrompt: string;
   userPrompt: string;
@@ -1264,12 +1326,21 @@ export async function queryClaudeSdkAsInferWithTools(
   // prepending it to the user prompt. The openai-path uses it mid-loop for
   // wrap-up compaction, which we can't replicate without SDK token counters,
   // but at least the signal reaches the model instead of being silently
-  // discarded. tokenBudget still has no enforcement on the SDK path — it
-  // relies on the SDK's internal 15-minute timeout and maxTurns ceiling.
+  // discarded.
   const userPrompt = options?.compressionContext
     ? `${options.compressionContext}\n\n---\n\n${flat.userPrompt}`
     : flat.userPrompt;
   const toolNames = tools.map((t) => t.function.name);
+
+  // V8.5 Phase 3.4 (flag-gated, dormant by default): map the caller's
+  // tokenBudget — which previously had NO enforcement on the SDK path
+  // (only the 15-minute timeout and maxTurns ceiling) — to the API-side
+  // task budget so the model paces itself and wraps up gracefully.
+  // Executor already passes TOKEN_BUDGET_HEAVY; fast-runner its own budget.
+  const taskBudgetTokens =
+    process.env.TASK_BUDGET_PACING_ENABLED === "true" && options?.tokenBudget
+      ? options.tokenBudget
+      : undefined;
 
   const result = await queryClaudeSdk({
     prompt: userPrompt,
@@ -1278,6 +1349,7 @@ export async function queryClaudeSdkAsInferWithTools(
     maxTurns: options?.maxRounds ?? 20,
     model: options?.model,
     effort: options?.effort,
+    taskBudgetTokens,
     abortSignal: options?.signal,
   });
 

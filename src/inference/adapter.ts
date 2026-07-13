@@ -294,6 +294,11 @@ async function inferWithToolsViaClaudeSdk(
     maxRounds: options?.maxRounds,
     signal: options?.signal,
     onTextChunk: options?.onTextChunk,
+    // tokenBudget deliberately rides BOTH legs (ratified, audit I3
+    // 2026-07-13): unlike `effort` below, a task budget is task-scoped
+    // pacing, not a model capability — the Haiku recovery leg still runs
+    // the same task under the same budget, and the SDK carries the beta
+    // header itself.
     tokenBudget: options?.tokenBudget,
     compressionContext: options?.compressionContext,
     providerName: options?.providerName,
