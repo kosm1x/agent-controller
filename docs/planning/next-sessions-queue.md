@@ -531,3 +531,10 @@ Sweep SHIPPED + deployed (`34fbb4f`→`a2e4da1`; plan `docs/planning/system-hard
 - Branch base is stale (`24af61d`) — rebase onto main before PR.
 - Minor: test file duplicates the migration DDL verbatim (drift risk — export a shared schema helper); `writeFacts()` doc says "single transaction" but it's a sequential loop.
 - **Next:** operator tells Jarvis "Continúa" — commit + PR now take seconds. New Jarvis directive: `jarvis-kb/directives/coding-task-playbook.md` (phase-per-turn with durable checkpoints, commit-per-phase, scoped tests only, handoff note on low budget, 3-strike stop, migration⇒deploy-gate rule).
+
+**Update 18:15 UTC — task 7493 ("Continue and land the pending PR") exposed two routing gaps:**
+
+1. **Continuation-task nanoclaw misroute (P2):** a chat continuing prior HOST-runner work ("land the pending PR" — state = staged files in the host worktree, branch never pushed) was routed to nanoclaw AGAIN; the sandbox spent ~12 min / ~$1.5 rebuilding JME from scratch in its throwaway clone, failed its commit goals, and fell back. The foreign-repo guards can't fire (target IS mission-control); the gap is state-continuity: the sandbox can never see uncommitted host state. Candidate: classifier guard that keeps continuation phrasing ("continue", "land the PR", "lo que dejaste pendiente") + mc-coding on a HOST runner.
+2. **Coding scope regex missed "PR" / English (P2):** the fast fallback ran with scope `[]` (29/217 tools) — "Continue and land the pending PR" trips no coding pattern, so git/shell tools were absent and Jarvis had to stop and ask the operator to activate them mid-task. Candidate: add `\bPR\b`/`pull request`/"land"+repo-noun to the coding scope patterns (both ES and EN).
+
+Positive validations in the same run: dispatcher fallback + `agent_type='fast'` reattribution worked; the write-guard blocked Jarvis's attempt to patch the pre-commit hook (his plan was stale — recall surfaced the pre-fix conversation, not the new playbook); hook verified intact.
