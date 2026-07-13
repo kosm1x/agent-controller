@@ -5,11 +5,20 @@
  * and open PRs for human review. NEVER pushes to main.
  */
 
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
+
+// The test gate MUST run async: a synchronous exec blocks mission-control's
+// event loop for the whole suite (~2 min), /health stops answering, the
+// external watchdog's double-probe fails, and its `systemctl restart` SIGTERMs
+// the entire cgroup — vitest included. Both 2026-07-13 action=pr "timeouts"
+// (18:30, 21:30) were this exact loop: the gate froze the service, the
+// watchdog killed the gate. execFileSync here = self-killing gate.
+const execFileAsync = promisify(execFile);
 
 // P1 (2026-07-12): jarvis_dev operates in a DEDICATED linked worktree, never
 // the primary checkout — his branch creation/staging on the shared tree
@@ -273,7 +282,7 @@ function actionBranch(type: string, slug: string): string {
   });
 }
 
-function actionTest(): string {
+async function actionTest(): Promise<string> {
   const branch = currentBranch();
   if (!JARVIS_BRANCH_RE.test(branch)) {
     return JSON.stringify({
@@ -294,11 +303,10 @@ function actionTest(): string {
 
   // Typecheck
   try {
-    execFileSync("npx", ["tsc", "--noEmit"], {
+    await execFileAsync("npx", ["tsc", "--noEmit"], {
       cwd: MC_DIR,
       timeout: TIMEOUT_MS,
       encoding: "utf-8",
-      stdio: "pipe",
       maxBuffer: EXEC_MAX_BUFFER,
     });
     results.typecheck = "PASS";
@@ -312,14 +320,17 @@ function actionTest(): string {
 
   // Tests
   try {
-    const output = execFileSync("npx", ["vitest", "run", "--reporter=dot"], {
-      cwd: MC_DIR,
-      timeout: TIMEOUT_MS,
-      encoding: "utf-8",
-      stdio: "pipe",
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
-    const summaryMatch = output.match(/Tests\s+(\d+)\s+passed/);
+    const { stdout } = await execFileAsync(
+      "npx",
+      ["vitest", "run", "--reporter=dot"],
+      {
+        cwd: MC_DIR,
+        timeout: TIMEOUT_MS,
+        encoding: "utf-8",
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    const summaryMatch = stdout.match(/Tests\s+(\d+)\s+passed/);
     results.tests = summaryMatch ? `PASS (${summaryMatch[1]} tests)` : "PASS";
   } catch (err) {
     // Distinguish timeout (ETIMEDOUT or signal=SIGTERM) from test-failure.
@@ -389,7 +400,7 @@ function actionTest(): string {
   return JSON.stringify({ branch, ...results, ready_for_pr });
 }
 
-function actionPr(title: string, body: string): string {
+async function actionPr(title: string, body: string): Promise<string> {
   const branch = currentBranch();
   console.log(`[jarvis_dev] action=pr branch=${branch} title="${title}"`);
   if (!JARVIS_BRANCH_RE.test(branch)) {
@@ -415,7 +426,7 @@ function actionPr(title: string, body: string): string {
         tests: `${cached.tests} (cached ${Math.round((Date.now() - cached.tested_at_ms) / 1000)}s ago)`,
         ready_for_pr: true,
       }
-    : JSON.parse(actionTest());
+    : JSON.parse(await actionTest());
   console.log(
     `[jarvis_dev] action=pr tests: ${testResult.ready_for_pr ? "PASS" : "FAIL"} (${cached ? "cached" : "fresh run"})`,
   );
