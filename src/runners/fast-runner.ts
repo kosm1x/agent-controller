@@ -1225,6 +1225,10 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           toolNames: allToolNames,
           maxTurns: maxRounds,
           abortSignal: input.signal,
+          // Metered by the dispatcher aggregate over result.tokenUsage (and
+          // by recordReflectionCost when reflection invokes this runner
+          // directly) — seam recording here would double-count. (3.3)
+          costLedger: false,
           ...(sdkImages.length > 0 && { images: sdkImages }),
         });
 
@@ -1315,6 +1319,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         exemptAnalysisParalysis: hasEmailDelivery,
         taskId: input.taskId,
         skipToolNudge: isConversational,
+        // Dispatcher aggregate meters this run — see the SDK-path opt-out. (3.3)
+        costLedger: false,
       });
 
       let parsed = parseRunnerStatus(result.content);
@@ -1589,6 +1595,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               providerName: tierToProvider(input.modelTier),
               effort: tierToEffort(input.modelTier),
               tokenBudget,
+              // Retry leg of the same dispatched run — same aggregate. (3.3)
+              costLedger: false,
             },
           );
           const retryParsed = parseRunnerStatus(retryResult.content);

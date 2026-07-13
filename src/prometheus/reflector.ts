@@ -166,7 +166,7 @@ export async function reflect(
   try {
     const response = useSdkPath()
       ? await queryClaudeSdkTiered(useOpus, (model) =>
-          queryClaudeSdkAsInfer(messages, { model }),
+          queryClaudeSdkAsInfer(messages, { model, costLedger: false }),
         )
       : await infer({ messages, temperature: 0.3 });
     const content = response.content ?? "";

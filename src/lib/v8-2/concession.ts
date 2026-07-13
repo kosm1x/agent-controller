@@ -199,6 +199,7 @@ export async function classifyReply(
       maxTurns: 2,
       model: options.model ?? SONNET_MODEL_ID,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:concession" },
     });
   } catch (e) {
     if (!sink.captured) {

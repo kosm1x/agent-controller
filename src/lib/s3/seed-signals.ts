@@ -61,8 +61,14 @@ export const SEED_SIGNALS: readonly NewDriftSignal[] = [
     signal_name: "s1_tool_cache_read_ratio",
     signal_kind: "cache_health",
     source_substrate: "S1",
+    // Population allow-list mirrors the §13 gate's GATE_CACHEABLE_AGENT_TYPES
+    // (V8.5 Phase 3.3, R2 audit W1): the claude-sdk seam metering writes new
+    // cache-cold row classes (chat:*, aux:*, v82:*, audit:*, tuning:*,
+    // sdk:unattributed) that would dilute a whole-ledger ratio into a false
+    // P1 drift alert. NOTE: seeding is insert-if-missing — changing this
+    // string does NOT update an already-seeded DB row (UPDATE it directly).
     baseline_query:
-      "SELECT CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(prompt_tokens), 0) FROM cost_ledger WHERE created_at > datetime('now', '-1 day')",
+      "SELECT CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(prompt_tokens), 0) FROM cost_ledger WHERE (agent_type IN ('fast','swarm','nanoclaw','a2a','self-healing-triage','hindsight') OR agent_type LIKE 'skill:%') AND created_at > datetime('now', '-1 day')",
     baseline_value_json: '{"value":0.85}', // PLACEHOLDER — recalibrate after 30d learning window (R1-W1)
     tolerance_json: '{"kind":"absolute_threshold","op":"lt","value":0.75}',
     cadence: "nightly",

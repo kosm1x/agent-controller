@@ -212,7 +212,7 @@ export async function selfAssess(
     ];
     const response = useSdkPath()
       ? await queryClaudeSdkTiered(useOpus, (model) =>
-          queryClaudeSdkAsInfer(selfAssessMessages, { model }),
+          queryClaudeSdkAsInfer(selfAssessMessages, { model, costLedger: false }),
         )
       : await infer({ messages: selfAssessMessages, temperature: 0.1 });
     const usage: TokenUsage = {
@@ -411,6 +411,9 @@ export async function executeGoal(
                 tokenBudget: TOKEN_BUDGET_HEAVY,
                 compressionContext,
                 model,
+                // Executor aggregates SDK cost into the orchestrator's
+                // tokenUsage → dispatcher recordCost — seam opt-out. (3.3)
+                costLedger: false,
               },
             ),
           )
@@ -554,6 +557,8 @@ export async function executeGoal(
                   tokenBudget: TOKEN_BUDGET_HEAVY,
                   compressionContext,
                   model,
+                  // Retry leg — same orchestrator aggregate. (3.3)
+                  costLedger: false,
                 },
               ),
             )

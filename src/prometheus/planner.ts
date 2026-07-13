@@ -169,7 +169,7 @@ export async function plan(
 
   const response = useSdkPath()
     ? await queryClaudeSdkTiered(useOpus, (model) =>
-        queryClaudeSdkAsInfer(messages, { model }),
+        queryClaudeSdkAsInfer(messages, { model, costLedger: false }),
       )
     : await infer({ messages, temperature: 0.4 });
   const content = response.content ?? "";
@@ -218,7 +218,7 @@ export async function replan(
 
   const response = useSdkPath()
     ? await queryClaudeSdkTiered(useOpus, (model) =>
-        queryClaudeSdkAsInfer(messages, { model }),
+        queryClaudeSdkAsInfer(messages, { model, costLedger: false }),
       )
     : await infer({ messages, temperature: 0.4 });
   return {

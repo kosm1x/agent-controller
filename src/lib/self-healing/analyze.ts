@@ -117,6 +117,8 @@ export async function runTriageAnalysis(
     extraTools: [submit],
     maxTurns: 6,
     model: opts.model ?? HAIKU_MODEL_ID,
+    // Metered below via this monitor's own recordCost — seam opt-out. (3.3)
+    costLedger: false,
   });
 
   // Record the monitor's own spend. These calls run OUTSIDE the dispatcher (like

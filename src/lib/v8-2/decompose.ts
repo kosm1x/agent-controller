@@ -188,6 +188,7 @@ export async function decomposeQuestion(
       maxTurns: 2,
       model: SONNET_MODEL_ID,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:decompose" },
     });
   } catch (e) {
     // The call threw (abort / API error). If the handler already captured the

@@ -139,6 +139,8 @@ export async function runSkillPrompt(
         ],
         temperature: 0,
         max_tokens: maxTokens,
+        // Metered by skills/dispatcher writeCostLedger — seam opt-out. (3.3)
+        costLedger: false,
       },
       { providerName: options.providerName, signal: ac.signal },
     );

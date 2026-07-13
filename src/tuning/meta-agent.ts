@@ -219,6 +219,7 @@ export async function defaultMetaInfer(
     ],
     temperature: 0.7,
     max_tokens: 1024,
+    costLedger: { agentType: "tuning:meta-agent" },
   });
 
   return {

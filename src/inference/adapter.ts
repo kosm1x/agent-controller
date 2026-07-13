@@ -81,6 +81,25 @@ export interface ChatMessage {
   cacheable?: boolean;
 }
 
+/**
+ * Cost-ledger attribution for the claude-sdk seam hook (V8.5 Phase 3.3).
+ *
+ * Every `queryClaudeSdk` call records its own cost_ledger row at the seam
+ * UNLESS the caller opts out:
+ *   - `{ agentType, taskId? }` — record with this attribution.
+ *   - `false` — caller's cost is already recorded elsewhere (dispatcher
+ *     aggregate over `result.tokenUsage`, `recordReflectionCost`, skills
+ *     `writeCostLedger`, self-healing) — the seam skips to avoid a
+ *     double-count.
+ *   - `undefined` — record as `agent_type='sdk:unattributed'`. The default
+ *     fails toward METERED: a future caller that forgets this field
+ *     over-counts visibly instead of leaking silently (the pre-3.3 state,
+ *     where chat/aux/v8-2 spend was invisible to the budget windows).
+ *
+ * No effect on the openai-compat path (cost computed downstream by callers).
+ */
+export type CostLedgerAttribution = { agentType: string; taskId?: string };
+
 export interface InferenceRequest {
   messages: ChatMessage[];
   tools?: ToolDefinition[];
@@ -104,6 +123,8 @@ export interface InferenceRequest {
    * — the caller opted in deliberately). Added 2026-05-23 (queue #228).
    */
   model?: string;
+  /** Cost-ledger seam attribution — see {@link CostLedgerAttribution}. */
+  costLedger?: CostLedgerAttribution | false;
 }
 
 export interface InferenceResponse {
@@ -237,8 +258,16 @@ async function inferViaClaudeSdk(
       // Effort passthrough (V8.5 Phase 2.3): request.effort was honored only
       // on the openai path since 05-10 — the SDK path dropped it.
       effort: request.effort,
+      // Seam metering attribution (V8.5 Phase 3.3) — rides BOTH legs like
+      // tokenBudget: the Haiku retry serves the same caller, so its spend
+      // belongs to the same cost_ledger attribution.
+      costLedger: request.costLedger,
     });
   } catch (err) {
+    // Budget refusal is not a provider failure — the Haiku retry would just
+    // be refused again (same exhausted window) while logging a misleading
+    // "provider failed" warn. Surface it to the caller directly.
+    if ((err as Error)?.name === "BudgetExhaustedError") throw err;
     console.warn(
       `[inference] claude-sdk ${primaryModel} failed (${errMsg(err)}), retrying with Haiku`,
     );
@@ -251,6 +280,7 @@ async function inferViaClaudeSdk(
       tools: request.tools,
       // effort deliberately NOT forwarded: Haiku 4.5 has no effort support;
       // the last-line fallback carries the minimal request.
+      costLedger: request.costLedger,
     });
   }
 }
@@ -302,6 +332,9 @@ async function inferWithToolsViaClaudeSdk(
     tokenBudget: options?.tokenBudget,
     compressionContext: options?.compressionContext,
     providerName: options?.providerName,
+    // Seam metering attribution (V8.5 Phase 3.3) — rides both legs; see
+    // the tokenBudget rationale above.
+    costLedger: options?.costLedger,
   };
   // Effort rides outside `passthrough`: the Haiku retry leg must not carry
   // it (Haiku 4.5 has no effort support — minimal request on the fallback).
@@ -316,6 +349,10 @@ async function inferWithToolsViaClaudeSdk(
       effort,
     });
   } catch (err) {
+    // Same guard as inferViaClaudeSdk: an exhausted budget window refuses
+    // the Haiku leg identically — don't burn a retry or mislabel it as a
+    // provider failure.
+    if ((err as Error)?.name === "BudgetExhaustedError") throw err;
     console.warn(
       `[inference] claude-sdk ${primaryModel} (with tools) failed (${errMsg(err)}), retrying with Haiku`,
     );
@@ -437,6 +474,8 @@ export interface InferWithToolsOptions {
    * conversational messages (reactions, thanks) that don't need tool calls.
    */
   skipToolNudge?: boolean;
+  /** Cost-ledger seam attribution — see {@link CostLedgerAttribution}. */
+  costLedger?: CostLedgerAttribution | false;
 }
 
 export async function inferWithTools(

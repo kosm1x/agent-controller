@@ -396,6 +396,7 @@ async function runPerspective(
       maxTurns: 2,
       model: opts.model,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:multi-option" },
     });
     const text = res.text.trim();
     return text.length > 0 ? text : null;
@@ -445,6 +446,7 @@ async function runSynthesizer(
       maxTurns: 2,
       model: opts.model,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:multi-option" },
     });
   } catch (e) {
     // A timeout that races a successful tool_use still has a valid capture —

@@ -148,6 +148,7 @@ export async function gateCommunityReply(
         ],
         temperature: 0,
         max_tokens: 256,
+        costLedger: { agentType: "aux:community-reply-gate" },
       },
       { providerName: options.providerName, signal: ac.signal },
     );

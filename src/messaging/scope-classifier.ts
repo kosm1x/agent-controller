@@ -117,6 +117,7 @@ export async function classifyScopeGroups(
         ],
         max_tokens: 80,
         ...(HAIKU_MODEL_ID !== undefined && { model: HAIKU_MODEL_ID }),
+        costLedger: { agentType: "aux:scope-classifier" },
       }),
       SCOPE_CLASSIFIER_TIMEOUT_MS,
       "scope classifier",

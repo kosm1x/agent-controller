@@ -45,7 +45,6 @@
  */
 
 import { getDatabase } from "../db/index.js";
-import { REFLECTION_AGENT_TYPE_PREFIX } from "../budget/service.js";
 
 /** spec §13 thresholds. */
 export const GATE_CACHE_READ_PCT = 80;
@@ -65,17 +64,43 @@ export const GATE_MORNING_PROMOTE_PCT = 60;
 export const GATE_MIN_RULED_BRIEFS = 3;
 
 /**
- * Agent types excluded from the §13 cache-read ratio because they fire less
- * often than the prompt cache's 5-min TTL, so every run is a cold start that
- * MUST pay `cache_creation` — a structural floor, not a cache regression.
- * `reflection:%` is matched by prefix (see `REFLECTION_AGENT_TYPE_PREFIX`);
- * this list is the exact-match half. See the 2026-07-10 spec-correction note.
+ * Agent types whose cold-start rows are RENDERED separately by
+ * `mc-ctl briefing-gate` (the "excluded" mirror query) so the §13 exclusion
+ * stays auditable. These fire less often than the prompt cache's 5-min TTL,
+ * so every run is a cold start that MUST pay `cache_creation` — a structural
+ * floor, not a cache regression. Since V8.5 Phase 3.3 the GATE filter itself
+ * is the `GATE_CACHEABLE_AGENT_TYPES` allow-list below; this const no longer
+ * shapes the ratio, only the mirror display.
  *
- * MUST stay non-empty: it is interpolated into `NOT IN (...)`, and SQLite
- * rejects `NOT IN ()` as a syntax error. Fail-loud by design — an empty list
- * would mean the exclusion silently stopped applying.
+ * MUST stay non-empty: it is interpolated into `IN (...)`, and SQLite
+ * rejects `IN ()` as a syntax error.
  */
 export const GATE_COLD_START_AGENT_TYPES = ["heavy"] as const;
+
+/**
+ * ALLOW-LIST of agent_type values the §13 cache-read ratio measures — the
+ * exact population the gate covered before V8.5 Phase 3.3, when the query
+ * was exclusion-based (`NOT LIKE 'reflection:%' AND NOT IN ('heavy')`).
+ *
+ * 3.3's claude-sdk seam metering added whole new row CLASSES to cost_ledger
+ * (`sdk:unattributed`, `chat:*`, `aux:*`, `v82:*`, `audit:*`, `tuning:*`) —
+ * mostly tiny, cache-cold aux calls. Under the old exclusion filter every
+ * one of them would have silently joined the ratio's denominator and could
+ * flip the razor-thin PASS (80.51 vs 80). Exclusion lists silently widen;
+ * gates enumerate what they MEAN to measure (feedback_allow_list_state_gating).
+ * A future agent_type stays OUT of the gate until deliberately added here.
+ *
+ * `skill:` is a prefix (writer uses `skill:<name>`), matched via LIKE.
+ */
+export const GATE_CACHEABLE_AGENT_TYPES = [
+  "fast",
+  "swarm",
+  "nanoclaw",
+  "a2a",
+  "self-healing-triage",
+  "hindsight",
+] as const;
+export const GATE_CACHEABLE_AGENT_PREFIX = "skill:" as const;
 
 export interface BriefingSurfaceHealth {
   surface: string;
@@ -161,20 +186,25 @@ export function evaluateActivationGate(): ActivationGateResult {
   const db = getDatabase();
 
   // §13 query 1 — cache-read ratio over CACHEABLE inference, rolling 24h.
-  // Filter excludes `reflection:%` AND `GATE_COLD_START_AGENT_TYPES` (`heavy`)
-  // because those rows fire too infrequently for the 5-min prompt-cache TTL to
-  // cover inter-run gaps (see both "Spec correction" notes in the module
-  // docstring). Also filters `prompt_tokens
-  // > 0` to skip null-usage rows that would otherwise pollute the ratio.
+  // ALLOW-LIST filter (V8.5 Phase 3.3, audit C2): only the agent_type values
+  // in `GATE_CACHEABLE_AGENT_TYPES` (+ the `skill:` prefix) enter the ratio —
+  // the same population the old exclusion filter (`NOT LIKE 'reflection:%'
+  // AND NOT IN ('heavy')`) measured before the claude-sdk seam metering
+  // started writing new row classes. reflection:%/heavy stay out for the
+  // original cold-start reason (they fire less often than the prompt-cache
+  // TTL — see the "Spec correction" notes in the module docstring); the new
+  // chat/aux/v82/tuning/sdk:unattributed classes stay out because they were
+  // never part of the §13 population. Also filters `prompt_tokens > 0` to
+  // skip null-usage rows that would otherwise pollute the ratio.
   //
   // `cost_ledger.created_at` defaults to `datetime('now')` (UTC); the window
   // bound below is UTC too, so the comparison is timezone-correct even though
   // the service runs TZ=America/Mexico_City. The same holds for the 7-day
   // briefing query — `generated_at` is written via `Date.toISOString()` (UTC).
-  // Reuse `REFLECTION_AGENT_TYPE_PREFIX` (the same constant the writer in
-  // budget/service.ts uses to label these rows) so a future rename of that
-  // prefix can't silently break the gate by leaving stale rows uncounted.
   const coldStartPlaceholders = GATE_COLD_START_AGENT_TYPES.map(() => "?").join(
+    ",",
+  );
+  const cacheablePlaceholders = GATE_CACHEABLE_AGENT_TYPES.map(() => "?").join(
     ",",
   );
   const cache = db
@@ -184,14 +214,14 @@ export function evaluateActivationGate(): ActivationGateResult {
               COUNT(*)                  AS runs,
               COALESCE(SUM(cost_usd),0) AS cost
          FROM cost_ledger
-        WHERE agent_type NOT LIKE ?
-          AND agent_type NOT IN (${coldStartPlaceholders})
+        WHERE (agent_type IN (${cacheablePlaceholders})
+           OR agent_type LIKE ?)
           AND prompt_tokens > 0
           AND created_at > datetime('now','-1 day')`,
     )
     .get(
-      `${REFLECTION_AGENT_TYPE_PREFIX}%`,
-      ...GATE_COLD_START_AGENT_TYPES,
+      ...GATE_CACHEABLE_AGENT_TYPES,
+      `${GATE_CACHEABLE_AGENT_PREFIX}%`,
     ) as CacheRow;
 
   // The mirror of query 1: the cold-start rows we just excluded. Never gates —

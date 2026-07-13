@@ -205,6 +205,39 @@ export function getThreeWindowStatus(): ThreeWindowStatus {
   };
 }
 
+/**
+ * Thrown by the claude-sdk seam when budget enforcement is armed
+ * (`budgetEnabled && budgetEnforce`) and every spending window's remaining
+ * headroom is exhausted. Thrown BEFORE the SDK subprocess spawns, so a
+ * refused call costs nothing. Callers distinguish it from provider failures
+ * via `err.name === "BudgetExhaustedError"` — it must NOT trip the circuit
+ * breaker or trigger a model-fallback retry loop's spend.
+ */
+export class BudgetExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BudgetExhaustedError";
+  }
+}
+
+/**
+ * Smallest remaining headroom across the three spending windows, in USD.
+ * ≤ 0 means at least one window is at/over its limit. Drives the claude-sdk
+ * seam's enforcement gate (V8.5 Phase 3.3): pre-call refusal at ≤ 0, and
+ * the value is forwarded as SDK `maxBudgetUsd` so an in-flight agentic loop
+ * hard-stops at the cap instead of finishing an arbitrarily expensive run.
+ */
+export function getRemainingBudgetUsd(): number {
+  const status = getThreeWindowStatus();
+  // WindowStatus.remaining is clamped to ≥ 0; recompute unclamped here so
+  // an already-breached window reports ≤ 0 rather than a phantom 0.0…1.
+  return Math.min(
+    status.hourly.limit - status.hourly.spend,
+    status.daily.limit - status.daily.spend,
+    status.monthly.limit - status.monthly.spend,
+  );
+}
+
 /** Check if any spending window is exceeded. */
 export function isAnyWindowExceeded(): boolean {
   const status = getThreeWindowStatus();

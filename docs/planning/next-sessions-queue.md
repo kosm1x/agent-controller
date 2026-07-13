@@ -118,6 +118,14 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 
 ---
 
+## BUDGET_ENFORCE arming pre-flight (V8.5 Phase 3.3 audit deferrals, 2026-07-13)
+
+**Trigger: BEFORE flipping `BUDGET_ENFORCE=true`** (it stays dormant until then — both items are latent, not live). From the 3.3 R1 audit:
+
+1. **W1 — budget refusal has no messaging floor.** Verbatim: "`BudgetExhaustedError` is a new throw with zero messaging-layer handling. `router.ts:1924` catches the fast-path throw and falls through to the full pipeline, which re-throws (same exhausted window) → generic task-`failed`. No dedicated 'budget exhausted' user reply." When armed, Telegram chat under an exhausted window must produce a deterministic "presupuesto agotado, se restablece a la hora en punto" reply + one operator notification — never silence (never-silent-reply floor). Fix belongs in router.ts/fast-path error handling; deferred because router.ts is outside the 3.3 diff.
+2. **W4 — eval/tuning processes write prod cost_ledger.** `npm run eval:gate` (~$5, `tuning:eval-probe` rows) and any script importing `infer()` against `mc.db` now land real rows in the shared windows. Under enforcement, one gate run can consume most of an hourly window and refuse production calls for the rest of the hour. Before arming: either size `BUDGET_HOURLY_LIMIT_USD` to accommodate a gate run, or exclude `tuning:%` from `getRemainingBudgetUsd()`'s windows (decide then — exclusion weakens the cap's completeness).
+3. **W2 (documented, accepted)** — per-call `maxBudgetUsd` = full remaining window, so N concurrent calls can overshoot by ~N×. The cap is a soft ceiling under concurrency, not a hard bound. Revisit only if overshoot is observed to matter.
+
 ## Updates log
 
 | Date | Change |

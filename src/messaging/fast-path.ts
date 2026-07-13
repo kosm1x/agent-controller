@@ -106,7 +106,7 @@ export async function fastPathRespond(
   });
 
   const result = await infer(
-    { messages, temperature: 0.7 },
+    { messages, temperature: 0.7, costLedger: { agentType: "chat:fast-path" } },
     { providerName: "fallback" }, // flash model for speed, no streaming
   );
 

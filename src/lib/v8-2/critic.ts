@@ -575,6 +575,7 @@ export async function runCritic(
       maxTurns: CRITIC_TOOL_BUDGET + 2,
       model: options.model ?? SONNET_MODEL_ID,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:critic" },
     });
 
     const latencyMs = Date.now() - t0;

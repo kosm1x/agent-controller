@@ -116,6 +116,7 @@ export async function runSkillCritic(
     };
     const response = await infer(
       {
+        costLedger: { agentType: "aux:skill-critic" },
         messages: [
           { role: "system", content: SKILL_CRITIC_SYSTEM_PROMPT },
           {

@@ -151,6 +151,7 @@ export async function authorJudgment(
       maxTurns: 2,
       model: options.model ?? SONNET_MODEL_ID,
       abortSignal: ac.signal,
+      costLedger: { agentType: "v82:author" },
     });
     const prose = res.text.trim();
     if (prose.length === 0) {

@@ -307,6 +307,7 @@ ${middleText}`;
         { role: "user", content: NO_TOOLS },
       ],
       temperature: 0.2,
+      costLedger: { agentType: "aux:context-compressor" },
       max_tokens: 1200, // 9 sections + analysis scratchpad overhead needs headroom
     });
 

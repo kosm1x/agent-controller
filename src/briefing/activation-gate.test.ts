@@ -162,6 +162,41 @@ describe("evaluateActivationGate", () => {
     expect(r.checks.cacheRead.pass).toBe(true);
   });
 
+  it("EXCLUDES the 3.3 seam-metering row classes (allow-list, not exclusion)", () => {
+    // 20 allow-listed rows at 90% — the intended §13 population.
+    insertCacheableRuns(20, 1000, 900);
+    // New classes written by the claude-sdk seam hook since V8.5 Phase 3.3 —
+    // tiny cache-cold aux calls. Under the old NOT-LIKE/NOT-IN filter every
+    // one of these would have joined the denominator and dragged 90% → FAIL.
+    for (const agentType of [
+      "sdk:unattributed",
+      "chat:fast-path",
+      "aux:scope-classifier",
+      "v82:critic",
+      "audit:critic",
+      "tuning:eval-probe",
+    ]) {
+      for (let i = 0; i < 5; i++) insertCacheableCost(2000, 0, agentType);
+    }
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate();
+    expect(r.cacheableRuns).toBe(20); // seam rows excluded from count
+    expect(r.cacheReadPct).toBe(90); // ratio undragged
+    expect(r.checks.cacheRead.pass).toBe(true);
+  });
+
+  it("KEEPS skill:% prefix rows in the ratio (pre-3.3 population preserved)", () => {
+    insertCacheableRuns(18, 1000, 900);
+    insertCacheableCost(1000, 900, "skill:weekly-report");
+    insertCacheableCost(1000, 900, "skill:kb-cleanup");
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate();
+    expect(r.cacheableRuns).toBe(20); // skill:% still counted
+    expect(r.cacheReadPct).toBe(90);
+  });
+
   it("EXCLUDES once-daily `heavy` cold-start rows from the cache-read ratio", () => {
     // Mirrors the live 2026-07-10 shape that failed §13: `fast` sits ABOVE the
     // 80% bar, and a single once-daily `heavy` cold start (~47%, a (N-1)/N

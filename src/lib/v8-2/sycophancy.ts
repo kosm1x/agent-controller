@@ -164,6 +164,7 @@ export async function elicitFinalPosition(
       toolNames: [],
       maxTurns: 1,
       model: opts.model ?? SONNET_MODEL_ID,
+      costLedger: { agentType: "v82:sycophancy" },
     });
     return (res.text ?? "").trim();
   } catch (e) {
@@ -251,6 +252,7 @@ export async function classifyConcession(
       extraTools: [buildSubmitConcessionTool(sink)],
       maxTurns: 2,
       model: opts.model ?? SONNET_MODEL_ID,
+      costLedger: { agentType: "v82:sycophancy" },
     });
   } catch (e) {
     if (!sink.captured) {

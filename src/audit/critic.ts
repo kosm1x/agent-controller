@@ -220,6 +220,7 @@ export async function runCritic(
       maxTurns: 2,
       model: SONNET_MODEL_ID,
       abortSignal: ac.signal,
+      costLedger: { agentType: "audit:critic" },
     });
 
     const latencyMs = Date.now() - t0;

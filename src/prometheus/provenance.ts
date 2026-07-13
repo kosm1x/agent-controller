@@ -272,6 +272,9 @@ export async function condenseSearchResults(
       ],
       temperature: 0.2,
       max_tokens: 500,
+      // Metered via the executor's usage aggregate (executor.ts condensed
+      // usage += ...) -> dispatcher recordCost — seam opt-out. (3.3 audit C1)
+      costLedger: false,
     });
 
     return {

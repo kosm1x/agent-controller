@@ -82,12 +82,11 @@ function maxJudgmentsPerBrief(): number {
   return Math.min(n, ABS_MAX_JUDGMENTS_PER_BRIEF);
 }
 
-/** Cost-ledger note (audit follow-up): the producer calls `queryClaudeSdk`
- *  directly (to control the §10 cache prefix), so its spend does NOT flow through
- *  the `infer()` adapter's `recordCost`. Complete capture needs token usage
- *  threaded out of author/decompose/critic/multi-option — a multi-module change
- *  tracked as the top V8.2-producer follow-up. While shadowing, gross spend is
- *  still bounded/observable via the hourly $2 budget cap + journalctl. */
+/** Cost-ledger note: CLOSED by V8.5 Phase 3.3 (2026-07-13). The claude-sdk
+ *  seam now records every producer call directly — author/decompose/critic/
+ *  multi-option/sycophancy/concession each pass `costLedger:{agentType:'v82:*'}`,
+ *  so V8.2 spend is fully attributed in cost_ledger without threading usage
+ *  through this module. */
 
 /** Selection priority — deepen the decision-worthy judgments first. Stable
  *  within a priority band (preserves brief order). */

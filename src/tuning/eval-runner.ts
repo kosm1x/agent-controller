@@ -211,7 +211,11 @@ export async function defaultInferFunction(
   // Dynamic import to avoid circular deps at module load time
   const { infer } = await import("../inference/adapter.js");
 
-  const result = await infer({ messages, tools });
+  const result = await infer({
+    messages,
+    tools,
+    costLedger: { agentType: "tuning:eval-probe" },
+  });
 
   const toolsCalled = (result.tool_calls ?? []).map((tc) => tc.function.name);
 

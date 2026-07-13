@@ -38,6 +38,30 @@ vi.mock("../tools/registry.js", () => ({
   },
 }));
 
+// Seam metering + enforcement mocks (V8.5 Phase 3.3). claude-sdk.ts now
+// statically imports recordCost/getRemainingBudgetUsd/getConfig — mocked so
+// existing specs never touch a real DB and the 3.3 specs can assert.
+const recordCostMock = vi.hoisted(() => vi.fn());
+const remainingBudgetMock = vi.hoisted(() => vi.fn(() => 10));
+const budgetFlags = vi.hoisted(() => ({ enabled: false, enforce: false }));
+
+vi.mock("../budget/service.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../budget/service.js")>();
+  return {
+    ...actual,
+    recordCost: recordCostMock,
+    getRemainingBudgetUsd: remainingBudgetMock,
+  };
+});
+
+vi.mock("../config.js", () => ({
+  getConfig: () => ({
+    budgetEnabled: budgetFlags.enabled,
+    budgetEnforce: budgetFlags.enforce,
+  }),
+}));
+
 import {
   queryClaudeSdk,
   queryClaudeSdkAsInfer,
@@ -50,11 +74,16 @@ import {
 } from "./claude-sdk.js";
 import type { ChatMessage, ToolDefinition } from "./adapter.js";
 import { providerMetrics } from "./adapter-openai.js";
+import { BudgetExhaustedError } from "../budget/service.js";
 
 beforeEach(() => {
   mockMessages.value = [];
   lastQueryArgs.value = null;
   mockThrowAfterYield.value = null;
+  recordCostMock.mockReset();
+  remainingBudgetMock.mockReset().mockReturnValue(10);
+  budgetFlags.enabled = false;
+  budgetFlags.enforce = false;
 });
 
 describe("queryClaudeSdk error_max_turns handling", () => {
@@ -2257,5 +2286,182 @@ describe("taskBudget pacing flag (V8.5 Phase 3.4)", () => {
     );
     const opts = lastQueryArgs.value?.options as Record<string, unknown>;
     expect("taskBudget" in opts).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V8.5 Phase 3.3 — cost-ledger seam metering + budget enforcement
+// ---------------------------------------------------------------------------
+
+const SEAM_SUCCESS_RESULT = {
+  type: "result",
+  subtype: "success",
+  result: "done\n\nSTATUS: DONE",
+  num_turns: 1,
+  usage: {
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_input_tokens: 40,
+    cache_creation_input_tokens: 10,
+  },
+  total_cost_usd: 0.0042,
+  duration_ms: 500,
+};
+
+describe("cost-ledger seam metering (V8.5 Phase 3.3)", () => {
+  it("records every call as sdk:unattributed by default (fail-toward-metered)", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+
+    expect(recordCostMock).toHaveBeenCalledTimes(1);
+    const rec = recordCostMock.mock.calls[0][0];
+    expect(rec.agentType).toBe("sdk:unattributed");
+    expect(rec.taskId).toBe("sdk:unattributed");
+    expect(rec.runId).toMatch(/^sdk-/);
+    // promptTokens = input + cache_creation + cache_read (Messages API spec)
+    expect(rec.promptTokens).toBe(150);
+    expect(rec.completionTokens).toBe(20);
+    expect(rec.cacheReadTokens).toBe(40);
+    expect(rec.cacheCreationTokens).toBe(10);
+    // Terminal result fired → SDK cost is authoritative, passed verbatim.
+    expect(rec.costUsdOverride).toBe(0.0042);
+  });
+
+  it("skips recording when the caller opts out (costLedger: false)", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "s",
+      toolNames: [],
+      costLedger: false,
+    });
+    expect(recordCostMock).not.toHaveBeenCalled();
+  });
+
+  it("uses caller attribution; taskId falls back to agentType", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "s",
+      toolNames: [],
+      costLedger: { agentType: "chat:fast-path" },
+    });
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "s",
+      toolNames: [],
+      costLedger: { agentType: "audit:critic", taskId: "task-9" },
+    });
+
+    expect(recordCostMock).toHaveBeenCalledTimes(2);
+    expect(recordCostMock.mock.calls[0][0].agentType).toBe("chat:fast-path");
+    expect(recordCostMock.mock.calls[0][0].taskId).toBe("chat:fast-path");
+    expect(recordCostMock.mock.calls[1][0].agentType).toBe("audit:critic");
+    expect(recordCostMock.mock.calls[1][0].taskId).toBe("task-9");
+  });
+
+  it("does not write a ledger row when nothing ran (no result, zero tokens)", async () => {
+    mockMessages.value = []; // stream ends with no terminal result
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    expect(recordCostMock).not.toHaveBeenCalled();
+  });
+
+  it("a ledger write failure never fails the inference call", async () => {
+    recordCostMock.mockImplementation(() => {
+      throw new Error("SQLITE_CANTOPEN: no db in this process");
+    });
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    const result = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+    expect(result.text).toContain("done");
+  });
+
+  it("threads costLedger through queryClaudeSdkAsInfer", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdkAsInfer(
+      [{ role: "user", content: "hola" }],
+      { costLedger: false },
+    );
+    expect(recordCostMock).not.toHaveBeenCalled();
+  });
+
+  it("threads costLedger through queryClaudeSdkAsInferWithTools", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "hola" }],
+      [],
+      async () => "",
+      { costLedger: { agentType: "v82:critic" } },
+    );
+    expect(recordCostMock).toHaveBeenCalledTimes(1);
+    expect(recordCostMock.mock.calls[0][0].agentType).toBe("v82:critic");
+  });
+});
+
+describe("budget enforcement gate (V8.5 Phase 3.3)", () => {
+  it("is dormant by default — no headroom read, no maxBudgetUsd", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    expect(remainingBudgetMock).not.toHaveBeenCalled();
+    const options = lastQueryArgs.value?.options as { maxBudgetUsd?: number };
+    expect(options.maxBudgetUsd).toBeUndefined();
+  });
+
+  it("budgetEnabled alone does not enforce (soft-cap posture preserved)", async () => {
+    budgetFlags.enabled = true;
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    expect(remainingBudgetMock).not.toHaveBeenCalled();
+  });
+
+  it("armed: forwards remaining headroom as SDK maxBudgetUsd (loop-cut tooth)", async () => {
+    budgetFlags.enabled = true;
+    budgetFlags.enforce = true;
+    remainingBudgetMock.mockReturnValue(5.5);
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    const options = lastQueryArgs.value?.options as { maxBudgetUsd?: number };
+    expect(options.maxBudgetUsd).toBe(5.5);
+  });
+
+  it("armed + exhausted: refuses BEFORE the SDK spawns, zero spend", async () => {
+    budgetFlags.enabled = true;
+    budgetFlags.enforce = true;
+    remainingBudgetMock.mockReturnValue(0);
+    await expect(
+      queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] }),
+    ).rejects.toThrow(BudgetExhaustedError);
+    expect(lastQueryArgs.value).toBeNull(); // never reached query()
+    expect(recordCostMock).not.toHaveBeenCalled();
+  });
+
+  it("armed + breached (negative headroom): refuses identically", async () => {
+    budgetFlags.enabled = true;
+    budgetFlags.enforce = true;
+    remainingBudgetMock.mockReturnValue(-0.25);
+    await expect(
+      queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] }),
+    ).rejects.toThrow(/budget_exhausted/);
+  });
+
+  it("fails OPEN when the headroom read itself errors (availability over budget)", async () => {
+    budgetFlags.enabled = true;
+    budgetFlags.enforce = true;
+    remainingBudgetMock.mockImplementation(() => {
+      throw new Error("db locked");
+    });
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    const result = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+    expect(result.text).toContain("done");
+    const options = lastQueryArgs.value?.options as { maxBudgetUsd?: number };
+    expect(options.maxBudgetUsd).toBeUndefined();
   });
 });

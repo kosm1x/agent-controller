@@ -29,6 +29,8 @@ vi.mock("../config.js", () => ({
 
 import {
   recordCost,
+  getRemainingBudgetUsd,
+  BudgetExhaustedError,
   getDailySpend,
   getHourlySpend,
   getMonthlySpend,
@@ -272,6 +274,32 @@ describe("budget service", () => {
       expect(mockDb.prepare).toHaveBeenCalledWith(
         expect.stringContaining("%Y-%m-01"),
       );
+    });
+  });
+
+  describe("getRemainingBudgetUsd (V8.5 Phase 3.3)", () => {
+    // getThreeWindowStatus query order: hourly, daily, monthly.
+    // Config mock limits: hourly 2, daily 10, monthly 200.
+    it("returns the smallest window headroom", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 1.5 }) // hourly → 0.5 left
+        .mockReturnValueOnce({ total: 5.0 }) // daily → 5 left
+        .mockReturnValueOnce({ total: 50.0 }); // monthly → 150 left
+      expect(getRemainingBudgetUsd()).toBeCloseTo(0.5);
+    });
+
+    it("reports a breached window as NEGATIVE, not the clamped 0", () => {
+      mockGet
+        .mockReturnValueOnce({ total: 2.5 }) // hourly breached by 0.5
+        .mockReturnValueOnce({ total: 0 })
+        .mockReturnValueOnce({ total: 0 });
+      expect(getRemainingBudgetUsd()).toBeCloseTo(-0.5);
+    });
+
+    it("BudgetExhaustedError carries a stable name for callers that branch on it", () => {
+      const err = new BudgetExhaustedError("budget_exhausted: test");
+      expect(err.name).toBe("BudgetExhaustedError");
+      expect(err).toBeInstanceOf(Error);
     });
   });
 

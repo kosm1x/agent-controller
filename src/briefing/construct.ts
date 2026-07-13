@@ -264,6 +264,8 @@ export async function constructBriefing(
       temperature: 0.3,
       max_tokens: 4000,
       effort: "high",
+      // Metered below via recordReflectionCost — seam opt-out. (3.3)
+      costLedger: false,
     });
   } catch (err) {
     // The adapter fails over across providers but ultimately throws — map it

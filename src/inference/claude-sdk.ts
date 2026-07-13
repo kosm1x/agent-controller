@@ -8,7 +8,7 @@
  * Switchback: set INFERENCE_PRIMARY_PROVIDER=openai to revert to DashScope.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   tool as sdkTool,
   createSdkMcpServer,
@@ -43,8 +43,17 @@ import type {
   ToolDefinition,
   ToolExecutor,
   OnTextChunk,
+  CostLedgerAttribution,
 } from "./adapter.js";
 import { errMsg } from "../lib/err-msg.js";
+// Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
+// db/config/pricing — no static cycle back into the inference layer.
+import {
+  recordCost,
+  getRemainingBudgetUsd,
+  BudgetExhaustedError,
+} from "../budget/service.js";
+import { getConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // JSON Schema → Zod raw shape (for SDK tool() definitions)
@@ -470,7 +479,51 @@ export async function queryClaudeSdk(opts: {
    * critic (2026-05-27 `fail_returned_anyway` fix).
    */
   extraTools?: InlineSdkTool[];
+  /**
+   * Cost-ledger seam metering (V8.5 Phase 3.3). Every call records its own
+   * cost_ledger row just before returning UNLESS this is `false` (the
+   * caller's spend is already recorded elsewhere — dispatcher aggregate,
+   * recordReflectionCost, skills writeCostLedger, self-healing).
+   * `undefined` records as `agent_type='sdk:unattributed'` — the default
+   * fails toward metered so a forgetful future caller over-counts visibly
+   * instead of leaking silently. See CostLedgerAttribution in adapter.ts.
+   */
+  costLedger?: CostLedgerAttribution | false;
 }): Promise<ClaudeSdkResult> {
+  // Budget enforcement gate (V8.5 Phase 3.3) — dormant unless the operator
+  // arms BOTH existing flags (BUDGET_ENABLED + BUDGET_ENFORCE, default off).
+  // Runs BEFORE the circuit-breaker check so a budget refusal never touches
+  // breaker state (it is not a provider failure). Two teeth:
+  //   1. remaining ≤ 0 → refuse pre-call (zero spend, BudgetExhaustedError).
+  //   2. remaining > 0 → forward as SDK maxBudgetUsd so an in-flight agentic
+  //      loop hard-stops at the cap (error_max_budget_usd terminal) instead
+  //      of finishing an arbitrarily expensive run. This is the "breach cuts
+  //      the loop" tooth — the SDK carries it natively.
+  // The ledger read fails OPEN (warn + proceed unguarded): a broken budget
+  // query must degrade to the pre-3.3 soft-cap posture, not silence every
+  // reply channel including "help, my server is down" chat.
+  let maxBudgetUsd: number | undefined;
+  {
+    const cfg = getConfig();
+    if (cfg.budgetEnabled && cfg.budgetEnforce) {
+      let remaining: number | undefined;
+      try {
+        remaining = getRemainingBudgetUsd();
+      } catch (err) {
+        console.warn(
+          `[claude-sdk] budget enforcement check failed — failing OPEN (unguarded call): ${errMsg(err)}`,
+        );
+      }
+      if (remaining !== undefined) {
+        if (remaining <= 0) {
+          throw new BudgetExhaustedError(
+            `budget_exhausted: all spending-window headroom consumed (remaining $${remaining.toFixed(4)}) — call refused before spawn`,
+          );
+        }
+        maxBudgetUsd = remaining;
+      }
+    }
+  }
   // Dim-4 R2 fix: claude-sdk path was unguarded since the 2026-04-22 Sonnet
   // primary flip. The shared circuitRegistry (adapter.ts:770) only protected
   // the openai path, so N consecutive Sonnet 500s each burned the full
@@ -588,6 +641,10 @@ export async function queryClaudeSdk(opts: {
     ...(opts.taskBudgetTokens && {
       taskBudget: { total: opts.taskBudgetTokens },
     }),
+    // Enforcement tooth 2 (V8.5 Phase 3.3): the SDK hard-stops the run when
+    // its cost reaches the remaining window headroom (error_max_budget_usd).
+    // Undefined while enforcement is dormant — no request-shape change.
+    ...(maxBudgetUsd !== undefined && { maxBudgetUsd }),
     abortController,
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
@@ -988,6 +1045,45 @@ export async function queryClaudeSdk(opts: {
       (timedOut ? " [TIMED OUT]" : ""),
   );
 
+  // Seam metering (V8.5 Phase 3.3): the ONE spot every host-side SDK call
+  // flows through with authoritative usage+cost in scope — success, error
+  // subtype, and abort/timeout all reach this return. Recording here is what
+  // makes the budget windows complete: pre-3.3, only dispatched-runner /
+  // reflection / skills / self-healing spend was recorded, so chat, messaging
+  // aux, v8-2 delivery, tool-handler nested calls, audit critics, and tuning
+  // were all invisible to the $-softcap. Swallow-safe: a ledger write must
+  // never fail the inference call (e.g. scripts running without the DB).
+  if (opts.costLedger !== false) {
+    const attribution = opts.costLedger ?? { agentType: "sdk:unattributed" };
+    // Skip only when there is nothing to record: no terminal result AND zero
+    // accumulated tokens (breaker-open throws never reach here; this is the
+    // abort-before-any-turn case). A row with all-zero token counts would be
+    // ledger noise with no spend information.
+    const hasSignal =
+      costAuthoritative || usage.promptTokens + usage.completionTokens > 0;
+    if (hasSignal) {
+      try {
+        recordCost({
+          runId: `sdk-${randomUUID()}`,
+          taskId: attribution.taskId ?? attribution.agentType,
+          agentType: attribution.agentType,
+          model: actualModel,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          // Same phantom-$0 discipline as the shims/dispatcher: SDK cost is
+          // used verbatim only when a terminal result reported it; on the
+          // abort path recordCost falls back to calculateCost() over the
+          // accumulated tokens.
+          ...(costAuthoritative && { costUsdOverride: costUsd }),
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheCreationTokens: usage.cacheCreationTokens,
+        });
+      } catch (err) {
+        warnSeamRecordFailureOnce(err);
+      }
+    }
+  }
+
   return {
     text: resultText,
     toolCalls: toolCallNames,
@@ -999,6 +1095,20 @@ export async function queryClaudeSdk(opts: {
     costAuthoritative,
     durationMs,
   };
+}
+
+/**
+ * Rate-limited warn for seam-metering write failures. In a process without
+ * the DB (eval/tuning scripts, one-off validators) EVERY call's write fails
+ * identically — one warn carries the signal, 172 repeats bury the log.
+ */
+let seamRecordFailureWarned = false;
+function warnSeamRecordFailureOnce(err: unknown): void {
+  if (seamRecordFailureWarned) return;
+  seamRecordFailureWarned = true;
+  console.warn(
+    `[claude-sdk] cost_ledger seam write failed (non-fatal, warning once per process): ${errMsg(err)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,6 +1310,7 @@ export async function queryClaudeSdkAsInfer(
     model?: string;
     tools?: ToolDefinition[];
     effort?: "low" | "medium" | "high" | "max";
+    costLedger?: CostLedgerAttribution | false;
   },
 ): Promise<InferenceResponse> {
   const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
@@ -1214,6 +1325,7 @@ export async function queryClaudeSdkAsInfer(
     model: options?.model,
     effort: options?.effort,
     abortSignal: options?.signal,
+    costLedger: options?.costLedger,
   });
 
   // Map captured tool_use blocks to the openai `tool_calls` shape the
@@ -1293,6 +1405,7 @@ export async function queryClaudeSdkAsInferWithTools(
     providerName?: string;
     model?: string;
     effort?: "low" | "medium" | "high" | "max";
+    costLedger?: CostLedgerAttribution | false;
   },
 ): Promise<{
   content: string;
@@ -1351,6 +1464,7 @@ export async function queryClaudeSdkAsInferWithTools(
     effort: options?.effort,
     taskBudgetTokens,
     abortSignal: options?.signal,
+    costLedger: options?.costLedger,
   });
 
   // Build a synthetic assistant turn with all tool calls collapsed into one
