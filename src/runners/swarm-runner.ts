@@ -40,6 +40,17 @@ import { extractDeliverableText } from "../lib/deliverable.js";
 
 const POLL_INTERVAL_MS = 3_000;
 const MAX_POLL_DURATION_MS = 600_000; // 10 minutes
+/**
+ * Absolute wall for the poll loop when children are STILL RUNNING past
+ * MAX_POLL_DURATION_MS (task 7466, 2026-07-13): the old behavior exited at
+ * 10 min flat, counted a running child as not-completed (0/N, score 0),
+ * failed the parent with an EMPTY error — and the child completed 103s
+ * later with the full deliverable, orphaned in its task row. Children are
+ * bounded by their own guards (15-min SDK call timeout, maxTurns,
+ * maxReplans), so waiting on active children cannot hang; the ceiling is a
+ * backstop against a pathological child, not the normal exit.
+ */
+const SWARM_HARD_CEILING_MS = 1_800_000; // 30 minutes
 const MAX_CONCURRENT_SUBTASKS = 10;
 const MAX_SWARM_DEPTH = 3;
 
@@ -463,6 +474,36 @@ function emitSwarmProgress(
   }
 }
 
+/**
+ * Maximum number of goals that could ever run CONCURRENTLY under the graph's
+ * dependency structure — the width of the widest topological level (Kahn).
+ * Width 1 = a strict chain: swarm's fan-out machinery adds pure overhead
+ * (one sub-task at a time under a poll wall) on top of what a single heavy
+ * run does natively with its own plan-execute-reflect loop. Task 7466
+ * (2026-07-13): a 5-goal chain ran exactly one heavy child, hit the 10-min
+ * wall, and failed a task whose child later completed. Goals with
+ * dependencies missing from the set are treated as ready (defensive — the
+ * planner validates deps, but a malformed graph must not loop forever).
+ * @internal exported for tests.
+ */
+export function maxParallelWidth(
+  goals: Array<{ id: string; dependsOn?: string[] }>,
+): number {
+  const remaining = new Map(goals.map((g) => [g.id, g]));
+  let width = 0;
+  while (remaining.size > 0) {
+    const level: string[] = [];
+    for (const g of remaining.values()) {
+      const deps = (g.dependsOn ?? []).filter((d) => remaining.has(d));
+      if (deps.length === 0) level.push(g.id);
+    }
+    if (level.length === 0) break; // dependency cycle — treat as done
+    width = Math.max(width, level.length);
+    for (const id of level) remaining.delete(id);
+  }
+  return width;
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -531,6 +572,126 @@ export const swarmRunner: Runner = {
     emitSwarmProgress(input.taskId, 15, `Planned ${graph.size} goals`);
     console.log(`[swarm] Task ${input.taskId}: planned ${graph.size} goals`);
 
+    // --- CHAIN DEMOTION (fix 3, task 7466) ---
+    // If the planned graph is a strict chain (max parallel width 1), swarm
+    // gains nothing: goals run one at a time under a poll wall, each paying
+    // sub-task dispatch overhead. Delegate the ORIGINAL task to a single
+    // heavy sub-task through the dispatcher (container policy, cost
+    // recording, retry semantics all stay correct) and mirror its result.
+    const width = maxParallelWidth(graph.getAll());
+    if (width <= 1) {
+      console.log(
+        `[swarm] Task ${input.taskId}: planned graph is a chain (width=${width}) — demoting to a single heavy sub-task`,
+      );
+      emitSwarmProgress(input.taskId, 20, "Chain plan — delegating to heavy");
+      try {
+        const demoted = await submitTask({
+          title: `[Swarm→heavy] ${input.title.slice(0, 100)}`,
+          description: taskDescription,
+          agentType: "heavy",
+          parentTaskId: input.taskId,
+          spawnType: "subtask",
+          tools: input.tools,
+        });
+        const demotedStart = Date.now();
+        // Mirrors syncSubTaskStatuses' terminal handling — including
+        // completed_with_concerns (audit W1: the sync path maps it to
+        // tracker.completed; omitting it here would poll a finished child
+        // to the 30-min ceiling — the exact orphan class being fixed).
+        const TERMINAL = new Set([
+          "completed",
+          "completed_with_concerns",
+          "failed",
+          "blocked",
+          "needs_context",
+          "cancelled",
+        ]);
+        let child = getTask(demoted.taskId);
+        while (
+          child &&
+          !TERMINAL.has(child.status ?? "") &&
+          Date.now() - demotedStart < SWARM_HARD_CEILING_MS
+        ) {
+          await sleep(POLL_INTERVAL_MS);
+          child = getTask(demoted.taskId);
+        }
+        const childStatus = child?.status ?? "unknown";
+        const childSucceeded =
+          childStatus === "completed" ||
+          childStatus === "completed_with_concerns";
+        if (childSucceeded) {
+          // Mirror the heavy child's output verbatim — it already carries
+          // the canonical {content, finalAnswer, ...} shape the delivery
+          // path expects.
+          let mirrored: unknown = child?.output ?? "";
+          if (typeof mirrored === "string" && mirrored.startsWith("{")) {
+            try {
+              mirrored = JSON.parse(mirrored);
+            } catch {
+              /* deliver the raw string */
+            }
+          }
+          // Audit W3: a "completed" child with NO output must not become a
+          // silent empty deliverable (the never-silent floor) — report it.
+          if (
+            mirrored === "" ||
+            mirrored === null ||
+            mirrored === undefined
+          ) {
+            return {
+              success: false,
+              error: `Demoted heavy sub-task ${demoted.taskId} completed but recorded no output — check that task row`,
+              durationMs: Date.now() - start,
+              goalGraph: graph.toJSON(),
+              trace: [
+                {
+                  type: "demoted-chain",
+                  taskId: demoted.taskId,
+                  status: childStatus,
+                },
+              ],
+            };
+          }
+          emitSwarmProgress(input.taskId, 100, "Swarm complete (demoted)");
+          return {
+            success: true,
+            output: mirrored as RunnerOutput["output"],
+            durationMs: Date.now() - start,
+            goalGraph: graph.toJSON(),
+            trace: [
+              {
+                type: "demoted-chain",
+                taskId: demoted.taskId,
+                status: childStatus,
+              },
+            ],
+          };
+        }
+        const stillRunning = !TERMINAL.has(childStatus);
+        return {
+          success: false,
+          error: stillRunning
+            ? `Demoted heavy sub-task ${demoted.taskId} still running at the ${SWARM_HARD_CEILING_MS / 60_000}-min ceiling — it may complete late; check that task row for the deliverable.`
+            : `Demoted heavy sub-task ${demoted.taskId} ended ${childStatus}: ${child?.error ?? "no error recorded"}`,
+          durationMs: Date.now() - start,
+          goalGraph: graph.toJSON(),
+          trace: [
+            {
+              type: "demoted-chain",
+              taskId: demoted.taskId,
+              status: childStatus,
+            },
+          ],
+        };
+      } catch (err) {
+        // Demotion submit failed — fall through to normal fan-out rather
+        // than failing the task on an optimization.
+        console.warn(
+          `[swarm] Task ${input.taskId}: chain demotion failed (${errMsg(err)}) — falling back to fan-out`,
+        );
+      }
+    }
+
     // --- PHASE 2: FAN-OUT ---
     const goalTaskMap: GoalTaskMap = new Map();
     const trackers = new Map<string, SubTaskTracker>();
@@ -546,7 +707,13 @@ export const swarmRunner: Runner = {
       return m;
     };
 
-    while (Date.now() - pollStart < MAX_POLL_DURATION_MS) {
+    while (
+      Date.now() - pollStart < MAX_POLL_DURATION_MS ||
+      // Fix 1 (task 7466): never abandon RUNNING children at the soft wall —
+      // keep polling while any child is active, up to the hard ceiling.
+      (countActive(trackers) > 0 &&
+        Date.now() - pollStart < SWARM_HARD_CEILING_MS)
+    ) {
       // Update blocked statuses
       graph.getBlocked();
 
@@ -640,6 +807,26 @@ export const swarmRunner: Runner = {
       await sleep(POLL_INTERVAL_MS);
     }
 
+    // Fix 2 (task 7466): if the hard ceiling expired with children still
+    // active, say so honestly — name the child task ids so a late-finishing
+    // deliverable is findable instead of silently orphaned. (With fix 1 this
+    // is reachable only via the 30-min backstop, not the 10-min soft wall.)
+    const abandonedChildren = Array.from(trackers.values()).filter(
+      (t) =>
+        t.status !== "completed" &&
+        t.status !== "failed" &&
+        t.status !== "cancelled",
+    );
+    const abandonedNote =
+      abandonedChildren.length > 0
+        ? `Swarm hard ceiling (${SWARM_HARD_CEILING_MS / 60_000} min) expired with ${abandonedChildren.length} child task(s) still running: ${abandonedChildren
+            .map((t) => t.taskId || t.goalId)
+            .join(", ")} — they may complete late; check those task rows for the deliverable.`
+        : undefined;
+    if (abandonedNote) {
+      console.warn(`[swarm] Task ${input.taskId}: ${abandonedNote}`);
+    }
+
     // --- PHASE 3: REFLECT ---
     const executionResults = buildExecutionResults(graph, trackers);
 
@@ -678,8 +865,19 @@ export const swarmRunner: Runner = {
 
     return {
       success: reflectionResult.success,
+      ...(abandonedNote &&
+        !reflectionResult.success && { error: abandonedNote }),
+      // Audit W2: a success verdict with abandoned children is a qualified
+      // success — surface the note structurally, not only inside content.
+      ...(abandonedNote &&
+        reflectionResult.success && {
+          status: "DONE_WITH_CONCERNS" as const,
+          concerns: [abandonedNote],
+        }),
       output: {
-        content: reflectionResult.summary,
+        content: abandonedNote
+          ? `${reflectionResult.summary}\n\n[${abandonedNote}]`
+          : reflectionResult.summary,
         score: reflectionResult.score,
         learnings: reflectionResult.learnings,
         goalSummary: summary,

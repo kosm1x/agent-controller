@@ -62,7 +62,13 @@ vi.mock("../prometheus/reflector.js", () => ({
 import {
   buildSubTaskDescription,
   syncSubTaskStatuses,
+  maxParallelWidth,
+  swarmRunner,
 } from "./swarm-runner.js";
+import { plan } from "../prometheus/planner.js";
+import { reflect } from "../prometheus/reflector.js";
+const mockPlan = vi.mocked(plan);
+const mockReflect = vi.mocked(reflect);
 import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
 import {
@@ -635,4 +641,218 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     );
     expect(mockSubmitTask).not.toHaveBeenCalled();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Fixes for task 7466 (2026-07-13): chain demotion + honest walls
+// ---------------------------------------------------------------------------
+
+describe("maxParallelWidth", () => {
+  it("a strict chain has width 1", () => {
+    expect(
+      maxParallelWidth([
+        { id: "a" },
+        { id: "b", dependsOn: ["a"] },
+        { id: "c", dependsOn: ["b"] },
+      ]),
+    ).toBe(1);
+  });
+
+  it("independent goals count as parallel width", () => {
+    expect(maxParallelWidth([{ id: "a" }, { id: "b" }, { id: "c" }])).toBe(3);
+  });
+
+  it("a diamond (fan-out after a root) is wider than 1", () => {
+    expect(
+      maxParallelWidth([
+        { id: "root" },
+        { id: "l", dependsOn: ["root"] },
+        { id: "r", dependsOn: ["root"] },
+        { id: "join", dependsOn: ["l", "r"] },
+      ]),
+    ).toBe(2);
+  });
+
+  it("a single goal is width 1", () => {
+    expect(maxParallelWidth([{ id: "only" }])).toBe(1);
+  });
+
+  it("does not loop forever on a dependency cycle", () => {
+    expect(
+      maxParallelWidth([
+        { id: "a", dependsOn: ["b"] },
+        { id: "b", dependsOn: ["a"] },
+        { id: "c" },
+      ]),
+    ).toBe(1); // c resolves; the a/b cycle breaks the walk defensively
+  });
+});
+
+describe("swarm chain demotion (task 7466)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function chainGraph(): GoalGraph {
+    const g = new GoalGraph();
+    g.addGoal({ id: "g-1", description: "step 1" });
+    g.addGoal({ id: "g-2", description: "step 2", dependsOn: ["g-1"] });
+    g.addGoal({ id: "g-3", description: "step 3", dependsOn: ["g-2"] });
+    return g;
+  }
+
+  it("delegates a chain plan to ONE heavy sub-task and mirrors its output", async () => {
+    mockPlan.mockResolvedValue({
+      graph: chainGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    mockSubmitTask.mockResolvedValue({
+      taskId: "demoted-1",
+      agentType: "heavy",
+    } as never);
+    mockGetTask.mockReturnValue({
+      task_id: "demoted-1",
+      status: "completed",
+      output: JSON.stringify({
+        content: "the real answer",
+        finalAnswer: "the real answer",
+      }),
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "parent-1",
+      runId: "run-1",
+      title: "chat chain",
+      description: "do a sequential analysis",
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const submission = mockSubmitTask.mock.calls[0][0];
+    expect(submission.agentType).toBe("heavy");
+    expect(submission.parentTaskId).toBe("parent-1");
+    const out = result.output as { content?: string; finalAnswer?: string };
+    expect(out.content).toBe("the real answer");
+    expect(out.finalAnswer).toBe("the real answer");
+  });
+
+  it("reports the demoted child's failure honestly (task id + status)", async () => {
+    mockPlan.mockResolvedValue({
+      graph: chainGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    mockSubmitTask.mockResolvedValue({
+      taskId: "demoted-2",
+      agentType: "heavy",
+    } as never);
+    mockGetTask.mockReturnValue({
+      task_id: "demoted-2",
+      status: "failed",
+      error: "child exploded",
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "parent-2",
+      runId: "run-2",
+      title: "chat chain",
+      description: "do a sequential analysis",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("demoted-2");
+    expect(result.error).toContain("failed");
+    expect(result.error).toContain("child exploded");
+  });
+
+  it("treats completed_with_concerns as a demoted-child success (audit W1)", async () => {
+    mockPlan.mockResolvedValue({
+      graph: chainGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    mockSubmitTask.mockResolvedValue({
+      taskId: "demoted-3",
+      agentType: "heavy",
+    } as never);
+    mockGetTask.mockReturnValue({
+      task_id: "demoted-3",
+      status: "completed_with_concerns",
+      output: JSON.stringify({ content: "qualified answer" }),
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "parent-4",
+      runId: "run-4",
+      title: "chat chain",
+      description: "sequential",
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.output as { content?: string }).content).toBe(
+      "qualified answer",
+    );
+  });
+
+  it("a completed demoted child with NO output is an honest failure, not an empty deliverable (audit W3)", async () => {
+    mockPlan.mockResolvedValue({
+      graph: chainGraph(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    mockSubmitTask.mockResolvedValue({
+      taskId: "demoted-4",
+      agentType: "heavy",
+    } as never);
+    mockGetTask.mockReturnValue({
+      task_id: "demoted-4",
+      status: "completed",
+      output: null,
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "parent-5",
+      runId: "run-5",
+      title: "chat chain",
+      description: "sequential",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("demoted-4");
+    expect(result.error).toContain("no output");
+  });
+
+  it("does NOT demote a parallel plan — fan-out proceeds", async () => {
+    const g = new GoalGraph();
+    g.addGoal({ id: "p-1", description: "item A" });
+    g.addGoal({ id: "p-2", description: "item B" });
+    mockPlan.mockResolvedValue({
+      graph: g,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    // Make fan-out submissions fail fast so the poll loop terminates quickly
+    // (goals go FAILED at submit → allTerminal → break).
+    mockSubmitTask.mockRejectedValue(new Error("no capacity"));
+    mockReflect.mockResolvedValue({
+      result: {
+        success: false,
+        score: 0,
+        learnings: [],
+        summary: "nothing ran",
+      },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "parent-3",
+      runId: "run-3",
+      title: "true fan-out",
+      description: "process items A and B independently",
+    });
+
+    expect(result.success).toBe(false);
+    // Both parallel goals were submitted through the NORMAL fan-out path
+    // (no agentType override), not the demotion path.
+    expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+    for (const call of mockSubmitTask.mock.calls) {
+      expect(call[0].agentType).toBeUndefined();
+    }
+  }, 15_000);
 });
