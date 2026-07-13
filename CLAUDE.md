@@ -18,6 +18,7 @@ npm run eval:gate -- --run # model-swap gate: score vs committed incumbent (~$5,
 
 Always run `typecheck` + `test` after changes before reporting completion.
 CI (`.github/workflows/ci.yml`) runs `tsc --noEmit` + sharded `vitest` on push/PR — it is the enforced gate; the local pre-commit hook is a convenience, not the only line of defense.
+Jarvis's `git_commit` and `jarvis_dev action=pr` commit with `--no-verify` on `jarvis/*` branches by design (`d9187ae`/`e1c18bd`): the hook's full suite cannot fit inside those tools' 30-60s timeouts, and `action=pr` runs its own suite gate anyway — do not "fix" this back; CI gates.
 
 **Before ANY model-id, system-prompt, or tool-description change**, run `npm run eval:gate -- --run` and do not ship on a FAIL (exit 1). This is the guard for the tool-adherence/delivery regression class that reverted the Sonnet-5 attempt — previously caught only in prod. First capture a gate-native incumbent once with `npm run eval:gate -- --run --update-baseline` (the committed `src/tuning/eval-baseline.json` is provisional). See `docs/planning/system-hardening-sweep-2026-07-05.md`.
 

@@ -516,3 +516,18 @@ Sweep SHIPPED + deployed (`34fbb4f`→`a2e4da1`; plan `docs/planning/system-hard
 - **Phase 3.1 cache-fix re-measure (blocker for that item)**: the cross-task cache-miss economics (~$754/mo estimate) were measured on the contaminated fat-prefix profile. 0.3.x changed everything: ~23k smaller stable prefix + 1h-TTL writes (2× write, 94-96% warm reads observed). Re-measure before choosing among the 3 drafted fix options — the problem may have shrunk or moved.
 - **Operator note**: chat task 7379 ("Los errores siguen ahí. Diagnostica y corrige", 2026-07-12 03:23 UTC) died in the Phase-1 incident (npm swap under live service — `feedback_live_service_dep_swap`) and was never retried. Resend if still wanted.
 - **Upstream (P3, optional)**: agent-SDK 0.2.x loaded filesystem settings with `settingSources` unset while its docs promised isolation-when-omitted; 0.3.207 types now document unset = load-all. Worth a GitHub issue for the 0.2.x docs/behavior mismatch if it still matters upstream.
+
+## 2026-07-13 (late) — JME Phase 0 review + Jarvis coding-task walls removed
+
+**Context:** Operator + Jarvis designed the **Jarvis Memory Engine** ("JME": episodic `jme_turns` + semantic `jme_facts`, hybrid Gemini-embed + FTS5 retrieval, per-category TTL) over Telegram (tasks 7473–7486, Mem0 evaluated and discarded); Jarvis then built Phase 0 solo (tasks 7487–7491). The code is good — independently verified 12/12 tests green + typecheck clean — but the run burned a watchdog kill, a full 55-turn budget, and three "Continúa" turns on **three structural walls, all fixed + deployed** (`d9187ae`, audit follow-up `e1c18bd`; qa-auditor verdict PASS-with-notes, no security regression — the local hook is typecheck+tests only and Jarvis's sensitive-file filters run pre-commit):
+
+- `git_commit` (30s timeout) fired the pre-commit hook (full suite, ~3-5 min) → commit could NEVER succeed on `jarvis/*`. Now auto `--no-verify`, gated on the branch regex alone (audit finding: not on the GH token); CI on push/PR stays the enforced gate.
+- `jarvis_dev action=pr` re-ran the suite it had ITSELF just passed (or cache-trusted) via the hook inside `GIT_TIMEOUT_MS=60s` → `--no-verify` on its commit.
+- Stuck-task watchdog counts wall-clock from `started_at`; the nanoclaw→fast fallback inherited a 14-min-spent clock and was killed 2 min in → dispatcher resets `started_at` on fallback (documented tradeoff: the column no longer measures total task latency; dispatcher's own durationMs unaffected).
+
+**Jarvis's JME branch (`jarvis/feat/jme-phase0` in the worktree — STAGED, not yet committed):**
+
+- ⚠️ **Deploy-gate landmine:** his migration bumps `user_version` 2→3 but `scripts/deploy.sh` hardcodes the fresh-boot signature at 2 — the PR MUST update the gate expectation or the first post-merge deploy aborts.
+- Branch base is stale (`24af61d`) — rebase onto main before PR.
+- Minor: test file duplicates the migration DDL verbatim (drift risk — export a shared schema helper); `writeFacts()` doc says "single transaction" but it's a sequential loop.
+- **Next:** operator tells Jarvis "Continúa" — commit + PR now take seconds. New Jarvis directive: `jarvis-kb/directives/coding-task-playbook.md` (phase-per-turn with durable checkpoints, commit-per-phase, scoped tests only, handoff note on low budget, 3-strike stop, migration⇒deploy-gate rule).
