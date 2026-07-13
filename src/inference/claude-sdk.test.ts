@@ -13,11 +13,18 @@ const lastQueryArgs: { value: { prompt: unknown; options: unknown } | null } = {
 const mockThrowAfterYield: { value: Error | null } = { value: null };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  tool: (name: string, desc: string, shape: unknown, handler: unknown) => ({
+  tool: (
+    name: string,
+    desc: string,
+    shape: unknown,
+    handler: unknown,
+    extras?: Record<string, unknown>,
+  ) => ({
     name,
     desc,
     shape,
     handler,
+    ...(extras ?? {}),
   }),
   createSdkMcpServer: (config: unknown) => ({ type: "mcp", config }),
   query: (args: { prompt: unknown; options: unknown }) => {
@@ -65,6 +72,9 @@ vi.mock("../config.js", () => ({
 import {
   queryClaudeSdk,
   queryClaudeSdkAsInfer,
+  buildMcpServer,
+  wrapToolCached,
+  toolSearchEnabled,
   queryClaudeSdkAsInferWithTools,
   queryClaudeSdkComplexWithFallback,
   dominantModel,
@@ -84,6 +94,7 @@ beforeEach(() => {
   remainingBudgetMock.mockReset().mockReturnValue(10);
   budgetFlags.enabled = false;
   budgetFlags.enforce = false;
+  delete process.env.TOOL_SEARCH_ENABLED;
 });
 
 describe("queryClaudeSdk error_max_turns handling", () => {
@@ -2463,5 +2474,122 @@ describe("budget enforcement gate (V8.5 Phase 3.3)", () => {
     expect(result.text).toContain("done");
     const options = lastQueryArgs.value?.options as { maxBudgetUsd?: number };
     expect(options.maxBudgetUsd).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V8.5 Phase 3.2 — first-party SDK tool search (flag-gated, dormant default)
+// ---------------------------------------------------------------------------
+
+import type { Tool } from "../tools/types.js";
+
+function fakeTool(overrides: Partial<Tool> & { name: string }): Tool {
+  return {
+    definition: {
+      type: "function",
+      function: {
+        name: overrides.name,
+        description: `desc for ${overrides.name}`,
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    execute: async () => "",
+    ...overrides,
+  } as unknown as Tool;
+}
+
+describe("tool search (V8.5 Phase 3.2)", () => {
+  it("is DORMANT by default: server alwaysLoad pinned true, no subprocess flag", async () => {
+    expect(toolSearchEnabled()).toBe(false);
+    const server = buildMcpServer([]) as unknown as {
+      config: { alwaysLoad?: boolean };
+    };
+    expect(server.config.alwaysLoad).toBe(true);
+
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    const env = (lastQueryArgs.value?.options as { env: Record<string, string> })
+      .env;
+    expect(env.ENABLE_TOOL_SEARCH).toBeUndefined();
+  });
+
+  it("armed: server pin drops and the subprocess env carries ENABLE_TOOL_SEARCH", async () => {
+    process.env.TOOL_SEARCH_ENABLED = "true";
+    const server = buildMcpServer([]) as unknown as {
+      config: { alwaysLoad?: boolean };
+    };
+    expect(server.config.alwaysLoad).toBe(false);
+
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+    const env = (lastQueryArgs.value?.options as { env: Record<string, string> })
+      .env;
+    expect(env.ENABLE_TOOL_SEARCH).toBe("true");
+  });
+
+  it("armed: admits the built-in ToolSearchTool (tools + allowedTools) — the CLI's mode decision requires it", async () => {
+    process.env.TOOL_SEARCH_ENABLED = "true";
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: ["x"] });
+    const options = lastQueryArgs.value?.options as {
+      tools: string[];
+      allowedTools: string[];
+    };
+    expect(options.tools).toEqual(["ToolSearch"]);
+    expect(options.allowedTools).toContain("ToolSearch");
+  });
+
+  it("dormant: built-in tools stay fully disabled (tools: [])", async () => {
+    mockMessages.value = [SEAM_SUCCESS_RESULT];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: ["x"] });
+    const options = lastQueryArgs.value?.options as {
+      tools: string[];
+      allowedTools: string[];
+    };
+    expect(options.tools).toEqual([]);
+    expect(options.allowedTools).not.toContain("ToolSearch");
+  });
+
+  it("bakes per-tool alwaysLoad from the registry deferred annotation", () => {
+    const core = wrapToolCached(
+      fakeTool({ name: "core_tool" }),
+    ) as unknown as { alwaysLoad?: boolean };
+    const tail = wrapToolCached(
+      fakeTool({ name: "tail_tool", deferred: true }),
+    ) as unknown as { alwaysLoad?: boolean };
+    expect(core.alwaysLoad).toBe(true);
+    expect(tail.alwaysLoad).toBe(false);
+  });
+
+  it("maps triggerPhrases to the search hint", () => {
+    const wrapped = wrapToolCached(
+      fakeTool({
+        name: "hinted_tool",
+        deferred: true,
+        triggerPhrases: ["manda un correo", "send email"],
+      }),
+    ) as unknown as { searchHint?: string };
+    expect(wrapped.searchHint).toBe("manda un correo, send email");
+
+    const bare = wrapToolCached(
+      fakeTool({ name: "bare_tool" }),
+    ) as unknown as { searchHint?: string };
+    expect(bare.searchHint).toBeUndefined();
+  });
+
+  it("forces inline extraTools always-loaded regardless of the flag (probe stubs must never defer)", () => {
+    process.env.TOOL_SEARCH_ENABLED = "true";
+    const inline = {
+      name: "submit_verdict",
+      description: "d",
+      inputSchema: {},
+      handler: async () => ({ content: [] }),
+    };
+    const server = buildMcpServer([], [
+      inline as never,
+    ]) as unknown as {
+      config: { tools: Array<{ _meta?: Record<string, unknown> }> };
+    };
+    expect(server.config.tools[0]._meta?.["anthropic/alwaysLoad"]).toBe(true);
   });
 });

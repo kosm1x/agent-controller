@@ -112,6 +112,24 @@ function jsonSchemaToZodShape(
  * fresh wrap automatically — no invalidation policy to maintain. The handler
  * closes over the registry lookup by name, so execution behavior is identical.
  */
+/**
+ * V8.5 Phase 3.2 — first-party SDK tool search. When armed, the SDK's
+ * subprocess receives ENABLE_TOOL_SEARCH=true, the jarvis MCP server drops
+ * its server-level `alwaysLoad: true` pin, and per-tool `alwaysLoad`
+ * (baked into every wrap as `!tool.deferred`) takes over: the always-on
+ * core stays in the turn-1 prompt, the deferred long tail is discovered
+ * on demand via the API-native search tool instead of shipping ~150 full
+ * schemas per call. Read per-call (no module-const freeze) — flip
+ * TOOL_SEARCH_ENABLED without a rebuild, kill switch = unset.
+ *
+ * DORMANT by default. Arming changes the tool block → invalidates the
+ * cached prompt prefix → contaminates any running cache experiment
+ * (see the DEBUG_CACHE_DIAG window); arm deliberately.
+ */
+export function toolSearchEnabled(): boolean {
+  return process.env.TOOL_SEARCH_ENABLED === "true";
+}
+
 const wrappedToolCache = new WeakMap<Tool, ReturnType<typeof wrapTool>>();
 
 /** @internal exported for the memoization contract test only. */
@@ -156,6 +174,19 @@ function wrapTool(t: Tool) {
           isError: true,
         };
       }
+    },
+    {
+      // V8.5 Phase 3.2: per-tool tool-search deferral. Inert while the
+      // server-level alwaysLoad pin is true (the SDK ORs them); when the
+      // TOOL_SEARCH_ENABLED flag drops the pin, the registry's existing
+      // `deferred` annotation decides prompt residency — the same core/
+      // long-tail split the OpenAI-path scope system uses. triggerPhrases
+      // double as the search hint (they exist to match informal requests).
+      alwaysLoad: !t.deferred,
+      ...(t.triggerPhrases &&
+        t.triggerPhrases.length > 0 && {
+          searchHint: t.triggerPhrases.join(", "),
+        }),
     },
   );
 }
@@ -229,16 +260,30 @@ export function buildMcpServer(
     .filter((t): t is Tool => t !== undefined)
     .map(wrapToolCached);
 
+  // Inline tools are ALWAYS loaded, tool search or not: they are the point
+  // of their call (selection-probe stubs, forced-structured-output submit
+  // tools like the S2 critic's submit_verdict). A deferred probe stub would
+  // silently break the eval gate's tool_selection signal — the eval-silence
+  // class. `_meta['anthropic/alwaysLoad']` is the SDK's documented per-tool
+  // carrier (what `tool({ alwaysLoad })` sets); pinned by spec in tests.
+  const inlineTools = extraTools.map((t) => ({
+    ...t,
+    _meta: { ...t._meta, "anthropic/alwaysLoad": true },
+  }));
+
   return createSdkMcpServer({
     name: "jarvis",
     version: "1.0.0",
-    tools: [...registryTools, ...extraTools],
+    tools: [...registryTools, ...inlineTools],
     // SDK 0.3.x connects MCP servers non-blocking and may defer tools behind
-    // SDK tool search. Mission-control runs its OWN deferral/scope system and
-    // every allowed tool must be in the prompt when turn 1 is built (eval
-    // selection probes + fast-runner assume it). alwaysLoad pins that;
-    // verified via scripts/validate-sdk-tool-visibility.ts (30/30 visible).
-    alwaysLoad: true,
+    // SDK tool search. With tool search OFF (default), every allowed tool
+    // must be in the prompt when turn 1 is built (eval selection probes +
+    // fast-runner assume it) — alwaysLoad pins that; verified via
+    // scripts/validate-sdk-tool-visibility.ts (30/30 visible). With
+    // TOOL_SEARCH_ENABLED=true (V8.5 Phase 3.2) the pin drops so the
+    // per-tool `alwaysLoad: !deferred` baked into each wrap takes over
+    // (the SDK ORs server-level with per-tool).
+    alwaysLoad: !toolSearchEnabled(),
   });
 }
 
@@ -504,8 +549,18 @@ export async function queryClaudeSdk(opts: {
   // reply channel including "help, my server is down" chat.
   let maxBudgetUsd: number | undefined;
   {
-    const cfg = getConfig();
-    if (cfg.budgetEnabled && cfg.budgetEnforce) {
+    // getConfig() THROWS on missing required env (MC_API_KEY etc.) —
+    // standalone scripts/harnesses run queryClaudeSdk without the service
+    // env and must not crash on an enforcement gate that is dormant for
+    // them anyway. Config-unavailable = enforcement skipped (same fail-open
+    // posture as the ledger-read guard below).
+    let cfg: { budgetEnabled: boolean; budgetEnforce: boolean } | undefined;
+    try {
+      cfg = getConfig();
+    } catch {
+      cfg = undefined;
+    }
+    if (cfg?.budgetEnabled && cfg.budgetEnforce) {
       let remaining: number | undefined;
       try {
         remaining = getRemainingBudgetUsd();
@@ -560,6 +615,11 @@ export async function queryClaudeSdk(opts: {
   const allowedTools = [
     ...opts.toolNames.map((n) => `mcp__jarvis__${n}`),
     ...extraTools.map((t) => `mcp__jarvis__${t.name}`),
+    // V8.5 Phase 3.2: the CLI refuses tool-search mode unless the built-in
+    // ToolSearchTool is available AND allowed ("mcp_search_unavailable" in
+    // tengu_tool_search_mode_decision) — `tools: []` below removes every
+    // built-in, so it must be re-admitted explicitly when armed.
+    ...(toolSearchEnabled() ? ["ToolSearch"] : []),
   ];
 
   const abortController = new AbortController();
@@ -614,7 +674,9 @@ export async function queryClaudeSdk(opts: {
     systemPrompt: safeSystemPromptText,
     mcpServers: { jarvis: mcpServer },
     allowedTools,
-    tools: [], // Disable all Claude Code built-in tools
+    // Disable all Claude Code built-in tools — EXCEPT the ToolSearchTool
+    // when tool search is armed (the mode decision requires it present).
+    tools: toolSearchEnabled() ? ["ToolSearch"] : [],
     // dontAsk + allowedTools: auto-approve listed tools, deny unlisted.
     // bypassPermissions crashes with MCP servers (exit code 1).
     permissionMode: "dontAsk",
@@ -652,6 +714,12 @@ export async function queryClaudeSdk(opts: {
     env: {
       ...process.env,
       CLAUDE_AGENT_SDK_CLIENT_APP: "mission-control/1.0.0",
+      // V8.5 Phase 3.2: the tool-search capability lives behind a binary
+      // env flag read by the CLI subprocess — options.env REPLACES the
+      // child's environment (0.2.113+ contract), so the flag must be set
+      // here explicitly; the process.env spread above only forwards it if
+      // the operator exported it globally.
+      ...(toolSearchEnabled() && { ENABLE_TOOL_SEARCH: "true" }),
       // v7.7.3: compact earlier than the 200k model ceiling to preserve
       // context fidelity before the window fills. Adopted from NanoClaw
       // v1.2.50 (2026-04-12) after they observed that compacting at the
@@ -813,6 +881,7 @@ export async function queryClaudeSdk(opts: {
         if (message.subtype === "success") {
           providerOutcome = "success";
           const success = message as SDKResultSuccess;
+          warnIfDeferredToolUnresolved(success);
           // success.result captures only the FINAL assistant turn's text.
           // When the final turn is tool-use-heavy (or a minimal closer), any
           // body text produced in earlier turns lives only in streamingText.
@@ -864,6 +933,10 @@ export async function queryClaudeSdk(opts: {
           // line so the fast-runner parser classifies deterministically
           // instead of defaulting to DONE on a raw error string.
           const error = message as SDKResultError;
+          // 3.2 tripwire on the error branch too (audit W3): a maxTurns-1
+          // run that dies ON the unresolved deferral ends as an error
+          // subtype — exactly the low-turn blind spot.
+          warnIfDeferredToolUnresolved(error);
           const errorMsgs = error.errors?.join("; ") ?? "unknown";
           const marker = `[${error.subtype} — ${errorMsgs}]`;
           numTurns =
@@ -1102,6 +1175,29 @@ export async function queryClaudeSdk(opts: {
  * the DB (eval/tuning scripts, one-off validators) EVERY call's write fails
  * identically — one warn carries the signal, 172 repeats bury the log.
  */
+/**
+ * V8.5 Phase 3.2 tripwire: with tool search armed the SDK should
+ * load-and-execute deferred tools transparently; a run that ENDS holding a
+ * deferred_tool_use (terminal_reason tool_deferred / tool_deferred_unavailable)
+ * means a tool the model wanted never ran — loud log on BOTH result branches
+ * so it can't decay silently (eval-silence class).
+ */
+function warnIfDeferredToolUnresolved(result: unknown): void {
+  const r = result as {
+    terminal_reason?: string;
+    deferred_tool_use?: { name?: string };
+  };
+  if (
+    r.deferred_tool_use ||
+    r.terminal_reason === "tool_deferred" ||
+    r.terminal_reason === "tool_deferred_unavailable"
+  ) {
+    console.warn(
+      `[claude-sdk] run ended with UNRESOLVED deferred tool use (terminal_reason=${r.terminal_reason ?? "n/a"}, tool=${r.deferred_tool_use?.name ?? "n/a"}) — tool search deferral did not resolve`,
+    );
+  }
+}
+
 let seamRecordFailureWarned = false;
 function warnSeamRecordFailureOnce(err: unknown): void {
   if (seamRecordFailureWarned) return;

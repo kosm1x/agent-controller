@@ -118,6 +118,11 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 
 ---
 
+## Tool-search follow-ups (V8.5 Phase 3.2, 2026-07-13)
+
+1. **Container propagation (audit W4).** `TOOL_SEARCH_ENABLED`/`ENABLE_TOOL_SEARCH` reach only HOST SDK calls; the nanoclaw sandbox and containerized-heavy runs keep full-schema prompts (correct, just unoptimized). Trigger: next nanoclaw/heavy-container image rebuild — decide whether to pass the flag into the container env (needs its own validation run inside the sandbox).
+2. **SDK-internal contract watch (audit W2).** The tripwire fields (`terminal_reason`, `deferred_tool_use`) and the inline `_meta['anthropic/alwaysLoad']` carrier are SDK-version-coupled (live-verified on 0.3.207 via `scripts/validate-tool-search.ts` phases D/E). Trigger: EVERY SDK version bump — re-run `npx tsx scripts/validate-tool-search.ts --run` (~$0.80) as part of the bump checklist, alongside the eval gate.
+
 ## BUDGET_ENFORCE arming pre-flight (V8.5 Phase 3.3 audit deferrals, 2026-07-13)
 
 > **PARKED — operator ruling 2026-07-13 (same day): "No hard-cap enforcement in the near future. Viewability and accountability are enough."** The hard-cap thread is CLOSED until the operator reopens it. Do not propose arming, do not schedule these items, do not count them as open work. The enforcement code stays dormant in the tree (zero-cost, fully tested); if arming is ever wanted, this section is the mandatory pre-flight.
