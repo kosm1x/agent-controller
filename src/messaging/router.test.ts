@@ -855,7 +855,7 @@ describe("MessageRouter", () => {
         const completedHandler = findHandler("task.completed");
         completedHandler!({
           data: {
-            task_id: "test-jme-1",
+            task_id: "test-task-123",
             agent_id: "fast",
             result: "Respuesta",
             duration_ms: 100,
@@ -863,7 +863,7 @@ describe("MessageRouter", () => {
         });
 
         // Fire-and-forget — flush microtasks
-        await new Promise((r) => setTimeout(r, 0));
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
 
         expect(mockWriteEpisodic).toHaveBeenCalled();
         const calls = mockWriteEpisodic.mock.calls;
@@ -885,14 +885,14 @@ describe("MessageRouter", () => {
         const completedHandler = findHandler("task.completed");
         completedHandler!({
           data: {
-            task_id: "test-jme-2",
+            task_id: "test-task-123",
             agent_id: "fast",
             result: "Respuesta",
             duration_ms: 100,
           },
         });
 
-        await new Promise((r) => setTimeout(r, 0));
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
 
         expect(mockWriteEpisodic).not.toHaveBeenCalled();
       });
@@ -910,14 +910,14 @@ describe("MessageRouter", () => {
         const completedHandler = findHandler("task.completed");
         completedHandler!({
           data: {
-            task_id: "test-jme-3",
+            task_id: "test-task-123",
             agent_id: "fast",
             result: "Respuesta",
             duration_ms: 100,
           },
         });
 
-        await new Promise((r) => setTimeout(r, 0));
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
 
         expect(mockWriteEpisodic).not.toHaveBeenCalled();
       });
