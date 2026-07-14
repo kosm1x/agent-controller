@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *   1. Cache — L1 in-memory (TTL), L2 market_data DB table
- *   2. Dispatch — primary (AV) with fallback (Polygon); macro via FRED
+ *   2. Dispatch — primary (Polygon) with fallback (AV, free tier: 25/day); macro via FRED
  *   3. Persist — every fetched bar lands in market_data
  *   4. Validate — H2 validation on every bar before insert
  *   5. Watchlist CRUD — add/remove/list with budget-overflow guard
@@ -18,7 +18,6 @@
 import { getDatabase } from "../db/index.js";
 import {
   DataUnavailableError,
-  RateLimitedError,
   type AssetClass,
   type FetchResult,
   type IntradayInterval,
@@ -187,26 +186,8 @@ export class DataLayer {
   ): Promise<MarketBar[]> {
     const attempts: { provider: Provider; reason: string }[] = [];
 
-    if (this.av && canCall("alpha_vantage")) {
-      try {
-        const bars = await this.av.fetchDaily(symbol, { lookback });
-        this.persistBars(bars);
-        return bars;
-      } catch (err) {
-        attempts.push({
-          provider: "alpha_vantage",
-          reason: errMsg(err),
-        });
-        if (!(err instanceof RateLimitedError)) {
-          // Non-rate-limit error: still try Polygon
-        }
-      }
-    } else if (this.av) {
-      attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
-    } else {
-      attempts.push({ provider: "alpha_vantage", reason: "not configured" });
-    }
-
+    // Polygon first — AV is on the free tier (25 req/day) since 2026-07-14,
+    // so the daily workhorse must be Polygon; AV is a scarce fallback.
     if (this.polygon && canCall("polygon")) {
       try {
         const bars = await this.polygon.fetchDaily(symbol, { lookback });
@@ -222,6 +203,23 @@ export class DataLayer {
       attempts.push({ provider: "polygon", reason: "rate limited" });
     } else {
       attempts.push({ provider: "polygon", reason: "not configured" });
+    }
+
+    if (this.av && canCall("alpha_vantage")) {
+      try {
+        const bars = await this.av.fetchDaily(symbol, { lookback });
+        this.persistBars(bars);
+        return bars;
+      } catch (err) {
+        attempts.push({
+          provider: "alpha_vantage",
+          reason: errMsg(err),
+        });
+      }
+    } else if (this.av) {
+      attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
+    } else {
+      attempts.push({ provider: "alpha_vantage", reason: "not configured" });
     }
 
     // Last resort: stale DB rows
@@ -360,20 +358,7 @@ export class DataLayer {
     lookback: number,
   ): Promise<MarketBar[]> {
     const attempts: { provider: Provider; reason: string }[] = [];
-    if (this.av && canCall("alpha_vantage")) {
-      try {
-        const bars = await this.av.fetchIntraday(symbol, interval, {
-          lookback,
-        });
-        this.persistBars(bars);
-        return bars;
-      } catch (err) {
-        attempts.push({
-          provider: "alpha_vantage",
-          reason: errMsg(err),
-        });
-      }
-    }
+    // Polygon first — see fetchDailyDispatch (AV free tier is 25 req/day).
     if (this.polygon && canCall("polygon")) {
       try {
         const bars = await this.polygon.fetchIntraday(symbol, interval, {
@@ -384,6 +369,20 @@ export class DataLayer {
       } catch (err) {
         attempts.push({
           provider: "polygon",
+          reason: errMsg(err),
+        });
+      }
+    }
+    if (this.av && canCall("alpha_vantage")) {
+      try {
+        const bars = await this.av.fetchIntraday(symbol, interval, {
+          lookback,
+        });
+        this.persistBars(bars);
+        return bars;
+      } catch (err) {
+        attempts.push({
+          provider: "alpha_vantage",
           reason: errMsg(err),
         });
       }
@@ -463,7 +462,7 @@ export class DataLayer {
     const projected = projectedDailyAvCalls(currentSize + 1);
     if (projected > AV_TIER1_DAILY_CEILING) {
       throw new Error(
-        `Adding ${symbol} would push projected daily AV usage to ${projected}/${AV_TIER1_DAILY_CEILING} calls — above 80% ceiling. Upgrade tier or remove a symbol first.`,
+        `Adding ${symbol} would push projected daily data-provider usage to ${projected}/${AV_TIER1_DAILY_CEILING} calls — above the Polygon free-tier practical ceiling. Remove a symbol first (or upgrade a provider tier).`,
       );
     }
 

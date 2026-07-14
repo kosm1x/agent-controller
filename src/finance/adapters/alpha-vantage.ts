@@ -1,11 +1,14 @@
 /**
- * Alpha Vantage adapter — primary finance data provider.
+ * Alpha Vantage adapter — FALLBACK finance data provider (Polygon is primary).
  *
- * Premium tier $49.99/mo. 75 req/min. Rate limiter ceiling set to 60/min (80%).
+ * FREE tier (downgraded from premium 2026-07-14): 25 requests/DAY, ~5 req/min.
+ * Rate limiter enforces both windows (see rate-limit.ts). Premium-only
+ * endpoints (TIME_SERIES_DAILY_ADJUSTED, realtime intraday) are NOT available
+ * on this key — daily bars use the free TIME_SERIES_DAILY (unadjusted).
  * Endpoints used:
- *   - TIME_SERIES_DAILY_ADJUSTED — daily OHLCV with split/div adjustment
+ *   - TIME_SERIES_DAILY — daily OHLCV (unadjusted; free tier)
  *   - TIME_SERIES_WEEKLY_ADJUSTED — weekly OHLCV with split/div adjustment
- *   - TIME_SERIES_INTRADAY — 1/5/15/60 min bars
+ *   - TIME_SERIES_INTRADAY — 1/5/15/60 min bars (delayed on free tier)
  *   - FX_DAILY — FX pair daily bars
  *   - GLOBAL_QUOTE — current snapshot
  *   - NEWS_SENTIMENT — ticker sentiment (25 cost units)
@@ -71,13 +74,15 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
 
   async fetchDaily(symbol: string, opts: FetchOpts): Promise<MarketBar[]> {
     const outputSize = opts.lookback > 100 ? "full" : "compact";
+    // TIME_SERIES_DAILY_ADJUSTED is premium-only; the free-tier key gets
+    // TIME_SERIES_DAILY (unadjusted, so adjustedClose = close). Polygon is
+    // the primary daily source and DOES adjust — this path is fallback-only.
     const body = await this.request<Record<string, unknown>>(
-      "TIME_SERIES_DAILY_ADJUSTED",
+      "TIME_SERIES_DAILY",
       { symbol, outputsize: outputSize },
     );
     const series = body["Time Series (Daily)"] as
-      | Record<string, Record<string, string>>
-      | undefined;
+      Record<string, Record<string, string>> | undefined;
     if (!series) {
       throw new Error(
         `AV daily: unexpected shape, keys=${Object.keys(body).join(",")}`,
@@ -93,8 +98,8 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
       high: parseFloat(row["2. high"]),
       low: parseFloat(row["3. low"]),
       close: parseFloat(row["4. close"]),
-      adjustedClose: parseFloat(row["5. adjusted close"]),
-      volume: parseInt(row["6. volume"], 10),
+      adjustedClose: parseFloat(row["4. close"]),
+      volume: parseInt(row["5. volume"], 10),
       provider: this.provider,
       interval: "daily" as const,
     }));
@@ -108,8 +113,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
       { symbol },
     );
     const series = body["Weekly Adjusted Time Series"] as
-      | Record<string, Record<string, string>>
-      | undefined;
+      Record<string, Record<string, string>> | undefined;
     if (!series) {
       throw new Error(
         `AV weekly: unexpected shape, keys=${Object.keys(body).join(",")}`,
@@ -144,8 +148,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
     );
     const key = `Time Series (${interval})`;
     const series = body[key] as
-      | Record<string, Record<string, string>>
-      | undefined;
+      Record<string, Record<string, string>> | undefined;
     if (!series) {
       throw new Error(`AV intraday: missing "${key}" in response`);
     }
@@ -177,8 +180,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
       outputsize: outputSize,
     });
     const series = body["Time Series FX (Daily)"] as
-      | Record<string, Record<string, string>>
-      | undefined;
+      Record<string, Record<string, string>> | undefined;
     if (!series) {
       throw new Error(`AV FX daily: missing "Time Series FX (Daily)"`);
     }
@@ -298,9 +300,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
         responseTimeMs: Date.now() - start,
         costUnits: opts.costUnits,
       });
-      throw new Error(
-        redactApiKeys(errMsg(err)),
-      );
+      throw new Error(redactApiKeys(errMsg(err)));
     }
 
     const responseTimeMs = Date.now() - start;

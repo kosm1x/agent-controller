@@ -60,20 +60,25 @@ export function budgetSummary(): {
 }
 
 /**
- * Seed the in-memory rate limiter at boot from the last minute of
- * successful calls. Prevents post-restart burst that would exceed the
- * provider ceiling.
+ * Seed the in-memory rate limiter at boot from recent successful calls.
+ * Prevents post-restart burst that would exceed the provider ceiling.
+ * Providers with a daily quota (alpha_vantage free tier: 25/day) seed from
+ * the last 24h so a restart can't reset the daily budget.
  */
 export function seedRateLimitersFromHistory(): void {
   const db = getDatabase();
-  const providers: Provider[] = ["alpha_vantage", "polygon", "fred"];
+  const providers: { provider: Provider; window: string }[] = [
+    { provider: "alpha_vantage", window: "-1 day" },
+    { provider: "polygon", window: "-1 minute" },
+    { provider: "fred", window: "-1 minute" },
+  ];
   const recentCalls = db.prepare(
     `SELECT call_time FROM api_call_budget
-     WHERE provider=? AND call_time > datetime('now','-1 minute')
+     WHERE provider=? AND call_time > datetime('now', ?)
      ORDER BY call_time ASC`,
   );
-  for (const provider of providers) {
-    const rows = recentCalls.all(provider) as { call_time: string }[];
+  for (const { provider, window } of providers) {
+    const rows = recentCalls.all(provider, window) as { call_time: string }[];
     seedFromHistory(
       provider,
       rows.map((r) => r.call_time),
@@ -83,8 +88,10 @@ export function seedRateLimitersFromHistory(): void {
 
 /**
  * Projected daily call count for a given watchlist size.
- * Used by watchlist_add to refuse adds that push projected usage > 80% of
- * the Alpha Vantage tier-1 daily quota (108,000 calls/day).
+ * Used by watchlist_add to refuse adds that push projected usage above the
+ * primary provider's practical daily throughput. Since the 2026-07-14 AV
+ * free-tier downgrade, Polygon (free: 5/min, no daily cap) is the primary —
+ * the binding constraint is its per-minute ceiling sustained over a day.
  *
  * Assumption: morning scan = 45 calls/scan × ~2 scans/day + ad-hoc = ~100 calls/symbol/day.
  * This is pessimistic — actual is lower with caching.
@@ -94,5 +101,9 @@ export function projectedDailyAvCalls(watchlistSize: number): number {
   return watchlistSize * CALLS_PER_SYMBOL_PER_DAY;
 }
 
-/** Alpha Vantage tier-1 daily ceiling (108k calls/day, enforced at 80%). */
-export const AV_TIER1_DAILY_CEILING = 86_400;
+/**
+ * Primary-provider practical daily ceiling: Polygon free tier at the 4/min
+ * limiter ceiling = 5,760 calls/day theoretical, enforced at 80%.
+ * (Replaced AV_TIER1_DAILY_CEILING=86,400 when the AV key dropped to free.)
+ */
+export const AV_TIER1_DAILY_CEILING = 4_608;

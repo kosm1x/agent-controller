@@ -46,7 +46,7 @@ describe("AlphaVantageAdapter", () => {
     mockDb.prepare.mockClear();
   });
 
-  it("fetches TIME_SERIES_DAILY_ADJUSTED and normalizes timestamps", async () => {
+  it("fetches TIME_SERIES_DAILY (free tier) and normalizes timestamps", async () => {
     const fakeFetch = vi
       .fn()
       .mockResolvedValue(okResponse(avDailySpy)) as unknown as typeof fetch;

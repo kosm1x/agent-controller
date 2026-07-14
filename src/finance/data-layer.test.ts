@@ -148,31 +148,42 @@ describe("DataLayer", () => {
     expect((av2.fetchDaily as any).mock.calls.length).toBe(0);
   });
 
-  it("primary→fallback on AV RateLimitedError", async () => {
-    const av = Object.create(AlphaVantageAdapter.prototype);
-    av.provider = "alpha_vantage";
-    av.fetchDaily = vi
-      .fn()
-      .mockRejectedValue(new RateLimitedError("alpha_vantage"));
+  it("Polygon is primary — AV is not called when Polygon serves", async () => {
+    const avBars = [makeBar({ provider: "alpha_vantage" })];
+    const av = makeAvStub(avBars);
     const polyBars = [makeBar({ provider: "polygon" })];
     const poly = makePolyStub(polyBars);
-    const layer = new DataLayer(av as AlphaVantageAdapter, poly, null);
+    const layer = new DataLayer(av, poly, null);
     const result = await layer.getDaily("SPY", { lookback: 1 });
     expect(result.provider).toBe("polygon");
-    expect(poly.fetchDaily).toHaveBeenCalled();
+    expect((av.fetchDaily as any).mock.calls.length).toBe(0);
   });
 
-  it("primary→fallback on AV 5xx-like error", async () => {
-    const av = Object.create(AlphaVantageAdapter.prototype);
-    av.provider = "alpha_vantage";
-    av.fetchDaily = vi
+  it("primary→fallback on Polygon RateLimitedError", async () => {
+    const poly = Object.create(PolygonAdapter.prototype);
+    poly.provider = "polygon";
+    poly.fetchDaily = vi
       .fn()
-      .mockRejectedValue(new Error("AV 503: service unavailable"));
-    const polyBars = [makeBar({ provider: "polygon" })];
-    const poly = makePolyStub(polyBars);
-    const layer = new DataLayer(av as AlphaVantageAdapter, poly, null);
+      .mockRejectedValue(new RateLimitedError("polygon"));
+    const avBars = [makeBar({ provider: "alpha_vantage" })];
+    const av = makeAvStub(avBars);
+    const layer = new DataLayer(av, poly as PolygonAdapter, null);
     const result = await layer.getDaily("SPY", { lookback: 1 });
-    expect(result.provider).toBe("polygon");
+    expect(result.provider).toBe("alpha_vantage");
+    expect(av.fetchDaily).toHaveBeenCalled();
+  });
+
+  it("primary→fallback on Polygon 5xx-like error", async () => {
+    const poly = Object.create(PolygonAdapter.prototype);
+    poly.provider = "polygon";
+    poly.fetchDaily = vi
+      .fn()
+      .mockRejectedValue(new Error("Polygon 503: service unavailable"));
+    const avBars = [makeBar({ provider: "alpha_vantage" })];
+    const av = makeAvStub(avBars);
+    const layer = new DataLayer(av, poly as PolygonAdapter, null);
+    const result = await layer.getDaily("SPY", { lookback: 1 });
+    expect(result.provider).toBe("alpha_vantage");
   });
 
   it("both-unavailable with stale DB rows returns stale:true", async () => {
@@ -291,13 +302,12 @@ describe("DataLayer", () => {
   });
 
   it("addToWatchlist rejects on projected budget overflow", () => {
-    // Seed 864 active symbols (each costs ~100 calls/day → 86,400 at ceiling)
-    // +1 more pushes over 80% of 108,000
+    // Seed 46 active symbols (each costs ~100 calls/day → 4,600 at the
+    // Polygon free-tier practical ceiling of 4,608). +1 more pushes over.
     const layer = new DataLayer(null, null, null);
-    for (let i = 0; i < 864; i++) {
+    for (let i = 0; i < 46; i++) {
       layer.addToWatchlist({ symbol: `SYM${i}A`, assetClass: "equity" });
     }
-    // Next add should refuse (864 * 100 = 86400 = ceiling; +1 more = over)
     expect(() =>
       layer.addToWatchlist({ symbol: "OVER", assetClass: "equity" }),
     ).toThrow(/ceiling/);

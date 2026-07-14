@@ -10,7 +10,12 @@ import type { Tool } from "../types.js";
 import { getDataLayer } from "../../finance/data-layer.js";
 import type { AssetClass, MacroPoint, MarketBar } from "../../finance/types.js";
 import { budgetSummary } from "../../finance/budget.js";
-import { currentWindow, ceilings } from "../../finance/rate-limit.js";
+import {
+  currentWindow,
+  ceilings,
+  currentDailyWindow,
+  dailyCeilings,
+} from "../../finance/rate-limit.js";
 import {
   seedSymbol,
   formatSeedResult,
@@ -480,7 +485,8 @@ export const marketBudgetStatsTool: Tool = {
       description: `API consumption stats for Alpha Vantage / Polygon / FRED.
 
 USE WHEN: user asks about API usage, rate limits, budget status.
-Output: last-60s window usage vs ceilings + last-hour summary.`,
+Output: last-60s window usage vs ceilings + daily quota usage (Alpha Vantage
+free tier: 25 req/day) + last-hour summary.`,
       parameters: { type: "object", properties: {} },
     },
   },
@@ -488,12 +494,20 @@ Output: last-60s window usage vs ceilings + last-hour summary.`,
   async execute(): Promise<string> {
     const window = currentWindow();
     const caps = ceilings();
+    const dailyWindow = currentDailyWindow();
+    const dailyCaps = dailyCeilings();
     const hourly = budgetSummary();
     const lines: string[] = ["Finance API budget:"];
     for (const [provider, count] of Object.entries(window)) {
       const cap = caps[provider as keyof typeof caps];
       lines.push(
         `  ${provider}: ${count}/${cap ?? "∞"} calls in last 60s (${cap ? Math.round((count / cap) * 100) : 0}% of window)`,
+      );
+    }
+    for (const [provider, count] of Object.entries(dailyWindow)) {
+      const cap = dailyCaps[provider as keyof typeof dailyCaps];
+      lines.push(
+        `  ${provider}: ${count}/${cap ?? "∞"} calls in last 24h (daily quota)`,
       );
     }
     if (hourly.length) {
@@ -766,12 +780,7 @@ function fmtValue(v: number | null): string {
 // ---------------------------------------------------------------------------
 
 type SingleValueIndicatorName =
-  | "sma"
-  | "ema"
-  | "rsi"
-  | "macd_hist"
-  | "roc"
-  | "williams";
+  "sma" | "ema" | "rsi" | "macd_hist" | "roc" | "williams";
 type ScanOperator = "lt" | "le" | "gt" | "ge" | "eq";
 
 export const marketScanTool: Tool = {
