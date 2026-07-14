@@ -1706,7 +1706,7 @@ cmd_trace() {
     COALESCE(tokens_in,'')   AS tok_in,
     COALESCE(tokens_out,'')  AS tok_out,
     COALESCE(latency_ms,'')  AS ms,
-    COALESCE(printf('%.4f', cost_usd),'') AS cost,
+    CASE WHEN cost_usd IS NULL THEN '' ELSE printf('%.4f', cost_usd) END AS cost,
     substr(COALESCE(attrs,''),1,80) AS attrs
   FROM task_trace_events WHERE task_id = '${id}' ORDER BY id;"
 

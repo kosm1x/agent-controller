@@ -570,3 +570,15 @@ Tier-2 audit (R1 adversarial + R2 adjacent + R3 verdict) on PR #27 + independent
 **Watch:** first auto-bridge fire = next "excelente" on a task with a feedback window (`mc-ctl db "SELECT case_id, mined_from FROM mined_test_cases WHERE mined_from LIKE 'flywheel:excelente:%'"`). Deferred by design: manual `flywheel:task:%`/`flywheel:manual` pins stay ceiling-exempt; tripwire = nightly `[case-miner]` warn when active tool_selection >200.
 
 **V8.5 remaining:** Phase 6 task-trace observability (next medium block) · Phase 5 arming runway (own sizing session) · cache-diag verdict ~07-16 (then remove `cache-diag.conf`) · tool_selection 32.30-vs-35.43 watch.
+
+## 2026-07-14 (late) — V8.5 Phase 6 SHIPPED: task-trace observability (`f264d75`, pid 3754043)
+
+**What exists now:** `task_trace_events` timeline per task_id — `task.started → tool.called / turn.completed → task.completed|failed`, plus `task.fallback` and `task.watchdog_failed` as distinct marks. Per-turn tokens (incl cache) + wall-clock latency at the queryClaudeSdk seam (fast runner; container runners fall back to lifecycle + runs summary). `mc-ctl trace <task_id>` renders the replay with a mid-flight forensic line ("trace ends at round N tool X") for dead tasks; `mc-ctl verdict-rate` gives §17 weekly + acceptance-window counts (labeled raw status, NOT the 6a metric). 30d retention on the daily tick. OTel-shaped single seam (`emitTraceEvent`) — Langfuse/exporter is a bolt-on if ever needed.
+
+**Live E2E verified:** smoke task `c09ed268` traced end-to-end (started/flash → turn 1: 26,711 tok in, 3.2s → completed $0.161).
+
+**Audit scoreboard (Tier 1):** R1: 0 Critical / 4 Warning (hot-path write amplification; warn spam; verdict-rate surface skew; untested dispatcher wiring) — all folded (prepared-stmt WeakMap cache + 60s throttle + exactly-one-terminal dispatcher specs). R2 on the folds: PASS — W1 cache verified airtight against the closed-handle silence class; **R2 caught R1's own W3 being mis-premised** (§17 6a is surface-agnostic; morning filter reverted, footer made honest). Bundle-regression catches: 5; pre-existing bugs: 0. No eval gate (no model/prompt/tool-desc change).
+
+**Deferred (documented, no trigger needed):** reflection invocations write trace rows without a tasks row (30d prune bounds it); required-tools early-return terminals omit tokens/cost (consistent with the cost path); dispatcher test file's fire-and-forget async leak (pre-existing, masked).
+
+**V8.5 remaining: Phase 5 ONLY** (Rule-of-Two audit, approval windows, shadow-Git (a)-lite — needs its own sizing session). Watches: cache-diag verdict ~07-16; tool_selection 32.30 band; §17 accrual (reminder live tonight 20:00 MX); JME 7-day clock.
