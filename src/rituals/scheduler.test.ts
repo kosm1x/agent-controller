@@ -91,7 +91,12 @@ describe("startRitualScheduler", () => {
     //   + 1 PM daily rebalance (F8.1c) + 1 hindsight-cost-pull (2026-05-07, queue #4)
     //   + 1 evolution-log-commit (weekly durability, 2026-06-17)
     //   + 1 no-verdict-reminder (V8.5 4.6, 2026-07-14)
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    //   + 1 jme-consolidate (JME Phase 2 nightly batch, 2026-07-14)
+    expect(mockSchedule).toHaveBeenCalledTimes(20);
+    // JME nightly consolidation runs pre-dawn MX (Phase 2, audit C3).
+    expect(mockSchedule.mock.calls.some((c) => c[0] === "45 2 * * *")).toBe(
+      true,
+    );
     // The §17 reminder must run in the evening, MX time (V8.5 4.6).
     expect(mockSchedule.mock.calls.some((c) => c[0] === "0 20 * * *")).toBe(
       true,
@@ -116,7 +121,7 @@ describe("startRitualScheduler", () => {
     delete process.env.HINDSIGHT_ENABLED;
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(18);
+      expect(mockSchedule).toHaveBeenCalledTimes(19);
     } finally {
       if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
     }
@@ -130,7 +135,7 @@ describe("startRitualScheduler", () => {
     process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(19);
+      expect(mockSchedule).toHaveBeenCalledTimes(20);
     } finally {
       if (priorEnabled !== undefined)
         process.env.HINDSIGHT_ENABLED = priorEnabled;
@@ -151,7 +156,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(19);
+    expect(mockStop).toHaveBeenCalledTimes(20);
   });
 });
 

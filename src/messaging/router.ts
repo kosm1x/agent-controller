@@ -2713,6 +2713,12 @@ export class MessageRouter {
             .catch((err) => {
               console.warn("[router] JME writeEpisodic failed:", errMsg(err));
             });
+
+          // JME Phase 2 consolidation is NIGHTLY (jme-consolidate cron in
+          // rituals/scheduler.ts), NOT per-completion: per-task wiring fired
+          // one Haiku call per operator message over a 2-turn window and
+          // deleted the turns immediately (audit C3, 2026-07-14). The router
+          // only WRITES the episodic turn (above); the batch consolidates it.
         } catch {
           // Non-fatal — JME must never break delivery
         }

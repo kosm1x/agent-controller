@@ -371,6 +371,7 @@ export function startRitualScheduler(): void {
   scheduleHindsightCostPull();
   schedulePrometheusAlertPoller();
   scheduleNoVerdictReminder();
+  scheduleJmeConsolidation();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -888,6 +889,40 @@ function scheduleNoVerdictReminder(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] no-verdict-reminder: scheduled (0 20 * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * JME nightly consolidation — Phase 2 (2026-07-14, audit C3 operator ruling:
+ * nightly batch, NOT per-message). One Haiku extraction over the day's
+ * episodic turns (>30 min settled, capped 400) → cosine-dedup upsert into
+ * jme_facts → delete exactly the consumed turns; then the 7d orphan sweep.
+ * consolidateAll never throws and emits its own recordRitualFailure — the
+ * catch here covers the import + the sweep.
+ */
+function scheduleJmeConsolidation(): void {
+  const job = scheduleCron(
+    "jme-consolidate",
+    "45 2 * * *",
+    async () => {
+      try {
+        const { consolidateAll, pruneStaleTurns } =
+          await import("../memory/jme.js");
+        const result = await consolidateAll();
+        const pruned = pruneStaleTurns();
+        console.log(
+          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned`,
+        );
+      } catch (err) {
+        console.error("[rituals] jme-consolidate failed:", err);
+        recordRitualFailure("jme-consolidate", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] jme-consolidate: scheduled (45 2 * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 
