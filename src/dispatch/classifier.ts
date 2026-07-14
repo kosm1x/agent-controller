@@ -256,9 +256,9 @@ export function isCodingTask(text: string): boolean {
 // 2026-06-20 — the W25 commit was routed to nanoclaw and silently never landed.)
 // The leading [a-z0-9] guard makes a bare "/root/claude/..." ellipsis NOT match.
 // The lookahead only exempts `mission-control` followed by `/`, whitespace, or EOL,
-// so a hypothetical `/root/claude/mission-control-worktree` would read as foreign —
+// so the P1 linked worktree `/root/claude/mission-control-jarvis` reads as foreign —
 // the SAFE direction (it just loses the sandbox and runs on a host runner that can
-// still reach it), and no such sibling dir exists today.
+// still reach it), overlapping with `referencesJarvisSelfDev` below.
 const FOREIGN_REPO_PATH =
   /\/root\/claude\/(?!mission-control(?:[/\s]|$))[a-z0-9][a-z0-9._-]*/i;
 
@@ -295,6 +295,32 @@ export function referencesForeignProject(
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(t);
   });
+}
+
+// Jarvis SELF-DEV surfaces are HOST-only. Since the P1 worktree split
+// (2026-07-12), Jarvis's mission-control git work happens ONLY in the linked
+// worktree /root/claude/mission-control-jarvis via jarvis_dev — which fails
+// loud inside the nanoclaw container (ro mount, no worktree). His KB tree
+// (/root/claude/jarvis-kb) isn't mounted in the sandbox at all, and JME is
+// his self-authored subsystem worked exclusively through that flow. A
+// self-dev chat routed to nanoclaw grinds ~10 min until the no-op/scope
+// fallback rescues it to fast (tasks 7529 + 7532, 2026-07-14 — two 10-min
+// detours in one afternoon). Word-bounded, durable markers only; extend the
+// alternation when Jarvis picks up a new self-dev project.
+const JARVIS_SELF_DEV =
+  /\bmission-control-jarvis\b|\bjarvis[-_]kb\b|\bjarvis\/(feat|fix|chore|docs|test)\//i;
+const JARVIS_SELF_DEV_PROJECTS = /\bjme\b|\bjarvis_dev\b/i;
+
+/**
+ * True when a coding-shaped task is about Jarvis's OWN development flow —
+ * his worktree, KB docs, jarvis/* branches, jarvis_dev, or a self-authored
+ * subsystem (JME). Those tasks need HOST tools (jarvis_dev bootstraps the
+ * linked worktree; jarvis_file_* read the host DB; jarvis-kb lives on the
+ * host FS), so they are excluded from the nanoclaw gate exactly like
+ * `targetsForeignRepo` / `referencesForeignProject`.
+ */
+export function referencesJarvisSelfDev(text: string): boolean {
+  return JARVIS_SELF_DEV.test(text) || JARVIS_SELF_DEV_PROJECTS.test(text);
 }
 
 // An EXTERNAL / out-of-sandbox web target. Two families: a URL/web-domain, and
@@ -447,7 +473,8 @@ export function classify(input: ClassificationInput): ClassificationResult {
     isCodingTask(detectText) &&
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
-    !referencesForeignProject(detectText, input.foreignProjectNames)
+    !referencesForeignProject(detectText, input.foreignProjectNames) &&
+    !referencesJarvisSelfDev(detectText)
   ) {
     return {
       agentType: "nanoclaw",
@@ -584,7 +611,8 @@ export function classify(input: ClassificationInput): ClassificationResult {
     score >= 3 &&
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
-    !referencesForeignProject(detectText, input.foreignProjectNames)
+    !referencesForeignProject(detectText, input.foreignProjectNames) &&
+    !referencesJarvisSelfDev(detectText)
   ) {
     agentType = "nanoclaw";
   } else if (score >= 3) {
