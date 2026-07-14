@@ -2685,6 +2685,21 @@ export class MessageRouter {
             .catch((err) => {
               console.warn("[router] JME writeEpisodic failed:", errMsg(err));
             });
+
+          // JME Phase 2 — fire-and-forget consolidator + global stale-turn sweep.
+          // consolidate() extracts facts from turns via Haiku, deduplicates, prunes
+          // the task's raw turns after consolidation.
+          // pruneStaleTurns() sweeps orphaned turns older than 7d (global cleanup).
+          import("../memory/jme.js")
+            .then(({ consolidate, pruneStaleTurns }) => {
+              consolidate(taskId).catch((err) => {
+                console.warn("[router] JME consolidate failed:", errMsg(err));
+              });
+              pruneStaleTurns();
+            })
+            .catch((err) => {
+              console.warn("[router] JME Phase 2 import failed:", errMsg(err));
+            });
         } catch {
           // Non-fatal — JME must never break delivery
         }

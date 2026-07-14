@@ -685,3 +685,31 @@ export async function consolidate(taskId: string): Promise<{
 
   return result;
 }
+
+/**
+ * Global 7-day sweep — prune orphaned turns that were never consolidated.
+ * Covers tasks that ended without a clean task.completed event (crashes,
+ * cancellations, wall-time kills). Safe to call at any time; it only removes
+ * turns older than TURN_RETENTION_DAYS so active sessions are never touched.
+ *
+ * Returns the number of rows deleted.
+ */
+export const TURN_RETENTION_DAYS = 7;
+
+export function pruneStaleTurns(): number {
+  const db = getDatabase();
+  let deleted = 0;
+  writeWithRetry(() => {
+    const result = db
+      .prepare(
+        `DELETE FROM jme_turns
+         WHERE ts < unixepoch() - (? * 86400)`,
+      )
+      .run(TURN_RETENTION_DAYS) as { changes: number };
+    deleted = result.changes;
+  });
+  if (deleted > 0) {
+    console.log(`[jme] pruneStaleTurns: removed ${deleted} stale turn(s) older than ${TURN_RETENTION_DAYS}d`);
+  }
+  return deleted;
+}

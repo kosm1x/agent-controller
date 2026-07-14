@@ -455,3 +455,44 @@ describe("JME — consolidate", () => {
     expect(jmeStats().turnsTotal).toBeGreaterThanOrEqual(0); // graceful, no crash
   });
 });
+
+// ---------------------------------------------------------------------------
+// pruneStaleTurns — global 7d sweep
+// ---------------------------------------------------------------------------
+describe("JME — pruneStaleTurns", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("removes turns older than TURN_RETENTION_DAYS and leaves recent ones", async () => {
+    const { writeEpisodic, pruneStaleTurns, TURN_RETENTION_DAYS } = await getJme();
+
+    // Write two turns — one recent, one >7d old
+    writeEpisodic({ taskId: "task-recent", role: "user", content: "fresh" });
+
+    // Manually backdate a turn by injecting directly into mockDb (column is `ts`)
+    const oldTimestamp = Math.floor(Date.now() / 1000) - (TURN_RETENTION_DAYS + 1) * 86400;
+    mockDb.prepare(
+      `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+    ).run("task-old", "user", "stale content", "telegram", oldTimestamp);
+
+    const deleted = pruneStaleTurns();
+
+    // The stale turn should be deleted, the recent one preserved
+    expect(deleted).toBe(1);
+    const remaining = mockDb.prepare(`SELECT task_id FROM jme_turns`).all() as { task_id: string }[];
+    const ids = remaining.map((r) => r.task_id);
+    expect(ids).toContain("task-recent");
+    expect(ids).not.toContain("task-old");
+  });
+
+  it("returns 0 when no stale turns exist", async () => {
+    const { writeEpisodic, pruneStaleTurns } = await getJme();
+
+    writeEpisodic({ taskId: "task-new", role: "user", content: "brand new" });
+
+    const deleted = pruneStaleTurns();
+    expect(deleted).toBe(0);
+  });
+});
