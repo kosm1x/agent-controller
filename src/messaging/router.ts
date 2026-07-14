@@ -2650,6 +2650,37 @@ export class MessageRouter {
         // Non-fatal
       }
 
+      // JME episodic store — write user + jarvis turns for operator telegram convos.
+      // Scope: only canal telegram del operador (TELEGRAM_OWNER_CHAT_ID).
+      // Fire-and-forget; never blocks delivery.
+      if (
+        pending.channel === "telegram" &&
+        pending.to === (process.env.TELEGRAM_OWNER_CHAT_ID ?? "")
+      ) {
+        try {
+          import("../memory/jme.js")
+            .then(({ writeEpisodic }) => {
+              writeEpisodic({
+                taskId,
+                role: "user",
+                content: pending.originalText,
+                channel: pending.channel,
+              });
+              writeEpisodic({
+                taskId,
+                role: "jarvis",
+                content: resultText,
+                channel: pending.channel,
+              });
+            })
+            .catch((err) => {
+              console.warn("[router] JME writeEpisodic failed:", errMsg(err));
+            });
+        } catch {
+          // Non-fatal — JME must never break delivery
+        }
+      }
+
       // Read tool calls once — shared by extractPattern + auto-persist + background extraction
       // (C1 audit fix: hoisted above all consumers to eliminate duplicate DB read)
       let taskToolCalls: string[] = [];

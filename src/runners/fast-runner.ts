@@ -139,6 +139,9 @@ import { errMsg } from "../lib/err-msg.js";
  * would be the exact verb/op-mismatch the strict mode was designed to
  * prevent. C3 audit fix (round 2, 2026-05-08). */
 const CONFIRM_PATTERN = buildConfirmRegex("strict");
+
+/** Maximum tokens of JME facts injected into the system prompt per turn. */
+const JME_INJECTION_BUDGET_TOKENS = 1500;
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
 const DELETION_ASK_PATTERN =
   /(?:delete_item|eliminar|borrar|¿confirmo|confirmas|¿(?:lo|la|los|las)\s+(?:elimino|borro)|quieres que\s+(?:\S+\s+)?(?:elimine|borre)|want me to (?:delete|remove)|shall I (?:delete|remove)|should I (?:delete|remove)|confirm.*(?:delet|elimin|borr)|(?:delet|elimin|borr)\S*\s*\?|procedo con la eliminaci[oó]n|CONFIRMATION_REQUIRED)/i;
@@ -895,6 +898,38 @@ export const fastRunner: Runner = {
           content: precedent,
           cacheable: false,
         });
+      }
+
+      // JME recall injection — semantic facts from prior operator conversations.
+      // Budget: JME_INJECTION_BUDGET_TOKENS (~1,500 tokens, ~6 kB).
+      // Variable per task; cacheable:false so byte-drift doesn't bust the
+      // stable systemPrompt cache prefix.
+      // Runs only on the chat path (conversationHistory present).
+      try {
+        const { queryMemory } = await import("../memory/jme.js");
+        const lastMsg = input.conversationHistory
+          .filter((t) => t.role === "user")
+          .pop()?.content ?? input.title;
+        const jmeFacts = await queryMemory(lastMsg, { k: 8, minScore: 0.25 });
+        if (jmeFacts.length > 0) {
+          // Build a compact block; each fact ~100-200 chars → 8 facts ~ 1,200 tokens max
+          const factsText = jmeFacts
+            .map((f, i) => `${i + 1}. [${f.category}] ${f.factText}`)
+            .join("\n");
+          // Rough token estimate: 4 chars/token
+          const estimatedTokens = factsText.length / 4;
+          const block =
+            estimatedTokens <= JME_INJECTION_BUDGET_TOKENS
+              ? factsText
+              : factsText.slice(0, JME_INJECTION_BUDGET_TOKENS * 4);
+          messages.push({
+            role: "system",
+            content: `[JME MEMORY — facts from prior conversations]\n${block}`,
+            cacheable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — JME must never block the runner
       }
 
       // Inject deferred tool catalog (names + descriptions only, no schemas)
