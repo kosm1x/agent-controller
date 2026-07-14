@@ -507,42 +507,36 @@ export async function upsertFact(fact: JmeFact): Promise<"skipped" | "superseded
   const db = getDatabase();
   const now = Date.now();
 
-  // Try to embed the incoming fact for similarity comparison
-  let incomingVec: Float32Array | null = null;
-  try {
-    incomingVec = await embed(fact.factText);
-  } catch {
-    // embedding unavailable — skip dedup, fall through to plain insert
+  // Validate: skip empty or oversized fact text
+  const trimmedText = fact.factText.trim();
+  if (!trimmedText || trimmedText.length > 2000) {
+    await writeFact({ ...fact, factText: trimmedText.slice(0, 2000) || fact.factText });
+    return "inserted";
   }
 
-  if (incomingVec) {
-    // Scan existing non-expired facts with embeddings for near-duplicates.
-    // Limit to 200 most recent to bound CPU cost.
-    type FactRow = { id: number; embedding: Buffer; fact_text: string };
-    const candidates = db
-      .prepare(
-        `SELECT id, embedding, fact_text FROM jme_facts
-         WHERE embedding IS NOT NULL
-           AND (expires_at IS NULL OR expires_at > ?)
-         ORDER BY ts DESC
-         LIMIT 200`,
-      )
-      .all(now) as FactRow[];
+  // Dedup via queryMemory(k:3) — reuses the hybrid BM25+vector path so the
+  // comparison scales with the full fact corpus (no LIMIT-200 recency bias).
+  const candidates = await queryMemory(trimmedText, { k: 3, minScore: CONSOLIDATOR_DEDUP_THRESHOLD });
 
-    let bestSim = 0;
-    let bestId = -1;
+  if (candidates.length > 0) {
+    // queryMemory returns pre-scored results; the top hit is the best match.
+    // We need the raw cosine similarity to compare against the thresholds.
+    // Re-embed to get the exact similarity if embedding is available.
+    let bestSim = candidates[0].score;
+    let bestId: number | null = null;
 
-    for (const row of candidates) {
-      try {
-        const existingVec = deserializeEmbedding(row.embedding);
-        const sim = cosineSimilarity(incomingVec, existingVec);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestId = row.id;
-        }
-      } catch {
-        // skip malformed embedding
-      }
+    // Look up the id of the top candidate in the DB
+    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD) {
+      type FactRow = { id: number };
+      const row = db
+        .prepare(
+          `SELECT id FROM jme_facts
+           WHERE fact_text = ?
+             AND (expires_at IS NULL OR expires_at > ?)
+           LIMIT 1`,
+        )
+        .get(candidates[0].factText, now) as FactRow | undefined;
+      if (row) bestId = row.id;
     }
 
     if (bestSim >= CONSOLIDATOR_SKIP_THRESHOLD) {
@@ -550,14 +544,16 @@ export async function upsertFact(fact: JmeFact): Promise<"skipped" | "superseded
       return "skipped";
     }
 
-    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestId !== -1) {
-      // Near-duplicate — supersede: expire the old fact, then insert the new one
+    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestId !== null) {
+      // Near-duplicate — supersede: expire old + insert new, atomically
       writeWithRetry(() => {
-        db.prepare(
-          `UPDATE jme_facts SET expires_at = ? WHERE id = ?`,
-        ).run(now, bestId);
+        db.transaction(() => {
+          db.prepare(
+            `UPDATE jme_facts SET expires_at = ? WHERE id = ?`,
+          ).run(now, bestId);
+        })();
       });
-      await writeFact(fact);
+      await writeFact({ ...fact, factText: trimmedText });
       return "superseded";
     }
   }
@@ -621,9 +617,23 @@ export async function consolidate(taskId: string): Promise<{
     if (turns.length === 0) return result;
     result.turnsProcessed = turns.length;
 
-    // 2. Format conversation for Haiku
+    // 2. Format conversation for Haiku — strip [JME MEMORY] injection blocks
+    // to prevent eco loop: a paraphrased restatement of an injected fact
+    // (sim 0.85–0.95) would otherwise supersede the original and renew its
+    // age every session, defeating the dedup invariant.
     const conversation = turns
-      .map((t) => `${t.role === "user" ? "Fede" : "Jarvis"}: ${t.content}`)
+      .map((t) => {
+        // Strip assistant turns that are pure JME memory restatements
+        let content = t.content;
+        if (t.role === "jarvis") {
+          // Remove [JME MEMORY] blocks (injected context header + body)
+          content = content.replace(/\[JME MEMORY\][\s\S]*?(?=\n\n|\n(?=[A-Z])|\s*$)/g, "").trim();
+          // Skip turns that are now empty (were purely memory restatements)
+          if (!content) return null;
+        }
+        return `${t.role === "user" ? "Fede" : "Jarvis"}: ${content}`;
+      })
+      .filter((line): line is string => line !== null)
       .join("\n");
 
     // 3. Extract facts via Haiku (effort:low — synthesis task)
@@ -681,6 +691,13 @@ export async function consolidate(taskId: string): Promise<{
     });
   } catch (err) {
     console.error(`[jme] consolidate: unhandled error for task ${taskId}: ${errMsg(err)}`);
+    // Observability: emit schedule.run_failed so failures are visible in mc-ctl
+    // (plan v2 line 38 — invariante de observabilidad para cualquier job async).
+    // Dynamic import avoids pulling the scheduler's static module graph into the
+    // jme module — prevents Prometheus double-registration in test suites.
+    import("../rituals/scheduler.js")
+      .then(({ recordRitualFailure }) => recordRitualFailure("jme-consolidate", err, "execute"))
+      .catch(() => {/* best-effort */});
   }
 
   return result;
