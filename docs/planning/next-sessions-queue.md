@@ -582,3 +582,9 @@ Tier-2 audit (R1 adversarial + R2 adjacent + R3 verdict) on PR #27 + independent
 **Deferred (documented, no trigger needed):** reflection invocations write trace rows without a tasks row (30d prune bounds it); required-tools early-return terminals omit tokens/cost (consistent with the cost path); dispatcher test file's fire-and-forget async leak (pre-existing, masked).
 
 **V8.5 remaining: Phase 5 ONLY** (Rule-of-Two audit, approval windows, shadow-Git (a)-lite — needs its own sizing session). Watches: cache-diag verdict ~07-16; tool_selection 32.30 band; §17 accrual (reminder live tonight 20:00 MX); JME 7-day clock.
+
+## 2026-07-14 (wrap) — container image current + JME clock caveat + queued follow-up
+
+- **Container image rebuilt from main 05:20** (post-Phase-6): nanoclaw/containerized-heavy now carry JME + traces + 4.6/4.7. Orphan `nanoclaw-agent:latest` (07-08, SDK 0.2.34, unreferenced) deleted. **Standing rule: deploy.sh does NOT rebuild the image** — after merging runner-relevant code, `docker build -t mission-control:latest .`; drift check = `docker images` CreatedAt vs last merge.
+- **JME clock caveat for the 07-21 readout**: was_used = 0 BY CONSTRUCTION until Jarvis's Phase 2 consolidator writes facts (turns ARE captured — 10 on day 1 — and recall fires every chat turn). Judge utility from the date facts first exist.
+- **Queued (small, P3)**: thread `trace: {taskId, runId}` through the 3 Prometheus queryClaudeSdk call sites (planner/executor/reflector) so heavy tasks get per-phase timeline depth — same pattern as fast-runner, ~30 min. Trigger: before Phase 5 sizing, or first heavy-task post-mortem that needs it.
