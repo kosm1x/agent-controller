@@ -128,6 +128,7 @@ import {
   HALLUCINATION_RETRY_HEADROOM,
 } from "../config/constants.js";
 import { errMsg } from "../lib/err-msg.js";
+import { withTimeout } from "../lib/with-timeout.js";
 
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
@@ -905,12 +906,27 @@ export const fastRunner: Runner = {
       // Variable per task; cacheable:false so byte-drift doesn't bust the
       // stable systemPrompt cache prefix.
       // Runs only on the chat path (conversationHistory present).
+      // Timeout: 1,500 ms — embed() can take up to 30 s; fail-fast keeps
+      // every chat turn responsive. On timeout the block is silently skipped.
+      const JME_QUERY_TIMEOUT_MS = 1_500;
+      // Cap query text to ~2,000 chars (~500 tokens) so embed() never gets
+      // a wall of text that inflates latency.
+      const JME_QUERY_MAX_CHARS = 2_000;
       try {
         const { queryMemory } = await import("../memory/jme.js");
-        const lastMsg = input.conversationHistory
-          .filter((t) => t.role === "user")
-          .pop()?.content ?? input.title;
-        const jmeFacts = await queryMemory(lastMsg, { k: 8, minScore: 0.25 });
+        const rawLastMsg =
+          input.conversationHistory
+            .filter((t) => t.role === "user")
+            .pop()?.content ?? input.title;
+        const lastMsg =
+          typeof rawLastMsg === "string"
+            ? rawLastMsg.slice(0, JME_QUERY_MAX_CHARS)
+            : input.title.slice(0, JME_QUERY_MAX_CHARS);
+        const jmeFacts = await withTimeout(
+          queryMemory(lastMsg, { k: 8, minScore: 0.25 }),
+          JME_QUERY_TIMEOUT_MS,
+          "jme-recall",
+        );
         if (jmeFacts.length > 0) {
           // Build a compact block; each fact ~100-200 chars → 8 facts ~ 1,200 tokens max
           const factsText = jmeFacts

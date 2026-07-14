@@ -569,6 +569,8 @@ const previousScopeGroups = new Map<string, Set<string>>();
 const previousMessages = new Map<string, string>();
 const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let threadAccessCount = 0;
+// Warn once if TELEGRAM_OWNER_CHAT_ID is missing — silent misconfiguration guard.
+let _jmeOwnerIdWarnedOnce = false;
 const hydratedChannels = new Set<string>();
 
 /**
@@ -2653,6 +2655,13 @@ export class MessageRouter {
       // JME episodic store — write user + jarvis turns for operator telegram convos.
       // Scope: only canal telegram del operador (TELEGRAM_OWNER_CHAT_ID).
       // Fire-and-forget; never blocks delivery.
+      if (!process.env.TELEGRAM_OWNER_CHAT_ID && !_jmeOwnerIdWarnedOnce) {
+        _jmeOwnerIdWarnedOnce = true;
+        console.warn(
+          "[router] TELEGRAM_OWNER_CHAT_ID is not set — JME episodic capture is dead. " +
+            "Set the env var to enable operator memory.",
+        );
+      }
       if (
         pending.channel === "telegram" &&
         pending.to === (process.env.TELEGRAM_OWNER_CHAT_ID ?? "")
