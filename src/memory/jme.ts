@@ -661,7 +661,10 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
          ORDER BY ts ASC
          LIMIT ?`,
       )
-      .all(Date.now() - CONSOLIDATOR_MIN_TURN_AGE_MS, CONSOLIDATOR_MAX_TURNS) as Array<{
+      .all(
+        Date.now() - CONSOLIDATOR_MIN_TURN_AGE_MS,
+        CONSOLIDATOR_MAX_TURNS,
+      ) as Array<{
       id: number;
       role: JmeTurnRole;
       content: string;
@@ -696,6 +699,15 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
     });
 
     const rawText = response.content?.trim() ?? "";
+    // An EMPTY completion is a transient failure, not a verdict — the prompt
+    // demands a literal [] for "nothing durable". Retain the turns for the
+    // next run, same as a parse failure (R2 W1, 2026-07-14).
+    if (!rawText) {
+      console.error(
+        "[jme] consolidateAll: empty Haiku response — retrying next run",
+      );
+      return result;
+    }
 
     // 4. Parse JSON — tolerate markdown code fences. A parse failure leaves
     // the turns in place (retried next night) — do NOT delete unconsumed data.
@@ -704,20 +716,18 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       category: string;
       confidence?: number;
     }> = [];
-    if (rawText) {
-      try {
-        const cleaned = rawText
-          .replace(/^```json\s*/i, "")
-          .replace(/```\s*$/, "")
-          .trim();
-        facts = JSON.parse(cleaned) as typeof facts;
-        if (!Array.isArray(facts)) facts = [];
-      } catch {
-        console.error(
-          `[jme] consolidateAll: failed to parse Haiku response: ${rawText.slice(0, 200)}`,
-        );
-        return result;
-      }
+    try {
+      const cleaned = rawText
+        .replace(/^```json\s*/i, "")
+        .replace(/```\s*$/, "")
+        .trim();
+      facts = JSON.parse(cleaned) as typeof facts;
+      if (!Array.isArray(facts)) facts = [];
+    } catch {
+      console.error(
+        `[jme] consolidateAll: failed to parse Haiku response: ${rawText.slice(0, 200)}`,
+      );
+      return result;
     }
 
     result.factsExtracted = facts.length;

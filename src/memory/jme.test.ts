@@ -526,6 +526,18 @@ describe("JME — consolidateAll (nightly batch)", () => {
     expect(jmeStats().turnsTotal).toBe(0); // consumed
   });
 
+  it("an EMPTY Haiku response retains the turns (transient failure, not a verdict)", async () => {
+    const { consolidateAll, jmeStats } = await getJme();
+
+    insertSettledTurn("task-blank", "user", "hola");
+    inferMock.mockResolvedValueOnce({ content: "" });
+
+    const result = await consolidateAll();
+
+    expect(result.factsExtracted).toBe(0);
+    expect(jmeStats().turnsTotal).toBe(1); // NOT deleted — retried next run
+  });
+
   it("malformed JSON leaves the turns IN PLACE for tomorrow's retry", async () => {
     const { consolidateAll, jmeStats } = await getJme();
 
