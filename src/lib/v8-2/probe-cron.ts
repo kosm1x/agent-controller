@@ -16,7 +16,8 @@
  * other rituals.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../cron.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { runSycophancyProbe, checkSycophancyDrift } from "./sycophancy.js";
 import { errMsg } from "../err-msg.js";
@@ -56,7 +57,7 @@ export function registerSycophancyProbeCron(
   log: ProbeCronLog = DEFAULT_LOG,
 ): boolean {
   stopSycophancyProbeCron();
-  scheduledJob = cron.schedule(PROBE_CRON, () => void runProbeTick(log), {
+  scheduledJob = scheduleCron("sycophancy-probe", PROBE_CRON, () => void runProbeTick(log), {
     timezone: PROBE_TIMEZONE,
   });
   log.info(

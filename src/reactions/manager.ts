@@ -9,6 +9,7 @@
 import type Database from "better-sqlite3";
 import { getEventBus } from "../lib/event-bus.js";
 import { getTask, submitTask } from "../dispatch/dispatcher.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import { getLatestGoalSnapshot } from "../db/reflector-gap.js";
 import type { Subscription } from "../lib/events/types.js";
 import type { ReactionContext } from "./types.js";
@@ -342,6 +343,15 @@ export class ReactionManager {
           `Stuck task detected (no progress for ${STUCK_THRESHOLD_MINUTES} minutes)`,
           stuck.task_id,
         );
+        // V8.5 Phase 6: a watchdog kill is a DISTINCT terminal in the trace —
+        // the dispatcher never gets to emit task.completed/failed for these
+        // (the runner may still be alive; see the 07-14 zombie-push variant),
+        // so without this row the timeline just stops mid-flight.
+        emitTraceEvent({
+          taskId: stuck.task_id,
+          name: "task.watchdog_failed",
+          attrs: { threshold_minutes: STUCK_THRESHOLD_MINUTES },
+        });
 
         try {
           getEventBus().emitEvent("task.failed", {

@@ -9,7 +9,8 @@
  * tz) so the monitor can't split from the other rituals.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../cron.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { getDatabase } from "../../db/index.js";
 import {
@@ -63,7 +64,7 @@ async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
 /** Register (idempotent — stops any prior job first). */
 export function registerTriageCron(log: TriageTickLog = NOOP_LOG): boolean {
   stopTriageCron();
-  scheduledJob = cron.schedule(TRIAGE_CRON, () => void tickWithRealDeps(log), {
+  scheduledJob = scheduleCron("self-healing-triage", TRIAGE_CRON, () => void tickWithRealDeps(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(

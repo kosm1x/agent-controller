@@ -10,7 +10,8 @@
  * previously-registered job first. Safe to call on every boot.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { recordCohortRollup } from "../observability/prometheus.js";
 import { type RollUpResult, rollUpCohort } from "./self-defining.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
@@ -42,7 +43,7 @@ export function registerCohortRollupCron(
   log: RollupLog = DEFAULT_LOG,
 ): boolean {
   stopCohortRollupCron();
-  scheduledJob = cron.schedule(ROLLUP_CRON, () => runCohortRollup(log), {
+  scheduledJob = scheduleCron("cohort-rollup", ROLLUP_CRON, () => runCohortRollup(log), {
     timezone: ROLLUP_TIMEZONE,
   });
   log.info(

@@ -10,7 +10,8 @@
  * 2. Delivery miss count (last 24h) — threshold: >2
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { getDatabase } from "../db/index.js";
 import { getRouter } from "../messaging/index.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -158,7 +159,8 @@ let canaryJob: ScheduledTask | null = null;
 export function scheduleCanary(): void {
   if (canaryJob) return;
 
-  canaryJob = cron.schedule(
+  canaryJob = scheduleCron(
+    "canary",
     "0 */4 * * *",
     () => {
       try {

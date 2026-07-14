@@ -352,11 +352,18 @@ describe("MessageRouter", () => {
       expect(submitTask).not.toHaveBeenCalled();
     });
 
-    it("a bare verdict with NO pending brief flows to the normal chat pipeline", async () => {
+    it("a bare verdict with NO pending brief gets a deterministic 'nothing pending' reply, NEVER the chat LLM (2026-07-14 incident)", async () => {
+      // Verdict floor: a bare "Sirve" with no brief to rule on used to fall
+      // through to the chat pipeline, where the LLM read it against prior
+      // conversation context as a project go-ahead (Jarvis started
+      // implementing JME Phase 2 from a verdict word).
       await router.handleInbound(owner("sirve"));
 
-      expect(submitTask).toHaveBeenCalled();
-      // fire-and-forget resolver still ran (expiry sweep / pushback path)
+      expect(submitTask).not.toHaveBeenCalled();
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toContain(
+        "No hay brief pendiente",
+      );
       expect(briefingMocks.resolveBriefingOnOperatorReply).toHaveBeenCalledWith(
         "sirve",
         expect.anything(),
@@ -396,7 +403,7 @@ describe("MessageRouter", () => {
       expect(submitTask).toHaveBeenCalled();
     });
 
-    it("a resolver race (null result despite pending brief) falls through to dispatch", async () => {
+    it("a resolver race (null result despite pending brief) still hits the verdict floor, not dispatch", async () => {
       briefingMocks.getResolvablePendingBriefing.mockReturnValueOnce({
         briefingId: "b1",
       });
@@ -404,12 +411,14 @@ describe("MessageRouter", () => {
 
       await router.handleInbound(owner("sirve"));
 
-      // The normal pipeline sends its own inbound ack; the point is that NO
-      // verdict ack was fabricated for a brief we didn't actually resolve.
-      for (const m of waAdapter.sentMessages) {
-        expect(m.text).not.toContain("Brief");
-      }
-      expect(submitTask).toHaveBeenCalled();
+      // No verdict ack is fabricated for a brief we didn't resolve — but the
+      // pure verdict token must still never reach the chat LLM: the floor
+      // reply says nothing is pending (the other path's ack already landed).
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toContain(
+        "No hay brief pendiente",
+      );
+      expect(submitTask).not.toHaveBeenCalled();
     });
   });
 
@@ -867,7 +876,9 @@ describe("MessageRouter", () => {
 
         expect(mockWriteEpisodic).toHaveBeenCalled();
         const calls = mockWriteEpisodic.mock.calls;
-        const roles = calls.map((c: unknown[]) => (c[0] as { role: string }).role);
+        const roles = calls.map(
+          (c: unknown[]) => (c[0] as { role: string }).role,
+        );
         expect(roles).toContain("user");
         expect(roles).toContain("jarvis");
       });

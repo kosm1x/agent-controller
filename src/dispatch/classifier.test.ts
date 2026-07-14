@@ -11,6 +11,7 @@ import {
   needsHeavyReasoning,
   targetsForeignRepo,
   referencesForeignProject,
+  referencesJarvisSelfDev,
   isFanOutTask,
 } from "./classifier.js";
 import type {
@@ -505,6 +506,87 @@ describe("classifier", () => {
       tags: ["messaging"],
     });
     expect(result.agentType).toBe("nanoclaw");
+  });
+
+  // ----- Jarvis self-dev chats stay OFF nanoclaw (2026-07-14) -----
+  // jarvis_dev/worktree/KB work is HOST-only since the P1 worktree split; a
+  // self-dev chat routed to the sandbox grinds ~10 min until the no-op/scope
+  // fallback rescues it (tasks 7529 + 7532 — two 10-min detours in one day).
+  describe("referencesJarvisSelfDev", () => {
+    it("matches the real misrouted messages from 2026-07-14", () => {
+      expect(
+        referencesJarvisSelfDev(
+          "Chat: Continúa JME Phase 2 — lee el review en jme-plan-v2.md antes de tocar código y haz las correciones al plan.",
+        ),
+      ).toBe(true);
+      expect(
+        referencesJarvisSelfDev(
+          "Chat: Relee jme-plan-v2.md — la sección 'Review de Phase 2 (2026-07-14)' es nueva",
+        ),
+      ).toBe(true);
+    });
+
+    it("matches worktree path, KB tree, jarvis/* branches, jarvis_dev", () => {
+      expect(
+        referencesJarvisSelfDev(
+          "commit en /root/claude/mission-control-jarvis",
+        ),
+      ).toBe(true);
+      expect(referencesJarvisSelfDev("actualiza jarvis-kb/projects")).toBe(
+        true,
+      );
+      expect(
+        referencesJarvisSelfDev(
+          "abre PR de jarvis/feat/jme-phase2-consolidator",
+        ),
+      ).toBe(true);
+      expect(referencesJarvisSelfDev("usa jarvis_dev action=pr")).toBe(true);
+    });
+
+    it("does NOT match ordinary mission-control coding chats", () => {
+      expect(
+        referencesJarvisSelfDev("implement the retry endpoint and add a test"),
+      ).toBe(false);
+      expect(
+        referencesJarvisSelfDev("arregla el bug del scheduler en router.ts"),
+      ).toBe(false);
+      // 'jme' must be word-bounded — no false hit inside other tokens
+      expect(referencesJarvisSelfDev("revisa el pipeline de jmeter")).toBe(
+        false,
+      );
+    });
+
+    it("routes a self-dev coding chat to a HOST runner, not nanoclaw", () => {
+      const result = classify({
+        title:
+          "Chat: Continúa JME Phase 2 — lee el review en jme-plan-v2.md antes...",
+        description: "You are Jarvis, a strategic AI assistant...",
+        tags: ["messaging"],
+      });
+      expect(result.agentType).not.toBe("nanoclaw");
+    });
+
+    it("a path-shaped false positive still lands on a HOST runner (safe degradation)", () => {
+      // `src/jarvis/feat/component.ts` matches the branch-namespace marker —
+      // an accepted FP because the fall-through is a host runner that can
+      // still do the work via the jarvis_dev worktree (loses only isolation).
+      const result = classify({
+        title: "Chat: refactor src/jarvis/feat/component.ts and add a test",
+        description: "You are Jarvis, a strategic AI assistant...",
+        tags: ["messaging"],
+      });
+      expect(result.agentType).not.toBe("nanoclaw");
+      expect(["fast", "heavy", "swarm"]).toContain(result.agentType);
+    });
+
+    it("keeps a plain mc coding chat on nanoclaw (guard does not over-fire)", () => {
+      const result = classify({
+        title: "Chat: implement the retry endpoint and add a test",
+        description: "You are Jarvis, a strategic AI assistant...",
+        tags: ["messaging"],
+      });
+      expect(result.agentType).toBe("nanoclaw");
+    });
   });
 
   // ----- Sibling repo named (no path) stays OFF nanoclaw (2026-06-24) -----

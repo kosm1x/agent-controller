@@ -1666,6 +1666,96 @@ cmd_stats() {
 }
 
 # ---------------------------------------------------------------------------
+# Task trace (V8.5 Phase 6)
+# ---------------------------------------------------------------------------
+
+cmd_trace() {
+  need_db
+  local id="$1"
+  [ -n "$id" ] || die "Usage: mc-ctl trace <task_id>"
+  if [[ ! "$id" =~ ^[a-zA-Z0-9_-]{4,64}$ ]]; then
+    die "Invalid task_id format: '${id}' (expected alphanumeric+dash+underscore, 4-64 chars)"
+  fi
+
+  echo -e "${BOLD}=== Task Trace ===${NC}"
+  echo ""
+  sql "SELECT task_id, substr(title,1,60) AS title, status, agent_type,
+    created_at, started_at, completed_at,
+    substr(COALESCE(error,''),1,120) AS error
+  FROM tasks WHERE task_id = '${id}';"
+
+  local n
+  n=$(sql_raw "SELECT COUNT(*) FROM task_trace_events WHERE task_id = '${id}';" 2>/dev/null || echo 0)
+  echo ""
+  if [ "${n}" = "0" ]; then
+    # Pre-Phase-6 task, or the SDK loop ran inside a container (nanoclaw/
+    # heavy sandbox) — fall back to the runs-row aggregate.
+    echo -e "${YELLOW}No trace events for this task${NC} (predates Phase 6, or ran in a container runner)."
+    echo -e "${BOLD}--- Runs summary (fallback) ---${NC}"
+    sql "SELECT run_id, agent_type, status, duration_ms,
+      substr(COALESCE(tool_calls,'[]'),1,120) AS tools,
+      substr(COALESCE(token_usage,''),1,120)  AS tokens
+    FROM runs WHERE task_id = '${id}' ORDER BY created_at;"
+    return
+  fi
+
+  echo -e "${BOLD}--- Timeline (${n} events) ---${NC}"
+  sql "SELECT substr(ts,12,12) AS t, name AS event,
+    COALESCE(round,'')       AS rnd,
+    COALESCE(tool,'')        AS tool,
+    COALESCE(tokens_in,'')   AS tok_in,
+    COALESCE(tokens_out,'')  AS tok_out,
+    COALESCE(latency_ms,'')  AS ms,
+    CASE WHEN cost_usd IS NULL THEN '' ELSE printf('%.4f', cost_usd) END AS cost,
+    substr(COALESCE(attrs,''),1,80) AS attrs
+  FROM task_trace_events WHERE task_id = '${id}' ORDER BY id;"
+
+  # Forensic one-liner: for a dead task, name the terminal round/tool.
+  local terminal
+  terminal=$(sql_raw "SELECT name FROM task_trace_events WHERE task_id='${id}' ORDER BY id DESC LIMIT 1;")
+  if [ "${terminal}" = "tool.called" ] || [ "${terminal}" = "turn.completed" ] || [ "${terminal}" = "task.watchdog_failed" ]; then
+    echo ""
+    sql_raw "SELECT '!! trace ends mid-flight at round ' || COALESCE(round,'?') ||
+      COALESCE(' tool ' || tool, '') || ' (' || name || ' @ ' || ts || ')'
+    FROM task_trace_events WHERE task_id='${id}'
+      AND name IN ('tool.called','turn.completed','task.watchdog_failed')
+    ORDER BY id DESC LIMIT 1;" | while read -r line; do echo -e "${RED}${line}${NC}"; done
+  fi
+}
+
+# V8.5 Phase 6 (plan-9-10 "S17 dashboard" folded in as a query): ruled-brief
+# verdict rate over time. The since-date mirrors GATE_V82_ACCEPTANCE_SINCE in
+# src/briefing/v82-activation-gate.ts (explicit-verdict era cutoff).
+cmd_verdict_rate() {
+  need_db
+  echo -e "${BOLD}=== S17 verdict rate — weekly, by surface ===${NC}"
+  sql "SELECT strftime('%Y-W%W', delivered_at) AS week, surface,
+    COUNT(*)                                   AS delivered,
+    SUM(status = 'promoted')                   AS sirve,
+    SUM(status = 'discarded')                  AS descarta,
+    SUM(status = 'expired')                    AS expired,
+    SUM(status = 'pending')                    AS pending,
+    COALESCE(ROUND(100.0 * SUM(status='promoted')
+      / NULLIF(SUM(status IN ('promoted','discarded')), 0), 1), '') AS promote_pct
+  FROM proposed_briefings
+  WHERE delivered_at IS NOT NULL
+  GROUP BY week, surface ORDER BY week DESC LIMIT 12;"
+
+  echo ""
+  # All surfaces — mirrors the 6a gate query (v82-activation-gate.ts), which
+  # does NOT filter by surface.
+  echo -e "${BOLD}=== S17 acceptance window (explicit-verdict era, since 2026-07-10, all surfaces) ===${NC}"
+  sql "SELECT SUM(status = 'promoted')  AS sirve_green,
+    SUM(status = 'discarded')           AS descarta_red,
+    SUM(status = 'pending')             AS pending,
+    SUM(status = 'expired')             AS expired
+  FROM proposed_briefings
+  WHERE delivered_at >= '2026-07-10';"
+  echo -e "${DIM}Raw brief-status counts — NOT the S17 gate metric (6a buckets ruled briefs by${NC}"
+  echo -e "${DIM}judgment COLOR, not status). Authoritative check: mc-ctl briefing-gate.${NC}"
+}
+
+# ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
 
@@ -1683,6 +1773,7 @@ usage() {
   echo -e "  ${BOLD}Tasks${NC}"
   echo -e "  ${GREEN}tasks${NC} [--status=X] [--limit=N]   List tasks (default 20)"
   echo -e "  ${GREEN}task${NC} <id>           Full task detail + runs + subtasks"
+  echo -e "  ${GREEN}trace${NC} <id>          Per-task trace timeline (rounds, tools, tokens, latency)"
   echo -e "  ${GREEN}cancel${NC} <id>         Cancel task via API"
   echo -e "  ${GREEN}smoke${NC} [timeoutS]    Post-deploy: run one real fast task, assert it completes"
   echo -e "  ${GREEN}task-resume${NC} <id> [goalId] [--run]  Resume a failed heavy/swarm task from a goal (isolated; --run to fire)"
@@ -1717,6 +1808,7 @@ usage() {
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
   echo -e "                          metrics: utility | cache-hit | latency | cost"
   echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
+  echo -e "  ${GREEN}verdict-rate${NC}         §17 ruled-brief verdict rate over time (weekly + acceptance window)"
   echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
   echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
@@ -2756,6 +2848,8 @@ case "$cmd" in
   cohort)            cmd_cohort "$@" ;;
   recall-modes)      cmd_recall_modes ;;
   briefing-gate)     cmd_briefing_gate ;;
+  verdict-rate)      cmd_verdict_rate ;;
+  trace)             cmd_trace "${1:-}" ;;
   v83-gate)          cmd_v83_gate ;;
   v83-promote)       cmd_v83_promote "$@" ;;
   judgments)         cmd_judgments "$@" ;;

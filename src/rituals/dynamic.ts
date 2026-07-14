@@ -14,6 +14,7 @@ import { getDatabase } from "../db/index.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { errMsg } from "../lib/err-msg.js";
 
 // ---------------------------------------------------------------------------
@@ -280,7 +281,8 @@ export function startDynamicScheduler(): void {
   ensureScheduledTasksTable();
 
   // Check every minute if any cron expressions match
-  pollingJob = cron.schedule(
+  pollingJob = scheduleCron(
+    "dynamic-schedules-poller",
     "* * * * *",
     () => {
       checkAndExecuteSchedules().catch((err) => {

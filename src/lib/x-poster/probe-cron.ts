@@ -9,7 +9,8 @@
  * per account+backend, so a persistently-stale account pings once, not daily.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../cron.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { recordXBackendHealth } from "../../observability/prometheus.js";
 import { probeAllAccounts } from "./index.js";
@@ -108,7 +109,7 @@ function tickWithRealDeps(log: XProbeLog): Promise<void> {
 export function registerXProbeCron(log: XProbeLog = NOOP_LOG): boolean {
   stopXProbeCron();
   const schedule = getXProbeCron();
-  scheduledJob = cron.schedule(schedule, () => void tickWithRealDeps(log), {
+  scheduledJob = scheduleCron("x-health-probe", schedule, () => void tickWithRealDeps(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(`registered X probe cron (${schedule}, ${RITUALS_TIMEZONE})`);

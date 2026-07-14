@@ -915,9 +915,8 @@ export const fastRunner: Runner = {
       try {
         const { queryMemory } = await import("../memory/jme.js");
         const rawLastMsg =
-          input.conversationHistory
-            .filter((t) => t.role === "user")
-            .pop()?.content ?? input.title;
+          input.conversationHistory.filter((t) => t.role === "user").pop()
+            ?.content ?? input.title;
         const lastMsg =
           typeof rawLastMsg === "string"
             ? rawLastMsg.slice(0, JME_QUERY_MAX_CHARS)
@@ -1280,6 +1279,10 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // by recordReflectionCost when reflection invokes this runner
           // directly) — seam recording here would double-count. (3.3)
           costLedger: false,
+          // Phase 6: per-turn/per-tool timeline correlated to this task.
+          // Reflection invokes execute() without a real task row — those
+          // emits still land and prune with the 30d window; harmless.
+          trace: { taskId: input.taskId, runId: input.runId },
           ...(sdkImages.length > 0 && { images: sdkImages }),
         });
 

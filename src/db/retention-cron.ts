@@ -5,9 +5,11 @@
  * node-cron scheduler must never see an unhandled exception.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 
 import { runTasksRetention } from "./retention.js";
+import { pruneTraceEvents } from "../observability/task-trace.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { errMsg } from "../lib/err-msg.js";
 
@@ -30,7 +32,7 @@ export function registerRetentionCron(
   log: RetentionLog = DEFAULT_LOG,
 ): boolean {
   stopRetentionCron();
-  scheduledJob = cron.schedule(RETENTION_CRON, () => runRetentionTick(log), {
+  scheduledJob = scheduleCron("tasks-retention", RETENTION_CRON, () => runRetentionTick(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(
@@ -68,5 +70,11 @@ export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
     log.warn("retention sweep threw (contract violation)", {
       error: errMsg(err),
     });
+  }
+  // V8.5 Phase 6: trace-event retention rides the same tick. pruneTraceEvents
+  // has its own never-throw contract, so no extra guard needed.
+  const traceRemoved = pruneTraceEvents();
+  if (traceRemoved > 0) {
+    log.info("trace retention", { eventsDeleted: traceRemoved });
   }
 }

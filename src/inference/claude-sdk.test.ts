@@ -52,9 +52,14 @@ const recordCostMock = vi.hoisted(() => vi.fn());
 const remainingBudgetMock = vi.hoisted(() => vi.fn(() => 10));
 const budgetFlags = vi.hoisted(() => ({ enabled: false, enforce: false }));
 
+// V8.5 Phase 6: trace-emit seam mock (real module writes SQLite).
+const emitTraceMock = vi.hoisted(() => vi.fn());
+vi.mock("../observability/task-trace.js", () => ({
+  emitTraceEvent: emitTraceMock,
+}));
+
 vi.mock("../budget/service.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../budget/service.js")>();
+  const actual = await importOriginal<typeof import("../budget/service.js")>();
   return {
     ...actual,
     recordCost: recordCostMock,
@@ -91,6 +96,7 @@ beforeEach(() => {
   lastQueryArgs.value = null;
   mockThrowAfterYield.value = null;
   recordCostMock.mockReset();
+  emitTraceMock.mockReset();
   remainingBudgetMock.mockReset().mockReturnValue(10);
   budgetFlags.enabled = false;
   budgetFlags.enforce = false;
@@ -2393,10 +2399,9 @@ describe("cost-ledger seam metering (V8.5 Phase 3.3)", () => {
 
   it("threads costLedger through queryClaudeSdkAsInfer", async () => {
     mockMessages.value = [SEAM_SUCCESS_RESULT];
-    await queryClaudeSdkAsInfer(
-      [{ role: "user", content: "hola" }],
-      { costLedger: false },
-    );
+    await queryClaudeSdkAsInfer([{ role: "user", content: "hola" }], {
+      costLedger: false,
+    });
     expect(recordCostMock).not.toHaveBeenCalled();
   });
 
@@ -2508,8 +2513,9 @@ describe("tool search (V8.5 Phase 3.2)", () => {
 
     mockMessages.value = [SEAM_SUCCESS_RESULT];
     await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
-    const env = (lastQueryArgs.value?.options as { env: Record<string, string> })
-      .env;
+    const env = (
+      lastQueryArgs.value?.options as { env: Record<string, string> }
+    ).env;
     expect(env.ENABLE_TOOL_SEARCH).toBeUndefined();
   });
 
@@ -2522,8 +2528,9 @@ describe("tool search (V8.5 Phase 3.2)", () => {
 
     mockMessages.value = [SEAM_SUCCESS_RESULT];
     await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
-    const env = (lastQueryArgs.value?.options as { env: Record<string, string> })
-      .env;
+    const env = (
+      lastQueryArgs.value?.options as { env: Record<string, string> }
+    ).env;
     expect(env.ENABLE_TOOL_SEARCH).toBe("true");
   });
 
@@ -2551,9 +2558,9 @@ describe("tool search (V8.5 Phase 3.2)", () => {
   });
 
   it("bakes per-tool alwaysLoad from the registry deferred annotation", () => {
-    const core = wrapToolCached(
-      fakeTool({ name: "core_tool" }),
-    ) as unknown as { alwaysLoad?: boolean };
+    const core = wrapToolCached(fakeTool({ name: "core_tool" })) as unknown as {
+      alwaysLoad?: boolean;
+    };
     const tail = wrapToolCached(
       fakeTool({ name: "tail_tool", deferred: true }),
     ) as unknown as { alwaysLoad?: boolean };
@@ -2571,9 +2578,9 @@ describe("tool search (V8.5 Phase 3.2)", () => {
     ) as unknown as { searchHint?: string };
     expect(wrapped.searchHint).toBe("manda un correo, send email");
 
-    const bare = wrapToolCached(
-      fakeTool({ name: "bare_tool" }),
-    ) as unknown as { searchHint?: string };
+    const bare = wrapToolCached(fakeTool({ name: "bare_tool" })) as unknown as {
+      searchHint?: string;
+    };
     expect(bare.searchHint).toBeUndefined();
   });
 
@@ -2585,11 +2592,85 @@ describe("tool search (V8.5 Phase 3.2)", () => {
       inputSchema: {},
       handler: async () => ({ content: [] }),
     };
-    const server = buildMcpServer([], [
-      inline as never,
-    ]) as unknown as {
+    const server = buildMcpServer([], [inline as never]) as unknown as {
       config: { tools: Array<{ _meta?: Record<string, unknown> }> };
     };
     expect(server.config.tools[0]._meta?.["anthropic/alwaysLoad"]).toBe(true);
+  });
+});
+
+describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
+  const twoTurnFixture = (): MockMessage[] => [
+    {
+      type: "assistant",
+      message: {
+        usage: { input_tokens: 100, output_tokens: 20 },
+        content: [
+          { type: "tool_use", name: "mcp__jarvis__web_search" },
+          { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+        ],
+      },
+    },
+    {
+      type: "assistant",
+      message: {
+        usage: {
+          input_tokens: 50,
+          output_tokens: 80,
+          cache_read_input_tokens: 900,
+        },
+        content: [{ type: "text", text: "done" }],
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      result: "done",
+      num_turns: 2,
+      usage: { input_tokens: 150, output_tokens: 100 },
+      total_cost_usd: 0.01,
+      duration_ms: 500,
+    },
+  ];
+
+  it("emits tool.called per tool_use and turn.completed per assistant turn when trace is set", async () => {
+    mockMessages.value = twoTurnFixture();
+
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-42", runId: "run-7" },
+    });
+
+    const calls = emitTraceMock.mock.calls.map((c) => c[0]);
+    expect(calls.map((e) => e.name)).toEqual([
+      "tool.called",
+      "tool.called",
+      "turn.completed",
+      "turn.completed",
+    ]);
+    // Bare tool names (mcp__jarvis__ prefix stripped), correct round.
+    expect(calls[0]).toMatchObject({
+      taskId: "task-42",
+      runId: "run-7",
+      tool: "web_search",
+      round: 1,
+    });
+    expect(calls[1]).toMatchObject({ tool: "jarvis_file_read", round: 1 });
+    // Turn tokens are per-turn (incl. cache read), not cumulative.
+    expect(calls[2]).toMatchObject({ round: 1, tokensIn: 100, tokensOut: 20 });
+    expect(calls[3]).toMatchObject({
+      round: 2,
+      tokensIn: 950,
+      tokensOut: 80,
+    });
+    expect(typeof calls[2].latencyMs).toBe("number");
+  });
+
+  it("emits NOTHING when trace is unset (non-task callers)", async () => {
+    mockMessages.value = twoTurnFixture();
+    await queryClaudeSdk({ prompt: "test", systemPrompt: "sys", toolNames: [] });
+    expect(emitTraceMock).not.toHaveBeenCalled();
   });
 });

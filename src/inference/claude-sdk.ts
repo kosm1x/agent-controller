@@ -46,6 +46,7 @@ import type {
   CostLedgerAttribution,
 } from "./adapter.js";
 import { errMsg } from "../lib/err-msg.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
 // db/config/pricing — no static cycle back into the inference layer.
 import {
@@ -534,6 +535,15 @@ export async function queryClaudeSdk(opts: {
    * instead of leaking silently. See CostLedgerAttribution in adapter.ts.
    */
   costLedger?: CostLedgerAttribution | false;
+  /**
+   * Task-trace correlation (V8.5 Phase 6). When set, every assistant turn
+   * emits `turn.completed` (turn tokens + wall-clock latency) and every
+   * tool_use block emits `tool.called` (round + bare tool name) to
+   * task_trace_events. Unset (all non-task callers: chat fast-path,
+   * briefing, critics) = zero overhead. Emits are best-effort by contract —
+   * a trace failure never fails the query.
+   */
+  trace?: { taskId: string; runId?: string };
 }): Promise<ClaudeSdkResult> {
   // Budget enforcement gate (V8.5 Phase 3.3) — dormant unless the operator
   // arms BOTH existing flags (BUDGET_ENABLED + BUDGET_ENFORCE, default off).
@@ -785,6 +795,10 @@ export async function queryClaudeSdk(opts: {
   // shim's `durationMs || Date.now() - start` pattern so a timed-out call still
   // records its real elapsed time instead of a phantom 0ms latency sample.
   const queryStart = Date.now();
+  // Phase 6: wall-clock anchor for per-turn latency. Assistant messages have
+  // no SDK-side duration; the delta between consecutive assistant messages
+  // (first one: since queryStart) is the turn's observable latency.
+  let lastTurnEndedAt = queryStart;
   const q = query({ prompt: sdkPrompt, options });
 
   try {
@@ -837,6 +851,7 @@ export async function queryClaudeSdk(opts: {
         // Capture streaming assistant text and tool names. MCP tools arrive
         // with the `mcp__jarvis__` prefix — strip so downstream code sees
         // bare names that match the registry.
+        const toolCountBeforeTurn = toolCallNames.length;
         if (message.message?.content) {
           for (const block of message.message.content) {
             if (typeof block !== "object" || !("type" in block)) continue;
@@ -861,6 +876,37 @@ export async function queryClaudeSdk(opts: {
             }
           }
         }
+        // Phase 6: per-turn trace events for task-correlated calls. Emitted
+        // AFTER the block scan so tool.called rows carry this turn's tools
+        // (the slice of toolCallNames this turn appended); turn tokens come
+        // from turnUsage (per-call, not cumulative).
+        if (opts.trace) {
+          const turnLatencyMs = Date.now() - lastTurnEndedAt;
+          for (const tool of toolCallNames.slice(toolCountBeforeTurn)) {
+            emitTraceEvent({
+              taskId: opts.trace.taskId,
+              runId: opts.trace.runId,
+              name: "tool.called",
+              round: assistantTurns,
+              tool,
+            });
+          }
+          emitTraceEvent({
+            taskId: opts.trace.taskId,
+            runId: opts.trace.runId,
+            name: "turn.completed",
+            round: assistantTurns,
+            tokensIn: turnUsage
+              ? (turnUsage.input_tokens ?? 0) +
+                (turnUsage.cache_creation_input_tokens ?? 0) +
+                (turnUsage.cache_read_input_tokens ?? 0)
+              : undefined,
+            tokensOut: turnUsage?.output_tokens,
+            latencyMs: turnLatencyMs,
+          });
+        }
+        lastTurnEndedAt = Date.now();
+
         // Progress log every 3 assistant turns so long-running queries are
         // observable (previously silent 10-min runs were impossible to diagnose).
         if (assistantTurns % 3 === 0) {

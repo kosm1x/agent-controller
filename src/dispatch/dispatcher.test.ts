@@ -63,6 +63,12 @@ vi.mock("./checkout.js", () => ({
   checkoutTask: vi.fn(() => ({ success: true, taskId: "mock-id" })),
 }));
 
+// V8.5 Phase 6: trace-emit seam (real module writes SQLite).
+const emitTraceMock = vi.hoisted(() => vi.fn());
+vi.mock("../observability/task-trace.js", () => ({
+  emitTraceEvent: emitTraceMock,
+}));
+
 vi.mock("../lib/logger.js", () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -78,7 +84,9 @@ import {
   cancelTask,
   extractPersistText,
   isPhantomZeroCostRow,
+  registerRunner,
 } from "./dispatcher.js";
+import type { RunnerOutput } from "../runners/types.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -368,5 +376,84 @@ describe("isPhantomZeroCostRow", () => {
   it("is a no-op when the run reported no tokenUsage at all", () => {
     expect(isPhantomZeroCostRow({ success: false })).toBe(false);
     expect(isPhantomZeroCostRow({ success: true })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task-trace emit wiring (V8.5 Phase 6, audit W4)
+// ---------------------------------------------------------------------------
+
+describe("dispatchTask trace emits", () => {
+  function stubRunner(result: Partial<RunnerOutput>) {
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, ...result }) as RunnerOutput,
+    });
+  }
+
+  async function traceNamesAfterDispatch(): Promise<string[]> {
+    await submitTask({ title: "Trace me", description: "trace wiring spec" });
+    // dispatchTask is fire-and-forget from submitTask — wait for a terminal.
+    await vi.waitFor(() => {
+      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+      if (!names.some((n) => n.startsWith("task.") && n !== "task.started")) {
+        throw new Error("no terminal trace event yet");
+      }
+    });
+    return emitTraceMock.mock.calls.map((c) => c[0].name);
+  }
+
+  it("success path: task.started then EXACTLY one terminal (task.completed)", async () => {
+    stubRunner({
+      success: true,
+      output: "done",
+      toolCalls: ["web_search"],
+      tokenUsage: {
+        promptTokens: 100,
+        completionTokens: 10,
+        actualCostUsd: 0.01,
+      },
+    });
+    const names = await traceNamesAfterDispatch();
+    expect(names[0]).toBe("task.started");
+    expect(names.filter((n) => n === "task.completed")).toHaveLength(1);
+    expect(names).not.toContain("task.failed");
+
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal).toMatchObject({
+      name: "task.completed",
+      tokensIn: 100,
+      tokensOut: 10,
+      costUsd: 0.01,
+      tool: "web_search",
+    });
+    expect(terminal.attrs).toMatchObject({
+      status: "completed",
+      agent_type: "fast",
+      tool_calls: 1,
+    });
+  });
+
+  it("runner-throw path: exactly one terminal (task.failed from the catch)", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        throw new Error("runner exploded");
+      },
+    });
+    const names = await traceNamesAfterDispatch();
+    expect(names.filter((n) => n.startsWith("task.") && n !== "task.started"))
+      .toEqual(["task.failed"]);
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.attrs).toMatchObject({ thrown: true });
+    expect(terminal.attrs.error).toContain("runner exploded");
+  });
+
+  it("failed-result path: one task.failed carrying the mapped status + error", async () => {
+    stubRunner({ success: false, error: "no scope", status: "FAIL" });
+    const names = await traceNamesAfterDispatch();
+    expect(names.filter((n) => n !== "task.started")).toEqual(["task.failed"]);
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.attrs).toMatchObject({ status: "failed", error: "no scope" });
   });
 });
