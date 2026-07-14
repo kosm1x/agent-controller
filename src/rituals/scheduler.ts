@@ -368,6 +368,7 @@ export function startRitualScheduler(): void {
   scheduleStaleArtifactPrune();
   scheduleHindsightCostPull();
   schedulePrometheusAlertPoller();
+  scheduleNoVerdictReminder();
 
   // v6.4 H3: Self-monitoring canary — health alerts every 4 hours
   try {
@@ -846,6 +847,36 @@ function scheduleHindsightCostPull(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] hindsight-cost-pull: scheduled (*/5 * * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * §17 no-verdict reminder — V8.5 Phase 4.6. Mechanical (no LLM): if the
+ * delivered brief is still `pending` (no whole-message sirve/descarta) by
+ * 20:00 MX, send ONE reminder with the exact reply vocabulary. Send-once
+ * guard + zero-delivery stance live in runNoVerdictReminder.
+ */
+function scheduleNoVerdictReminder(): void {
+  const job = cron.schedule(
+    "0 20 * * *",
+    async () => {
+      try {
+        const { runNoVerdictReminder } =
+          await import("../briefing/no-verdict-reminder.js");
+        const result = await runNoVerdictReminder();
+        console.log(
+          `[rituals] no-verdict-reminder: ${result.reason}${result.briefingId ? ` (${result.briefingId})` : ""}`,
+        );
+      } catch (err) {
+        console.error("[rituals] no-verdict-reminder failed:", err);
+        recordRitualFailure("no-verdict-reminder", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] no-verdict-reminder: scheduled (0 20 * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

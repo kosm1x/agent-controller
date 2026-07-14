@@ -11,12 +11,37 @@
  * picked up by getActiveTestCases() in the eval runner.
  */
 
+import type Database from "better-sqlite3";
 import { getDatabase } from "../db/index.js";
 import {
   getTelemetryWithRepairs,
   getTelemetryWithNegativeFeedback,
   getRecentTelemetry,
 } from "../intelligence/scope-telemetry.js";
+
+/**
+ * Lazy DDL for mined_test_cases — shared by mineTestCases() and the
+ * excelente→flywheel auto-bridge (V8.5 4.7), either of which can be the
+ * first writer on a fresh DB.
+ */
+export function ensureMinedTestCasesTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mined_test_cases (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id     TEXT UNIQUE NOT NULL,
+      category    TEXT NOT NULL,
+      input       TEXT NOT NULL,
+      expected    TEXT NOT NULL,
+      weight      REAL DEFAULT 0.8,
+      source      TEXT DEFAULT 'mined',
+      active      INTEGER DEFAULT 1,
+      mined_from  TEXT,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mined_cases_category
+      ON mined_test_cases(category);
+  `);
+}
 import {
   SCHEDULE_TOOLS,
   GOOGLE_TOOLS,
@@ -271,7 +296,42 @@ function mineTierMismatches(days: number = 14): MinedCase[] {
  * positive + 39 seed + negatives + flywheel keeps the corpus in the
  * 150-200 band the gate design targets.
  */
-const POSITIVE_CASE_CEILING = 140;
+export const POSITIVE_CASE_CEILING = 140;
+
+/**
+ * SQL predicate selecting every ACTIVE case that counts against
+ * POSITIVE_CASE_CEILING: miner positives + auto-bridged excelente pins
+ * (V8.5 4.7). The bridge is matched on its exclusive mined_from marker, not
+ * a case_id prefix — a manual CLI pin (`add-eval-case.ts --id auto-x` →
+ * case_id `flywheel-auto-x`) must NOT consume miner room (audit W2).
+ */
+export const POSITIVE_CEILING_PREDICATE = `(case_id LIKE 'mined-positive-%'
+    OR mined_from LIKE 'flywheel:excelente:%')
+   AND active = 1`;
+
+/** Active positive-case count against POSITIVE_CASE_CEILING (0 when the
+ *  table doesn't exist yet). Shared by the miner and the auto-bridge.
+ *
+ *  Audit W-R2.1 (2026-07-14): only the missing-table case means "full room";
+ *  any other DB error rethrows so the bridge/miner fail CLOSED — a swallowed
+ *  SQLITE_BUSY here would report unbounded room to the ceiling check. */
+export function countActivePositiveCases(db: Database.Database): number {
+  try {
+    return (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM mined_test_cases
+           WHERE ${POSITIVE_CEILING_PREDICATE}`,
+        )
+        .get() as { n: number }
+    ).n;
+  } catch (err) {
+    if (err instanceof Error && /no such table/i.test(err.message)) {
+      return 0; // first run — the table's writer will create it
+    }
+    throw err;
+  }
+}
 
 /** @internal exported for tests */
 export function minePositiveSelections(
@@ -283,19 +343,11 @@ export function minePositiveSelections(
   const seen = new Set<string>();
 
   // Remaining room under the ceiling — counts previously-stored actives.
-  let existing = 0;
-  try {
-    existing = (
-      db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM mined_test_cases
-           WHERE case_id LIKE 'mined-positive-%' AND active = 1`,
-        )
-        .get() as { n: number }
-    ).n;
-  } catch {
-    // Table may not exist yet (first run) — full room available.
-  }
+  // V8.5 4.7: auto-bridged excelente cases consume the same room — the
+  // ceiling bounds per-run gate cost, and an auto-bridged case is one real
+  // LLM call per eval:gate run exactly like a mined positive. See
+  // POSITIVE_CEILING_PREDICATE for the namespace rules.
+  const existing = countActivePositiveCases(db);
   const room = Math.min(cap, Math.max(0, POSITIVE_CASE_CEILING - existing));
   if (room === 0) return [];
 
@@ -354,23 +406,7 @@ export function mineTestCases(): {
   const db = getDatabase();
   const stats = { inserted: 0, skipped: 0, errors: 0 };
 
-  // Ensure table exists
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS mined_test_cases (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      case_id     TEXT UNIQUE NOT NULL,
-      category    TEXT NOT NULL,
-      input       TEXT NOT NULL,
-      expected    TEXT NOT NULL,
-      weight      REAL DEFAULT 0.8,
-      source      TEXT DEFAULT 'mined',
-      active      INTEGER DEFAULT 1,
-      mined_from  TEXT,
-      created_at  TEXT DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_mined_cases_category
-      ON mined_test_cases(category);
-  `);
+  ensureMinedTestCasesTable(db);
 
   const allCases = [
     ...mineScopeMisses(),
@@ -423,6 +459,25 @@ export function mineTestCases(): {
   console.log(
     `[case-miner] Mined ${allCases.length} candidates → ${stats.inserted} new, ${stats.skipped} dedup, ${stats.errors} errors`,
   );
+
+  // Audit I-R2.2 (2026-07-14): manual flywheel pins (flywheel:task:%,
+  // flywheel:manual) are deliberately OUTSIDE the ceiling (human-typed,
+  // self-limiting) yet still cost one gate LLM call each and never prune.
+  // Surface drift past the corpus design band instead of letting the
+  // "150-200" claim rot silently.
+  const activeToolSelection = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM mined_test_cases
+         WHERE category = 'tool_selection' AND active = 1`,
+      )
+      .get() as { n: number }
+  ).n;
+  if (activeToolSelection > 200) {
+    console.warn(
+      `[case-miner] active tool_selection corpus at ${activeToolSelection} (design band 150-200) — manual flywheel pins are ceiling-exempt; review before the next eval:gate cost jump`,
+    );
+  }
 
   return stats;
 }

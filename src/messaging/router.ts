@@ -132,6 +132,7 @@ import {
   linkScopeToTask,
   linkFeedbackToScope,
 } from "../intelligence/scope-telemetry.js";
+import { bridgePraisedTaskToEvalCase } from "../tuning/flywheel-bridge.js";
 import { autoPersistConversation } from "../memory/auto-persist.js";
 import { getOutcomeTag } from "../memory/outcome-tag.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -1854,6 +1855,25 @@ export class MessageRouter {
           linkFeedbackToScope(feedbackTaskId, signal);
         } catch {
           /* non-fatal */
+        }
+        // V8.5 4.7: an explicit positive here is "excelente" — the operator's
+        // sole eval word — so the praised task's telemetry auto-pins as a
+        // flywheel eval case (same pin add-eval-case.ts --from-task does by
+        // hand). Best-effort: a bridge failure must never affect the reply.
+        if (signal === "positive") {
+          try {
+            const bridge = bridgePraisedTaskToEvalCase(feedbackTaskId);
+            console.log(
+              bridge.created
+                ? `[router] flywheel auto-bridge: pinned ${bridge.caseId}`
+                : `[router] flywheel auto-bridge: skipped (${bridge.reason}) for task ${feedbackTaskId}`,
+            );
+          } catch (err) {
+            console.error(
+              `[router] flywheel auto-bridge failed for task ${feedbackTaskId}:`,
+              err,
+            );
+          }
         }
         // v6.4 H1: When user rephrases, extract what changed and persist
         // as a correction so the enrichment pipeline recalls it on future
