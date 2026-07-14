@@ -34,7 +34,12 @@ function seedMarkets(
 ) {
   const n = opts.count ?? 5;
   const category = opts.category ?? "Politics";
-  const resDate = opts.resolutionDate ?? "2026-07-15T00:00:00Z";
+  // Relative, far outside the near-resolution exclusion window. An absolute
+  // date here is a time bomb: the old "2026-07-15" fixture passed until
+  // midnight UTC 2026-07-14, then every market fell inside the 24h window
+  // and the suite went red with zero code change (blocked PR #28).
+  const resDate =
+    opts.resolutionDate ?? new Date(Date.now() + 30 * 86_400_000).toISOString();
   const liq = opts.liquidity ?? 50_000;
   const insert = db.prepare(
     `INSERT INTO prediction_markets
