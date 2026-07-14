@@ -24,6 +24,8 @@ import {
 } from "./embeddings.js";
 import { errMsg } from "../lib/err-msg.js";
 import { logRecall } from "./recall-utility.js";
+import { infer } from "../inference/adapter.js";
+import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -474,4 +476,212 @@ export function jmeStats(): {
   ).n;
 
   return { turnsTotal, factsTotal, factsWithEmbedding, factsExpiringSoon };
+}
+
+// ── Phase 2 — Consolidator + Dedup ───────────────────────────────────────────
+
+/**
+ * Similarity threshold above which an incoming fact is considered a
+ * near-duplicate of an existing one and should SUPERSEDE it (update
+ * expires_at of the old fact + insert the new one).
+ */
+export const CONSOLIDATOR_DEDUP_THRESHOLD = 0.85;
+
+/**
+ * Similarity threshold above which an incoming fact is considered IDENTICAL
+ * to an existing one and is silently skipped (no insert, no supersede).
+ */
+export const CONSOLIDATOR_SKIP_THRESHOLD = 0.95;
+
+/**
+ * Upsert a fact with dedup:
+ *   - If an existing fact has cosine similarity >= SKIP_THRESHOLD  → skip (no-op)
+ *   - If an existing fact has cosine similarity >= DEDUP_THRESHOLD → supersede
+ *     (mark old fact as expired, insert new one)
+ *   - Otherwise → plain insert (delegates to writeFact)
+ *
+ * The cosine comparison only runs when embeddings are available; if embed()
+ * is unavailable the function falls through to writeFact (no silent data loss).
+ */
+export async function upsertFact(fact: JmeFact): Promise<"skipped" | "superseded" | "inserted"> {
+  const db = getDatabase();
+  const now = Date.now();
+
+  // Try to embed the incoming fact for similarity comparison
+  let incomingVec: Float32Array | null = null;
+  try {
+    incomingVec = await embed(fact.factText);
+  } catch {
+    // embedding unavailable — skip dedup, fall through to plain insert
+  }
+
+  if (incomingVec) {
+    // Scan existing non-expired facts with embeddings for near-duplicates.
+    // Limit to 200 most recent to bound CPU cost.
+    type FactRow = { id: number; embedding: Buffer; fact_text: string };
+    const candidates = db
+      .prepare(
+        `SELECT id, embedding, fact_text FROM jme_facts
+         WHERE embedding IS NOT NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY ts DESC
+         LIMIT 200`,
+      )
+      .all(now) as FactRow[];
+
+    let bestSim = 0;
+    let bestId = -1;
+
+    for (const row of candidates) {
+      try {
+        const existingVec = deserializeEmbedding(row.embedding);
+        const sim = cosineSimilarity(incomingVec, existingVec);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestId = row.id;
+        }
+      } catch {
+        // skip malformed embedding
+      }
+    }
+
+    if (bestSim >= CONSOLIDATOR_SKIP_THRESHOLD) {
+      // Near-identical — no-op
+      return "skipped";
+    }
+
+    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestId !== -1) {
+      // Near-duplicate — supersede: expire the old fact, then insert the new one
+      writeWithRetry(() => {
+        db.prepare(
+          `UPDATE jme_facts SET expires_at = ? WHERE id = ?`,
+        ).run(now, bestId);
+      });
+      await writeFact(fact);
+      return "superseded";
+    }
+  }
+
+  // No near-duplicate found — plain insert
+  await writeFact(fact);
+  return "inserted";
+}
+
+/**
+ * Fact extraction prompt for Haiku.
+ * Returns a JSON array of fact objects.
+ */
+const CONSOLIDATOR_EXTRACT_PROMPT = `You are a fact extractor for a personal assistant memory system.
+Given a conversation, extract a compact list of durable facts about the user.
+
+Rules:
+- Each fact must be a self-contained, standalone statement (no pronouns like "he/she").
+- Only extract facts that would still be useful weeks from now.
+- Skip greetings, filler, one-off operational details, and temporary states.
+- Categories: "decision" | "preference" | "event" | "emotion" | "project"
+- Confidence: 0.0–1.0 (how confident you are this is a lasting fact)
+
+Respond with ONLY a JSON array, no explanation:
+[{"factText": "...", "category": "...", "confidence": 0.9}, ...]
+
+If no durable facts are present, respond with: []`;
+
+/**
+ * Consolidate a completed task session into the semantic fact store.
+ *
+ * Steps:
+ *   1. Load all turns for the task from jme_turns
+ *   2. Call Haiku (effort:low) to extract durable facts
+ *   3. Upsert each fact (dedup against existing facts)
+ *   4. Prune raw turns for this task (buffer cleared after consolidation)
+ *
+ * Safe to call fire-and-forget — all errors are caught and logged.
+ * Does NOT use recordRitualFailure (not a ritual job) — logs to console.error.
+ */
+export async function consolidate(taskId: string): Promise<{
+  turnsProcessed: number;
+  factsExtracted: number;
+  factsInserted: number;
+  factsSkipped: number;
+  factsSuperseded: number;
+}> {
+  const result = {
+    turnsProcessed: 0,
+    factsExtracted: 0,
+    factsInserted: 0,
+    factsSkipped: 0,
+    factsSuperseded: 0,
+  };
+
+  try {
+    const db = getDatabase();
+
+    // 1. Load turns
+    const turns = getTurnsForTask(taskId, 100);
+    if (turns.length === 0) return result;
+    result.turnsProcessed = turns.length;
+
+    // 2. Format conversation for Haiku
+    const conversation = turns
+      .map((t) => `${t.role === "user" ? "Fede" : "Jarvis"}: ${t.content}`)
+      .join("\n");
+
+    // 3. Extract facts via Haiku (effort:low — synthesis task)
+    const response = await infer(
+      {
+        messages: [
+          { role: "user", content: `${CONSOLIDATOR_EXTRACT_PROMPT}\n\n---\n${conversation}` },
+        ],
+        model: HAIKU_MODEL_ID,
+        max_tokens: 1024,
+        effort: "low",
+        taskId,
+      },
+    );
+
+    const rawText = response.content?.trim() ?? "";
+    if (!rawText) return result;
+
+    // 4. Parse JSON — tolerate markdown code fences
+    let facts: Array<{ factText: string; category: string; confidence?: number }> = [];
+    try {
+      const cleaned = rawText.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+      facts = JSON.parse(cleaned) as typeof facts;
+      if (!Array.isArray(facts)) facts = [];
+    } catch {
+      console.error(`[jme] consolidate: failed to parse Haiku response for task ${taskId}: ${rawText.slice(0, 200)}`);
+      return result;
+    }
+
+    result.factsExtracted = facts.length;
+
+    // 5. Upsert each fact
+    for (const f of facts) {
+      const category = (["decision", "preference", "event", "emotion", "project"] as const)
+        .find((c) => c === f.category) ?? "decision";
+
+      try {
+        const outcome = await upsertFact({
+          sourceTask: taskId,
+          factText: f.factText,
+          category,
+          confidence: typeof f.confidence === "number" ? f.confidence : 1.0,
+        });
+        if (outcome === "inserted") result.factsInserted++;
+        else if (outcome === "skipped") result.factsSkipped++;
+        else if (outcome === "superseded") result.factsSuperseded++;
+      } catch (err) {
+        console.error(`[jme] consolidate: upsertFact failed for task ${taskId}: ${errMsg(err)}`);
+      }
+    }
+
+    // 6. Prune raw turns for this task (buffer cleared after consolidation)
+    writeWithRetry(() => {
+      db.prepare(`DELETE FROM jme_turns WHERE task_id = ?`).run(taskId);
+    });
+  } catch (err) {
+    console.error(`[jme] consolidate: unhandled error for task ${taskId}: ${errMsg(err)}`);
+  }
+
+  return result;
 }

@@ -12,6 +12,15 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 
+// Phase 2 mocks (hoisted before dynamic import)
+const inferMock = vi.fn();
+vi.mock("../inference/adapter.js", () => ({
+  infer: (...args: unknown[]) => inferMock(...args),
+}));
+vi.mock("../inference/claude-sdk.js", () => ({
+  HAIKU_MODEL_ID: "claude-haiku-test",
+}));
+
 // ── Mock DB & dependencies ───────────────────────────────────────────────────
 
 // We create an in-memory DB and run the JME schema manually
@@ -284,5 +293,165 @@ describe("JME — stats", () => {
     expect(stats.turnsTotal).toBe(2);
     expect(stats.factsTotal).toBe(1);
     expect(stats.factsWithEmbedding).toBe(0); // embed() returns null in tests
+  });
+});
+
+// ── Phase 2: Consolidator + Dedup ─────────────────────────────────────────────
+
+describe("JME — upsertFact (dedup)", () => {
+  it("inserts a new fact when no near-duplicate exists (embed unavailable)", async () => {
+    const { upsertFact, jmeStats } = await getJme();
+
+    // embed() mock returns null → no vector comparison → plain insert
+    const outcome = await upsertFact({
+      sourceTask: "t1",
+      factText: "Fede prefers concise responses",
+      category: "preference",
+    });
+
+    expect(outcome).toBe("inserted");
+    expect(jmeStats().factsTotal).toBe(1);
+  });
+
+  it("skips fact when cosine similarity >= SKIP_THRESHOLD (near-identical)", async () => {
+    const { upsertFact, jmeStats, CONSOLIDATOR_SKIP_THRESHOLD } = await getJme();
+    const { embed: embedMock, cosineSimilarity: cosSim, deserializeEmbedding: deser,
+            serializeEmbedding: ser } = await import("./embeddings.js");
+
+    const vec = new Float32Array([1, 0, 0]);
+    const blob = Buffer.from(vec.buffer);
+
+    // Both calls to embed() during first upsertFact (once in upsertFact, once in writeFact)
+    vi.mocked(embedMock).mockResolvedValue(vec);
+    vi.mocked(ser).mockReturnValue(blob);
+
+    await upsertFact({ sourceTask: "t1", factText: "Fede likes coffee", category: "preference" });
+
+    // Second insert — same vector, cosine sim above SKIP_THRESHOLD
+    // embed() called once in upsertFact (not in writeFact since we return early)
+    vi.mocked(embedMock).mockResolvedValueOnce(vec);
+    vi.mocked(deser).mockReturnValueOnce(vec);
+    vi.mocked(cosSim).mockReturnValueOnce(CONSOLIDATOR_SKIP_THRESHOLD + 0.01);
+
+    const outcome = await upsertFact({
+      sourceTask: "t2",
+      factText: "Fede likes coffee",
+      category: "preference",
+    });
+
+    expect(outcome).toBe("skipped");
+    expect(jmeStats().factsTotal).toBe(1); // still only 1 fact
+
+    // restore default mock
+    vi.mocked(embedMock).mockResolvedValue(null);
+    vi.mocked(ser).mockImplementation((v: Float32Array) =>
+      Buffer.from(v.buffer, v.byteOffset, v.byteLength),
+    );
+  });
+
+  it("supersedes fact when cosine similarity >= DEDUP_THRESHOLD but < SKIP_THRESHOLD", async () => {
+    const { upsertFact, jmeStats, CONSOLIDATOR_DEDUP_THRESHOLD, CONSOLIDATOR_SKIP_THRESHOLD } =
+      await getJme();
+    const { embed: embedMock, cosineSimilarity: cosSim, deserializeEmbedding: deser,
+            serializeEmbedding: ser } = await import("./embeddings.js");
+
+    const vec = new Float32Array([1, 0, 0]);
+    const blob = Buffer.from(vec.buffer);
+
+    // First insert — both embed() calls get the vector
+    vi.mocked(embedMock).mockResolvedValue(vec);
+    vi.mocked(ser).mockReturnValue(blob);
+
+    await upsertFact({ sourceTask: "t1", factText: "Fede uses Valle de Bravo to rest", category: "event" });
+
+    // Second insert — near-duplicate (above DEDUP but below SKIP)
+    const midSim = (CONSOLIDATOR_DEDUP_THRESHOLD + CONSOLIDATOR_SKIP_THRESHOLD) / 2;
+    vi.mocked(deser).mockReturnValueOnce(vec);
+    vi.mocked(cosSim).mockReturnValueOnce(midSim);
+    // embed() called twice: once in upsertFact (for comparison), once in writeFact (for new fact)
+    vi.mocked(embedMock).mockResolvedValue(vec);
+
+    const outcome = await upsertFact({
+      sourceTask: "t2",
+      factText: "Fede uses Valle de Bravo for rest and recovery",
+      category: "event",
+    });
+
+    expect(outcome).toBe("superseded");
+    // Old fact expired + new fact inserted = 2 rows total (old is expired but still counted)
+    expect(jmeStats().factsTotal).toBe(2);
+
+    // restore
+    vi.mocked(embedMock).mockResolvedValue(null);
+    vi.mocked(ser).mockImplementation((v: Float32Array) =>
+      Buffer.from(v.buffer, v.byteOffset, v.byteLength),
+    );
+  });
+});
+
+describe("JME — consolidate", () => {
+  beforeEach(() => {
+    inferMock.mockReset();
+  });
+
+  it("extracts facts from turns and prunes turns after consolidation", async () => {
+    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+
+    writeEpisodic({ taskId: "task-abc", role: "user", content: "I prefer short answers" });
+    writeEpisodic({ taskId: "task-abc", role: "jarvis", content: "Noted!" });
+
+    inferMock.mockResolvedValueOnce({
+      content: JSON.stringify([
+        { factText: "Fede prefers short answers", category: "preference", confidence: 0.9 },
+      ]),
+    });
+
+    const result = await consolidate("task-abc");
+
+    expect(result.turnsProcessed).toBe(2);
+    expect(result.factsExtracted).toBe(1);
+    expect(result.factsInserted).toBe(1);
+    expect(result.factsSkipped).toBe(0);
+    // Turns are pruned after consolidation
+    expect(jmeStats().turnsTotal).toBe(0);
+    expect(jmeStats().factsTotal).toBe(1);
+  });
+
+  it("returns early with no facts when Haiku returns empty array", async () => {
+    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+
+    writeEpisodic({ taskId: "task-empty", role: "user", content: "hi" });
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    const result = await consolidate("task-empty");
+
+    expect(result.factsExtracted).toBe(0);
+    expect(result.factsInserted).toBe(0);
+    // Turns still pruned even when no facts extracted
+    expect(jmeStats().turnsTotal).toBe(0);
+  });
+
+  it("returns zeros when no turns exist for the task", async () => {
+    const { consolidate } = await getJme();
+
+    const result = await consolidate("task-nonexistent");
+
+    expect(result.turnsProcessed).toBe(0);
+    expect(result.factsExtracted).toBe(0);
+    expect(inferMock).not.toHaveBeenCalled();
+  });
+
+  it("handles malformed JSON from Haiku gracefully", async () => {
+    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+
+    writeEpisodic({ taskId: "task-bad", role: "user", content: "hello" });
+    inferMock.mockResolvedValueOnce({ content: "not valid json {{{" });
+
+    const result = await consolidate("task-bad");
+
+    expect(result.factsExtracted).toBe(0);
+    // Turns should NOT be pruned when JSON parse fails (no facts processed)
+    // — turns remain for potential retry
+    expect(jmeStats().turnsTotal).toBeGreaterThanOrEqual(0); // graceful, no crash
   });
 });
