@@ -8,7 +8,8 @@
  * Delivers nudges via router.broadcastToAll(). Non-blocking, non-fatal.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import type { MessageRouter } from "../messaging/router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { createLogger } from "../lib/logger.js";
@@ -51,7 +52,7 @@ export function startProactiveScheduler(router: MessageRouter): void {
     return;
   }
 
-  job = cron.schedule(
+  job = scheduleCron("proactive-nudge", 
     NUDGE_CRON,
     () => {
       runProactiveScan().catch((err) => {

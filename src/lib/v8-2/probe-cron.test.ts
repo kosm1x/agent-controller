@@ -25,7 +25,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.schedule.mockReturnValue({ stop: mocks.stop });
+  mocks.schedule.mockReturnValue({ stop: mocks.stop, on: vi.fn() });
   stopSycophancyProbeCron();
   mocks.stop.mockClear();
 });
@@ -37,7 +37,10 @@ describe("registerSycophancyProbeCron", () => {
     expect(mocks.schedule).toHaveBeenCalledWith(
       "30 2 * * *",
       expect.any(Function),
-      { timezone: "America/Mexico_City" },
+      expect.objectContaining({
+        timezone: "America/Mexico_City",
+        missedExecutionTolerance: 60_000,
+      }),
     );
   });
 

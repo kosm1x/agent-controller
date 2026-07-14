@@ -5,7 +5,8 @@
  * Idempotent: checks if a ritual already ran today before submitting.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { execFileSync } from "child_process";
 import { getDatabase } from "../db/index.js";
 import { scheduleCanary, stopCanary } from "./canary.js";
@@ -344,7 +345,8 @@ export function startRitualScheduler(): void {
     // unknown template id, trading-day check) otherwise escape as unhandled
     // rejections and bypass recordRitualFailure — the reaction rules built to
     // catch systemic ritual outages miss exactly this class.
-    const job = cron.schedule(
+    const job = scheduleCron(
+      ritual.id,
       ritual.cron,
       () =>
         void executeRitual(ritual).catch((err) => {
@@ -467,7 +469,8 @@ export function pruneOldTags(): void {
 /** Autonomous improvement — detects issues, creates fix branch + PR. */
 function scheduleAutonomousImprovement(): void {
   // 1:30 AM Tue/Thu/Sat — right after overnight tuning (1:00 AM)
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "autonomous-improvement",
     "30 1 * * 2,4,6",
     async () => {
       try {
@@ -505,7 +508,8 @@ function scheduleAutonomousImprovement(): void {
 /** Mechanical KB backup — no LLM, just pushes jarvis_files to Postgres. */
 function scheduleKbBackup(): void {
   // 10:30 PM daily — right after nightly close
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "kb-backup",
     "30 22 * * *",
     async () => {
       try {
@@ -539,7 +543,8 @@ function scheduleKbBackup(): void {
 function scheduleEvolutionLogCommit(): void {
   // Sunday 3:00 AM MX — after Saturday's 23:59 evolution-log entry, before the
   // Sunday morning rituals.
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "evolution-log-commit",
     "0 3 * * 0",
     () => {
       try {
@@ -571,7 +576,8 @@ function scheduleEvolutionLogCommit(): void {
  * bounded without busy-looping.
  */
 function scheduleKbReindex(): void {
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "kb-reindex",
     "10 * * * *",
     async () => {
       try {
@@ -672,7 +678,8 @@ function scheduleStaleArtifactPrune(): void {
   // Every hour at :17 so it doesn't collide with the backup cron or the
   // nightly close ritual. Cron TZ is noise for hourly cadence but kept
   // consistent with the rest of the scheduler.
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "stale-artifact-prune",
     "17 * * * *",
     async () => {
       let listOutput: string;
@@ -747,7 +754,8 @@ function scheduleStaleArtifactPrune(): void {
 /** CCP7: Memory consolidation — prune stale/duplicate memories. */
 function scheduleMemoryConsolidation(): void {
   // 2:30 AM Tue/Thu/Sat — after overnight tuning (1:00 AM)
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "memory-consolidation",
     "30 2 * * 2,4,6",
     async () => {
       try {
@@ -772,7 +780,8 @@ function scheduleMemoryConsolidation(): void {
 /** Weekly diff digest — SG1 safeguard. Summarizes autonomous activity. */
 function scheduleDiffDigest(): void {
   // Sunday 8 PM — same timezone as weekly review
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "diff-digest",
     "0 20 * * 0",
     async () => {
       try {
@@ -821,7 +830,8 @@ function scheduleHindsightCostPull(): void {
     );
     return;
   }
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "hindsight-cost-pull",
     "*/5 * * * *",
     async () => {
       try {
@@ -857,7 +867,8 @@ function scheduleHindsightCostPull(): void {
  * guard + zero-delivery stance live in runNoVerdictReminder.
  */
 function scheduleNoVerdictReminder(): void {
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "no-verdict-reminder",
     "0 20 * * *",
     async () => {
       try {
@@ -895,7 +906,8 @@ function schedulePrometheusAlertPoller(): void {
     );
     return;
   }
-  const job = cron.schedule(
+  const job = scheduleCron(
+    "prometheus-alert-notifier",
     "*/2 * * * *",
     async () => {
       try {

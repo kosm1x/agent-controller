@@ -67,7 +67,6 @@ import {
   isExclusivelyBriefVerdict,
   resolveBriefingOnOperatorReply,
 } from "../briefing/promote.js";
-import { getResolvablePendingBriefing } from "../briefing/storage.js";
 import { isV82ProducerEnabled } from "../lib/v8-2/flags.js";
 import { reRunJudgment } from "../lib/v8-2/produce.js";
 import {
@@ -1259,12 +1258,15 @@ export class MessageRouter {
    *
    * PURE VERDICT ("sirve" / "no sirve" / "útil"… — `isExclusivelyBriefVerdict`,
    * i.e. a whole-message verdict that can mean nothing but a ruling on the
-   * brief) with a resolvable brief pending: handled HERE, synchronously —
-   * resolve, send the deterministic ack, and return true so the chat pipeline
-   * is skipped. Dispatching such a message as a chat task cost ~$0.65 in LLM
-   * calls and produced an empty STATUS: DONE that the router dropped silently
-   * (2026-07-11 incident — operator saw Jarvis "stuck" after answering the
-   * morning brief).
+   * brief): ALWAYS handled HERE, synchronously — resolve if a brief is
+   * pending, otherwise answer with a deterministic "nothing pending", and
+   * return true so the chat pipeline is skipped either way. Dispatching such
+   * a message as a chat task cost ~$0.65 in LLM calls and produced an empty
+   * STATUS: DONE that the router dropped silently (2026-07-11 incident —
+   * operator saw Jarvis "stuck" after answering the morning brief); worse,
+   * with NO pending brief the LLM interpreted a bare "Sirve" against prior
+   * conversation context as a project go-ahead (2026-07-14 incident — Jarvis
+   * started implementing JME Phase 2 from a verdict word).
    *
    * ANYTHING ELSE — including IMPERATIVE-shaped verdicts ("archívalo",
    * "descártalo", "skip"), which may be instructions about prior context
@@ -1291,14 +1293,7 @@ export class MessageRouter {
     }
     const deps = isV82ProducerEnabled() ? { reRunJudgment } : {};
 
-    let isPureVerdict = false;
-    try {
-      isPureVerdict =
-        isExclusivelyBriefVerdict(msg.text) &&
-        getResolvablePendingBriefing() !== null;
-    } catch {
-      // DB unavailable — treat as non-verdict; the resolver below no-ops too
-    }
+    const isPureVerdict = isExclusivelyBriefVerdict(msg.text);
 
     if (!isPureVerdict) {
       void resolveBriefingOnOperatorReply(msg.text, deps)
@@ -1314,18 +1309,31 @@ export class MessageRouter {
     const res = await resolveBriefingOnOperatorReply(msg.text, deps).catch(
       () => null,
     );
-    // Raced away (another path resolved it first) — let the chat pipeline
-    // have the message rather than answering about a brief we didn't rule on.
-    if (!res) return false;
 
+    // Verdict floor (2026-07-14 incident): a PURE verdict token must NEVER
+    // reach the chat LLM — with no resolvable brief (none generated, already
+    // resolved, or raced away to another path), a bare "Sirve" landed in the
+    // chat pipeline and Jarvis read it against prior context as a project
+    // go-ahead (started implementing JME Phase 2). The shape can mean nothing
+    // but a ruling on the brief, so when there is nothing to rule on the
+    // right answer is a deterministic "nothing pending", not interpretation.
+    //
+    // Known tradeoff (do NOT "fix" by restoring a pre-check on
+    // getResolvablePendingBriefing): if the DB is unavailable while a brief
+    // IS pending, the resolver's catch yields null and this floor claims
+    // nothing was pending — a rare degraded-state message. The alternative
+    // (falling through) hands the verdict token to the chat LLM, which is
+    // the exact incident class this floor exists to kill.
+    //
     // Binary + concession outcomes carry `reply`; `expired` deliberately
     // doesn't (see ResolveResult) — the verdict arrived too late, say so
     // instead of silently swallowing the operator's ruling.
-    const ack =
-      res.reply ??
-      (res.resolution === "expired"
-        ? "⏰ El brief ya había expirado — veredicto no registrado."
-        : "✓");
+    const ack = res
+      ? (res.reply ??
+        (res.resolution === "expired"
+          ? "⏰ El brief ya había expirado — veredicto no registrado."
+          : "✓"))
+      : "📋 No hay brief pendiente que resolver — veredicto no registrado (el brief de hoy no se generó o ya fue resuelto).";
     this.sendToChannel(msg.channel, msg.from, ack);
     appendDayLog("JARVIS", ack);
 

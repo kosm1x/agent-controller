@@ -5,7 +5,8 @@
  * node-cron scheduler must never see an unhandled exception.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 
 import { runTasksRetention } from "./retention.js";
 import { pruneTraceEvents } from "../observability/task-trace.js";
@@ -31,7 +32,7 @@ export function registerRetentionCron(
   log: RetentionLog = DEFAULT_LOG,
 ): boolean {
   stopRetentionCron();
-  scheduledJob = cron.schedule(RETENTION_CRON, () => runRetentionTick(log), {
+  scheduledJob = scheduleCron("tasks-retention", RETENTION_CRON, () => runRetentionTick(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(

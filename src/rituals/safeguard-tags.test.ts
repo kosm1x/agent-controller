@@ -8,7 +8,7 @@ vi.mock("child_process", () => ({
 
 // Mock other scheduler deps to prevent side effects
 vi.mock("node-cron", () => ({
-  default: { schedule: vi.fn().mockReturnValue({ stop: vi.fn() }) },
+  default: { schedule: vi.fn().mockReturnValue({ stop: vi.fn(), on: vi.fn() }) },
 }));
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({ prepare: vi.fn().mockReturnValue({ get: vi.fn() }) }),

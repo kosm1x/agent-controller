@@ -375,9 +375,10 @@ export interface EventPayloadMap {
 export interface ScheduleRunFailedPayload {
   ritual_id: string;
   error: string;
-  /** Phase where the failure occurred: 'submit' (task couldn't be queued) or
-   *  'execute' (cron-dispatched work threw in its own body). */
-  phase: "submit" | "execute";
+  /** Phase where the failure occurred: 'submit' (task couldn't be queued),
+   *  'execute' (cron-dispatched work threw in its own body), or 'missed'
+   *  (node-cron skipped the fire — event loop blocked past the tolerance). */
+  phase: "submit" | "execute" | "missed";
 }
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Hoist mocks so vi.mock factories can reference them
 const { mockSchedule, mockGet, mockPrepare, mockSubmitTask } = vi.hoisted(
   () => ({
-    mockSchedule: vi.fn().mockReturnValue({ stop: vi.fn() }),
+    mockSchedule: vi.fn().mockReturnValue({ stop: vi.fn(), on: vi.fn() }),
     mockGet: vi.fn(),
     mockPrepare: vi.fn().mockReturnValue({ get: vi.fn() }),
     mockSubmitTask: vi.fn().mockResolvedValue({
@@ -146,7 +146,7 @@ describe("startRitualScheduler", () => {
 describe("stopRitualScheduler", () => {
   it("should stop all scheduled jobs", () => {
     const mockStop = vi.fn();
-    mockSchedule.mockReturnValue({ stop: mockStop });
+    mockSchedule.mockReturnValue({ stop: mockStop, on: vi.fn() });
 
     startRitualScheduler();
     stopRitualScheduler();

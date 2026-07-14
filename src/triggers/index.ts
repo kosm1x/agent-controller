@@ -17,6 +17,7 @@
  */
 
 import cron, { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { handleTaskCompleted } from "./n-turn.js";
@@ -51,7 +52,7 @@ export function startTriggers(): void {
     );
   }
   jobs.push(
-    cron.schedule(morningExpr, () => void runMorningSurface(), {
+    scheduleCron("morning-surface", morningExpr, () => void runMorningSurface(), {
       timezone: RITUALS_TIMEZONE,
     }),
   );
@@ -63,7 +64,8 @@ export function startTriggers(): void {
   // reads (detectStalledTasks/isThrottled) run outside any try inside, so a
   // throw was an unhandled rejection and a silently-skipped check.
   jobs.push(
-    cron.schedule(
+    scheduleCron(
+      "idle-detect",
       IDLE_DETECT_CRON,
       () =>
         void runIdleDetectCheck().catch((err) => {

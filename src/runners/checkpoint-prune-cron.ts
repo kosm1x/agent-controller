@@ -17,7 +17,8 @@
  * job first. Safe to call on every boot.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 
 import { pruneExpiredSnapshots } from "../prometheus/snapshot.js";
 import { pruneExpiredCheckpoints } from "./checkpoint.js";
@@ -49,7 +50,7 @@ export function registerCheckpointPruneCron(
   log: PruneLog = DEFAULT_LOG,
 ): boolean {
   stopCheckpointPruneCron();
-  scheduledJob = cron.schedule(PRUNE_CRON, () => runCheckpointPrune(log), {
+  scheduledJob = scheduleCron("checkpoint-prune", PRUNE_CRON, () => runCheckpointPrune(log), {
     timezone: PRUNE_TIMEZONE,
   });
   log.info(

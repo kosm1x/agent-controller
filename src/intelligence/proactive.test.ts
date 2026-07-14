@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("node-cron", () => ({
   default: {
-    schedule: vi.fn().mockReturnValue({ stop: vi.fn() }),
+    schedule: vi.fn().mockReturnValue({ stop: vi.fn(), on: vi.fn() }),
   },
 }));
 

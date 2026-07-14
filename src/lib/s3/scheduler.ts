@@ -17,7 +17,8 @@
  * times safely (existing jobs are stopped first).
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../cron.js";
 import { evaluateSignal } from "./evaluator.js";
 import {
   detectBursts,
@@ -72,7 +73,8 @@ export function registerS3CronJobs(): number {
 
   for (const [cadence, cronExpr] of Object.entries(CRON_BY_CADENCE)) {
     const c = cadence as Cadence;
-    const job = cron.schedule(
+    const job = scheduleCron(
+      `s3-${c}`,
       cronExpr,
       () => void runCadenceTick(c).catch((err) => noticeError(c, err)),
       { timezone: S3_TIMEZONE },
