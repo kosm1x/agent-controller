@@ -23,6 +23,7 @@ import {
   deserializeEmbedding,
 } from "./embeddings.js";
 import { errMsg } from "../lib/err-msg.js";
+import { logRecall } from "./recall-utility.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,11 +101,14 @@ export function getTurnsForTask(
   limit = 50,
 ): Array<{ role: JmeTurnRole; content: string; ts: number }> {
   const db = getDatabase();
-  return db
+  // W4/W7: grab the most recent `limit` turns (deterministic tie-break on id
+  // when timestamps collide), then reverse to restore chronological (ASC)
+  // order for consolidation input.
+  const rows = db
     .prepare(
       `SELECT role, content, ts FROM jme_turns
        WHERE task_id = ?
-       ORDER BY ts ASC
+       ORDER BY ts DESC, id DESC
        LIMIT ?`,
     )
     .all(taskId, limit) as Array<{
@@ -112,17 +116,28 @@ export function getTurnsForTask(
     content: string;
     ts: number;
   }>;
+  return rows.reverse();
 }
 
 // ── Semantic store ───────────────────────────────────────────────────────────
 
 /**
- * Write a fact to the semantic store.
- * Embeds asynchronously — if embedding fails, falls back to FTS5-only.
+ * Resolve the persisted row values for a fact (TTL → expires_at, best-effort
+ * embedding). Kept separate so both writeFact and writeFacts can await the
+ * async embedding step *before* opening a synchronous DB transaction.
  */
-export async function writeFact(fact: JmeFact): Promise<void> {
-  const db = getDatabase();
-  const now = Date.now();
+async function prepareFactRow(
+  fact: JmeFact,
+  now: number,
+): Promise<{
+  sourceTask: string;
+  ts: number;
+  factText: string;
+  category: string;
+  embeddingBlob: Buffer | null;
+  expiresAt: number | null;
+  confidence: number;
+}> {
   const ttl = TTL_MS[fact.category];
   const expiresAt = fact.expiresAt !== undefined
     ? fact.expiresAt
@@ -139,32 +154,99 @@ export async function writeFact(fact: JmeFact): Promise<void> {
     // silently degrade to FTS5-only
   }
 
+  return {
+    sourceTask: fact.sourceTask,
+    ts: now,
+    factText: fact.factText,
+    category: fact.category,
+    embeddingBlob,
+    expiresAt,
+    confidence: fact.confidence ?? 1.0,
+  };
+}
+
+const INSERT_FACT_SQL = `INSERT INTO jme_facts (source_task, ts, fact_text, category, embedding, expires_at, confidence)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`;
+
+/**
+ * Write a fact to the semantic store.
+ * Embeds asynchronously — if embedding fails, falls back to FTS5-only.
+ */
+export async function writeFact(fact: JmeFact): Promise<void> {
+  const db = getDatabase();
+  const now = Date.now();
+  const row = await prepareFactRow(fact, now);
+
   writeWithRetry(() => {
-    db.prepare(
-      `INSERT INTO jme_facts (source_task, ts, fact_text, category, embedding, expires_at, confidence)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      fact.sourceTask,
-      now,
-      fact.factText,
-      fact.category,
-      embeddingBlob,
-      expiresAt,
-      fact.confidence ?? 1.0,
+    db.prepare(INSERT_FACT_SQL).run(
+      row.sourceTask,
+      row.ts,
+      row.factText,
+      row.category,
+      row.embeddingBlob,
+      row.expiresAt,
+      row.confidence,
     );
   });
 }
 
 /**
- * Write multiple facts in a single transaction.
+ * Write multiple facts atomically.
+ *
+ * W3: async embedding is resolved for every fact *before* the transaction,
+ * then all rows are inserted inside a single real db.transaction so either
+ * all facts land or none do (no partial writes on failure).
  */
 export async function writeFacts(facts: JmeFact[]): Promise<void> {
-  for (const fact of facts) {
-    await writeFact(fact);
-  }
+  if (facts.length === 0) return;
+  const db = getDatabase();
+  const now = Date.now();
+
+  const rows = await Promise.all(
+    facts.map((fact) => prepareFactRow(fact, now)),
+  );
+
+  const insertAll = db.transaction(
+    (
+      pending: Array<Awaited<ReturnType<typeof prepareFactRow>>>,
+    ): void => {
+      const stmt = db.prepare(INSERT_FACT_SQL);
+      for (const row of pending) {
+        stmt.run(
+          row.sourceTask,
+          row.ts,
+          row.factText,
+          row.category,
+          row.embeddingBlob,
+          row.expiresAt,
+          row.confidence,
+        );
+      }
+    },
+  );
+
+  writeWithRetry(() => insertAll(rows));
 }
 
 // ── Retrieval ────────────────────────────────────────────────────────────────
+
+/**
+ * W1: Turn a free-form query into safe FTS5 keyword tokens.
+ * - Lowercases everything (FTS5 operators AND/OR/NOT/NEAR are case-sensitive
+ *   uppercase, so lowercasing alone neutralizes them as operators).
+ * - Strips punctuation/special chars that carry FTS5 meaning (", *, :, (, ),
+ *   ^, -, etc.), keeping only alphanumerics and accented letters.
+ * - Drops the reserved operator words defensively and tokens ≤2 chars.
+ */
+function extractKeywords(query: string): string[] {
+  const FTS5_OPERATORS = new Set(["and", "or", "not", "near"]);
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúñü\s]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !FTS5_OPERATORS.has(w));
+}
 
 /**
  * Query the semantic store — hybrid BM25 + vector search.
@@ -183,6 +265,7 @@ export async function queryMemory(
   const { k = 8, minScore = 0.25 } = options;
   const db = getDatabase();
   const now = Date.now();
+  const startedAt = now;
 
   type DbFactRow = {
     id: number;
@@ -231,13 +314,10 @@ export async function queryMemory(
   // ── 2. FTS5 keyword search ─────────────────────────────────────────────────
   const keywordScores = new Map<number, number>();
   try {
-    // Sanitize query for FTS5 (remove special chars)
-    const ftsQuery = query
-      .replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ\s]/g, " ")
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length > 2)
-      .join(" OR ");
+    // W1: lowercase + strip FTS5 operators so user tokens can never be
+    // interpreted as query syntax (AND/OR/NOT/NEAR, column filters, etc.).
+    const keywords = extractKeywords(query);
+    const ftsQuery = keywords.join(" OR ");
 
     if (ftsQuery) {
       const keywordRows = db
@@ -251,9 +331,16 @@ export async function queryMemory(
         )
         .all(ftsQuery, now) as Array<{ id: number; bm25_score: number }>;
 
+      // W2: BM25 in SQLite FTS5 is negative (lower = better). Normalize each
+      // score against the actual best (most negative) score in this result
+      // set — divide by Math.max of the |scores| so the top hit maps to 1.0.
+      // No hardcoded 0.001 default floor (which acted as a ceiling and flat-
+      // lined every score to ~1.0).
+      const magnitudes = keywordRows.map((r) => Math.abs(r.bm25_score));
+      const maxMagnitude = Math.max(...magnitudes, 0);
       for (const row of keywordRows) {
-        // BM25 in SQLite FTS5 is negative (lower = better). Normalize to [0,1].
-        const normalized = Math.max(0, 1 + row.bm25_score / 10);
+        const normalized =
+          maxMagnitude > 0 ? Math.abs(row.bm25_score) / maxMagnitude : 0;
         keywordScores.set(row.id, normalized);
       }
     }
@@ -261,9 +348,30 @@ export async function queryMemory(
     console.warn("[jme] FTS5 query failed:", errMsg(err));
   }
 
+  // Single return path so telemetry (logRecall) fires for EVERY recall —
+  // including empty-result recalls — preserving source:'jme' and latency.
+  const logAndReturn = (results: JmeRecallResult[]): JmeRecallResult[] => {
+    try {
+      logRecall({
+        bank: "jme",
+        query,
+        source: "jme",
+        results: results.map((r) => ({
+          content: r.factText,
+          relevance: r.score,
+          createdAt: new Date(r.ts).toISOString(),
+        })),
+        latencyMs: Date.now() - startedAt,
+      });
+    } catch {
+      // telemetry is best-effort — never fail a recall on an audit-write error
+    }
+    return results;
+  };
+
   // ── 3. Gather all candidate IDs ────────────────────────────────────────────
   const allIds = new Set([...vectorScores.keys(), ...keywordScores.keys()]);
-  if (allIds.size === 0) return [];
+  if (allIds.size === 0) return logAndReturn([]);
 
   // ── 4. Fetch metadata for all candidates ──────────────────────────────────
   const idList = [...allIds].join(",");
@@ -302,7 +410,9 @@ export async function queryMemory(
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
 
-  return results;
+  // Telemetry: record this recall in the shared audit table with source:'jme'
+  // so JME retrievals are observable alongside the hindsight/sqlite paths.
+  return logAndReturn(results);
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -353,12 +463,14 @@ export function jmeStats(): {
       )
       .get() as { n: number }
   ).n;
+  // W6: only count facts expiring within the *next* 7 days — the window is
+  // BETWEEN now AND now+7d, so already-expired facts are excluded.
   const factsExpiringSoon = (
     db
       .prepare(
-        "SELECT COUNT(*) as n FROM jme_facts WHERE expires_at IS NOT NULL AND expires_at < ?",
+        "SELECT COUNT(*) as n FROM jme_facts WHERE expires_at IS NOT NULL AND expires_at BETWEEN ? AND ?",
       )
-      .get(sevenDays) as { n: number }
+      .get(now, sevenDays) as { n: number }
   ).n;
 
   return { turnsTotal, factsTotal, factsWithEmbedding, factsExpiringSoon };

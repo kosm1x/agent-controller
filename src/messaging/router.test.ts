@@ -85,6 +85,12 @@ vi.mock("../briefing/promote.js", async (importOriginal) => {
   };
 });
 
+const mockWriteEpisodic = vi.fn().mockResolvedValue(undefined);
+vi.mock("../memory/jme.js", () => ({
+  writeEpisodic: (...args: unknown[]) => mockWriteEpisodic(...args),
+  queryMemory: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({ get: dbStatusGet }),
@@ -822,6 +828,99 @@ describe("MessageRouter", () => {
       expect(exchange).toContain("[Task cancelled by operator] user-requested");
       expect(opts.bank).toBe("mc-jarvis");
       expect(opts.tags).toContain("outcome:failed");
+    });
+
+    describe("JME operator filter (writeEpisodic)", () => {
+      const OWNER_ID = "12345";
+
+      beforeEach(() => {
+        mockWriteEpisodic.mockClear();
+        process.env.TELEGRAM_OWNER_CHAT_ID = OWNER_ID;
+      });
+
+      afterEach(() => {
+        delete process.env.TELEGRAM_OWNER_CHAT_ID;
+      });
+
+      it("calls writeEpisodic when channel=telegram and to=OWNER_ID", async () => {
+        const msg: IncomingMessage = {
+          channel: "telegram",
+          from: OWNER_ID,
+          text: "hola",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: "Respuesta",
+            duration_ms: 100,
+          },
+        });
+
+        // Fire-and-forget — flush microtasks
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
+
+        expect(mockWriteEpisodic).toHaveBeenCalled();
+        const calls = mockWriteEpisodic.mock.calls;
+        const roles = calls.map((c: unknown[]) => (c[0] as { role: string }).role);
+        expect(roles).toContain("user");
+        expect(roles).toContain("jarvis");
+      });
+
+      it("does NOT call writeEpisodic for non-operator channels (whatsapp)", async () => {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "someone@s.whatsapp.net",
+          text: "hola",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: "Respuesta",
+            duration_ms: 100,
+          },
+        });
+
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
+
+        expect(mockWriteEpisodic).not.toHaveBeenCalled();
+      });
+
+      it("does NOT call writeEpisodic for telegram from a different chat (not owner)", async () => {
+        const msg: IncomingMessage = {
+          channel: "telegram",
+          from: "99999", // different from OWNER_ID
+          text: "hola",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: "Respuesta",
+            duration_ms: 100,
+          },
+        });
+
+        await vi.advanceTimersByTimeAsync(0); // suite runs fake timers — a real setTimeout flush never fires
+
+        expect(mockWriteEpisodic).not.toHaveBeenCalled();
+      });
     });
   });
 

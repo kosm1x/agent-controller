@@ -38,6 +38,12 @@ vi.mock("../lib/err-msg.js", () => ({
   errMsg: (e: unknown) => String(e),
 }));
 
+// Mock recall telemetry so we can assert logRecall fires on every recall path
+const logRecallMock = vi.fn();
+vi.mock("./recall-utility.js", () => ({
+  logRecall: (...args: unknown[]) => logRecallMock(...args),
+}));
+
 function applyJmeSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS jme_turns (
@@ -90,6 +96,7 @@ function applyJmeSchema(db: Database.Database): void {
 beforeEach(() => {
   mockDb = new Database(":memory:");
   applyJmeSchema(mockDb);
+  logRecallMock.mockClear();
 });
 
 // Dynamic import so mocks are in place first
@@ -182,6 +189,20 @@ describe("JME — semantic store (FTS5 path)", () => {
 
     const results = await queryMemory("Valle de Bravo");
     expect(results).toHaveLength(0);
+  });
+
+  it("queryMemory calls logRecall once with source:'jme' even when result set is empty", async () => {
+    const { queryMemory } = await getJme();
+
+    // No facts written → FTS5 matches nothing → empty result set
+    const results = await queryMemory("nonexistent query term xyz");
+    expect(results).toHaveLength(0);
+
+    // Telemetry must still fire exactly once on the empty-result path
+    expect(logRecallMock).toHaveBeenCalledTimes(1);
+    expect(logRecallMock).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "jme", results: [] }),
+    );
   });
 
   it("permanent facts (preference) never expire", async () => {

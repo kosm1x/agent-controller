@@ -321,7 +321,8 @@ interface LogRecallInput {
     | "sqlite-primary"
     | "circuit-open"
     | "bank-disabled"
-    | "rerank-opt-out";
+    | "rerank-opt-out"
+    | "jme";
   /** Results AFTER the outcome filter has run. result_count and snippets in
    * the audit row reflect what the agent saw, not what the vendor returned. */
   results: MemoryItem[];
