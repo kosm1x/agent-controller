@@ -401,6 +401,29 @@ export function initDatabase(dbPath: string): Database.Database {
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // V8.5 Phase 6: per-task trace events (task.started → tool.called →
+  // turn.completed → task.completed/failed), correlated by task_id.
+  // Writer/reader: src/observability/task-trace.ts; viewer: mc-ctl trace.
+  // `id` is the replay order; `ts` carries milliseconds for latency reading.
+  _db.exec(`CREATE TABLE IF NOT EXISTS task_trace_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL,
+    run_id     TEXT,
+    ts         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    name       TEXT NOT NULL,
+    round      INTEGER,
+    tool       TEXT,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
+    cost_usd   REAL,
+    latency_ms INTEGER,
+    attrs      TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_trace_task ON task_trace_events(task_id, id)",
+  );
+  _db.exec("CREATE INDEX IF NOT EXISTS idx_trace_ts ON task_trace_events(ts)");
+
   // v5.0 S5b: Knowledge maps for Prometheus
   _db.exec(`CREATE TABLE IF NOT EXISTS knowledge_maps (
     id          TEXT PRIMARY KEY,
@@ -1132,8 +1155,12 @@ export function initDatabase(dbPath: string): Database.Database {
             channel    TEXT DEFAULT 'unknown'
           )
         `);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_turns_task ON jme_turns(task_id)`);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_turns_ts   ON jme_turns(ts DESC)`);
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_turns_task ON jme_turns(task_id)`,
+        );
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_turns_ts   ON jme_turns(ts DESC)`,
+        );
 
         // jme_facts — semantic store (extracted facts + embeddings)
         db.exec(`
@@ -1149,10 +1176,18 @@ export function initDatabase(dbPath: string): Database.Database {
             confidence  REAL NOT NULL DEFAULT 1.0
           )
         `);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_task     ON jme_facts(source_task)`);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_ts       ON jme_facts(ts DESC)`);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_category ON jme_facts(category)`);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_jme_facts_expires  ON jme_facts(expires_at)`);
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_facts_task     ON jme_facts(source_task)`,
+        );
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_facts_ts       ON jme_facts(ts DESC)`,
+        );
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_facts_category ON jme_facts(category)`,
+        );
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_jme_facts_expires  ON jme_facts(expires_at)`,
+        );
 
         // FTS5 virtual table for keyword fallback
         db.exec(`

@@ -17,6 +17,7 @@ import {
   recordCost,
 } from "../budget/service.js";
 import { taskStarted, taskCompleted } from "../observability/prometheus.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
@@ -565,6 +566,17 @@ async function dispatchWithSlot(
   };
 
   taskStarted(agentType);
+  // V8.5 Phase 6: forensic timeline start. Best-effort by contract.
+  emitTraceEvent({
+    taskId,
+    runId,
+    name: "task.started",
+    attrs: {
+      agent_type: agentType,
+      title: submission.title.slice(0, 120),
+      ...(input.modelTier && { tier: input.modelTier }),
+    },
+  });
   // The runner that ultimately ANSWERS this task. Starts as the classified type
   // but is re-stamped to "fast" if the nanoclaw→fast misroute fallback below
   // succeeds, so cost + outcome are attributed to the runner that actually ran
@@ -609,6 +621,12 @@ async function dispatchWithSlot(
           { taskId },
           "nanoclaw chat failed (no-op/scope) — falling back to fast runner",
         );
+        emitTraceEvent({
+          taskId,
+          runId,
+          name: "task.fallback",
+          attrs: { from: "nanoclaw", to: "fast" },
+        });
         // W2: the nanoclaw container already spawned + exited inside the runner;
         // free the scarce container slot before the container-less fast re-run so
         // other queued nanoclaw tasks aren't blocked by the extra round-trip.
@@ -739,6 +757,15 @@ async function dispatchWithSlot(
             result.output,
             `Required tools not called after retry: ${missing.join(", ")}`,
           );
+          emitTraceEvent({
+            taskId,
+            runId,
+            name: "task.failed",
+            latencyMs: durationMs,
+            attrs: {
+              error: `required tools missing after retry: ${missing.join(", ")}`,
+            },
+          });
           return;
         }
 
@@ -772,6 +799,15 @@ async function dispatchWithSlot(
           result.output,
           `Required tools not called: ${missing.join(", ")}`,
         );
+        emitTraceEvent({
+          taskId,
+          runId,
+          name: "task.failed",
+          latencyMs: durationMs,
+          attrs: {
+            error: `required tools missing (auto-retrying): ${missing.join(", ")}`,
+          },
+        });
         return;
       }
     }
@@ -855,6 +891,28 @@ async function dispatchWithSlot(
       }
     }
 
+    // V8.5 Phase 6: terminal trace event. For a failed task the last
+    // tool.called row before this one names the terminal round/tool; here we
+    // carry the aggregate (tokens, cost, wall-clock) and the mapped status.
+    emitTraceEvent({
+      taskId,
+      runId,
+      name: result.success ? "task.completed" : "task.failed",
+      tokensIn: result.tokenUsage?.promptTokens,
+      tokensOut: result.tokenUsage?.completionTokens,
+      costUsd: result.tokenUsage?.actualCostUsd,
+      latencyMs: durationMs,
+      ...(result.toolCalls?.length && {
+        tool: result.toolCalls[result.toolCalls.length - 1],
+      }),
+      attrs: {
+        status: taskStatus,
+        agent_type: effectiveAgentType,
+        tool_calls: result.toolCalls?.length ?? 0,
+        ...(result.error && { error: result.error.slice(0, 300) }),
+      },
+    });
+
     // Emit completion event
     try {
       if (result.success) {
@@ -890,6 +948,12 @@ async function dispatchWithSlot(
     ).run({ runId, error: errorMsg });
 
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
+    emitTraceEvent({
+      taskId,
+      runId,
+      name: "task.failed",
+      attrs: { error: errorMsg.slice(0, 300), thrown: true },
+    });
   } finally {
     taskCompleted(agentType);
     // The fast-fallback may have already released the container slot early (W2);
