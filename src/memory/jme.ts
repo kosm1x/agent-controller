@@ -32,11 +32,7 @@ import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
 export type JmeTurnRole = "user" | "jarvis";
 
 export type JmeFactCategory =
-  | "decision"
-  | "preference"
-  | "event"
-  | "emotion"
-  | "project";
+  "decision" | "preference" | "event" | "emotion" | "project";
 
 export interface JmeTurn {
   taskId: string;
@@ -56,6 +52,8 @@ export interface JmeFact {
 }
 
 export interface JmeRecallResult {
+  /** jme_facts row id — lets consumers (dedup supersede) target the exact row. */
+  id: number;
   factText: string;
   category: JmeFactCategory;
   sourceTask: string;
@@ -141,11 +139,12 @@ async function prepareFactRow(
   confidence: number;
 }> {
   const ttl = TTL_MS[fact.category];
-  const expiresAt = fact.expiresAt !== undefined
-    ? fact.expiresAt
-    : ttl !== null
-      ? now + ttl
-      : null;
+  const expiresAt =
+    fact.expiresAt !== undefined
+      ? fact.expiresAt
+      : ttl !== null
+        ? now + ttl
+        : null;
 
   // Embed fact text (best-effort)
   let embeddingBlob: Buffer | null = null;
@@ -209,9 +208,7 @@ export async function writeFacts(facts: JmeFact[]): Promise<void> {
   );
 
   const insertAll = db.transaction(
-    (
-      pending: Array<Awaited<ReturnType<typeof prepareFactRow>>>,
-    ): void => {
+    (pending: Array<Awaited<ReturnType<typeof prepareFactRow>>>): void => {
       const stmt = db.prepare(INSERT_FACT_SQL);
       for (const row of pending) {
         stmt.run(
@@ -396,11 +393,10 @@ export async function queryMemory(
     .map((row) => {
       const vScore = vectorScores.get(row.id) ?? 0;
       const kScore = keywordScores.get(row.id) ?? 0;
-      const fused = queryVec
-        ? vScore * 0.7 + kScore * 0.3
-        : kScore;
+      const fused = queryVec ? vScore * 0.7 + kScore * 0.3 : kScore;
 
       return {
+        id: row.id,
         factText: row.fact_text,
         category: row.category as JmeFactCategory,
         sourceTask: row.source_task,
@@ -493,73 +489,106 @@ export const CONSOLIDATOR_DEDUP_THRESHOLD = 0.85;
  */
 export const CONSOLIDATOR_SKIP_THRESHOLD = 0.95;
 
+/** Floor for the hybrid candidate-generation query. Deliberately LOW: the
+ * fused score is only used to FIND candidates; the skip/supersede decision is
+ * made on true cosine similarity below. */
+const DEDUP_CANDIDATE_MIN_SCORE = 0.3;
+
 /**
- * Upsert a fact with dedup:
- *   - If an existing fact has cosine similarity >= SKIP_THRESHOLD  → skip (no-op)
- *   - If an existing fact has cosine similarity >= DEDUP_THRESHOLD → supersede
- *     (mark old fact as expired, insert new one)
- *   - Otherwise → plain insert (delegates to writeFact)
+ * Upsert a fact with dedup. Decision metric: TRUE cosine similarity between
+ * the incoming fact's embedding and each candidate's STORED embedding —
+ * never the fused hybrid recall score (audit C2, 2026-07-14: the fused
+ * score's keyword component is set-relative-normalized, so its top hit is
+ * always 1.0 and any shared token could read as a near-duplicate).
  *
- * The cosine comparison only runs when embeddings are available; if embed()
- * is unavailable the function falls through to writeFact (no silent data loss).
+ *   - cosine >= SKIP_THRESHOLD  (0.95) → skip (no-op)
+ *   - cosine >= DEDUP_THRESHOLD (0.85) → supersede (expire old + insert new)
+ *   - otherwise                        → plain insert
+ *
+ * Candidates come from `queryMemory` (hybrid, full-corpus — no recency cap);
+ * it is used ONLY as a candidate generator. If the incoming fact cannot be
+ * embedded (Gemini outage/timeout), dedup is impossible and the fact is
+ * PLAIN-INSERTED — a temporary duplicate beats a silently dropped fact.
  */
-export async function upsertFact(fact: JmeFact): Promise<"skipped" | "superseded" | "inserted"> {
+export async function upsertFact(
+  fact: JmeFact,
+): Promise<"skipped" | "superseded" | "inserted"> {
   const db = getDatabase();
   const now = Date.now();
 
-  // Validate: skip empty or oversized fact text
-  const trimmedText = fact.factText.trim();
-  if (!trimmedText || trimmedText.length > 2000) {
-    await writeFact({ ...fact, factText: trimmedText.slice(0, 2000) || fact.factText });
+  // Validate: reject empty text, truncate oversized, clamp confidence (W3 —
+  // queryMemory ranks by sim*confidence and the stale-prune keys on <0.4, so
+  // an out-of-range Haiku value skews both).
+  const trimmedText = fact.factText.trim().slice(0, 2000);
+  if (!trimmedText) return "skipped";
+  const clamped: JmeFact = {
+    ...fact,
+    factText: trimmedText,
+    confidence: Math.max(0, Math.min(1, fact.confidence ?? 1)),
+  };
+
+  let incomingVec: Float32Array | null = null;
+  try {
+    incomingVec = await embed(trimmedText);
+  } catch {
+    incomingVec = null;
+  }
+  if (!incomingVec) {
+    // Embedding unavailable → no trustworthy similarity signal exists (the
+    // FTS-only fused score must NEVER decide a skip). Insert plainly.
+    await writeFact(clamped);
     return "inserted";
   }
 
-  // Dedup via queryMemory(k:3) — reuses the hybrid BM25+vector path so the
-  // comparison scales with the full fact corpus (no LIMIT-200 recency bias).
-  const candidates = await queryMemory(trimmedText, { k: 3, minScore: CONSOLIDATOR_DEDUP_THRESHOLD });
+  const candidates = await queryMemory(trimmedText, {
+    k: 3,
+    minScore: DEDUP_CANDIDATE_MIN_SCORE,
+  });
 
-  if (candidates.length > 0) {
-    // queryMemory returns pre-scored results; the top hit is the best match.
-    // We need the raw cosine similarity to compare against the thresholds.
-    // Re-embed to get the exact similarity if embedding is available.
-    let bestSim = candidates[0].score;
-    let bestId: number | null = null;
-
-    // Look up the id of the top candidate in the DB
-    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD) {
-      type FactRow = { id: number };
-      const row = db
-        .prepare(
-          `SELECT id FROM jme_facts
-           WHERE fact_text = ?
-             AND (expires_at IS NULL OR expires_at > ?)
-           LIMIT 1`,
-        )
-        .get(candidates[0].factText, now) as FactRow | undefined;
-      if (row) bestId = row.id;
-    }
-
-    if (bestSim >= CONSOLIDATOR_SKIP_THRESHOLD) {
-      // Near-identical — no-op
-      return "skipped";
-    }
-
-    if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestId !== null) {
-      // Near-duplicate — supersede: expire old + insert new, atomically
-      writeWithRetry(() => {
-        db.transaction(() => {
-          db.prepare(
-            `UPDATE jme_facts SET expires_at = ? WHERE id = ?`,
-          ).run(now, bestId);
-        })();
-      });
-      await writeFact({ ...fact, factText: trimmedText });
-      return "superseded";
+  let bestSim = 0;
+  let bestId: number | null = null;
+  for (const candidate of candidates) {
+    const row = db
+      .prepare(
+        `SELECT embedding FROM jme_facts
+         WHERE id = ? AND embedding IS NOT NULL
+           AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .get(candidate.id, now) as { embedding: Buffer } | undefined;
+    if (!row) continue;
+    try {
+      const sim = cosineSimilarity(
+        incomingVec,
+        deserializeEmbedding(row.embedding),
+      );
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestId = candidate.id;
+      }
+    } catch {
+      // malformed stored embedding — not a dedup candidate
     }
   }
 
-  // No near-duplicate found — plain insert
-  await writeFact(fact);
+  if (bestSim >= CONSOLIDATOR_SKIP_THRESHOLD) {
+    return "skipped";
+  }
+
+  if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestId !== null) {
+    // Near-duplicate — supersede. Insert the NEW fact first, THEN expire the
+    // old one: a crash in between leaves a temporary duplicate (self-heals on
+    // the next dedup pass) instead of losing the fact outright.
+    await writeFact(clamped);
+    writeWithRetry(() => {
+      db.prepare(`UPDATE jme_facts SET expires_at = ? WHERE id = ?`).run(
+        now,
+        bestId,
+      );
+    });
+    return "superseded";
+  }
+
+  await writeFact(clamped);
   return "inserted";
 }
 
@@ -574,6 +603,7 @@ Rules:
 - Each fact must be a self-contained, standalone statement (no pronouns like "he/she").
 - Only extract facts that would still be useful weeks from now.
 - Skip greetings, filler, one-off operational details, and temporary states.
+- Extract ONLY from what Fede (the user) states. NEVER extract from Jarvis's replies: Jarvis often restates facts it already remembers, and re-extracting those would create duplicates. Jarvis turns are context for understanding Fede, not a fact source.
 - Categories: "decision" | "preference" | "event" | "emotion" | "project"
 - Confidence: 0.0–1.0 (how confident you are this is a lasting fact)
 
@@ -582,26 +612,37 @@ Respond with ONLY a JSON array, no explanation:
 
 If no durable facts are present, respond with: []`;
 
-/**
- * Consolidate a completed task session into the semantic fact store.
- *
- * Steps:
- *   1. Load all turns for the task from jme_turns
- *   2. Call Haiku (effort:low) to extract durable facts
- *   3. Upsert each fact (dedup against existing facts)
- *   4. Prune raw turns for this task (buffer cleared after consolidation)
- *
- * Safe to call fire-and-forget — all errors are caught and logged.
- * Does NOT use recordRitualFailure (not a ritual job) — logs to console.error.
- */
-export async function consolidate(taskId: string): Promise<{
+/** Turns younger than this are left for the NEXT nightly run — never eat a
+ * conversation that may still be in flight. */
+export const CONSOLIDATOR_MIN_TURN_AGE_MS = 30 * 60 * 1000;
+/** Per-run turn cap: bounds the Haiku context; the leftover is picked up the
+ * following night (and pruneStaleTurns bounds the worst case at 7d). */
+export const CONSOLIDATOR_MAX_TURNS = 400;
+
+export interface ConsolidateResult {
   turnsProcessed: number;
   factsExtracted: number;
   factsInserted: number;
   factsSkipped: number;
   factsSuperseded: number;
-}> {
-  const result = {
+}
+
+/**
+ * NIGHTLY batch consolidation of the episodic buffer into the semantic fact
+ * store (operator decision 2026-07-14, audit C3: the previous per-task wiring
+ * fired one Haiku call per operator MESSAGE over a 2-turn window and deleted
+ * the turns immediately — session-level context was structurally impossible).
+ *
+ * One run: load up to CONSOLIDATOR_MAX_TURNS turns older than 30 min across
+ * ALL tasks (chronological), ONE Haiku extraction over the full window,
+ * upsert each fact (cosine dedup), then delete exactly the processed turns.
+ * Scheduled by the `jme-consolidate` cron (02:45 MX) in rituals/scheduler.ts.
+ *
+ * Safe to call fire-and-forget — never throws; failures log + emit
+ * `schedule.run_failed` via recordRitualFailure (observability invariant).
+ */
+export async function consolidateAll(): Promise<ConsolidateResult> {
+  const result: ConsolidateResult = {
     turnsProcessed: 0,
     factsExtracted: 0,
     factsInserted: 0,
@@ -612,67 +653,85 @@ export async function consolidate(taskId: string): Promise<{
   try {
     const db = getDatabase();
 
-    // 1. Load turns
-    const turns = getTurnsForTask(taskId, 100);
+    // 1. Load the settled window (oldest first, capped)
+    const turns = db
+      .prepare(
+        `SELECT id, role, content FROM jme_turns
+         WHERE ts < ?
+         ORDER BY ts ASC
+         LIMIT ?`,
+      )
+      .all(Date.now() - CONSOLIDATOR_MIN_TURN_AGE_MS, CONSOLIDATOR_MAX_TURNS) as Array<{
+      id: number;
+      role: JmeTurnRole;
+      content: string;
+    }>;
     if (turns.length === 0) return result;
     result.turnsProcessed = turns.length;
+    if (turns.length === CONSOLIDATOR_MAX_TURNS) {
+      // No silent caps: the leftover is real work deferred to tomorrow.
+      console.warn(
+        `[jme] consolidateAll: hit the ${CONSOLIDATOR_MAX_TURNS}-turn cap — leftover turns consolidate next run`,
+      );
+    }
 
-    // 2. Format conversation for Haiku — strip [JME MEMORY] injection blocks
-    // to prevent eco loop: a paraphrased restatement of an injected fact
-    // (sim 0.85–0.95) would otherwise supersede the original and renew its
-    // age every session, defeating the dedup invariant.
+    // 2. Format the window for Haiku. Jarvis turns stay as context; the
+    // prompt instructs extraction from Fede's statements ONLY (anti-echo:
+    // Jarvis restating remembered facts must not re-extract them).
     const conversation = turns
-      .map((t) => {
-        // Strip assistant turns that are pure JME memory restatements
-        let content = t.content;
-        if (t.role === "jarvis") {
-          // Remove [JME MEMORY] blocks (injected context header + body)
-          content = content.replace(/\[JME MEMORY\][\s\S]*?(?=\n\n|\n(?=[A-Z])|\s*$)/g, "").trim();
-          // Skip turns that are now empty (were purely memory restatements)
-          if (!content) return null;
-        }
-        return `${t.role === "user" ? "Fede" : "Jarvis"}: ${content}`;
-      })
-      .filter((line): line is string => line !== null)
+      .map((t) => `${t.role === "user" ? "Fede" : "Jarvis"}: ${t.content}`)
       .join("\n");
 
-    // 3. Extract facts via Haiku (effort:low — synthesis task)
-    const response = await infer(
-      {
-        messages: [
-          { role: "user", content: `${CONSOLIDATOR_EXTRACT_PROMPT}\n\n---\n${conversation}` },
-        ],
-        model: HAIKU_MODEL_ID,
-        max_tokens: 1024,
-        effort: "low",
-        taskId,
-      },
-    );
+    // 3. ONE extraction call over the whole window (effort:low — synthesis)
+    const response = await infer({
+      messages: [
+        {
+          role: "user",
+          content: `${CONSOLIDATOR_EXTRACT_PROMPT}\n\n---\n${conversation}`,
+        },
+      ],
+      model: HAIKU_MODEL_ID,
+      max_tokens: 1024,
+      effort: "low",
+    });
 
     const rawText = response.content?.trim() ?? "";
-    if (!rawText) return result;
 
-    // 4. Parse JSON — tolerate markdown code fences
-    let facts: Array<{ factText: string; category: string; confidence?: number }> = [];
-    try {
-      const cleaned = rawText.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
-      facts = JSON.parse(cleaned) as typeof facts;
-      if (!Array.isArray(facts)) facts = [];
-    } catch {
-      console.error(`[jme] consolidate: failed to parse Haiku response for task ${taskId}: ${rawText.slice(0, 200)}`);
-      return result;
+    // 4. Parse JSON — tolerate markdown code fences. A parse failure leaves
+    // the turns in place (retried next night) — do NOT delete unconsumed data.
+    let facts: Array<{
+      factText: string;
+      category: string;
+      confidence?: number;
+    }> = [];
+    if (rawText) {
+      try {
+        const cleaned = rawText
+          .replace(/^```json\s*/i, "")
+          .replace(/```\s*$/, "")
+          .trim();
+        facts = JSON.parse(cleaned) as typeof facts;
+        if (!Array.isArray(facts)) facts = [];
+      } catch {
+        console.error(
+          `[jme] consolidateAll: failed to parse Haiku response: ${rawText.slice(0, 200)}`,
+        );
+        return result;
+      }
     }
 
     result.factsExtracted = facts.length;
 
-    // 5. Upsert each fact
+    // 5. Upsert each fact (cosine dedup inside upsertFact)
     for (const f of facts) {
-      const category = (["decision", "preference", "event", "emotion", "project"] as const)
-        .find((c) => c === f.category) ?? "decision";
+      const category =
+        (
+          ["decision", "preference", "event", "emotion", "project"] as const
+        ).find((c) => c === f.category) ?? "decision";
 
       try {
         const outcome = await upsertFact({
-          sourceTask: taskId,
+          sourceTask: "consolidator-nightly",
           factText: f.factText,
           category,
           confidence: typeof f.confidence === "number" ? f.confidence : 1.0,
@@ -681,23 +740,30 @@ export async function consolidate(taskId: string): Promise<{
         else if (outcome === "skipped") result.factsSkipped++;
         else if (outcome === "superseded") result.factsSuperseded++;
       } catch (err) {
-        console.error(`[jme] consolidate: upsertFact failed for task ${taskId}: ${errMsg(err)}`);
+        console.error(
+          `[jme] consolidateAll: upsertFact failed: ${errMsg(err)}`,
+        );
       }
     }
 
-    // 6. Prune raw turns for this task (buffer cleared after consolidation)
+    // 6. Delete EXACTLY the processed turns (an empty [] extraction is a
+    // valid consumption — the window held nothing durable).
+    const ids = turns.map((t) => t.id).join(",");
     writeWithRetry(() => {
-      db.prepare(`DELETE FROM jme_turns WHERE task_id = ?`).run(taskId);
+      db.prepare(`DELETE FROM jme_turns WHERE id IN (${ids})`).run();
     });
   } catch (err) {
-    console.error(`[jme] consolidate: unhandled error for task ${taskId}: ${errMsg(err)}`);
-    // Observability: emit schedule.run_failed so failures are visible in mc-ctl
-    // (plan v2 line 38 — invariante de observabilidad para cualquier job async).
-    // Dynamic import avoids pulling the scheduler's static module graph into the
-    // jme module — prevents Prometheus double-registration in test suites.
+    console.error(`[jme] consolidateAll: unhandled error: ${errMsg(err)}`);
+    // Observability invariant: emit schedule.run_failed so a dead consolidator
+    // is never silent. Dynamic import keeps the scheduler's module graph out
+    // of jme (prevents Prometheus double-registration in test suites).
     import("../rituals/scheduler.js")
-      .then(({ recordRitualFailure }) => recordRitualFailure("jme-consolidate", err, "execute"))
-      .catch(() => {/* best-effort */});
+      .then(({ recordRitualFailure }) =>
+        recordRitualFailure("jme-consolidate", err, "execute"),
+      )
+      .catch(() => {
+        /* best-effort */
+      });
   }
 
   return result;
@@ -717,16 +783,20 @@ export function pruneStaleTurns(): number {
   const db = getDatabase();
   let deleted = 0;
   writeWithRetry(() => {
+    // ts is Date.now() MILLISECONDS — audit C1 (2026-07-14): the original
+    // `unixepoch()` (seconds) comparison was ~1000x below every stored ts,
+    // so the sweep never deleted anything. Threshold computed in JS ms.
     const result = db
-      .prepare(
-        `DELETE FROM jme_turns
-         WHERE ts < unixepoch() - (? * 86400)`,
-      )
-      .run(TURN_RETENTION_DAYS) as { changes: number };
+      .prepare(`DELETE FROM jme_turns WHERE ts < ?`)
+      .run(Date.now() - TURN_RETENTION_DAYS * 86_400_000) as {
+      changes: number;
+    };
     deleted = result.changes;
   });
   if (deleted > 0) {
-    console.log(`[jme] pruneStaleTurns: removed ${deleted} stale turn(s) older than ${TURN_RETENTION_DAYS}d`);
+    console.log(
+      `[jme] pruneStaleTurns: removed ${deleted} stale turn(s) older than ${TURN_RETENTION_DAYS}d`,
+    );
   }
   return deleted;
 }

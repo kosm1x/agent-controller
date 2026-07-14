@@ -313,25 +313,32 @@ describe("JME — upsertFact (dedup)", () => {
     expect(jmeStats().factsTotal).toBe(1);
   });
 
-  it("skips fact when cosine similarity >= SKIP_THRESHOLD (near-identical)", async () => {
-    const { upsertFact, jmeStats, CONSOLIDATOR_SKIP_THRESHOLD } = await getJme();
-    const { embed: embedMock, cosineSimilarity: cosSim, deserializeEmbedding: deser,
-            serializeEmbedding: ser } = await import("./embeddings.js");
+  it("skips fact when TRUE cosine similarity >= SKIP_THRESHOLD (near-identical)", async () => {
+    const { upsertFact, jmeStats, CONSOLIDATOR_SKIP_THRESHOLD } =
+      await getJme();
+    const {
+      embed: embedMock,
+      cosineSimilarity: cosSim,
+      deserializeEmbedding: deser,
+      serializeEmbedding: ser,
+    } = await import("./embeddings.js");
 
     const vec = new Float32Array([1, 0, 0]);
     const blob = Buffer.from(vec.buffer);
 
-    // Both calls to embed() during first upsertFact (once in upsertFact, once in writeFact)
+    // Seed fact WITH a stored embedding
     vi.mocked(embedMock).mockResolvedValue(vec);
     vi.mocked(ser).mockReturnValue(blob);
+    await upsertFact({
+      sourceTask: "t1",
+      factText: "Fede likes coffee",
+      category: "preference",
+    });
 
-    await upsertFact({ sourceTask: "t1", factText: "Fede likes coffee", category: "preference" });
-
-    // Second insert — same vector, cosine sim above SKIP_THRESHOLD
-    // embed() called once in upsertFact (not in writeFact since we return early)
-    vi.mocked(embedMock).mockResolvedValueOnce(vec);
-    vi.mocked(deser).mockReturnValueOnce(vec);
-    vi.mocked(cosSim).mockReturnValueOnce(CONSOLIDATOR_SKIP_THRESHOLD + 0.01);
+    // Second upsert: cosine reads near-identical everywhere (queryMemory's
+    // candidate scan AND the true-cosine re-check both go through cosSim)
+    vi.mocked(deser).mockReturnValue(vec);
+    vi.mocked(cosSim).mockReturnValue(CONSOLIDATOR_SKIP_THRESHOLD + 0.01);
 
     const outcome = await upsertFact({
       sourceTask: "t2",
@@ -342,34 +349,46 @@ describe("JME — upsertFact (dedup)", () => {
     expect(outcome).toBe("skipped");
     expect(jmeStats().factsTotal).toBe(1); // still only 1 fact
 
-    // restore default mock
+    // restore defaults
     vi.mocked(embedMock).mockResolvedValue(null);
+    vi.mocked(cosSim).mockReturnValue(0);
     vi.mocked(ser).mockImplementation((v: Float32Array) =>
       Buffer.from(v.buffer, v.byteOffset, v.byteLength),
     );
   });
 
-  it("supersedes fact when cosine similarity >= DEDUP_THRESHOLD but < SKIP_THRESHOLD", async () => {
-    const { upsertFact, jmeStats, CONSOLIDATOR_DEDUP_THRESHOLD, CONSOLIDATOR_SKIP_THRESHOLD } =
-      await getJme();
-    const { embed: embedMock, cosineSimilarity: cosSim, deserializeEmbedding: deser,
-            serializeEmbedding: ser } = await import("./embeddings.js");
+  it("supersedes the MATCHED row when cosine is between DEDUP and SKIP", async () => {
+    const {
+      upsertFact,
+      jmeStats,
+      CONSOLIDATOR_DEDUP_THRESHOLD,
+      CONSOLIDATOR_SKIP_THRESHOLD,
+    } = await getJme();
+    const {
+      embed: embedMock,
+      cosineSimilarity: cosSim,
+      deserializeEmbedding: deser,
+      serializeEmbedding: ser,
+    } = await import("./embeddings.js");
 
     const vec = new Float32Array([1, 0, 0]);
     const blob = Buffer.from(vec.buffer);
 
-    // First insert — both embed() calls get the vector
     vi.mocked(embedMock).mockResolvedValue(vec);
     vi.mocked(ser).mockReturnValue(blob);
+    await upsertFact({
+      sourceTask: "t1",
+      factText: "Fede uses Valle de Bravo to rest",
+      category: "event",
+    });
+    const seeded = mockDb
+      .prepare(`SELECT id FROM jme_facts LIMIT 1`)
+      .get() as { id: number };
 
-    await upsertFact({ sourceTask: "t1", factText: "Fede uses Valle de Bravo to rest", category: "event" });
-
-    // Second insert — near-duplicate (above DEDUP but below SKIP)
-    const midSim = (CONSOLIDATOR_DEDUP_THRESHOLD + CONSOLIDATOR_SKIP_THRESHOLD) / 2;
-    vi.mocked(deser).mockReturnValueOnce(vec);
-    vi.mocked(cosSim).mockReturnValueOnce(midSim);
-    // embed() called twice: once in upsertFact (for comparison), once in writeFact (for new fact)
-    vi.mocked(embedMock).mockResolvedValue(vec);
+    const midSim =
+      (CONSOLIDATOR_DEDUP_THRESHOLD + CONSOLIDATOR_SKIP_THRESHOLD) / 2;
+    vi.mocked(deser).mockReturnValue(vec);
+    vi.mocked(cosSim).mockReturnValue(midSim);
 
     const outcome = await upsertFact({
       sourceTask: "t2",
@@ -378,81 +397,145 @@ describe("JME — upsertFact (dedup)", () => {
     });
 
     expect(outcome).toBe("superseded");
-    // Old fact expired + new fact inserted = 2 rows total (old is expired but still counted)
+    // Old fact expired + new fact inserted = 2 rows total
     expect(jmeStats().factsTotal).toBe(2);
+    // W2: the supersede must expire the MATCHED row (by id), not an arbitrary one
+    const oldRow = mockDb
+      .prepare(`SELECT expires_at FROM jme_facts WHERE id = ?`)
+      .get(seeded.id) as { expires_at: number | null };
+    expect(oldRow.expires_at).not.toBeNull();
 
     // restore
     vi.mocked(embedMock).mockResolvedValue(null);
+    vi.mocked(cosSim).mockReturnValue(0);
     vi.mocked(ser).mockImplementation((v: Float32Array) =>
       Buffer.from(v.buffer, v.byteOffset, v.byteLength),
     );
   });
+
+  it("NEVER skips on the FTS-only path — keyword overlap is not similarity (audit C2)", async () => {
+    const { upsertFact, jmeStats, writeFact } = await getJme();
+    // embed stays null (default): the fused score would be keyword-only, with
+    // the top FTS hit normalized to 1.0 — the exact condition that silently
+    // dropped unrelated facts pre-fix.
+    await writeFact({
+      sourceTask: "t1",
+      factText: "Fede prefers dark roast coffee in the morning",
+      category: "preference",
+    });
+
+    const outcome = await upsertFact({
+      sourceTask: "t2",
+      factText: "The coffee machine in the office broke yesterday",
+      category: "event",
+    });
+
+    expect(outcome).toBe("inserted");
+    expect(jmeStats().factsTotal).toBe(2);
+  });
+
+  it("clamps out-of-range confidence into [0,1] (audit W3)", async () => {
+    const { upsertFact } = await getJme();
+    await upsertFact({
+      sourceTask: "t1",
+      factText: "Fede runs a VPS with mission-control",
+      category: "project",
+      confidence: 7,
+    });
+    const row = mockDb
+      .prepare(`SELECT confidence FROM jme_facts LIMIT 1`)
+      .get() as { confidence: number };
+    expect(row.confidence).toBe(1);
+  });
 });
 
-describe("JME — consolidate", () => {
+describe("JME — consolidateAll (nightly batch)", () => {
   beforeEach(() => {
     inferMock.mockReset();
   });
 
-  it("extracts facts from turns and prunes turns after consolidation", async () => {
-    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+  /** Insert a turn old enough for the consolidator's 30-min settle window. */
+  function insertSettledTurn(taskId: string, role: string, content: string) {
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(taskId, role, content, "telegram", Date.now() - 31 * 60 * 1000);
+  }
 
-    writeEpisodic({ taskId: "task-abc", role: "user", content: "I prefer short answers" });
-    writeEpisodic({ taskId: "task-abc", role: "jarvis", content: "Noted!" });
+  it("consolidates settled turns ACROSS tasks in one call and deletes exactly them", async () => {
+    const { consolidateAll, jmeStats } = await getJme();
+
+    insertSettledTurn("task-a", "user", "I prefer short answers");
+    insertSettledTurn("task-a", "jarvis", "Noted!");
+    insertSettledTurn("task-b", "user", "Vamos a despertar Pipesong");
 
     inferMock.mockResolvedValueOnce({
       content: JSON.stringify([
-        { factText: "Fede prefers short answers", category: "preference", confidence: 0.9 },
+        {
+          factText: "Fede prefers short answers",
+          category: "preference",
+          confidence: 0.9,
+        },
       ]),
     });
 
-    const result = await consolidate("task-abc");
+    const result = await consolidateAll();
 
-    expect(result.turnsProcessed).toBe(2);
+    expect(result.turnsProcessed).toBe(3); // one batch, both tasks
+    expect(inferMock).toHaveBeenCalledTimes(1); // ONE Haiku call for the window
     expect(result.factsExtracted).toBe(1);
     expect(result.factsInserted).toBe(1);
-    expect(result.factsSkipped).toBe(0);
-    // Turns are pruned after consolidation
     expect(jmeStats().turnsTotal).toBe(0);
     expect(jmeStats().factsTotal).toBe(1);
   });
 
-  it("returns early with no facts when Haiku returns empty array", async () => {
-    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+  it("leaves turns younger than the settle window for the next run", async () => {
+    const { consolidateAll, writeEpisodic, jmeStats } = await getJme();
 
-    writeEpisodic({ taskId: "task-empty", role: "user", content: "hi" });
+    insertSettledTurn("task-old", "user", "settled message");
+    writeEpisodic({ taskId: "task-live", role: "user", content: "just now" });
     inferMock.mockResolvedValueOnce({ content: "[]" });
 
-    const result = await consolidate("task-empty");
+    const result = await consolidateAll();
 
-    expect(result.factsExtracted).toBe(0);
-    expect(result.factsInserted).toBe(0);
-    // Turns still pruned even when no facts extracted
-    expect(jmeStats().turnsTotal).toBe(0);
+    expect(result.turnsProcessed).toBe(1);
+    expect(jmeStats().turnsTotal).toBe(1); // the fresh turn survives
   });
 
-  it("returns zeros when no turns exist for the task", async () => {
-    const { consolidate } = await getJme();
+  it("returns zeros without calling Haiku when nothing is settled", async () => {
+    const { consolidateAll, writeEpisodic } = await getJme();
 
-    const result = await consolidate("task-nonexistent");
+    writeEpisodic({ taskId: "task-live", role: "user", content: "hi" });
+
+    const result = await consolidateAll();
 
     expect(result.turnsProcessed).toBe(0);
-    expect(result.factsExtracted).toBe(0);
     expect(inferMock).not.toHaveBeenCalled();
   });
 
-  it("handles malformed JSON from Haiku gracefully", async () => {
-    const { consolidate, writeEpisodic, jmeStats } = await getJme();
+  it("a valid empty [] consumes the window (nothing durable is a valid verdict)", async () => {
+    const { consolidateAll, jmeStats } = await getJme();
 
-    writeEpisodic({ taskId: "task-bad", role: "user", content: "hello" });
-    inferMock.mockResolvedValueOnce({ content: "not valid json {{{" });
+    insertSettledTurn("task-empty", "user", "hola");
+    inferMock.mockResolvedValueOnce({ content: "[]" });
 
-    const result = await consolidate("task-bad");
+    const result = await consolidateAll();
 
     expect(result.factsExtracted).toBe(0);
-    // Turns should NOT be pruned when JSON parse fails (no facts processed)
-    // — turns remain for potential retry
-    expect(jmeStats().turnsTotal).toBeGreaterThanOrEqual(0); // graceful, no crash
+    expect(jmeStats().turnsTotal).toBe(0); // consumed
+  });
+
+  it("malformed JSON leaves the turns IN PLACE for tomorrow's retry", async () => {
+    const { consolidateAll, jmeStats } = await getJme();
+
+    insertSettledTurn("task-bad", "user", "hello");
+    inferMock.mockResolvedValueOnce({ content: "not valid json {{{" });
+
+    const result = await consolidateAll();
+
+    expect(result.factsExtracted).toBe(0);
+    expect(jmeStats().turnsTotal).toBe(1); // NOT deleted — unconsumed data
   });
 });
 
@@ -472,7 +555,9 @@ describe("JME — pruneStaleTurns", () => {
     writeEpisodic({ taskId: "task-recent", role: "user", content: "fresh" });
 
     // Manually backdate a turn by injecting directly into mockDb (column is `ts`)
-    const oldTimestamp = Math.floor(Date.now() / 1000) - (TURN_RETENTION_DAYS + 1) * 86400;
+    // Same unit production writes: writeEpisodic stores Date.now() MILLISECONDS
+    // (audit C1: the old seconds-based fixture masked the units mismatch).
+    const oldTimestamp = Date.now() - (TURN_RETENTION_DAYS + 1) * 86_400_000;
     mockDb.prepare(
       `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
     ).run("task-old", "user", "stale content", "telegram", oldTimestamp);
