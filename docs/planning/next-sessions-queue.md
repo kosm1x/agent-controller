@@ -629,3 +629,12 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - **Operator-run cleanup still pending** (classifier requires the user to name shared/stateful targets): `rm -rf /tmp/tool-search-val-* /tmp/sdk-tool-vis-*` (3.9G, 07-12/13 experiment dirs) and `docker volume rm $(docker volume ls -f dangling=true -q)` (17 orphans ~1.6G incl. dead grafana-data). Candidates awaiting a ruling: qmd/bun (~1.1G, zero usage traces) and crm-hindsight image (6.4GB + ~300MB RAM — Hindsight demoted, but project_hindsight_fireworks_followup still open).
 
 **Carry-over watches from 07-14 earlier entries remain live:** 02:45 MX first jme-consolidate; 06:00 MX brief on the fixed cron path; 09:00 MX first X-probe tick; 13:00 MX tweet; 20:00 MX no-verdict reminder should stay silent on a ruled day.
+
+## 2026-07-15 — MCP isolation leak closed: strictMcpConfig (`4a5f3ca`, pid 2520693)
+
+**Shipped:** operator MCP servers (`/root/claude/.mcp.json` playwright/supabase, claude.ai Gmail/Drive connectors, sequential-thinking) were merging into every Jarvis SDK subprocess — `settingSources: []` covers settings files only, NOT MCP config. Surfaced as Transhumanismo (delivery=telegram) shipping "no tengo herramienta de Telegram" complaints inside its deliverables since tool search armed (07-13): agents hunted for delivery tools, found the leaked connectors (07-14 even ATTEMPTED `mcp__claude_ai_Gmail__create_draft`; held by the allowedTools deny), found no Telegram, and narrated the failure into the broadcast text. Fix: `strictMcpConfig: true` (spec-pinned) + telegram deliveryInstructions hardened at both dynamic.ts sites. Live probe: jarvis-only manifest. **eval:gate PASS 66.65 vs 65.75 — tool_selection 36.88 resolves the Ph3.2 WATCH (32.30 was the leak, not tool search).**
+
+**Watches:**
+- **Next Transhumanismo run 12:00 MX**: expect clean content, `completed` (not `_with_concerns`), no ToolSearch delivery-hunting in toolCalls. Same check applies to the other 4 telegram-delivery schedules (Williams Journal, MexicoNecesario, Morning Sync, Química Básica).
+- **Cache-diag window restarted AGAIN 07-15** (`4a5f3ca` changed the tool block; the 07-13 window's ~07-16 verdict is contaminated — discard it). New verdict ~07-18.
+- The eval-baseline incumbent stays 65.75; candidate 66.65 was a gate check, not a re-baseline. If the next legit tool-surface change gates against 65.75 and the WATCH math matters, consider `--update-baseline` then.
