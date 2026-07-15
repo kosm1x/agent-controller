@@ -2117,6 +2117,23 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(opts.settingSources).toEqual([]);
   });
 
+  it("pins strictMcpConfig: true — Jarvis must never load operator MCP servers (2026-07-15 leak)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as {
+      strictMcpConfig?: boolean;
+    };
+    expect(opts.strictMcpConfig).toBe(true);
+  });
+
   it("pins alwaysLoad: true on the jarvis MCP server (0.3.x defers tools behind tool search)", async () => {
     mockMessages.value = [
       {
@@ -2670,7 +2687,11 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
 
   it("emits NOTHING when trace is unset (non-task callers)", async () => {
     mockMessages.value = twoTurnFixture();
-    await queryClaudeSdk({ prompt: "test", systemPrompt: "sys", toolNames: [] });
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
     expect(emitTraceMock).not.toHaveBeenCalled();
   });
 });

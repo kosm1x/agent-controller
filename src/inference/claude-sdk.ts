@@ -702,6 +702,17 @@ export async function queryClaudeSdk(opts: {
     // Jarvis's context comes from its own systemPrompt/KB, never from
     // operator dotfiles. Pinned by spec in claude-sdk.test.ts.
     settingSources: [],
+    // EXPLICIT MCP isolation (2026-07-15). settingSources: [] does NOT cover
+    // MCP config — without this flag the CLI merges the OPERATOR'S servers
+    // (/root/claude/.mcp.json playwright/supabase, claude.ai account
+    // connectors like Gmail/Drive) into every Jarvis subprocess. Execution
+    // was held by the allowedTools deny, but the schemas were visible: with
+    // tool search armed (Ph3.2) agents hunted for them — scheduled tasks
+    // attempted mcp__claude_ai_Gmail__create_draft and shipped "no tengo
+    // herramienta de Telegram" complaints inside deliverables (07-13..15).
+    // Only the jarvis server passed above may exist. Pinned by spec in
+    // claude-sdk.test.ts.
+    strictMcpConfig: true,
     maxTurns: opts.maxTurns ?? 20,
     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
     // cached prompt prefix. Omitted when unset so the SDK default ("high")

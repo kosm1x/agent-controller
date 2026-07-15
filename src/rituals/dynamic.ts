@@ -225,7 +225,7 @@ export async function executeScheduleNow(
   }
   if (schedule.delivery === "telegram" || schedule.delivery === "both") {
     deliveryInstructions +=
-      "\n\nEl resultado será enviado automáticamente por Telegram.";
+      "\n\nTu texto final ES el mensaje que se enviará automáticamente por Telegram. NO busques ni intentes usar herramientas de envío (Telegram, Gmail, etc.) ni menciones limitaciones de entrega — solo compón el contenido.";
   }
 
   const dateContext = buildDateContext(now);
@@ -286,9 +286,7 @@ export function startDynamicScheduler(): void {
     "* * * * *",
     () => {
       checkAndExecuteSchedules().catch((err) => {
-        console.error(
-          `[schedules] Execution error: ${errMsg(err)}`,
-        );
+        console.error(`[schedules] Execution error: ${errMsg(err)}`);
       });
     },
     { timezone: TIMEZONE },
@@ -346,7 +344,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       }
       if (schedule.delivery === "telegram" || schedule.delivery === "both") {
         deliveryInstructions +=
-          "\n\nEl resultado será enviado automáticamente por Telegram.";
+          "\n\nTu texto final ES el mensaje que se enviará automáticamente por Telegram. NO busques ni intentes usar herramientas de envío (Telegram, Gmail, etc.) ni menciones limitaciones de entrega — solo compón el contenido.";
       }
 
       const dateContext = buildDateContext(now);
