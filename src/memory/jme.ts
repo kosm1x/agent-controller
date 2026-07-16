@@ -685,12 +685,21 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       .map((t) => `${t.role === "user" ? "Fede" : "Jarvis"}: ${t.content}`)
       .join("\n");
 
-    // 3. ONE extraction call over the whole window (effort:low — synthesis)
+    // 3. ONE extraction call over the whole window (effort:low — synthesis).
+    // The directive MUST ride as a default-cacheable role:"system" message so
+    // flattenMessagesForSdk promotes it to the SDK systemPrompt — burying it
+    // at the top of the user message left the call on the "You are a helpful
+    // assistant." default and Haiku CONTINUED the transcript's dialogue
+    // instead of extracting (issue #29: 3/3 nightly runs → 0 facts). The
+    // trailing user-side instruction keeps the directive as the last thing
+    // the model reads after a 400-turn transcript. Do NOT mark the system
+    // message cacheable:false — that routes it back into the user prefix.
     const response = await infer({
       messages: [
+        { role: "system", content: CONSOLIDATOR_EXTRACT_PROMPT },
         {
           role: "user",
-          content: `${CONSOLIDATOR_EXTRACT_PROMPT}\n\n---\n${conversation}`,
+          content: `${conversation}\n\n---\nExtract the durable facts from the conversation above. Respond with ONLY the JSON array.`,
         },
       ],
       model: HAIKU_MODEL_ID,

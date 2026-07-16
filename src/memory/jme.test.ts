@@ -40,7 +40,9 @@ vi.mock("./embeddings.js", () => ({
   serializeEmbedding: vi.fn((v: Float32Array) =>
     Buffer.from(v.buffer, v.byteOffset, v.byteLength),
   ),
-  deserializeEmbedding: vi.fn((b: Buffer) => new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4)),
+  deserializeEmbedding: vi.fn(
+    (b: Buffer) => new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4),
+  ),
 }));
 
 vi.mock("../lib/err-msg.js", () => ({
@@ -179,8 +181,16 @@ describe("JME — semantic store (FTS5 path)", () => {
   it("writeFacts stores multiple facts", async () => {
     const { writeFacts, jmeStats } = await getJme();
     await writeFacts([
-      { sourceTask: "t1", factText: "Fede prefers concise responses", category: "preference" },
-      { sourceTask: "t1", factText: "Fede is building TMN project", category: "project" },
+      {
+        sourceTask: "t1",
+        factText: "Fede prefers concise responses",
+        category: "preference",
+      },
+      {
+        sourceTask: "t1",
+        factText: "Fede is building TMN project",
+        category: "project",
+      },
     ]);
     const stats = jmeStats();
     expect(stats.factsTotal).toBe(2);
@@ -253,14 +263,18 @@ describe("JME — lifecycle", () => {
 
     // Manually insert a stale low-confidence fact (ts 60 days ago)
     const sixtyDaysAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
-    mockDb.prepare(
-      `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence)
-       VALUES ('t1', ?, 'uncertain old fact', 'event', 0.3)`
-    ).run(sixtyDaysAgo);
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence)
+       VALUES ('t1', ?, 'uncertain old fact', 'event', 0.3)`,
+      )
+      .run(sixtyDaysAgo);
     // Also insert FTS5 index manually
-    mockDb.prepare(
-      `INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (last_insert_rowid(), 'uncertain old fact')`
-    ).run();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (last_insert_rowid(), 'uncertain old fact')`,
+      )
+      .run();
 
     const pruned = pruneExpiredFacts();
     expect(pruned).toBeGreaterThanOrEqual(1);
@@ -287,7 +301,11 @@ describe("JME — stats", () => {
 
     writeEpisodic({ taskId: "t1", role: "user", content: "hello" });
     writeEpisodic({ taskId: "t1", role: "jarvis", content: "hi" });
-    await writeFact({ sourceTask: "t1", factText: "test fact", category: "event" });
+    await writeFact({
+      sourceTask: "t1",
+      factText: "test fact",
+      category: "event",
+    });
 
     const stats = jmeStats();
     expect(stats.turnsTotal).toBe(2);
@@ -381,9 +399,9 @@ describe("JME — upsertFact (dedup)", () => {
       factText: "Fede uses Valle de Bravo to rest",
       category: "event",
     });
-    const seeded = mockDb
-      .prepare(`SELECT id FROM jme_facts LIMIT 1`)
-      .get() as { id: number };
+    const seeded = mockDb.prepare(`SELECT id FROM jme_facts LIMIT 1`).get() as {
+      id: number;
+    };
 
     const midSim =
       (CONSOLIDATOR_DEDUP_THRESHOLD + CONSOLIDATOR_SKIP_THRESHOLD) / 2;
@@ -490,6 +508,31 @@ describe("JME — consolidateAll (nightly batch)", () => {
     expect(jmeStats().factsTotal).toBe(1);
   });
 
+  it("pins the extraction message shape: directive in role:system, transcript in role:user (issue #29)", async () => {
+    const { consolidateAll } = await getJme();
+
+    insertSettledTurn("task-shape", "user", "Me gusta el café de Veracruz");
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    await consolidateAll();
+
+    const req = inferMock.mock.calls[0][0] as {
+      messages: Array<{ role: string; content: string; cacheable?: boolean }>;
+    };
+    expect(req.messages).toHaveLength(2);
+    // System message carries the extractor directive and must stay
+    // default-cacheable — cacheable:false routes it back into the user
+    // prefix (flattenMessagesForSdk) and re-opens the #29 prose failure.
+    expect(req.messages[0].role).toBe("system");
+    expect(req.messages[0].content).toContain("fact extractor");
+    expect(req.messages[0].cacheable).toBeUndefined();
+    // User message is transcript + trailing instruction, NOT the directive.
+    expect(req.messages[1].role).toBe("user");
+    expect(req.messages[1].content).toContain("Me gusta el café de Veracruz");
+    expect(req.messages[1].content).not.toContain("fact extractor");
+    expect(req.messages[1].content).toMatch(/ONLY the JSON array\.$/);
+  });
+
   it("leaves turns younger than the settle window for the next run", async () => {
     const { consolidateAll, writeEpisodic, jmeStats } = await getJme();
 
@@ -561,7 +604,8 @@ describe("JME — pruneStaleTurns", () => {
   });
 
   it("removes turns older than TURN_RETENTION_DAYS and leaves recent ones", async () => {
-    const { writeEpisodic, pruneStaleTurns, TURN_RETENTION_DAYS } = await getJme();
+    const { writeEpisodic, pruneStaleTurns, TURN_RETENTION_DAYS } =
+      await getJme();
 
     // Write two turns — one recent, one >7d old
     writeEpisodic({ taskId: "task-recent", role: "user", content: "fresh" });
@@ -570,15 +614,19 @@ describe("JME — pruneStaleTurns", () => {
     // Same unit production writes: writeEpisodic stores Date.now() MILLISECONDS
     // (audit C1: the old seconds-based fixture masked the units mismatch).
     const oldTimestamp = Date.now() - (TURN_RETENTION_DAYS + 1) * 86_400_000;
-    mockDb.prepare(
-      `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
-    ).run("task-old", "user", "stale content", "telegram", oldTimestamp);
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("task-old", "user", "stale content", "telegram", oldTimestamp);
 
     const deleted = pruneStaleTurns();
 
     // The stale turn should be deleted, the recent one preserved
     expect(deleted).toBe(1);
-    const remaining = mockDb.prepare(`SELECT task_id FROM jme_turns`).all() as { task_id: string }[];
+    const remaining = mockDb.prepare(`SELECT task_id FROM jme_turns`).all() as {
+      task_id: string;
+    }[];
     const ids = remaining.map((r) => r.task_id);
     expect(ids).toContain("task-recent");
     expect(ids).not.toContain("task-old");
