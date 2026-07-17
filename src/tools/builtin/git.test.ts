@@ -313,15 +313,42 @@ describe("git tools", () => {
       expect(r2).toContain("body is required");
     });
 
-    it("creates PR with correct args", async () => {
-      mockExecFileSync.mockReturnValue(
-        "https://github.com/kosm1x/agent-controller/pull/42",
-      );
+    it("reads the head branch from cwd and passes --head + cwd to gh (task adcda0f2 fix)", async () => {
+      mockExecFileSync
+        .mockReturnValueOnce("feature-x\n") // getCurrentBranch(workDir)
+        .mockReturnValueOnce("feature-x\n") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce(
+          "https://github.com/kosm1x/agent-controller/pull/42",
+        ); // gh pr create
       const result = await ghCreatePrTool.execute({
         title: "Add feature",
         body: "## Summary\nNew feature",
+        cwd: "/root/claude/myrepo",
       });
       expect(result).toContain("pull/42");
+
+      const ghCall = mockExecFileSync.mock.calls.at(-1)!;
+      expect(ghCall[0]).toBe("gh");
+      const argv = ghCall[1] as string[];
+      expect(argv).toContain("--head");
+      expect(argv[argv.indexOf("--head") + 1]).toBe("feature-x");
+      const opts = ghCall[2] as { cwd: string };
+      expect(opts.cwd).toBe("/root/claude/myrepo");
+    });
+
+    it("refuses when cwd is on the base branch — the pre-fix wrong-checkout failure mode", async () => {
+      mockExecFileSync.mockReturnValue("main\n"); // getCurrentBranch(workDir)
+      const result = await ghCreatePrTool.execute({
+        title: "t",
+        body: "b",
+        cwd: "/root/claude/myrepo",
+      });
+      const parsed = JSON.parse(result) as { error: string };
+      expect(parsed.error).toContain('is on "main"');
+      expect(parsed.error).toContain("feature branch");
+      // gh itself must never have been invoked
+      const ghCalls = mockExecFileSync.mock.calls.filter((c) => c[0] === "gh");
+      expect(ghCalls).toHaveLength(0);
     });
   });
 });

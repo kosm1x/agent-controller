@@ -505,6 +505,22 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         if (match) {
           const tokenUrl = `https://${JARVIS_GH_USER}:${JARVIS_GH_TOKEN}@github.com/${match[1]}.git`;
           pushResult = runArgs("git", ["push", tokenUrl, branch], 60_000, cwd);
+          // A URL push can't take -u (upstream needs a named remote), leaving
+          // the branch without tracking — which strands any follow-on
+          // `gh pr create` that infers the head from upstream. Fetch the ref
+          // we just pushed and set tracking best-effort; the push itself
+          // already succeeded.
+          try {
+            runArgs("git", ["fetch", "origin", branch], 15_000, cwd);
+            runArgs(
+              "git",
+              ["branch", `--set-upstream-to=origin/${branch}`, branch],
+              10_000,
+              cwd,
+            );
+          } catch {
+            // Tracking is a convenience — never fail the push over it.
+          }
         } else {
           pushResult = runArgs(
             "git",
@@ -612,11 +628,15 @@ export const ghCreatePrTool: Tool = {
     type: "function",
     function: {
       name: "gh_create_pr",
-      description: `Create a GitHub pull request from the current branch.
+      description: `Create a GitHub pull request from the branch checked out in \`cwd\`.
 
 USE WHEN:
-- After pushing a feature branch
+- After pushing a feature branch (git_push)
 - To request review of changes before merging to main
+
+ALWAYS pass \`cwd\` — the repo (or worktree) where you committed. Without it
+the tool looks at an unrelated default directory and the PR fails or targets
+the wrong repo. The head branch is read from \`cwd\` automatically.
 
 Returns the PR URL on success.`,
       parameters: {
@@ -635,6 +655,11 @@ Returns the PR URL on success.`,
             type: "string",
             description: "Base branch to merge into (default: main)",
           },
+          cwd: {
+            type: "string",
+            description:
+              "Absolute path of the repo/worktree whose checked-out branch is the PR head — the same cwd you passed to git_commit/git_push.",
+          },
         },
         required: ["title", "body"],
       },
@@ -650,7 +675,23 @@ Returns the PR URL on success.`,
       if (!title) return JSON.stringify({ error: "title is required." });
       if (!body) return JSON.stringify({ error: "body is required." });
 
-      // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
+      // Resolve + validate the working dir (same guard chain as the other git
+      // tools), then read the head branch from IT. Before 2026-07-17 this tool
+      // had no cwd input and ran `gh` in DEFAULT_CWD — from the jarvis
+      // worktree flow every call died against the wrong checkout and the
+      // agent burned its remaining turns retrying (task adcda0f2).
+      const workDir = resolveWorkDir(args.cwd as string | undefined);
+      const head = getCurrentBranch(workDir);
+      if (head === "HEAD" || head === base) {
+        return JSON.stringify({
+          error:
+            `cwd ${workDir} is on "${head}" — a PR needs a feature branch checked out. ` +
+            `Pass the cwd where you ran git_commit (e.g. the jarvis worktree).`,
+        });
+      }
+
+      // --head makes the PR head explicit so gh does not depend on upstream
+      // tracking (the jarvis token-URL push path cannot set one).
       const prArgs = [
         "pr",
         "create",
@@ -660,16 +701,20 @@ Returns the PR URL on success.`,
         body,
         "--base",
         base,
+        "--head",
+        head,
       ];
       let result: string;
-      if (isJarvisBranch() && JARVIS_GH_TOKEN) {
+      // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
+      if (isJarvisBranch(workDir) && JARVIS_GH_TOKEN) {
         result = execFileSync("gh", prArgs, {
+          cwd: workDir,
           timeout: 60_000,
           encoding: "utf-8",
           env: { ...process.env, GH_TOKEN: JARVIS_GH_TOKEN },
         }).trim();
       } else {
-        result = runArgs("gh", prArgs, 60_000);
+        result = runArgs("gh", prArgs, 60_000, workDir);
       }
       return result;
     } catch (err) {
