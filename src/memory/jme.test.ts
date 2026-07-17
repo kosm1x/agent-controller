@@ -641,3 +641,147 @@ describe("JME — pruneStaleTurns", () => {
     expect(deleted).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// deduplicateFacts — Phase 3 temporal filter
+// ---------------------------------------------------------------------------
+describe("JME — deduplicateFacts (Phase 3 temporal filter)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Build a minimal JmeRecallResult for use in deduplicateFacts tests.
+   * Embeddings are plain Float32Arrays — cosineSimilarity is mocked globally.
+   */
+  function makeResult(
+    id: number,
+    ts: number,
+    score = 0.8,
+  ): import("./jme.js").JmeRecallResult {
+    return {
+      id,
+      factText: `fact-${id}`,
+      category: "project" as const,
+      sourceTask: "test",
+      score,
+      ts,
+    };
+  }
+
+  function makeEmbedding(id: number, value: number): [number, Float32Array] {
+    const vec = new Float32Array(4);
+    vec.fill(value);
+    return [id, vec];
+  }
+
+  it("passes through single-element list unchanged", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+    const r = makeResult(1, 1000);
+    const embeddings = new Map([makeEmbedding(1, 0.5)]);
+
+    // cosineSimilarity mock returns 0 — no clustering possible
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    vi.mocked(cosineSim).mockReturnValue(0);
+
+    const out = deduplicateFacts([r], embeddings);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(1);
+    void TEMPORAL_DEDUP_THRESHOLD; // import check
+  });
+
+  it("passes through two dissimilar facts unchanged", async () => {
+    const { deduplicateFacts } = await getJme();
+    const r1 = makeResult(1, 1000, 0.9);
+    const r2 = makeResult(2, 2000, 0.7);
+    const embeddings = new Map([makeEmbedding(1, 0.1), makeEmbedding(2, 0.9)]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    // Low similarity — below threshold
+    vi.mocked(cosineSim).mockReturnValue(0.3);
+
+    const out = deduplicateFacts([r1, r2], embeddings);
+    expect(out).toHaveLength(2);
+  });
+
+  it("removes older fact when two facts are semantically similar", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+
+    const older = makeResult(1, 1000, 0.9); // higher score but older
+    const newer = makeResult(2, 9000, 0.7); // lower score but newer
+    const embeddings = new Map([makeEmbedding(1, 0.5), makeEmbedding(2, 0.5)]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    // High similarity — above threshold
+    vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
+
+    const out = deduplicateFacts([older, newer], embeddings);
+    // Should keep the newer fact, drop the older one
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(2);
+  });
+
+  it("collapses a 3+ member cluster to ONLY the newest fact (v1/v2/v3 regression)", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+
+    // Same topic, three versions: ranked v1 > v2 > v3 by score, aged
+    // v1 < v2 < v3. Spec: only v3 reaches the context. The pre-fix shape
+    // returned [v2, v3] — the anchor broke on the FIRST newer candidate and
+    // never absorbed the rest of the cluster. 2-member tests cannot catch
+    // this; keep this one 3-wide.
+    const v1 = makeResult(1, 100, 0.9);
+    const v2 = makeResult(2, 200, 0.8);
+    const v3 = makeResult(3, 300, 0.7);
+    const embeddings = new Map([
+      makeEmbedding(1, 0.5),
+      makeEmbedding(2, 0.5),
+      makeEmbedding(3, 0.5),
+    ]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
+
+    const out = deduplicateFacts([v1, v2, v3], embeddings);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(3);
+  });
+
+  it("keeps older fact when anchor is more recent than candidate", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+
+    const anchor = makeResult(1, 9000, 0.9); // higher score AND newer
+    const candidate = makeResult(2, 1000, 0.7); // lower score AND older
+    const embeddings = new Map([makeEmbedding(1, 0.5), makeEmbedding(2, 0.5)]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
+
+    const out = deduplicateFacts([anchor, candidate], embeddings);
+    // Anchor is newer — keep anchor, drop candidate
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(1);
+  });
+
+  it("skips facts without embeddings (keeps them unconditionally)", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+
+    const withEmb = makeResult(1, 9000, 0.9);
+    const noEmb = makeResult(2, 1000, 0.8);
+    // Only id=1 has an embedding; id=2 has none
+    const embeddings = new Map([makeEmbedding(1, 0.5)]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
+
+    const out = deduplicateFacts([withEmb, noEmb], embeddings);
+    // Both kept: id=2 has no embedding so cannot be clustered
+    expect(out).toHaveLength(2);
+  });
+
+  it("returns empty list unchanged", async () => {
+    const { deduplicateFacts } = await getJme();
+    const out = deduplicateFacts([], new Map());
+    expect(out).toHaveLength(0);
+  });
+});

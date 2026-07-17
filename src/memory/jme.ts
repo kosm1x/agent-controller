@@ -27,6 +27,23 @@ import { logRecall } from "./recall-utility.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
 
+// ── Phase 3 constants ────────────────────────────────────────────────────────
+
+/**
+ * Cosine similarity threshold above which two facts are considered to be
+ * about the same topic. When grouping recall candidates, only the most-recent
+ * fact per cluster survives. Keeps contradictory v1/v3 facts out of the same
+ * context window. (Phase 3, Pieza 1)
+ */
+export const TEMPORAL_DEDUP_THRESHOLD = 0.85;
+
+/**
+ * When jme_facts with embeddings exceeds this count, the nightly consolidator
+ * emits a warn log. LIMIT 500 in queryMemory() starts being a bottleneck at
+ * ~400 rows. (Phase 3, Pieza 2)
+ */
+export const VECTOR_CEILING_WARN = 400;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type JmeTurnRole = "user" | "jarvis";
@@ -257,6 +274,71 @@ function extractKeywords(query: string): string[] {
  *
  * Falls back to FTS5-only if embedding fails.
  */
+/**
+ * Temporal deduplication of recall candidates.
+ *
+ * Groups results by semantic similarity (cosine > TEMPORAL_DEDUP_THRESHOLD).
+ * Within each cluster, keeps only the most-recent fact (highest `ts`).
+ * Prevents contradictory v1/v3 facts from appearing in the same context window.
+ *
+ * Algorithm is O(n²) over the recall set — acceptable because k ≤ 20 and
+ * this runs entirely in-process with pre-loaded Float32Arrays.
+ *
+ * @param results   Already-ranked recall results (best first)
+ * @param queryVec  Query embedding used during the original vector search;
+ *                  used to re-compute inter-fact similarities. If null, no
+ *                  deduplication is performed (FTS5-only path).
+ * @returns Filtered results with at most one representative per cluster,
+ *          preserving the original ranking order among survivors.
+ */
+export function deduplicateFacts(
+  results: JmeRecallResult[],
+  factEmbeddings: Map<number, Float32Array>,
+): JmeRecallResult[] {
+  if (results.length <= 1) return results;
+
+  const kept: JmeRecallResult[] = [];
+  // Indices already claimed by an earlier anchor's cluster.
+  const absorbed = new Set<number>();
+
+  for (let i = 0; i < results.length; i++) {
+    if (absorbed.has(i)) continue;
+
+    const anchor = results[i];
+    const anchorVec = factEmbeddings.get(anchor.id);
+
+    // If we have no embedding for the anchor, keep it unconditionally —
+    // we can't meaningfully cluster it.
+    if (!anchorVec) {
+      kept.push(anchor);
+      continue;
+    }
+
+    // Absorb the FULL cluster around this anchor first, then keep only its
+    // most-recent member (at the anchor's rank position). Breaking out on
+    // the first newer candidate — the original shape — left the rest of the
+    // cluster un-absorbed, so a v1/v2/v3 trio surfaced BOTH v2 and v3
+    // (repro: identical embeddings, ts 100/200/300 → [v2, v3]).
+    let newest = anchor;
+    for (let j = i + 1; j < results.length; j++) {
+      if (absorbed.has(j)) continue;
+      const candidate = results[j];
+      const candidateVec = factEmbeddings.get(candidate.id);
+      if (!candidateVec) continue;
+
+      const sim = cosineSimilarity(anchorVec, candidateVec);
+      if (sim >= TEMPORAL_DEDUP_THRESHOLD) {
+        absorbed.add(j);
+        if (candidate.ts > newest.ts) newest = candidate;
+      }
+    }
+
+    kept.push(newest);
+  }
+
+  return kept;
+}
+
 export async function queryMemory(
   query: string,
   options: { k?: number; minScore?: number } = {},
@@ -278,6 +360,8 @@ export async function queryMemory(
 
   // ── 1. Vector search ───────────────────────────────────────────────────────
   const vectorScores = new Map<number, number>();
+  // Phase 3 Pieza 1: stash deserialized embeddings for temporal dedup below
+  const factEmbeddings = new Map<number, Float32Array>();
 
   let queryVec: Float32Array | null = null;
   try {
@@ -304,6 +388,7 @@ export async function queryMemory(
         const factVec = deserializeEmbedding(row.embedding);
         const sim = cosineSimilarity(queryVec, factVec);
         vectorScores.set(row.id, sim * row.confidence);
+        factEmbeddings.set(row.id, factVec);
       } catch {
         // skip malformed embedding
       }
@@ -389,24 +474,37 @@ export async function queryMemory(
   }>;
 
   // ── 5. Fuse scores ─────────────────────────────────────────────────────────
-  const results: JmeRecallResult[] = candidateRows
+  const fused: JmeRecallResult[] = candidateRows
     .map((row) => {
       const vScore = vectorScores.get(row.id) ?? 0;
       const kScore = keywordScores.get(row.id) ?? 0;
-      const fused = queryVec ? vScore * 0.7 + kScore * 0.3 : kScore;
+      const fusedScore = queryVec ? vScore * 0.7 + kScore * 0.3 : kScore;
 
       return {
         id: row.id,
         factText: row.fact_text,
         category: row.category as JmeFactCategory,
         sourceTask: row.source_task,
-        score: fused,
+        score: fusedScore,
         ts: row.ts,
       };
     })
     .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+
+  // ── 5.5 Temporal dedup (Phase 3 Pieza 1) ──────────────────────────────────
+  // Group semantically similar facts and keep only the most-recent per cluster.
+  // Prevents contradictory v1/v3 versions of the same fact from appearing in
+  // the same context window. Only runs when we have embeddings to compare.
+  const results =
+    factEmbeddings.size > 0 ? deduplicateFacts(fused, factEmbeddings) : fused;
+
+  if (results.length < fused.length) {
+    console.log(
+      `[jme] temporal dedup: ${fused.length} → ${results.length} facts (removed ${fused.length - results.length} stale duplicate(s))`,
+    );
+  }
 
   // Telemetry: record this recall in the shared audit table with source:'jme'
   // so JME retrievals are observable alongside the hindsight/sqlite paths.
@@ -669,6 +767,23 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       role: JmeTurnRole;
       content: string;
     }>;
+    // Phase 3 Pieza 2: vector ceiling surveillance.
+    // When jme_facts with embeddings approaches the LIMIT 500 in queryMemory(),
+    // recall quality degrades (oldest facts get cut off). Warn early at 400 so
+    // there's runway before it becomes a problem. Phase 4 will add auto-pruning.
+    const embeddingCount = (
+      db
+        .prepare(
+          "SELECT COUNT(*) as n FROM jme_facts WHERE embedding IS NOT NULL",
+        )
+        .get() as { n: number }
+    ).n;
+    if (embeddingCount >= VECTOR_CEILING_WARN) {
+      console.warn(
+        `[jme] consolidateAll: vector ceiling warning — ${embeddingCount} facts with embeddings (warn threshold=${VECTOR_CEILING_WARN}, query LIMIT=500). Consider pruning low-confidence facts.`,
+      );
+    }
+
     if (turns.length === 0) return result;
     result.turnsProcessed = turns.length;
     if (turns.length === CONSOLIDATOR_MAX_TURNS) {
