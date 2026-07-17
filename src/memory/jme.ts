@@ -298,7 +298,7 @@ export function deduplicateFacts(
   if (results.length <= 1) return results;
 
   const kept: JmeRecallResult[] = [];
-  // cluster[i] = true if result[i] was already absorbed into a cluster
+  // Indices already claimed by an earlier anchor's cluster.
   const absorbed = new Set<number>();
 
   for (let i = 0; i < results.length; i++) {
@@ -314,7 +314,12 @@ export function deduplicateFacts(
       continue;
     }
 
-    // Scan later results for cluster members
+    // Absorb the FULL cluster around this anchor first, then keep only its
+    // most-recent member (at the anchor's rank position). Breaking out on
+    // the first newer candidate — the original shape — left the rest of the
+    // cluster un-absorbed, so a v1/v2/v3 trio surfaced BOTH v2 and v3
+    // (repro: identical embeddings, ts 100/200/300 → [v2, v3]).
+    let newest = anchor;
     for (let j = i + 1; j < results.length; j++) {
       if (absorbed.has(j)) continue;
       const candidate = results[j];
@@ -323,28 +328,12 @@ export function deduplicateFacts(
 
       const sim = cosineSimilarity(anchorVec, candidateVec);
       if (sim >= TEMPORAL_DEDUP_THRESHOLD) {
-        // Keep the more-recent fact, drop the older one.
-        // Anchor was ranked higher (better score) but if candidate is newer,
-        // promote candidate and mark anchor for replacement.
-        if (candidate.ts > anchor.ts) {
-          // Candidate is newer — it should replace the anchor in the output.
-          // We'll handle this by NOT adding anchor to kept, adding candidate,
-          // and absorbing anchor.
-          absorbed.add(i);
-          absorbed.add(j);
-          kept.push(candidate);
-          break; // anchor is gone — move to next i
-        } else {
-          // Anchor is newer (or same age) — absorb candidate, keep anchor
-          absorbed.add(j);
-        }
+        absorbed.add(j);
+        if (candidate.ts > newest.ts) newest = candidate;
       }
     }
 
-    // Only add anchor if it wasn't absorbed by a newer candidate in the loop
-    if (!absorbed.has(i)) {
-      kept.push(anchor);
-    }
+    kept.push(newest);
   }
 
   return kept;

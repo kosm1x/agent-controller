@@ -722,15 +722,37 @@ describe("JME — deduplicateFacts (Phase 3 temporal filter)", () => {
     expect(out[0].id).toBe(2);
   });
 
+  it("collapses a 3+ member cluster to ONLY the newest fact (v1/v2/v3 regression)", async () => {
+    const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
+
+    // Same topic, three versions: ranked v1 > v2 > v3 by score, aged
+    // v1 < v2 < v3. Spec: only v3 reaches the context. The pre-fix shape
+    // returned [v2, v3] — the anchor broke on the FIRST newer candidate and
+    // never absorbed the rest of the cluster. 2-member tests cannot catch
+    // this; keep this one 3-wide.
+    const v1 = makeResult(1, 100, 0.9);
+    const v2 = makeResult(2, 200, 0.8);
+    const v3 = makeResult(3, 300, 0.7);
+    const embeddings = new Map([
+      makeEmbedding(1, 0.5),
+      makeEmbedding(2, 0.5),
+      makeEmbedding(3, 0.5),
+    ]);
+
+    const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
+    vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
+
+    const out = deduplicateFacts([v1, v2, v3], embeddings);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(3);
+  });
+
   it("keeps older fact when anchor is more recent than candidate", async () => {
     const { deduplicateFacts, TEMPORAL_DEDUP_THRESHOLD } = await getJme();
 
     const anchor = makeResult(1, 9000, 0.9); // higher score AND newer
     const candidate = makeResult(2, 1000, 0.7); // lower score AND older
-    const embeddings = new Map([
-      makeEmbedding(1, 0.5),
-      makeEmbedding(2, 0.5),
-    ]);
+    const embeddings = new Map([makeEmbedding(1, 0.5), makeEmbedding(2, 0.5)]);
 
     const { cosineSimilarity: cosineSim } = await import("./embeddings.js");
     vi.mocked(cosineSim).mockReturnValue(TEMPORAL_DEDUP_THRESHOLD + 0.01);
