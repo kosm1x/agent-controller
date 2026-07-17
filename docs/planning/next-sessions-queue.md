@@ -638,3 +638,19 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - **Next Transhumanismo run 12:00 MX**: expect clean content, `completed` (not `_with_concerns`), no ToolSearch delivery-hunting in toolCalls. Same check applies to the other 4 telegram-delivery schedules (Williams Journal, MexicoNecesario, Morning Sync, Química Básica).
 - **Cache-diag window restarted AGAIN 07-15** (`4a5f3ca` changed the tool block; the 07-13 window's ~07-16 verdict is contaminated — discard it). New verdict ~07-18.
 - The eval-baseline incumbent stays 65.75; candidate 66.65 was a gate check, not a re-baseline. If the next legit tool-surface change gates against 65.75 and the WATCH math matters, consider `--update-baseline` then.
+
+## 2026-07-17 — JME Phase 3 merged + turn-exhaustion class closed (`a9fc14b` + `c7cfb06`, pid 1689123)
+
+**Shipped:** JME Phase 3 (temporal dedup keep-newest, ceiling warn 400, `mc-ctl jme-stats`) merged via PR #30 after relanding the deduplicateFacts cluster fix (`a81e160` — Jarvis's own fix ran in nanoclaw and evaporated in the sandbox clone while self-reporting "completed"). Turn-exhaustion root cause: `gh_create_pr` had no `cwd` (ran in DEFAULT_CWD=cuatro-flor) + token-push set no upstream → unwinnable endgame thrash; fixed `c7cfb06` (cwd + --head + set-upstream), eval:gate PASS 66.87 (+1.12; tool_selection 37.41). #29 consolidator fix PROVEN in prod (120 turns → 8 facts; first was_used=1 hits). OAuth outage 16:26–16:31 UTC (dead refresh token; /login fixed).
+
+**Queued (systemic, not yet built):**
+- **Nanoclaw work-landing check**: an mc-coding task can "complete" in the sandbox with commits that never reach host/remote (task 595947aa). Needs a structural gate like the TARGET_NOT_IN_SANDBOX sentinel — e.g. worker verifies `git ls-remote` shows the claimed branch tip before reporting success, else `success:false`. Also decide whether chat-initiated mc-coding should route to nanoclaw at all now that the worktree+jarvis_dev host path exists.
+- **Nanoclaw PlanParseError 15:12 07-17**: single unexplained instance (host auth was healthy; 16:26 twin was the OAuth outage). If it recurs, pull `LLMJsonParseError.rawSample` from container logs before theorizing.
+- **Coding-playbook repo map**: ~7 turns of adcda0f2 went to hunting mc-ctl's location. One line in `jarvis-kb/directives/coding-task-playbook.md` ("mc-ctl is at repo root; tests colocated `src/**/*.test.ts`") kills that class.
+
+**Watches:**
+- **JME utility readout ~07-24** (7d from first facts 07-17): `./mc-ctl jme-stats` — success ≥39% was_used; demote <20% AND >50% latency tax. Nightly consolidator + dedup log line `[jme] temporal dedup: N → M` appears once same-topic fact versions accumulate.
+- **Next fast-runner coding task**: expect commit→push→PR chain in ≤3 turns (no thrash); `mc-ctl trace <id>` histogram is the check.
+- **Cache-diag (window restarted 07-15, verdict ~07-18)**: `c7cfb06` changed a DEFERRED tool description — coding-scope prompt lines perturbed; chat-scope lines (the main measurement) untouched. Read the verdict stratified by scope.
+- strictMcpConfig watch RESOLVED: 07-16 Transhumanismo `completed` clean (07-14/15 were `_with_concerns`).
+- Incumbent stays 65.75; candidates 66.65 (07-15) and 66.87 (07-17) were gate checks, not re-baselines.
