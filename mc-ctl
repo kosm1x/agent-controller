@@ -1666,6 +1666,106 @@ cmd_stats() {
 }
 
 # ---------------------------------------------------------------------------
+# JME utility dashboard (Phase 3)
+# ---------------------------------------------------------------------------
+
+cmd_jme_stats() {
+  need_db
+  echo -e "${BOLD}=== JME Utility Dashboard ===${NC}"
+  echo ""
+
+  local now_ms
+  now_ms=$(date +%s%3N)
+  local today
+  today=$(date '+%Y-%m-%d')
+
+  # ── Fact store ──────────────────────────────────────────────────────────────
+  echo -e "${BOLD}Fact store:${NC}"
+  local facts_total facts_emb facts_expiring
+  facts_total=$(sql_raw "SELECT COUNT(*) FROM jme_facts;" 2>/dev/null || echo "0")
+  facts_emb=$(sql_raw "SELECT COUNT(*) FROM jme_facts WHERE embedding IS NOT NULL;" 2>/dev/null || echo "0")
+  facts_expiring=$(sql_raw "SELECT COUNT(*) FROM jme_facts WHERE expires_at IS NOT NULL AND expires_at BETWEEN ${now_ms} AND ${now_ms} + 604800000;" 2>/dev/null || echo "0")
+
+  echo -e "  Facts total:        ${facts_total}"
+  echo -e "  With embeddings:    ${facts_emb}  (vector query LIMIT=500, ceiling warn=400)"
+  echo -e "  Expiring in 7d:     ${facts_expiring}"
+
+  if [ "$facts_emb" -ge 400 ] 2>/dev/null; then
+    echo -e "  ${YELLOW}⚠️  Vector ceiling approaching — consider pruning low-confidence facts${NC}"
+  fi
+
+  echo ""
+
+  # ── Turn buffer ─────────────────────────────────────────────────────────────
+  echo -e "${BOLD}Turn buffer:${NC}"
+  local turns_total
+  turns_total=$(sql_raw "SELECT COUNT(*) FROM jme_turns;" 2>/dev/null || echo "0")
+  echo -e "  Turns (pending consolidation): ${turns_total}"
+  echo ""
+
+  # ── Recall utility ──────────────────────────────────────────────────────────
+  echo -e "${BOLD}Recall utility (source='jme'):${NC}"
+
+  local total_jme used_jme unused_jme null_jme
+  total_jme=$(sql_raw   "SELECT COUNT(*) FROM recall_audit WHERE source='jme';" 2>/dev/null || echo "0")
+  used_jme=$(sql_raw    "SELECT COUNT(*) FROM recall_audit WHERE source='jme' AND was_used=1;" 2>/dev/null || echo "0")
+  unused_jme=$(sql_raw  "SELECT COUNT(*) FROM recall_audit WHERE source='jme' AND was_used=0;" 2>/dev/null || echo "0")
+  null_jme=$(sql_raw    "SELECT COUNT(*) FROM recall_audit WHERE source='jme' AND was_used IS NULL;" 2>/dev/null || echo "0")
+
+  local util_pct="n/a"
+  if [ "$total_jme" -gt 0 ] 2>/dev/null && [ "$((used_jme + unused_jme))" -gt 0 ] 2>/dev/null; then
+    util_pct=$(awk "BEGIN { printf \"%.1f%%\", 100 * ${used_jme} / (${used_jme} + ${unused_jme}) }")
+  fi
+
+  echo -e "  Total recalls:      ${total_jme}"
+  echo -e "  was_used=1 (used):  ${used_jme}"
+  echo -e "  was_used=0 (miss):  ${unused_jme}"
+  echo -e "  was_used=NULL:      ${null_jme}  (unmatched — normal for recent turns)"
+  echo -e "  Utility rate:       ${util_pct}"
+  echo ""
+
+  # ── Daily breakdown (last 7 days) ──────────────────────────────────────────
+  echo -e "${BOLD}Daily breakdown (last 7 days, source='jme'):${NC}"
+  sql "SELECT
+    date(created_at) AS day,
+    COUNT(*) AS recalls,
+    SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) AS used,
+    SUM(CASE WHEN was_used=0 THEN 1 ELSE 0 END) AS unused,
+    ROUND(100.0 * SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN was_used IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS util_pct
+  FROM recall_audit
+  WHERE source='jme'
+    AND created_at >= date('now', '-7 days')
+  GROUP BY day
+  ORDER BY day DESC;" 2>/dev/null || echo -e "  ${DIM}No JME recall data yet.${NC}"
+
+  echo ""
+
+  # ── Baseline comparison ─────────────────────────────────────────────────────
+  echo -e "${BOLD}Baseline comparison (last 7 days, all sources):${NC}"
+  sql "SELECT
+    source,
+    COUNT(*) AS recalls,
+    SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) AS used,
+    ROUND(100.0 * SUM(CASE WHEN was_used=1 THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN was_used IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS util_pct
+  FROM recall_audit
+  WHERE created_at >= date('now', '-7 days')
+  GROUP BY source
+  ORDER BY util_pct DESC NULLS LAST;" 2>/dev/null || echo -e "  ${DIM}No recall audit data.${NC}"
+
+  echo ""
+
+  # ── Verdict runway ──────────────────────────────────────────────────────────
+  echo -e "${BOLD}Verdict runway:${NC}"
+  local verdict_date="2026-07-27"
+  local days_left
+  days_left=$(( ( $(date -d "$verdict_date" +%s) - $(date +%s) ) / 86400 ))
+  echo -e "  Verdict date:  ${verdict_date}"
+  echo -e "  Days remaining: ${days_left}"
+  echo -e "  Success criteria: util_pct ≥ 39% (baseline hybrid), p50 latency < 350ms"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Task trace (V8.5 Phase 6)
 # ---------------------------------------------------------------------------
 
@@ -1796,6 +1896,7 @@ usage() {
   echo -e "  ${BOLD}Memory${NC}"
   echo -e "  ${GREEN}conversations${NC} [N]   Last N conversations (default 10)"
   echo -e "  ${GREEN}memory${NC}              Memory backend status"
+  echo -e "  ${GREEN}jme-stats${NC}           JME utility dashboard — facts, recall rate, verdict runway"
   echo ""
   echo -e "  ${BOLD}Hindsight${NC}"
   echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
@@ -2873,6 +2974,7 @@ case "$cmd" in
 
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;
+  jme-stats)         cmd_jme_stats ;;
 
   validation)        cmd_validation "$@" ;;
 
