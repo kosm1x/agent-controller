@@ -654,3 +654,20 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - **Cache-diag (window restarted 07-15, verdict ~07-18)**: `c7cfb06` changed a DEFERRED tool description — coding-scope prompt lines perturbed; chat-scope lines (the main measurement) untouched. Read the verdict stratified by scope.
 - strictMcpConfig watch RESOLVED: 07-16 Transhumanismo `completed` clean (07-14/15 were `_with_concerns`).
 - Incumbent stays 65.75; candidates 66.65 (07-15) and 66.87 (07-17) were gate checks, not re-baselines.
+
+## 2026-07-18 — Enhancer ASK enforcement + alias guard + W29 validation + §17 KB sync (pid 2338165)
+
+**Shipped:** (1) `980297f` prompt-enhancer: CIRICD ASK rule enforced in CODE (ASK requires `risk==="high" && clarity<4 && context==="unresolved"`, else downgrade → ASSUME/PASS with an `ASK downgraded` log line), risk redefined (own-chat sends = low; high = irreversible/third-party/spend only), off-topic context ignored. Motivation: 16/16 ASKs operator-skipped over 30d (0% utility). Live-replay validated (3 real FPs → PASS; destructive control still ASKs). (2) `078cd16` dispatcher: `getForeignProjectNames()` folds `projects.config.aliases`; williams-entry-radar aliases `["williams","radar","journal","thewilliamsradar"]` registered in DB — closes the cf40a528 "Journal W29"→nanoclaw misroute (message named the project only colloquially). (3) Williams publish schedule 18:30→20:00 MX (`scheduled_tasks` 84ccc541) — it raced the now-85-min Polygon scan. (4) KB sync via `upsertFile` (4 files: plan-2027 pulso copy, williams README + scan-window rule, azteca-fsd copy, canonical pulso README → `192b97f`) attacking §17's unfixable 21.4% / resolver 93.8% blockers.
+
+**Operator actions pending:**
+- Re-send the W29 publish request to Jarvis ("Escribe el comentario del analista para el Journal W29 y publícalo siguiendo el SOP (publish-journal.mjs)") — routing is now alias-safe.
+- Keep ruling the 06:00 brief with exact `sirve`/`descarta` — §17 acceptance needs ≥3 of each (currently 1/1).
+- Carry-over: `/tmp/tool-search-val-* /tmp/sdk-tool-vis-*` (3.9G) + dangling docker volumes (~1.6G) cleanups.
+
+**Watches:**
+- **Enhancer**: next ASKs in prod should be rare and rule-conforming; grep `journalctl -u mission-control | grep 'ASK downgraded'` for downgrade lines. If the enhancer still annoys, the fallback is `PROMPT_ENHANCER_ENABLED=false` — but measure first.
+- **§17 re-check ~07-25**: `./mc-ctl judgments` header — unfixable/resolver should trend toward thresholds as new judgments cite the synced KB; acceptance count with rulings.
+- **Fri 07-24 20:00 MX**: first publish-schedule fire at the new time — must find `last-run.json` already stamped W30.
+- Carry-over: JME utility readout ~07-24 (`jme-stats`, ≥39% was_used); cache-diag verdict ~07-18 (read scope-stratified); next fast-runner coding task ≤3 turns to PR.
+
+**Queued (systemic, unchanged from 07-17):** nanoclaw work-landing check (`git ls-remote` gate); nanoclaw PlanParseError single instance; coding-playbook repo map one-liner.
