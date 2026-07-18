@@ -319,9 +319,12 @@ describe("analyzePrompt — RC3: cold-start guard forces PASS without context", 
 
   it("does NOT force PASS when context exists, even if short", async () => {
     const { infer } = await import("../inference/adapter.js");
+    // Rule-satisfying ASK (clarity<4, risk=high, context=unresolved) so the
+    // 2026-07-18 decision-rule enforcement doesn't downgrade it — this test
+    // pins the cold-start guard's scope only.
     vi.mocked(infer).mockResolvedValue(
       inferResp(
-        '{"decision":"ASK","intent":"x","clarity":6,"risk":"low","impact":1,"context":"resolved","decompose":"ok","questions":["q1?","q2?"]}',
+        '{"decision":"ASK","intent":"x","clarity":2,"risk":"high","impact":1,"context":"unresolved","decompose":"ok","questions":["q1?","q2?"]}',
       ),
     );
 
@@ -361,14 +364,15 @@ describe("analyzePrompt — RC3: cold-start guard forces PASS without context", 
   // the cold-start guard is purely an ergonomics relief for low-risk asks.
   it("does NOT force PASS when risk=high, even on cold start", async () => {
     const { infer } = await import("../inference/adapter.js");
+    // clarity=2: a truly ambiguous destructive request. (clarity≥4 would now
+    // be downgraded by the decision-rule enforcement — see that describe.)
     vi.mocked(infer).mockResolvedValue(
       inferResp(
-        '{"decision":"ASK","intent":"borrar archivos","clarity":7,"risk":"high","impact":15,"context":"unresolved","decompose":"ok","questions":["¿Cuál directorio exactamente?","¿Confirmas borrado permanente?"]}',
+        '{"decision":"ASK","intent":"borrar archivos","clarity":2,"risk":"high","impact":15,"context":"unresolved","decompose":"ok","questions":["¿Cuál directorio exactamente?","¿Confirmas borrado permanente?"]}',
       ),
     );
 
-    // Empty context (cold start) + clarity=7 (>5) — would normally force
-    // PASS, but risk=high overrides to preserve the safety gate.
+    // Empty context (cold start) — risk=high preserves the safety gate.
     const result = await analyzePrompt(
       "Borra todos los archivos del proyecto X",
       "",
@@ -376,6 +380,92 @@ describe("analyzePrompt — RC3: cold-start guard forces PASS without context", 
     expect(result).not.toBe("PASS");
     expect(result).toContain("directorio");
     expect(result).toContain("Confirmas");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Decision-rule enforcement (2026-07-18): ASK is only honored when its own
+// stated preconditions hold (clarity < 4 AND risk = high AND context =
+// unresolved). 30-day production data: 16/16 ASKs were skipped by the user;
+// the model emitted ASK with contradicting self-scores (risk=low + ASK on
+// "Explica porque no corrió el Williams Radar", with an off-topic F1 guess).
+// ---------------------------------------------------------------------------
+
+describe("analyzePrompt — ASK decision-rule enforcement", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Plenty of grounding context so the cold-start guard stays out of the way.
+  const ctx =
+    "User: registra mi avance del quiz de química.\nJarvis: listo, registrado en la KB con fecha de hoy.";
+
+  it("downgrades ASK→PASS when risk=low (Williams Radar false positive)", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    vi.mocked(infer).mockResolvedValue(
+      inferResp(
+        '{"decision":"ASK","intent":"Explicar por qué no corrió el Williams Radar (F1 u otro contexto)","clarity":3,"risk":"low","impact":1,"context":"unresolved","decompose":"ok","questions":["¿Te refieres a F1?","¿Qué radar?"]}',
+      ),
+    );
+
+    const result = await analyzePrompt(
+      "Explica porque no corrió el Williams Radar",
+      ctx,
+    );
+    expect(result).toBe("PASS");
+  });
+
+  it("downgrades ASK→PASS when clarity ≥ 4 despite risk=high", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    vi.mocked(infer).mockResolvedValue(
+      inferResp(
+        '{"decision":"ASK","intent":"Actualizar KB","clarity":5,"risk":"high","impact":1,"context":"unresolved","decompose":"ok","questions":["¿Qué repo?","¿Qué KB?"]}',
+      ),
+    );
+
+    const result = await analyzePrompt(
+      "Actualiza el kb de pulso aura con el repo",
+      ctx,
+    );
+    expect(result).toBe("PASS");
+  });
+
+  it("downgrades ASK→PASS when context=resolved", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    vi.mocked(infer).mockResolvedValue(
+      inferResp(
+        '{"decision":"ASK","intent":"x","clarity":3,"risk":"high","impact":1,"context":"resolved","decompose":"ok","questions":["q1?","q2?"]}',
+      ),
+    );
+
+    const result = await analyzePrompt("mensaje suficientemente largo", ctx);
+    expect(result).toBe("PASS");
+  });
+
+  it("downgrades ASK→ASSUME when the model stated an assumption", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    vi.mocked(infer).mockResolvedValue(
+      inferResp(
+        '{"decision":"ASK","intent":"x","clarity":5,"risk":"low","impact":1,"context":"unresolved","decompose":"ok","questions":["q1?"],"assumption":"Entiendo que quieres actualizar la KB de Pulso Aura"}',
+      ),
+    );
+
+    const result = await analyzePrompt("mensaje suficientemente largo", ctx);
+    expect(result.startsWith("ASSUME:")).toBe(true);
+    expect(result).toContain("Pulso Aura");
+  });
+
+  it("honors ASK when all preconditions hold", async () => {
+    const { infer } = await import("../inference/adapter.js");
+    vi.mocked(infer).mockResolvedValue(
+      inferResp(
+        '{"decision":"ASK","intent":"borrar archivos","clarity":2,"risk":"high","impact":10,"context":"unresolved","decompose":"ok","questions":["¿Cuál directorio?","¿Borrado permanente?"]}',
+      ),
+    );
+
+    const result = await analyzePrompt("borra todo eso que te dije", ctx);
+    expect(result).not.toBe("PASS");
+    expect(result).toContain("directorio");
   });
 });
 

@@ -153,16 +153,17 @@ Analiza el mensaje del usuario EN CONTEXTO de la conversación reciente usando e
 **I — Intent**: Extrae la acción principal en una frase.
   Ej: "Publicar artículo en WordPress", "Enviar reporte por email a Javier"
 
-**R — Risk** (high/low): ¿La ambigüedad puede causar un ERROR GRAVE?
-  high = acción destructiva (borrar, sobreescribir), envío a destino incorrecto, datos que se pierden
-  low = lectura, búsqueda, análisis, creación de contenido nuevo
+**R — Risk** (high/low): ¿La ambigüedad puede causar un daño IRREVERSIBLE?
+  high = SOLO acciones irreversibles: borrar o sobreescribir datos existentes, enviar mensajes/emails a TERCEROS (personas distintas del usuario), publicar hacia fuera, gastar dinero
+  low = TODO lo demás: lectura, diagnóstico, búsqueda, análisis, actualizar la KB propia, crear contenido nuevo, tareas de código (tienen tests y git como red), y CUALQUIER cosa enviada/posteada a este mismo chat (re-postear, resumir, quiz, reportes) — el usuario la ve y la corrige al instante
 
 **I2 — Impact** (count): ¿Cuántos items afecta?
   Cuenta archivos, registros, emails, tareas. Si no es claro, estima.
 
 **C2 — Context** (resolved/unresolved): ¿La conversación reciente aclara las dudas?
-  resolved = paths, repos, destinos ya mencionados en conversación
+  resolved = paths, repos, destinos ya mencionados en conversación, O el mensaje es autosuficiente por sí solo
   unresolved = información crítica faltante que Jarvis NO puede inferir
+  IMPORTANTE: si el contexto reciente trata de un tema DISTINTO al mensaje actual, IGNÓRALO por completo y evalúa el mensaje por sí solo. Que el contexto hable de otra cosa NO vuelve el mensaje unresolved.
 
 **D — Decompose** (ok/split): ¿Necesita dividirse?
   split = >5 archivos O >10 tool calls O batch (migrar/mover muchos items)
@@ -177,6 +178,7 @@ Basándote en los scores:
 - **SPLIT** si: Decompose = split → sugiere plan de división en bloques de max 5 items
 
 DEFAULT = PASS. Solo usa ASK cuando la ambigüedad + riesgo harían daño. Prefiere ASSUME sobre ASK — es mejor intentar y que el usuario corrija que preguntar de más.
+Las preguntas de ASK deben referirse EXCLUSIVAMENTE al mensaje actual — NUNCA preguntes sobre la relación con temas anteriores no relacionados.
 
 ## FORMATO DE RESPUESTA (JSON estricto)
 
@@ -289,7 +291,7 @@ export async function analyzePrompt(
     if (raw.toUpperCase() === "PASS") return "PASS";
 
     // Parse CIRICD JSON response
-    const ciricd = parseCiricdResponse(raw);
+    let ciricd = parseCiricdResponse(raw);
     if (!ciricd) {
       // RC1: CIRICD parse failed. We do NOT ship raw LLM output to users —
       // the legacy fallback path was producing 20-27 line "questions" that
@@ -300,6 +302,30 @@ export async function analyzePrompt(
         `[enhancer] CIRICD parse failed (raw[${raw.length}]="${raw.slice(0, 80).replace(/\n/g, " ")}…"). Defaulting to PASS.`,
       );
       return "PASS";
+    }
+
+    // Decision-rule enforcement (2026-07-18). The prompt states "ASK only
+    // when Clarity < 4 AND Risk = high AND Context = unresolved" but the
+    // model regularly emits ASK with self-scores that contradict it (e.g.
+    // risk=low + ASK on "Explica porque no corrió el Williams Radar").
+    // 30-day data: 16/16 ASKs were skipped by the user — an ASK that
+    // doesn't meet its own preconditions is pure friction. Enforce the
+    // rule structurally: downgrade to ASSUME (if the model stated an
+    // interpretation) or PASS. True destructive ambiguity still ASKs.
+    if (
+      ciricd.decision === "ASK" &&
+      !(
+        ciricd.risk === "high" &&
+        ciricd.clarity < 4 &&
+        ciricd.context === "unresolved"
+      )
+    ) {
+      console.log(
+        `[enhancer] ASK downgraded (rule violation: clarity=${ciricd.clarity} risk=${ciricd.risk} context=${ciricd.context}) → ${ciricd.assumption ? "ASSUME" : "PASS"}`,
+      );
+      ciricd = ciricd.assumption
+        ? { ...ciricd, decision: "ASSUME" }
+        : { ...ciricd, decision: "PASS" };
     }
 
     // RC3: Cold-start guard. If the channel has no recent context AND the
