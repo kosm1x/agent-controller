@@ -266,17 +266,38 @@ function getForeignProjectNames(db: ReturnType<typeof getDatabase>): string[] {
   try {
     const rows = db
       .prepare(
-        `SELECT slug, name FROM projects
+        `SELECT slug, name, config FROM projects
          WHERE lower(slug) NOT IN ('mission-control', 'agent-controller', 'jarvis')
            AND lower(COALESCE(status, 'active')) NOT IN ('archived', 'completed')`,
       )
-      .all() as Array<{ slug: string | null; name: string | null }>;
+      .all() as Array<{
+      slug: string | null;
+      name: string | null;
+      config: string | null;
+    }>;
     const out = new Set<string>();
     for (const r of rows) {
       const slug = r.slug?.trim();
       const name = r.name?.trim();
       if (slug && slug.length >= 4) out.add(slug);
       if (name && name.length >= 4) out.add(name);
+      // config.aliases: user-facing shorthand that names the project without
+      // its slug/name — e.g. "el Journal W29" targets williams-entry-radar's
+      // journal repo but contains neither "williams" nor "radar". The W29
+      // misroute (task cf40a528, 2026-07-18) sailed past this guard into the
+      // nanoclaw sandbox on exactly that gap.
+      try {
+        const aliases = JSON.parse(r.config ?? "{}")?.aliases;
+        if (Array.isArray(aliases)) {
+          for (const a of aliases) {
+            if (typeof a === "string" && a.trim().length >= 4) {
+              out.add(a.trim());
+            }
+          }
+        }
+      } catch {
+        // Malformed config JSON — slug/name coverage still applies.
+      }
     }
     foreignProjectsCache = { at: Date.now(), names: [...out] };
     return foreignProjectsCache.names;
