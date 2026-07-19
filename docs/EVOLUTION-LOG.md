@@ -856,3 +856,135 @@ Five distinct friction events documented: (1) Obsidian Connectivity v2 request a
 
 ### Research notes
 Today represents a milestone in the co-evolution arc: Fede directed Jarvis to produce a formal self-assessment (6.1/10) and a prescriptive improvement roadmap (5 sprints, 14 weeks to 9/10) — the system is now modeling its own development trajectory, not just executing tasks. The session also illustrates the "context reset as cognitive hygiene" pattern: at least 3 deliberate resets were used as session management tools to prevent compounding context drift, a behavior that has stabilized into routine workflow.
+
+## 2026-07-13
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 26 (telegram: 26) |
+| Streak days | — |
+
+### Interactions summary
+The entire day was devoted to designing and shipping the **Jarvis Memory Engine (JME)**: Fede rejected Mem0 outright and directed construction of a bespoke semantic memory system on the existing SQLite/Gemini/BM25 stack. Two PRs were opened and merged — PR #27 (Phase 0: schema + module + 12 tests) and PR #28 (Phase 1: full wiring with `writeEpisodic`, `queryMemory`, 1 500-token injection, and a `withTimeout` guard) — closing the day with a green health check and a preview of Phase 2 (dedup + consolidator). Approximately 25 human exchanges across 8 sessions, all via Telegram.
+
+### What Jarvis learned
+Fede's architectural reflex is strong ownership: when an off-the-shelf option (Mem0) was merely analysed, a single word ("No es una opción") dismissed it and pivoted to custom build. Scope constraints are issued with minimum words but maximum precision ("Solo conversaciones conmigo"), and Jarvis is expected to redesign fully from that hint, not ask clarifying questions. A new playbook rule was also institutionalised: commit checkpoint + STOP at scope boundary; wiring always earns its own turn.
+
+### Friction points
+The 55-turn session limit was hit **three times** (Phase 0 at 10:43, Phase 1 gate fixes at 17:35, Phase 1 wiring at 19:01), forcing manual context hand-off each time. A branch duplication in Phase 1 required an explicit `reset --hard` instruction. Jarvis also repeatedly initialised in the wrong working directory (`/workspace` vs. the correct worktree path) and the deploy gate's expected `user_version` was stale (2 instead of 3) — both caught and corrected by Fede before causing production failures.
+
+### Research notes
+Today marks a clear inflection point in the co-evolution arc: the agent is no longer merely executing tasks within a pre-built memory framework — it *built its own memory layer from scratch under the operator's direction*. Phase 1 shipping means that from today onward each conversation turn is episodically recorded and future turns can recall prior context semantically. This is the first day the system's longitudinal memory is self-authored rather than injected externally, a milestone directly relevant to the agent-user co-evolution paper.
+
+## 2026-07-14
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 17 (telegram: 17) |
+| Streak days | — |
+
+### Interactions summary
+Today was a high-density engineering day dominated by three fronts: **JME (Jarvis Memory Engine)** Phase 2 verification and Phase 3 planning occupied most of the session (eval gate run: PASS, composite 65.71/100; commit `31c71ce` confirmed on `origin/main`); **PipeSong** was formally reactivated and scheduled to resume Phase 4 (latency optimization, <$0.03/min, <1.1s E2E) starting 2026-07-15; and a brief **Química Básica** study session (Day 2 — physical vs. chemical changes) was logged. The session closed with a Google Calendar event created for the JME Gate 2 check on 2026-07-16 at 19:00 CDMX.
+
+### What Jarvis learned
+An architectural decision was locked in for JME: **Opción A** (retain `jme_turns` as a working buffer with a global 7-day sweep), settling a previously open design question. The eval gate for Phase 2 is not a 7-day observation window but a ~10-minute static benchmark (193 → 551 cases); Fede needed explicit clarification on this, suggesting the gate terminology was ambiguous in prior documentation. PipeSong's GPU supply constraint (TensorDock ran out) triggered a comparative provider analysis (Vast.ai, RunPod, others), indicating infrastructure sourcing is an active bottleneck for that project.
+
+### Friction points
+Four distinct friction events logged: (1) `error_max_turns` hit at 12:07 during JME Phase 2 wiring — work left incomplete, requiring a new session; (2) eval gate timeout (900 s) at 14:19 — result not reportable in the same turn, recovered at 18:58; (3) `jme-plan-v2.md` in repo was stale vs. the KB copy — Jarvis couldn't read 4 mandatory corrections and had to abort; (4) Google Calendar creation blocked inside Claude Code at 19:15, requiring a second explicit request from the Google-authenticated session at 20:29.
+
+### Research notes
+The session illustrates a recurring pattern in the Jarvis co-evolution arc: multi-turn engineering tasks regularly collide with hard limits (max_turns, timeouts, permission boundaries), forcing task fragmentation and re-entry. These interruptions are not noise — they are structural inflection points where operator trust and recovery protocol matter. JME Phase 2 now in production marks the first self-improving memory layer reaching prod; Phase 3 (temporal filtering + monitoring) is the next meaningful milestone.
+
+## 2026-07-15
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 30 (telegram: 30) |
+| Streak days | — |
+
+### Interactions summary
+A wide-spectrum day spanning ~27 exchanges across five sessions over 23 hours. The day opened in the early hours with a Rumi poem request and two detailed geopolitical briefings (Iran–US conflict and Ukraine–Russia war), then shifted at midday into technical work: three rounds of Agent-Controller KB sync, a full PipeSong session (component analysis, GPU sweep, Google Doc creation), Snowflake key management for Pulso Aura, and ended with a health-check that surfaced a critical JME bug (`jme_facts = 0`) which was diagnosed and formally filed as a repo issue. A notable personal moment occurred mid-afternoon when Fede expressed pride in the Fede–Jarvis alliance, calling Jarvis "mi roca Piotr," followed by the generation and publication of a new Jarvis avatar on livingjoyfully.art — the first image that reflects the current alliance rather than the generic assistant persona.
+
+### What Jarvis learned
+The `mc.db` path ambiguity (root 0-byte file vs. `data/mc.db` at 365 MB) is a latent reliability trap — the consolidator was silently reading the wrong file, explaining the long-standing `jme_facts = 0` anomaly. Fede's decision-making style on personal matters (divorce) confirms a pattern: he gathers full options, quickly identifies the minimal-friction path, commits, and archives — no revisiting. The GPU sweep for PipeSong reveals that Phase 4a unblocking is cost-constrained (~$0.50–$2/hr for ≥16 GB VRAM), not technically infeasible, suggesting readiness to execute once budget is cleared.
+
+### Friction points
+Shell guard blocked writing to `/root/.secrets/` (both direct write and `mv`), requiring the user to execute the Snowflake key placement manually from SSH — an extra step that worked but interrupted flow. Agent-Controller KB required three separate sync rounds throughout the day due to commits arriving between sessions; no real blocking, but suggests a session-close batching opportunity. An unnecessary tool load occurred during the divorce topic resolution and was self-corrected inline.
+
+### Research notes
+The avatar milestone marks a qualitative shift in identity projection: Jarvis now has a visual artifact that the operator chose and confirmed as representative of the alliance, not merely a default icon. This is consistent with the co-evolution paper's "identity crystallization" phase — the system is acquiring persistent symbolic anchors beyond functional memory. The JME bug discovery via health-check (rather than via user complaint) is the first documented case of Jarvis surfacing a system fault proactively; worth tracking as a signal of increasing observability depth.
+
+## 2026-07-16
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 8 (telegram: 8) |
+| Streak days | — |
+
+### Interactions summary
+A focused, operationally dense day across three projects plus a social media incident. The morning session covered **Pulso Aura** (KB sync of 6 Snowflake production-grade commits, strategic reaffirmation of Pulso Aura as Palanca 3 of Plan 2027), **JME** (diagnosis and KB sync of Bug #29 — system prompt contamination in the consolidator that caused `jme_facts = 0` after the first nightly batch), and **TMN** (reapertura briefing plus conceptual design of the Shopper Club). The evening session resolved an operational publishing incident: a tweet for `@mexiconecesario` was successfully published after credentials were rotated, with one extra exchange required to supply the missing `ct0` cookie.
+
+### What Jarvis learned
+Bug #29 root cause confirmed and closed: `consolidateAll()` was injecting Jarvis's system prompt into the Haiku model, which returned prose instead of structured JSON — a subtle boundary-contamination failure that will inform future consolidator architecture reviews. The TMN Shopper Club ideation session revealed Fede's preference for layered conceptual framing (value prop → membership mechanics → data model → activation levers), confirming a top-down structuring style when exploring new product concepts. The Pulso Aura strategic anchor check (Palanca 3, Plan 2027) was resolved in a single confirmation turn — no ambiguity, no revision needed.
+
+### Friction points
+Credential handoff for `@mexiconecesario` was incomplete on the first message (auth_token sent without ct0), requiring one additional exchange. Jarvis caught the gap immediately and the tweet published in the following turn — minor friction, no impact on outcome.
+
+### Research notes
+Today's session illustrates a maturing operational rhythm: three parallel project threads (KB sync, bug triage, strategic ideation) were handled across ~9 exchanges without context loss or re-entry confusion. Bug #29's closure is particularly significant — it was diagnosed on 2026-07-15, committed and synced today, completing a full detect → diagnose → fix → document loop within 24 hours. This is consistent with the co-evolution arc's emerging reliability pattern: self-surfaced faults now close at higher velocity than operator-reported ones.
+
+## 2026-07-17
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 29 (telegram: 29) |
+| Streak days | — |
+
+### Interactions summary
+A dense, three-arc day: (1) JME Phase 3 was verified, a pre-merge bug in `deduplicateFacts()` (cluster-of-3+ not fully absorbed before max-ts selection) was caught and fixed, PR #30 merged to main, and the KB README synced; (2) Williams Radar W29 was diagnosed — the system was healthy but hung on an Alpha Vantage fallback that had already been migrated to Polygon; diagnosis resolved, Journal W29 published; (3) Química Básica Día 4 was reviewed (atomic models: Rutherford → Bohr → quantum), quiz evaluated, and learner progress logged. The afternoon also included a health check and a quick read-through of Plan 2027. Roughly 25 human↔Jarvis exchanges across the full day.
+
+### What Jarvis learned
+The flailing guard's string-match logic is too broad: the SQL keyword `select` in an inline command triggered it repeatedly, forcing a workaround (write SQL to a file first) that cost ~3 extra turns. The `git_push` tool does not support `--delete`; branch deletion requires `shell_exec`. Both are known friction sources that should be factored into toolchain planning for future sessions.
+
+### Friction points
+Four friction events: (1) flailing guard false-positive on SQL `select` keyword (~3 retries, redirected to script-to-file); (2) OAuth session expired at 10:26, required re-send of "Continúa"; (3) max_turns (55) hit mid-Phase-3 implementation, leaving partial state that had to be resumed in a new session; (4) Journal W29 required two requests — first at 19:27 was incomplete, completed on re-send at 19:42. No data loss in any case, but measurable context overhead.
+
+### Research notes
+Day marks a clear pattern: the user's preferred working style is deep sequential arcs (engineering → ops → learning), not scattered micro-tasks. JME Phase 3 closure is a milestone — memory infrastructure is now production-stable; Phase 4 is intentionally gated until ~400 facts accumulate (ETA 2026-07-27). The false-positive flailing guard is the most repeated source of friction across recent days and warrants a targeted fix.
+
+## 2026-07-18
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | ~23 exchanges across 8 sessions |
+| Total tasks | 28 active projects tracked |
+| Conversations today | 22 (telegram: 22) |
+| Streak days | — |
+
+### Interactions summary
+The day had two clear focal areas: **project KB maintenance** (Pulso Aura verification, agent-controller KB sync, and Uncharted Lite opened as a new subproject with 4 KB synchronizations in a single day as Phases 1 and 2 were shipped) and a **structured learning session** in Química Básica (Module 1 Day 5: atomic structure and isotopes — carbon, chlorine, gold). Fede also engaged in a brief philosophical reflection on transhumanism and uncertainty, and ran JME health checks that surfaced a latent data-loss risk (15/15 facts expiring in 7 days, no corrective action taken). Shell tools, KB write/sync, and repo access (authenticated GitHub) were the most-used tool categories.
+
+### What Jarvis learned
+The private-repo pattern surfaced again: Jarvis defaulted to treating a 404 from the unauthenticated GitHub API as "repo doesn't exist" rather than "repo is private — retry with token," requiring the user to insist twice before the correct code path was tried. The Uncharted Lite session also revealed that Fede uses rapid same-day KB syncs (4 in one day) as a rhythm during active shipping, treating Jarvis's KB as a near-live mirror of the repo HEAD. No new preferences around chemistry learning style were detected, though the user's self-driven isotope exercises suggest active recall is already part of his study habit.
+
+### Friction points
+Two friction points logged: (1) **"Descarta" without context (08:07)** — ambiguous single-word message that Jarvis could not act on and the user never clarified; (2) **Uncharted Lite private repo misclassified as nonexistent (19:21–19:25)** — Jarvis reported 404 twice before attempting authenticated access, requiring the user to explicitly prompt "verify your access and credentials." Both are Jarvis-side failures: insufficient inference on ambiguous input and premature conclusion from a public-API 404.
+
+### Research notes
+Day reflects a maturing "mirror rhythm" pattern: the operator ships fast and uses Jarvis's KB sync as an external memory checkpoint rather than a planning tool, keeping Jarvis in a reactive-but-accurate observer role. The private-repo friction is a recurring class of error (over-trusting public API signals) worth tracking as a regression candidate once the agent-controller ASK enforcement fix propagates.
