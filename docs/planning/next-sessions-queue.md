@@ -598,6 +598,7 @@ Tier-2 audit (R1 adversarial + R2 adjacent + R3 verdict) on PR #27 + independent
 **Audit scoreboard (Tier 1):** R1 PASS-with-warnings: 0 Critical / 2 Warning (DB-outage floor message tradeoff — comment folded; missed-alert fan-out — accepted as intended signal). R2 PASS: 0 new findings; verified replacement path strictly louder than stock node-cron, DECLINE-side floor inert on triage/§17 state. Bundle-regression catches: 0; pre-existing bugs surfaced: 2 (the dep-bump semantics change; the intercept fall-through). No eval gate (no model/prompt/tool-desc change).
 
 **Watches / follow-ups:**
+
 - **Verify tomorrow's brief**: 06:00 MX 07-15 must produce a `proposed_briefings` row + delivery (`./mc-ctl db "SELECT briefing_id, delivered_at FROM proposed_briefings ORDER BY id DESC LIMIT 1"`). §17 earliest pass shifts ~07-20 → ~07-23 (3 lost fuel days; no backfill possible — delivery needs the in-process router).
 - **Known residual (I1, pre-existing, shrunk)**: user dynamic schedules can still skip when the loop blocks >60s (poller matches wall clock, no replay) — now observable via `dynamic-schedules-poller` missed alert. Trigger to act: a missed-alert actually firing in prod.
 - **NEXT SESSION (operator-approved): salvage review of Jarvis's JME Phase 2 commit `5843f60`** (`/root/claude/mission-control-jarvis`, upsertFact + consolidate, no PR) — audit against jme-plan-v2.md (dedup/supersede, echo-amplification guard, retention) before any merge.
@@ -607,7 +608,6 @@ Tier-2 audit (R1 adversarial + R2 adjacent + R3 verdict) on PR #27 + independent
 **JME Phase 2 end-to-end audit (branch `jarvis/feat/jme-phase2-consolidator`, 3 commits, 480 LOC): R1 FAIL — PR blocked.** 3 Criticals: C1 `pruneStaleTurns` permanent no-op (ts in ms vs `unixepoch()` seconds; the test masks it by injecting seconds); C2 dedup thresholds (cosine-calibrated 0.85/0.95) applied to the FUSED hybrid score — proven live: with embed down, an unrelated fact sharing one keyword gets `skipped` (silent data loss); C3 per-message consolidation masquerading as session-close (one Haiku call per operator message, turns deleted per-exchange — session accumulation structurally impossible). Warnings: anti-echo regex INERT (wrong literal `[JME MEMORY]` vs real header + wrong surface — assistant paraphrase unaddressed); supersede-by-text-equality; confidence unclamped; FTS-only path untested. Refuted: his dedup tests are NOT vacuous; router rejection handling OK. Findings written to `jarvis-kb/projects/agent-controller/jme-phase2-review-2026-07-14.md` (syncs to his store 19:10). **PENDING OPERATOR DECISION (C3): consolidation granularity** — recommendation: nightly batch (drop the router hook, consolidate all unconsolidated turns in the nightly ritual, 1 Haiku/day, full-day context). Jarvis fixes C1/C2/W* after the ruling; THEN R2 on his fixes; THEN PR.
 
 **Classifier guard shipped:** `referencesJarvisSelfDev()` excludes Jarvis self-dev chats (markers: `mission-control-jarvis`, `jarvis-kb`, `jarvis/{feat,fix,chore,docs,test}/`, `jme`, `jarvis_dev`) from BOTH nanoclaw gates — kills the 10-min sandbox detour (tasks 7529+7532). R1 audit PASS-with-warnings (stale-comment fold + safe-degradation spec added; FP/FN directions both probed safe — FPs land on host runners, FNs still rescued by the no-op fallback). Classification eval 100/100 (dry). R2 skipped deliberately: folds were comment+test only; R1 already executed live regex probes both directions — recorded honestly here.
-
 
 ## 2026-07-14 (late-3) — JME Phase 2 MERGED (`fee4203`, pid 708929)
 
@@ -624,6 +624,7 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Shipped:** mc `8bfaae0` (AV 4/min + 22/day dual-window limiter w/ 24h boot seed; Polygon-primary daily+intraday dispatch; free TIME_SERIES_DAILY; watchlist ceiling 4,608). Radar `2bab4b5` (fetchTicker = cache → Polygon → AV-fallback, 13s pacing, holiday-week snap w/ 5 tests; scaffolds+harnesses `e83f736`). Key verified in radar service env (operator appended; probe authenticated). VPS sweep freed ~34GB (docker builder 31.5G, npm 3.5G, snaps 1.4G, go 770M, apt 520M, 06-28 backup pair) + dead-Grafana wiring removed (Caddy block, UFW 3001/9001) + swap flushed.
 
 **Watches:**
+
 - **Fri 07-17 ~18:00–19:25 MX — W29 first Polygon scan**: expect ~85 min (was ~10); compare Telegram summary vs W28 — pricePercentile/ranging recalibrate one-time on dividend payers (AO/AC proven identical). Check `journalctl -u williams-radar` for polygon errors / AV-fallback lines.
 - **AV daily quota in practice**: `./mc-ctl db "SELECT status, COUNT(*) FROM api_call_budget WHERE provider='alpha_vantage' AND call_time > datetime('now','-1 day') GROUP BY status"` — rate_limited rows should drop to ~0 now that Polygon is primary. Weekly bars in mc still ride AV (Polygon weekly unimplemented in data-layer) — if AV weekly starts starving Jarvis's occasional weekly queries, implement Polygon weekly in `fetchWeeklyDispatch` (fetch-polygon.ts in the radar repo is the reference).
 - **Operator-run cleanup still pending** (classifier requires the user to name shared/stateful targets): `rm -rf /tmp/tool-search-val-* /tmp/sdk-tool-vis-*` (3.9G, 07-12/13 experiment dirs) and `docker volume rm $(docker volume ls -f dangling=true -q)` (17 orphans ~1.6G incl. dead grafana-data). Candidates awaiting a ruling: qmd/bun (~1.1G, zero usage traces) and crm-hindsight image (6.4GB + ~300MB RAM — Hindsight demoted, but project_hindsight_fireworks_followup still open).
@@ -635,6 +636,7 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Shipped:** operator MCP servers (`/root/claude/.mcp.json` playwright/supabase, claude.ai Gmail/Drive connectors, sequential-thinking) were merging into every Jarvis SDK subprocess — `settingSources: []` covers settings files only, NOT MCP config. Surfaced as Transhumanismo (delivery=telegram) shipping "no tengo herramienta de Telegram" complaints inside its deliverables since tool search armed (07-13): agents hunted for delivery tools, found the leaked connectors (07-14 even ATTEMPTED `mcp__claude_ai_Gmail__create_draft`; held by the allowedTools deny), found no Telegram, and narrated the failure into the broadcast text. Fix: `strictMcpConfig: true` (spec-pinned) + telegram deliveryInstructions hardened at both dynamic.ts sites. Live probe: jarvis-only manifest. **eval:gate PASS 66.65 vs 65.75 — tool_selection 36.88 resolves the Ph3.2 WATCH (32.30 was the leak, not tool search).**
 
 **Watches:**
+
 - **Next Transhumanismo run 12:00 MX**: expect clean content, `completed` (not `_with_concerns`), no ToolSearch delivery-hunting in toolCalls. Same check applies to the other 4 telegram-delivery schedules (Williams Journal, MexicoNecesario, Morning Sync, Química Básica).
 - **Cache-diag window restarted AGAIN 07-15** (`4a5f3ca` changed the tool block; the 07-13 window's ~07-16 verdict is contaminated — discard it). New verdict ~07-18.
 - The eval-baseline incumbent stays 65.75; candidate 66.65 was a gate check, not a re-baseline. If the next legit tool-surface change gates against 65.75 and the WATCH math matters, consider `--update-baseline` then.
@@ -644,11 +646,13 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Shipped:** JME Phase 3 (temporal dedup keep-newest, ceiling warn 400, `mc-ctl jme-stats`) merged via PR #30 after relanding the deduplicateFacts cluster fix (`a81e160` — Jarvis's own fix ran in nanoclaw and evaporated in the sandbox clone while self-reporting "completed"). Turn-exhaustion root cause: `gh_create_pr` had no `cwd` (ran in DEFAULT_CWD=cuatro-flor) + token-push set no upstream → unwinnable endgame thrash; fixed `c7cfb06` (cwd + --head + set-upstream), eval:gate PASS 66.87 (+1.12; tool_selection 37.41). #29 consolidator fix PROVEN in prod (120 turns → 8 facts; first was_used=1 hits). OAuth outage 16:26–16:31 UTC (dead refresh token; /login fixed).
 
 **Queued (systemic, not yet built):**
+
 - **Nanoclaw work-landing check**: an mc-coding task can "complete" in the sandbox with commits that never reach host/remote (task 595947aa). Needs a structural gate like the TARGET_NOT_IN_SANDBOX sentinel — e.g. worker verifies `git ls-remote` shows the claimed branch tip before reporting success, else `success:false`. Also decide whether chat-initiated mc-coding should route to nanoclaw at all now that the worktree+jarvis_dev host path exists.
 - **Nanoclaw PlanParseError 15:12 07-17**: single unexplained instance (host auth was healthy; 16:26 twin was the OAuth outage). If it recurs, pull `LLMJsonParseError.rawSample` from container logs before theorizing.
 - **Coding-playbook repo map**: ~7 turns of adcda0f2 went to hunting mc-ctl's location. One line in `jarvis-kb/directives/coding-task-playbook.md` ("mc-ctl is at repo root; tests colocated `src/**/*.test.ts`") kills that class.
 
 **Watches:**
+
 - **JME utility readout ~07-24** (7d from first facts 07-17): `./mc-ctl jme-stats` — success ≥39% was_used; demote <20% AND >50% latency tax. Nightly consolidator + dedup log line `[jme] temporal dedup: N → M` appears once same-topic fact versions accumulate.
 - **Next fast-runner coding task**: expect commit→push→PR chain in ≤3 turns (no thrash); `mc-ctl trace <id>` histogram is the check.
 - **Cache-diag (window restarted 07-15, verdict ~07-18)**: `c7cfb06` changed a DEFERRED tool description — coding-scope prompt lines perturbed; chat-scope lines (the main measurement) untouched. Read the verdict stratified by scope.
@@ -660,12 +664,14 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Shipped:** (1) `980297f` prompt-enhancer: CIRICD ASK rule enforced in CODE (ASK requires `risk==="high" && clarity<4 && context==="unresolved"`, else downgrade → ASSUME/PASS with an `ASK downgraded` log line), risk redefined (own-chat sends = low; high = irreversible/third-party/spend only), off-topic context ignored. Motivation: 16/16 ASKs operator-skipped over 30d (0% utility). Live-replay validated (3 real FPs → PASS; destructive control still ASKs). (2) `078cd16` dispatcher: `getForeignProjectNames()` folds `projects.config.aliases`; williams-entry-radar aliases `["williams","radar","journal","thewilliamsradar"]` registered in DB — closes the cf40a528 "Journal W29"→nanoclaw misroute (message named the project only colloquially). (3) Williams publish schedule 18:30→20:00 MX (`scheduled_tasks` 84ccc541) — it raced the now-85-min Polygon scan. (4) KB sync via `upsertFile` (4 files: plan-2027 pulso copy, williams README + scan-window rule, azteca-fsd copy, canonical pulso README → `192b97f`) attacking §17's unfixable 21.4% / resolver 93.8% blockers.
 
 **Operator actions pending:**
+
 - Re-send the W29 publish request to Jarvis ("Escribe el comentario del analista para el Journal W29 y publícalo siguiendo el SOP (publish-journal.mjs)") — routing is now alias-safe.
 - Keep ruling the 06:00 brief with exact `sirve`/`descarta` — §17 acceptance needs ≥3 of each (currently 1/1).
 - Carry-over: `/tmp/tool-search-val-* /tmp/sdk-tool-vis-*` (3.9G) + dangling docker volumes (~1.6G) cleanups.
 
 **Watches:**
-- **Enhancer**: next ASKs in prod should be rare and rule-conforming; grep `journalctl -u mission-control | grep 'ASK downgraded'` for downgrade lines. If the enhancer still annoys, the fallback is `PROMPT_ENHANCER_ENABLED=false` — but measure first.
+
+- ~~**Enhancer**~~ RESOLVED 2026-07-20 by REMOVAL (`cfbbb9e`): post-fix data settled it — 3 rule-conforming ASKs fired 07-20, operator skipped all 3 within seconds (lifetime: 13/13 skipped since June, `buildEnhancedPrompt` never ran once). Root cause architectural: the gate keys off the aux LLM's own risk/context self-scores, which are unreliable. Module + router interceptors deleted; `PROMPT_ENHANCER_ENABLED` inert.
 - **§17 re-check ~07-25**: `./mc-ctl judgments` header — unfixable/resolver should trend toward thresholds as new judgments cite the synced KB; acceptance count with rulings.
 - **Fri 07-24 20:00 MX**: first publish-schedule fire at the new time — must find `last-run.json` already stamped W30.
 - Carry-over: JME utility readout ~07-24 (`jme-stats`, ≥39% was_used); cache-diag verdict ~07-18 (read scope-stratified); next fast-runner coding task ≤3 turns to PR.
