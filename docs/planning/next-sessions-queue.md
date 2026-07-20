@@ -677,3 +677,17 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - Carry-over: JME utility readout ~07-24 (`jme-stats`, ≥39% was_used); cache-diag verdict ~07-18 (read scope-stratified); next fast-runner coding task ≤3 turns to PR.
 
 **Queued (systemic, unchanged from 07-17):** nanoclaw work-landing check (`git ls-remote` gate); nanoclaw PlanParseError single instance; coding-playbook repo map one-liner.
+
+## 2026-07-20 — Prompt enhancer REMOVED (pid 3145317)
+
+**Shipped:** `cfbbb9e` (−1,118 lines) + `86038a2` (docs). Full diagnosis + rationale in PROJECT-STATUS 07-20 entry: post-fix ASK acceptance 0/3 (skipped within 5-9s), lifetime 13/13 skipped, `buildEnhancedPrompt` never executed in production, ~4-6s blocking aux LLM round on every ≥40-char inbound. Third strike on the fix class → removal per 3-strike rule. Deleted module + test, both router interceptors + `SKIP_ENHANCER_RE`, four protected-path entries, stale comments. `PROMPT_ENHANCER_ENABLED` inert; `AUX_HAIKU_ENABLED`/scope-classifier untouched. qa-auditor 5-check sweep: PASS clean, zero findings. Suite 6,949 green.
+
+**Behavior notes (operator-visible):**
+
+- Substantive Telegram/email messages now dispatch immediately — no analysis pause, no "🔍 Antes de proceder" questions, no "💡" assumption notes.
+- "enhancer on/off/estado" is no longer a command — such text becomes a normal task.
+- Truly ambiguous destructive requests are now judged by the downstream agent (which has the confirmation flow for high-risk tools) — the pre-dispatch gate is gone by design.
+
+**Operator actions pending:** unchanged from 07-18 (W29 publish re-send; `sirve`/`descarta` rulings; /tmp + docker-volume cleanups).
+
+**Watches:** unchanged from 07-18 minus the resolved enhancer watch (§17 re-check ~07-25; Fri 07-24 20:00 MX publish fire; JME utility ~07-24; cache-diag verdict; fast-runner ≤3 turns to PR).
