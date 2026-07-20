@@ -190,7 +190,7 @@ describe("inferWithTools() with claude-sdk primary", () => {
 
 // ---------------------------------------------------------------------------
 // 2026-05-23 — queue #228 — InferenceRequest.model plumbing
-// Aux callers (scope-classifier, prompt-enhancer) can opt into Haiku for
+// Aux callers (scope-classifier) can opt into Haiku for
 // cost savings. Plumbing is on by default; the env-flag gate at the call
 // site decides whether to populate the field. These tests pin the adapter
 // contract: when present, `request.model` takes precedence over the

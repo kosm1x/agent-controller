@@ -18,7 +18,6 @@ const ALLOWED_PATHS = [
   "src/intel/",
   "src/messaging/scope.ts",
   "src/messaging/prompt-sections.ts",
-  "src/messaging/prompt-enhancer.ts",
   "src/video/",
 ];
 

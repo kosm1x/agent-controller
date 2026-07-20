@@ -22,17 +22,6 @@ import {
   findRelevantPatterns,
 } from "../intelligence/execution-patterns.js";
 import { getFile, mirrorToDisk } from "../db/jarvis-fs.js";
-import {
-  shouldEnhance,
-  checkToggle,
-  isWaitingForAnswers,
-  getOriginalMessage,
-  getQuestions,
-  clearEnhancerState,
-  setWaiting,
-  analyzePrompt,
-  buildEnhancedPrompt,
-} from "./prompt-enhancer.js";
 import type { Event } from "../lib/events/types.js";
 import type {
   TaskCompletedPayload,
@@ -153,8 +142,6 @@ const BACKGROUND_AGENT_RE =
   /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
 const CANCEL_INTENT_RE =
   /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
-const SKIP_ENHANCER_RE =
-  /^(skip|hazlo|procede|sin preguntas|no importa|ya|dale|solo hazlo|just do it)\b/i;
 const CONTINUATION_RE =
   /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
 
@@ -1344,21 +1331,6 @@ export class MessageRouter {
     return true;
   }
 
-  /** Prompt-enhancer toggle commands (checkToggle). Returns true when a toggle was handled (stop). */
-  private interceptEnhancerToggle(msg: IncomingMessage): boolean {
-    // Prompt enhancer toggle commands
-    const toggleResult = checkToggle(msg.text);
-    if (toggleResult !== null) {
-      this.sendToChannel(
-        msg.channel,
-        msg.from,
-        `🔍 Prompt enhancer: ${toggleResult ? "ACTIVADO" : "DESACTIVADO"}`,
-      );
-      return true;
-    }
-    return false;
-  }
-
   /**
    * Context-clear phrase. Returns true when fully handled (no remainder);
    * false when remainder text was left in msg.text (mutated) for the pipeline.
@@ -1654,111 +1626,6 @@ export class MessageRouter {
         );
       }
       return true;
-    }
-    return false;
-  }
-
-  /**
-   * Prompt enhancer — waiting-for-answers branch + shouldEnhance branch.
-   * Returns true when SPLIT/ASK was sent (stop); false on answer-built,
-   * SKIP, ASSUME and PASS paths (msg.text may be mutated) — pipeline continues.
-   */
-  private async interceptEnhancer(
-    msg: IncomingMessage,
-    tk: string,
-  ): Promise<boolean> {
-    // Prompt enhancer: if waiting for answers, build enhanced prompt or skip
-    if (isWaitingForAnswers(msg.channel)) {
-      const original = getOriginalMessage(msg.channel)!;
-      const questions = getQuestions(msg.channel);
-      clearEnhancerState(msg.channel);
-
-      // Skip enhancer if user says "skip", "hazlo", "procede", "sin preguntas"
-      // or sends a short dismissal — just pass the original through
-      if (SKIP_ENHANCER_RE.test(msg.text.trim())) {
-        console.log("[enhancer] User skipped questions. Passing original.");
-        this.sendToChannel(msg.channel, msg.from, "🔍 Procesando...");
-        msg.text = original;
-      } else {
-        // Build enhanced prompt from user's answers/clarification
-        const threadTurns = getThreadTurns(tk);
-        const builderContext = threadTurns
-          .slice(-4)
-          .map((t) => `${t.role}: ${t.content.slice(0, 300)}`)
-          .join("\n");
-
-        console.log(
-          `[enhancer] Building enhanced prompt from answers: "${msg.text.slice(0, 60)}"`,
-        );
-        const enhanced = await buildEnhancedPrompt(
-          original,
-          questions,
-          msg.text,
-          builderContext,
-        );
-        console.log(`[enhancer] Enhanced: "${enhanced.slice(0, 100)}"`);
-
-        this.sendToChannel(msg.channel, msg.from, "🔍 Procesando...");
-        msg.text = enhanced;
-      }
-    }
-    // Prompt enhancer: check if new message needs enhancement
-    else if (!msg.imageUrl && shouldEnhance(msg.text)) {
-      const threadTurns = getThreadTurns(tk);
-      const recentContext = threadTurns
-        .slice(-4)
-        .map((t) => `${t.role}: ${t.content.slice(0, 200)}`)
-        .join("\n");
-
-      console.log(`[enhancer] Analyzing: "${msg.text.slice(0, 60)}"`);
-      const analysis = await analyzePrompt(msg.text, recentContext);
-
-      // Branch order is load-bearing: prefix-typed markers (ASSUME:, SPLIT:)
-      // MUST be checked before the generic non-PASS ASK branch — otherwise
-      // SPLIT plans silently regress to the `🔍 Antes de proceder:` ASK
-      // framing. See audit W5 (prompt-enhancer-leakage bundle).
-      if (analysis.startsWith("ASSUME:")) {
-        // v6.4 CL1.3: Show assumption to user, then proceed without blocking.
-        const assumption = analysis.slice(7);
-        this.sendToChannel(msg.channel, msg.from, `💡 ${assumption}`);
-        console.log(
-          "[enhancer] ASSUME — proceeding with stated interpretation",
-        );
-      } else if (analysis.startsWith("SPLIT:")) {
-        // RC2: SPLIT path — proposal to chunk a too-big task. Frame as a
-        // plan suggestion, not a clarifying question. Wait for the user
-        // to confirm the proposed decomposition (or correct it).
-        const plan = analysis.slice("SPLIT:".length);
-        setWaiting(msg.channel, msg.text, plan);
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          `📋 Plan sugerido:\n\n${plan}\n\n¿Procedemos así, o prefieres otro orden?`,
-        );
-        console.log(
-          "[enhancer] SPLIT — proposing decomposition, awaiting confirmation",
-        );
-        return true;
-      } else if (analysis !== "PASS") {
-        // ASK path — actual clarifying questions
-        setWaiting(msg.channel, msg.text, analysis);
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          `🔍 Antes de proceder:\n\n${analysis}`,
-        );
-        // RC4: count actual numbered questions, not raw newlines. The old
-        // counter overcounted (counted blank lines, wrap artifacts, etc.)
-        // which masked RC1 in observability — "Asking 27 questions" was
-        // really "raw LLM blob with 27 newlines" not "27 questions".
-        const qCount = analysis
-          .split("\n")
-          .filter((l) => /^\s*\d+[\.\)]\s/.test(l)).length;
-        console.log(`[enhancer] Asking ${qCount} question(s)`);
-        return true;
-      } else {
-        console.log("[enhancer] PASS — message is clear enough");
-      }
     }
     return false;
   }
@@ -2324,8 +2191,6 @@ export class MessageRouter {
     // Day log: record user message (mechanical, no LLM)
     appendDayLog("USER", msg.text);
 
-    if (this.interceptEnhancerToggle(msg)) return;
-
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
     // Pass the channel adapter's email mode so threadKey can per-sender isolate
     // community-manager mailboxes (each external sender gets their own buffer +
@@ -2343,7 +2208,6 @@ export class MessageRouter {
     if (this.interceptAgentList(msg)) return;
     if (this.interceptAgentCancel(msg)) return;
     if (this.interceptTaskCancel(msg, tk)) return;
-    if (await this.interceptEnhancer(msg, tk)) return;
     if (await this.interceptPendingConfirmation(msg, tk)) return;
     if (await this.interceptBriefingVerdict(msg, tk)) return;
     const feedbackTaskId = this.recordFeedbackWindowSignal(msg, tk);

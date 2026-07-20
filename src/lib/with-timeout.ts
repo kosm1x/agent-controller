@@ -7,7 +7,7 @@
  * 3. Throws a consistent error message
  *
  * Extracted after the same timer-leak pattern appeared in 3+ files
- * (scope-classifier, prompt-enhancer, correction-loop).
+ * (scope-classifier, correction-loop).
  */
 
 /**

@@ -112,8 +112,8 @@ export interface InferenceRequest {
   /**
    * Model override for SDK-routed inference. When set, takes precedence over
    * the hardcoded `SONNET_MODEL_ID` default in `inferViaClaudeSdk` /
-   * `inferWithToolsViaClaudeSdk`. Used by aux callers (scope-classifier,
-   * prompt-enhancer) to opt into Haiku for cost savings when
+   * `inferWithToolsViaClaudeSdk`. Used by aux callers
+   * (scope-classifier) to opt into Haiku for cost savings when
    * `process.env.AUX_HAIKU_ENABLED === "true"`. **No effect under the
    * openai-path** (each provider sets its own model from per-provider config).
    *
@@ -215,12 +215,12 @@ export {
  *     on aux lines). When `request.model` is undefined the default stays
  *     `SONNET_MODEL_ID` — every caller in the codebase that doesn't
  *     explicitly opt in continues to use Sonnet. Currently only
- *     scope-classifier.ts and prompt-enhancer.ts pass `model: HAIKU_MODEL_ID`,
+ *     scope-classifier.ts passes `model: HAIKU_MODEL_ID`,
  *     and only when `process.env.AUX_HAIKU_ENABLED === "true"` (default off).
  *     The flag is operator-flipped after manual validation — there is no
  *     automated shadow-A/B harness in the codebase today; the comparison is
  *     done by reading scope-classifier output (Set<string> of group names)
- *     and prompt-enhancer output (CIRICD JSON / PASS) under both models on
+ *     under both models on
  *     the same inputs. Related: `feedback_prometheus_upstream` #8
  *     [[aux-model-routing-audit]]; a shadow harness is queued for future work.
  *   - Pre-2026-05-23 the function hardcoded SONNET_MODEL_ID for every caller.

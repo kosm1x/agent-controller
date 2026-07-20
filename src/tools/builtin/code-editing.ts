@@ -28,7 +28,6 @@ const SELF_IMPROVEMENT_ALLOWED = [
   "src/intel/",
   "src/messaging/scope.ts",
   "src/messaging/prompt-sections.ts",
-  "src/messaging/prompt-enhancer.ts",
   "src/video/",
 ];
 
