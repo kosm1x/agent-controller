@@ -95,6 +95,7 @@ import {
   codingSection,
   browserSection,
   researchSection,
+  sourceGroundingSection,
   availableSkillsSection,
   cohortSection,
 } from "./prompt-sections.js";
@@ -307,6 +308,7 @@ function buildJarvisSystemPrompt(
   if (flags.hasCoding) p3.push(codingSection());
   if (flags.hasBrowser) p3.push(browserSection());
   if (flags.hasResearch) p3.push(researchSection());
+  if (flags.hasWebResearch) p3.push(sourceGroundingSection());
   // v7.6 Spine 5 — surface first-party skill catalog. Filtered to skills whose
   // parent tool is in scope so we never advertise a skill the LLM cannot use
   // (round-1 audit H1: identity-section rule "no menciones herramientas que no

@@ -19,6 +19,7 @@ export interface PromptToolFlags {
   hasNorthStar: boolean;
   hasResearch: boolean;
   hasUserFacts: boolean;
+  hasWebResearch: boolean;
 }
 
 export function detectToolFlags(tools: string[]): PromptToolFlags {
@@ -44,6 +45,7 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
       ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
     ),
     hasUserFacts: tools.includes("user_fact_set"),
+    hasWebResearch: tools.some((t) => ["web_search", "web_read"].includes(t)),
   };
 }
 
@@ -562,6 +564,27 @@ Tienes herramientas para analizar documentos en profundidad:
 - Los archivos expiran a las 48h — re-sube si el usuario vuelve después
 - Para lectura simple de un PDF, usa pdf_read (más rápido, no requiere upload)
 - gemini_research usa Flash por defecto. Usa model="gemini-2.5-pro" solo para análisis complejos multi-documento`;
+}
+
+/**
+ * Citation/source grounding — included whenever web research tools are in
+ * scope. Motivating incident (task 7756, 2026-07-20): asked to write a paper
+ * "con las fuentes que encontraste", the agent had only loose source mentions
+ * from a PRIOR task's research (the web results died with that task's
+ * context), skipped re-searching, and completed an 8-entry bibliography from
+ * parametric memory — 5 fabricated citations including an invented statistic
+ * presented as the empirical core. The URL requirement is the poka-yoke: a
+ * citation without an in-conversation URL is visibly ungrounded instead of
+ * invisibly fabricated.
+ */
+export function sourceGroundingSection(): string {
+  return `## REGLA CRÍTICA: Fuentes externas verificables
+Cuando cites trabajos externos (papers, estudios, artículos, autores, estadísticas):
+- Cada cita DEBE provenir de un resultado de web_search/web_read de ESTA conversación y DEBE llevar la URL de donde la leíste.
+- Menciones sueltas de un turno anterior ("el paper de X") NO son citas: si te piden escribir "con las fuentes" y los metadatos (autores, venue, año, URL) no están en tu contexto, RE-BUSCA con web_search para recuperarlos ANTES de escribir. "Ya lo tengo en el contexto" no aplica a bibliografías.
+- NUNCA inventes ni completes de memoria autores, títulos, venues, años o cifras. Una estadística sin URL de origen en esta conversación no se usa — punto.
+- Si no puedes verificar una fuente, márcala explícitamente como "(sin verificar — de memoria)" u omítela y dilo.
+- Pocas fuentes verificadas SIEMPRE gana a una bibliografía completa inventada. "Solo pude verificar N fuentes" es el output correcto cuando la verificación falla.`;
 }
 
 /**

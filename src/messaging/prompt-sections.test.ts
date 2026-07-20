@@ -13,6 +13,7 @@ import {
   codingSection,
   browserSection,
   researchSection,
+  sourceGroundingSection,
   confirmationSection,
   toolFirstSection,
   availableSkillsSection,
@@ -58,6 +59,12 @@ describe("detectToolFlags", () => {
     expect(flags.hasResearch).toBe(true);
   });
 
+  it("detects web research tools by name match", () => {
+    expect(detectToolFlags(["web_search"]).hasWebResearch).toBe(true);
+    expect(detectToolFlags(["web_read"]).hasWebResearch).toBe(true);
+    expect(detectToolFlags(["gemini_research"]).hasWebResearch).toBe(false);
+  });
+
   it("returns all false for empty tool list", () => {
     const flags = detectToolFlags([]);
     expect(flags.hasBrowser).toBe(false);
@@ -66,6 +73,7 @@ describe("detectToolFlags", () => {
     expect(flags.hasGoogle).toBe(false);
     expect(flags.hasNorthStar).toBe(false);
     expect(flags.hasResearch).toBe(false);
+    expect(flags.hasWebResearch).toBe(false);
   });
 
   it("returns all false for unrecognized tools", () => {
@@ -363,5 +371,37 @@ describe("cohortSection", () => {
   it("renders the cohort when ownerChannel is true", () => {
     const s = cohortSection([member("project", "EurekaMD", 9)], true);
     expect(s).toContain("EurekaMD");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sourceGroundingSection — citation anti-fabrication rule (2026-07-20 incident)
+// ---------------------------------------------------------------------------
+
+describe("sourceGroundingSection", () => {
+  it("binds citations to in-conversation web tool results via URL", () => {
+    const s = sourceGroundingSection();
+    expect(s).toContain("web_search");
+    expect(s).toContain("URL");
+    expect(s).toContain("ESTA conversación");
+  });
+
+  it("forbids completing bibliographies from memory and demands re-search", () => {
+    const s = sourceGroundingSection();
+    expect(s).toContain("NUNCA inventes");
+    expect(s).toContain("RE-BUSCA");
+    // Loose mentions from a prior turn are explicitly NOT citations —
+    // the exact loophole task 7756 used ("tengo todo en el contexto").
+    expect(s).toContain("NO son citas");
+  });
+
+  it("prefers honest-partial over a complete fabricated bibliography", () => {
+    const s = sourceGroundingSection();
+    expect(s).toContain("sin verificar — de memoria");
+    expect(s).toContain("Pocas fuentes verificadas");
+  });
+
+  it("is deterministic (stable for prompt cache)", () => {
+    expect(sourceGroundingSection()).toBe(sourceGroundingSection());
   });
 });
