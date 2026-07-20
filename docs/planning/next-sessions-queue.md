@@ -691,3 +691,16 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Operator actions pending:** unchanged from 07-18 (W29 publish re-send; `sirve`/`descarta` rulings; /tmp + docker-volume cleanups).
 
 **Watches:** unchanged from 07-18 minus the resolved enhancer watch (§17 re-check ~07-25; Fri 07-24 20:00 MX publish fire; JME utility ~07-24; cache-diag verdict; fast-runner ≤3 turns to PR).
+
+## 2026-07-20b — DCB closed + citation-grounding fix (pid 3320604)
+
+**Shipped:** `e395568` — `sourceGroundingSection()` (citation anti-fabrication, active when web_search/web_read in scope; eval:gate PASS 66.69 vs 65.75). Full rationale in PROJECT-STATUS 07-20b. KB paper `prompt-enhancement-redesign-2026-07-20.md` fact-checked + rewritten + CLOSED (Phase 0 gate failed: 1 context-poverty event/31d vs <2/wk; operator-ratified — do NOT build DCB phases unless the re-open trigger fires).
+
+**Watches:**
+
+- **Citation grounding (live behavior):** next research-backed writing task — every reference must carry an in-conversation URL or an explicit "(sin verificar — de memoria)" tag. If fabricated citations recur WITH the rule live, escalate: extend the community-reply audit gate to KB-bound artifacts.
+- Carry-overs unchanged (§17 re-check ~07-25; Fri 07-24 20:00 MX publish fire; JME utility ~07-24; cache-diag; fast-runner ≤3 turns).
+
+**Queued (new):** task 7755 anomaly — 13-min silent stall before `task.fallback` rescued it (21:56:50→22:09:44 UTC 07-20, zero trace events in the gap); diagnose what the primary attempt was doing and why no trace/timeout fired sooner.
+
+**Queued (systemic, unchanged):** nanoclaw work-landing check (`git ls-remote` gate); nanoclaw PlanParseError single instance; coding-playbook repo map one-liner.
