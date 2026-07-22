@@ -12,7 +12,9 @@ import type {
   OutgoingMessage,
 } from "../types.js";
 import { formatForTelegram } from "../formatter.js";
-import { extractPdfFromUrl } from "../../lib/pdf.js";
+import { extractPdfFromUrl, extractPdfToMarkdown } from "../../lib/pdf.js";
+import { writeFile, mkdir } from "fs/promises";
+import { basename, join } from "path";
 import {
   isTranscriptionConfigured,
   transcribeBuffer,
@@ -23,6 +25,54 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
 const JINA_PREFIX = "https://r.jina.ai/";
 const MAX_FILE_CONTENT = 15_000; // chars
+const DOWNLOADS_DIR = "/tmp/jarvis-downloads"; // same root gdrive_download uses
+
+/** Sanitize a Telegram attachment filename for local persistence. */
+export function sanitizeAttachmentName(name: string | undefined): string {
+  const base = basename(name ?? "document").replace(/[^\w.\-]/g, "_");
+  return base.slice(0, 120) || "document";
+}
+
+// Telegram's bot API caps getFile downloads at 20 MB — mirror it as our own
+// guard (qa W2) so a misbehaving CDN response can't fill the disk.
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Persist the raw attachment bytes to DOWNLOADS_DIR so downstream tools
+ * (pdf_read, gemini_upload) have a real source path. Image-only PDFs extract
+ * 0 chars of text — before this, the bytes were discarded and the agent had
+ * nothing to feed the vision path (2026-07-22 incident). Returns the saved
+ * path + bytes (so callers can extract without re-downloading, qa W3), or
+ * null on failure (message flow must not break on a save error).
+ */
+async function saveAttachmentToDisk(
+  fileUrl: string,
+  fileName: string | undefined,
+): Promise<{ path: string; bytes: Uint8Array } | null> {
+  try {
+    const response = await fetch(fileUrl, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+      console.warn(
+        `[telegram] Attachment too large to persist: ${bytes.byteLength} bytes`,
+      );
+      return null;
+    }
+    await mkdir(DOWNLOADS_DIR, { recursive: true });
+    const path = join(DOWNLOADS_DIR, sanitizeAttachmentName(fileName));
+    await writeFile(path, bytes);
+    console.log(
+      `[telegram] Attachment saved: ${path} (${bytes.byteLength} bytes)`,
+    );
+    return { path, bytes };
+  } catch (err) {
+    console.warn(`[telegram] Attachment save failed: ${errMsg(err)}`);
+    return null;
+  }
+}
 
 /**
  * Download a file from Telegram and extract readable content.
@@ -265,10 +315,7 @@ export class TelegramAdapter implements ChannelAdapter {
             this.restartPolling();
           });
       } catch (err) {
-        console.error(
-          "[telegram] Polling restart failed:",
-          errMsg(err),
-        );
+        console.error("[telegram] Polling restart failed:", errMsg(err));
         this.restartPolling(); // Retry with backoff
       }
     }, delay);
@@ -320,10 +367,7 @@ export class TelegramAdapter implements ChannelAdapter {
             `[telegram] 409 conflict — external getUpdates rival, auto-recovering (every ~3min until token rotated; see stabilization plan P0-1)`,
           );
         } else {
-          console.error(
-            "[telegram] Polling loop died:",
-            errMsg(err),
-          );
+          console.error("[telegram] Polling loop died:", errMsg(err));
         }
         this.pollingActive = false;
         this.restartPolling();
@@ -375,6 +419,8 @@ export class TelegramAdapter implements ChannelAdapter {
         let fileContent = "";
         let fileLabel = "";
         let imageUrl: string | undefined;
+        let savedPath: string | null = null;
+        let isPdf = false;
 
         if (doc) {
           fileLabel = doc.file_name ?? "document";
@@ -395,8 +441,33 @@ export class TelegramAdapter implements ChannelAdapter {
                 "[Imagen recibida pero no se pudo descargar para análisis.]";
             }
           } else {
-            // Non-image documents: extract text content
-            fileContent = await extractFileContent(fileUrl, doc.mime_type);
+            // Non-image documents: persist raw bytes first, then extract text
+            // from the saved copy (no second download — qa W3).
+            const saved = await saveAttachmentToDisk(fileUrl, doc.file_name);
+            savedPath = saved?.path ?? null;
+            isPdf =
+              doc.mime_type?.includes("pdf") || fileLabel.endsWith(".pdf");
+            const isHtml =
+              doc.mime_type?.includes("html") || fileLabel.endsWith(".html");
+            if (saved && isPdf) {
+              try {
+                fileContent = await extractPdfToMarkdown(saved.path, {
+                  maxChars: MAX_FILE_CONTENT,
+                });
+              } catch (err) {
+                fileContent = `[Error al extraer contenido: ${errMsg(err)}]`;
+              }
+            } else if (saved && !isHtml) {
+              // Plain text-ish files: decode the bytes we already have
+              const text = new TextDecoder().decode(saved.bytes);
+              fileContent =
+                text.length > MAX_FILE_CONTENT
+                  ? text.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
+                  : text;
+            } else {
+              // HTML (needs Jina's URL-based conversion) or save failed
+              fileContent = await extractFileContent(fileUrl, doc.mime_type);
+            }
           }
         } else if (photo && photo.length > 0) {
           fileLabel = "imagen";
@@ -423,9 +494,19 @@ export class TelegramAdapter implements ChannelAdapter {
           text =
             caption || "El usuario envió una imagen. Descríbela y responde.";
         } else {
-          const contentBlock = fileContent
-            ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---`
-            : `\n\n[No se pudo extraer contenido del archivo "${fileLabel}"]`;
+          const pathNote = savedPath
+            ? `\n(Archivo original guardado en ${savedPath})`
+            : "";
+          // qa W1: the pdf_read/vision advice is PDF-only — for other formats
+          // that extract empty, prescribe nothing (pdf_read on a .docx errors
+          // and re-opens the improvisation loop this fix closes).
+          const contentBlock = fileContent.trim()
+            ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---${pathNote}`
+            : savedPath && isPdf
+              ? `\n\n[El archivo "${fileLabel}" no contiene texto extraíble — probablemente escaneado o basado en imágenes. Archivo guardado en ${savedPath}: usa pdf_read con esa ruta, o gemini_upload + gemini_research para análisis visual.]`
+              : savedPath
+                ? `\n\n[No se pudo extraer texto del archivo "${fileLabel}" — archivo guardado en ${savedPath}]`
+                : `\n\n[No se pudo extraer contenido del archivo "${fileLabel}"]`;
           text = caption
             ? `${caption}${contentBlock}`
             : `El usuario envió un archivo: "${fileLabel}".${contentBlock}\n\nAnaliza el contenido y responde.`;

@@ -739,6 +739,43 @@ describe("scope pattern matching", () => {
     expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
   });
 
+  it("research activates on a bare PDF filename (no analysis verb)", () => {
+    // 2026-07-22 incident: the bare-extension token `(?:^|[\s"'`(])\.pdf\b`
+    // can never match a real filename (word char precedes the dot), so the
+    // attachment message 'El usuario envió un archivo: "X.pdf"' scoped
+    // without research and pdf_read was unreachable.
+    const tools = scope(
+      'El usuario envió un archivo: "EurekaMS_Intelligence_Evolution.pdf".',
+    );
+    expect(hasAll(tools, RESEARCH_TOOLS)).toBe(true);
+    expect(tools).toContain("pdf_read");
+    const pptx = scope("te mando slides_upfront.pptx para revisar");
+    expect(hasAll(pptx, RESEARCH_TOOLS)).toBe(true);
+  });
+
+  it("google group carries the document read/vision chain (deferred)", () => {
+    // A bare Drive link scopes [google, coding] with no research keyword;
+    // pdf_read/gemini must ride along or they're invisible to ToolSearch
+    // (deferred tools are searchable only within scope). 2026-07-22 incident.
+    const tools = scope(
+      "https://drive.google.com/file/d/1ONv1utu0x2nMEISnr9KqvMAx7IFXggIu/view",
+    );
+    expect(tools).toContain("gdrive_download");
+    expect(tools).toContain("pdf_read");
+    expect(tools).toContain("gemini_upload");
+    expect(tools).toContain("gemini_research");
+  });
+
+  it("google document chain suppressed when hasGoogle=false", () => {
+    const tools = scope(
+      "https://drive.google.com/file/d/1ONv1utu0x2nMEISnr9KqvMAx7IFXggIu/view",
+      [],
+      { ...ALL_ON, hasGoogle: false },
+    );
+    expect(tools).not.toContain("gdrive_download");
+    expect(tools).not.toContain("pdf_read");
+  });
+
   it("crm activates ONLY when CRM or Azteca is mentioned", () => {
     expect(scope("Del CRM de Azteca, dime cómo van")).toContain("crm_query");
     expect(scope("Del CRM, dime el proyectado")).toContain("crm_query");

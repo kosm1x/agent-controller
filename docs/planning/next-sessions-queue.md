@@ -704,3 +704,14 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Queued (new):** task 7755 anomaly — 13-min silent stall before `task.fallback` rescued it (21:56:50→22:09:44 UTC 07-20, zero trace events in the gap); diagnose what the primary attempt was doing and why no trace/timeout fired sooner.
 
 **Queued (systemic, unchanged):** nanoclaw work-landing check (`git ls-remote` gate); nanoclaw PlanParseError single instance; coding-playbook repo map one-liner.
+
+## 2026-07-22 — PDF-reading fix: attachment persistence + scope reachability (pid 1211610)
+
+**Shipped:** 4-piece bundle (eval:gate PASS 66.43 vs 65.75) — telegram attachments persist to `/tmp/jarvis-downloads`; research regex matches filenames; google group carries `pdf_read`/`gemini_*` deferred; scope-classifier null fallbacks now logged. Full detail in PROJECT-STATUS 07-22. Root cause of note: **deferred ≠ reachable — ToolSearch searches only in-scope tools**; scope is the hard wall.
+
+**Watches:**
+
+- **PDF flow (live behavior):** next PDF the operator sends (Telegram or Drive link) must reach `pdf_read` → (if imageOnly) `gemini_upload`+`gemini_research` with NO shell improvisation. Check `task_trace_events` for the task: expect `pdf_read`/`gemini_*` tool.called rows, no pdftotext/pdftoppm shell_exec.
+- **scope-classifier null rate:** `journalctl -u mission-control | grep scope-classifier` — the 02:15 incident silent-null is now visible; if nulls are frequent (>~10%/day), diagnose the classifier (timeout? unparseable format?) as its own item.
+
+**Queued (small):** `/tmp/jarvis-downloads` has no reaper — slow accumulation (20MB cap/file, owner-only ingress; qa W2 residual). Fold a reap into the daily retention tick when convenient. Also noted: a PDF with `mime application/pdf` but no `.pdf` in the filename still misses the regex-fallback research scope (qa I2, rare — semantic classifier usually covers).

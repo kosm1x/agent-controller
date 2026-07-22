@@ -820,7 +820,7 @@ LIMITS:
 - Native exports (Docs/Slides as PDF/DOCX/PPTX) are additionally capped by Drive at 10 MB. Sheets at 100 MB.
 - Output paths must resolve under /tmp/jarvis-downloads/ or /root/claude/inbox/. Path traversal (..) and symlink escape are blocked.
 
-Returns: { path, name, mimeType, sizeBytes, note? }`,
+Returns: { path, name, mimeType, sizeBytes, note?, hint? }`,
       parameters: {
         type: "object",
         properties: {
@@ -948,6 +948,12 @@ Returns: { path, name, mimeType, sizeBytes, note? }`,
       // W3: surface signal that export_format was discarded for binary files
       if (exportFormat && !isNative) {
         result.note = `export_format='${exportFormat}' ignored — file is already binary (${meta.mimeType})`;
+      }
+      // Poka-yoke: point the next step at pdf_read so the agent doesn't
+      // improvise with shell (pdftotext/pdftoppm) when the tool exists.
+      // Mirrors pdf_read's own imageOnly hint (Session 114 pattern).
+      if (resultMime === "application/pdf") {
+        result.hint = `PDF saved — call pdf_read with source="${outputPath}" to extract text. If it returns imageOnly (scanned/design deck), call gemini_upload with the same path, then gemini_research with your question.`;
       }
       return JSON.stringify(result);
     } catch (err) {

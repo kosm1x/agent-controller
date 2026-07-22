@@ -645,11 +645,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     // Document/deck/PDF analysis activation. Regex carries memory:
     //  - `\.pdf\b` and `\.pptx?\b` need a non-word edge BEFORE the dot too;
     //    use `(?:^|[\s"'`(])` so "the .pptx file" matches (qa W3, scope-regex memory).
+    //  - Filenames need their OWN alternatives (`\w+\.pdf\b`): the bare-extension
+    //    tokens above can never match "report.pdf" (word char before the dot),
+    //    so a message whose only PDF signal is a filename missed the research
+    //    group entirely (2026-07-22 EurekaMS deck incident — pdf_read out of
+    //    scope, 49-turn shell improvisation).
     //  - The describe/analiza arm intentionally does NOT include bare `imagen|image`
     //    (qa W2) — "describe la imagen del logo" is image-generation chat, not
     //    document analysis. Restricted to slide/diapositiva/presentaci anchors.
     pattern:
-      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF|presentaci[oó]n(?:es)?|slides?|deck)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|upload\s+(?:\S+\s+)?(?:document|presentation|slides?|deck)|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf|presentaci[oó]n(?:es)?|slides?|deck)|(?:^|[\s"'`(])\.pdf\b|(?:^|[\s"'`(])\.pptx?\b|(?:captura\w*|capture)\s+(?:cada\s+|each\s+|every\s+|all\s+|las\s+|todas?\s+las\s+)?(?:slides?|diapositivas?|p[aá]ginas?\s+del?\s+(?:PDF|deck|presentaci))|cada\s+(?:slide|diapositiva|p[aá]gina\s+del?\s+(?:PDF|deck))|(?:describe|descrip|analiza|analyze)\s+(?:la|the|cada|each|every|all)?\s*(?:slide|diapositiva|presentaci))/i,
+      /\b(research|investigaci[oó]n|anali[zs][ae]\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|paper|PDF|presentaci[oó]n(?:es)?|slides?|deck)|study\s*guide|gu[ií]a\s*de\s*estudio|podcast|audio\s*overview|notebook\s*lm|flashcards?|tarjetas?\s*de\s*estudio|quiz|cuestionario|briefing\s+d|resum(?:e|en)(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|sube\w*(?:\s+\S+){0,2}\s+(?:documento|archivo|PDF|presentaci[oó]n(?:es)?|slides?|deck)|upload\s+(?:\S+\s+)?(?:document|presentation|slides?|deck)|gemini_(?:upload|research|audio)|deep\s+(?:dive|analysis|an[aá]lisis)|(?:qu[eé]|what)\s+(?:\S+\s+){0,3}documentos?|(?:lee|abre|open|read)\w*(?:\s+\S+){0,2}\s+(?:PDF|\.pdf|presentaci[oó]n(?:es)?|slides?|deck)|(?:^|[\s"'`(])\.pdf\b|(?:^|[\s"'`(])\.pptx?\b|\w+\.pdf\b|\w+\.pptx?\b|(?:captura\w*|capture)\s+(?:cada\s+|each\s+|every\s+|all\s+|las\s+|todas?\s+las\s+)?(?:slides?|diapositivas?|p[aá]ginas?\s+del?\s+(?:PDF|deck|presentaci))|cada\s+(?:slide|diapositiva|p[aá]gina\s+del?\s+(?:PDF|deck))|(?:describe|descrip|analiza|analyze)\s+(?:la|the|cada|each|every|all)?\s*(?:slide|diapositiva|presentaci))/i,
     group: "research",
   },
   {
@@ -1437,6 +1442,13 @@ export function scopeToolsForMessage(
   }
   if (activeGroups.has("google") && options.hasGoogle) {
     tools.push(...GOOGLE_TOOLS);
+    // A Drive download's most common payload is a document, but a bare Drive
+    // link carries no research keyword — so the read/vision chain must ride
+    // with the google group or it's invisible even to ToolSearch (deferred
+    // tools are searchable only within scope). All three are deferred:true,
+    // so prompt cost is ~zero until called. (2026-07-22 EurekaMS deck
+    // incident: scope [google, coding] → pdf_read unreachable.)
+    tools.push("pdf_read", "gemini_upload", "gemini_research");
   }
   if (activeGroups.has("browser")) {
     tools.push(...BROWSER_TOOLS, ...BROWSER_EXTRA_TOOLS);

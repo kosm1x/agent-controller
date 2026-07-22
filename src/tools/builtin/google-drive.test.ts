@@ -123,6 +123,27 @@ describe("gdrive_download — execution", () => {
     expect(mocks.mockMkdirSync).toHaveBeenCalledWith("/tmp/jarvis-downloads", {
       recursive: true,
     });
+
+    // PDF poka-yoke: result must point the agent at pdf_read + the gemini
+    // vision fallback so it never improvises with shell (2026-07-22 incident)
+    expect(parsed.hint).toContain("pdf_read");
+    expect(parsed.hint).toContain("/tmp/jarvis-downloads/abc123.pdf");
+    expect(parsed.hint).toContain("gemini_upload");
+  });
+
+  it("omits the pdf_read hint for non-PDF binaries", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG magic
+    mocks.mockGoogleFetch
+      .mockResolvedValueOnce({
+        id: "img1",
+        name: "diagram.png",
+        mimeType: "image/png",
+        size: "4",
+      })
+      .mockResolvedValueOnce(bytes);
+
+    const result = await gdriveDownloadTool.execute({ file_id: "img1" });
+    expect(JSON.parse(result).hint).toBeUndefined();
   });
 
   it("exports a native Google Slides as PDF by default", async () => {

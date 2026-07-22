@@ -124,9 +124,21 @@ export async function classifyScopeGroups(
     );
 
     const raw = (result.content ?? "").trim();
-    return parseScopeGroups(raw);
-  } catch {
-    return null; // Fallback to regex
+    const parsed = parseScopeGroups(raw);
+    if (parsed === null) {
+      // Silent-failure observability: a null here silently downgrades scope
+      // to regex fallback (which dropped the research group in the 2026-07-22
+      // PDF incident) — make the WHY visible in journalctl.
+      console.warn(
+        `[scope-classifier] Unparseable response → regex fallback: "${raw.slice(0, 120)}"`,
+      );
+    }
+    return parsed;
+  } catch (err) {
+    console.warn(
+      `[scope-classifier] Classify failed → regex fallback: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
   }
 }
 
