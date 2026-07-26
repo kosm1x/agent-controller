@@ -988,3 +988,160 @@ Two friction points logged: (1) **"Descarta" without context (08:07)** — ambig
 
 ### Research notes
 Day reflects a maturing "mirror rhythm" pattern: the operator ships fast and uses Jarvis's KB sync as an external memory checkpoint rather than a planning tool, keeping Jarvis in a reactive-but-accurate observer role. The private-repo friction is a recurring class of error (over-trusting public API signals) worth tracking as a regression candidate once the agent-controller ASK enforcement fix propagates.
+
+## 2026-07-19
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 10 |
+| Total tasks | — |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | — |
+
+### Interactions summary
+Sunday carried a mixed profile: a brief philosophical exchange in the morning on the personal economics of technology adoption, followed by a self-directed chemistry learning session (octet rule, H₂O, NH₃) in the mid-afternoon where Fede derived the structures himself and asked Jarvis to confirm and formalize. The bulk of the evening was KB synchronization work — Pulso Aura, Uncharted Lite, and VLMP (three separate rounds) — capped by status queries on the day's output and on JME's post-Phase-3 observación state.
+
+### What Jarvis learned
+VLMP re-emerged after a ~3-month pause (last activity 2026-04-16) and compressed a full versioning arc — reactivation, Windows port prep, Windows installer, and a critical ACL security fix — into a single day, reaching v0.1.1 by 22:47. Fede's learning style in chemistry mirrors his engineering habit: he derives the answer first, then uses Jarvis to validate and add formal vocabulary (lone pair, basicidad), suggesting he prefers scaffolded confirmation over passive instruction. The transhumanism comment ("vale si no rompe presupuesto ni productividad") signals a pragmatic, ROI-first filter on all tech decisions — consistent with prior patterns.
+
+### Friction points
+During VLMP round 2 (20:19), `shell_exec` was unavailable and Jarvis had to reconstruct the git history indirectly via `list_dir` and `file_read` on raw git objects — correct result, but more circuitous than usual. VLMP also required three separate sync requests in one evening because commits arrived in waves; no misunderstandings occurred, but the repetition was operationally noisy.
+
+### Research notes
+The day illustrates a recurring dual-mode pattern: Fede alternates between "learning / reflection" sessions and "maintenance / ops" bursts with little transition friction. VLMP's single-day reactivation-to-fix arc is a data point for project velocity when Fede is in a focused build sprint — worth watching in subsequent days to see if v0.2 milestones follow.
+
+## 2026-07-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 29 (telegram: 29) |
+| Streak days | — |
+
+### Interactions summary
+A high-volume, technically dense day spanning madrugada through late night. The dominant thread was **VLMP**, which advanced from v0.1.3 to v0.1.6 in a single day across four KB sync cycles — covering hotfixes, an absolute-timeline rebase, and a new TV Apps roadmap saved to the project KB. The afternoon shifted to **agent-controller**: the CIRICD/Prompt Enhancer was post-mortemed, a new architectural design was produced and saved as a technical paper, and the **@MexicoNecesario** editorial calendar was audited and three backlogged tweets were rescheduled to early August. Two scheduled tasks (Mercados & Biotecnología, CMLL & Entretenimiento) were permanently deleted, leaving 7 actives.
+
+### What Jarvis learned
+Fede ships fast and in short bursts — VLMP moved through four minor releases in one afternoon, each triggering an immediate KB sync request, confirming that the KB-sync ritual is now a habitual, reflexive part of his release loop. The agent-controller session surfaces a preference for architectural thinking over implementation detail: Fede requested a design + paper before any code, which is consistent with prior planning-first behavior. No new patterns surfaced via memory_reflect today (tool not available in this runner context).
+
+### Friction points
+Three notable friction events. (1) **Fabricated references in the technical paper**: Jarvis hallucinated citations in the agent-controller prompt-enhancement paper; Fede had to flag it explicitly, triggering ~20 min of correction work at 17:14. This is a recurring LLM risk on long-form technical documents and should be mitigated by a "sources-verified" checklist before delivery. (2) **Missing project slug "Divorcio"**: Fede asked to archive a project that doesn't exist under that name; the closest match (`juicio-modificacion`) was never confirmed, and the archival was left unresolved. (3) **Ambiguous "continua y concluye"** at 17:40: without a clear referent, Jarvis paused to clarify rather than proceeding, adding an unnecessary round-trip.
+
+### Research notes
+Day illustrates a mature KB-sync loop as a core interaction primitive — Fede initiates it reflexively after every git push, suggesting the human-agent workflow has converged on a tight release→sync→verify cycle for personal OSS projects. The hallucinated-references incident is the most significant quality signal of the week: on long-form structured output (papers, roadmaps), verification scaffolding is absent and trust breaks when the user spot-checks sources. This is an open research gap at the current co-evolution phase.
+
+## 2026-07-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 26 (telegram: 26) |
+| Streak days | — |
+
+### Interactions summary
+An intense, multi-session day spanning midnight (00:32) through evening (21:46), driven primarily by KB maintenance and commercial material production. The dominant workflows were repo syncs across four projects — VLMP (three syncs covering v0.1.7, v0.1.8), Pulso Aura (three rounds, 12 commits total), agent-controller (two syncs), and Pipesong/EurekaMS — alongside deep market research on VLMP competitors, writing the VLMP v0.2.0 roadmap, and producing three Google Docs (Pulso Aura approved advertisers, PipeSong Pharma one pager, EurekaMS retail slide). Around 03:00 AM, Fede paused for a Rumi poem before closing the night session.
+
+### What Jarvis learned
+Fede made an explicit strategic declaration today: VLMP is to be positioned as the best open-source media player without monetization, a decision that surfaced after Jarvis contextualized the Plex → Jellyfin migration moment in the ecosystem. The day also reinforced that Fede works across deeply distinct product universes (healthcare/EurekaMD vs. retail/EurekaMS vs. media/VLMP) and that context bleed between them is a consistent risk — the wrong Google Doc was populated before the user intervened. PDF analysis of image-only documents continues to require Gemini as the sole viable path; local OCR tooling (pdftotext, tesseract) remains insufficient.
+
+### Friction points
+Two friction events: (1) A three-attempt saga to analyze `EurekaMS_Intelligence_Evolution_(2).pdf` — first attempt failed because the file wasn't reachable in the filesystem; second attempt failed because the PDF contained only images with no extractable text; the third attempt (via Gemini with the file pre-staged in `/tmp/`) succeeded. (2) When generating the five EurekaMS retail questions, Jarvis wrote the output to the PipeSong Pharma Google Doc and framed questions in a healthcare register rather than retail — the user had to correct both the content universe and the document destination.
+
+### Research notes
+The day illustrates a maturing "operator as conductor" pattern: Fede issued many short, directive requests (sync, generate, adapt, create doc) across long calendar windows rather than engaging in extended dialogue, treating Jarvis as an execution layer for a pre-planned workday. The EurekaMS/EurekaMD context-bleed incident is a recurring friction archetype worth tracking — as the project portfolio grows (28 active projects), namespace collision between similarly-named entities is becoming a measurable source of rework.
+
+## 2026-07-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 14 |
+| Total tasks | — |
+| Conversations today | 15 (telegram: 15) |
+| Streak days | — |
+
+### Interactions summary
+The day ran in four distinct sessions across a wide range of topics: a pre-dawn failed tweet post for @mexiconecesario (X error 226 — flagged_automated, second consecutive block), an early-morning deep-research block on GTA IV and GTA VI that extended into gaming hardware comparisons (PS5 Pro vs. PS5 estándar vs. Xbox Series X, Mexico pricing, TV refresh rates), and two evening KB maintenance sessions (Pulso Aura and VLMP). The day closed with the operator reading the full post-mortem of the Pulso Aura Dashboard Estrategia 2027 first live day — a 6-layer incident report committed as `LEARNINGS-2026-07-22-DASHBOARD.md`. Tools most exercised: `tweet_post`, `jarvis_file_read`, repo-sync KB writes for `pulso-aura-upfront` and `vlmp`.
+
+### What Jarvis learned
+The operator is comfortable issuing abrupt abort signals mid-task ("Descarta") and expects Jarvis to stop cleanly with no side effects — the first Pulso Aura sync was cancelled before persistence with no friction on Jarvis's side. The X error-226 pattern is now two days old and unresolved; the operator has not escalated to manual intervention or a new strategy, suggesting low urgency. GTA VI (November 2026) is on the operator's radar as a consumer interest, not a project — occasional curiosity queries should be treated as low-stakes, no memory necessary.
+
+### Friction points
+Two friction signals: (1) The Pulso Aura KB sync required two attempts — the first was triggered with an ambiguous phrase ("con el kb") and aborted immediately; the second, 30 minutes later in a fresh session, succeeded. Ambiguity in sync triggers is a recurring micro-friction. (2) The @mexiconecesario tweet remains unresolved after two days of error-226 blocks — no new operator instruction issued, leaving the task in an open-ended pending state.
+
+### Research notes
+Day shows a mature ambient-assistant pattern: the operator navigates between highly personal curiosity queries (gaming research) and project-critical maintenance (KB syncs, post-mortem reads) in the same session stream, with no explicit mode-switching signal to Jarvis. The co-evolution trajectory continues in its steady-state maintenance phase — no new NorthStar milestones crossed today, but VLMP advancing to v0.1.9.4 and the Pulso Aura Dashboard going live are meaningful technical milestones worth tracking longitudinally.
+
+## 2026-07-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 11 (telegram: 11) |
+| Streak days | — |
+
+### Interactions summary
+Today split into two well-defined blocks. The morning (08:17–11:35) was a focused VLMP v0.2 development sprint: Fede directed Jarvis through four sequential tasks — implementing the `GET /api/info` endpoint in `health.ts`, redesigning the README with badges and a public roadmap, applying the Lumiere Dark reskin to remaining UI components, and completing GitHub housekeeping (repo description, topics, issue templates). A follow-on security session produced a permanent finding: `serverFingerprint` must never be exposed raw in public endpoints, stored in the new `projects/vlmp/security-findings.md`. The afternoon (12:01–12:27) pivoted sharply to portfolio analysis: Jarvis delivered an updated pre-earnings thesis for BSX (earnings 29-Jul, price corrected to $42.60) and a post-Q2/pre-Q3 thesis for ABT (already reported 16-Jul; Jarvis corrected Fede's framing before delivering the window analysis).
+
+### What Jarvis learned
+The operator's instruction rhythm during the VLMP sprint — short, sequential directives with a standing "don't exhaust turns" constraint — reflects a learned trust model: Fede delegates scope control to Jarvis rather than micromanaging each step. Security hygiene is now an explicitly tracked concern at the project level (`security-findings.md`), a new artifact type not seen before. On the finance side, Jarvis successfully self-corrected the operator's framing (ABT "pre-earnings" → post-Q2 thesis) without requiring a re-ask — a reliable disambiguation behavior now part of the interaction baseline.
+
+### Friction points
+Three minor friction points: (1) RAM benchmark retrieval for the VLMP README was impossible with no running instance — Jarvis flagged this and moved on without blocking; (2) the Lumiere Dark reskin response (point 3) appears truncated in the day-log, though no visible friction emerged in the actual session flow; (3) the ABT framing correction was necessary but low-cost — resolved inline without a follow-up loop.
+
+### Research notes
+Today marks the first session where a security findings KB file was created as a first-class project artifact in VLMP — a small but meaningful step toward Jarvis functioning as a persistent engineering co-author rather than a stateless assistant. The rapid context switch from dev-sprint to investment-thesis with no friction signal from the operator confirms the ambient multi-domain pattern is stable; Fede is operating Jarvis as a general cognitive layer, not a specialized tool.
+
+## 2026-07-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 2 (telegram: 2) |
+| Streak days | — |
+
+### Interactions summary
+A light day with two independent interactions separated by roughly 20 hours. Early in the morning (00:03), Fede requested a KB sync for the Pulso Aura Upfront project, incorporating 28 new commits (range `192b97f` → `340ab02`) and updating `projects/plan-2027/pulso-aura-upfront.md` with the Dashboard 2027 delta — including new functions `generar_dashboard_anunciante` and `generar_oferta_2027`. In the late afternoon (20:22), Fede queried the data-source breakdown for the Williams Radar W30 daily run (84-minute run, 18:00–19:24 MX time): Jarvis confirmed Polygon as primary source for 387 of 388 tickers, with a single Alpha Vantage fallback for SGEN (Seagen).
+
+### What Jarvis learned
+No new patterns detected via memory_reflect today — tools were unavailable in this session. From the day narrative: the operator continues to use Jarvis reactively for two distinct modes — project KB maintenance and live system diagnostics — without any visible friction between the two. The Williams Radar W30 query confirms Fede monitors data-source reliability at the individual-ticker level, suggesting precision expectations for the radar's data provenance.
+
+### Friction points
+None detected. Both interactions completed cleanly on first attempt — the KB sync succeeded without an abort (contrast with 2026-07-22's two-attempt pattern), and the W30 data-source query was resolved with a single log review.
+
+### Research notes
+Today illustrates the steady-state ambient-assistant mode: low conversation volume, high task specificity, zero friction. Both touchpoints (KB maintenance + system diagnostics) are operational/maintenance in nature rather than creative or exploratory — consistent with a mature project portfolio in active execution phase. No NorthStar milestones crossed today; the Pulso Aura Dashboard 2027 branch advancing 28 commits is a quiet but meaningful sign of project momentum between Jarvis interactions.
+
+## 2026-07-25
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 31 (telegram: 31) |
+| Streak days | — |
+
+### Interactions summary
+High-density operational day (~25 exchanges, 02:49–23:21 CDMX) dominated by KB synchronization cycles across four active projects: Azteca FSD (2 syncs), Pulso Aura (4 syncs), VLMP (3 syncs), and Plan 2027 (2 KB updates). Parallel threads included a deep JME diagnostic session that surfaced a 12% recall-utility alert, a Química Básica card delivery (Módulo 1 integrator quiz), and an evening GTA IV/VI analysis block. The day opened with a Rumi poem request and closed with Pulso Aura fact-bridge review.
+
+### What Jarvis learned
+The most significant signal was the JME diagnostic: 63 facts stored, 351 total recalls, but only 17 marked `was_used=1` → 12% utility, well below the ≥39% day-14 success threshold (verdict due 2026-07-27). This quantifies a concrete gap between recall volume and actual usefulness in context. A secondary pattern: KB state divergence between `pulso-aura-upfront/README.md` and the `plan-2027` overlay KB forced four sync rounds — the two-layer KB architecture is creating friction when both layers are maintained independently.
+
+### Friction points
+1. **shell_exec gating**: Jarvis couldn't run `mc-ctl jme-stats` on first attempt; required explicit user authorization before proceeding — minor but recurrent pattern.
+2. **Dual-KB desync on Pulso Aura**: The central project KB and the Plan 2027 overlay were out of sync, driving 4 repetitive sync rounds throughout the day.
+3. **Fact-bridge file not found initially**: Jarvis failed to locate `review-fact-bridge-2026-07-26.md` until the user specified the exact repo path (root of Pulso Aura repo).
+4. **JME DB path confusion**: During the 12% diagnostic, initial queries hit the worktree DB (empty/wrong schema) rather than the live process DB; required path correction before valid data was returned.
+
+### Research notes
+Day 25 marks a critical pre-verdicto moment in the JME experiment: two days before the day-14 verdict (2026-07-27), recall utility sits at 12% — the system is in documented underperformance territory. The day also surfaces a structural tension in the KB architecture: as projects scale, maintaining two parallel KB representations (project-level README + plan overlay) without automated reconciliation generates compounding re-work. Both signals are relevant to the co-evolution paper's "infrastructure debt as interaction cost" thread.
