@@ -453,6 +453,83 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
     });
 
+    it("prefixes a caveat when a promoted heavy task completes with concerns (qa-audit W1)", async () => {
+      // Heavy graded-down completions (all goals done, reflection below the
+      // gate) are delivered via the completed path as completed_with_concerns
+      // — the operator must see the unverified-content caveat, not a clean
+      // answer indistinguishable from a fully verified one.
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: verifica el PDF",
+        status: "completed_with_concerns",
+        agent_type: "heavy",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "verifica el PDF",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "heavy",
+            result: { finalAnswer: "Reporte de cifras verificadas." },
+            duration_ms: 500,
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "Completado con reservas",
+        );
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "Reporte de cifras verificadas.",
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("does NOT prefix the caveat for fast completed_with_concerns tasks (routine status)", async () => {
+      // Fast tasks land completed_with_concerns routinely (a missing STATUS
+      // line defaults there) — a caveat on those would be noise.
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: normal",
+        status: "completed_with_concerns",
+        agent_type: "fast",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "normal",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: { text: "Respuesta normal." },
+            duration_ms: 500,
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toBe("Respuesta normal.");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
     it("sends a fallback ack when a chat task completes with EMPTY text (2026-07-11)", async () => {
       // The model can answer a contentless ack ("sirve") with a bare
       // "STATUS: DONE" → parseRunnerStatus strips it → output.text === "".
@@ -704,6 +781,176 @@ describe("MessageRouter", () => {
           "No pude completar eso",
         );
         expect(waAdapter.sentMessages[1].text).not.toContain("toolCalls");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("delivers a produced deliverable on plain `failed` with an honest caveat (task e6f3dfa0)", async () => {
+      // A reflection-graded heavy failure still carried the full report in
+      // result.finalAnswer; the old handler discarded it and sent the
+      // generic line ("[Task failed] Unknown error" in memory).
+      memoryRetainSpy.mockClear();
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: verifica el PDF",
+        status: "failed",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "verifica el PDF",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const failedHandler = findHandler("task.failed");
+        failedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "heavy",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: {
+              content: "Reflector meta-summary",
+              finalAnswer: "Cifra $7,200 MDP en conflicto con KB ($6,175).",
+              score: 0.63,
+            },
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "no se completó al 100%",
+        );
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "Cifra $7,200 MDP en conflicto con KB ($6,175).",
+        );
+        // Memory records what the operator saw, not "[Task failed]".
+        const [exchange] = memoryRetainSpy.mock.calls[0];
+        expect(exchange).toContain("$7,200 MDP");
+        expect(exchange).not.toContain("[Task failed]");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("keeps the generic line on plain `failed` for non-heavy agents (qa-audit W3)", async () => {
+      // nanoclaw failures can carry structural sentinels or guard-suppressed
+      // substitute work — never deliver those as a partial answer.
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: code task",
+        status: "failed",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "code task",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const failedHandler = findHandler("task.failed");
+        failedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "nanoclaw",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: { finalAnswer: "TARGET_NOT_IN_SANDBOX — cannot proceed" },
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "No pude completar eso",
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("does not deliver the reflector meta-summary as a partial answer (qa-audit W2)", async () => {
+      // A heavy run where every goal failed has finalAnswer=null and only
+      // `content` (the reflector's meta-summary, e.g. "Heuristic score:
+      // 0.00") — that is commentary about the work, not the work.
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: hard task",
+        status: "failed",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "hard task",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const failedHandler = findHandler("task.failed");
+        failedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "heavy",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: {
+              content: "Heuristic score: 0.00. 0/3 goals completed.",
+              finalAnswer: null,
+            },
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "No pude completar eso",
+        );
+        expect(waAdapter.sentMessages[1].text).not.toContain("Heuristic score");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("keeps the generic line on plain `failed` when nothing was produced", async () => {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: x",
+        status: "failed",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "x",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const failedHandler = findHandler("task.failed");
+        failedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "heavy",
+            error: "Provider exploded",
+            recoverable: false,
+            attempts: 1,
+            // Deliverable fields exist but are empty → stays generic (the
+            // 2026-07-11 empty-completion class).
+            result: { content: "", finalAnswer: null },
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "No pude completar eso",
+        );
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }

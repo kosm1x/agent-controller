@@ -122,8 +122,15 @@ export async function resumeFromGoal(
     useOpus,
   );
 
+  // Same grading-vs-execution split as orchestrate(): all goals completed
+  // but reflection graded below the gate → promote-to-concerns eligible.
+  const resumeSummary = graph.summary();
   return {
     success: reflection.success,
+    completedWithConcerns:
+      !reflection.success &&
+      resumeSummary.total > 0 &&
+      resumeSummary.completed === resumeSummary.total,
     goalGraph: graph.toJSON(),
     executionResults: mergedExecResult,
     reflection,

@@ -231,6 +231,15 @@ export interface RunTrace {
 
 export interface OrchestratorResult {
   success: boolean;
+  /**
+   * Every goal completed (0 failed/blocked/pending) but reflection graded
+   * below the success gate — e.g. best-effort goals discounted the score.
+   * The deliverable exists; the heavy runner promotes this shape to
+   * DONE_WITH_CONCERNS instead of failing the task (2026-07-27: task
+   * e6f3dfa0 delivered a full PDF-verification report as "[Task failed]
+   * Unknown error").
+   */
+  completedWithConcerns?: boolean;
   goalGraph: { goals: Record<string, Goal> };
   executionResults: ExecutionResult;
   reflection: ReflectionResult;

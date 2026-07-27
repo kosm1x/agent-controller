@@ -211,6 +211,99 @@ describe("heavyRunner", () => {
 
     expect(result.success).toBe(false);
     expect((result.output as { content: string }).content).toBe("Task failed");
+    expect(result.status).toBeUndefined();
+  });
+
+  it("promotes graded-down completions to DONE_WITH_CONCERNS (task e6f3dfa0 class)", async () => {
+    // All goals completed but reflection scored below the success gate
+    // (best-effort discount). The answer exists — it must be delivered as
+    // completed_with_concerns, not discarded as "failed".
+    mockOrchestrate.mockResolvedValueOnce(
+      makeOrchestratorResult({
+        success: false,
+        completedWithConcerns: true,
+        executionResults: {
+          goalResults: {
+            "g-1": {
+              goalId: "g-1",
+              ok: true,
+              result: "verified figures report",
+              durationMs: 0,
+              toolCalls: 0,
+              toolNames: [],
+              toolFailures: 0,
+              tokenUsage: { promptTokens: 0, completionTokens: 0 },
+            },
+            "g-2": {
+              goalId: "g-2",
+              ok: true,
+              result: "partial verification",
+              criteriaMet: false,
+              durationMs: 0,
+              toolCalls: 0,
+              toolNames: [],
+              toolFailures: 0,
+              tokenUsage: { promptTokens: 0, completionTokens: 0 },
+            },
+          },
+          summary: { completed: 2, total: 2 },
+          totalToolCalls: 40,
+          totalToolNames: [],
+          totalToolFailures: 0,
+          toolRepairs: [],
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+        reflection: {
+          success: false,
+          score: 0.63,
+          learnings: [],
+          summary: "Best-effort on g-2",
+        },
+      }),
+    );
+
+    const result = await heavyRunner.execute({
+      taskId: "task-promote",
+      runId: "run-promote",
+      title: "Graded down",
+      description: "All goals done, low score",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.concerns).toEqual([
+      "Goal g-2: success criteria not verified (best-effort)",
+    ]);
+    // The deliverable survives — finalAnswer joins the per-goal answers.
+    expect((result.output as { finalAnswer: string }).finalAnswer).toContain(
+      "verified figures report",
+    );
+  });
+
+  it("does NOT promote when goals actually failed (completedWithConcerns=false)", async () => {
+    mockOrchestrate.mockResolvedValueOnce(
+      makeOrchestratorResult({
+        success: false,
+        completedWithConcerns: false,
+        reflection: {
+          success: false,
+          score: 0.3,
+          learnings: [],
+          summary: "Goal g-1 failed",
+        },
+      }),
+    );
+
+    const result = await heavyRunner.execute({
+      taskId: "task-no-promote",
+      runId: "run-no-promote",
+      title: "Real failure",
+      description: "A goal failed",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.status).toBeUndefined();
+    expect(result.concerns).toBeUndefined();
   });
 
   it("should catch thrown errors and return failure", async () => {
@@ -329,6 +422,47 @@ describe("heavyRunner container mode", () => {
       promptTokens: 200,
       completionTokens: 100,
     });
+  });
+
+  it("promotes graded-down container results to DONE_WITH_CONCERNS", async () => {
+    const containerOutput: ContainerOutput = {
+      status: "success",
+      result: JSON.stringify({
+        success: false,
+        completedWithConcerns: true,
+        content: "Reflector summary",
+        finalAnswer: "the container report",
+        score: 0.6,
+        learnings: [],
+        tokenUsage: { promptTokens: 10, completionTokens: 5 },
+        goalGraph: { goals: {} },
+        trace: [],
+        durationMs: 100,
+      }),
+    };
+
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-promote",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve(containerOutput),
+      kill: vi.fn(),
+    });
+
+    const result = await heavyRunner.execute({
+      taskId: "task-c-promote",
+      runId: "run-c-promote",
+      title: "Container graded down",
+      description: "All goals done, low score",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.concerns).toEqual([
+      "Success criteria not fully verified (best-effort goals)",
+    ]);
+    expect((result.output as { finalAnswer: string }).finalAnswer).toBe(
+      "the container report",
+    );
   });
 
   it("should mount credentials + HOME + provider env when provider is claude-sdk", async () => {

@@ -56,8 +56,32 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       snapshot,
     );
 
+    // Promote graded-down completions: every goal completed but reflection
+    // scored below the success gate. The answer exists — deliver it as
+    // completed_with_concerns instead of failing the task (task e6f3dfa0,
+    // 2026-07-27: a full PDF-verification report reached the operator as
+    // "[Task failed] Unknown error"). Same promote-to-deliver precedent as
+    // fast-runner's needs-context text handling.
+    const promoted = !result.success && result.completedWithConcerns === true;
+    const unverifiedGoals = promoted
+      ? Object.values(result.executionResults.goalResults)
+          .filter((gr) => gr.criteriaMet === false)
+          .map(
+            (gr) =>
+              `Goal ${gr.goalId}: success criteria not verified (best-effort)`,
+          )
+      : [];
+
     return {
-      success: result.success,
+      success: result.success || promoted,
+      ...(promoted && {
+        status: "DONE_WITH_CONCERNS" as const,
+        concerns: unverifiedGoals.length
+          ? unverifiedGoals
+          : [
+              `Reflection score ${result.reflection.score.toFixed(2)} below success gate`,
+            ],
+      }),
       output: {
         content: result.reflection.summary,
         score: result.reflection.score,
@@ -176,6 +200,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     // Parse the structured output from the container
     const parsed = JSON.parse(containerOutput.result ?? "{}") as {
       success?: boolean;
+      completedWithConcerns?: boolean;
       content?: string;
       score?: number;
       learnings?: string[];
@@ -205,8 +230,18 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       };
     }
 
+    // Same graded-down promotion as the in-process branch. The container
+    // JSON doesn't carry per-goal results, so concerns fall back to the
+    // generic line.
+    const containerPromoted =
+      parsed.success === false && parsed.completedWithConcerns === true;
+
     return {
-      success: parsed.success ?? true,
+      success: (parsed.success ?? true) || containerPromoted,
+      ...(containerPromoted && {
+        status: "DONE_WITH_CONCERNS" as const,
+        concerns: ["Success criteria not fully verified (best-effort goals)"],
+      }),
       output: {
         content: parsed.content,
         score: parsed.score,

@@ -70,6 +70,9 @@ async function main(): Promise<void> {
     const output = {
       type: "result",
       success: result.success,
+      // Graded-down completion flag — host-side heavy-runner promotes this
+      // shape to DONE_WITH_CONCERNS (see executeInContainer).
+      completedWithConcerns: result.completedWithConcerns ?? false,
       content: result.reflection.summary,
       score: result.reflection.score,
       learnings: result.reflection.learnings,

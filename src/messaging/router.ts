@@ -2476,20 +2476,42 @@ export class MessageRouter {
     clearTimeout(pending.abandonTimer);
     this.pendingReplies.delete(taskId);
 
-    const resultText = this.extractResultText(data.result);
-    if (resultText) {
+    const extractedText = this.extractResultText(data.result);
+    if (extractedText) {
       // Background agent notification: different format
       let isBackground = false;
       let bgTitle = "";
+      let gradedDown = false;
       try {
         const task = getDatabase()
-          .prepare("SELECT spawn_type, title FROM tasks WHERE task_id = ?")
-          .get(taskId) as { spawn_type: string; title: string } | undefined;
+          .prepare(
+            "SELECT spawn_type, title, status, agent_type FROM tasks WHERE task_id = ?",
+          )
+          .get(taskId) as
+          | {
+              spawn_type: string;
+              title: string;
+              status: string;
+              agent_type: string;
+            }
+          | undefined;
         isBackground = task?.spawn_type === "user-background";
         bgTitle = task?.title?.replace("🤖 Agente: ", "") ?? "";
+        // Heavy promoted completions (all goals done, reflection below the
+        // success gate → DONE_WITH_CONCERNS) carry unverified content — the
+        // operator must see the caveat, not a clean answer (qa-audit W1).
+        // Heavy-only: fast tasks land completed_with_concerns routinely
+        // (missing STATUS line defaults there) and a caveat would be noise.
+        gradedDown =
+          task?.status === "completed_with_concerns" &&
+          task?.agent_type === "heavy";
       } catch {
         // DB not available (e.g. in tests) — treat as normal task
       }
+      const resultText =
+        gradedDown && !isBackground
+          ? `⚠️ Completado con reservas — no verifiqué todos los criterios al 100%:\n\n${extractedText}`
+          : extractedText;
 
       if (isBackground) {
         const summary =
@@ -2880,11 +2902,44 @@ export class MessageRouter {
           failMsg = runnerText;
           deliveredRunnerText = true;
         }
+      } else if (data.agent_id === "heavy") {
+        // Plain `failed` with a produced deliverable (task e6f3dfa0,
+        // 2026-07-27): a reflection-graded heavy failure still carried the
+        // full report in result.finalAnswer, and the generic line discarded
+        // 7 minutes of work. Deliver what was produced, honestly framed as
+        // incomplete. Heavy-only: nanoclaw failures can carry structural
+        // sentinels (TARGET_NOT_IN_SANDBOX) or guard-suppressed substitute
+        // work that must NOT reach the operator (qa-audit W3). `content` is
+        // excluded — on heavy it's the reflector's meta-summary ("Heuristic
+        // score: 0.00"), not the work (qa-audit W2). No deliverable →
+        // generic line as before.
+        const sansContent =
+          data.result && typeof data.result === "object"
+            ? {
+                ...(data.result as Record<string, unknown>),
+                content: undefined,
+              }
+            : data.result;
+        const runnerText = hasDeliverableField(sansContent)
+          ? this.extractResultText(sansContent)
+          : null;
+        if (runnerText) {
+          failMsg = `⚠️ La tarea no se completó al 100% — esto es lo que alcancé a producir:\n\n${runnerText}`;
+          deliveredRunnerText = true;
+        }
       }
     } catch {
       // DB not available — use generic message
     }
-    this.sendToChannel(pending.channel, pending.to, failMsg);
+    // Runner-produced text is LLM output — it must flow through the
+    // community write-gate on public email channels (qa-audit C1; the
+    // 2026-07-11 needs_context branch had the same latent gap). The generic
+    // line stays on the direct sender: router-authored, safe by construction.
+    if (deliveredRunnerText) {
+      this.sendLLMReplyToChannel(pending.channel, pending.to, failMsg);
+    } else {
+      this.sendToChannel(pending.channel, pending.to, failMsg);
+    }
 
     // When the runner's own question was delivered, record the exchange in
     // the thread buffer — the operator's next message answers that question,

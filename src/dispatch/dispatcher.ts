@@ -950,9 +950,10 @@ async function dispatchWithSlot(
           error: result.error ?? "Unknown error",
           recoverable: false,
           attempts: 1,
-          // NEEDS_CONTEXT/BLOCKED runners still produced text (the clarifying
-          // question / blocker description) — carry it so the router can
-          // deliver it instead of the generic failure message.
+          // Failed runners often still produced text — NEEDS_CONTEXT/BLOCKED
+          // carry the clarifying question / blocker description, and heavy
+          // graded-down failures carry the partial report — so the router
+          // can deliver it instead of the generic failure message.
           result: result.output,
         });
       }
@@ -1071,7 +1072,9 @@ export function isPhantomZeroCostRow(result: {
 // Task status helpers
 // ---------------------------------------------------------------------------
 
-function updateTaskStatus(
+// Exported for tests (update-task-status.test.ts) — production callers are
+// all internal to this module.
+export function updateTaskStatus(
   taskId: string,
   status: string,
   output?: unknown,
@@ -1103,9 +1106,12 @@ function updateTaskStatus(
       `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(status, error ?? null, taskId);
   } else if (status === "failed") {
+    // Persist whatever the runner produced even on failure — post-mortems on
+    // graded-down heavy tasks (e6f3dfa0, 2026-07-27) had tasks.output=null
+    // and needed the conversations table to reconstruct the deliverable.
     db.prepare(
-      `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
-    ).run(error ?? null, taskId);
+      `UPDATE tasks SET status = 'failed', error = ?, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
+    ).run(error ?? null, output ? JSON.stringify(output) : null, taskId);
   } else {
     // Round-2 audit W2 fix (2026-05-07): guard the generic UPDATE too so
     // any future caller passing a non-enumerated status (e.g. "claimed",

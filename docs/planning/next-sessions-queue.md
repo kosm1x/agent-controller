@@ -715,3 +715,19 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - **scope-classifier null rate:** `journalctl -u mission-control | grep scope-classifier` — the 02:15 incident silent-null is now visible; if nulls are frequent (>~10%/day), diagnose the classifier (timeout? unparseable format?) as its own item.
 
 **Queued (small):** `/tmp/jarvis-downloads` has no reaper — slow accumulation (20MB cap/file, owner-only ingress; qa W2 residual). Fold a reap into the daily retention tick when convenient. Also noted: a PDF with `mime application/pdf` but no `.pdf` in the filename still misses the regex-fallback research scope (qa I2, rare — semantic classifier usually covers).
+
+## 2026-07-27 — Graded-down heavy tasks deliver their answer (pid 3436394)
+
+**Shipped:** 3-piece fix + 5 audit folds — heavy tasks whose goals ALL completed but whose reflection score fell below the 0.8 gate now promote to `completed_with_concerns` and deliver with a "⚠️ Completado con reservas" caveat; plain-`failed` heavy tasks with an extractable deliverable send it honestly framed instead of "No pude completar eso"; failed tasks persist `output`. Full detail in PROJECT-STATUS 07-27. Root causes of note: **grading ≠ execution — a reflector discount is not a failure when the deliverable exists**; and the failure path is a delivery path too (never discard produced work at the last hop; the memory retained "[Task failed] Unknown error" while the report existed).
+
+**Watches:**
+
+- **First promoted heavy task:** expect `completed_with_concerns` + caveat-prefixed answer on the operator channel, `runs.runner_status='DONE_WITH_CONCERNS'`. If a heavy task still lands `failed` with a real report in `tasks.output`, the promotion condition missed a shape.
+- **Canary detector wake (qa I1):** `rituals/canary.ts`'s `failed`-status arm was dead (failed rows had `output=NULL`) and is now live — `deliveryMisses` may start counting; if `>2/24h` alerts fire, re-baseline the threshold rather than assume a delivery regression.
+- **Recall-tier shift (qa I5):** promoted tasks retain as `outcome:concerns` (recallable, −0.05) instead of `outcome:failed` (dropped). By design; watch that unverified-criteria content doesn't pollute recall precedents.
+
+**Queued:**
+
+- **scope-classifier TIMEOUT rate — now its own item (07-22 watch tripped):** 14 `Classify failed → regex fallback: scope classifier timeout` lines on 07-27 alone. Every timeout degrades scope precision (regex fallback widened this task to 124 tools). Diagnose the classifier's timeout budget vs its actual latency distribution (aux Haiku call — provider slowdown? timeout too tight?).
+- **pgvector 504 during task e6f3dfa0** (22:36:02) — KB vector search failing degrades goal executors into find/grep improvisation (feeds the looping penalty). Check supabase/pgvector health + the search's timeout/retry posture.
+- **Command-layer `sendToChannel` replies** (router.ts ~1290, ~1693) predate the community write-gate and may carry LLM text on command flows; audit whether any command path is reachable from community email channels (sweep note from qa C1, out of scope this session).

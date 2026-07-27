@@ -155,9 +155,7 @@ export async function orchestrate(
           phase: Phase.PLAN,
           error: String(err),
         });
-        throw new Error(
-          `Planning failed: ${errMsg(err)}`,
-        );
+        throw new Error(`Planning failed: ${errMsg(err)}`);
       }
 
       traceRecord(trace, "phase_end", {
@@ -355,9 +353,7 @@ export async function orchestrate(
               (totalActualCostUsd ?? 0) + replanUsage.actualCostUsd;
           }
         } catch (err) {
-          console.warn(
-            `[orchestrator] Replan failed: ${errMsg(err)}`,
-          );
+          console.warn(`[orchestrator] Replan failed: ${errMsg(err)}`);
           break;
         }
         continue;
@@ -403,9 +399,7 @@ export async function orchestrate(
           pending: postExecSummary.pending,
         });
       } catch (err) {
-        console.warn(
-          `[orchestrator] Failed to save snapshot: ${errMsg(err)}`,
-        );
+        console.warn(`[orchestrator] Failed to save snapshot: ${errMsg(err)}`);
       }
     }
 
@@ -478,12 +472,24 @@ export async function orchestrate(
       }
     }
 
+    // Grading-vs-execution split: when every goal completed but reflection
+    // scored below the success gate (best-effort discount, convergence
+    // penalty), the deliverable exists — flag it so the runner promotes to
+    // DONE_WITH_CONCERNS instead of discarding the answer as "failed".
+    const finalSummary = graph.summary();
+    const completedWithConcerns =
+      !reflection.success &&
+      finalSummary.total > 0 &&
+      finalSummary.completed === finalSummary.total;
+
     console.log(
-      `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}`,
+      `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}` +
+        (completedWithConcerns ? " (all goals completed → concerns)" : ""),
     );
 
     return {
       success: reflection.success,
+      completedWithConcerns,
       goalGraph: graph.toJSON(),
       executionResults,
       reflection,

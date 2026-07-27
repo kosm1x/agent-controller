@@ -134,6 +134,7 @@ describe("orchestrate", () => {
     const result = await orchestrate("task-1", "Test task");
 
     expect(result.success).toBe(true);
+    expect(result.completedWithConcerns).toBe(false);
     expect(result.reflection.score).toBe(1.0);
     expect(result.reflection.summary).toBe("Perfect execution");
     expect(result.goalGraph.goals).toHaveProperty("g-1");
@@ -147,6 +148,68 @@ describe("orchestrate", () => {
     expect(mockPlan).toHaveBeenCalledTimes(1);
     expect(mockExecuteGraph).toHaveBeenCalledTimes(1);
     expect(mockReflect).toHaveBeenCalledTimes(1);
+  });
+
+  it("flags completedWithConcerns when all goals completed but reflection graded below the gate", async () => {
+    // Task e6f3dfa0 shape (2026-07-27): execution 3/3 completed, best-effort
+    // discount pushed the score under 0.8 → success=false. The runner uses
+    // this flag to promote to DONE_WITH_CONCERNS instead of failing.
+    const graph = makeGraph(); // both goals COMPLETED
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: {
+        ...makeReflection(),
+        success: false,
+        score: 0.63,
+        summary: "Best-effort on g-2",
+      },
+      usage: { promptTokens: 200, completionTokens: 100 },
+    });
+
+    const result = await orchestrate("task-graded-down", "Test task");
+
+    expect(result.success).toBe(false);
+    expect(result.completedWithConcerns).toBe(true);
+  });
+
+  it("does NOT flag completedWithConcerns when a goal actually failed (qa-audit W4 mutation hole)", async () => {
+    // The `completed === total` clause is the ONLY guard preventing
+    // promotion of a genuinely failed graph — this test kills the mutation
+    // that drops it.
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Goal 2",
+      status: GoalStatus.FAILED,
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: {
+        ...makeReflection(),
+        success: false,
+        score: 0.4,
+        summary: "g-2 failed",
+      },
+      usage: { promptTokens: 200, completionTokens: 100 },
+    });
+
+    const result = await orchestrate("task-real-failure", "Test task");
+
+    expect(result.success).toBe(false);
+    expect(result.completedWithConcerns).toBe(false);
   });
 
   it("should emit progress events", async () => {
