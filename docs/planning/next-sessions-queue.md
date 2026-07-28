@@ -736,7 +736,7 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 
 **Shipped:** PLAN_SYSTEM/REPLAN_SYSTEM workload-sizing rules (batch goals of 3-5 items, mutual independence, no ALL-quantified criteria, overflow + small-task floor) + checkReplan timeout vote (a timed-out goal fires a hard replan whose reason carries the timeout so the replanner splits it instead of retrying it whole). Substitute gate `scripts/validate-planner-sizing.ts` PASS ×2 (eval:gate corpus is blind to PLAN_SYSTEM). Full detail in PROJECT-STATUS 07-28.
 
-**Watch:** next large operator task (multi-item analysis) should plan range-batched goals (`mc-ctl trace <id>` / journalctl "planned N goals") and finish inside the 10-min ceiling. If a plan still emits a monolithic per-item goal, capture the exact task text as the regression case for the prompt.
+**Watch: ✅ VERIFIED same night (task 68f8847b, 00:19)** — operator re-sent the incident PDF: 4 mutually-independent slide-range batches + consolidation, all batches concurrent, clean `completed` in 4m42s, 11-chunk delivery, zero penalties. The watch is closed; if a FUTURE large plan regresses to monolithic per-item goals, capture the exact task text as the prompt regression case.
 
 **Queued:**
 
