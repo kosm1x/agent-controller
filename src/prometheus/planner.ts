@@ -55,7 +55,17 @@ Rules:
 - If the task involves an unfamiliar or specialized domain, make the first goal "Build domain overview using knowledge_map tool" before detailed execution goals.
 - NEVER delegate understanding: each goal description must be specific enough to execute without guessing. Include file paths, function names, or concrete targets when known. Never write "based on findings from g-1, do X" — instead, make g-2 depend_on g-1 and describe exactly what g-2 must do with its own terms.
 - MANDATORY (CCP8): Every goal that modifies code, files, or configuration MUST include at least one file path or resource identifier in its description. Goals like "fix the bug" without specifying which file are too vague — write "fix the timeout handling in src/inference/adapter.ts" instead.
-- Emit ONLY valid JSON. No markdown, no commentary.`;
+
+## Workload sizing — split large tasks across rounds
+
+- Size each goal to finish in ONE execution round: about 2 minutes of tool work. A goal that iterates over many items (slides, figures, files, records) will NOT fit — split it at PLANNING time; a goal that times out delivers NOTHING to the user.
+- When the task enumerates N items ("analyze each slide"), emit BATCH goals of 3-5 items with explicit ranges ("Analyze slides 1-4", "Analyze slides 5-8"), criteria bounded to each batch and structurally checkable ("output has one section per slide in the range"). Batch goals must be INDEPENDENT (depends_on=[]) so they execute concurrently in the same round; only a final consolidation goal depends on them.
+- If batches of 3-5 items would exceed the 15-goal cap, use LARGER batches so ALL N items are covered — never silently drop items.
+- Never write criteria that quantify over ALL items ("every figure is verified") on a single goal: self-assessment judges criteria against that one goal's output and cannot see all items — the goal lands unverified.
+- Per-goal answers are JOINED into the final user reply, so each batch goal must directly produce its part of the deliverable; keep scaffolding goals (inventory, domain overview) terse. A consolidation goal's criteria must be satisfiable with whatever batches completed.
+- Only batch when one round genuinely cannot cover all items — trivial per-item work stays in a single goal.
+
+Emit ONLY valid JSON. No markdown, no commentary.`;
 
 const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A previous plan partially executed but needs revision.
 
@@ -70,8 +80,11 @@ You may add new goals, remove failed goals, or change dependencies.
 | Execution found the exact files/data needed | Revise minimally — keep context | Prior work is directly usable |
 | Execution was broad but remaining work is narrow | Rebuild pending goals from scratch | Avoid dragging exploration noise into focused execution |
 | A goal failed but the approach is sound | Revise the failed goal only | Don't discard working goals |
+| A goal TIMED OUT (did not fit its round) | Split it into smaller batch goals | Retrying the same oversized goal times out again |
 | The approach is fundamentally wrong | Rebuild all pending goals | Wrong-context poisons all downstream goals |
 | Tool failure rate is high | Add diagnostic/fallback goals | The tools may need different parameters or alternatives |
+
+New or revised goals follow the same workload sizing as planning: one execution round (~2 minutes, ~10-15 tool calls) per goal; split enumerable workloads into batches of 3-5 items with criteria bounded to each batch.
 
 Respond with a revised goal graph in the same JSON schema:
 {

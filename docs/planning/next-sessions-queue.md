@@ -731,3 +731,15 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 - **scope-classifier TIMEOUT rate — now its own item (07-22 watch tripped):** 14 `Classify failed → regex fallback: scope classifier timeout` lines on 07-27 alone. Every timeout degrades scope precision (regex fallback widened this task to 124 tools). Diagnose the classifier's timeout budget vs its actual latency distribution (aux Haiku call — provider slowdown? timeout too tight?).
 - **pgvector 504 during task e6f3dfa0** (22:36:02) — KB vector search failing degrades goal executors into find/grep improvisation (feeds the looping penalty). Check supabase/pgvector health + the search's timeout/retry posture.
 - **Command-layer `sendToChannel` replies** (router.ts ~1290, ~1693) predate the community write-gate and may carry LLM text on command flows; audit whether any command path is reachable from community email channels (sweep note from qa C1, out of scope this session).
+
+## 2026-07-28 — Planner workload sizing (pid 3519028)
+
+**Shipped:** PLAN_SYSTEM/REPLAN_SYSTEM workload-sizing rules (batch goals of 3-5 items, mutual independence, no ALL-quantified criteria, overflow + small-task floor) + checkReplan timeout vote (a timed-out goal fires a hard replan whose reason carries the timeout so the replanner splits it instead of retrying it whole). Substitute gate `scripts/validate-planner-sizing.ts` PASS ×2 (eval:gate corpus is blind to PLAN_SYSTEM). Full detail in PROJECT-STATUS 07-28.
+
+**Watch:** next large operator task (multi-item analysis) should plan range-batched goals (`mc-ctl trace <id>` / journalctl "planned N goals") and finish inside the 10-min ceiling. If a plan still emits a monolithic per-item goal, capture the exact task text as the regression case for the prompt.
+
+**Queued:**
+
+- **Executor unbounded concurrent fan-out (qa W2):** `executeGraph` runs ALL ready goals via `Promise.allSettled` with no concurrency limiter — fine at 4 batches, but a 13-batch plan = 13 concurrent Opus calls → rate-limit burst → breaker opens → per-goal CB_COOLDOWN sleeps consume the ceiling. Add a small semaphore (3-4) if a wide plan ever trips the breaker.
+- **`GOAL_TIMEOUT_MS` is dead config (qa I5):** `config.ts` defines it but both consumers read `defaultConfig()` (types.ts 120_000). Either wire the env through or delete it; the prompt's "~2 minutes" now hardcodes the same number in a third place.
+- **Self-assess output window vs batch size (qa W5):** `windowOutputForAssess` caps at 5000 chars (head 3000/tail 2000) — a 5-item batch with rich prose can elide middle items' evidence and fail per-batch criteria. Prompt now asks for structurally checkable criteria; if unverified-criteria grades recur on batch goals, widen the window or assess per-section.

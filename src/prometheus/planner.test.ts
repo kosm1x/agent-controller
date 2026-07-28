@@ -80,6 +80,44 @@ describe("plan", () => {
     expect(usage.completionTokens).toBe(50);
   });
 
+  it("system prompt carries the workload-sizing rules (2026-07-27: split large tasks across rounds)", async () => {
+    // Task 588389e9: "analiza cada slide" planned monolithic per-item goals
+    // that blew the 120s per-goal round twice and hit the orchestrator
+    // ceiling with the user-facing goals unfinished. The planner must size
+    // goals to one round and batch enumerable workloads.
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Goal",
+            completion_criteria: [],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+
+    await plan("Analyze each slide of the deck");
+
+    const sysMsg = mockInfer.mock.calls[0][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    // Regex over exact prose (qa-audit I2): pin the load-bearing tokens,
+    // survive wording polish.
+    expect(sysMsg!.content).toContain("Workload sizing");
+    expect(sysMsg!.content).toContain("ONE execution round");
+    expect(sysMsg!.content).toMatch(/batch goals of \d-\d items/i);
+    expect(sysMsg!.content).toMatch(/quantify over ALL items/i);
+    expect(sysMsg!.content).toMatch(/independent \(depends_on=\[\]\)/i);
+    expect(sysMsg!.content).toMatch(/never silently drop items/i);
+  });
+
   it("should strip markdown fences from LLM output", async () => {
     mockInfer.mockResolvedValueOnce({
       content:
@@ -333,6 +371,55 @@ describe("replan", () => {
     expect(newGraph.size).toBe(2);
     expect(newGraph.getGoal("g-1").status).toBe(GoalStatus.COMPLETED);
     expect(newGraph.getGoal("g-2").status).toBe(GoalStatus.PENDING);
+  });
+
+  it("replan system prompt carries the timeout-split rule and workload sizing (2026-07-27)", async () => {
+    // A timed-out goal retried whole times out again — the replanner must
+    // split it, and any new goals must be round-sized like plan-time goals.
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Goal",
+            completion_criteria: [],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+    const { graph } = await plan("Task");
+
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Goal",
+            completion_criteria: [],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+    await replan("Task", graph, "Goal g-3 timed out after 120000ms");
+
+    const sysMsg = mockInfer.mock.calls[1][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    expect(sysMsg!.content).toContain("A goal TIMED OUT");
+    expect(sysMsg!.content).toContain("Split it into smaller batch goals");
+    expect(sysMsg!.content).toContain("same workload sizing as planning");
   });
 });
 

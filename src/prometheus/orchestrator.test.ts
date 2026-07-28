@@ -339,6 +339,84 @@ describe("orchestrate", () => {
     expect(deferEvents.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("fires a hard replan carrying the timeout when a goal timed out (qa-audit C1, 2026-07-27)", async () => {
+    // The replanner's "goal TIMED OUT → split" rule only fires if the replan
+    // reason carries the timeout — the generic blocked-goals reason hides it.
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Analyze all 14 slides",
+      status: GoalStatus.FAILED,
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const timeoutExec: ExecutionResult = {
+      goalResults: {
+        "g-1": {
+          goalId: "g-1",
+          ok: true,
+          result: "done",
+          durationMs: 100,
+          toolCalls: 2,
+          toolNames: ["pdf_read"],
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+        "g-2": {
+          goalId: "g-2",
+          ok: false,
+          error: "Goal g-2 timed out after 120000ms",
+          durationMs: 360000,
+          toolCalls: 15,
+          toolNames: ["web_read"],
+          toolFailures: 0,
+          tokenUsage: { promptTokens: 0, completionTokens: 0 },
+        },
+      },
+      summary: {
+        completed: 1,
+        failed: 1,
+        pending: 0,
+        blocked: 0,
+        in_progress: 0,
+        total: 2,
+      },
+      totalToolCalls: 17,
+      totalToolNames: ["pdf_read", "web_read"],
+      totalToolFailures: 0,
+      tokenUsage: { promptTokens: 0, completionTokens: 0 },
+      toolRepairs: [],
+    };
+    mockExecuteGraph.mockResolvedValueOnce(timeoutExec);
+
+    // Replan returns an all-completed graph → next pass votes nothing → exit.
+    const replanGraph = makeGraph();
+    mockReplan.mockResolvedValueOnce({
+      graph: replanGraph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    await orchestrate("task-timeout-split", "Analyze each slide");
+
+    expect(mockReplan).toHaveBeenCalledTimes(1);
+    const reason = mockReplan.mock.calls[0][2];
+    expect(reason).toMatch(/timed out after 120000ms/);
+    expect(reason).toMatch(/split it into smaller batch goals/);
+  });
+
   it("should NOT replan on a single-pass soft vote when no work remains", async () => {
     // k=2 + no remaining work => the deferred vote is dropped and
     // execution exits cleanly. This is the key anti-thrash behavior:

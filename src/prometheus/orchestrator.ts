@@ -569,9 +569,25 @@ interface ReplanVote {
 function checkReplan(
   graph: GoalGraph,
   trace: RunTrace,
-  _execResults: ExecutionResult,
+  execResults: ExecutionResult,
   config: OrchestratorConfig,
 ): ReplanVote | null {
+  // Timed-out goal (hard, checked first — most specific): re-running an
+  // oversized goal whole times out again; the replanner must SPLIT it. This
+  // vote is the only path that puts a timeout in the replan reason — the
+  // replanner's "goal TIMED OUT → split" row is unreachable without it
+  // (qa-audit C1, 2026-07-27). Scoped to goals still FAILED in the graph so
+  // a replan that already rebuilt the goal doesn't re-vote on stale results.
+  for (const goal of graph.getByStatus(GoalStatus.FAILED)) {
+    const err = execResults.goalResults[goal.id]?.error;
+    if (err && /timed out after \d+ms/.test(err)) {
+      return {
+        reason: `${err} — the goal did not fit its execution round; split it into smaller batch goals`,
+        severity: "hard",
+      };
+    }
+  }
+
   // Tool failure rate threshold (soft — can improve with another pass)
   if (trace.totalToolCalls > 0) {
     const rate = trace.totalToolFailures / trace.totalToolCalls;
