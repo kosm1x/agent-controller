@@ -115,16 +115,25 @@ fi
 # --- Check 5: Disk usage ---
 # Real reclaim levers only. scripts/retention.sh was DELETED in Session 104; DB
 # retention is now a node cron (src/db/retention.ts), NOT a shell script, so we do
-# not try to invoke it here. Levers: vacuum systemd journals, prune Supabase
-# pg_dumps past the 7-day retention, and reclaim docker layer/build cache.
+# not try to invoke it here. Levers: vacuum systemd journals and reclaim docker
+# layer/build cache.
+#
+# NO pg_dump prune here (removed 2026-07-30). It was `-mtime +7` against
+# /opt/supabase/backups, but /opt/supabase/backup.sh already prunes that same
+# directory at `-mtime +3` every night — so nothing older than ~4 days ever
+# survives to be matched and this line reclaimed exactly 0 bytes while the alert
+# below claimed credit for it. Do NOT "fix" it by tightening the window: the
+# desktop rsync is a MIRROR (no --backup-dir), so any dump deleted here is also
+# deleted from the offsite copy on the next 09:00 UTC pull — i.e. it would burn
+# the recovery window during the incident that most needs it. Disk retention
+# policy belongs in backup.sh, not in the emergency path.
 DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
 if [ "$DISK_PCT" -gt 90 ]; then
   journalctl --vacuum-size=200M > /dev/null 2>&1 || true
-  find /opt/supabase/backups -maxdepth 1 -name '*.sql.gz' -mtime +7 -delete 2>/dev/null || true
   docker system prune -f > /dev/null 2>&1 || true
   docker buildx prune -f > /dev/null 2>&1 || true
   NEW_DISK=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
-  alert "Disk at ${DISK_PCT}%, ran cleanup (journal vacuum→200M, pruned pg_dumps >7d, docker system+buildx prune). Now ${NEW_DISK}%"
+  alert "Disk at ${DISK_PCT}%, ran cleanup (journal vacuum→200M, docker system+buildx prune). Now ${NEW_DISK}%"
 fi
 
 # --- Check 6 (CRM container prerequisites) REMOVED 2026-06-15 ---
