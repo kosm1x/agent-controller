@@ -37,17 +37,35 @@ import { errMsg } from "../err-msg.js";
 const log = createLogger("v8-3:trigger");
 
 /**
- * Tool name → seeded `capability_autonomy` key. Only the 5 tool-backed
+ * Tool name → seeded `capability_autonomy` key. Only the tool-backed
  * capabilities that pass through the operator confirm path. `task_edit` (an
  * internal `tasks` UPDATE, the `sql_inverse` reversibility workhorse) is a
  * SEPARATE seam and is intentionally NOT wired here.
+ *
+ * 2026-08-01 — two confirm-path DELETE tools were missing from this map, so
+ * they executed unlogged even with the capability armed. `delete_schedule`
+ * (riskTier high, `requiresConfirmation: true`) ran on 2026-08-01 13:22 MX and
+ * left no ledger row: the exact action class the ledger exists to record. Both
+ * map onto an ALREADY-SEEDED capability — no new seed, no `CAPABILITY_SEEDS`
+ * change — and neither declares a `sqlMutation`, so each lands a decision row
+ * with `reversal: null` (the same audit-only shape `jarvis_file_delete` has had
+ * since v1). §14's reversibility-coverage check is L≥3-only, so an L1 row
+ * without a reversal op cannot breach it.
+ *
+ * The mapped tool need not equal the capability name: a capability is the
+ * governed ACTION CLASS, and `delete_schedule` is the `delete_inverse` half of
+ * `schedule_task`. Tools WITHOUT `requiresConfirmation` (e.g. `schedule_task`
+ * itself) never reach this seam — mapping them is inert until the coverage
+ * boundary in the module doc is widened.
  */
 export const CAPABILITY_BY_TOOL: Record<string, string> = {
   jarvis_file_delete: "jarvis_file_delete",
+  jarvis_files_batch_delete: "jarvis_file_delete",
   gmail_send: "gmail_send",
   northstar_sync: "northstar_sync",
   skill_run: "skill_run",
   schedule_task: "schedule_task",
+  delete_schedule: "schedule_task",
 };
 
 /**

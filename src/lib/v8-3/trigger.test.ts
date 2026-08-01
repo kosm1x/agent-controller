@@ -31,6 +31,8 @@ function seedCapability(capability: string, level: number, gate: GateConfig) {
 }
 
 const FILE_GATE: GateConfig = { reversible_required: false, max_level: 2 };
+/** `schedule_task`'s real seed shape (CAPABILITY_SEEDS) — `delete_schedule` maps onto it. */
+const SCHEDULE_GATE: GateConfig = { reversible_required: true, max_level: 5 };
 const OK = JSON.stringify({ ok: true });
 
 function decisionCount(): number {
@@ -45,6 +47,7 @@ beforeEach(() => {
   initDatabase(":memory:");
   seedCapability("jarvis_file_delete", 1, FILE_GATE);
   seedCapability("gmail_send", 1, FILE_GATE);
+  seedCapability("schedule_task", 1, SCHEDULE_GATE);
   mockExecute.mockResolvedValue(OK);
   delete process.env.V83_ENABLED;
   delete process.env.V83_GATED_CAPABILITIES;
@@ -149,6 +152,54 @@ describe("executeGatedCapability — wrapped (armed canary)", () => {
     // gmail_send now active → wrapped.
     await executeGatedCapability("gmail_send", {}, { threadId: "t1" });
     expect(decisionCount()).toBe(1);
+  });
+
+  // 2026-08-01: both DELETE tools below reach the router confirm seam
+  // (`requiresConfirmation: true`) but were absent from CAPABILITY_BY_TOOL, so
+  // they executed unlogged. They map onto an already-seeded capability whose
+  // name differs from the tool name — these assert the CAPABILITY is recorded,
+  // which an identity-map "simplification" would break.
+  it("delete_schedule records under the schedule_task capability", async () => {
+    process.env.V83_GATED_CAPABILITIES = "schedule_task";
+    const toolOut = JSON.stringify({ ok: true, deleted: "0b107bb0" });
+    mockExecute.mockResolvedValue(toolOut);
+    const out = await executeGatedCapability(
+      "delete_schedule",
+      { schedule_id: "0b107bb0", confirmed: true },
+      { threadId: "t1" },
+    );
+    expect(out).toBe(toolOut);
+    expect(decisionCount()).toBe(1);
+    const row = getDatabase()
+      .prepare(
+        `SELECT capability, status, autonomy_level FROM decisions LIMIT 1`,
+      )
+      .get() as { capability: string; status: string; autonomy_level: number };
+    expect(row.capability).toBe("schedule_task"); // capability, NOT the tool name
+    expect(row.autonomy_level).toBe(1);
+    expect(row.status).toBe("committed");
+  });
+
+  it("jarvis_files_batch_delete records under the jarvis_file_delete capability", async () => {
+    mockExecute.mockResolvedValue(JSON.stringify({ ok: true, deleted: 3 }));
+    await executeGatedCapability(
+      "jarvis_files_batch_delete",
+      { paths: ["a.md", "b.md", "c.md"], confirmed: true },
+      { threadId: "t1" },
+    );
+    expect(decisionCount()).toBe(1); // default canary covers jarvis_file_delete
+    const row = getDatabase()
+      .prepare(`SELECT capability FROM decisions LIMIT 1`)
+      .get() as { capability: string };
+    expect(row.capability).toBe("jarvis_file_delete");
+  });
+
+  it("a mapped tool stays dormant while its capability is outside the canary", async () => {
+    process.env.V83_GATED_CAPABILITIES = "jarvis_file_delete";
+    // delete_schedule maps to schedule_task, which is NOT armed here.
+    await executeGatedCapability("delete_schedule", {}, { threadId: "t1" });
+    expect(decisionCount()).toBe(0);
+    expect(mockExecute).toHaveBeenCalledTimes(1); // still executed, just unlogged
   });
 
   it("empty V83_GATED_CAPABILITIES disables all (passthrough)", async () => {

@@ -133,6 +133,20 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 2. **W4 — eval/tuning processes write prod cost_ledger.** `npm run eval:gate` (~$5, `tuning:eval-probe` rows) and any script importing `infer()` against `mc.db` now land real rows in the shared windows. Under enforcement, one gate run can consume most of an hourly window and refuse production calls for the rest of the hour. Before arming: either size `BUDGET_HOURLY_LIMIT_USD` to accommodate a gate run, or exclude `tuning:%` from `getRemainingBudgetUsd()`'s windows (decide then — exclusion weakens the cap's completeness).
 3. **W2 (documented, accepted)** — per-call `maxBudgetUsd` = full remaining window, so N concurrent calls can overshoot by ~N×. The cap is a soft ceiling under concurrency, not a hard bound. Revisit only if overshoot is observed to matter.
 
+## V8.3 ledger coverage + unsolicited-Telegram follow-ups (2026-08-01)
+
+**Watches** (each has a concrete trigger — promote to a queue item when it fires):
+
+1. **First V8.3 decision row.** The canary is now `jarvis_file_delete,gmail_send,northstar_sync,schedule_task` and `CAPABILITY_BY_TOOL` covers `delete_schedule` + `jarvis_files_batch_delete`. The NEXT operator-confirmed action on any of those five tools should write a `decisions` row. **Trigger: if one is confirmed and `mc-ctl v83-gate` still reads 0, the wiring is wrong** — check the router confirm path actually calls `executeGatedCapability` for that tool, and that the capability is seeded non-zero.
+2. **Shadow volume vs real tempo.** Gate baseline post-arming is still `0/7`. **Trigger: re-check `mc-ctl v83-gate` on ~2026-08-08.** If <7, the confirm-seam tempo genuinely can't feed §14 and the decision is whether to record scheduled/ritual executions too. That is NOT a bug fix — it redefines a "decision" from "operator confirmed this" to "this ran", and the coverage boundary in `lib/v8-3/trigger.ts`'s module doc calls it out as a separate change. Operator call.
+3. **Alert notify-once regret.** `ALERT_RENOTIFY_HOURS=0` means a MISSED first announcement can become a silent outage (the 2026-06-12 failure mode the reminder was built for). **Trigger: any alert discovered late.** Fix = set `24` (daily reminder) rather than reverting to 6h.
+4. **Salon 54444db3 still logged out.** The alert is TRUE and now quiet. **Trigger: gilda.mx traffic questions, or any salones-wa work** — re-link per RUNBOOK §5, or retire the scrape job if Gilda stays dormant. Silencing was repetition-suppression, NOT resolution.
+
+**Queued (not scheduled):**
+
+5. **§13 pushback classifier — relevance floor.** Topic-word overlap is being read as dispute: judgment 122's prose contained "the Transhumanismo daily exploration", so two operator messages about a meditation SCHEDULE were classified as pushback on a SUBSTACK judgment. Each emitted the `held_position` default = the judgment's full ~1,600-char prose verbatim, in English, ahead of the real answer. Consider (a) requiring the reply to name the judgment's subject or contradict its posture, not merely share a token; (b) truncating/summarising the held-position re-delivery instead of restating full prose; (c) matching the re-delivery to the conversation's language. Cheap partial: (b) alone removes most of the perceived spam.
+6. **`skill_run` unreachable at the confirm seam.** It is in `CAPABILITY_BY_TOOL` but carries `riskTier: medium` with no `requiresConfirmation`, so it never reaches `executeGatedCapability`. Either give it confirmation semantics or accept it is inert and note that in the map (currently the comment says so; the entry itself reads as if it were live).
+
 ## Updates log
 
 | Date | Change |
