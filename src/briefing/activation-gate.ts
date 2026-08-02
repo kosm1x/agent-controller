@@ -77,8 +77,30 @@ export const GATE_MIN_RULED_BRIEFS = 3;
  *
  * MUST stay non-empty: it is interpolated into `IN (...)`, and SQLite
  * rejects `IN ()` as a syntax error.
+ *
+ * `nanoclaw` added 2026-08-02. It had been in the CACHEABLE allow-list below
+ * while meeting this list's criterion more strongly than `heavy` does — every
+ * run gets a fresh Docker container and a fresh clone, so it can never reuse a
+ * prompt-cache prefix across runs. Measured over 30d: `nanoclaw` pooled 34.5%
+ * cache-read over 49 runs / 72.0M prompt tokens, versus `heavy` (already
+ * excluded for coldness) at 61.8% and the hot path `fast` at 85.8%. The
+ * excluded type was warmer than the scored one — a category error, not a
+ * threshold problem.
+ *
+ * It bit because the ratio is TOKEN-weighted (`SUM/SUM`), so a low-count,
+ * multi-million-token runner outvotes the whole hot path: on 2026-08-02 a
+ * single 3.13M-token nanoclaw run at 0% cache-read pulled the 24h ratio from
+ * 94.7% (18 `fast` runs) to 76.8% and failed §13 on its own.
+ *
+ * CRITERION for adding a future runner here: does it start from a cold prompt
+ * prefix on EVERY run (containerized, fresh clone, or fires less often than the
+ * 5-min cache TTL)? If yes it belongs here, not in the allow-list — regardless
+ * of how good its numbers happen to look this week. Do NOT instead make the
+ * ratio weight-robust (median/capped contribution): pooled token share is the
+ * cost-relevant question the gate exists to ask, and blunting it would mask a
+ * genuine hot-path cache regression.
  */
-export const GATE_COLD_START_AGENT_TYPES = ["heavy"] as const;
+export const GATE_COLD_START_AGENT_TYPES = ["heavy", "nanoclaw"] as const;
 
 /**
  * ALLOW-LIST of agent_type values the §13 cache-read ratio measures — the
@@ -98,7 +120,8 @@ export const GATE_COLD_START_AGENT_TYPES = ["heavy"] as const;
 export const GATE_CACHEABLE_AGENT_TYPES = [
   "fast",
   "swarm",
-  "nanoclaw",
+  // `nanoclaw` was here until 2026-08-02 — moved to GATE_COLD_START_AGENT_TYPES
+  // (containerized, fresh clone per run ⇒ structurally cold). See that const.
   "a2a",
   "self-healing-triage",
   "hindsight",

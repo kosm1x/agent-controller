@@ -221,6 +221,30 @@ describe("evaluateActivationGate", () => {
     });
   });
 
+  it("EXCLUDES `nanoclaw` — one containerized run must not outvote the hot path", () => {
+    // The live 2026-08-02 shape. `nanoclaw` sat in the CACHEABLE allow-list
+    // despite being colder than `heavy`: fresh container + fresh clone per run,
+    // so it can never reuse a prompt-cache prefix. Because the ratio is
+    // TOKEN-weighted, ONE 3.13M-token run at 0% cache-read pulled 24h from
+    // 94.7% (18 fast runs) down to 76.8% and failed §13 by itself.
+    // Token proportions preserved at 1/1000 scale; run COUNT raised to 20 so
+    // this isolates the ratio effect rather than tripping GATE_MIN_CACHEABLE_RUNS
+    // (live had 18 fast runs, which is separately below that floor).
+    insertCacheableRuns(20, 747, 707); // fast: 94.6%, comfortably above the bar
+    insertCacheableCost(3_128, 0, "nanoclaw"); // one cold container run, 0%
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate();
+    expect(r.cacheableRuns).toBe(20); // nanoclaw row not counted
+    expect(r.cacheReadPct).toBeGreaterThanOrEqual(80); // undragged → PASS
+    expect(r.checks.cacheRead.pass).toBe(true);
+
+    // Excluded, never hidden: it still surfaces in the auditable mirror, so a
+    // real nanoclaw cache regression stays visible while non-gating.
+    expect(r.excludedColdStart.runs).toBe(1);
+    expect(r.excludedColdStart.cacheReadPct).toBe(0);
+  });
+
   it("reports excludedColdStart as zero/null when no heavy rows are in the window", () => {
     insertCacheableRuns(20, 1000, 900);
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
