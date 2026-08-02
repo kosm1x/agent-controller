@@ -21,6 +21,7 @@ import {
 import {
   evaluateV82Gate,
   combineVerdicts,
+  COMBINED_VERDICT_LABEL,
 } from "../src/briefing/v82-activation-gate.js";
 
 const V82_VERDICT_LABEL = {
@@ -41,19 +42,13 @@ const DB_PATH = join(
 const VERDICT_LABEL = {
   pass: "✅ PASS — V8.1 §13 activation gate met",
   fail: "❌ FAIL — below a §13 threshold",
-  // NOT "shadow run still accumulating" — §13 has been ACTIVE since V8.1. Its
-  // insufficient state means the operator ruled on too few briefs this window
-  // (`GATE_MIN_RULED_BRIEFS`), which is a real un-measurable, not a warm-up.
+  // NOT "shadow run still accumulating" — §13 has been ACTIVE since V8.1. And
+  // NOT a named cause: §13 has TWO insufficient terms (cache-read sample and
+  // ruled-brief sample, `activation-gate.ts:325`), so naming one gets it wrong
+  // half the time. The per-check `✗` lines below say which; the headline
+  // shouldn't guess.
   insufficient_data:
-    "⏳ INSUFFICIENT DATA — not enough ruled briefs to measure §13",
-} as const;
-
-/** Worst-of-two, printed so the exit code is never the only place it appears. */
-const COMBINED_LABEL = {
-  pass: "✅ BOTH GATES MET (exit 0)",
-  fail: "❌ FAIL — a threshold was missed in §13 or §17 (exit 1)",
-  insufficient_data:
-    "⏳ NOT MEASURABLE — a gate lacks the sample to be scored (exit 2)",
+    "⏳ INSUFFICIENT DATA — a §13 term is not measurable (see ✗ below)",
 } as const;
 
 function main(): number {
@@ -129,7 +124,7 @@ function main(): number {
   // code, so the render IS the consumer — if it isn't on screen, it isn't
   // reported.
   const combined = combineVerdicts(g.verdict, g2.verdict);
-  console.log(`\n=== Combined ===\n\n${COMBINED_LABEL[combined]}`);
+  console.log(`\n=== Combined ===\n\n${COMBINED_VERDICT_LABEL[combined]}`);
   return combined === "pass" ? 0 : combined === "fail" ? 1 : 2;
 }
 

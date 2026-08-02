@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { initDatabase, closeDatabase, getDatabase } from "../db/index.js";
-import { evaluateV82Gate, combineVerdicts } from "./v82-activation-gate.js";
+import {
+  evaluateV82Gate,
+  combineVerdicts,
+  COMBINED_VERDICT_LABEL,
+} from "./v82-activation-gate.js";
+import type { GateVerdict } from "./v82-activation-gate.js";
 import {
   CRITIC_UNVERIFIED_MARKER,
   CRITIC_NO_TOOL_CALL_MSG,
@@ -235,6 +240,27 @@ describe("evaluateV82Gate", () => {
     );
     // Exit 0 requires BOTH green — what scripts/briefing-gate.ts documents.
     expect(combineVerdicts("pass", "pass")).toBe("pass");
+  });
+
+  it("labels every combined verdict, and each label states the exit code its caller returns", () => {
+    // The label map lived in scripts/briefing-gate.ts until 2026-08-02 (audit
+    // R3 W3), where `Record<GateVerdict, string>` is NOT enforced — tsconfig
+    // includes only src/**, so a missing key would have rendered `undefined`
+    // to the operator with typecheck clean. This test is the second half of
+    // that fix: it also pins label↔exit-code agreement, which no type can.
+    const EXIT_CODE: Record<GateVerdict, number> = {
+      pass: 0,
+      fail: 1,
+      insufficient_data: 2,
+    };
+    for (const verdict of Object.keys(EXIT_CODE) as GateVerdict[]) {
+      const label = COMBINED_VERDICT_LABEL[verdict];
+      expect(label, `no label for '${verdict}'`).toBeTruthy();
+      expect(
+        label,
+        `'${verdict}' label must state exit ${EXIT_CODE[verdict]}`,
+      ).toContain(`exit ${EXIT_CODE[verdict]}`);
+    }
   });
 
   it("counts unfixable verdicts from critic_trail_json", () => {

@@ -100,6 +100,22 @@ export function combineVerdicts(a: GateVerdict, b: GateVerdict): GateVerdict {
   return "pass";
 }
 
+/**
+ * Operator-facing label for each combined verdict, with the exit code the
+ * caller returns for it. Lives HERE, not in `scripts/briefing-gate.ts`, so the
+ * `Record<GateVerdict, …>` annotation is actually enforced: `tsconfig.json`
+ * includes only `src/**`, so a map defined in `scripts/` is never typechecked
+ * and a missing key renders `undefined` at runtime. That exact trap already bit
+ * this subsystem once (`scripts/judgments.ts` printed `acceptance undefined×`
+ * after a field was removed, with `npm run typecheck` clean).
+ */
+export const COMBINED_VERDICT_LABEL: Record<GateVerdict, string> = {
+  pass: "✅ BOTH GATES MET (exit 0)",
+  fail: "❌ FAIL — a threshold was missed in §13 or §17 (exit 1)",
+  insufficient_data:
+    "⏳ NOT MEASURABLE — a gate lacks the sample to be scored (exit 2)",
+};
+
 export interface V82GateResult {
   /** Judgments written in the last 7 days (shadow volume). */
   judgments7d: number;
