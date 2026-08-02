@@ -4,7 +4,7 @@
  * Invoked by `mc-ctl briefing-gate`. Evaluates BOTH activation gates — the V8.1
  * §13 gate (cache-read ratio over cacheable inference + morning-brief
  * promote-rate) and the V8.2 §17 gate (shadow volume, citation resolver,
- * critic-unfixable, sycophancy, acceptance) — and prints one operator-readable
+ * critic-unfixable, sycophancy) — and prints one operator-readable
  * report. Read-only — no writes. The exit code is the worst-of-two so a single
  * `mc-ctl briefing-gate` reflects whether EITHER layer is activatable.
  */
@@ -104,7 +104,6 @@ function main(): number {
   line("citation resolver", c.resolver);
   line("critic unfixable", c.unfixable);
   line("sycophancy", c.sycophancy);
-  line("acceptance (6a)", c.acceptance);
 
   // Combined exit code (worst-of-two) so one invocation reflects both layers.
   // 0 = both gates met; 1 = a threshold failed in either; 2 = still

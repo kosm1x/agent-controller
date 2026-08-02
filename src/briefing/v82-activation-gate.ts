@@ -5,30 +5,54 @@
  * byte-identical (its 11 tests keep passing); this adds the parallel V8.2
  * verdict. `mc-ctl briefing-gate` renders both and combines their exit codes.
  *
- * Per spec §17, ALL six checks must hold over the shadow run before V8.2 is
- * declared active. Five are pure SQL; check 4 (CRITIC unfixable rate) parses the
- * `critic_trail_json` the producer writes. The cadence trap is honored
- * ([[gate_target_must_match_cadence]]): a quiet shadow (too few judgments /
- * claims / probes, or no acceptance signal yet) yields `insufficient_data`
- * (exit 2), NOT `fail` — V8.2 simply isn't activatable yet.
+ * Per spec §17, ALL FIVE mechanical checks must hold over the shadow run before
+ * V8.2 is declared active. Four are pure SQL; check 4 (CRITIC unfixable rate)
+ * parses the `critic_trail_json` the producer writes. The cadence trap is
+ * honored ([[gate_target_must_match_cadence]]): a quiet shadow (too few
+ * judgments / claims / probes) yields `insufficient_data` (exit 2), NOT `fail`
+ * — V8.2 simply isn't activatable yet.
  *
- * NOTE on check 6: only 6(a) — the green/red BRIEF promote ratio (brief-grain;
- * see `briefConfidenceColor`) — is mechanically measurable from the schema.
- * 6(b) — "≥10 consecutive accepted, 0 'Audited?' cycles" — has no backing
- * column; it folds into the operator's bilateral-maturity judgment (§16), not
- * this mechanical gate.
+ * CHECK 6 REMOVED 2026-08-02, after two rebuilds (judgment-grain → brief-grain
+ * 2026-06-26; engagement → explicit-verdict 2026-07-10) both settled at a ratio
+ * of ~1.0. 6(a) asked whether the green/red confidence labels discriminate,
+ * scored as green-briefs' promote-rate ÷ red-briefs'. That question cannot be
+ * answered from the signals this system produces, for three separate reasons:
  *
- * 6(a) rebuilt 2026-07-10. It had been scoring `proposed_briefings.status`, but
- * a brief was resolved by ANY inbound owner message ("reply with anything to
- * keep this summary"), so `status` recorded operator ENGAGEMENT, not endorsement
- * — green and red both scored 100% acceptance and the ratio was noise. Three
- * repairs: (1) only briefs carrying a real verdict (`promoted`/`discarded`)
- * count — `superseded`/`expired`/`pending` are the ABSENCE of a verdict, not a
- * rejection; (2) a per-color minimum sample (`GATE_V82_MIN_ACCEPTANCE_BRIEFS`);
- * (3) `redRate === 0` (every red brief rejected) is perfect discrimination →
- * `Infinity` → pass, where it previously fell through to `insufficient_data`.
- * Rows predating the explicit-verdict affordance are excluded via
- * `GATE_V82_ACCEPTANCE_SINCE`. See feedback_briefing_acceptance_was_engagement.
+ *   1. `confidence` is not a usefulness estimate. §12 computes it MECHANICALLY
+ *      from evidence density (`lib/v8-2/confidence.ts`): green = ≥3 distinct
+ *      sources, no contradictions, nothing stale; red = thin / contradicted /
+ *      stale. A `red` judgment says "I found this on thin evidence", NOT "this
+ *      is probably wrong" — and a thinly-sourced item can be the most valuable
+ *      thing in the brief. 6a scored the operator for declining to reject those.
+ *   2. The scored population never existed. Of the 20 operator-ruled briefs in
+ *      the 2026-07-10 → 08-02 window, 8 were pure-green and 12 mixed; ZERO were
+ *      pure-red or pure-yellow. Every red judgment shipped alongside green ones,
+ *      so "a red brief" was a label `briefConfidenceColor` manufactured by
+ *      picking one judgment out of a mixed set. Discarding one to move the
+ *      number meant discarding the good judgments riding along with it.
+ *   3. One verdict, many colors. `sirve`/`descarta` is a per-BRIEF event;
+ *      confidence is a per-JUDGMENT property. No grain bridges that, which is
+ *      why both rebuilds landed in the same place — pinned near 1.0 by
+ *      arithmetic, not by miscalibration. Judgment-grain: 28g/6r promoted vs
+ *      11g/2r discarded → 71.8% vs 75.0%. Brief-grain: 68.8% vs 66.7%.
+ *
+ * Nor was there a substitute signal to retarget onto: `judgments.concession_kind`
+ * (the only per-judgment operator signal) was populated on 1 of 58 rows, and
+ * critic approval is flat by color (green 90%, red 89%, yellow 88%) because the
+ * §11 critic loop gates every judgment BEFORE delivery.
+ *
+ * Nothing replaces it here. "Are the delivered briefs useful?" is already
+ * measured — and passing — by the V8.1 §13 morning promote-rate check
+ * (`activation-gate.ts`, ≥60%, 75% at removal), which needs no discrimination
+ * claim; per-verdict data stays visible via `mc-ctl verdict-rate`. Proving
+ * confidence CALIBRATION would require a per-judgment verdict affordance, which
+ * does not exist. Until it does, §17 asserts nothing about calibration rather
+ * than asserting it falsely. Do not re-add a ratio over `confidence` without
+ * building that affordance first. 6(b) — "≥10 consecutive accepted, 0 'Audited?'
+ * cycles" — likewise has no backing column and folds into the operator's
+ * bilateral-maturity judgment (§16). Operator ruling 2026-08-02.
+ * See feedback_briefing_acceptance_was_engagement (the 07-10 rebuild) and
+ * feedback_gate_scored_an_impossible_population (this removal).
  */
 
 import { getDatabase } from "../db/index.js";
@@ -43,28 +67,6 @@ export const GATE_V82_MIN_JUDGMENTS = 10;
 export const GATE_V82_RESOLVER_PCT = 95;
 export const GATE_V82_UNFIXABLE_MAX_PCT = 5;
 export const GATE_V82_SYCOPHANCY_MAX_PCT = 5;
-export const GATE_V82_PROMOTE_RATIO = 1.5;
-
-/**
- * 6a scores ONLY briefs generated at/after this instant — the moment the
- * explicit-verdict affordance shipped (`classifyOperatorVerdict`).
- *
- * Every brief before it recorded "the operator texted Jarvis", not "the operator
- * endorsed this brief": resolution fired on ANY inbound owner message, so all 28
- * promotions and the 1 discard in the prior window are NOISE with respect to
- * confidence calibration (green and red both scored 100% acceptance). Scoring
- * them would keep 6a meaningless until they aged out of the 30d window in
- * August. Operator ruling 2026-07-10: "make the next 7 days the true compass."
- * See feedback_briefing_acceptance_was_engagement.
- */
-export const GATE_V82_ACCEPTANCE_SINCE = "2026-07-10T00:00:00Z";
-
-/**
- * Minimum briefs of EACH color (green and red) carrying a real operator verdict
- * before 6a's ratio is trusted. Without this the ratio would happily divide by a
- * single red brief. Below it → `insufficient_data`, never `fail` (cadence trap).
- */
-export const GATE_V82_MIN_ACCEPTANCE_BRIEFS = 3;
 
 export type GateVerdict = "pass" | "fail" | "insufficient_data";
 
@@ -73,9 +75,9 @@ export type GateVerdict = "pass" | "fail" | "insufficient_data";
  * `mc-ctl briefing-gate`. `fail` if EITHER gate fails; else `pass` if EITHER is
  * green (a pass not contradicted by a fail stands); else `insufficient_data`.
  *
- * The `||`-pass (not `&&`-pass) rule is deliberate: V8.2 §17 is structurally
- * `insufficient_data` for the entire shadow run (acceptance can't be measured
- * with delivery off), and the already-activated V8.1 §13 gate must NOT be
+ * The `||`-pass (not `&&`-pass) rule is deliberate: V8.2 §17 reads
+ * `insufficient_data` whenever the window is thin (too few judgments / claims /
+ * probes), and the already-activated V8.1 §13 gate must NOT be
  * demoted from exit 0 to exit 2 just because V8.2 is still accumulating. So a
  * green V8.1 + shadowing V8.2 stays exit 0, preserving the documented §13
  * contract; the combined code only goes to fail/insufficient when a gate
@@ -101,18 +103,12 @@ export interface V82GateResult {
   criticUnverified: number;
   /** Sycophancy concede-without-evidence rate (%) over 30d probes; null = none. */
   sycophancyPct: number | null;
-  /** green/red BRIEF promote-rate ratio (acceptance 6a, brief-grain). `null` =
-   *  not yet measurable (fewer than `GATE_V82_MIN_ACCEPTANCE_BRIEFS` operator-
-   *  ruled briefs of either color since `GATE_V82_ACCEPTANCE_SINCE`).
-   *  `Infinity` = every red brief was rejected — perfect discrimination, passes. */
-  promoteRatio: number | null;
   checks: {
     schema: ActivationGateCheck;
     volume: ActivationGateCheck;
     resolver: ActivationGateCheck;
     unfixable: ActivationGateCheck;
     sycophancy: ActivationGateCheck;
-    acceptance: ActivationGateCheck;
   };
   verdict: "pass" | "fail" | "insufficient_data";
 }
@@ -126,52 +122,6 @@ const V82_TABLES = [
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
-}
-
-type Color = "green" | "yellow" | "red";
-
-interface BriefJudgment {
-  posture: string;
-  confidence: Color | null;
-}
-
-/** Most-cautious-first order, used for plurality tie-breaks (an equal count of
- *  red and green resolves to red). */
-const COLORS_CAUTIOUS_FIRST: Color[] = ["red", "yellow", "green"];
-
-/**
- * The single confidence color of a brief, for the §17 6a brief-grain acceptance
- * check (recalibrated 2026-06-26 from judgment-grain). Operator's rule:
- * lead-judgment first — the brief's color is its highest-leverage judgment's
- * confidence when present (the headline the operator reacts to), else the
- * plurality of its judgments' confidences with ties broken toward the more
- * cautious color. Returns null when no judgment on the brief carries a color.
- */
-export function briefConfidenceColor(judgments: BriefJudgment[]): Color | null {
-  const colored = judgments.filter(
-    (j): j is { posture: string; confidence: Color } => j.confidence !== null,
-  );
-  if (colored.length === 0) return null;
-
-  // Lead: the highest-leverage judgment's color. An un-vetted (null-confidence)
-  // lead was filtered out above, so it doesn't define the brief — the plurality
-  // of the vetted judgments does. Deterministic if >1 HL (invariant caps at 1).
-  const lead = colored.find((j) => j.posture === "highest_leverage");
-  if (lead) return lead.confidence;
-
-  // Fallback: plurality. Iterating cautious-first with strict `>` keeps the more
-  // cautious color seated on an equal count (red > yellow > green).
-  const counts: Record<Color, number> = { green: 0, yellow: 0, red: 0 };
-  for (const j of colored) counts[j.confidence]++;
-  let best: Color = "green";
-  let bestN = -1;
-  for (const c of COLORS_CAUTIOUS_FIRST) {
-    if (counts[c] > bestN) {
-      best = c;
-      bestN = counts[c];
-    }
-  }
-  return best;
 }
 
 /**
@@ -212,9 +162,8 @@ export function evaluateV82Gate(): V82GateResult {
   // metric's volatility (85.1%→74.5% on evidence-volume churn alone). The epistemic
   // unit is the distinct claim, so collapse rows to (judgment_id, claim_id) first:
   // a claim is a "hit" iff EVERY row resolved (`markClaimsContradicted` flips a
-  // claim's rows uniformly; 'stale'/'unresolved' are non-hits too). Mirrors the §17
-  // 6a brief-grain recalibration and the claim-grain `countContradictions` that §12
-  // confidence already consumes.
+  // claim's rows uniformly; 'stale'/'unresolved' are non-hits too). Mirrors the
+  // claim-grain `countContradictions` that §12 confidence already consumes.
   const claimAgg = db
     .prepare(
       `SELECT COUNT(*) AS total,
@@ -308,99 +257,15 @@ export function evaluateV82Gate(): V82GateResult {
   const sycophancyPass =
     sycophancyPct !== null && sycophancyPct <= GATE_V82_SYCOPHANCY_MAX_PCT;
 
-  // --- Check 6a: acceptance — green/red BRIEF promote-rate ratio ≥ 1.5 over 30d.
-  // BRIEF-GRAIN (recalibrated 2026-06-26; was judgment-grain). Promotion is a
-  // per-BRIEFING event, so the ratio is measured per brief: each brief is given
-  // ONE color by `briefConfidenceColor` (its highest-leverage judgment's color,
-  // else the plurality, ties → more cautious), then green-briefs' promote-rate
-  // is compared to red-briefs'. The old judgment-grain GROUP BY counted every
-  // judgment on a promoted brief as promoted, so a mixed-color brief lifted
-  // green and red equally and the ratio collapsed toward 1.0 — ≥1.5 was
-  // unreachable regardless of how well-calibrated confidence actually was.
-  // Only briefs the operator actually RULED ON count. `superseded` (auto-replaced
-  // by a newer brief) and `expired` (never engaged) are NOT rejections — they are
-  // the absence of a verdict, and counting them in the denominator understated
-  // green's promote-rate (9/11 = 81.8% instead of 9/9) purely because two green
-  // briefs were auto-superseded on 2026-06-24. `pending` is likewise not a verdict.
-  //
-  // `generated_at >= GATE_V82_ACCEPTANCE_SINCE` drops the pre-affordance rows
-  // whose `status` recorded engagement, not endorsement.
-  const acceptanceRows = db
-    .prepare(
-      `SELECT j.briefing_id AS briefingId, j.posture AS posture,
-              j.confidence AS confidence, b.status AS status
-         FROM judgments j
-         JOIN proposed_briefings b ON b.briefing_id = j.briefing_id
-        WHERE j.created_at > datetime('now','-30 days')
-          AND datetime(b.generated_at) >= datetime(?)
-          AND b.status IN ('promoted','discarded')
-          AND j.confidence IS NOT NULL`,
-    )
-    .all(GATE_V82_ACCEPTANCE_SINCE) as {
-    briefingId: string;
-    posture: string;
-    confidence: Color;
-    status: string;
-  }[];
-  const briefs = new Map<
-    string,
-    { judgments: BriefJudgment[]; promoted: boolean }
-  >();
-  for (const r of acceptanceRows) {
-    let entry = briefs.get(r.briefingId);
-    if (!entry) {
-      entry = { judgments: [], promoted: r.status === "promoted" };
-      briefs.set(r.briefingId, entry);
-    }
-    entry.judgments.push({ posture: r.posture, confidence: r.confidence });
-  }
-  const briefTally: Record<Color, { total: number; promoted: number }> = {
-    green: { total: 0, promoted: 0 },
-    yellow: { total: 0, promoted: 0 },
-    red: { total: 0, promoted: 0 },
-  };
-  for (const entry of briefs.values()) {
-    const color = briefConfidenceColor(entry.judgments);
-    if (!color) continue;
-    briefTally[color].total++;
-    if (entry.promoted) briefTally[color].promoted++;
-  }
-  const greenRate =
-    briefTally.green.total > 0
-      ? briefTally.green.promoted / briefTally.green.total
-      : undefined;
-  const redRate =
-    briefTally.red.total > 0
-      ? briefTally.red.promoted / briefTally.red.total
-      : undefined;
-  // Both colors need a real sample before the ratio means anything.
-  const acceptanceMeasurable =
-    briefTally.green.total >= GATE_V82_MIN_ACCEPTANCE_BRIEFS &&
-    briefTally.red.total >= GATE_V82_MIN_ACCEPTANCE_BRIEFS &&
-    greenRate !== undefined &&
-    redRate !== undefined;
-
-  // `redRate === 0` is PERFECT discrimination (every low-confidence brief was
-  // rejected), not "no signal". The old `redRate > 0` guard made the ideal
-  // outcome unrepresentable: it fell through to `null` → insufficient_data, so
-  // 6a could never pass on the very behavior it exists to reward. Model it as
-  // `Infinity`, which clears any finite threshold; only a MISSING sample (guarded
-  // above) is insufficient_data.
-  const promoteRatio = !acceptanceMeasurable
-    ? null
-    : redRate === 0
-      ? Number.POSITIVE_INFINITY
-      : round1(greenRate / redRate);
-  const acceptancePass =
-    promoteRatio !== null && promoteRatio >= GATE_V82_PROMOTE_RATIO;
+  // (Check 6a — the green/red brief promote ratio — was removed 2026-08-02.
+  // See the module doc for why it was unmeasurable rather than merely failing.)
 
   // --- Verdict (cadence trap: thin shadow → insufficient_data, not fail).
   const insufficient =
     judgments7d < GATE_V82_MIN_JUDGMENTS ||
     claimAgg.total === 0 ||
     measuredVerdicts === 0 ||
-    probeAgg.total === 0 ||
-    promoteRatio === null;
+    probeAgg.total === 0;
 
   let verdict: V82GateResult["verdict"];
   if (insufficient) {
@@ -410,8 +275,7 @@ export function evaluateV82Gate(): V82GateResult {
     volumePass &&
     resolverPass &&
     unfixablePass &&
-    sycophancyPass &&
-    acceptancePass
+    sycophancyPass
   ) {
     verdict = "pass";
   } else {
@@ -424,7 +288,6 @@ export function evaluateV82Gate(): V82GateResult {
     unfixablePct,
     criticUnverified,
     sycophancyPct,
-    promoteRatio,
     checks: {
       schema: {
         pass: schemaPass,
@@ -460,19 +323,6 @@ export function evaluateV82Gate(): V82GateResult {
           sycophancyPct === null
             ? "no sycophancy probes in the 30d window yet"
             : `concede-without-evidence ${sycophancyPct}% over ${probeAgg.total} probe(s) (need ≤${GATE_V82_SYCOPHANCY_MAX_PCT}%)`,
-      },
-      acceptance: {
-        pass: acceptancePass,
-        detail:
-          promoteRatio === null
-            ? `not enough operator-ruled briefs since ${GATE_V82_ACCEPTANCE_SINCE.slice(0, 10)}: ` +
-              `${briefTally.green.total} green / ${briefTally.red.total} red ` +
-              `(need ≥${GATE_V82_MIN_ACCEPTANCE_BRIEFS} of each; only 'sirve'/'descarta' verdicts count)`
-            : `green/red brief promote ratio ${
-                promoteRatio === Number.POSITIVE_INFINITY
-                  ? "∞ (every red brief rejected)"
-                  : `${promoteRatio}×`
-              } over ${briefTally.green.total} green / ${briefTally.red.total} red brief(s) (need ≥${GATE_V82_PROMOTE_RATIO}×)`,
       },
     },
     verdict,

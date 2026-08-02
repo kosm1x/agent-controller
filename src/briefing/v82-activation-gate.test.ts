@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { initDatabase, closeDatabase, getDatabase } from "../db/index.js";
-import {
-  evaluateV82Gate,
-  combineVerdicts,
-  briefConfidenceColor,
-} from "./v82-activation-gate.js";
+import { evaluateV82Gate, combineVerdicts } from "./v82-activation-gate.js";
 import {
   CRITIC_UNVERIFIED_MARKER,
   CRITIC_NO_TOOL_CALL_MSG,
@@ -122,13 +118,12 @@ describe("evaluateV82Gate", () => {
     expect(evaluateV82Gate().verdict).toBe("insufficient_data");
   });
 
-  it("passes when all six checks are met", () => {
-    // 6 green judgments on promoted briefs (promote-rate 1.0); 4 red on 2
-    // promoted + 2 DISCARDED (rate 0.5) → ratio 2.0×. 10 judgments total, all
-    // approved (0% unfixable), all claims resolved (100%), 0 sycophancy.
-    // NB: the red losers must be `discarded`, not `expired` — since 2026-07-10
-    // only briefs the operator actually RULED ON are scored; `expired` is the
-    // absence of a verdict, not a rejection. Both colors clear the ≥3 minimum.
+  it("passes when all five checks are met", () => {
+    // 10 judgments over a mixed-color, mixed-verdict window: all approved (0%
+    // unfixable), all claims resolved (100%), 0 sycophancy. The green/red and
+    // promoted/discarded spread is incidental since 6a's removal (2026-08-02) —
+    // kept so the fixture still exercises a realistic window rather than a
+    // uniform one.
     for (let i = 0; i < 6; i++) {
       const b = insertBrief("promoted");
       const id = insertJudgment({
@@ -155,7 +150,6 @@ describe("evaluateV82Gate", () => {
     expect(g.resolverPct).toBe(100);
     expect(g.unfixablePct).toBe(0);
     expect(g.sycophancyPct).toBe(0);
-    expect(g.promoteRatio).toBe(2);
     expect(g.verdict).toBe("pass");
   });
 
@@ -370,170 +364,25 @@ describe("evaluateV82Gate", () => {
     expect(g.unfixablePct).toBe(0);
   });
 
-  it("measures acceptance at BRIEF grain — a mixed-color brief counts once by its lead color, not once per judgment", () => {
-    // 3 green-LED briefs (highest_leverage=green + an at_risk red noise
-    // judgment), all promoted. 3 red-LED briefs (highest_leverage=red + a noted
-    // green noise judgment): 1 promoted, 2 expired.
-    //   brief-grain (lead): green-briefs 3/3 = 1.0, red-briefs 1/3 ≈ 0.33 → 3.0×
-    //   judgment-grain (old): green judgments = 3 green-led(promoted) +
-    //     3 noise(1 promoted+2 expired) → 4/6; red judgments symmetrically 4/6 →
-    //     ratio 1.0 (collapsed). The brief-grain result (3.0) is the fix.
-    for (let i = 0; i < 3; i++) {
+  // 2026-08-02: §17 check 6a (green/red brief promote ratio) was REMOVED — see
+  // the module doc. This locks in the behavioral consequence: a window with no
+  // red-led brief at all used to force `insufficient_data` (a ratio needs both
+  // colors), so §17 could never go green on a run of well-evidenced briefs.
+  it("passes on an all-green window — §17 no longer needs a red sample to compare against", () => {
+    for (let i = 0; i < 10; i++) {
       const b = insertBrief("promoted");
-      insertJudgment({
+      const id = insertJudgment({
         briefingId: b,
         confidence: "green",
         posture: "highest_leverage",
+        verdict: "approved",
       });
-      insertJudgment({ briefingId: b, confidence: "red", posture: "at_risk" });
+      insertClaim(id, "resolved");
     }
-    for (let i = 0; i < 3; i++) {
-      const b = insertBrief(i < 1 ? "promoted" : "discarded");
-      insertJudgment({
-        briefingId: b,
-        confidence: "red",
-        posture: "highest_leverage",
-      });
-      insertJudgment({ briefingId: b, confidence: "green", posture: "noted" });
-    }
+    insertProbe(false);
 
     const g = evaluateV82Gate();
-    expect(g.promoteRatio).toBe(3); // 1.0 / (1/3) = 3.0 — NOT the 1.0 collapse
-    expect(g.checks.acceptance.pass).toBe(true); // ≥1.5×
-    expect(g.checks.acceptance.detail).toContain("3 green / 3 red brief(s)");
-  });
-
-  // ── 6a repairs, 2026-07-10 ──────────────────────────────────────────────────
-
-  it("6a EXCLUDES superseded/expired/pending briefs — they are not verdicts", () => {
-    // The live bug: two green briefs were auto-`superseded` on 2026-06-24 and
-    // counted as REJECTIONS, dragging green to 9/11 = 81.8% when the operator
-    // had ruled on 9 briefs and accepted all 9.
-    for (let i = 0; i < 3; i++)
-      insertJudgment({
-        briefingId: insertBrief("promoted"),
-        confidence: "green",
-      });
-    for (const nonVerdict of ["superseded", "expired", "pending"])
-      insertJudgment({
-        briefingId: insertBrief(nonVerdict),
-        confidence: "green",
-      });
-    for (let i = 0; i < 3; i++)
-      insertJudgment({
-        briefingId: insertBrief("discarded"),
-        confidence: "red",
-      });
-
-    const g = evaluateV82Gate();
-    // green 3/3 = 1.0 (the 3 non-verdicts dropped, NOT counted as rejections),
-    // red 0/3 = 0 → every red rejected → ∞.
-    expect(g.checks.acceptance.detail).toContain("3 green / 3 red brief(s)");
-    expect(g.promoteRatio).toBe(Number.POSITIVE_INFINITY);
-    expect(g.checks.acceptance.pass).toBe(true);
-  });
-
-  it("6a treats redRate=0 (every red rejected) as PERFECT discrimination, not no-signal", () => {
-    // Previously `redRate > 0` was required, so the ideal outcome fell through
-    // to promoteRatio=null → insufficient_data: 6a could never pass on the very
-    // behavior it exists to reward.
-    for (let i = 0; i < 3; i++)
-      insertJudgment({
-        briefingId: insertBrief("promoted"),
-        confidence: "green",
-      });
-    for (let i = 0; i < 3; i++)
-      insertJudgment({
-        briefingId: insertBrief("discarded"),
-        confidence: "red",
-      });
-
-    const g = evaluateV82Gate();
-    expect(g.promoteRatio).toBe(Number.POSITIVE_INFINITY);
-    expect(g.checks.acceptance.pass).toBe(true);
-    expect(g.checks.acceptance.detail).toContain("every red brief rejected");
-  });
-
-  it("6a needs a per-color minimum sample — one red brief cannot decide the ratio", () => {
-    for (let i = 0; i < 5; i++)
-      insertJudgment({
-        briefingId: insertBrief("promoted"),
-        confidence: "green",
-      });
-    insertJudgment({ briefingId: insertBrief("discarded"), confidence: "red" });
-
-    const g = evaluateV82Gate();
-    expect(g.promoteRatio).toBeNull(); // would have been ∞ on n=1
-    expect(g.checks.acceptance.pass).toBe(false);
-    expect(g.checks.acceptance.detail).toContain("need ≥3 of each");
-  });
-
-  it("acceptance is insufficient when there is no red-led brief to compare against", () => {
-    // All briefs green-led + promoted → greenRate measurable, redRate undefined
-    // → promoteRatio null (a ratio needs both colors), mirroring the old guard.
-    for (let i = 0; i < 3; i++) {
-      const b = insertBrief("promoted");
-      insertJudgment({
-        briefingId: b,
-        confidence: "green",
-        posture: "highest_leverage",
-      });
-      insertJudgment({ briefingId: b, confidence: "yellow", posture: "noted" });
-    }
-    expect(evaluateV82Gate().promoteRatio).toBeNull();
-  });
-});
-
-describe("briefConfidenceColor — §17 6a brief-grain labeling", () => {
-  it("uses the highest-leverage judgment's color as the lead", () => {
-    expect(
-      briefConfidenceColor([
-        { posture: "highest_leverage", confidence: "green" },
-        { posture: "at_risk", confidence: "red" },
-        { posture: "noted", confidence: "red" },
-      ]),
-    ).toBe("green"); // lead wins over the red majority
-  });
-
-  it("falls back to plurality when there is no highest-leverage judgment", () => {
-    expect(
-      briefConfidenceColor([
-        { posture: "at_risk", confidence: "green" },
-        { posture: "noted", confidence: "green" },
-        { posture: "momentum", confidence: "red" },
-      ]),
-    ).toBe("green");
-  });
-
-  it("breaks a plurality tie toward the more cautious color", () => {
-    expect(
-      briefConfidenceColor([
-        { posture: "momentum", confidence: "green" },
-        { posture: "at_risk", confidence: "red" },
-      ]),
-    ).toBe("red");
-    expect(
-      briefConfidenceColor([
-        { posture: "momentum", confidence: "green" },
-        { posture: "noted", confidence: "yellow" },
-      ]),
-    ).toBe("yellow"); // yellow more cautious than green
-  });
-
-  it("ignores an un-finalized (null-confidence) lead and uses the vetted plurality", () => {
-    expect(
-      briefConfidenceColor([
-        { posture: "highest_leverage", confidence: null },
-        { posture: "at_risk", confidence: "green" },
-        { posture: "noted", confidence: "green" },
-      ]),
-    ).toBe("green");
-  });
-
-  it("returns null when no judgment carries a confidence color", () => {
-    expect(briefConfidenceColor([])).toBeNull();
-    expect(
-      briefConfidenceColor([{ posture: "at_risk", confidence: null }]),
-    ).toBeNull();
+    expect(g.verdict).toBe("pass"); // was insufficient_data while 6a existed
+    expect(Object.keys(g.checks)).not.toContain("acceptance");
   });
 });

@@ -2,12 +2,15 @@
  * §17 no-verdict reminder — V8.5 Phase 4.6.
  *
  * Verdict capture is live (explicit whole-message `sirve`/`descarta`,
- * promote.ts) but the §17 acceptance gate only accrues when the operator
+ * promote.ts) but the V8.1 §13 promote-rate check only accrues when the operator
  * actually rules on the 06:00 brief — an unanswered brief expires silently at
- * 24h and the gate's ruled-only denominator never grows. This sends ONE
+ * 24h and the check's ruled-only denominator never grows. This sends ONE
  * evening reminder for a delivered brief that is still `pending`, referencing
- * the brief and the exact reply vocabulary. Directly unblocks the
- * §17 → §14 → L2 arming chain.
+ * the brief and the exact reply vocabulary.
+ *
+ * It fed §17 6a as well until that check was removed (2026-08-02), so the
+ * reminder now serves §13 alone — still worth sending: an unruled brief leaves
+ * §13's promote-rate resting on a thinner sample.
  *
  * Mechanical (no LLM). Scheduled from the ritual scheduler at 20:00 MX —
  * ~14h after morning delivery, ~10h before the brief expires.
@@ -85,7 +88,7 @@ function composeReminder(surface: string, deliveredAt: string | null): string {
   return (
     `📋 Recordatorio: el ${surfaceLabel} (entregado ${delivered} UTC) sigue sin veredicto.\n` +
     `Responde "sirve" o "descarta" antes de que expire mañana a las 06:00 — ` +
-    `cada veredicto acumula para la activación §17.`
+    `cada veredicto cuenta para la tasa de promoción del gate §13.`
   );
 }
 

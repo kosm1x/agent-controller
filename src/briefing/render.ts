@@ -117,9 +117,10 @@ export function renderBriefing(
   // The footer IS the affordance — it must state the exact verdict vocabulary
   // `classifyOperatorVerdict` accepts. It previously read "responde lo que sea
   // para conservar este resumen", which made acceptance mean "the operator sent
-  // a message", not "the operator endorsed this brief" — destroying §17's 6a
-  // calibration check. Any edit here must stay in sync with ACCEPT_RE/DISCARD_RE
-  // in `promote.ts`.
+  // a message", not "the operator endorsed this brief" — destroying the §17 6a
+  // calibration check (since removed) and corrupting the V8.1 §13 promote-rate,
+  // which still reads these verdicts. Any edit here must stay in sync with
+  // ACCEPT_RE/DISCARD_RE in `promote.ts`.
   lines.push("—");
   lines.push(
     "_¿Te sirvió para enfocar el día? Responde *sirve* o *descarta*. " +

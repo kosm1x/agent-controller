@@ -133,6 +133,20 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 2. **W4 — eval/tuning processes write prod cost_ledger.** `npm run eval:gate` (~$5, `tuning:eval-probe` rows) and any script importing `infer()` against `mc.db` now land real rows in the shared windows. Under enforcement, one gate run can consume most of an hourly window and refuse production calls for the rest of the hour. Before arming: either size `BUDGET_HOURLY_LIMIT_USD` to accommodate a gate run, or exclude `tuning:%` from `getRemainingBudgetUsd()`'s windows (decide then — exclusion weakens the cap's completeness).
 3. **W2 (documented, accepted)** — per-call `maxBudgetUsd` = full remaining window, so N concurrent calls can overshoot by ~N×. The cap is a soft ceiling under concurrency, not a hard bound. Revisit only if overshoot is observed to matter.
 
+## §17 6a removed — follow-ups (2026-08-02)
+
+**Context:** 6a (green/red brief promote ratio) was deleted, not re-tuned — it scored a population that never existed (0 pure-red briefs in 20 ruled), over a label that means evidence density rather than predicted usefulness, from a per-brief verdict that cannot express per-judgment calibration. §17 now passes 5/5. Full rationale lives in the module doc of `src/briefing/v82-activation-gate.ts` — read it before touching any of the below.
+
+**Watches:**
+
+1. **Do NOT re-add a confidence ratio without a per-judgment verdict.** This check has now been rebuilt twice and removed once; the next person to see "§17 doesn't measure calibration" will be tempted to restore it. **Trigger: any proposal to score `confidence` against operator behavior.** The prerequisite is an affordance that lets the operator rule on individual judgments (the brief already numbers them — e.g. `sirve 1,3 / descarta 2`). Build that first; then calibration is directly measurable and 6a can return honestly.
+2. **§17 now passes — confirm the operator still wants V8.2 activation gated on the remaining five.** §17 passing is one of three blockers on V8.3 L≥3 (the others: §14 at 0/7, and an explicit `mc-ctl v83-promote <cap> --confirm`). Nothing auto-arms — `evaluateV82Gate` is tsx-only, never called in-service. **Trigger: before any L≥3 discussion**, re-read what §17 now asserts (schema, shadow volume, citation resolver, critic unfixable, sycophancy) and confirm that set is a sufficient bar without an acceptance term.
+3. **`V82_DELIVERY_ENABLED` is now a product decision, not a gate unblock.** It used to be the only path off §17's `insufficient_data`. With 6a gone, §17 goes green on shadow data alone. **Trigger: when the judgments are worth showing** — arm it because the operator wants them in the 06:00 brief, not to move a gate.
+
+**Queued (not scheduled):**
+
+4. **Deploy the reminder-string change.** The only runtime-affecting line in the 6a removal is `no-verdict-reminder.ts`'s operator-facing Spanish (it told the operator verdicts "acumula para la activación §17" — false since 6a's removal; now points at §13). Runs from compiled `dist/`, so it needs `./scripts/deploy.sh`. Low urgency (fires 20:00 MX only when a brief is unruled). **Note: a restart re-announces the still-firing `SalonWhatsAppLoggedOut` critical once** — criticals are deliberately never restart-seeded.
+
 ## V8.3 ledger coverage + unsolicited-Telegram follow-ups (2026-08-01)
 
 **Watches** (each has a concrete trigger — promote to a queue item when it fires):

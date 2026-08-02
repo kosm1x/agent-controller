@@ -1824,8 +1824,10 @@ cmd_trace() {
 }
 
 # V8.5 Phase 6 (plan-9-10 "S17 dashboard" folded in as a query): ruled-brief
-# verdict rate over time. The since-date mirrors GATE_V82_ACCEPTANCE_SINCE in
-# src/briefing/v82-activation-gate.ts (explicit-verdict era cutoff).
+# verdict rate over time. 2026-07-10 is the explicit-verdict-era cutoff — the day
+# `classifyOperatorVerdict` shipped, before which `status` recorded engagement,
+# not endorsement. (It was also §17 6a's scoring cutoff until 6a was removed on
+# 2026-08-02; this report is now the only place that window is surfaced.)
 cmd_verdict_rate() {
   need_db
   echo -e "${BOLD}=== S17 verdict rate — weekly, by surface ===${NC}"
@@ -1842,8 +1844,8 @@ cmd_verdict_rate() {
   GROUP BY week, surface ORDER BY week DESC LIMIT 12;"
 
   echo ""
-  # All surfaces — mirrors the 6a gate query (v82-activation-gate.ts), which
-  # does NOT filter by surface.
+  # All surfaces, deliberately — a verdict is a verdict whichever surface
+  # produced the brief.
   echo -e "${BOLD}=== S17 acceptance window (explicit-verdict era, since 2026-07-10, all surfaces) ===${NC}"
   sql "SELECT SUM(status = 'promoted')  AS sirve_green,
     SUM(status = 'discarded')           AS descarta_red,
@@ -1851,8 +1853,8 @@ cmd_verdict_rate() {
     SUM(status = 'expired')             AS expired
   FROM proposed_briefings
   WHERE delivered_at >= '2026-07-10';"
-  echo -e "${DIM}Raw brief-status counts — NOT the S17 gate metric (6a buckets ruled briefs by${NC}"
-  echo -e "${DIM}judgment COLOR, not status). Authoritative check: mc-ctl briefing-gate.${NC}"
+  echo -e "${DIM}Raw brief-status counts. Since 6a was removed (2026-08-02) NO S17 check reads${NC}"
+  echo -e "${DIM}these; the promote-rate gate is V8.1 S13. Authoritative: mc-ctl briefing-gate.${NC}"
 }
 
 # ---------------------------------------------------------------------------

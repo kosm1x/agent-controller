@@ -53,7 +53,10 @@ export const GATE_MORNING_PROMOTE_PCT = 60;
 
 /**
  * Minimum morning briefs carrying a real operator verdict before check 2's
- * promote-rate is trusted. Mirrors §17 6a's `GATE_V82_MIN_ACCEPTANCE_BRIEFS`.
+ * promote-rate is trusted. Since §17 6a was removed (2026-08-02 — see the module
+ * doc in `v82-activation-gate.ts`), check 2 is the gate system's ONLY
+ * promote-rate measure: it asks whether delivered briefs are useful, and makes
+ * no discrimination claim over the §12 confidence colors.
  *
  * Without a floor, `ruled > 0` lets a SINGLE ruling decide the gate: one
  * discarded brief in a quiet week is `0/1 = 0%` → measurable → §13 FAIL. That

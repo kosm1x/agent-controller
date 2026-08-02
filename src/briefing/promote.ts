@@ -58,8 +58,9 @@ const log = createLogger("briefing:promote");
  *
  * Leading/trailing punctuation, emoji and an optional courtesy "gracias" are
  * tolerated; anything more substantive leaves the brief `pending` (fails closed
- * — a missed accept is a lost data point, a false accept poisons §17 6a, which
- * gates V8.3 autonomy).
+ * — a missed accept is a lost data point, a false accept poisons the V8.1 §13
+ * promote-rate, which gates V8.1 activation. It poisoned §17 6a too until that
+ * check was removed on 2026-08-02).
  *
  * The `u` flag matters: without it `\b` is ASCII-only, so `\bútil` never fires on
  * a leading accented `ú` and the CORRECTLY spelled "útil" was silently dropped
@@ -98,10 +99,13 @@ const ACCEPT_WHOLE_RE = /^(s[ií]\s+)?(sirve|es\s+[uú]til|[uú]til)$/iu;
  *      morning brief.
  *
  * So `status` recorded WHETHER THE OPERATOR TEXTED JARVIS, uncorrelated with the
- * brief's content. That destroyed §17 check 6a, whose whole job is to prove the
- * green/red confidence labels discriminate: green and red both scored 100%
- * acceptance. Since 6a is a documented blocker on V8.3's L≥3 autonomous
- * execution, a meaningless 6a is a safety problem, not a cosmetic one.
+ * brief's content. That destroyed both checks reading it — §17 6a (whose job was
+ * to prove the green/red confidence labels discriminate: green and red both
+ * scored 100% acceptance) and the V8.1 §13 morning promote-rate. 6a was later
+ * REMOVED outright (2026-08-02; it was unmeasurable for deeper reasons than this
+ * one), leaving §13 the sole consumer. A promote-rate that records "the operator
+ * replied" rather than "the operator endorsed" is a safety problem, not a
+ * cosmetic one — §13 gates V8.1 activation.
  *
  * Fix: resolution requires the message to BE a verdict (see the anchoring note
  * above). An unrelated message returns `null` → the brief stays `pending` and a
