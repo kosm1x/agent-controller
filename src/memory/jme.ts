@@ -44,6 +44,14 @@ export const TEMPORAL_DEDUP_THRESHOLD = 0.85;
  */
 export const VECTOR_CEILING_WARN = 400;
 
+/**
+ * Phase 4: When the vector ceiling is active, facts below this confidence
+ * threshold are pruned during consolidation — more aggressive than the
+ * baseline 0.4 floor used in pruneExpiredFacts(). Clears marginal facts
+ * before they degrade recall quality by filling the LIMIT 500 query window.
+ */
+export const PHASE4_CONFIDENCE_FLOOR = 0.5;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type JmeTurnRole = "user" | "jarvis";
@@ -723,6 +731,8 @@ export interface ConsolidateResult {
   factsInserted: number;
   factsSkipped: number;
   factsSuperseded: number;
+  /** Phase 4: facts pruned during auto-prune when ceiling was active. */
+  factsPruned: number;
 }
 
 /**
@@ -746,6 +756,7 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
     factsInserted: 0,
     factsSkipped: 0,
     factsSuperseded: 0,
+    factsPruned: 0,
   };
 
   try {
@@ -767,10 +778,12 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       role: JmeTurnRole;
       content: string;
     }>;
-    // Phase 3 Pieza 2: vector ceiling surveillance.
+    // Phase 3 Pieza 2 + Phase 4: vector ceiling surveillance + auto-prune.
     // When jme_facts with embeddings approaches the LIMIT 500 in queryMemory(),
-    // recall quality degrades (oldest facts get cut off). Warn early at 400 so
-    // there's runway before it becomes a problem. Phase 4 will add auto-pruning.
+    // recall quality degrades (oldest facts get cut off). Phase 4: when the
+    // ceiling is active, auto-prune low-confidence facts (threshold raised to
+    // PHASE4_CONFIDENCE_FLOOR=0.5) before extraction, so the query window has
+    // room for the facts that matter.
     const embeddingCount = (
       db
         .prepare(
@@ -780,8 +793,24 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
     ).n;
     if (embeddingCount >= VECTOR_CEILING_WARN) {
       console.warn(
-        `[jme] consolidateAll: vector ceiling warning — ${embeddingCount} facts with embeddings (warn threshold=${VECTOR_CEILING_WARN}, query LIMIT=500). Consider pruning low-confidence facts.`,
+        `[jme] consolidateAll: vector ceiling active — ${embeddingCount} facts (warn=${VECTOR_CEILING_WARN}). Auto-pruning low-confidence facts (threshold=${PHASE4_CONFIDENCE_FLOOR}).`,
       );
+      // Phase 4 auto-prune: delete expired AND low-confidence facts using the
+      // elevated Phase 4 floor. This is a superset of pruneExpiredFacts() —
+      // it catches facts that the baseline 0.4 threshold would have kept.
+      const pruneResult = db
+        .prepare(
+          `DELETE FROM jme_facts
+           WHERE (expires_at IS NOT NULL AND expires_at < ?)
+              OR (confidence < ? AND ts < ?)`,
+        )
+        .run(Date.now(), PHASE4_CONFIDENCE_FLOOR, Date.now() - 30 * 24 * 60 * 60 * 1000);
+      result.factsPruned = pruneResult.changes;
+      if (result.factsPruned > 0) {
+        console.log(
+          `[jme] consolidateAll: phase4 auto-prune removed ${result.factsPruned} low-confidence facts`,
+        );
+      }
     }
 
     if (turns.length === 0) return result;

@@ -592,6 +592,74 @@ describe("JME — consolidateAll (nightly batch)", () => {
     expect(result.factsExtracted).toBe(0);
     expect(jmeStats().turnsTotal).toBe(1); // NOT deleted — unconsumed data
   });
+
+  // ── Phase 4: auto-prune when ceiling is active ───────────────────────────
+
+  it("Phase 4: auto-prunes low-confidence facts when embedding count >= VECTOR_CEILING_WARN", async () => {
+    const { consolidateAll, VECTOR_CEILING_WARN, PHASE4_CONFIDENCE_FLOOR } =
+      await getJme();
+
+    // Insert VECTOR_CEILING_WARN low-confidence facts (confidence below Phase 4
+    // floor, ts > 30 days ago so they qualify for deletion)
+    const oldTs = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const stmt = mockDb.prepare(
+      `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence, embedding)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    // Use a tiny 4-byte blob so embedding IS NOT NULL (counted by the ceiling query)
+    const tinyEmbedding = Buffer.alloc(4);
+    for (let i = 0; i < VECTOR_CEILING_WARN; i++) {
+      stmt.run("consolidator-nightly", oldTs, `low-conf fact ${i}`, "event", 0.3, tinyEmbedding);
+      mockDb
+        .prepare(`INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (last_insert_rowid(), ?)`)
+        .run(`low-conf fact ${i}`);
+    }
+
+    // Also insert one high-confidence fact that should survive
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence)
+         VALUES ('t-keep', ?, 'important fact', 'preference', 0.9)`,
+      )
+      .run(oldTs);
+
+    // No turns to process — consolidateAll still performs the ceiling check
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    const result = await consolidateAll();
+
+    // Phase 4 pruned the low-confidence facts
+    expect(result.factsPruned).toBeGreaterThanOrEqual(VECTOR_CEILING_WARN);
+    // High-confidence fact is untouched
+    const remaining = mockDb
+      .prepare(`SELECT fact_text FROM jme_facts WHERE fact_text = 'important fact'`)
+      .get();
+    expect(remaining).toBeTruthy();
+  });
+
+  it("Phase 4: factsPruned is 0 when embedding count is below VECTOR_CEILING_WARN", async () => {
+    const { consolidateAll, VECTOR_CEILING_WARN } = await getJme();
+
+    // Insert fewer facts than the ceiling threshold
+    const oldTs = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const tinyEmbedding = Buffer.alloc(4);
+    for (let i = 0; i < VECTOR_CEILING_WARN - 1; i++) {
+      mockDb
+        .prepare(
+          `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence, embedding)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run("t1", oldTs, `fact ${i}`, "event", 0.3, tinyEmbedding);
+    }
+
+    insertSettledTurn("task-x", "user", "hola");
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    const result = await consolidateAll();
+
+    // Below ceiling — no Phase 4 prune
+    expect(result.factsPruned).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

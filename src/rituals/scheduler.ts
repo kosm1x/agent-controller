@@ -910,8 +910,9 @@ function scheduleJmeConsolidation(): void {
           await import("../memory/jme.js");
         const result = await consolidateAll();
         const pruned = pruneStaleTurns();
+        const p4Tag = result.factsPruned > 0 ? `, ${result.factsPruned} p4-pruned` : "";
         console.log(
-          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned`,
+          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned${p4Tag}`,
         );
       } catch (err) {
         console.error("[rituals] jme-consolidate failed:", err);
