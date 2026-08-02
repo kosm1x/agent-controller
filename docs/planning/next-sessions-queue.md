@@ -133,6 +133,14 @@ To clear P0+P1: ~5 sessions. To clear P0–P2 fully: ~9 sessions. Strategic deci
 2. **W4 — eval/tuning processes write prod cost_ledger.** `npm run eval:gate` (~$5, `tuning:eval-probe` rows) and any script importing `infer()` against `mc.db` now land real rows in the shared windows. Under enforcement, one gate run can consume most of an hourly window and refuse production calls for the rest of the hour. Before arming: either size `BUDGET_HOURLY_LIMIT_USD` to accommodate a gate run, or exclude `tuning:%` from `getRemainingBudgetUsd()`'s windows (decide then — exclusion weakens the cap's completeness).
 3. **W2 (documented, accepted)** — per-call `maxBudgetUsd` = full remaining window, so N concurrent calls can overshoot by ~N×. The cap is a soft ceiling under concurrency, not a hard bound. Revisit only if overshoot is observed to matter.
 
+## JME Phase 4 — REJECTED and reverted (2026-08-02)
+
+PR #31 closed unmerged; both branches deleted (`jarvis/feat/jme-phase4-auto-prune` @ `0e1f898`, `jme-phase4-autoprune` @ `b37712e`). No code reached `main`; the 129 `jme_facts` rows are intact. **Reason: every precondition matched an empty set** — trigger `embeddingCount >= 400` vs a live count of **129**; `confidence < 0.5` vs a table minimum of **0.72** (0 rows); `ts < 30 days ago` vs an oldest fact of **16 days** (0 rows). Raising the floor `0.4 → 0.5` changed the outcome for exactly zero facts. Same defect class as §17 6a below — acting on a population that does not occur.
+
+Patches for BOTH attempts preserved at `/root/claude-backups/jme-phase4-rejected-2026-08-02/` (its `README.txt` marks which is worth reusing). Postmortem written for Jarvis at `jarvis-kb/projects/agent-controller/jme-phase4-postmortem-2026-08-02.md`.
+
+**Trigger: `jme_facts` with embeddings reaching ~400** (≈ early September at the current ~8 facts/day — check with `./mc-ctl db "SELECT COUNT(*) FROM jme_facts WHERE embedding IS NOT NULL"`). When it fires, the fix is `b37712e`'s shape — the FIRST attempt, which correctly parameterized `pruneExpiredFacts(confidenceFloor = 0.4)` and called it, rather than the inlined duplicate `DELETE` that became PR #31 — with a floor chosen from the confidence distribution observed at that time. Note `pruneExpiredFacts()` currently has **no caller in production**: it is exported, tested, and dead. Wiring it up is the actual Phase 4 task.
+
 ## §17 6a removed — follow-ups (2026-08-02)
 
 **Context:** 6a (green/red brief promote ratio) was deleted, not re-tuned — it scored a population that never existed (0 pure-red briefs in 20 ruled), over a label that means evidence density rather than predicted usefulness, from a per-brief verdict that cannot express per-judgment calibration. §17 now passes 5/5. Full rationale lives in the module doc of `src/briefing/v82-activation-gate.ts` — read it before touching any of the below.
