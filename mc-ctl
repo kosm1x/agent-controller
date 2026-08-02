@@ -1830,7 +1830,7 @@ cmd_trace() {
 # 2026-08-02; this report is now the only place that window is surfaced.)
 cmd_verdict_rate() {
   need_db
-  echo -e "${BOLD}=== S17 verdict rate — weekly, by surface ===${NC}"
+  echo -e "${BOLD}=== Ruled-brief verdict rate — weekly, by surface ===${NC}"
   sql "SELECT strftime('%Y-W%W', delivered_at) AS week, surface,
     COUNT(*)                                   AS delivered,
     SUM(status = 'promoted')                   AS sirve,
@@ -1846,7 +1846,7 @@ cmd_verdict_rate() {
   echo ""
   # All surfaces, deliberately — a verdict is a verdict whichever surface
   # produced the brief.
-  echo -e "${BOLD}=== S17 acceptance window (explicit-verdict era, since 2026-07-10, all surfaces) ===${NC}"
+  echo -e "${BOLD}=== Explicit-verdict era (since 2026-07-10, all surfaces) ===${NC}"
   sql "SELECT SUM(status = 'promoted')  AS sirve_green,
     SUM(status = 'discarded')           AS descarta_red,
     SUM(status = 'pending')             AS pending,
@@ -1910,8 +1910,8 @@ usage() {
   echo -e "  ${GREEN}drift${NC}                Config drift report — running env vs declared invariants (V8 S3)"
   echo -e "  ${GREEN}audit-claim${NC} METRIC   Stratify metric, surface warnings BEFORE reporting (V8 S2)"
   echo -e "                          metrics: utility | cache-hit | latency | cost"
-  echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 activation gate — cache-read ratio + promote-rate"
-  echo -e "  ${GREEN}verdict-rate${NC}         §17 ruled-brief verdict rate over time (weekly + acceptance window)"
+  echo -e "  ${GREEN}briefing-gate${NC}        V8.1 §13 + V8.2 §17 activation gates (worst-of-two exit)"
+  echo -e "  ${GREEN}verdict-rate${NC}         ruled-brief verdict rate over time (weekly + explicit-verdict era)"
   echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
   echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"

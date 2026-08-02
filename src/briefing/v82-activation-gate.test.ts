@@ -214,17 +214,26 @@ describe("evaluateV82Gate", () => {
     expect(g.checks.resolver.detail).toContain("distinct claim(s)");
   });
 
-  it("does NOT demote a passing V8.1 gate while V8.2 is still shadowing", () => {
-    // The whole point of the combined exit code: a green V8.1 + insufficient
-    // (shadowing) V8.2 must stay 'pass' (exit 0), not regress to insufficient.
-    expect(combineVerdicts("pass", "insufficient_data")).toBe("pass");
-    expect(combineVerdicts("insufficient_data", "pass")).toBe("pass");
-    // fail dominates either way; both-insufficient stays insufficient.
+  it("combines as TRUE worst-of-two — an un-measurable gate is never reported as met", () => {
+    // 2026-08-02 (audit C1): this was `||`-pass — green if EITHER gate was
+    // green — an exception that existed only because 6a pinned §17
+    // non-green for the whole shadow run. Removing 6a inverted it: §17's
+    // permanent pass masked a §13 gone `insufficient_data` (which happens on
+    // any week with < GATE_MIN_RULED_BRIEFS operator verdicts), reporting exit
+    // 0 for the only check that still measures human usefulness.
+    expect(combineVerdicts("pass", "insufficient_data")).toBe(
+      "insufficient_data",
+    );
+    expect(combineVerdicts("insufficient_data", "pass")).toBe(
+      "insufficient_data",
+    );
+    // fail still dominates everything, from either side.
     expect(combineVerdicts("pass", "fail")).toBe("fail");
     expect(combineVerdicts("fail", "insufficient_data")).toBe("fail");
     expect(combineVerdicts("insufficient_data", "insufficient_data")).toBe(
       "insufficient_data",
     );
+    // Exit 0 requires BOTH green — what scripts/briefing-gate.ts documents.
     expect(combineVerdicts("pass", "pass")).toBe("pass");
   });
 

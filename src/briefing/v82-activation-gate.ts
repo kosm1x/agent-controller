@@ -72,21 +72,30 @@ export type GateVerdict = "pass" | "fail" | "insufficient_data";
 
 /**
  * Combine the V8.1 §13 and V8.2 §17 verdicts into one exit verdict for
- * `mc-ctl briefing-gate`. `fail` if EITHER gate fails; else `pass` if EITHER is
- * green (a pass not contradicted by a fail stands); else `insufficient_data`.
+ * `mc-ctl briefing-gate`. TRUE worst-of-two: `fail` if either fails, else
+ * `insufficient_data` if either is un-measurable, else `pass`. Exit 0 therefore
+ * means what its caller has always documented — BOTH gates met.
  *
- * The `||`-pass (not `&&`-pass) rule is deliberate: V8.2 §17 reads
- * `insufficient_data` whenever the window is thin (too few judgments / claims /
- * probes), and the already-activated V8.1 §13 gate must NOT be
- * demoted from exit 0 to exit 2 just because V8.2 is still accumulating. So a
- * green V8.1 + shadowing V8.2 stays exit 0, preserving the documented §13
- * contract; the combined code only goes to fail/insufficient when a gate
- * actually regresses or neither is green.
+ * This was `||`-pass (green if EITHER gate was green) until 2026-08-02. That
+ * exception existed for one reason: §17 check 6a could not accrue until brief
+ * delivery was armed, so §17 was structurally `insufficient_data` for the whole
+ * shadow run and would have demoted the already-active §13 from exit 0 to
+ * exit 2. Removing 6a killed that premise — §17 now passes on shadow data
+ * alone — and the exception INVERTED: §17's permanent green began masking a §13
+ * that had gone un-measurable. Concretely, a week where the operator rules on
+ * fewer than `GATE_MIN_RULED_BRIEFS` briefs makes §13 `insufficient_data`, and
+ * under `||`-pass the combined code still read exit 0 — a green light for the
+ * one check that still measures whether briefs are useful to a human.
+ *
+ * The asymmetry is the point: a gate that cannot be measured must never be
+ * reported as met. If §17 later regains an operator-grounded term, it does not
+ * need this exception back — it needs its own sample.
  */
 export function combineVerdicts(a: GateVerdict, b: GateVerdict): GateVerdict {
   if (a === "fail" || b === "fail") return "fail";
-  if (a === "pass" || b === "pass") return "pass";
-  return "insufficient_data";
+  if (a === "insufficient_data" || b === "insufficient_data")
+    return "insufficient_data";
+  return "pass";
 }
 
 export interface V82GateResult {

@@ -20,7 +20,16 @@
  * `V81_BRIEF_DELIVERY_ENABLED`); with it on, `deliverBriefing` appends a
  * strategic-judgment section. The two flags are independent on purpose: the
  * judgments must prove sound in shadow before they reach the operator's brief,
- * so delivery is flipped on once §17 is green — without touching the producer.
+ * and delivery can be armed without touching the producer.
+ *
+ * §17 green is NECESSARY, NOT SUFFICIENT — do not read a passing gate as an
+ * instruction to flip this. Since check 6a was removed (2026-08-02) every
+ * surviving §17 check is machine-generated (schema, judgment count, citation
+ * resolver, critic LLM, sycophancy probe), so §17 can go green with zero
+ * operator input. Arming delivery is a PRODUCT decision — "do these judgments
+ * belong in the operator's 06:00 brief?" — and that question is answered by
+ * reading them (`mc-ctl judgments`), not by an exit code.
+ *
  * Default OFF (`=== "true"` opt-in idiom) so V8.2 stays dormant in the delivered
  * payload until that deliberate flip.
  */
