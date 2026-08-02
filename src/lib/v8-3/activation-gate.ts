@@ -42,6 +42,24 @@ const EXPECTED_CAPABILITY_COUNT = 6;
 export interface V83GateCheck {
   pass: boolean;
   detail: string;
+  /**
+   * True when the check passed WITHOUT EXAMINING ANYTHING — its population was
+   * empty, so `pass` records "no breach found", not "the property holds".
+   *
+   * Checks 5 and 6 are regression detectors over L≥3 decisions, and that
+   * population is empty by construction until an L3 promotion exists (only
+   * L1→L2 is implemented; all capabilities seed at L1). A bare `✓` over zero
+   * rows is indistinguishable from a `✓` over real coverage, and
+   * `renderPromotionAdr` writes these lines into a PERMANENT record as the
+   * evidence for a promotion — so the distinction has to survive into the
+   * rendering. Consumers must mark a vacuous pass differently from a verified
+   * one (see `promotion.ts` and `scripts/v83-gate.ts`).
+   *
+   * NOT a failure and NOT `insufficient_data`: demanding a non-empty L≥3
+   * population before §14 can pass would deadlock the gate permanently, since
+   * L≥3 decisions cannot exist until a promotion that §14 itself gates.
+   */
+  vacuous?: boolean;
 }
 
 export interface V83GateResult {
@@ -102,6 +120,21 @@ export function evaluateV83Gate(
       .get() as { n: number }
   ).n;
   const shadowPass = shadowDecisions >= GATE_V83_MIN_SHADOW_DECISIONS;
+
+  // The DENOMINATOR for checks 5 and 6. Both are regression detectors phrased as
+  // violation counts, so both pass trivially when this is 0 — which it is by
+  // construction until an L3 promotion exists. Measuring it lets the checks
+  // report what they actually examined instead of implying coverage they don't
+  // have (audit R2-A1, 2026-08-02).
+  const autonomousDecisions = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM decisions
+          WHERE autonomy_level >= 3
+            AND datetime(proposed_at) > datetime('now','-7 days')`,
+      )
+      .get() as { n: number }
+  ).n;
 
   // 5. judgment-linkage integrity — no L≥3 decision with judgment_id NULL (R2 #9).
   const unlinkedAutonomous = (
@@ -166,17 +199,23 @@ export function evaluateV83Gate(
       },
       linkageIntegrity: {
         pass: linkagePass,
+        vacuous: autonomousDecisions === 0,
         detail:
-          unlinkedAutonomous === 0
-            ? "no L≥3 decision lacks a linked judgment"
-            : `${unlinkedAutonomous} L≥3 decision(s) with judgment_id NULL — §12 linkage BREACH`,
+          autonomousDecisions === 0
+            ? "no L≥3 decision exists in the 7d window — nothing to verify (vacuous)"
+            : unlinkedAutonomous === 0
+              ? `all ${autonomousDecisions} L≥3 decision(s) carry a linked judgment`
+              : `${unlinkedAutonomous}/${autonomousDecisions} L≥3 decision(s) with judgment_id NULL — §12 linkage BREACH`,
       },
       reversibilityCoverage: {
         pass: reversibilityPass,
+        vacuous: autonomousDecisions === 0,
         detail:
-          irreversibleAutonomous === 0
-            ? "every L≥3 decision carries a reversal op"
-            : `${irreversibleAutonomous} L≥3 decision(s) with no reversal_op — §7 BREACH`,
+          autonomousDecisions === 0
+            ? "no L≥3 decision exists in the 7d window — nothing to verify (vacuous)"
+            : irreversibleAutonomous === 0
+              ? `all ${autonomousDecisions} L≥3 decision(s) carry a reversal op`
+              : `${irreversibleAutonomous}/${autonomousDecisions} L≥3 decision(s) with no reversal_op — §7 BREACH`,
       },
     },
     verdict,

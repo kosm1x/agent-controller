@@ -42,8 +42,12 @@ function main(): number {
   console.log("");
 
   const c = g.checks;
+  // `○` marks a VACUOUS pass — the check's population was empty, so it examined
+  // nothing. Rendering it as `✓` would read as verified coverage (audit R2-A1).
   const line = (label: string, chk: V83GateCheck): void =>
-    console.log(`  ${chk.pass ? "✓" : "✗"} ${label}: ${chk.detail}`);
+    console.log(
+      `  ${chk.vacuous ? "○" : chk.pass ? "✓" : "✗"} ${label}: ${chk.detail}`,
+    );
   line("schema", c.schema);
   line("v8.2 dependency", c.v82Dependency);
   line("seeded capabilities", c.seeded);

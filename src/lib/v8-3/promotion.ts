@@ -176,9 +176,26 @@ export function promoteCapabilityL1toL2(
  */
 export function renderPromotionAdr(outcome: PromotionDone): string {
   const c = outcome.gate.checks;
+  // A VACUOUS pass (empty population — see V83GateCheck.vacuous) gets its own
+  // mark. This record is permanent promotion evidence, and rendering "✓" for a
+  // check that examined zero rows would let a future reader conclude the
+  // property was verified when nothing was (audit R2-A1, 2026-08-02).
   const checkLines = Object.entries(c)
-    .map(([name, chk]) => `- ${chk.pass ? "✓" : "✗"} ${name}: ${chk.detail}`)
+    .map(
+      ([name, chk]) =>
+        `- ${chk.vacuous ? "○" : chk.pass ? "✓" : "✗"} ${name}: ${chk.detail}`,
+    )
     .join("\n");
+  const vacuousNames = Object.entries(c)
+    .filter(([, chk]) => chk.vacuous)
+    .map(([name]) => name);
+  const vacuousNote = vacuousNames.length
+    ? `\n> **○ = vacuous pass.** ${vacuousNames.join(", ")} had an empty population at ` +
+      `promotion time, so ${vacuousNames.length === 1 ? "it records" : "they record"} ` +
+      `"no breach found", NOT a verified property. L≥3 decisions cannot exist before ` +
+      `this promotion, so this is expected here — it is marked so the record cannot be ` +
+      `misread later as evidence the invariant was checked against real data.\n`
+    : "";
   return `# Capability promotion: ${outcome.capability} L1 → L2
 
 - **Status:** accepted
@@ -191,7 +208,7 @@ V8.3 §11 first promotion. The §14 v1 activation gate returned \`pass\` at the
 moment of promotion:
 
 ${checkLines}
-
+${vacuousNote}
 ## Decision
 
 \`${outcome.capability}\` moves from L1 (sync-confirm) to L2. \`override_integral\`

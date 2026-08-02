@@ -89,6 +89,50 @@ describe("evaluateV83Gate — §14 v1 activation gate", () => {
     expect(g.verdict).toBe("pass");
   });
 
+  // Audit R2-A1 (2026-08-02): checks 5/6 are violation counts over L≥3
+  // decisions — a population empty by construction until an L3 promotion
+  // exists. Both therefore PASS having examined nothing, and `promotion.ts`
+  // writes those lines into a permanent ADR as promotion evidence. The pass is
+  // correct (they are regression detectors, and demanding a non-empty L≥3
+  // population would deadlock the gate forever); what was wrong is that a
+  // vacuous ✓ was indistinguishable from a verified one. These two tests pin
+  // the distinction — before the fix both cases produced identical output.
+  it("marks linkage/reversibility VACUOUS when no L≥3 decision exists (passed without examining anything)", () => {
+    seedCapabilities();
+    insertN(7); // all L1 — the real steady state today
+    const g = evaluateV83Gate();
+
+    expect(g.verdict).toBe("pass");
+    expect(g.checks.linkageIntegrity.pass).toBe(true);
+    expect(g.checks.linkageIntegrity.vacuous).toBe(true);
+    expect(g.checks.linkageIntegrity.detail).toContain("nothing to verify");
+    expect(g.checks.reversibilityCoverage.vacuous).toBe(true);
+    // A check with a real population is never marked vacuous.
+    expect(g.checks.shadowVolume.vacuous).toBeFalsy();
+  });
+
+  it("is NOT vacuous once real L≥3 decisions exist, and reports the denominator", () => {
+    seedCapabilities();
+    const jid = seedJudgmentId();
+    insertN(7);
+    // Two compliant L≥3 decisions: linked AND carrying a reversal op.
+    for (let i = 0; i < 2; i++)
+      insertDecision({
+        autonomyLevel: 3,
+        judgmentId: jid,
+        reversalOp: '{"op":"undo"}',
+      });
+
+    const g = evaluateV83Gate();
+    expect(g.verdict).toBe("pass");
+    expect(g.checks.linkageIntegrity.vacuous).toBe(false);
+    expect(g.checks.linkageIntegrity.detail).toContain("all 2 L≥3 decision(s)");
+    expect(g.checks.reversibilityCoverage.vacuous).toBe(false);
+    expect(g.checks.reversibilityCoverage.detail).toContain(
+      "all 2 L≥3 decision(s)",
+    );
+  });
+
   it("missing a capability (5 seeded) → fail (misconfiguration, not insufficient_data)", () => {
     seedCapabilities(SIX.slice(0, 5));
     insertN(3);

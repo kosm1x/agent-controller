@@ -190,4 +190,23 @@ describe("renderPromotionAdr", () => {
     expect(adr).toContain("shadowVolume");
     expect(adr).toContain("gated on V8.2 §17");
   });
+
+  it("marks a VACUOUS check with ○ and explains it, so the permanent record can't be misread as verified", () => {
+    // Audit R2-A1: at the first L1→L2 promotion there are no L≥3 decisions, so
+    // linkage/reversibility pass having examined zero rows. Rendering them as
+    // "✓" alongside genuinely-verified checks would let a future reader of this
+    // permanent record conclude the invariants were checked against real data.
+    seedCapabilities();
+    makeGatePass();
+    const r = promoteCapabilityL1toL2("skill_run", { confirm: true });
+    const adr = renderPromotionAdr(r as PromotionDone);
+
+    expect(adr).toContain("○ linkageIntegrity");
+    expect(adr).toContain("○ reversibilityCoverage");
+    expect(adr).not.toContain("✓ linkageIntegrity"); // the pre-fix rendering
+    expect(adr).toContain("○ = vacuous pass");
+    expect(adr).toContain("NOT a verified property");
+    // Checks with a real population still render as ✓.
+    expect(adr).toContain("✓ shadowVolume");
+  });
 });
