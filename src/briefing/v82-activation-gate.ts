@@ -74,7 +74,9 @@ export type GateVerdict = "pass" | "fail" | "insufficient_data";
  * Combine the V8.1 §13 and V8.2 §17 verdicts into one exit verdict for
  * `mc-ctl briefing-gate`. TRUE worst-of-two: `fail` if either fails, else
  * `insufficient_data` if either is un-measurable, else `pass`. Exit 0 therefore
- * means what its caller has always documented — BOTH gates met.
+ * means BOTH gates met. (`scripts/briefing-gate.ts` described the old
+ * `||`-pass rule in prose — "whether EITHER layer is activatable" — and was
+ * corrected in the same change, so neither side still claims it.)
  *
  * This was `||`-pass (green if EITHER gate was green) until 2026-08-02. That
  * exception existed for one reason: §17 check 6a could not accrue until brief

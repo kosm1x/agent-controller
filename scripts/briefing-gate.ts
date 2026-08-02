@@ -5,8 +5,10 @@
  * §13 gate (cache-read ratio over cacheable inference + morning-brief
  * promote-rate) and the V8.2 §17 gate (shadow volume, citation resolver,
  * critic-unfixable, sycophancy) — and prints one operator-readable
- * report. Read-only — no writes. The exit code is the worst-of-two so a single
- * `mc-ctl briefing-gate` reflects whether EITHER layer is activatable.
+ * report. Read-only — no writes. Both the printed Combined verdict and the exit
+ * code are TRUE worst-of-two: exit 0 means BOTH layers are activatable. (This
+ * said "EITHER layer" until 2026-08-02, describing the `||`-pass exception that
+ * §17 check 6a's removal invalidated — see `combineVerdicts`.)
  */
 
 import { dirname, join } from "node:path";
@@ -39,7 +41,19 @@ const DB_PATH = join(
 const VERDICT_LABEL = {
   pass: "✅ PASS — V8.1 §13 activation gate met",
   fail: "❌ FAIL — below a §13 threshold",
-  insufficient_data: "⏳ INSUFFICIENT DATA — shadow run still accumulating",
+  // NOT "shadow run still accumulating" — §13 has been ACTIVE since V8.1. Its
+  // insufficient state means the operator ruled on too few briefs this window
+  // (`GATE_MIN_RULED_BRIEFS`), which is a real un-measurable, not a warm-up.
+  insufficient_data:
+    "⏳ INSUFFICIENT DATA — not enough ruled briefs to measure §13",
+} as const;
+
+/** Worst-of-two, printed so the exit code is never the only place it appears. */
+const COMBINED_LABEL = {
+  pass: "✅ BOTH GATES MET (exit 0)",
+  fail: "❌ FAIL — a threshold was missed in §13 or §17 (exit 1)",
+  insufficient_data:
+    "⏳ NOT MEASURABLE — a gate lacks the sample to be scored (exit 2)",
 } as const;
 
 function main(): number {
@@ -105,10 +119,17 @@ function main(): number {
   line("critic unfixable", c.unfixable);
   line("sycophancy", c.sycophancy);
 
-  // Combined exit code (worst-of-two) so one invocation reflects both layers.
-  // 0 = both gates met; 1 = a threshold failed in either; 2 = still
-  // accumulating (the expected state while V8.2 is in its 7-day shadow).
+  // Combined verdict (worst-of-two) so one invocation reflects both layers.
+  // 0 = both gates met; 1 = a threshold failed in either; 2 = a gate is not
+  // measurable (too few ruled briefs for §13, or a thin §17 window).
+  //
+  // PRINTED, not just returned (audit R2 C1): a per-gate render alone ends the
+  // terminal on §17's line, so a §13 `insufficient_data` under a passing §17
+  // showed a green last line while exiting 2. Nothing automated reads the exit
+  // code, so the render IS the consumer — if it isn't on screen, it isn't
+  // reported.
   const combined = combineVerdicts(g.verdict, g2.verdict);
+  console.log(`\n=== Combined ===\n\n${COMBINED_LABEL[combined]}`);
   return combined === "pass" ? 0 : combined === "fail" ? 1 : 2;
 }
 
