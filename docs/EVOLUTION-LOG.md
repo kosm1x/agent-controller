@@ -1145,3 +1145,161 @@ The most significant signal was the JME diagnostic: 63 facts stored, 351 total r
 
 ### Research notes
 Day 25 marks a critical pre-verdicto moment in the JME experiment: two days before the day-14 verdict (2026-07-27), recall utility sits at 12% — the system is in documented underperformance territory. The day also surfaces a structural tension in the KB architecture: as projects scale, maintaining two parallel KB representations (project-level README + plan overlay) without automated reconciliation generates compounding re-work. Both signals are relevant to the co-evolution paper's "infrastructure debt as interaction cost" thread.
+
+## 2026-07-26
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 6 (telegram: 6) |
+| Streak days | — |
+
+### Interactions summary
+The day split cleanly into two modes: early-morning knowledge-base maintenance (Pulso Aura and Azteca FSD KBs synced to their respective repo HEADs) and an afternoon-evening deep-dive into the Ricardo Salinas Pliego legal case (EWCA Civ 940, Court of Appeal England, 21-Jul-2026). Fede engaged Jarvis on legal analysis, probabilistic scenario planning for the London trial, and a structured reputational profile of Salinas as a political-business figure. One Reddit link (r/mexico, 14:29) was attempted but failed — Reddit returned 403 and a base64 image fallback that could not be parsed; Fede did not pursue the thread further.
+
+### What Jarvis learned
+The Salinas case has direct bearing on the Azteca FSD project context (concurso mercantil), and Fede made that cross-reference explicit — signaling that external legal intelligence is in-scope for Azteca FSD analysis. The terse "Sirve" confirmation at 12:30 confirms Fede's pattern of single-word acknowledgments when a prior deliverable is satisfactory; no response is expected and none was pressed. No new patterns surfaced via memory_reflect today (tool not available in this session).
+
+### Friction points
+Reddit link at 14:29 was unresolvable — 403 block and base64 image fallback with no text content. Jarvis reported the failure and awaited context from the user; the thread was dropped without resolution, so the topic of the post remains unknown.
+
+### Research notes
+Day illustrates the dual-mode pattern: infrastructure maintenance (KB sync) followed by intelligence work (legal + reputational analysis). The Salinas thread is notable as an example of external legal documents (PDFs) being ingested mid-day and immediately cross-referenced to an active project — a signal of increasing integration density between external world events and internal project context. Phase: established co-pilot, tool-augmented intelligence work.
+
+## 2026-07-27
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 38 (telegram: 38) |
+| Streak days | — |
+
+### Interactions summary
+A high-intensity strategic day with 6 sessions and ~30 exchanges spanning early morning to late afternoon. The dominant theme was **CTV / digital video** (México): Jarvis built a full KB from scratch, produced three market-intelligence reports, a narrative thread, and two Google Slides decks (one for agencies, one for the CEO). In parallel, **Plan 2027 crossed its most important milestone to date** — it was presented to the Comité Comercial with a strong reception and formally moved into Implementación phase. Secondary threads included two VLMP KB syncs (to v0.1.9.9), analysis of TelevisaUnivision's Q2 2026 results, Pipesong voice-agent call-log analysis (CSV → Google Docs report), and the opening of a new Fantasy 2026 project.
+
+### What Jarvis learned
+Fede confirmed that external legal and competitive intelligence (TV Azteca concurso mercantil at 01:15, Roku/Fox deal at $22B) is immediately incorporated into active project narratives — cross-referencing between real-world events and internal KBs happens in real time. The Google Slides API has a structural blind spot: inner text boxes are not exposed, so slides appear empty until the user provides a PDF; Jarvis should treat deck content as opaque until a file is supplied. No new patterns surfaced via memory_reflect today (tool not available in this session).
+
+### Friction points
+1. **Factual error — Mundial 2026 / TV Azteca** (10:35): Jarvis incorrectly stated TV Azteca did not broadcast the 2026 World Cup. Fede corrected the record: Azteca transmitted via sublicense from Televisa. Jarvis acknowledged and republished the corrected analysis.
+2. **Ambiguous ticker TVSA** (10:21–10:23): Fede asked about "TVSA" meaning $TV (TelevisaUnivision); two exchanges were needed to clarify the correct ticker.
+3. **Google Slides API opacity** (16:33–16:34): Inner text boxes on the CTV deck were not accessible via the API — Jarvis reported slides as "empty" until Fede uploaded the PDF, which resolved the content.
+4. **Context bleed between sessions** (16:32): When asked for a "resumen ejecutivo" of the CTV deck, Jarvis generated a deck titled "Agente de Voz Próstata" — a likely context bleed from the concurrent Pipesong session running earlier in the same window.
+5. **Orphaned workspace — madrugada** (01:15 → 08:07): The concurso mercantil query at 01:15 had no explicit close; the "Descarta" command at 08:07 required clarification and was never confirmed as executed.
+
+### Research notes
+Today marks a phase inflection: **Plan 2027 moving from strategy to implementation** is the first major institutional milestone (Comité Comercial approval) observed in the log. The parallel CTV subproject demonstrates Jarvis as a document-production engine — KB, intelligence reports, narrative thread, and two decks all built in under 6 hours. The context bleed between Pipesong and CTV sessions (friction point 4) is a longitudinal signal worth tracking: as concurrent project threads multiply, cross-contamination risk increases at session-boundary moments.
+
+## 2026-07-28
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 8 (telegram: 8) |
+| Streak days | — |
+
+### Interactions summary
+Three distinct work blocks defined the day: a morning session synthesizing Flash Digital Q1 2025–Q1 2026 advertising market data (Mexico); an afternoon session on global private-label / retailer own-brand trends that culminated in an automated Google Doc with an expanded Mexico section; and an extended evening session on Rocket Lab (RKLB) covering investment thesis, Q2 2026 earnings consensus, mid-term business outlook, and the Neutron rocket development timeline. Roughly 9 human↔Jarvis exchanges across 4 sessions. The Google Docs write tool and web-sourced financial/market data were the most active surfaces.
+
+### What Jarvis learned
+Fede is comfortable mixing strategic research (private label global trends) with operational outputs (write it to a Google Doc, now) in the same thread — he expects seamless handoff between analysis and artifact creation. On the RKLB session, a minor factual confusion arose when Fede assumed Q2 2026 earnings had already occurred; Jarvis corrected cleanly (Q1 already reported, Q2 due ~Aug 10), and Fede accepted without friction. No new preferences or corrections beyond that single clarification.
+
+### Friction points
+One minor friction detected: ambiguity over which RKLB earnings cycle had already occurred. Resolved in a single exchange with no backtracking required. No other friction points detected.
+
+### Research notes
+The day illustrates a mature "research → document" workflow loop: Fede supplies a domain (advertising spend, private label, space equities), Jarvis synthesizes and structures, then immediately externalizes the output to a shareable artifact (Google Doc, structured tesis). The RKLB session — spanning thesis, consensus, outlook, and hardware status in five rapid turns — suggests the co-evolution is entering a phase where Jarvis is used as a real-time investment intelligence layer alongside longer-form strategic work.
+
+## 2026-07-29
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 2 (telegram: 2) |
+| Streak days | — |
+
+### Interactions summary
+Minimal-activity day. A single documented exchange occurred at 23:25 h: Fede sent "Sirve" — confirming that a brief had been saved correctly — and Jarvis acknowledged with "✓ Brief conservado." No projects were engaged extensively, and no decisions of long-term scope appeared in the log. The two conversations were brief, confirmatory, and frictionless.
+
+### What Jarvis learned
+No new patterns detected. The day's sole signal is behavioral: Fede uses terse single-word confirmations ("Sirve") as a low-cost closure signal, trusting Jarvis to have already handled the underlying action correctly. No corrections or new preferences surfaced.
+
+### Friction points
+None detected.
+
+### Research notes
+A quiet day with minimal surface area — consistent with a sustained-use phase where the agent sits passively available for brief confirmations rather than extended sessions. The "Sirve" closure pattern recurs across the log and is now a well-established interaction primitive: it marks task handoff as complete without requiring elaboration.
+
+## 2026-07-30
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 15 |
+| Total tasks | — |
+| Conversations today | 15 (telegram: 15) |
+| Streak days | — |
+
+### Interactions summary
+An intense, multi-threaded day spanning late night through evening. The early hours (00:02–00:31) were devoted to financial modelling for TMN × Soriana: Fede walked Jarvis through a credit-differential P&L structure and confirmed the definitive model (50 MDP cost → 100 MDP market value, no take-rate), ending with a three-scenario business case built into an existing Google Sheet. The rest of the day was dominated by KB synchronisation work — FSD Azteca received three separate syncs (accumulating at least 8 new commits, closing Move 1 audit at PASS WITH WARNINGS / 263 tests), Pulso Aura was synced once (kill switch `CRM_RITUALS_SLEEP=true` active in prod), and Plan 2027 was opened and updated as an integrated cross-asset view. A single investment query (SPCX / SpaceX ETF) also came through mid-morning.
+
+### What Jarvis learned
+The TMN model clarification revealed a recurring user pattern: Fede iterates financial assumptions in tight back-and-forth cycles, confirming before any write operation — the "Confirmo el modelo" checkpoint is a deliberate gate, not just acknowledgment. The §15 ground-truth update to FSD Azteca (guides close daily at 18:00, not weekly batch) signals that operational facts embedded in KB can drift silently and require explicit correction sessions. No new patterns surfaced via memory_reflect today (tool not available in this runner).
+
+### Friction points
+One avoidable error: when asked to update the investment verdict for **SPCX**, Jarvis incorrectly assumed the ticker was RKLB (Rocket Lab) and delivered the wrong analysis. The user had to correct explicitly ("Te pedí SPCX") before the right SPCX / SpaceX ETF verdict was produced. This is a ticker-disambiguation failure — two aerospace names collided in retrieval. Friction was mild but the pattern (user must repeat the exact request to get the correct subject) warrants a watch.
+
+### Research notes
+The day exemplifies the "parallel-thread operator" phase: Fede routinely runs 3–4 workstreams in a single day (financial modelling, KB maintenance, investment tracking, strategic planning) with Jarvis as the synchronisation layer. The SPCX/RKLB disambiguation error is the type of low-stakes but repeatable friction that, if left unaddressed, accumulates into distrust of financial-data outputs — worth flagging as a quality signal for the co-evolution paper.
+
+## 2026-07-31
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 14 (telegram: 14) |
+| Streak days | — |
+
+### Interactions summary
+High-activity day across four distinct fronts: (1) TMN/Soriana — Fede confirmed delivery of the business case and registered the Tuesday 4-Aug partner meeting; a key model correction was made, eliminating revenue share and anchoring the deal structure to credit spread as the sole profit mechanism. (2) Grupo Ángeles / EurekaMD — a new project was opened from a meeting report, with three tracks scoped and the voice agent brief for Hospital Ángel Acoxpa (Track 1, urgent) fully documented including a salary benchmark of $9,931/mo (Médica Sur reference). (3) @MexicoNecesario editorial calendar — 42 tweets generated for August–September and loaded to the scheduler. (4) Williams Radar W31 — a 404 incident surfaced at 20:14 CDMX after the pipeline generated the CSV but failed to publish the `.md`; shell-based diagnosis was underway at day close with no confirmed resolution.
+
+### What Jarvis learned
+The Soriana model has definitively shifted to credit-spread-only — revenue share is off the table and the KB was updated accordingly; this is a durable context anchor for all future TMN interactions. The Grupo Ángeles project introduced a direct PipeSong application: the voice agent for hospital first-contact reception is Track 1 with an urgency flag for the week of August 3rd, making this the first concrete external deployment brief for PipeSong infrastructure. No new behavioral patterns surfaced via memory_reflect today (tool not available in this session).
+
+### Friction points
+Two friction events logged: (1) Company name mismatch — the meeting report said "EurekaMS" but the correct entity is "EurekaMD"; Fede had to correct it after the initial analysis, adding a step. (2) W31 pipeline incident — the journal publisher generated the CSV but did not commit/push the `.md`, causing a user-visible 404 at 20:14; manual shell diagnosis was required and the issue was unresolved at log time. The raw binary DOCX delivery also added a parsing step, though Jarvis handled it transparently.
+
+### Research notes
+Day marks the first time PipeSong surfaces explicitly as a billable deliverable for an external client (EurekaMD / Grupo Ángeles), suggesting a phase transition from internal infrastructure to commercial deployment. The operator's session pattern — bursts of high-context work across unrelated projects within a single morning window — continues to confirm a concentrated, multi-domain cognitive mode that benefits from persistent KB state across all open projects simultaneously.
+
+## 2026-08-01
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 12 (telegram: 12) |
+| Streak days | — |
+
+### Interactions summary
+Today was a maintenance and recalibration day spanning four sessions (08:36–17:12) with approximately 14 exchanges across six projects. Fede focused on fixing inherited bugs (Williams Radar Journal W31 had Spanish sections from a template propagation error), redesigning two cognitive-routine systems (chemistry flashcards and the transhumanist meditation schedule), reviewing a Pulso Aura stakeholder name-bridge document (ultimately discarded), and syncing three project KBs (Pulso Aura, Agent Controller, Pipesong) against their repos. Shell access and KB sync tools were the most heavily used.
+
+### What Jarvis learned
+A meaningful conceptual pivot emerged: Fede signaled that the existing transhumanist meditation content (gadgets, biohacking) felt superficial and misaligned with his actual intellectual trajectory, prompting a curriculum redesign toward the Transhumanism-to-Posthumanism transition. This is a signal about depth preference — Fede expects philosophical rigor over technology enthusiasm in reflective content. The chemistry flashcard rule change (repeat unanswered cards rather than advancing) also reveals a preference for confirmed mastery over throughput.
+
+### Friction points
+Two friction events: (1) the Pulso Aura stakeholder file `data/stakeholders-2026-08-01/review-stakeholder-bridge.md` was not accessible via KB path and required a fallback to shell in the local repo — resolved transparently. (2) The `schedule_task` schema was not loaded in deferred tools during the meditation schedule update, causing a pause before the correct route was found. Both were self-recovered without operator intervention beyond initial path clarification.
+
+### Research notes
+The day illustrates a recurring pattern in the co-evolution arc: Fede uses maintenance sessions not just for upkeep but as a recalibration mechanism — resetting cognitive tools (cards, meditation) to better match his evolving intellectual posture. At ~day 180+ of longitudinal tracking, we are well past cold-start; the agent is now detecting misalignment in scheduled content before the user explicitly names it as a problem (the meditation redesign was proactively diagnosed once the user gave the signal). This suggests entry into a feedback-dense phase where course-corrections are smaller and faster.
