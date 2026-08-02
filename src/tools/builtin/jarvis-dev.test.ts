@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildGateScopeArgs,
   computeDirtyHash,
+  describeTestRunFailure,
   detectRunMutation,
+  execFailureText,
+  GATE_SCOPE_PROPERTIES,
   isCacheFresh,
   TEST_CACHE_TTL_MS,
   type TestCacheEntry,
@@ -168,5 +172,94 @@ describe("jarvis_dev dirty hash — untracked content (M1)", () => {
       ],
     });
     expect(h1).not.toEqual(h2);
+  });
+});
+
+describe("jarvis_dev gate scope containment (OOM outage 2026-08-02)", () => {
+  it("wraps the child in a transient scope inside the capped shared slice", () => {
+    const cmd = ["npx", "vitest", "run", "--reporter=dot"];
+    const args = buildGateScopeArgs(cmd);
+    // --scope = the child leaves mission-control.service's cgroup, so an OOM
+    // kill can only take the test run, never the host service.
+    expect(args[0]).toBe("--scope");
+    expect(args).toContain("--collect");
+    // The memory cap lives on the SLICE (shared across concurrent gate runs —
+    // per-scope caps would stack), so membership is the load-bearing arg.
+    expect(args).toContain("--slice=jarvis-gate");
+    // RuntimeMaxSec is the cgroup-wide deadline — the fix for orphaned fork
+    // workers that Node's single-process SIGTERM timeout leaves behind.
+    expect(args.join(" ")).toMatch(/--property RuntimeMaxSec=\d+/);
+    // The command survives verbatim after the `--` separator.
+    expect(args.slice(args.indexOf("--") + 1)).toEqual(cmd);
+  });
+
+  it("every scope property is a well-formed systemd Key=Value", () => {
+    expect(GATE_SCOPE_PROPERTIES.length).toBeGreaterThanOrEqual(1);
+    for (const p of GATE_SCOPE_PROPERTIES) {
+      expect(p).toMatch(/^[A-Za-z]+=\S+$/);
+    }
+  });
+});
+
+describe("jarvis_dev failure classification (audit C1/C2/W4 2026-08-02)", () => {
+  it("classifies a scope kill (RuntimeMaxSec / cgroup-OOM) as TIMEOUT/KILLED, not parsed failures", () => {
+    // systemd-run --scope execs the command, so kills arrive as plain
+    // signals — partial stdout must not be parsed as a failure count.
+    const out = describeTestRunFailure({
+      signal: "SIGKILL",
+      code: null,
+      stdout: "Tests  3 failed | 100 passed", // partial, untrustworthy
+    });
+    expect(out).toMatch(/^TIMEOUT\/KILLED/);
+    expect(out).not.toContain("3 failed");
+  });
+
+  it("classifies a maxBuffer breach as KILLED with the buffer size", () => {
+    expect(
+      describeTestRunFailure({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }),
+    ).toMatch(/^KILLED: vitest output exceeded maxBuffer \(32 MiB\)/);
+  });
+
+  it("extracts the failure count from stdout AND failing names from stderr", () => {
+    // vitest prints the summary on stdout but the Failed Tests block on
+    // STDERR — the old stdout-only read lost every failing test name.
+    const out = describeTestRunFailure({
+      code: 1,
+      stdout: "Tests  2 failed | 6975 passed (6977)",
+      stderr:
+        " FAIL  src/a.test.ts > does the thing\n FAIL  src/b.test.ts > other\n",
+    });
+    expect(out).toContain("FAIL: 2 failed, 6975 passed");
+    expect(out).toContain("src/a.test.ts > does the thing");
+  });
+
+  it("surfaces systemd-run's own stderr-only failures instead of `FAIL: ` with no text", () => {
+    // execFile attaches stdout as "" (never undefined), so a ??-chain on
+    // stdout swallowed stderr-only errors into an empty message.
+    const out = describeTestRunFailure({
+      code: 1,
+      stdout: "",
+      stderr: "Unknown assignment: NotARealProp=1\n",
+    });
+    expect(out).toContain("Unknown assignment");
+  });
+
+  it("falls back to err.message when both streams are empty (e.g. ENOENT)", () => {
+    const out = describeTestRunFailure({
+      code: "ENOENT",
+      stdout: "",
+      stderr: "",
+      message: "spawn systemd-run ENOENT",
+    });
+    expect(out).toContain("spawn systemd-run ENOENT");
+  });
+
+  it("execFailureText combines both streams — tsc diagnostics live on stdout", () => {
+    expect(
+      execFailureText({ stdout: "src/x.ts(1,1): error TS2322", stderr: "" }),
+    ).toContain("TS2322");
+    expect(execFailureText({ stdout: "", stderr: "", message: "boom" })).toBe(
+      "boom",
+    );
   });
 });

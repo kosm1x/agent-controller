@@ -62,6 +62,111 @@ const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 // `push` in particular hits the network and does pre-commit hooks.
 const GIT_TIMEOUT_MS = 60_000;
 
+// OOM containment (2026-08-02): both gate children previously ran inside
+// mission-control.service's cgroup. Jarvis's action=pr full suite drove the
+// box into GLOBAL OOM; the kernel picked the fattest process (a 3.5GB vitest
+// worker) and systemd's default OOMPolicy turned that single kill into unit
+// failure — the gate OOM-killed its own host service mid-run (19:23 outage).
+// Every gate child now runs in a transient systemd scope:
+//   - OUT of the service cgroup — an OOM kill can only hit the test run,
+//     which surfaces as a failed gate, never as a service outage (an
+//     OOMPolicy=continue drop-in covers the remaining in-cgroup children);
+//   - memory-capped via the SHARED /etc/systemd/system/jarvis-gate.slice
+//     (MemoryMax=8G) — on the slice, not per scope, so concurrent gate runs
+//     share ONE budget and a stacked retry cannot re-create the global OOM
+//     (audit W3). Measured 2026-08-02: a green full suite (6,975 tests)
+//     peaks at 684M in the slice, so 8G is ~12x headroom — a breach means
+//     runaway tests (the incident's 3.5G worker came from a broken tree),
+//     and it costs a red gate, never the box;
+//   - RuntimeMaxSec kills the WHOLE process group at the deadline — Node's
+//     `timeout` option only SIGTERMs the npx wrapper and orphans the vitest
+//     fork workers.
+//
+// The slice unit must exist on the host (daemon-reloaded); if it is missing,
+// systemd-run fails fast with a stderr message that execFailureText surfaces
+// — a visible FAIL, never a silent PASS.
+export const GATE_SLICE = "jarvis-gate";
+export const GATE_SCOPE_PROPERTIES = [
+  `RuntimeMaxSec=${TIMEOUT_MS / 1000}`,
+] as const;
+
+/** systemd-run argv for one gate child. Pure so tests can pin the contract. */
+export function buildGateScopeArgs(cmd: readonly string[]): string[] {
+  return [
+    "--scope",
+    "--collect",
+    "--quiet",
+    `--slice=${GATE_SLICE}`,
+    ...GATE_SCOPE_PROPERTIES.flatMap((p) => ["--property", p]),
+    "--",
+    ...cmd,
+  ];
+}
+
+// The scope's RuntimeMaxSec is the real deadline (cgroup-wide kill); Node's
+// timeout is only a backstop for a hung systemd-run itself, so it gets slack.
+const EXEC_TIMEOUT_MS = TIMEOUT_MS + 30_000;
+
+/** Error shape promisify(execFile) rejects with. Streams are `""`, never
+ * undefined, so `??` chains silently swallow them — combine instead. */
+export interface ExecFailure {
+  code?: string | number | null;
+  signal?: string | null;
+  stdout?: string;
+  stderr?: string;
+  message?: string;
+}
+
+/** Both streams joined — tsc writes diagnostics to STDOUT, vitest writes its
+ * failed-test block to STDERR, and systemd-run's own failures (bad property,
+ * dbus refusal) are stderr-only. Reading a single stream loses one of them
+ * (audit C1/C2 2026-08-02: every tsc FAIL had reported an empty message). */
+export function execFailureText(e: ExecFailure): string {
+  return (
+    [e.stdout, e.stderr].filter(Boolean).join("\n") ||
+    e.message ||
+    "(no output)"
+  );
+}
+
+/**
+ * Classify a failed vitest child into the gate's `tests` result string.
+ * Pure and exported so the kill/maxbuffer/parse branches are testable
+ * (audit W4 2026-08-02 — previously only the argv builder was pinned).
+ */
+export function describeTestRunFailure(e: ExecFailure): string {
+  // ETIMEDOUT + SIGTERM = Node's own timeout. SIGKILL = external kill
+  // (OOM-killer, resource cap) — also a "killed before finishing" signal,
+  // so report it as timeout rather than parsing partial stdout as failures.
+  // systemd-run --scope EXECS the command (measured, audit W1 2026-08-02),
+  // so a RuntimeMaxSec or cgroup-OOM kill reaches Node as a plain signal —
+  // no numeric exit-code translation happens.
+  const timedOut =
+    e.code === "ETIMEDOUT" || e.signal === "SIGTERM" || e.signal === "SIGKILL";
+  if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    return `KILLED: vitest output exceeded maxBuffer (${EXEC_MAX_BUFFER / (1024 * 1024)} MiB) — a huge failure dump usually means many tests failed. Run a scoped vitest on the touched files to see the real failures.`;
+  }
+  if (timedOut) {
+    return `TIMEOUT/KILLED (code=${e.code ?? "?"} signal=${e.signal ?? "?"}): vitest died before finishing (scope limits: ${TIMEOUT_MS / 1000}s, shared MemoryMax on jarvis-gate.slice). Re-run a scoped vitest on the touched files; if those pass, the gate was killed by load or the memory cap.`;
+  }
+  const msg = execFailureText(e);
+  const summaryMatch = msg.match(
+    /Tests\s+(\d+)\s+failed(?:\s+\|\s+(\d+)\s+passed)?/,
+  );
+  // Name the failures (up to 10) — a bare count forced blind re-debugging
+  // on 2026-07-13 ("17 failed" with no way to know which; the load-flake
+  // vs real-failure call needed the names).
+  const failedNames = [...msg.matchAll(/^\s*(?:FAIL|×|✗)\s+(.+)$/gm)]
+    .map((m) => m[1].trim())
+    .slice(0, 10);
+  const namesSuffix = failedNames.length
+    ? ` — failing: ${failedNames.join("; ")}`
+    : "";
+  return summaryMatch
+    ? `FAIL: ${summaryMatch[1]} failed, ${summaryMatch[2] ?? "?"} passed${namesSuffix}`
+    : `FAIL: ${msg.slice(0, 500)}`;
+}
+
 // action=test caches its result so action=pr can skip re-running the full
 // suite when nothing has changed since. Tests take 136s+ and that alone can
 // exceed the caller's per-query budget.
@@ -303,29 +408,33 @@ async function actionTest(): Promise<string> {
 
   // Typecheck
   try {
-    await execFileAsync("npx", ["tsc", "--noEmit"], {
-      cwd: MC_DIR,
-      timeout: TIMEOUT_MS,
-      encoding: "utf-8",
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
+    await execFileAsync(
+      "systemd-run",
+      buildGateScopeArgs(["npx", "tsc", "--noEmit"]),
+      {
+        cwd: MC_DIR,
+        timeout: EXEC_TIMEOUT_MS,
+        encoding: "utf-8",
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
     results.typecheck = "PASS";
   } catch (err) {
+    // tsc writes ALL diagnostics to stdout (audit C2 2026-08-02 — the old
+    // stderr-only read reported `FAIL: ` with zero text on every failure).
     const msg =
-      err instanceof Error
-        ? ((err as { stderr?: string }).stderr ?? err.message)
-        : String(err);
+      err instanceof Error ? execFailureText(err as ExecFailure) : String(err);
     results.typecheck = `FAIL: ${msg.slice(0, 500)}`;
   }
 
   // Tests
   try {
     const { stdout } = await execFileAsync(
-      "npx",
-      ["vitest", "run", "--reporter=dot"],
+      "systemd-run",
+      buildGateScopeArgs(["npx", "vitest", "run", "--reporter=dot"]),
       {
         cwd: MC_DIR,
-        timeout: TIMEOUT_MS,
+        timeout: EXEC_TIMEOUT_MS,
         encoding: "utf-8",
         maxBuffer: EXEC_MAX_BUFFER,
       },
@@ -337,41 +446,7 @@ async function actionTest(): Promise<string> {
     // A timed-out vitest has partial stdout that can match the "N failed" regex
     // even when the ONLY failure was the kill signal — don't trust that as a
     // real failure count.
-    const e = err as {
-      code?: string;
-      signal?: string;
-      stdout?: string;
-      message?: string;
-    };
-    // ETIMEDOUT + SIGTERM = Node's own timeout. SIGKILL = external kill
-    // (OOM-killer, resource cap) — also a "killed before finishing" signal,
-    // so report it as timeout rather than parsing partial stdout as failures.
-    const timedOut =
-      e.code === "ETIMEDOUT" ||
-      e.signal === "SIGTERM" ||
-      e.signal === "SIGKILL";
-    if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-      results.tests = `KILLED: vitest output exceeded maxBuffer (${EXEC_MAX_BUFFER / (1024 * 1024)} MiB) — a huge failure dump usually means many tests failed. Run a scoped vitest on the touched files to see the real failures.`;
-    } else if (timedOut) {
-      results.tests = `TIMEOUT/KILLED (code=${e.code ?? "?"} signal=${e.signal ?? "?"}): vitest died before finishing (limit ${TIMEOUT_MS / 1000}s). Re-run locally; if the suite passes in isolation, the gate was killed by load.`;
-    } else {
-      const msg = e.stdout ?? e.message ?? String(err);
-      const summaryMatch = msg.match(
-        /Tests\s+(\d+)\s+failed(?:\s+\|\s+(\d+)\s+passed)?/,
-      );
-      // Name the failures (up to 10) — a bare count forced blind re-debugging
-      // on 2026-07-13 ("17 failed" with no way to know which; the load-flake
-      // vs real-failure call needed the names).
-      const failedNames = [...msg.matchAll(/^\s*(?:FAIL|×|✗)\s+(.+)$/gm)]
-        .map((m) => m[1].trim())
-        .slice(0, 10);
-      const namesSuffix = failedNames.length
-        ? ` — failing: ${failedNames.join("; ")}`
-        : "";
-      results.tests = summaryMatch
-        ? `FAIL: ${summaryMatch[1]} failed, ${summaryMatch[2] ?? "?"} passed${namesSuffix}`
-        : `FAIL: ${msg.slice(0, 500)}`;
-    }
+    results.tests = describeTestRunFailure(err as ExecFailure);
   }
 
   // Re-snapshot AFTER tests ran. If the working tree changed during the
