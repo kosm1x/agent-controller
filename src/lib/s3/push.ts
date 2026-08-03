@@ -175,10 +175,13 @@ function extractObserved(json: string): string {
  * itself never rejects (it swallows + logs in `Promise.all`).
  */
 type PushRouter = {
+  // Return widened to `unknown` (2026-08-03): the live router now resolves a
+  // {sent, failed} tally for sync-surfacing; this module keeps counting via
+  // the failure callback and ignores the resolved value either way.
   broadcastToAll: (
     text: string,
     onChannelFailure?: (channelName: string, err: unknown) => void,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 };
 
 export async function dispatchPushAlerts(

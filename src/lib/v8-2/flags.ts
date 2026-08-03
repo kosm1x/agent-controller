@@ -46,3 +46,14 @@ export function isV82ProducerEnabled(): boolean {
 export function isV82DeliveryEnabled(): boolean {
   return process.env.V82_DELIVERY_ENABLED === "true";
 }
+
+/** schedule_id of the operator's scheduled task that acts as the strategic
+ *  surface (operator ruling 2026-08-03: the 08:00 "Morning Sync" replaced the
+ *  retired 06:00 brief as the operator-facing morning surface). When set, the
+ *  dynamic scheduler injects one vetted judgment per day into that task's
+ *  prompt and appends the Lectura estratégica line to its outbound message
+ *  (src/lib/v8-2/sync-surfacing.ts). Unset (the default) = no injection. */
+export function getSyncSurfaceScheduleId(): string | null {
+  const v = process.env.V82_SYNC_SCHEDULE_ID?.trim();
+  return v ? v : null;
+}

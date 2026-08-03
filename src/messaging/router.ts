@@ -2235,11 +2235,18 @@ export class MessageRouter {
    * resolves before `Promise.all`. The callback must not throw; if it
    * throws, the throw is logged and ignored to keep this method's
    * fire-and-forget contract intact.
+   *
+   * Returns the per-channel tally (mirrors `sendBriefingToOwner`) so a caller
+   * that needs delivery-of-record semantics — the sync-surfacing consent stamp
+   * — can distinguish "resolved with 0 sends" from an actual delivery. Existing
+   * fire-and-forget callers ignore the value unchanged.
    */
   async broadcastToAll(
     text: string,
     onChannelFailure?: (channelName: ChannelName, err: unknown) => void,
-  ): Promise<void> {
+  ): Promise<{ sent: number; failed: number }> {
+    let sent = 0;
+    let failed = 0;
     const promises: Promise<void>[] = [];
 
     for (const [name, adapter] of this.channels) {
@@ -2252,8 +2259,11 @@ export class MessageRouter {
         promises.push(
           adapter
             .send({ channel: name, to, text })
-            .then(() => undefined)
+            .then(() => {
+              sent++;
+            })
             .catch((err) => {
+              failed++;
               console.error(`[router] Broadcast to ${name} failed:`, err);
               if (onChannelFailure) {
                 try {
@@ -2271,6 +2281,7 @@ export class MessageRouter {
     }
 
     await Promise.all(promises);
+    return { sent, failed };
   }
 
   /**
@@ -2998,6 +3009,18 @@ export class MessageRouter {
 
     if (isProactiveTask(taskId)) {
       handleProactiveFailure(taskId);
+    }
+
+    // Mirror handleTaskFailed for scheduled tasks (qa R2-C1, 2026-08-03):
+    // without this, a cancelled scheduled run leaks its pendingScheduled
+    // entry — and since the sync-surfacing in-flight guard suppresses new
+    // strategic injections while one is pending, a single cancelled Morning
+    // Sync would silently disable the strategic surface until restart.
+    if (isScheduledTask(taskId)) {
+      handleScheduledTaskFailure(
+        taskId,
+        data.reason ?? `cancelled (${data.cancelled_by ?? "unknown"})`,
+      );
     }
 
     const pending = this.pendingReplies.get(taskId);

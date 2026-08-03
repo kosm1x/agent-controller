@@ -1219,6 +1219,12 @@ export function initDatabase(dbPath: string): Database.Database {
         `);
       },
     },
+    {
+      version: 4,
+      description:
+        "V8.2 sync-surfacing — judgments.surfaced_at records the judgment reaching the operator via the Morning Sync surface (V8.3 §12 consent linkage reads it)",
+      up: (db) => db.exec("ALTER TABLE judgments ADD COLUMN surfaced_at TEXT"),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

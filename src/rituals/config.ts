@@ -32,7 +32,12 @@ export const rituals: RitualDefinition[] = [
     title: "Morning briefing",
     // Production: '0 7 * * *' (7:00 AM daily)
     cron: "0 7 * * *",
-    enabled: true,
+    // RETIRED (operator ruling 2026-08-03): the operator's 08:00 "Morning
+    // Sync" scheduled task is the morning surface; the V8.1 delivered brief
+    // is off too (V81_BRIEF_DELIVERY_ENABLED=false). Disabled here as well
+    // because scheduler.ts only skips this ritual while that flag is TRUE —
+    // without this, turning the flag off would resurrect the legacy brief.
+    enabled: false,
   },
   {
     id: "nightly-close",

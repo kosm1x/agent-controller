@@ -10,6 +10,7 @@ function insertJudgment(opts: {
   confidence: string | null;
   verdict?: string;
   deliveredAt?: string | null;
+  surfacedAt?: string | null;
 }): number {
   const db = getDatabase();
   // judgments.briefing_id is NOT NULL + FK → every judgment has a briefing.
@@ -24,10 +25,10 @@ function insertJudgment(opts: {
   const info = db
     .prepare(
       `INSERT INTO judgments
-         (briefing_id, subject, posture, prose, confidence, created_at, critic_trail_json)
-       VALUES ('b-1', 's', 'at_risk', 'p', ?, datetime('now'), ?)`,
+         (briefing_id, subject, posture, prose, confidence, created_at, critic_trail_json, surfaced_at)
+       VALUES ('b-1', 's', 'at_risk', 'p', ?, datetime('now'), ?, ?)`,
     )
-    .run(opts.confidence, trail);
+    .run(opts.confidence, trail, opts.surfacedAt ?? null);
   return Number(info.lastInsertRowid);
 }
 
@@ -115,6 +116,43 @@ describe("checkJudgmentLinkage — §12 consent gate", () => {
     });
     expect(checkJudgmentLinkage(id, NOW).reason).toBe(
       "judgment_not_prior_brief",
+    );
+  });
+
+  // Sync-surfacing path (2026-08-03): `judgments.surfaced_at` — the Morning
+  // Sync consent stamp — satisfies condition (c) with the delivered-brief
+  // surface retired.
+  it("ok: prior surfaced_at with NO delivered brief", () => {
+    const id = insertJudgment({
+      confidence: "green",
+      verdict: "approved",
+      deliveredAt: null,
+      surfacedAt: PRIOR,
+    });
+    expect(checkJudgmentLinkage(id, NOW)).toEqual({ ok: true, reason: "ok" });
+  });
+
+  it("FUTURE surfaced_at (same-cycle) → not_prior_brief", () => {
+    const id = insertJudgment({
+      confidence: "green",
+      verdict: "approved",
+      deliveredAt: null,
+      surfacedAt: FUTURE,
+    });
+    expect(checkJudgmentLinkage(id, NOW).reason).toBe(
+      "judgment_not_prior_brief",
+    );
+  });
+
+  it("surfaced_at does not weaken the other conditions (red + surfaced still blocked)", () => {
+    const id = insertJudgment({
+      confidence: "red",
+      verdict: "approved",
+      deliveredAt: null,
+      surfacedAt: PRIOR,
+    });
+    expect(checkJudgmentLinkage(id, NOW).reason).toBe(
+      "judgment_confidence_not_green_yellow",
     );
   });
 });

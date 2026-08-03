@@ -634,8 +634,15 @@ export class TelegramAdapter implements ChannelAdapter {
           await new Promise((r) => setTimeout(r, 200));
         }
       } catch (err) {
+        // Throw, don't return a sentinel (same invariant as the no-bot guard
+        // above): broadcastToAll/sendBriefingToOwner count any RESOLVED send()
+        // as delivered — a resolved "error" here would tally sent>0 on a total
+        // failure, and since 2026-08-03 that tally is a CONSENT record (the
+        // sync-surfacing surfaced_at stamp). A partial delivery (earlier chunks
+        // landed, this one didn't) also throws: the strategic line rides in the
+        // final chunk, so a lost tail means the operator did not see it.
         console.error("[telegram] Send failed:", err);
-        return "error";
+        throw err instanceof Error ? err : new Error(String(err));
       }
     }
 

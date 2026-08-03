@@ -205,10 +205,28 @@ function round1(n: number): number {
 }
 
 /**
+ * Operator ruling 2026-08-03: the delivered morning brief is RETIRED as a
+ * surface — the 08:00 Morning Sync carries the strategic reading instead
+ * (lib/v8-2/sync-surfacing.ts). A CODE constant, not an env read: the gate
+ * runs both inside the service (which sees `.env` via `EnvironmentFile=`) and
+ * from `mc-ctl briefing-gate` (a bare shell that deliberately never sources
+ * `.env` — qa R1-C2 caught the env read silently skipping the check in the
+ * ONE process that actually runs it). Reversing the ruling = flip this here,
+ * deliberately, in a commit.
+ */
+export const BRIEF_SURFACE_RETIRED = true;
+
+/**
  * Evaluate the §13 activation gate against the live ledgers. Safe to call any
  * time — during the shadow run it returns `insufficient_data`.
+ *
+ * `opts.briefSurfaceRetired` (default: the ruling constant) exists so tests
+ * can exercise the promote-rate SCORING path, which stays real code for a
+ * possible reversal of the ruling.
  */
-export function evaluateActivationGate(): ActivationGateResult {
+export function evaluateActivationGate(opts?: {
+  briefSurfaceRetired?: boolean;
+}): ActivationGateResult {
   const db = getDatabase();
 
   // §13 query 1 — cache-read ratio over CACHEABLE inference, rolling 24h.
@@ -332,17 +350,27 @@ export function evaluateActivationGate(): ActivationGateResult {
   // charged against the rate. With zero rulings the check is `insufficient_data`,
   // never `fail` — the same cadence-trap discipline as §17. Note `expired` no
   // longer makes the check measurable; only a real verdict does.
+  // With the brief surface retired (see BRIEF_SURFACE_RETIRED) this check can
+  // never accrue data again, so it is scored as an explicit SKIP (pass,
+  // annotated) — not `insufficient_data`, which would read as "still
+  // accumulating" forever and hold the combined verdict hostage to a check the
+  // operator deliberately retired (§14 vacuous-check discipline).
+  const surfaceRetired = opts?.briefSurfaceRetired ?? BRIEF_SURFACE_RETIRED;
   const morningRuled = morning?.ruled ?? 0;
-  const promoteMeasurable =
+  const promoteScorable =
     morning !== undefined && morningRuled >= GATE_MIN_RULED_BRIEFS;
+  const promoteMeasurable = surfaceRetired || promoteScorable;
   const promoteRatePass =
-    promoteMeasurable && morning.promoteRatePct >= GATE_MORNING_PROMOTE_PCT;
-  const promoteDetail = !morning
-    ? "no morning briefings generated in the last 7 days"
-    : morningRuled < GATE_MIN_RULED_BRIEFS
-      ? `${morning.generated} morning brief(s) generated, only ${morningRuled} ruled on ` +
-        `(need ≥${GATE_MIN_RULED_BRIEFS}; ${morning.expired} expired unanswered, ${morning.pending} pending)`
-      : `morning promote-rate ${morning.promoteRatePct}% over ${morningRuled} ruled brief(s) (need ≥${GATE_MORNING_PROMOTE_PCT}%)`;
+    surfaceRetired ||
+    (promoteScorable && morning.promoteRatePct >= GATE_MORNING_PROMOTE_PCT);
+  const promoteDetail = surfaceRetired
+    ? "surface retired 2026-08-03 (Morning Sync carries the strategic reading); promote-rate not scored"
+    : !morning
+      ? "no morning briefings generated in the last 7 days"
+      : morningRuled < GATE_MIN_RULED_BRIEFS
+        ? `${morning.generated} morning brief(s) generated, only ${morningRuled} ruled on ` +
+          `(need ≥${GATE_MIN_RULED_BRIEFS}; ${morning.expired} expired unanswered, ${morning.pending} pending)`
+        : `morning promote-rate ${morning.promoteRatePct}% over ${morningRuled} ruled brief(s) (need ≥${GATE_MORNING_PROMOTE_PCT}%)`;
 
   let verdict: ActivationGateResult["verdict"];
   if (!cacheReadMeasurable || !promoteMeasurable) {

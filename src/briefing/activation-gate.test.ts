@@ -60,9 +60,14 @@ afterEach(() => {
   closeDatabase();
 });
 
+/** The promote-rate SCORING path assumes a live brief surface; production has
+ *  it retired (BRIEF_SURFACE_RETIRED, 2026-08-03) — covered by its own
+ *  describe block below. Scoring stays real code for a ruling reversal. */
+const SCORING = { briefSurfaceRetired: false };
+
 describe("evaluateActivationGate", () => {
   it("returns insufficient_data on an empty system", () => {
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.verdict).toBe("insufficient_data");
     expect(r.cacheReadPct).toBeNull();
     expect(r.cacheableRuns).toBe(0);
@@ -76,7 +81,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "discarded");
     insertBriefing("morning", "expired");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheReadPct).toBe(85);
     expect(r.checks.cacheRead.pass).toBe(true);
     expect(r.checks.promoteRate.pass).toBe(true);
@@ -87,7 +92,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableRuns(20, 1000, 700); // 70% cache-read
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheReadPct).toBe(70);
     expect(r.checks.cacheRead.pass).toBe(false);
     expect(r.verdict).toBe("fail");
@@ -102,7 +107,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "expired"); // unruled → excluded
     // 2 promoted / 4 RULED = 50%, below the 60% bar.
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.checks.cacheRead.pass).toBe(true);
     expect(r.checks.promoteRate.pass).toBe(false);
     expect(r.verdict).toBe("fail");
@@ -112,7 +117,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableRuns(10, 1000, 950);
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(10);
     expect(r.checks.cacheRead.pass).toBe(false);
     expect(r.verdict).toBe("insufficient_data");
@@ -123,7 +128,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "pending");
     insertBriefing("morning", "pending");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.checks.promoteRate.pass).toBe(false);
     expect(r.checks.promoteRate.detail).toContain("only 0 ruled on");
     expect(r.verdict).toBe("insufficient_data");
@@ -142,7 +147,7 @@ describe("evaluateActivationGate", () => {
       )
       .run(crypto.randomUUID());
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // stale row excluded
     expect(r.cacheReadPct).toBe(90); // ratio undragged
   });
@@ -156,7 +161,7 @@ describe("evaluateActivationGate", () => {
     }
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // reflection rows excluded from count
     expect(r.cacheReadPct).toBe(90); // ratio undragged by reflection 0%
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -180,7 +185,7 @@ describe("evaluateActivationGate", () => {
     }
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // seam rows excluded from count
     expect(r.cacheReadPct).toBe(90); // ratio undragged
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -192,7 +197,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableCost(1000, 900, "skill:kb-cleanup");
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // skill:% still counted
     expect(r.cacheReadPct).toBe(90);
   });
@@ -207,7 +212,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableCost(10_000, 4_760, "heavy"); // heavy: 47.6%, cold start
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // heavy row excluded from the count
     expect(r.cacheReadPct).toBe(81); // ratio undragged by heavy's cold start
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -234,7 +239,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableCost(3_128, 0, "nanoclaw"); // one cold container run, 0%
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20); // nanoclaw row not counted
     expect(r.cacheReadPct).toBeGreaterThanOrEqual(80); // undragged → PASS
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -249,7 +254,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableRuns(20, 1000, 900);
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.excludedColdStart).toEqual({
       runs: 0,
       cacheReadPct: null,
@@ -263,7 +268,7 @@ describe("evaluateActivationGate", () => {
     // 5 null-usage rows that would otherwise count as 0% reads.
     for (let i = 0; i < 5; i++) insertCacheableCost(0, 0);
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20);
     expect(r.cacheReadPct).toBe(90);
   });
@@ -277,7 +282,7 @@ describe("evaluateActivationGate", () => {
     insertCacheableRuns(20, 1000, 800); // exactly 80%, exactly 20 runs
     for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.cacheableRuns).toBe(20);
     expect(r.cacheReadPct).toBe(80);
     expect(r.checks.cacheRead.pass).toBe(true);
@@ -289,7 +294,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "pending");
     insertBriefing("weekly", "discarded");
 
-    const health = evaluateActivationGate().briefingHealth;
+    const health = evaluateActivationGate(SCORING).briefingHealth;
     const morning = health.find((h) => h.surface === "morning")!;
     expect(morning.generated).toBe(2);
     expect(morning.promoted).toBe(1);
@@ -309,7 +314,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "expired");
     insertBriefing("morning", "expired");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     const morning = r.briefingHealth.find((h) => h.surface === "morning")!;
     expect(morning.expired).toBe(2);
     expect(morning.ruled).toBe(3);
@@ -325,7 +330,7 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "expired");
     insertBriefing("morning", "pending");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.checks.promoteRate.pass).toBe(false);
     expect(r.checks.promoteRate.detail).toContain("only 1 ruled on");
     expect(r.verdict).toBe("insufficient_data"); // NOT "fail"
@@ -337,9 +342,37 @@ describe("evaluateActivationGate", () => {
     insertBriefing("morning", "expired");
     insertBriefing("morning", "expired");
 
-    const r = evaluateActivationGate();
+    const r = evaluateActivationGate(SCORING);
     expect(r.checks.promoteRate.pass).toBe(false);
     expect(r.checks.promoteRate.detail).toContain("only 0 ruled on");
     expect(r.verdict).toBe("insufficient_data"); // NOT "fail"
+  });
+});
+
+describe("evaluateActivationGate — brief surface retired (2026-08-03, the production default)", () => {
+  it("promote-rate is an annotated skip, and the verdict rides on cache-read alone", () => {
+    insertCacheableRuns(20, 1000, 850); // cache passes; zero briefs ruled
+    const r = evaluateActivationGate();
+    expect(r.checks.promoteRate.pass).toBe(true);
+    expect(r.checks.promoteRate.detail).toContain("surface retired");
+    expect(r.verdict).toBe("pass");
+  });
+
+  it("a cache-read miss still fails — the skip never masks the live check", () => {
+    insertCacheableRuns(20, 1000, 700); // 70% < 80%
+    const r = evaluateActivationGate();
+    expect(r.checks.promoteRate.pass).toBe(true);
+    expect(r.verdict).toBe("fail");
+  });
+
+  it("residual ruled briefs inside the 7d window do not resurrect scoring", () => {
+    insertCacheableRuns(20, 1000, 850);
+    // Rulings from before the flip — the surface is retired regardless.
+    insertBriefing("morning", "discarded");
+    insertBriefing("morning", "discarded");
+    insertBriefing("morning", "discarded"); // would score 0% and FAIL if live
+    const r = evaluateActivationGate();
+    expect(r.checks.promoteRate.pass).toBe(true);
+    expect(r.verdict).toBe("pass");
   });
 });

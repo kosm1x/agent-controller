@@ -305,10 +305,7 @@ async function main(): Promise<void> {
   import("./lib/s3/scheduler.js")
     .then(({ registerS3CronJobs }) => registerS3CronJobs())
     .catch((err) => {
-      console.warn(
-        "[s3] Cron registration failed (non-fatal):",
-        errMsg(err),
-      );
+      console.warn("[s3] Cron registration failed (non-fatal):", errMsg(err));
     });
 
   // v7.7 Spine 3 Phase 2 Bundle 2: register skill test sweep cron.
@@ -447,7 +444,9 @@ async function main(): Promise<void> {
   // Wire MCP alerts + intel alerts to Telegram (after messaging is ready)
   if (router) {
     mcpSource.setAlertFn((msg: string) => router.broadcastToAll(msg));
-    setIntelBroadcast((msg: string) => router.broadcastToAll(msg));
+    setIntelBroadcast((msg: string) =>
+      router.broadcastToAll(msg).then(() => undefined),
+    );
     startProactiveScheduler(router);
   }
 

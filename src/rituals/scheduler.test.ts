@@ -84,15 +84,17 @@ afterEach(() => {
 describe("startRitualScheduler", () => {
   it("should schedule enabled rituals", () => {
     startRitualScheduler();
-    // Nineteen: 6 base rituals (+ day-narrative; weekly-review DISABLED 2026-06-23,
-    //   NorthStar work-source) + 2 F9 market rituals (morning-scan + eod-scan)
+    // 5 base rituals (+ day-narrative; weekly-review DISABLED 2026-06-23,
+    //   NorthStar work-source; morning-briefing RETIRED 2026-08-03 —
+    //   Morning Sync is the operator surface) + 2 F9 market rituals
+    //   (morning-scan + eod-scan)
     //   + 1 KB backup + 1 KB reindex (2026-05-07) + 1 autonomous improvement + 1 diff digest
     //   + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
     //   + 1 PM daily rebalance (F8.1c) + 1 hindsight-cost-pull (2026-05-07, queue #4)
     //   + 1 evolution-log-commit (weekly durability, 2026-06-17)
     //   + 1 no-verdict-reminder (V8.5 4.6, 2026-07-14)
     //   + 1 jme-consolidate (JME Phase 2 nightly batch, 2026-07-14)
-    expect(mockSchedule).toHaveBeenCalledTimes(20);
+    expect(mockSchedule).toHaveBeenCalledTimes(19);
     // JME nightly consolidation runs pre-dawn MX (Phase 2, audit C3).
     expect(mockSchedule.mock.calls.some((c) => c[0] === "45 2 * * *")).toBe(
       true,
@@ -121,7 +123,7 @@ describe("startRitualScheduler", () => {
     delete process.env.HINDSIGHT_ENABLED;
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(19);
+      expect(mockSchedule).toHaveBeenCalledTimes(18);
     } finally {
       if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
     }
@@ -135,7 +137,7 @@ describe("startRitualScheduler", () => {
     process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(20);
+      expect(mockSchedule).toHaveBeenCalledTimes(19);
     } finally {
       if (priorEnabled !== undefined)
         process.env.HINDSIGHT_ENABLED = priorEnabled;
@@ -156,7 +158,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(20);
+    expect(mockStop).toHaveBeenCalledTimes(19);
   });
 });
 

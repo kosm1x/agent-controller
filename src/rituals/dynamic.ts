@@ -16,6 +16,14 @@ import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
 import { errMsg } from "../lib/err-msg.js";
+import { getSyncSurfaceScheduleId } from "../lib/v8-2/flags.js";
+import {
+  markJudgmentSurfaced,
+  pickSyncJudgment,
+  renderSyncPromptContext,
+  renderSyncStrategicLine,
+  type StrategicInjection,
+} from "../lib/v8-2/sync-surfacing.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,6 +210,56 @@ function markExecuted(scheduleId: string): void {
 }
 
 /**
+ * Strategic-surface injection (V8.2 sync-surfacing, operator ruling 2026-08-03).
+ * When this schedule is the designated Morning Sync surface
+ * (`V82_SYNC_SCHEDULE_ID`), pick today's vetted judgment: its prompt block is
+ * spliced into the task description, and the compact line travels with the
+ * pending-task meta so `handleScheduledTaskResult` can append it to the
+ * outbound message and stamp `surfaced_at` after a verified delivery.
+ *
+ * Exported for tests. Failure-isolated: any V8.2 read error degrades to a plain
+ * Sync (null), never sinks the schedule — observability, not a gate.
+ */
+export function maybeStrategicInjection(
+  schedule: ScheduledTaskRow,
+): StrategicInjection | null {
+  const target = getSyncSurfaceScheduleId();
+  if (!target || schedule.schedule_id !== target) return null;
+  // The line ships on the telegram broadcast leg only. "email" never
+  // broadcasts (qa R1-W3), and "both" loses the line silently when a
+  // gmail_send miss short-circuits into the retry branch before the
+  // broadcast (qa R2-W2) — so inject for exactly "telegram".
+  if (schedule.delivery !== "telegram") return null;
+  // One strategic run in flight per schedule: a manual run-now racing the
+  // 08:00 cron would otherwise pick the same still-unstamped judgment twice
+  // and double-append it to the operator (qa R1-W1). Logged because a leaked
+  // entry here would otherwise suppress the surface invisibly (qa R2-C1 —
+  // the cancelled-task path now cleans up via handleScheduledTaskFailure).
+  for (const [pendingTaskId, pending] of pendingScheduled.entries()) {
+    if (pending.scheduleId === schedule.schedule_id && pending.strategic) {
+      console.log(
+        `[schedules] strategic injection suppressed — run ${pendingTaskId} already in flight for this schedule`,
+      );
+      return null;
+    }
+  }
+  try {
+    const j = pickSyncJudgment();
+    if (!j) return null;
+    return {
+      judgmentId: j.id,
+      line: renderSyncStrategicLine(j),
+      promptBlock: renderSyncPromptContext(j),
+    };
+  } catch (err) {
+    console.error(
+      `[schedules] strategic injection failed (sync unaffected): ${errMsg(err)}`,
+    );
+    return null;
+  }
+}
+
+/**
  * Execute a schedule immediately (v6.4 OH1.5).
  * Called after schedule creation so the user gets instant feedback
  * that the report works without waiting for the next cron match.
@@ -228,10 +286,11 @@ export async function executeScheduleNow(
       "\n\nTu texto final ES el mensaje que se enviará automáticamente por Telegram. NO busques ni intentes usar herramientas de envío (Telegram, Gmail, etc.) ni menciones limitaciones de entrega — solo compón el contenido.";
   }
 
+  const strategic = maybeStrategicInjection(schedule);
   const dateContext = buildDateContext(now);
   const result = await submitTask({
     title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-    description: `${dateContext}${schedule.description}${deliveryInstructions}`,
+    description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
     agentType: "fast",
     tools,
     tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
@@ -239,7 +298,7 @@ export async function executeScheduleNow(
   });
 
   insertScheduleRun(schedule.schedule_id, result.taskId);
-  watchScheduledTask(result.taskId, schedule);
+  watchScheduledTask(result.taskId, schedule, 0, strategic);
   markExecuted(schedule.schedule_id);
   return result.taskId;
 }
@@ -347,10 +406,11 @@ async function checkAndExecuteSchedules(): Promise<void> {
           "\n\nTu texto final ES el mensaje que se enviará automáticamente por Telegram. NO busques ni intentes usar herramientas de envío (Telegram, Gmail, etc.) ni menciones limitaciones de entrega — solo compón el contenido.";
       }
 
+      const strategic = maybeStrategicInjection(schedule);
       const dateContext = buildDateContext(now);
       const result = await submitTask({
         title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-        description: `${dateContext}${schedule.description}${deliveryInstructions}`,
+        description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
         agentType: "fast",
         tools,
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
@@ -360,7 +420,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       // H3: Record execution in audit trail
       insertScheduleRun(schedule.schedule_id, result.taskId);
       // Watch for result to verify delivery and broadcast
-      watchScheduledTask(result.taskId, schedule);
+      watchScheduledTask(result.taskId, schedule, 0, strategic);
     } catch (err) {
       const message = errMsg(err);
       console.error(
@@ -481,14 +541,22 @@ interface PendingSchedule {
   scheduleId: string;
   /** How many times this execution has been retried after delivery miss. */
   retryCount: number;
+  /** Set when this run carries the day's strategic reading (sync-surfacing):
+   *  the line is appended to the outbound message and `surfaced_at` stamped on
+   *  verified delivery. In-memory only — a restart between submit and
+   *  completion loses it, which fails SAFE (no stamp, judgment stays eligible). */
+  strategic?: StrategicInjection | null;
 }
 
 const pendingScheduled = new Map<string, PendingSchedule>();
 
-function watchScheduledTask(
+/** Exported for tests (the strategic-delivery seam is exercised through
+ *  `handleScheduledTaskResult`, which reads this map). */
+export function watchScheduledTask(
   taskId: string,
   schedule: ScheduledTaskRow,
   retryCount = 0,
+  strategic: StrategicInjection | null = null,
 ): void {
   pendingScheduled.set(taskId, {
     name: schedule.name,
@@ -496,6 +564,7 @@ function watchScheduledTask(
     emailTo: schedule.email_to,
     scheduleId: schedule.schedule_id,
     retryCount,
+    strategic,
   });
 }
 
@@ -595,9 +664,37 @@ export function handleScheduledTaskResult(
     router &&
     result
   ) {
-    router.broadcastToAll(result).catch((err) => {
-      console.error(`[schedules] Broadcast failed: ${err}`);
-    });
+    // Sync-surfacing: the strategic line is appended DETERMINISTICALLY (the
+    // prompt block is flavor; this is the delivery contract), and the consent
+    // stamp is written only when ≥1 channel actually delivered — a resolved
+    // broadcast with 0 sends must not claim the operator saw the judgment.
+    const strategic = meta.strategic;
+    const outbound = strategic ? `${result}\n\n${strategic.line}` : result;
+    router
+      .broadcastToAll(outbound)
+      .then((tally) => {
+        if (!strategic) return;
+        if (tally.sent > 0) {
+          try {
+            const stamped = markJudgmentSurfaced(strategic.judgmentId);
+            console.log(
+              `[schedules] strategic reading surfaced: judgment #${strategic.judgmentId}` +
+                (stamped ? "" : " (already stamped)"),
+            );
+          } catch (err) {
+            console.error(
+              `[schedules] surfaced_at stamp failed for judgment #${strategic.judgmentId}: ${errMsg(err)}`,
+            );
+          }
+        } else {
+          console.warn(
+            `[schedules] strategic reading NOT stamped (0 channels delivered): judgment #${strategic.judgmentId}`,
+          );
+        }
+      })
+      .catch((err) => {
+        console.error(`[schedules] Broadcast failed: ${err}`);
+      });
     console.log(`[schedules] Broadcast scheduled task result: ${taskId}`);
   }
 }
