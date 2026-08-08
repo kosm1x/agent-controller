@@ -94,6 +94,11 @@ export const nanoclawRunner: Runner = {
       const volumes = [
         "/root/claude/mission-control:/root/claude/mission-control:ro",
         "/root/.config/gh:/root/.config/gh:ro",
+        // Host channels (telegram.ts, gdrive_download) save attachments here;
+        // without this mount an attachment-bearing task is unwinnable in the
+        // sandbox (task 8251, 2026-08-08: 8 min of fs sweeps + mc.db WAL
+        // forensics before the fast-runner fallback rescued it).
+        "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
       ];
       if (isClaudeSdk) {
         volumes.push(

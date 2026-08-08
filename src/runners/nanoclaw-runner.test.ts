@@ -119,6 +119,7 @@ describe("nanoclawRunner", () => {
         volumes: [
           "/root/claude/mission-control:/root/claude/mission-control:ro",
           "/root/.config/gh:/root/.config/gh:ro",
+          "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
         ],
       }),
     );
