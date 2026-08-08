@@ -8,6 +8,10 @@ import type { Tool } from "./types.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
+import {
+  recordGatedExecution,
+  shouldRecordGatedExecution,
+} from "../lib/v8-3/gated-execution.js";
 
 const log = createLogger("tools");
 
@@ -176,8 +180,40 @@ export class ToolRegistry {
     return "low";
   }
 
-  /** Execute a tool by name. */
-  async execute(name: string, args: Record<string, unknown>): Promise<string> {
+  /**
+   * Execute a tool by name.
+   *
+   * V8.3 background seam (2026-08-08, gate-validity assessment): this is the
+   * general tool-execution chokepoint — scheduled/ritual tasks (task-executor),
+   * the Prometheus executor, and the claude-sdk MCP bridge all funnel here. A
+   * tool that maps to an ACTIVE gated capability is recorded in the V8.3
+   * decision ledger (audit-only: any ledger failure degrades to a direct
+   * execute, the tool runs at most once, output is never swallowed). The
+   * interactive confirm seam (`lib/v8-3/trigger.ts`) records its OWN decision
+   * and passes `{v83: "skip"}` so one execution never lands two rows. The
+   * check is O(1) map+env lookups when V8.3 is dormant or the tool is ungated.
+   */
+  async execute(
+    name: string,
+    args: Record<string, unknown>,
+    opts?: { v83?: "skip" },
+  ): Promise<string> {
+    if (opts?.v83 !== "skip" && shouldRecordGatedExecution(name)) {
+      return recordGatedExecution(
+        name,
+        args,
+        () => this.executeDirect(name, args),
+        { source: "background", threadId: "background" },
+      );
+    }
+    return this.executeDirect(name, args);
+  }
+
+  /** The unwrapped execution path (risk-tier audit log + metrics + dispatch). */
+  private async executeDirect(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       return JSON.stringify({ error: `Unknown tool: ${name}` });

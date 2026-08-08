@@ -754,3 +754,104 @@ describe("runDecisionPipeline — Phase 6 §12 consent linkage", () => {
     expect(r.status).toBe("committed"); // executes normally; linkage not applied at L≤2
   });
 });
+
+describe("runDecisionPipeline — delete_inverse (2026-08-08 §7 widening)", () => {
+  const CREATION = {
+    table: "scheduled_tasks",
+    pkColumn: "schedule_id",
+    resultPkField: "schedule_id",
+  };
+
+  function creationTrigger(judgmentId?: number): DecisionTrigger {
+    return {
+      capability: "schedule_task",
+      payload: { name: "n" },
+      context: { ok: true },
+      threadId: "t-1",
+      judgmentId: judgmentId ?? null,
+      creation: CREATION,
+    };
+  }
+
+  it("an autonomous (L4) schedule_task creation stays AUTONOMOUS and completes its op post-execution", async () => {
+    seedCapability({
+      capability: "schedule_task",
+      level: 4,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const jid = seedLinkedJudgment();
+    const r = await runDecisionPipeline(creationTrigger(jid), {
+      execute: () => ({
+        ok: true,
+        output: JSON.stringify({ success: true, schedule_id: "sched-1" }),
+      }),
+    });
+    // Pre-widening, kind !== "sql_inverse" demoted this to confirm. Now the
+    // delete_inverse template is a proven-replayable kind → autonomous.
+    expect(r.route).toBe("autonomous");
+    expect(r.demoted).toBe(false);
+    expect(r.reversal).toBe("delete_inverse");
+    expect(r.status).toBe("committed");
+    const row = getDatabase()
+      .prepare(`SELECT reversal_op_json FROM decisions WHERE id = ?`)
+      .get(r.decisionId) as { reversal_op_json: string };
+    expect(JSON.parse(row.reversal_op_json)).toEqual({
+      kind: "delete_inverse",
+      table: "scheduled_tasks",
+      pkColumn: "schedule_id",
+      pkValue: "sched-1",
+    });
+  });
+
+  it("an output the pk cannot be extracted from leaves the persisted op incomplete (pkValue null)", async () => {
+    seedCapability({
+      capability: "schedule_task",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const r = await runDecisionPipeline(creationTrigger(), {
+      execute: () => ({ ok: true, output: "plain text, not JSON" }),
+    });
+    expect(r.status).toBe("committed");
+    const row = getDatabase()
+      .prepare(`SELECT reversal_op_json FROM decisions WHERE id = ?`)
+      .get(r.decisionId) as { reversal_op_json: string };
+    expect(JSON.parse(row.reversal_op_json).pkValue).toBeNull();
+  });
+
+  it("a creation declaration on a capability whose canonical strategy is NOT delete_inverse is refused (seam-a analog)", async () => {
+    seedCapability({
+      capability: "task_edit", // canonical sql_inverse
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    await expect(
+      runDecisionPipeline({
+        ...creationTrigger(),
+        capability: "task_edit",
+      }),
+    ).rejects.toThrow(/delete_inverse required/);
+  });
+
+  it("declaring BOTH sqlMutation and creation is refused as a wiring bug", async () => {
+    seedCapability({
+      capability: "schedule_task",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    await expect(
+      runDecisionPipeline({
+        ...creationTrigger(),
+        sqlMutation: {
+          targets: [{ table: "tasks", pk: { task_id: "x" } }],
+          strategy: "delete_inverse",
+          allowedTables: ["tasks"],
+        },
+      }),
+    ).rejects.toThrow(/BOTH sqlMutation and creation/);
+  });
+});

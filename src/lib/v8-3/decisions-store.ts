@@ -124,6 +124,22 @@ export function setDecisionPreState(
   );
 }
 
+/**
+ * Replace a decision's stored reversal op. Used by the pipeline's post-execution
+ * completion of a `delete_inverse` template (fill the created pk); the op's KIND
+ * never changes here — only its completion state.
+ */
+export function updateDecisionReversalOp(
+  decisionId: number,
+  reversalOp: unknown,
+  db: Database.Database = getDatabase(),
+): void {
+  db.prepare(`UPDATE decisions SET reversal_op_json = ? WHERE id = ?`).run(
+    toJsonOrNull(reversalOp),
+    decisionId,
+  );
+}
+
 /** Advance a decision's status (e.g. pending → committed) + stamp decided_at. */
 export function updateDecisionStatus(
   decisionId: number,

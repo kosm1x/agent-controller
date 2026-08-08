@@ -111,10 +111,13 @@ describe("executeGatedCapability — wrapped (armed canary)", () => {
       { threadId: "t1" },
     );
     expect(out).toBe(toolOut); // output fidelity — operator sees the tool's own result
-    expect(mockExecute).toHaveBeenCalledExactlyOnceWith("jarvis_file_delete", {
-      path: "x.md",
-      confirmed: true,
-    });
+    // The interactive seam MUST pass {v83:"skip"} so the registry chokepoint
+    // (background seam) does not double-record the same execution.
+    expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
+      "jarvis_file_delete",
+      { path: "x.md", confirmed: true },
+      { v83: "skip" },
+    );
     expect(decisionCount()).toBe(1);
     const row = getDatabase()
       .prepare(
@@ -220,9 +223,11 @@ describe("executeGatedCapability — wrapped (armed canary)", () => {
       { threadId: "t1" },
     );
     expect(out).toBe(OK); // fallback returned the tool output
-    expect(mockExecute).toHaveBeenCalledExactlyOnceWith("northstar_sync", {
-      do: "x",
-    }); // AT MOST ONCE across the throw path
+    expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
+      "northstar_sync",
+      { do: "x" },
+      { v83: "skip" },
+    ); // AT MOST ONCE across the throw path; skip flag on the degrade path too
     expect(decisionCount()).toBe(0); // nothing persisted (threw before any write)
   });
 

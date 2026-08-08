@@ -4,9 +4,11 @@ import {
   applyReversal,
   buildReversalOp,
   captureSqlPreState,
+  completeDeleteInverse,
   fingerprint,
   revertDecision,
   validateBlastRadius,
+  verifyDeleted,
   verifyRestored,
   type ReversalOp,
   type SqlPreState,
@@ -434,6 +436,161 @@ describe("revertDecision (ledger-integrated)", () => {
     });
     expect(out.reason).toBe("reversal_failed_state_not_restored");
     // The decision stays committed — frozen for investigation, not mislabeled.
+    expect(getDecisionForRevert(id, db())?.status).toBe("committed");
+  });
+});
+
+// ── delete_inverse (2026-08-08 — gate-validity assessment build) ─────────────
+
+describe("delete_inverse — build + complete", () => {
+  it("builds a null-pk template when a creation target is declared", () => {
+    const op = buildReversalOp({
+      strategy: "delete_inverse",
+      creation: { table: "widgets", pkColumn: "id" },
+      level: 1,
+      reversibleRequired: true,
+    });
+    expect(op).toEqual({
+      kind: "delete_inverse",
+      table: "widgets",
+      pkColumn: "id",
+      pkValue: null,
+    });
+  });
+
+  it("still returns the legacy deferred op when NO creation target is declared (back-compat)", () => {
+    const op = buildReversalOp({
+      strategy: "delete_inverse",
+      level: 1,
+      reversibleRequired: true,
+    });
+    expect(op.kind).toBe("deferred");
+  });
+
+  it("rejects unsafe identifiers at BUILD time", () => {
+    expect(() =>
+      buildReversalOp({
+        strategy: "delete_inverse",
+        creation: { table: "widgets; DROP TABLE widgets", pkColumn: "id" },
+        level: 1,
+        reversibleRequired: true,
+      }),
+    ).toThrow(/unsafe SQL identifier/);
+  });
+
+  it("completeDeleteInverse fills the pk from the tool's JSON output", () => {
+    const op = buildReversalOp({
+      strategy: "delete_inverse",
+      creation: { table: "widgets", pkColumn: "id" },
+      level: 1,
+      reversibleRequired: true,
+    }) as Extract<ReversalOp, { kind: "delete_inverse" }>;
+    const done = completeDeleteInverse(
+      op,
+      JSON.stringify({ success: true, schedule_id: "abc-123" }),
+      "schedule_id",
+    );
+    expect(done).toEqual({ ...op, pkValue: "abc-123" });
+  });
+
+  it("completeDeleteInverse returns null on non-JSON, missing-field, or non-scalar output", () => {
+    const op = {
+      kind: "delete_inverse",
+      table: "widgets",
+      pkColumn: "id",
+      pkValue: null,
+    } as const;
+    expect(completeDeleteInverse(op, undefined, "schedule_id")).toBeNull();
+    expect(completeDeleteInverse(op, "not json", "schedule_id")).toBeNull();
+    expect(completeDeleteInverse(op, "{}", "schedule_id")).toBeNull();
+    expect(
+      completeDeleteInverse(
+        op,
+        JSON.stringify({ schedule_id: { nested: true } }),
+        "schedule_id",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("delete_inverse — apply / verify / revert", () => {
+  it("a null-pk op refuses replay", () => {
+    const op: ReversalOp = {
+      kind: "delete_inverse",
+      table: "widgets",
+      pkColumn: "id",
+      pkValue: null,
+    };
+    const out = applyReversal(db(), op);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/never captured/);
+    expect(verifyDeleted(db(), op)).toBe(false);
+  });
+
+  it("a completed op deletes exactly the created row and verifies absence", () => {
+    makeWidgets();
+    const op: ReversalOp = {
+      kind: "delete_inverse",
+      table: "widgets",
+      pkColumn: "id",
+      pkValue: 1,
+    };
+    expect(applyReversal(db(), op)).toEqual({ ok: true });
+    expect(verifyDeleted(db(), op)).toBe(true);
+    // The sibling row is untouched — blast radius is the one created row.
+    expect(db().prepare(`SELECT COUNT(*) n FROM widgets`).get()).toEqual({
+      n: 1,
+    });
+  });
+
+  it("revertDecision replays a committed delete_inverse decision end-to-end", () => {
+    makeWidgets();
+    seedCap("schedule_task");
+    const op: ReversalOp = {
+      kind: "delete_inverse",
+      table: "widgets",
+      pkColumn: "id",
+      pkValue: 2,
+    };
+    const id = insertDecision({
+      capability: "schedule_task",
+      judgmentId: null,
+      autonomyLevel: 1,
+      status: "committed",
+      capabilityToken: {},
+      payload: {},
+      reversalOp: op,
+      threadId: "t",
+    });
+    const out = revertDecision(id, db());
+    expect(out).toEqual({ ok: true, status: "reverted", restored: true });
+    expect(
+      db().prepare(`SELECT 1 FROM widgets WHERE id = 2`).get(),
+    ).toBeUndefined();
+    expect(getDecisionForRevert(id, db())?.status).toBe("reverted");
+  });
+
+  it("revertDecision refuses a committed decision whose op was never completed (pkValue null)", () => {
+    seedCap("schedule_task");
+    const id = insertDecision({
+      capability: "schedule_task",
+      judgmentId: null,
+      autonomyLevel: 1,
+      status: "committed",
+      capabilityToken: {},
+      payload: {},
+      reversalOp: {
+        kind: "delete_inverse",
+        table: "widgets",
+        pkColumn: "id",
+        pkValue: null,
+      },
+      threadId: "t",
+    });
+    const out = revertDecision(id, db());
+    expect(out.ok).toBe(false);
+    expect(out.status).toBe("unchanged");
+    expect(out.reason).toMatch(/never captured/);
     expect(getDecisionForRevert(id, db())?.status).toBe("committed");
   });
 });

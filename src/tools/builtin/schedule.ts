@@ -148,6 +148,10 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
         );
       });
 
+      // CONTRACT: the top-level `schedule_id` field feeds V8.3's delete_inverse
+      // completion (CREATION_BY_TOOL in lib/v8-3/gated-execution.ts). Renaming
+      // it silently degrades every schedule_task decision to an unreplayable
+      // null-pk reversal op — update that map in the same change.
       return JSON.stringify({
         success: true,
         schedule_id: scheduleId,

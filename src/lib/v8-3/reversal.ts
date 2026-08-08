@@ -10,13 +10,20 @@
  * Strategy coverage in v1 (spec §7), keyed off `ReversalStrategy`:
  *  - sql_inverse  — IMPLEMENTED: capture → build → validate blast-radius →
  *                   apply (UPDATE / INSERT / DELETE inverse) → verify restored.
+ *  - delete_inverse — IMPLEMENTED (2026-08-08, gate-validity assessment): the
+ *                   inverse of CREATING a row is deleting it. Built pre-execution
+ *                   as a template (`pkValue: null` — the created pk does not exist
+ *                   yet), completed post-execution from the tool's own output via
+ *                   `completeDeleteInverse`. Blast radius is inherently the one
+ *                   row the tool itself created. A trigger that declares no
+ *                   `creation` target still gets the legacy `deferred` op.
  *  - compensating — recorded as a PROPOSED reversal; never auto-executed
  *                   (a sent email, a NorthStar LWW write) — the operator confirms.
  *  - none         — explicit irreversible marker; buildable ONLY at L≤2 with
  *                   `reversible_required=false` (§7.4); else it throws.
- *  - delete_inverse / tri_restore — forward-modeled as `deferred`; replay needs
- *                   the tool / FS layer (later phases), so they are NOT auto-
- *                   revertible in v1 and cannot back an autonomous (L≥3) action.
+ *  - tri_restore  — forward-modeled as `deferred`; replay needs the tool / FS
+ *                   layer (later phases), so it is NOT auto-revertible in v1 and
+ *                   cannot back an autonomous (L≥3) action.
  *
  * Dormant: no production call site. The pipeline gains the wiring but still
  * ships ungated (`V83_ENABLED` off).
@@ -106,6 +113,20 @@ export type ReversalOp =
       steps: ReversalStep[];
       fingerprint: string;
     }
+  | {
+      /**
+       * Inverse of a row CREATION: delete the created row. `pkValue` is null on
+       * the pre-execution template (the pk is generated inside the tool) and
+       * filled by `completeDeleteInverse` from the tool's output. A null-pk op
+       * refuses replay — a committed decision left with `pkValue: null` has an
+       * unreplayable inverse (benign on an L1-L2 audit row; on an autonomous
+       * decision it is the §10 freeze class, same as a failed verify).
+       */
+      kind: "delete_inverse";
+      table: string;
+      pkColumn: string;
+      pkValue: string | number | null;
+    }
   | { kind: "compensating"; proposal: string; autoExecutable: false }
   | { kind: "irreversible"; reason: string }
   | {
@@ -166,6 +187,13 @@ export interface BuildReversalInput {
   level: AutonomyLevel;
   reversibleRequired: boolean;
   compensatingProposal?: string;
+  /**
+   * For `delete_inverse`: the table + pk column the action CREATES a row in.
+   * Identifiers are validated at build time (fail early, not at replay). Absent
+   * ⇒ the legacy `deferred` op (back-compat for triggers that never declared a
+   * creation target).
+   */
+  creation?: { table: string; pkColumn: string };
 }
 
 /**
@@ -204,7 +232,27 @@ export function buildReversalOp(input: BuildReversalInput): ReversalOp {
           "Operator-confirmed compensating action required (no clean inverse).",
         autoExecutable: false,
       };
-    case "delete_inverse":
+    case "delete_inverse": {
+      if (!input.creation) {
+        // Back-compat: a trigger that declares no creation target still gets the
+        // legacy non-replayable marker (pre-2026-08-08 behavior).
+        return {
+          kind: "deferred",
+          strategy: input.strategy,
+          note: "replay requires the tool/FS layer (later phase); not auto-revertible in v1",
+        };
+      }
+      // Validate identifiers NOW (ident throws on anything unsafe) so a bad
+      // declaration fails at build, not at a future replay.
+      ident(input.creation.table);
+      ident(input.creation.pkColumn);
+      return {
+        kind: "delete_inverse",
+        table: input.creation.table,
+        pkColumn: input.creation.pkColumn,
+        pkValue: null, // completed post-execution via completeDeleteInverse
+      };
+    }
     case "tri_restore":
       return {
         kind: "deferred",
@@ -229,6 +277,30 @@ export function buildReversalOp(input: BuildReversalInput): ReversalOp {
         throw new Error(`V8.3 reversal: unknown reversal strategy`);
       })(input.strategy);
   }
+}
+
+/**
+ * Complete a `delete_inverse` template with the created row's pk, extracted from
+ * the tool's own JSON output (`resultPkField`). Returns the completed op, or
+ * null when the output is not JSON / lacks the field / carries a non-scalar —
+ * in which case the persisted op keeps `pkValue: null` and refuses replay.
+ */
+export function completeDeleteInverse(
+  op: Extract<ReversalOp, { kind: "delete_inverse" }>,
+  toolOutput: string | undefined,
+  resultPkField: string,
+): Extract<ReversalOp, { kind: "delete_inverse" }> | null {
+  if (toolOutput === undefined) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolOutput);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const value = (parsed as Record<string, unknown>)[resultPkField];
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  return { ...op, pkValue: value };
 }
 
 /** Reject an inverse that touches tables outside the declared blast-radius (§7.1). */
@@ -310,6 +382,23 @@ export function applyReversal(
         };
       }
     }
+    case "delete_inverse": {
+      if (op.pkValue === null) {
+        return {
+          ok: false,
+          reason:
+            "delete_inverse: created-row pk was never captured (tool output lacked it) — not replayable",
+        };
+      }
+      try {
+        db.prepare(
+          `DELETE FROM ${ident(op.table)} WHERE ${ident(op.pkColumn)} = ?`,
+        ).run(op.pkValue);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, reason: errMsg(err) };
+      }
+    }
     case "compensating":
       return { ok: false, requiresOperator: true, reason: op.proposal };
     case "irreversible":
@@ -320,6 +409,22 @@ export function applyReversal(
         reason: `deferred strategy '${op.strategy}' not replayable in v1`,
       };
   }
+}
+
+/**
+ * Post-replay verification for `delete_inverse`: the created row must be ABSENT.
+ * Deleting an already-absent row verifies true (idempotent revert — the schedule
+ * was removed by someone else first; the end state is the reverted state).
+ */
+export function verifyDeleted(
+  db: Database.Database,
+  op: Extract<ReversalOp, { kind: "delete_inverse" }>,
+): boolean {
+  if (op.pkValue === null) return false;
+  const row = db
+    .prepare(`SELECT 1 FROM ${ident(op.table)} WHERE ${ident(op.pkColumn)} = ?`)
+    .get(op.pkValue);
+  return row === undefined;
 }
 
 /**
@@ -401,6 +506,40 @@ export function revertDecision(
   }
   if (op.kind === "deferred") {
     return { ok: false, status: "unchanged", reason: `deferred: ${op.note}` };
+  }
+
+  if (op.kind === "delete_inverse") {
+    // Blast radius is inherently the one row the tool created; a null pk (never
+    // completed) refuses inside applyReversal.
+    const applied = applyReversal(db, op);
+    if (!applied.ok) {
+      return {
+        ok: false,
+        status: "unchanged",
+        restored: false,
+        reason: applied.reason,
+      };
+    }
+    if (!verifyDeleted(db, op)) {
+      return {
+        ok: false,
+        status: "unchanged",
+        restored: false,
+        reason: "reversal_failed_state_not_restored",
+      };
+    }
+    appendDecisionEvent(
+      {
+        decisionId,
+        sequenceNo: nextSequenceNo(decisionId, db),
+        eventKind: "reverted",
+        payload: { reason: "operator_revert", restored: true },
+        occurredAt: nowIso,
+      },
+      db,
+    );
+    markReverted(decisionId, nowIso, db);
+    return { ok: true, status: "reverted", restored: true };
   }
 
   // sql_inverse

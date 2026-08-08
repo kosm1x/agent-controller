@@ -30,12 +30,14 @@ import {
   getCapabilityRow,
   insertDecision,
   markReverted,
+  updateDecisionReversalOp,
   updateDecisionStatus,
 } from "./decisions-store.js";
 import {
   applyReversal,
   buildReversalOp,
   captureSqlPreState,
+  completeDeleteInverse,
   verifyRestored,
   type MutationTarget,
   type ReversalOp,
@@ -84,6 +86,19 @@ export interface DecisionTrigger {
     compensatingProposal?: string;
   };
   /**
+   * 2026-08-08 — declares that this decision CREATES a row (the `delete_inverse`
+   * half of reversibility): the pipeline builds a delete-the-created-row template
+   * BEFORE execute and completes it AFTER execute from the tool's own output
+   * (`resultPkField` names the JSON field carrying the created pk). Only valid on
+   * a capability whose canonical strategy is `delete_inverse` (seam-(a) analog —
+   * fail loud on mismatch). Mutually exclusive with `sqlMutation`.
+   */
+  creation?: {
+    table: string;
+    pkColumn: string;
+    resultPkField: string;
+  };
+  /**
    * §8 — external (non-Jarvis) content this action consumes (operator message,
    * kb_entry, scraped web, API response). When present, the pipeline runs the
    * DETERMINISTIC injection heuristic before execute; a hit HALTS the decision as
@@ -98,10 +113,16 @@ export interface RunPipelineOptions {
   db?: Database.Database;
   /** Injected clock (ISO) for deterministic tests. */
   nowIso?: string;
-  /** Mock executor (Phase 2). Default = no-op success; real exec is later. */
+  /**
+   * Executor. Default = no-op success. `output` (the tool's result string) is
+   * optional and consumed only by the `delete_inverse` post-execution completion
+   * — existing callers that return bare `{ok}` are unaffected.
+   */
   execute?: (
     trigger: DecisionTrigger,
-  ) => Promise<{ ok: boolean }> | { ok: boolean };
+  ) =>
+    | Promise<{ ok: boolean; output?: string }>
+    | { ok: boolean; output?: string };
 }
 
 export interface PipelineResult {
@@ -152,7 +173,8 @@ export async function runDecisionPipeline(
   const db = options.db ?? getDatabase();
   const nowIso = options.nowIso ?? new Date().toISOString();
   const now = new Date(nowIso);
-  const execute = options.execute ?? (() => ({ ok: true }));
+  const execute =
+    options.execute ?? ((): { ok: boolean; output?: string } => ({ ok: true }));
 
   // 1. Resolve the capability (deterministic lookup).
   const cap = getCapabilityRow(trigger.capability, db);
@@ -240,15 +262,57 @@ export async function runDecisionPipeline(
     });
   }
 
+  // 2c. delete_inverse creation declaration (2026-08-08). Mutually exclusive with
+  //     sqlMutation (a decision is either a mutation of existing rows or a
+  //     creation — declaring both is a wiring bug). Seam-(a) analog: only a
+  //     capability whose CANONICAL strategy is delete_inverse may declare a
+  //     creation target, so e.g. gmail_send can never grow a fake "undo".
+  if (trigger.creation) {
+    if (trigger.sqlMutation) {
+      throw new Error(
+        `V8.3 pipeline: trigger for '${cap.capability}' declared BOTH sqlMutation and creation — pick one`,
+      );
+    }
+    const capabilityStrategy = reversalStrategyForCapability(cap.capability);
+    if (capabilityStrategy !== "delete_inverse") {
+      throw new Error(
+        `V8.3 pipeline: trigger declared a creation target for '${cap.capability}', ` +
+          `but its canonical reversal strategy is '${capabilityStrategy}' (delete_inverse required)`,
+      );
+    }
+    reversalOp = buildReversalOp({
+      strategy: "delete_inverse",
+      creation: {
+        table: trigger.creation.table,
+        pkColumn: trigger.creation.pkColumn,
+      },
+      level: effectiveLevel,
+      reversibleRequired: gateConfig.reversible_required,
+    });
+  }
+
   // Seam (b): §7 structural invariant — an autonomous (L≥3) action MUST carry a
-  // proven, replayable inverse (`sql_inverse`). ANY other case demotes to confirm
-  // (L2). This now fires GENERALLY, not just inside the `sqlMutation` branch:
-  // previously an L≥3 trigger that declared NO sqlMutation reached the autonomous
-  // route with `reversalOp === null` and `reversible_required` unenforced. Now a
-  // missing/non-sql_inverse inverse always demotes — no autonomous path without a
-  // proven undo. (Non-reversible capabilities are already max_level≤2 by the seed
-  // invariant, so this only bites a mis-wired L≥3 trigger — the safe direction.)
-  if (effectiveLevel >= 3 && reversalOp?.kind !== "sql_inverse") {
+  // proven, replayable inverse. ANY other case demotes to confirm (L2). This
+  // fires GENERALLY, not just inside the `sqlMutation` branch: an L≥3 trigger
+  // that declared no mutation/creation demotes with `reversalOp === null` — no
+  // autonomous path without a proven undo. (Non-reversible capabilities are
+  // already max_level≤2 by the seed invariant, so this only bites a mis-wired
+  // L≥3 trigger — the safe direction.)
+  //
+  // 2026-08-08 (gate-validity assessment): the proven set widened from
+  // {sql_inverse} to {sql_inverse, delete_inverse}. A delete_inverse op at gate
+  // time is a TEMPLATE (`pkValue: null` — the row is not created yet); the
+  // strategy itself is what is proven (creation is always undone by deleting the
+  // created row), and the post-execution completion below fills the pk. Anything
+  // deferred/compensating/irreversible still demotes.
+  const PROVEN_REPLAYABLE: ReadonlySet<string> = new Set([
+    "sql_inverse",
+    "delete_inverse",
+  ]);
+  if (
+    effectiveLevel >= 3 &&
+    (!reversalOp || !PROVEN_REPLAYABLE.has(reversalOp.kind))
+  ) {
     const from = effectiveLevel;
     effectiveLevel = 2;
     demotions.push({ from, to: 2, reason: "not_reversible" });
@@ -371,6 +435,22 @@ export async function runDecisionPipeline(
     emit("executed", { mock: true });
     updateDecisionStatus(decisionId, "committed", nowIso, db);
     status = "committed";
+    // Post-execution completion of a delete_inverse template: extract the
+    // created row's pk from the tool's own output and persist the completed op.
+    // Extraction failure leaves `pkValue: null` (op refuses replay) — benign on
+    // an L1-L2 audit row; a FUTURE autonomous caller must treat a committed
+    // decision whose op stayed incomplete as the §10 freeze class.
+    if (reversalOp?.kind === "delete_inverse" && trigger.creation) {
+      const completed = completeDeleteInverse(
+        reversalOp,
+        result.output,
+        trigger.creation.resultPkField,
+      );
+      if (completed) {
+        updateDecisionReversalOp(decisionId, completed, db);
+        reversalOp = completed;
+      }
+    }
   } else if (
     reversalOp?.kind === "sql_inverse" &&
     (capturedPreState as SqlPreState | null)?.kind === "sql"
