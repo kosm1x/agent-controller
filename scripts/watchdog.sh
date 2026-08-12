@@ -314,6 +314,53 @@ if [ "$DISK_USED_GB" -ge 150 ]; then
     "Disk at ${DISK_USED_GB} GB (soft cap 150 / hard 200). Trim time. Top: ${TOP}"
 fi
 
+# --- Check 11: Offsite pull staleness (alert-only) ---
+# Every check above verifies backups are PRODUCED. None verify they LEAVE the box.
+# The offsite copy is PULLED by the Windows/WSL desktop (~09:00 UTC), and its own
+# healthcheck (check-vps-backup.sh) runs on that same PC under the same WSL cron
+# that performs the pull — so when WSL is down, the backup and its monitor fail
+# together and neither can report it. 2026-08-07..08-12: six consecutive nights
+# missed in total silence. Every VPS-side check stayed green (producers were fine),
+# while the Aug 07 pg_dump aged out of the +3 retention and was destroyed before it
+# had ever shipped. The VPS is the only vantage point that stays up — detection
+# has to live here.
+#
+# Alert-only by design: nothing on this host can fix a PC that is switched off.
+#
+# Signal is a BURST of desktop-key auths, not merely the newest one: a full rsync
+# run opens ~21 connections, while an interactive ssh/scp or an inventory-script
+# run opens 1-3. Counting (threshold 10) means operator logins can't reset the
+# clock and mask a cron that has stopped firing. Source is auth.log rather than
+# the journal — it retains ~4 weeks across rotation vs ~6 days. The fingerprint is
+# derived from authorized_keys instead of hardcoded, so rotating the key does not
+# silently blind this check.
+PULL_STATE=/var/lib/mc-watchdog-pull-alert
+DESKTOP_FP=$(ssh-keygen -lf /root/.ssh/authorized_keys 2>/dev/null \
+  | awk '/windows-desktop-backup/ {print $2; exit}')
+if [ -z "$DESKTOP_FP" ]; then
+  maybe_alert "$PULL_STATE" \
+    "Offsite backup key 'windows-desktop-backup' is NOT in /root/.ssh/authorized_keys — the nightly pull cannot authenticate. Nothing is leaving this box."
+else
+  PULL_NEWEST=$(grep -hF "$DESKTOP_FP" /var/log/auth.log.1 /var/log/auth.log 2>/dev/null \
+    | grep -F 'Accepted publickey' | tail -1 | cut -d' ' -f1)
+  # Fail SAFE on an unparseable timestamp: a future rsyslog format change would
+  # otherwise make the window comparison below match nothing and cry wolf daily.
+  if [ -n "$PULL_NEWEST" ] && ! date -d "$PULL_NEWEST" +%s >/dev/null 2>&1; then
+    echo "$LOG_PREFIX WARNING: Check 11 skipped — auth.log timestamp '$PULL_NEWEST' did not parse"
+  else
+    # auth.log stamps are ISO8601 at +00:00, so a lexical compare against a UTC
+    # cutoff is a correct time comparison and needs no per-line date parsing.
+    PULL_CUTOFF=$(date -u -d '36 hours ago' +%Y-%m-%dT%H:%M:%S)
+    PULL_COUNT=$(grep -hF "$DESKTOP_FP" /var/log/auth.log.1 /var/log/auth.log 2>/dev/null \
+      | grep -F 'Accepted publickey' \
+      | awk -v c="$PULL_CUTOFF" '$1 >= c' | wc -l)
+    if [ "$PULL_COUNT" -lt 10 ]; then
+      maybe_alert "$PULL_STATE" \
+        "Offsite pull has NOT run in 36h (${PULL_COUNT} desktop auths in window, a full pull is ~21; last seen ${PULL_NEWEST:-never}). VPS backups are being produced normally — they are just not shipping. Check WSL cron on the PC; dumps age out of retention in ~4 days and are then gone."
+    fi
+  fi
+fi
+
 # --- Summary ---
 if [ ${#ACTIONS[@]} -eq 0 ]; then
   echo "$LOG_PREFIX OK: all checks passed"
