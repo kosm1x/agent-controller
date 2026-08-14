@@ -284,6 +284,73 @@ describe("evaluateV82Gate", () => {
     const g = evaluateV82Gate();
     expect(g.unfixablePct).toBe(10); // 1 of 10
     expect(g.checks.unfixable.pass).toBe(false); // ≥5%
+    // qa S2: this row has NO persisted reason and NO infra marker — the
+    // documented legacy default classifies it `contradicted` in the breakdown.
+    expect(g.unfixableBreakdown).toEqual({ contradicted: 1, unsupported: 0 });
+  });
+
+  it("scores unfixables over a 30d window — an 8-day-old defect still counts (7d would miss it)", () => {
+    // 2026-08-14: check 4 widened from 7d to 30d — at ~20 verdicts/7d a <5%
+    // threshold was zero-tolerance (one unfixable = 5% = fail). The volume
+    // check deliberately stays 7d (tempo), so the old row must not affect it.
+    const b = insertBrief("promoted");
+    for (let i = 0; i < 10; i++) {
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    const old = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    insertJudgment({
+      briefingId: b,
+      confidence: "green",
+      verdict: "unfixable",
+      unfixableReason: "unsupported",
+      createdAt: old,
+    });
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.judgments7d).toBe(10); // volume window unchanged — old row outside
+    expect(g.unfixablePct).toBe(9.1); // 1 of 11 measured verdicts in 30d
+    expect(g.checks.unfixable.pass).toBe(false);
+    expect(g.checks.unfixable.detail).toContain("in 30d");
+  });
+
+  it("breaks the counted unfixables down by defect class in the result and the detail", () => {
+    const b = insertBrief("promoted");
+    for (let i = 0; i < 17; i++) {
+      const id = insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "approved",
+      });
+      insertClaim(id, "resolved");
+    }
+    insertJudgment({
+      briefingId: b,
+      confidence: "green",
+      verdict: "unfixable",
+      unfixableReason: "contradicted",
+    });
+    for (let i = 0; i < 2; i++) {
+      insertJudgment({
+        briefingId: b,
+        confidence: "green",
+        verdict: "unfixable",
+        unfixableReason: "unsupported",
+      });
+    }
+    insertProbe(false);
+
+    const g = evaluateV82Gate();
+    expect(g.unfixableBreakdown).toEqual({ contradicted: 1, unsupported: 2 });
+    expect(g.unfixablePct).toBe(15); // 3 of 20
+    expect(g.checks.unfixable.detail).toContain(
+      "contradicted: 1 · unsupported: 2",
+    );
   });
 
   it("excludes critic-infra 'unverified' escalations from the rate (numerator AND denominator)", () => {
@@ -371,6 +438,8 @@ describe("evaluateV82Gate", () => {
     const g = evaluateV82Gate();
     expect(g.criticUnverified).toBe(1);
     expect(g.unfixablePct).toBe(0); // the only unfixable was infra → excluded
+    // qa S2: infra rows are excluded from the breakdown too, not mislabelled.
+    expect(g.unfixableBreakdown).toEqual({ contradicted: 0, unsupported: 0 });
   });
 
   it("retro-classifies an OLDER-vintage infra row that lacks the escalation marker (the #38 gap)", () => {

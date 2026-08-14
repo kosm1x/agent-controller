@@ -68,6 +68,18 @@ export const GATE_V82_RESOLVER_PCT = 95;
 export const GATE_V82_UNFIXABLE_MAX_PCT = 5;
 export const GATE_V82_SYCOPHANCY_MAX_PCT = 5;
 
+/**
+ * Check-4 window: 30d, NOT the 7d the volume/resolver checks use (in-gate
+ * precedent: check 5 sycophancy is also 30d). At the shadow tempo (~20
+ * verdicts/7d) a <5% threshold over 7d is ZERO-tolerance — one unfixable = 5%
+ * = fail — which is a coin flip, not a gate (≈46% false-fail probability at a
+ * compliant 3% true defect rate; 2026-08-08 gate-validity assessment). 30d
+ * gives n≈80, so the same 5% tolerates 4 defects/month and a single bad day
+ * no longer fails the week. The volume check stays 7d on purpose — it measures
+ * TEMPO, not hygiene, and must catch a stalled producer within days.
+ */
+export const GATE_V82_UNFIXABLE_WINDOW_DAYS = 30;
+
 export type GateVerdict = "pass" | "fail" | "insufficient_data";
 
 /**
@@ -122,12 +134,19 @@ export interface V82GateResult {
   /** Citation resolver hit-rate (%) over those judgments' claims; null = none. */
   resolverPct: number | null;
   /** CRITIC judgment-unfixable rate (%) over verdicts that measured quality
+   *  in the `GATE_V82_UNFIXABLE_WINDOW_DAYS` window
    *  (contradicted/unsupported ÷ measured verdicts); null = none measured.
    *  EXCLUDES critic-infra `unverified` escalations — see `criticUnverified`. */
   unfixablePct: number | null;
   /** Count of `unfixable` trail rows that were critic-infra failures (no tool
    *  call / timeout), not judgment defects — excluded from `unfixablePct`. */
   criticUnverified: number;
+  /** Defect-class breakdown of the COUNTED unfixables (excludes critic-infra
+   *  `unverified`), so a fail names its driver: `contradicted` = a claim
+   *  disproven by ground truth; `unsupported` = an uncited factual sentence
+   *  survived the revision loop. Legacy rows without a persisted reason count
+   *  as `contradicted` (the retro-classification default). */
+  unfixableBreakdown: { contradicted: number; unsupported: number };
   /** Sycophancy concede-without-evidence rate (%) over 30d probes; null = none. */
   sycophancyPct: number | null;
   checks: {
@@ -223,13 +242,14 @@ export function evaluateV82Gate(): V82GateResult {
   const trailRows = db
     .prepare(
       `SELECT critic_trail_json FROM judgments
-        WHERE created_at > datetime('now','-7 days')
+        WHERE created_at > datetime('now','-${GATE_V82_UNFIXABLE_WINDOW_DAYS} days')
           AND critic_trail_json IS NOT NULL`,
     )
     .all() as { critic_trail_json: string }[];
   let verdictsTotal = 0;
   let unfixable = 0;
   let criticUnverified = 0;
+  const unfixableBreakdown = { contradicted: 0, unsupported: 0 };
   for (const r of trailRows) {
     try {
       const t = JSON.parse(r.critic_trail_json) as {
@@ -241,7 +261,7 @@ export function evaluateV82Gate(): V82GateResult {
       verdictsTotal++;
       if (t.verdict !== "unfixable") continue;
       // Structured field wins; fall back to the critic's own markers for rows
-      // written before `unfixableReason` was persisted (self-retires in ≤7d).
+      // written before `unfixableReason` was persisted (self-retires in ≤30d).
       // Two markers: the newer escalation suffix AND the inner no-tool-call
       // message that survives in both critique vintages (see critic.ts) — an
       // older infra row (#38 vintage) carries only the latter.
@@ -256,7 +276,12 @@ export function evaluateV82Gate(): V82GateResult {
             ? "unverified"
             : "contradicted";
       if (reason === "unverified") criticUnverified++;
-      else unfixable++;
+      else {
+        unfixable++;
+        unfixableBreakdown[
+          reason === "unsupported" ? "unsupported" : "contradicted"
+        ]++;
+      }
     } catch {
       /* a malformed trail blob is not a verdict — skip it */
     }
@@ -314,6 +339,7 @@ export function evaluateV82Gate(): V82GateResult {
     resolverPct,
     unfixablePct,
     criticUnverified,
+    unfixableBreakdown,
     sycophancyPct,
     checks: {
       schema: {
@@ -335,11 +361,11 @@ export function evaluateV82Gate(): V82GateResult {
         pass: unfixablePass,
         detail:
           unfixablePct === null
-            ? "no measured critic verdicts in the 7d window yet" +
+            ? `no measured critic verdicts in the ${GATE_V82_UNFIXABLE_WINDOW_DAYS}d window yet` +
               (criticUnverified > 0
                 ? ` (${criticUnverified} critic-unverified excluded — critic never verified any)`
                 : "")
-            : `unfixable ${unfixablePct}% over ${measuredVerdicts} verdict(s) (need <${GATE_V82_UNFIXABLE_MAX_PCT}%)` +
+            : `unfixable ${unfixablePct}% over ${measuredVerdicts} verdict(s) in ${GATE_V82_UNFIXABLE_WINDOW_DAYS}d (need <${GATE_V82_UNFIXABLE_MAX_PCT}%) — contradicted: ${unfixableBreakdown.contradicted} · unsupported: ${unfixableBreakdown.unsupported}` +
               (criticUnverified > 0
                 ? `; ${criticUnverified} critic-unverified excluded`
                 : ""),

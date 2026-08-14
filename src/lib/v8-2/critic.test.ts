@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { queryClaudeSdk } from "../../inference/claude-sdk.js";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import {
@@ -84,6 +85,21 @@ describe("CRITIC_SYSTEM_PROMPT_V1 — verification discipline", () => {
     // passed green — mirrors the rule-2 safety-clause pin above.
     expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
       "on the strength of a 0-row result",
+    );
+  });
+
+  it("requires a double probe before an entity-absence claim (judgment 154 regression)", () => {
+    // Regression: judgment 154 — the ASCII-only sanitizer mangled "Ángeles"
+    // into the unmatchable token "ngeles"; recall_check returned 0 hits for an
+    // entity 14 KB files contained, and the critic directed the revision to
+    // DELETE the true claim as "not documented".
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain("ABSENCE NEEDS A DOUBLE PROBE");
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "lexical pass AND an independent substring probe",
+    );
+    // The disposition: no remove-as-undocumented without the double-probe result.
+    expect(CRITIC_SYSTEM_PROMPT_V1).toContain(
+      "NEVER direct a revision to remove an entity as undocumented",
     );
   });
 });
@@ -553,6 +569,14 @@ describe("verification tools — read-only guards", () => {
     expect(sanitizeFtsQuery("  @#$ -- ")).toBe("");
   });
 
+  it("sanitizeFtsQuery preserves accented tokens intact (#153/#154 regression)", () => {
+    // Mutation check: revert the token regex to /[a-z0-9]+/g and the first
+    // assertion reads '"grupo" OR "ngeles"' — the unmatchable token that
+    // manufactured the false "no KB hits" behind judgments #153/#154.
+    expect(sanitizeFtsQuery("Grupo Ángeles")).toBe('"grupo" OR "ángeles"');
+    expect(sanitizeFtsQuery("México señales")).toBe('"méxico" OR "señales"');
+  });
+
   describe("runReadOnlySelect", () => {
     it("rejects anything that is not a single SELECT", () => {
       const db = getDatabase();
@@ -638,6 +662,73 @@ describe("verification tools — read-only guards", () => {
     expect(hit).toMatch(/kb\/pilot\.md|lexical/);
     expect(runRecallCheck(db, "")).toMatch(/empty query/);
     expect(runRecallCheck(db, "zzqqxx-nomatch")).toMatch(/no KB matches/);
+  });
+
+  it("runRecallCheck finds accented content via an accented query (e2e #154)", () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    ).run(
+      "f2",
+      "projects/grupo-angeles/README.md",
+      "Grupo Ángeles",
+      "minuta de Grupo Ángeles, agosto 2026",
+    );
+    expect(runRecallCheck(db, "Grupo Ángeles")).toMatch(
+      /grupo-angeles\/README\.md/,
+    );
+  });
+
+  it("runRecallCheck refuses a false absence: 0 FTS hits + substring hit reports EXISTS", () => {
+    // "ngeles" is a byte-substring of "Ángeles" but never an FTS token, so the
+    // FTS pass misses while the probe hits — the tool must NOT claim absence.
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    ).run("f3", "kb/ga.md", "GA", "reunión con Grupo Ángeles");
+    const out = runRecallCheck(db, "ngeles");
+    expect(out).toMatch(/KB DOES contain the term/);
+    expect(out).toMatch(/kb\/ga\.md/);
+    expect(out).not.toMatch(/no KB matches/);
+  });
+
+  it("a thrown probe fails CLOSED — never fabricates the double-probe absence (qa W1)", () => {
+    // FTS table exists (0 hits) but the jarvis_files base table does not, so
+    // every probe variant throws. The pre-fix code returned the exact
+    // "no KB matches (lexical FTS + substring probe)" string prompt-rule 4
+    // treats as a licence to delete a claim — judgment #154 reproduced through
+    // the guard built to prevent it.
+    const bare = new Database(":memory:");
+    bare.exec(
+      "CREATE VIRTUAL TABLE jarvis_files_fts USING fts5(title, content, path)",
+    );
+    const out = runRecallCheck(bare, "ngeles");
+    expect(out).toMatch(/absence NOT established/);
+    expect(out).toMatch(/probe unavailable/);
+    expect(out).not.toMatch(/no KB matches/);
+    bare.close();
+  });
+
+  it("a query too short to probe never claims absence (qa W2)", () => {
+    // 2-char tokens pass sanitizeFtsQuery but are below the probe's ≥3-char
+    // floor — with zero probes run, the tool must not emit any "no KB matches".
+    const out = runRecallCheck(getDatabase(), "GA");
+    expect(out).toMatch(/absence NOT established/);
+    expect(out).toMatch(/query too short/);
+    expect(out).not.toMatch(/no KB matches/);
+  });
+
+  it("runRecallCheck true absence carries the double-probe marker; LIKE wildcards are escaped", () => {
+    const db = getDatabase();
+    expect(runRecallCheck(db, "zzqqxx-nomatch")).toMatch(
+      /no KB matches .* \(lexical FTS \+ substring probe\)/,
+    );
+    // A metacharacter query must not wildcard-match everything: "z%z" would
+    // LIKE-match any content containing two z's around anything if unescaped.
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    ).run("f4", "kb/zz.md", "zz", "zebra zulu");
+    expect(runRecallCheck(db, "z%z")).toMatch(/no KB matches/);
   });
 
   it("runFileSha hashes a repo file, rejects traversal, reports missing", () => {

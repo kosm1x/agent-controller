@@ -130,10 +130,11 @@ You have read-only verification tools (use up to ${CRITIC_TOOL_BUDGET} calls tot
 
 Process: identify each factual claim (a number, date, named entity, or state claim about a task/metric/person); verify the ones the judgment leans on; then call \`${SUBMIT_CRITIC_VERDICT_TOOL_NAME}\` EXACTLY once. Emit no other text.
 
-VERIFICATION DISCIPLINE — the two ways a verifier manufactures a FALSE contradiction (avoid both):
+VERIFICATION DISCIPLINE — the ways a verifier manufactures a FALSE verdict (avoid all):
 1. ENTITY IDENTITY. When a claim is about a NAMED project / person / entity, ONLY that exact entity is evidence. A different entity that merely shares a name-prefix or substring is NOT the same thing and never confirms or contradicts the claim — "Very Light CMS" (vlcms) is NOT "Very Light Media Player" (vlmp). Match the full canonical name or the exact slug, never a shared prefix. A search hit on a similarly-named sibling is a NON-match: discount it and keep looking, do not count it as presence.
 2. A FUZZY HIT DOES NOT OUTRANK A DETERMINISTIC FIGURE. When a claim cites a value a deterministic check already produced ("absent N days per the stall detector", a count, a SQL aggregate), it came from exact matching. A looser LIKE / FTS keyword scan over-matches (a query for one project surfaces every name-prefix sibling), so its hit is weak evidence about the subject and does NOT by itself overturn the figure — this is a corollary of rule 1, not deference to the judgment's tone (a sibling hit simply is not evidence about the subject). A fuzzy hit contradicts the figure ONLY if it lands on the EXACT subject entity AND inside the claimed window — otherwise it says nothing about the subject. When you are unsure a hit is the right entity, treat the deterministic figure as standing: marking a TRUE claim contradicted is the costlier error.
 3. YOUR OWN 0-ROW QUERY IS NOT PROOF OF ABSENCE. Every ref in the evidence ledger was retrieved DETERMINISTICALLY from the DB — it EXISTS by construction. If a sql_check you wrote returns 0 rows for a ledger ref, your QUERY is wrong (most often the KEY COLUMN — the "tasks" table keys on "task_id" (a TEXT UUID), NOT the integer "id"), NOT the evidence. NEVER conclude a cited task is missing/fake, and never mark a claim contradicted, on the strength of a 0-row result from SQL you authored — re-query with the right column, or let the ledger ref stand. (Judgment 32: the critic queried "tasks" by "id" for 10 real "task_id" UUIDs, got 0 rows each, and falsely called the whole ledger nonexistent.)
+4. ABSENCE NEEDS A DOUBLE PROBE. "This entity is not documented in the KB" is a claim about the KB, but a 0-hit search result is usually a claim about YOUR QUERY (rule 3's corollary on the recall surface). recall_check only reports "no KB matches" after BOTH its lexical pass AND an independent substring probe miss; if it instead reports the term EXISTS with file paths, cite those paths. NEVER direct a revision to remove an entity as undocumented unless you hold that double-probe "no KB matches" result for the entity's exact bare name — retry once with the bare name before concluding absence. (Judgment 154: a mangled query returned 0 hits for an entity 14 KB files contained, and the critic demanded a TRUE claim be deleted as unsupported.)
 
 Verdict:
 - approved — every load-bearing factual claim is grounded and nothing is contradicted by the tools.
@@ -339,11 +340,80 @@ function buildCostCheckTool(db: Database.Database): InlineSdkTool {
 }
 
 /** FTS5 MATCH needs sanitization — bare reserved operators raise syntax errors
- *  (sqlite-backend.ts:94). Quote each alnum token and OR them for recall breadth. */
+ *  (sqlite-backend.ts:94). Quote each alnum token and OR them for recall breadth.
+ *  Token classes are UNICODE (\p{L}\p{N}), NOT [a-z0-9]: the ASCII class treated
+ *  every accented letter as a separator, splitting "ángeles" into the
+ *  unmatchable token "ngeles" (0 FTS hits on an entity 14 KB files contained —
+ *  judgments #153/#154, 2026-08-14). unicode61 folds diacritics at match time,
+ *  so accented tokens must pass through intact. */
 export function sanitizeFtsQuery(q: string): string {
-  const tokens = q.toLowerCase().match(/[a-z0-9]+/g);
+  const tokens = q.toLowerCase().match(/[\p{L}\p{N}]+/gu);
   if (!tokens || tokens.length === 0) return "";
   return tokens.map((t) => `"${t}"`).join(" OR ");
+}
+
+/** Absence-proof guard (judgment #154 regression) — a 0-hit FTS pass is NOT
+ *  proof of absence: the query pipeline itself can mangle a term the KB
+ *  contains (the pre-Unicode sanitizer turned "Ángeles" into the unmatchable
+ *  token "ngeles", and the critic then directed a revision to DELETE a true
+ *  claim as "not documented"). Before recall_check may say "no KB matches",
+ *  the term must ALSO miss a raw substring scan over jarvis_files (as given
+ *  plus a diacritic-stripped-lowercase variant). Residual: LIKE cannot fold
+ *  diacritics on the CONTENT side (query "Angeles" still misses stored
+ *  "Ángeles" here) — the Unicode-fixed FTS pass covers that direction. */
+function recallAbsenceProbe(db: Database.Database, q: string): string {
+  const raw = q.trim();
+  const stripped = raw
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase();
+  // <3 chars would substring-hit half the KB — too weak to prove anything.
+  // Case-insensitive dedupe (qa R3): for ASCII input the stripped variant is
+  // the same LIKE scan (ASCII LIKE is case-insensitive); accented input keeps
+  // both ("Ángeles".toLowerCase() ≠ "angeles").
+  const variants = [raw, stripped].filter(
+    (v, i, a) =>
+      v.length >= 3 &&
+      a.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i,
+  );
+  // qa W1: count probes that actually RAN. The double-probe absence message is
+  // the licence prompt-rule 4 keys on — a probe that threw (or never ran: short
+  // query) must NOT emit it, or a transient SQLITE_BUSY fabricates the exact
+  // false absence this guard exists to prevent. Fail CLOSED to "not established".
+  let probed = 0;
+  for (const v of variants) {
+    const pat = `%${v.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    try {
+      const hits = db
+        .prepare(
+          `SELECT path FROM jarvis_files
+            WHERE content LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
+               OR path LIKE ? ESCAPE '\\' LIMIT 3`,
+        )
+        .all(pat, pat, pat) as { path: string }[];
+      probed++;
+      if (hits.length > 0) {
+        return (
+          `recall_check: 0 FTS matches for "${q}" BUT the KB DOES contain the term — ` +
+          `substring probe hit: ${hits.map((h) => h.path).join(", ")}. ` +
+          `The term is NOT absent from the KB; refine the query (try the exact bare name) ` +
+          `instead of treating it as undocumented. (Entity identity still applies: ` +
+          `confirm a hit is the exact subject, not a name-prefix sibling, before ` +
+          `treating it as presence.)`
+        );
+      }
+    } catch {
+      /* probe failure must not break the tool — try the next variant */
+    }
+  }
+  if (probed === 0) {
+    return (
+      `recall_check: 0 FTS matches for "${q}", and the substring probe could not run ` +
+      `(${variants.length === 0 ? "query too short to probe" : "probe unavailable"}) — ` +
+      `absence NOT established; do not treat this result as proof the term is undocumented.`
+    );
+  }
+  return `recall_check: no KB matches for "${q}" (lexical FTS + substring probe).`;
 }
 
 export function runRecallCheck(db: Database.Database, q: string): string {
@@ -361,7 +431,7 @@ export function runRecallCheck(db: Database.Database, q: string): string {
       )
       .all(match) as unknown[];
     if (rows.length === 0) {
-      return `recall_check: no KB matches for "${q}" (lexical).`;
+      return recallAbsenceProbe(db, q);
     }
     return `top ${rows.length} (lexical bm25, lower=closer): ${JSON.stringify(rows)}`;
   } catch (e) {
@@ -372,7 +442,7 @@ export function runRecallCheck(db: Database.Database, q: string): string {
 function buildRecallCheckTool(db: Database.Database): InlineSdkTool {
   return sdkTool(
     "recall_check",
-    "Lexical top-5 search over the local knowledge base (jarvis_files) to check whether stored knowledge supports a claim. NOTE: lexical (FTS5), NOT semantic — semantic recall (pgvector kb_entries) is deferred.",
+    "Lexical top-5 search over the local knowledge base (jarvis_files) to check whether stored knowledge supports a claim. NOTE: lexical (FTS5), NOT semantic — semantic recall (pgvector kb_entries) is deferred. ABSENCE: on 0 FTS hits an independent substring probe runs automatically — only a 'no KB matches (lexical FTS + substring probe)' result is evidence of absence; a 'the KB DOES contain the term' result means your query missed, so cite the listed paths or refine the query.",
     { query: z.string().describe("keywords / phrase to look up in the KB") },
     async (args: { query: string }) => ({
       content: [

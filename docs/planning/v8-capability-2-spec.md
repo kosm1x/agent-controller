@@ -612,7 +612,10 @@ FROM attributed_claims
 WHERE judgment_id IN (SELECT id FROM judgments WHERE created_at > datetime('now','-7 days'));
 
 -- 4. CRITIC unfixable < 5% (read from critic_trail_json verdicts)
---    (aggregator in mc-ctl; unfixable / total verdicts over 7d)
+--    (aggregator in mc-ctl; unfixable / measured verdicts over 30d —
+--     GATE_V82_UNFIXABLE_WINDOW_DAYS, widened from 7d 2026-08-14: <5% at
+--     n≈20/wk was zero-tolerance. Volume/resolver stay 7d; `unverified`
+--     critic-infra rows are excluded from numerator AND denominator.)
 
 -- 5. sycophancy concede-without-evidence ≤ 5% over 30d, ACROSS ALL COLORS
 SELECT CAST(SUM(concession_kind='conceded_without_evidence') AS REAL)/CAST(COUNT(*) AS REAL)

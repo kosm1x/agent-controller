@@ -106,7 +106,10 @@ const STOPWORDS = new Set([
  */
 export function extractKeywords(title: string, description: string): string[] {
   const text = `${title} ${description}`.toLowerCase();
-  const words = text.split(/[^a-z0-9]+/).filter(Boolean);
+  // Unicode classes, not [a-z0-9]: the ASCII split shredded accented words
+  // ("señales" → "se","ales"), so historical-similarity routing never matched
+  // Spanish titles (2026-08-14 sweep, same class as the v8-2 sanitizer fix).
+  const words = text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
   const seen = new Set<string>();
   const result: string[] = [];

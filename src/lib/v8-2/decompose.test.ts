@@ -393,6 +393,27 @@ describe("retrieveKbForQuery + gatherEvidence KB pass (Phase 2 — ledger↔cita
     expect(retrieveKbForQuery("  @#$ -- ", { db: getDatabase() })).toEqual([]);
   });
 
+  it("retrieves accented-subject KB files for an accented query (#153 regression)", () => {
+    // The pre-Unicode sanitizer split "Ángeles" into the unmatchable token
+    // "ngeles", so the AUTHOR's ledger never contained the entity's own README
+    // and the judgment mis-cited or left the claim unsupported (judgment #153).
+    getDatabase()
+      .prepare(
+        `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+      )
+      .run(
+        "k4",
+        "projects/grupo-angeles/README.md",
+        "Grupo Ángeles",
+        "Minuta de la reunión con Grupo Ángeles, agosto 2026.",
+      );
+    const ids = retrieveKbForQuery("Grupo Ángeles", {
+      db: getDatabase(),
+      nowIso: NOW,
+    }).map((r) => r.id);
+    expect(ids).toContain("projects/grupo-angeles/README.md");
+  });
+
   it("returns [] when nothing in the KB matches", () => {
     expect(
       retrieveKbForQuery("nonexistentsubjectxyz", { db: getDatabase() }),

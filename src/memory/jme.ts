@@ -251,17 +251,23 @@ export async function writeFacts(facts: JmeFact[]): Promise<void> {
  * - Lowercases everything (FTS5 operators AND/OR/NOT/NEAR are case-sensitive
  *   uppercase, so lowercasing alone neutralizes them as operators).
  * - Strips punctuation/special chars that carry FTS5 meaning (", *, :, (, ),
- *   ^, -, etc.), keeping only alphanumerics and accented letters.
+ *   ^, -, etc.), keeping only Unicode letters and numbers.
  * - Drops the reserved operator words defensively and tokens ≤2 chars.
  */
 function extractKeywords(query: string): string[] {
   const FTS5_OPERATORS = new Set(["and", "or", "not", "near"]);
-  return query
-    .toLowerCase()
-    .replace(/[^a-z0-9áéíóúñü\s]/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !FTS5_OPERATORS.has(w));
+  return (
+    query
+      .toLowerCase()
+      // Unicode classes, not an enumerated accent set — the enumeration mangled
+      // any diacritic outside it (ç, ã, ê…) the same way the critic's ASCII
+      // tokenizer mangled "ángeles" (2026-08-14 sweep; sqlite-backend.ts already
+      // uses \p{L}\p{N}).
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !FTS5_OPERATORS.has(w))
+  );
 }
 
 /**
