@@ -1914,6 +1914,7 @@ usage() {
   echo -e "  ${GREEN}verdict-rate${NC}         ruled-brief verdict rate over time (weekly + explicit-verdict era)"
   echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
   echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
+  echo -e "  ${GREEN}rule-of-two${NC}          V8.5 §5.2 Rule-of-Two audit: tool matrix + trifectas + 30d retrospective (--write → docs/audit)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2891,6 +2892,21 @@ cmd_v83_promote() {
   ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/v83-promote.ts "$@" )
 }
 
+cmd_rule_of_two() {
+  # mc-ctl rule-of-two [--offline] [--days N] [--write] — V8.5 Phase 5.2
+  # Rule-of-Two audit: per-tool [A]/[B]/[C] matrix over the LIVE registry
+  # (via /api/admin/tool-annotations; --offline = host registry in-process),
+  # single-tool trifectas + tier delta, capability rows vs the structural L1
+  # cap, and the 30d run-level retrospective. Read-only; --write emits
+  # docs/audit/rule-of-two-matrix-<date>.md.
+  local key=""
+  case " $* " in
+    *" --offline "*) ;;                 # host registry in-process — no API, no .env needed
+    *) key=$(api_key) ;;
+  esac
+  ( cd "$PROJECT_DIR" && MC_API_KEY="$key" API_URL="$API_URL" npx --no-install tsx scripts/rule-of-two-audit.ts "$@" )
+}
+
 cmd_briefing_gate() {
   # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
   # ratio over reflection inference + morning-brief promote-rate). Read-only.
@@ -2955,6 +2971,7 @@ case "$cmd" in
   trace)             cmd_trace "${1:-}" ;;
   v83-gate)          cmd_v83_gate ;;
   v83-promote)       cmd_v83_promote "$@" ;;
+  rule-of-two)       cmd_rule_of_two "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

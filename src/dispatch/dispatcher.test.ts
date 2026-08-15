@@ -86,6 +86,7 @@ import {
   isPhantomZeroCostRow,
   registerRunner,
 } from "./dispatcher.js";
+import { priorRunTools, recordRunTool } from "../tools/rule-of-two.js";
 import type { RunnerOutput } from "../runners/types.js";
 
 beforeEach(() => {
@@ -382,6 +383,30 @@ describe("isPhantomZeroCostRow", () => {
 // ---------------------------------------------------------------------------
 // Task-trace emit wiring (V8.5 Phase 6, audit W4)
 // ---------------------------------------------------------------------------
+
+describe("dispatchTask Rule-of-Two run context (V8.5 Phase 5.2, qa W3)", () => {
+  it("runner.execute runs INSIDE enterRunToolContext — priorRunTools() is defined and tools record", async () => {
+    let seenInside: readonly string[] | undefined | "unset" = "unset";
+    let seenAfterRecord: readonly string[] | undefined | "unset" = "unset";
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        seenInside = priorRunTools();
+        recordRunTool("web_search");
+        seenAfterRecord = priorRunTools();
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({ title: "R2 ctx", description: "rule of two context wiring" });
+    await vi.waitFor(() => {
+      if (seenAfterRecord === "unset") throw new Error("runner not yet executed");
+    });
+    // Delete the dispatcher's enterRunToolContext wrap and this reads `undefined`.
+    expect(seenInside).toEqual([]);
+    expect(seenAfterRecord).toEqual(["web_search"]);
+    expect(priorRunTools()).toBeUndefined(); // context does not leak out of the run
+  });
+});
 
 describe("dispatchTask trace emits", () => {
   function stubRunner(result: Partial<RunnerOutput>) {

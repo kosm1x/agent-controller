@@ -3,6 +3,7 @@
  */
 
 import type { ToolDefinition } from "../inference/adapter.js";
+import { resolveRuleOfTwo } from "./rule-of-two.js";
 
 /** A tool that can be executed by runners. */
 export interface Tool {
@@ -55,6 +56,20 @@ export interface Tool {
   readonly destructiveHint?: boolean;
   readonly idempotentHint?: boolean;
   readonly openWorldHint?: boolean;
+  /**
+   * Rule-of-Two properties (V8.5 Phase 5.2, `rule-of-two.ts`). Explicit
+   * fields override the name-keyed classification table; absent ⇒ table ⇒
+   * MCP prefix default ⇒ true (unknown = riskier).
+   *
+   * untrustedInputHint: [A] the tool's INHERENT output carries free text
+   *   authored outside the operator/Jarvis boundary (mail, web, shared docs,
+   *   inbound messages, third-party feeds).
+   * sensitiveAccessHint: [B] touches private operator data or a privileged
+   *   system (KB, memories, mail, workspace, FS, shell, git, VPS, accounts).
+   * [C] "changes state / communicates out" is `!readOnlyHint` — not repeated.
+   */
+  readonly untrustedInputHint?: boolean;
+  readonly sensitiveAccessHint?: boolean;
   /** Execute the tool with parsed arguments. Returns result string. */
   execute(args: Record<string, unknown>): Promise<string>;
 }
@@ -70,8 +85,9 @@ export interface Tool {
  * The unknown-state defaults are deliberately conservative — when a tool
  * hasn't been classified yet, treat it as the riskier alternative.
  *
- * No runtime path consults this helper today. Callers that opt in get a
- * single normalized view that includes the four MCP hints + mc-specific
+ * Runtime consumers: `ToolRegistry.getEffectiveRiskTier` (interactive confirm
+ * flow) and the V8.3 seed cross-check. Callers get a single normalized view
+ * that includes the four MCP hints, the two Rule-of-Two hints + mc-specific
  * `requiresConfirmation` and `riskTier` fields so safety reasoning doesn't
  * have to combine two surfaces.
  */
@@ -80,19 +96,44 @@ export interface ToolAnnotations {
   readonly destructiveHint: boolean;
   readonly idempotentHint: boolean;
   readonly openWorldHint: boolean;
+  /** Rule-of-Two [A] — see `Tool.untrustedInputHint`. */
+  readonly untrustedInputHint: boolean;
+  /** Rule-of-Two [B] — see `Tool.sensitiveAccessHint`. */
+  readonly sensitiveAccessHint: boolean;
+  /**
+   * Rule-of-Two single-tool trifecta: [A] ∧ [B] ∧ [C]. When true the resolver
+   * has already forced `riskTier:"high"` + `requiresConfirmation:true` below.
+   */
+  readonly ruleOfTwoTrifecta: boolean;
   /** mc-specific: caller must confirm before invoking. */
   readonly requiresConfirmation: boolean;
   /** mc-specific: graduated risk tier; absent collapses to "low". */
   readonly riskTier: "low" | "medium" | "high";
 }
 
+/**
+ * The ONE runtime resolver for tool safety metadata. `ToolRegistry.
+ * getEffectiveRiskTier` (which the interactive confirm flow in task-executor
+ * reads) delegates here, so the Rule-of-Two structural rule below has no code
+ * path around it: a tool that alone holds untrusted-input + sensitive-access +
+ * state-change is `high`/confirm regardless of what its definition declares
+ * (structural-safety-gate — the resolver refuses the safe-looking value).
+ */
 export function getToolAnnotations(tool: Tool): ToolAnnotations {
+  const readOnlyHint = tool.readOnlyHint ?? false;
+  const { untrustedInput, sensitiveAccess } = resolveRuleOfTwo(tool);
+  const ruleOfTwoTrifecta = untrustedInput && sensitiveAccess && !readOnlyHint;
+  const declaredTier =
+    tool.riskTier ?? (tool.requiresConfirmation ? "high" : "low");
   return {
-    readOnlyHint: tool.readOnlyHint ?? false,
+    readOnlyHint,
     destructiveHint: tool.destructiveHint ?? true,
     idempotentHint: tool.idempotentHint ?? false,
     openWorldHint: tool.openWorldHint ?? true,
-    requiresConfirmation: tool.requiresConfirmation ?? false,
-    riskTier: tool.riskTier ?? (tool.requiresConfirmation ? "high" : "low"),
+    untrustedInputHint: untrustedInput,
+    sensitiveAccessHint: sensitiveAccess,
+    ruleOfTwoTrifecta,
+    requiresConfirmation: ruleOfTwoTrifecta || (tool.requiresConfirmation ?? false),
+    riskTier: ruleOfTwoTrifecta ? "high" : declaredTier,
   };
 }

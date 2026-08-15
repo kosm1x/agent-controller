@@ -182,10 +182,10 @@ describe("renderPromotionAdr", () => {
   it("renders a MADR-style record carrying the gate evidence at promotion time", () => {
     seedCapabilities();
     makeGatePass();
-    const r = promoteCapabilityL1toL2("skill_run", { confirm: true });
+    const r = promoteCapabilityL1toL2("gmail_send", { confirm: true });
     expect(r.ok && r.executed).toBe(true);
     const adr = renderPromotionAdr(r as PromotionDone);
-    expect(adr).toContain("skill_run L1 → L2");
+    expect(adr).toContain("gmail_send L1 → L2");
     expect(adr).toContain("**Status:** accepted");
     expect(adr).toContain("shadowVolume");
     expect(adr).toContain("gated on V8.2 §17");
@@ -198,7 +198,7 @@ describe("renderPromotionAdr", () => {
     // permanent record conclude the invariants were checked against real data.
     seedCapabilities();
     makeGatePass();
-    const r = promoteCapabilityL1toL2("skill_run", { confirm: true });
+    const r = promoteCapabilityL1toL2("gmail_send", { confirm: true });
     const adr = renderPromotionAdr(r as PromotionDone);
 
     expect(adr).toContain("○ linkageIntegrity");
@@ -208,5 +208,29 @@ describe("renderPromotionAdr", () => {
     expect(adr).toContain("NOT a verified property");
     // Checks with a real population still render as ✓.
     expect(adr).toContain("✓ shadowVolume");
+  });
+});
+
+describe("promoteCapabilityL1toL2 — Rule of Two refusal (V8.5 Phase 5.2)", () => {
+  it("refuses skill_run (trifecta-backed) even when the LIVE row admits max_level 2 and the gate passes", () => {
+    seedCapabilities(); // legacy shape: every row says max_level 2
+    makeGatePass();
+    const r = promoteCapabilityL1toL2("skill_run", { confirm: true });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.refusedBy).toBe("rule_of_two");
+    expect(r.reason).toMatch(/structurally capped at L1/);
+    // Nothing moved.
+    const row = getDatabase()
+      .prepare("SELECT level FROM capability_autonomy WHERE capability = 'skill_run'")
+      .get() as { level: number };
+    expect(row.level).toBe(1);
+  });
+
+  it("a non-trifecta capability is NOT refused by the Rule-of-Two guard", () => {
+    seedCapabilities();
+    makeGatePass();
+    const r = promoteCapabilityL1toL2("gmail_send", { confirm: false });
+    if (!r.ok) expect(r.refusedBy).not.toBe("rule_of_two");
   });
 });

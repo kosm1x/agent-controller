@@ -27,6 +27,7 @@
 import type Database from "better-sqlite3";
 import type { ToolRegistry } from "../../tools/registry.js";
 import { getToolAnnotations } from "../../tools/types.js";
+import { isTrifectaByName } from "../../tools/rule-of-two.js";
 import type { CapabilitySeed, ReversalStrategy } from "./types.js";
 import { deriveReversibleDefault } from "./types.js";
 
@@ -110,12 +111,17 @@ export const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
     level: 1,
     blast_radius: "session",
     reversal_strategy: "none", // reversibility depends on the skill — conservative
-    gate_config: { reversible_required: true, max_level: 2 },
+    // Rule of Two (2026-08-15): `skill_run` is an unbounded sub-run whose
+    // provenance is unknowable at the tool boundary ⇒ classified A∧B (+C) ⇒
+    // trifecta ⇒ hard cap L1 (was 2). The live row still says max_level 2
+    // (INSERT OR IGNORE); `structuralMaxLevel` + the pipeline/promotion caps
+    // enforce 1 regardless — the audit script reports the row drift.
+    gate_config: { reversible_required: true, max_level: 1 },
     odd_predicate: { op: "eq", field: "autonomy_eligible", value: true },
     ux_confirm_flag: false,
     file_mutating: false,
     description:
-      "Run a skill (reversibility depends on the skill; conservatively capped at L2).",
+      "Run a skill (reversibility depends on the skill; Rule-of-Two trifecta ⇒ capped at L1).",
   },
   {
     capability: "schedule_task",
@@ -185,7 +191,32 @@ export function assertSeedInvariants(seed: CapabilitySeed): string | null {
   // §7.2 — file-mutating capabilities stay L≤2 until shadow-Git exists.
   if (file_mutating && gate_config.max_level > 2)
     return `${capability}: file-mutating but max_level ${gate_config.max_level} > 2 (shadow-Git deferred)`;
+  // Rule of Two (V8.5 Phase 5.2, operator ruling 2026-08-15) — a capability
+  // whose backing tool ALONE holds untrusted-input ∧ sensitive-access (∧ the
+  // state-change every gated write has) can never leave the confirm floor.
+  const cap = structuralMaxLevel(seed);
+  if (cap !== null && gate_config.max_level > cap)
+    return `${capability}: backing tool '${seed.backing.kind === "tool" ? seed.backing.tool_name : "?"}' is a Rule-of-Two trifecta but max_level ${gate_config.max_level} > ${cap}`;
   return null;
+}
+
+/**
+ * Structural autonomy ceiling imposed by the Rule of Two on a seed: `1` when the
+ * backing tool is a single-tool trifecta (A∧B by static classification; C is
+ * guaranteed for a gated write), else `null` (no extra cap). Consumed by the
+ * seed invariant, `promotion.ts` (refuses L2) and the pipeline (clamps).
+ */
+export function structuralMaxLevel(
+  seed: Pick<CapabilitySeed, "backing">,
+): 1 | null {
+  if (seed.backing.kind !== "tool") return null;
+  return isTrifectaByName(seed.backing.tool_name) ? 1 : null;
+}
+
+/** `structuralMaxLevel` by capability key (null for unseeded/non-tool). */
+export function structuralMaxLevelForCapability(capability: string): 1 | null {
+  const seed = CAPABILITY_SEEDS.find((s) => s.capability === capability);
+  return seed ? structuralMaxLevel(seed) : null;
 }
 
 export interface SeedResult {

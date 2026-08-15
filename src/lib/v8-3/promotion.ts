@@ -32,12 +32,19 @@ import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
 import { evaluateV83Gate, type V83GateResult } from "./activation-gate.js";
 import { getCapabilityRow } from "./decisions-store.js";
+import { structuralMaxLevelForCapability } from "./seed.js";
 import type { CapabilityAutonomyRow } from "./types.js";
 
 export interface PromotionRefusal {
   ok: false;
   /** Which guard refused — stable identifiers for the CLI's exit-code mapping. */
-  refusedBy: "unseeded" | "level" | "max_level" | "gate" | "concurrent_update";
+  refusedBy:
+    | "unseeded"
+    | "level"
+    | "max_level"
+    | "rule_of_two"
+    | "gate"
+    | "concurrent_update";
   reason: string;
   gate?: V83GateResult;
 }
@@ -102,6 +109,18 @@ export function promoteCapabilityL1toL2(
       reason: `only the L1→L2 transition is supported; "${capability}" is at L${row.level}${
         row.level >= 2 ? " (already promoted)" : ""
       }. L≥3 promotion is not implemented by this command — it additionally requires V8.2 §17 (mc-ctl briefing-gate) and per-capability operator signoff.`,
+    };
+  }
+
+  // Rule of Two (V8.5 Phase 5.2): a trifecta-backed capability is capped at L1
+  // by the seed constants — but the LIVE row may predate the ruling (INSERT OR
+  // IGNORE never rewrites gate_config), so refuse here from the code constant,
+  // never from the row.
+  if (structuralMaxLevelForCapability(capability) === 1) {
+    return {
+      ok: false,
+      refusedBy: "rule_of_two",
+      reason: `"${capability}" is backed by a Rule-of-Two trifecta tool (untrusted-input ∧ sensitive-access ∧ state-change); it is structurally capped at L1 — L2 is not admissible.`,
     };
   }
 

@@ -49,6 +49,8 @@ import {
   type ExternalContent,
 } from "./external-content.js";
 import { checkJudgmentLinkage } from "./judgment-linkage.js";
+import { ruleOfTwoState } from "../../tools/rule-of-two.js";
+import type { ToolAnnotations } from "../../tools/types.js";
 
 export type DecisionRoute = "confirm" | "autonomous";
 
@@ -65,6 +67,15 @@ export interface DecisionTrigger {
   judgmentId?: number | null;
   /** Conversation thread this decision belongs to. */
   threadId: string;
+  /**
+   * Rule of Two (V8.5 Phase 5.2) — tool names this run invoked BEFORE the
+   * tool named in `context.tool`. The pipeline composes prior ∪ this and
+   * demotes to L1 when the run holds untrusted-input ∧ sensitive-access ∧
+   * state-change. `undefined` = the seam had NO run context (unknown prior ⇒
+   * demote, fail closed); `[]` = a run with no prior calls. Only consulted for
+   * tool-backed triggers (`context.tool`).
+   */
+  priorToolNames?: readonly string[];
   /**
    * Pre-mutation state mock used when no SQL mutation is declared (Phase 2 path).
    * When `sqlMutation` is present, the pipeline captures the real snapshot and
@@ -113,6 +124,13 @@ export interface RunPipelineOptions {
   db?: Database.Database;
   /** Injected clock (ISO) for deterministic tests. */
   nowIso?: string;
+  /**
+   * Rule of Two — resolves a tool name to its normalized annotations (the
+   * registry's view). Absent, or returning `undefined` for a name, counts as
+   * ALL THREE properties (fail toward demotion): a tool-backed decision the
+   * gate cannot classify is handed to a human, never waved through.
+   */
+  resolveToolAnnotations?: (name: string) => ToolAnnotations | undefined;
   /**
    * Executor. Default = no-op success. `output` (the tool's result string) is
    * optional and consumed only by the `delete_inverse` post-execution completion
@@ -218,6 +236,48 @@ export async function runDecisionPipeline(
     to: AutonomyLevel;
     reason: string;
   }> = [];
+
+  // 2a. Rule of Two (V8.5 Phase 5.2, operator ruling 2026-08-15: trifecta ⇒
+  //     hard cap at L1). Tool-backed decisions only (`context.tool`); non-tool
+  //     seams (task_edit) have no tool composition to evaluate.
+  //     (i)  `rule_of_two_tool` — the backing tool ALONE holds A∧B∧C. Structural
+  //          cap regardless of the stored gate_config: mirrors the seed
+  //          invariant + the promotion refusal, so a legacy/stale row can never
+  //          admit L2 for a trifecta tool.
+  //     (ii) `rule_of_two` — prior tools ∪ this tool hold A∧B∧C (the doctrine's
+  //          real target: e.g. gmail_read earlier, gmail_send now).
+  //     Runs BEFORE the ODD/reversibility/linkage gates so those never see a
+  //     level the doctrine already refused. Dormant while every capability sits
+  //     at L1 (`effectiveLevel >= 2` never holds); live at first promotion.
+  //     (iii) `rule_of_two_no_context` — the seam ran OUTSIDE any run context
+  //          (`priorToolNames === undefined`: container worker, reflection
+  //          runner, interactive confirm handler). The prior set is UNKNOWN,
+  //          and unknown composes as all three (fail closed) — the boundary the
+  //          context cannot see is handed to a human, never waved through.
+  const backingTool =
+    typeof trigger.context.tool === "string" ? trigger.context.tool : null;
+  if (backingTool !== null && effectiveLevel >= 2) {
+    const resolve = options.resolveToolAnnotations ?? (() => undefined);
+    const own = ruleOfTwoState([backingTool], resolve);
+    const prior = trigger.priorToolNames;
+    const composed =
+      prior === undefined
+        ? null
+        : ruleOfTwoState([...prior, backingTool], resolve);
+    const reason = own.trifecta
+      ? "rule_of_two_tool"
+      : composed === null
+        ? "rule_of_two_no_context"
+        : composed.trifecta
+          ? "rule_of_two"
+          : null;
+    if (reason !== null) {
+      const from = effectiveLevel;
+      effectiveLevel = 1;
+      demotions.push({ from, to: 1, reason });
+    }
+  }
+
   let inODD: boolean | null = null;
   if (effectiveLevel >= 3) {
     inODD = evaluateODD(predicate, trigger.context, now);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import type { GateConfig, ODDPredicate, ReversalStrategy } from "./types.js";
 import { runDecisionPipeline, type DecisionTrigger } from "./pipeline.js";
+import type { ToolAnnotations } from "../../tools/types.js";
 
 const ALWAYS_IN: ODDPredicate = { op: "eq", field: "ok", value: true };
 const ALWAYS_OUT: ODDPredicate = { op: "eq", field: "ok", value: false };
@@ -853,5 +854,142 @@ describe("runDecisionPipeline — delete_inverse (2026-08-08 §7 widening)", () 
         },
       }),
     ).rejects.toThrow(/BOTH sqlMutation and creation/);
+  });
+});
+
+describe("runDecisionPipeline — Rule of Two (V8.5 Phase 5.2)", () => {
+  /** A registry-like resolver over four synthetic tools. */
+  const ann = (
+    o: Partial<ToolAnnotations> & { readOnlyHint: boolean },
+  ): ToolAnnotations => ({
+    destructiveHint: !o.readOnlyHint,
+    idempotentHint: false,
+    openWorldHint: true,
+    untrustedInputHint: false,
+    sensitiveAccessHint: false,
+    ruleOfTwoTrifecta: false,
+    requiresConfirmation: false,
+    riskTier: "low",
+    ...o,
+  });
+  const TOOLS: Record<string, ToolAnnotations> = {
+    // C only (the gated write) — like gmail_send: B+C
+    send: ann({ readOnlyHint: false, sensitiveAccessHint: true }),
+    // A+B read — like gmail_read
+    readmail: ann({
+      readOnlyHint: true,
+      untrustedInputHint: true,
+      sensitiveAccessHint: true,
+    }),
+    // A only — like web_search
+    web: ann({ readOnlyHint: true, untrustedInputHint: true }),
+    // single-tool trifecta — like skill_run
+    tri: ann({
+      readOnlyHint: false,
+      untrustedInputHint: true,
+      sensitiveAccessHint: true,
+      ruleOfTwoTrifecta: true,
+      riskTier: "high",
+      requiresConfirmation: true,
+    }),
+  };
+  const resolve = (n: string) => TOOLS[n];
+  const demotionPayload = (decisionId: number): { reason: string } | undefined => {
+    const row = getDatabase()
+      .prepare(
+        "SELECT payload_json FROM decision_events WHERE decision_id = ? AND event_kind = 'autonomy_demoted' ORDER BY sequence_no LIMIT 1",
+      )
+      .get(decisionId) as { payload_json: string } | undefined;
+    return row ? (JSON.parse(row.payload_json) as { reason: string }) : undefined;
+  };
+  const L2_GATE: GateConfig = { reversible_required: true, max_level: 2 };
+
+  it("L2 + prior A∧B read + this C write ⇒ demoted to L1, reason rule_of_two", async () => {
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      {
+        ...trigger("send", { tool: "send", source: "background" }),
+        priorToolNames: ["web", "readmail"],
+      },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(r.demoted).toBe(true);
+    expect(r.route).toBe("confirm");
+    expect(r.events).toContain("autonomy_demoted");
+    expect(demotionPayload(r.decisionId)?.reason).toBe("rule_of_two");
+  });
+
+  it("properties compose ACROSS tools: prior A-only read + this B+C write ⇒ A∧B∧C ⇒ demote", async () => {
+    // web (A) + send (B+C) = A∧B∧C across the run. B does not need to come from
+    // the same tool as A — that is the doctrine's whole point.
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("send", { tool: "send" }), priorToolNames: ["web"] },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(demotionPayload(r.decisionId)?.reason).toBe("rule_of_two");
+  });
+
+  it("L2 with no untrusted input in the run ⇒ stays L2 (mutation-verify: the guard releases)", async () => {
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("send", { tool: "send" }), priorToolNames: [] },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.demoted).toBe(false);
+  });
+
+  it("single-tool trifecta backing ⇒ capped at L1 regardless of the stored max_level (rule_of_two_tool)", async () => {
+    seedCapability({ capability: "tri", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("tri", { tool: "tri" }), priorToolNames: [] },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(demotionPayload(r.decisionId)?.reason).toBe("rule_of_two_tool");
+  });
+
+  it("no run context (priorToolNames undefined) ⇒ demoted to L1, reason rule_of_two_no_context (qa W2)", async () => {
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      trigger("send", { tool: "send" }), // no priorToolNames at all
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(demotionPayload(r.decisionId)?.reason).toBe("rule_of_two_no_context");
+  });
+
+  it("no resolver ⇒ a tool-backed L2 decision fails CLOSED (demoted), never waved through", async () => {
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("send", { tool: "send" }), priorToolNames: [] },
+      { nowIso: "2026-08-15T12:00:00Z" },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(r.demoted).toBe(true);
+  });
+
+  it("non-tool seams (no context.tool) are untouched at L2", async () => {
+    seedCapability({ capability: "send", level: 2, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("send", { ok: true }), priorToolNames: ["web", "readmail"] },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(2);
+    expect(r.demoted).toBe(false);
+  });
+
+  it("dormant at L1: a trifecta run at L1 records no demotion (nothing to demote)", async () => {
+    seedCapability({ capability: "send", level: 1, odd: ALWAYS_IN, gate: L2_GATE });
+    const r = await runDecisionPipeline(
+      { ...trigger("send", { tool: "send" }), priorToolNames: ["readmail"] },
+      { nowIso: "2026-08-15T12:00:00Z", resolveToolAnnotations: resolve },
+    );
+    expect(r.effectiveLevel).toBe(1);
+    expect(r.demoted).toBe(false);
+    expect(r.events).toEqual(["proposed", "approved", "executed"]);
   });
 });

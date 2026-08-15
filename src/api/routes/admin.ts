@@ -12,6 +12,9 @@ import { checkDrift, summarizeDrift } from "../../observability/drift.js";
 import { compareBackends } from "../../memory/recall-compare.js";
 import type { MemoryBank } from "../../memory/types.js";
 import { suppressAlert } from "../../lib/s3/suppression.js";
+import { toolRegistry } from "../../tools/registry.js";
+import { getToolAnnotations } from "../../tools/types.js";
+import { isRuleOfTwoClassified } from "../../tools/rule-of-two.js";
 
 export const admin = new Hono();
 
@@ -63,6 +66,40 @@ admin.post("/kill-autonomous", (c) => {
     cancelled_tasks: cancelled,
     timestamp: new Date().toISOString(),
   });
+});
+
+/**
+ * GET /api/admin/tool-annotations
+ *
+ * Rule of Two (V8.5 Phase 5.2): the LIVE registry's normalized safety view for
+ * every registered tool — the four MCP hints, the two Rule-of-Two hints, the
+ * resolved trifecta verdict and effective risk tier, plus the tier the
+ * definition DECLARED (so the audit can show the structural delta). Read-only;
+ * consumed by `scripts/rule-of-two-audit.ts` (mc-ctl rule-of-two).
+ */
+admin.get("/tool-annotations", (c) => {
+  const tools = toolRegistry.list().map((name) => {
+    const t = toolRegistry.get(name)!;
+    const a = getToolAnnotations(t);
+    return {
+      name,
+      readOnlyHint: a.readOnlyHint,
+      destructiveHint: a.destructiveHint,
+      idempotentHint: a.idempotentHint,
+      openWorldHint: a.openWorldHint,
+      untrustedInputHint: a.untrustedInputHint,
+      sensitiveAccessHint: a.sensitiveAccessHint,
+      ruleOfTwoTrifecta: a.ruleOfTwoTrifecta,
+      riskTier: a.riskTier,
+      requiresConfirmation: a.requiresConfirmation,
+      declaredRiskTier: t.riskTier ?? (t.requiresConfirmation ? "high" : "low"),
+      classified:
+        t.untrustedInputHint !== undefined ||
+        t.sensitiveAccessHint !== undefined ||
+        isRuleOfTwoClassified(name),
+    };
+  });
+  return c.json({ generatedAt: new Date().toISOString(), tools });
 });
 
 /**

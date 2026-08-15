@@ -23,6 +23,10 @@ import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";
+import {
+  enterRunToolContext,
+  outsideRunToolContext,
+} from "../tools/rule-of-two.js";
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -225,7 +229,12 @@ function drainContainerQueue(): void {
       { taskId: next.taskId },
       "dequeued task — container slot acquired",
     );
-    dispatchWithSlot(next.taskId, next.agentType, next.submission).catch(
+    // Rule of Two: the drain fires from releaseContainerSlot() inside the
+    // FINISHING run's async frame — exit its run-tool context so the dequeued
+    // (unrelated) task neither inherits that run's prior nor leaks into it.
+    outsideRunToolContext(() =>
+      dispatchWithSlot(next.taskId, next.agentType, next.submission),
+    ).catch(
       (err) => {
         log.error({ err, taskId: next.taskId }, "queued task failed");
         updateTaskStatus(next.taskId, "failed", undefined, String(err));
@@ -614,9 +623,15 @@ async function dispatchWithSlot(
     // the LLM loop. Non-ritual submissions skip the wrap entirely, preserving
     // the original process-global guard behavior for normal traffic.
     const ritualId = submission.ritualId;
-    let result = await (ritualId
-      ? ritualContext.run({ ritualId }, () => runner.execute(input))
-      : runner.execute(input));
+    // Rule of Two (V8.5 Phase 5.2): every runner execution enters a run-tool
+    // context so `ToolRegistry.execute` can see which tools THIS run invoked
+    // before a gated capability fires (composition demotion in the V8.3
+    // pipeline). Same ALS propagation path ritualContext already relies on.
+    let result = await enterRunToolContext(taskId, () =>
+      ritualId
+        ? ritualContext.run({ ritualId }, () => runner.execute(input))
+        : runner.execute(input),
+    );
 
     // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
     // failed there WITHOUT an error. The sandbox mounts ONLY mission-control, so a
@@ -684,7 +699,9 @@ async function dispatchWithSlot(
           "UPDATE tasks SET started_at = datetime('now') WHERE task_id = ? AND status = 'running'",
         ).run(taskId);
         try {
-          const fb = await fastRunner.execute(input);
+          const fb = await enterRunToolContext(taskId, () =>
+            fastRunner.execute(input),
+          );
           if (fb.success) {
             result = fb;
             // W1: attribute the rescued task to the runner that actually answered.

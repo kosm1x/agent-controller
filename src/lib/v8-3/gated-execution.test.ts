@@ -11,6 +11,7 @@ import { ToolRegistry } from "../../tools/registry.js";
 import type { Tool } from "../../tools/types.js";
 import type { GateConfig } from "./types.js";
 import { recordGatedExecution } from "./gated-execution.js";
+import { enterRunToolContext } from "../../tools/rule-of-two.js";
 
 /** Seed one capability_autonomy row (mirrors trigger.test.ts). */
 function seedCapability(capability: string, level: number, gate: GateConfig) {
@@ -209,5 +210,58 @@ describe("recordGatedExecution — shared wrapper contract", () => {
     );
     expect(JSON.parse(out)).toEqual({ success: false, results: [] }); // output fidelity
     expect(decisionRows()[0].status).toBe("pending");
+  });
+});
+
+describe("background seam — Rule of Two composition end-to-end (V8.5 Phase 5.2)", () => {
+  const demotionReasons = (): string[] =>
+    (
+      getDatabase()
+        .prepare(
+          "SELECT payload_json FROM decision_events WHERE event_kind = 'autonomy_demoted' ORDER BY id",
+        )
+        .all() as Array<{ payload_json: string }>
+    ).map((r) => (JSON.parse(r.payload_json) as { reason: string }).reason);
+  const levels = (): number[] =>
+    (
+      getDatabase()
+        .prepare("SELECT autonomy_level FROM decisions ORDER BY id")
+        .all() as Array<{ autonomy_level: number }>
+    ).map((r) => r.autonomy_level);
+
+  it("registry ALS → seam priorToolNames → pipeline: gmail_read then gmail_send at L2 ⇒ demoted to L1 (rule_of_two)", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    // Re-seed gmail_send at L2 (the shared beforeEach seeds L1).
+    getDatabase().prepare("DELETE FROM capability_autonomy WHERE capability = 'gmail_send'").run();
+    seedCapability("gmail_send", 2, { reversible_required: true, max_level: 2 });
+    const calls: string[] = [];
+    // Real names ⇒ the real classification applies (gmail_read = A+B, gmail_send = B+C).
+    const readTool = fakeTool("gmail_read", () => "mail body", calls);
+    (readTool as { readOnlyHint: boolean }).readOnlyHint = true;
+    registry.register(readTool);
+    registry.register(fakeTool("gmail_send", () => "sent", calls));
+
+    await enterRunToolContext("task-r2", async () => {
+      await registry.execute("gmail_read", { id: "1" });
+      await registry.execute("gmail_send", { to: "a@b.c" });
+    });
+    expect(calls).toEqual(["gmail_read", "gmail_send"]); // never blocks, at-most-once
+    expect(levels()).toEqual([1]);
+    expect(demotionReasons()).toEqual(["rule_of_two"]);
+  });
+
+  it("control: gmail_send alone at L2 inside a run ⇒ stays L2, no demotion (mutation-verify)", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    getDatabase().prepare("DELETE FROM capability_autonomy WHERE capability = 'gmail_send'").run();
+    seedCapability("gmail_send", 2, { reversible_required: true, max_level: 2 });
+    const calls: string[] = [];
+    registry.register(fakeTool("gmail_send", () => "sent", calls));
+    await enterRunToolContext("task-r2b", async () => {
+      await registry.execute("gmail_send", { to: "a@b.c" });
+    });
+    expect(levels()).toEqual([2]);
+    expect(demotionReasons()).toEqual([]);
   });
 });

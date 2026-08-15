@@ -4,7 +4,9 @@
 
 import type { ZodType } from "zod";
 import type { ToolDefinition } from "../inference/adapter.js";
-import type { Tool } from "./types.js";
+import type { Tool, ToolAnnotations } from "./types.js";
+import { getToolAnnotations } from "./types.js";
+import { priorRunTools, recordRunTool } from "./rule-of-two.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
@@ -170,14 +172,21 @@ export class ToolRegistry {
 
   /**
    * CCP5: Get effective risk tier for a tool.
-   * Priority: explicit riskTier > requiresConfirmation (→ high) > default (low).
+   * Priority: Rule-of-Two single-tool trifecta (→ high, structural) >
+   * explicit riskTier > requiresConfirmation (→ high) > default (low).
+   * Delegates to `getToolAnnotations` — the one resolver — so the interactive
+   * confirm flow (task-executor) cannot see a tier the resolver refused.
    */
   getEffectiveRiskTier(name: string): "low" | "medium" | "high" {
     const tool = this.tools.get(name);
     if (!tool) return "low";
-    if (tool.riskTier) return tool.riskTier;
-    if (tool.requiresConfirmation) return "high";
-    return "low";
+    return getToolAnnotations(tool).riskTier;
+  }
+
+  /** Normalized annotations for a registered tool, or undefined if unknown. */
+  annotationsOf(name: string): ToolAnnotations | undefined {
+    const tool = this.tools.get(name);
+    return tool ? getToolAnnotations(tool) : undefined;
   }
 
   /**
@@ -198,14 +207,27 @@ export class ToolRegistry {
     args: Record<string, unknown>,
     opts?: { v83?: "skip" },
   ): Promise<string> {
+    // Rule of Two (V8.5 Phase 5.2): a gated tool's seam sees the tools this
+    // run invoked BEFORE this call (`undefined` outside a dispatcher run —
+    // the pipeline fails closed on that); the call itself is recorded AFTER
+    // the snapshot so a tool never counts as its own prior. Every call is
+    // recorded (gated or not) so later gated calls see the full run.
     if (opts?.v83 !== "skip" && shouldRecordGatedExecution(name)) {
+      const priorToolNames = priorRunTools();
+      recordRunTool(name);
       return recordGatedExecution(
         name,
         args,
         () => this.executeDirect(name, args),
-        { source: "background", threadId: "background" },
+        {
+          source: "background",
+          threadId: "background",
+          priorToolNames,
+          resolveToolAnnotations: (n) => this.annotationsOf(n),
+        },
       );
     }
+    recordRunTool(name);
     return this.executeDirect(name, args);
   }
 

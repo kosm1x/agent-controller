@@ -17,6 +17,8 @@ import {
   CAPABILITY_SEEDS,
   assertSeedInvariants,
   seedV83Capabilities,
+  structuralMaxLevel,
+  structuralMaxLevelForCapability,
 } from "./seed.js";
 
 const TOOL_KEYS = [
@@ -131,7 +133,7 @@ describe("seedV83Capabilities — happy path", () => {
       JSON.parse(rows().find((r) => r.capability === c)!.gate_config_json);
     expect(cap("gmail_send").max_level).toBe(2);
     expect(cap("northstar_sync").max_level).toBe(2);
-    expect(cap("skill_run").max_level).toBe(2);
+    expect(cap("skill_run").max_level).toBe(1); // Rule-of-Two trifecta (2026-08-15)
     expect(cap("jarvis_file_delete").max_level).toBe(2); // file-mutating
     expect(cap("task_edit").max_level).toBe(5);
     expect(cap("schedule_task").max_level).toBe(5);
@@ -228,5 +230,40 @@ describe("CAPABILITY_SEEDS — structural invariants", () => {
       gate_config: { reversible_required: true, max_level: 2 },
     };
     expect(assertSeedInvariants(bad)).toMatch(/exceeds gate_config\.max_level/);
+  });
+});
+
+describe("CAPABILITY_SEEDS — Rule of Two structural cap (V8.5 Phase 5.2)", () => {
+  it("skill_run is trifecta-backed ⇒ structural ceiling 1 and its seed says max_level 1", () => {
+    const skillRun = CAPABILITY_SEEDS.find((s) => s.capability === "skill_run")!;
+    expect(structuralMaxLevel(skillRun)).toBe(1);
+    expect(skillRun.gate_config.max_level).toBe(1);
+    expect(structuralMaxLevelForCapability("skill_run")).toBe(1);
+  });
+
+  it("non-trifecta and non-tool capabilities carry no structural cap", () => {
+    for (const c of ["gmail_send", "northstar_sync", "jarvis_file_delete", "schedule_task", "task_edit"])
+      expect(structuralMaxLevelForCapability(c), c).toBeNull();
+    expect(structuralMaxLevelForCapability("unseeded")).toBeNull();
+  });
+
+  it("flags a trifecta-backed capability whose seed admits L2 (mutation-verify)", () => {
+    const skillRun = CAPABILITY_SEEDS.find((s) => s.capability === "skill_run")!;
+    const bad: CapabilitySeed = {
+      ...skillRun,
+      capability: "bad_trifecta",
+      gate_config: { reversible_required: true, max_level: 2 },
+    };
+    expect(assertSeedInvariants(bad)).toMatch(/Rule-of-Two trifecta but max_level 2 > 1/);
+    // A trifecta-backed capability at max_level 1 is fine.
+    expect(assertSeedInvariants({ ...bad, gate_config: { reversible_required: true, max_level: 1 } })).toBeNull();
+    // Re-point the backing at a non-trifecta tool ⇒ the cap releases.
+    expect(
+      assertSeedInvariants({
+        ...bad,
+        backing: { kind: "tool", tool_name: "gmail_send" },
+        gate_config: { reversible_required: true, max_level: 2 },
+      }),
+    ).toBeNull();
   });
 });

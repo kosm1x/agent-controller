@@ -31,6 +31,7 @@
  * feedback_boot_throw_exits_zero).
  */
 import type Database from "better-sqlite3";
+import type { ToolAnnotations } from "../../tools/types.js";
 import { createLogger } from "../logger.js";
 import { isV83Enabled } from "./flags.js";
 import { runDecisionPipeline, type DecisionTrigger } from "./pipeline.js";
@@ -139,6 +140,18 @@ export interface GatedExecutionCtx {
   source: "interactive" | "background";
   /** Conversation thread the decision belongs to (persisted on the row). */
   threadId: string;
+  /**
+   * Rule of Two (V8.5 Phase 5.2): tools this run invoked BEFORE this call
+   * (`priorRunTools()` at the registry seam). The pipeline composes them with
+   * this tool and demotes to L1 on an A∧B∧C run. Absent ⇒ no prior.
+   */
+  priorToolNames?: readonly string[];
+  /**
+   * Rule of Two — the registry's annotation view by tool name. Absent ⇒ the
+   * pipeline treats every name as unclassified (all three ⇒ demote), so a
+   * caller that forgets it fails toward a human, never toward autonomy.
+   */
+  resolveToolAnnotations?: (name: string) => ToolAnnotations | undefined;
   /** Test injection; defaults to the singleton. */
   db?: Database.Database;
 }
@@ -169,6 +182,7 @@ export async function recordGatedExecution(
     payload: args,
     context: { tool: toolName, source: ctx.source },
     threadId: ctx.threadId,
+    priorToolNames: ctx.priorToolNames,
     // `creation` (delete_inverse template) only for creation tools; other
     // capabilities land audit-only rows (`reversal: null`), same shape
     // `jarvis_file_delete` has had since v1. No `sqlMutation` at this seam —
@@ -192,6 +206,7 @@ export async function recordGatedExecution(
   try {
     const result = await runDecisionPipeline(trigger, {
       db: ctx.db,
+      resolveToolAnnotations: ctx.resolveToolAnnotations,
       // The pipeline captures pre-state, THEN calls execute. This callback
       // captures the tool's own throw (→ ok:false) so the tool runs AT MOST
       // ONCE: after `output` is set the outer catch never re-executes. The

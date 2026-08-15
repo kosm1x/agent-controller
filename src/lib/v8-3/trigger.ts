@@ -22,6 +22,7 @@
  */
 import type Database from "better-sqlite3";
 import { toolRegistry } from "../../tools/registry.js";
+import { priorRunTools } from "../../tools/rule-of-two.js";
 import {
   CAPABILITY_BY_TOOL,
   recordGatedExecution,
@@ -56,6 +57,12 @@ export async function executeGatedCapability(
     toolName,
     args,
     () => toolRegistry.execute(toolName, args, { v83: "skip" }),
-    { source: "interactive", threadId: ctx.threadId, db: ctx.db },
+    {
+      source: "interactive",
+      threadId: ctx.threadId,
+      db: ctx.db,
+      priorToolNames: priorRunTools(),
+      resolveToolAnnotations: (n) => toolRegistry.annotationsOf(n),
+    },
   );
 }

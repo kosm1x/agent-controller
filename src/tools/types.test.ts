@@ -17,14 +17,29 @@ const baseTool = (overrides: Partial<Tool> = {}): Tool => ({
 });
 
 describe("getToolAnnotations", () => {
-  it("returns conservative defaults when fields are absent", () => {
+  it("returns conservative defaults when fields are absent (unknown = riskier, incl. Rule of Two)", () => {
     const a = getToolAnnotations(baseTool());
     // Per MCP spec recommendations: unknown = treat as risky.
     expect(a.readOnlyHint).toBe(false);
     expect(a.destructiveHint).toBe(true);
     expect(a.idempotentHint).toBe(false);
     expect(a.openWorldHint).toBe(true);
-    // mc-specific defaults
+    // Rule of Two (V8.5 Phase 5.2): an UNCLASSIFIED name resolves A=B=true, and
+    // with readOnlyHint false that is the single-tool trifecta ⇒ the resolver
+    // forces high/confirm. Host tools are all classified (rule-of-two.test.ts
+    // coverage), so only a genuinely unknown tool lands here — safe direction.
+    expect(a.untrustedInputHint).toBe(true);
+    expect(a.sensitiveAccessHint).toBe(true);
+    expect(a.ruleOfTwoTrifecta).toBe(true);
+    expect(a.requiresConfirmation).toBe(true);
+    expect(a.riskTier).toBe("high");
+  });
+
+  it("mc-specific defaults for a classified non-trifecta tool: no confirm, low tier", () => {
+    const a = getToolAnnotations(
+      baseTool({ untrustedInputHint: false, sensitiveAccessHint: false }),
+    );
+    expect(a.ruleOfTwoTrifecta).toBe(false);
     expect(a.requiresConfirmation).toBe(false);
     expect(a.riskTier).toBe("low");
   });
@@ -35,11 +50,29 @@ describe("getToolAnnotations", () => {
     expect(a.riskTier).toBe("high");
   });
 
-  it("explicit riskTier wins over the requiresConfirmation fallback", () => {
+  it("explicit riskTier wins over the requiresConfirmation fallback (non-trifecta tool)", () => {
     const a = getToolAnnotations(
-      baseTool({ requiresConfirmation: true, riskTier: "medium" }),
+      baseTool({
+        requiresConfirmation: true,
+        riskTier: "medium",
+        untrustedInputHint: false,
+      }),
     );
     expect(a.riskTier).toBe("medium");
+  });
+
+  it("explicit riskTier does NOT win over the Rule-of-Two trifecta (structural)", () => {
+    const a = getToolAnnotations(
+      baseTool({
+        riskTier: "medium",
+        readOnlyHint: false,
+        untrustedInputHint: true,
+        sensitiveAccessHint: true,
+      }),
+    );
+    expect(a.ruleOfTwoTrifecta).toBe(true);
+    expect(a.riskTier).toBe("high");
+    expect(a.requiresConfirmation).toBe(true);
   });
 
   it("respects explicit annotations on a read-only tool", () => {
@@ -56,6 +89,9 @@ describe("getToolAnnotations", () => {
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
+      untrustedInputHint: true, // unclassified name ⇒ conservative
+      sensitiveAccessHint: true,
+      ruleOfTwoTrifecta: false, // read-only ⇒ no [C] ⇒ never a trifecta
       requiresConfirmation: false,
       riskTier: "low",
     });

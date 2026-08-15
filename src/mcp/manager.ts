@@ -12,6 +12,7 @@ import { MCP_NAMESPACE_SEP } from "./types.js";
 import { createMcpTool } from "./bridge.js";
 import type { McpCallResult } from "./bridge.js";
 import { getMcpToolHints } from "./annotations.js";
+import { getToolAnnotations } from "../tools/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -174,6 +175,7 @@ export class McpManager {
     // Register each tool in the global registry
     const deferSet = new Set(config.deferredTools ?? []);
     const unannotatedTools: string[] = [];
+    const trifectaTools: string[] = [];
     for (const mcpTool of tools) {
       const tool = createMcpTool(
         serverId,
@@ -199,6 +201,13 @@ export class McpManager {
       ) {
         unannotatedTools.push(tool.name);
       }
+      // Rule of Two (V8.5 Phase 5.2, qa R2 W-C 2026-08-15): a NEW tool under
+      // an A∧B prefix (`xpoz__`) with a destructive/unknown verb resolves as
+      // a single-tool trifecta ⇒ structural high/confirm — an unsigned flip
+      // the test fixture cannot see (it IS the input). Detect it at boot.
+      if (getToolAnnotations(tool).ruleOfTwoTrifecta) {
+        trifectaTools.push(tool.name);
+      }
     }
 
     this.servers.set(serverId, { client, transport, toolNames });
@@ -208,6 +217,11 @@ export class McpManager {
     if (unannotatedTools.length > 0) {
       console.warn(
         `[mcp] ${serverId}: ${unannotatedTools.length} tool(s) without hint overrides — will fall back to conservative-destructive defaults: ${unannotatedTools.join(", ")}`,
+      );
+    }
+    if (trifectaTools.length > 0) {
+      console.warn(
+        `[mcp] ${serverId}: ${trifectaTools.length} tool(s) resolve as a Rule-of-Two TRIFECTA (untrusted-input ∧ sensitive-access ∧ state-change ⇒ forced high/confirm): ${trifectaTools.join(", ")} — classify in src/tools/rule-of-two.ts (RULE_OF_TWO_MCP_OVERRIDES) if that is not intended`,
       );
     }
 
