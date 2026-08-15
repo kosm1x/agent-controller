@@ -81,6 +81,7 @@ Tool definitions are prompts — they deserve more engineering than the handler 
   - `idempotentHint` — re-issuing the SAME call has no additional effect beyond the first
   - `openWorldHint` — interacts with state outside the agent (network, FS, third-party API)
     Defaults are deliberately conservative (`getToolAnnotations()` collapses absent hints to `{readOnly:false, destructive:true, idempotent:false, openWorld:true}`) so unannotated tools are treated as risky. Logical invariants enforced by tests in `src/tools/types.test.ts` AND production-coverage invariants in `src/tools/registry.test.ts` (v7.6 Spine 4): every production tool has all 4 hints set explicitly; `readOnlyHint` ⇒ NOT `destructiveHint`; `requiresConfirmation` ⇒ NOT `readOnlyHint`; `riskTier='high'` ⇒ `destructiveHint=true`. As of 2026-05-08, 186/186 non-MCP production tools annotated; MCP-bridge tools (xpoz, browser, playwright) currently fall back to defaults — name-pattern hint lookup tracked for v7.7+.
+  - **Rule of Two (V8.5 Phase 5.2, 2026-08-15)** — every host tool ALSO carries `[A] untrustedInputHint` (inherent output is third-party free text) and `[B] sensitiveAccessHint` (private data / privileged system) via the name-keyed table in `src/tools/rule-of-two.ts` (`[C]` = `!readOnlyHint`). **A new builtin tool MUST get an entry there** — `rule-of-two.test.ts` fails both directions (unclassified tool / stale key). Unclassified names resolve A=B=true, and a non-readOnly A∧B tool is a single-tool trifecta ⇒ `getToolAnnotations` forces `riskTier:"high"` + confirm (structural; `ToolRegistry.getEffectiveRiskTier` delegates there). MCP servers get per-prefix defaults (`RULE_OF_TWO_PREFIX_DEFAULTS`); add a row when adding a server. `mc-ctl rule-of-two` renders the live matrix + the 30d run-level retrospective.
 - **Use enums over free strings** — `z.enum(["high","medium","low"])` not `z.string()`. Constrain the model's output space
 - **Poka-yoke** — design interfaces that make mistakes impossible. If the model confuses relative/absolute paths, require absolute. If empty string vs null causes bugs, handle both (see `update_task`'s `""` → `null` pattern)
 - **Test tools with the model** — run real calls, observe mistakes, iterate on descriptions. Tool optimization often matters more than system prompt tuning
@@ -219,7 +220,7 @@ Jarvis-authored conversation memory, LIVE since PR #27/#28 (migration v3: `jme_t
 ### Adding a new tool
 
 1. Create handler in `src/tools/builtin/` — new tools use `defineTool()` from `src/tools/define-tool.ts` (name declared once); failure returns are `{error}` JSON, never `"Error:"` strings or `success:false`
-2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface)
+2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface), AND add its Rule-of-Two row to `RULE_OF_TWO_CLASSIFICATION` in `src/tools/rule-of-two.ts` (the coverage test fails otherwise)
 3. Write tool descriptions following ACI principles above (describe edge cases, use enums, add `.describe()` to all params)
 4. Test with a real model call to verify the description guides correct usage
 5. Add test in `src/tools/registry.test.ts`
