@@ -16,6 +16,7 @@ import { ensureIntelTables } from "./intel-schema.js";
 import { ensureVideoTables } from "./video-schema.js";
 import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
 import { ensureV83Tables } from "../lib/v8-3/schema.js";
+import { ensureV84Tables } from "../lib/v8-4/schema.js";
 
 import { activateBestVariant } from "../tuning/activation.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -1114,6 +1115,8 @@ export function initDatabase(dbPath: string): Database.Database {
   // pipeline reads/writes them yet. The V8.2 hard-dependency check is a boot
   // precondition run from src/index.ts (assertV82Dependencies), not here.
   ensureV83Tables(_db);
+  // V8.4 completion ledger (2026-08-16): harness-owned acceptance gates.
+  ensureV84Tables(_db);
   // Activate best variant from archive (v2.28 — HyperAgents pattern)
   activateBestVariant();
 

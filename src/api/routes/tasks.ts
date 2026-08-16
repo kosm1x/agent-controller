@@ -14,6 +14,7 @@ import {
   getTaskWithRuns,
   cancelTask,
 } from "../../dispatch/dispatcher.js";
+import { parseGateSpecs, type GateSpec } from "../../lib/v8-4/gates.js";
 
 const tasks = new Hono();
 
@@ -33,6 +34,7 @@ tasks.post("/", async (c) => {
     tools,
     input,
     conversationHistory,
+    gates,
   } = body;
 
   if (!title || typeof title !== "string") {
@@ -40,6 +42,19 @@ tasks.post("/", async (c) => {
   }
   if (!description || typeof description !== "string") {
     return c.json({ error: "description is required (string)" }, 400);
+  }
+  // V8.4: optional acceptance gates (source "submission"). Validated HERE so a
+  // malformed ledger is a 400, never a task that silently runs ungated.
+  let gateSpecs: GateSpec[] | undefined;
+  if (gates !== undefined) {
+    try {
+      gateSpecs = parseGateSpecs(gates);
+    } catch (err) {
+      return c.json(
+        { error: `gates: ${err instanceof Error ? err.message : String(err)}` },
+        400,
+      );
+    }
   }
 
   const result = await submitTask({
@@ -50,6 +65,7 @@ tasks.post("/", async (c) => {
     tags,
     tools,
     input,
+    ...(gateSpecs?.length && { gates: gateSpecs }),
     // Passing conversationHistory from the body routes this task through the
     // chat branch in fast-runner, which triggers KB injection (always-read +
     // enforce + conditional files + project README auto-injection). Without

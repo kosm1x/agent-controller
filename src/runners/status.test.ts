@@ -129,3 +129,14 @@ describe("parseRunnerStatus", () => {
     expect(result.status).toBe("DONE");
   });
 });
+
+describe("statusSource (V8.4 measurement, 2026-08-16)", () => {
+  it("explicit STATUS line → explicit; missing → default (still DONE); API error → api_error", () => {
+    expect(parseRunnerStatus("Listo.\nSTATUS: DONE").statusSource).toBe("explicit");
+    expect(parseRunnerStatus("Listo.\nSTATUS: DONE_WITH_CONCERNS — x").statusSource).toBe("explicit");
+    const silent = parseRunnerStatus("Listo, todo hecho.");
+    expect(silent.status).toBe("DONE");
+    expect(silent.statusSource).toBe("default");
+    expect(parseRunnerStatus("API Error: 400 bad request").statusSource).toBe("api_error");
+  });
+});

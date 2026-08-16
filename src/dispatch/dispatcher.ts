@@ -31,6 +31,16 @@ import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
+import {
+  declareGates,
+  freezeGates,
+  listGates,
+  renderGatesBlock,
+  type GateSource,
+  type GateSpec,
+} from "../lib/v8-4/gates.js";
+import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
+import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -111,6 +121,15 @@ export interface TaskSubmission {
    * rituals (they set `tools`, not `requiredTools`).
    */
   persistResult?: { bank: MemoryBank; tags: string[] };
+  /**
+   * V8.4 completion ledger (2026-08-16): acceptance gates declared BEFORE the
+   * work. Persisted to `task_gates` at submit, frozen at run start, rendered
+   * into the runner's task description, and evaluated by the harness at
+   * completion (`lib/v8-4/consumer.ts`) — the model never writes the ledger.
+   * `gatesSource` defaults to "submission"; rituals pass "ritual".
+   */
+  gates?: GateSpec[];
+  gatesSource?: GateSource;
 }
 
 export interface TaskRow {
@@ -390,6 +409,16 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     retryCount: submission.retryCount ?? 0,
   });
 
+  // V8.4: the ledger is written before any work happens (rule zero). A
+  // malformed gates payload must not lose the task — log and run ungated.
+  if (submission.gates?.length) {
+    try {
+      declareGates(taskId, submission.gates, submission.gatesSource ?? "submission", db);
+    } catch (err) {
+      log.warn({ taskId, err: errMsg(err) }, "gates: declaration failed — task runs ungated");
+    }
+  }
+
   // Emit event
   try {
     getEventBus().emitEvent("task.created", {
@@ -594,6 +623,15 @@ async function dispatchWithSlot(
     signal: submission.abortController?.signal,
     interactive: submission.interactive,
   };
+
+  // V8.4: freeze the ledger (gates declared so far are the fixed contract for
+  // this run) and show it to the runner. Only tasks WITH gates see the block —
+  // ungated traffic's prompt is byte-for-byte unchanged.
+  const gateRows = listGates(taskId, db);
+  if (gateRows.length > 0) {
+    freezeGates(taskId, db);
+    input.description = `${input.description}${renderGatesBlock(gateRows)}`;
+  }
 
   taskStarted(agentType);
   // V8.5 Phase 6: forensic timeline start. Best-effort by contract.
@@ -850,6 +888,22 @@ async function dispatchWithSlot(
       }
     }
 
+    // V8.4 completion ledger + numbers audit. Runs the declared checks (mode
+    // shadow/enforce), may demote completed → completed_with_concerns and
+    // append the ledger block / unverified-numbers footer (enforce / flag).
+    // Never throws; on any internal failure status + output pass through.
+    const ledgerOutcome = await applyCompletionLedger({
+      taskId,
+      runId,
+      agentType: effectiveAgentType,
+      tags: submission.tags ?? [],
+      taskDescription: stripCacheMarker(submission.description),
+      result,
+      taskStatus,
+    });
+    taskStatus = ledgerOutcome.taskStatus;
+    result.output = ledgerOutcome.output;
+
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
 
     // Deterministic ritual-output persistence (skill-evolution /diagnose,
@@ -995,6 +1049,10 @@ async function dispatchWithSlot(
     });
   } finally {
     taskCompleted(agentType);
+    // V8.4: free the numbers-provenance corpus on every exit path (the
+    // consumer already took it on the normal path; this covers early returns
+    // and thrown errors so the per-task buffer never outlives its run).
+    takeToolEvidence(taskId);
     // The fast-fallback may have already released the container slot early (W2);
     // guard against a double-release.
     if (needsContainer(agentType) && !containerSlotReleased) {

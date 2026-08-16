@@ -1915,6 +1915,7 @@ usage() {
   echo -e "  ${GREEN}v83-gate${NC}             V8.3 §14 v1 activation gate — substrate + 7-day shadow readiness"
   echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
   echo -e "  ${GREEN}rule-of-two${NC}          V8.5 §5.2 Rule-of-Two audit: tool matrix + trifectas + 30d retrospective (--write → docs/audit)"
+  echo -e "  ${GREEN}gates${NC}                V8.4 completion ledger: <task_id> | summary [days] | status-sources [days] | set-ritual <id> <file>"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2907,6 +2908,64 @@ cmd_rule_of_two() {
   ( cd "$PROJECT_DIR" && MC_API_KEY="$key" API_URL="$API_URL" npx --no-install tsx scripts/rule-of-two-audit.ts "$@" )
 }
 
+cmd_gates() {
+  # mc-ctl gates <task_id>                       — V8.4 ledger rows for a task
+  # mc-ctl gates summary [days]                  — gates.evaluated verdicts + hook blocks (trace), last N days (default 7)
+  # mc-ctl gates status-sources [days]           — how often the fast runner's status came from an explicit STATUS line vs the DONE default
+  # mc-ctl gates set-ritual <schedule_id> <file> — validate + write a schedule's gates JSON (file or - for stdin)
+  need_db
+  local sub="${1:-}"
+  case "$sub" in
+    "")
+      die "Usage: mc-ctl gates <task_id> | summary [days] | status-sources [days] | set-ritual <schedule_id> <file.json|->" ;;
+    summary)
+      local days="${2:-7}"
+      [[ "$days" =~ ^[0-9]{1,3}$ ]] || die "days must be an integer"
+      echo -e "${BOLD}=== V8.4 ledger — last ${days}d ===${NC}"
+      sql "SELECT json_extract(attrs,'$.mode') AS mode, json_extract(attrs,'$.verdict') AS verdict, COUNT(*) AS n,
+             SUM(json_extract(attrs,'$.failed')) AS failed_gates, SUM(json_extract(attrs,'$.abandoned')) AS abandoned
+           FROM task_trace_events WHERE name='gates.evaluated' AND ts >= datetime('now', '-${days} days')
+           GROUP BY 1,2 ORDER BY n DESC;"
+      echo ""
+      sql "SELECT name, COUNT(*) AS n FROM task_trace_events
+           WHERE name IN ('gates.hook_blocked','gates.hook_released','gates.parent_reverified','numbers.audited')
+             AND ts >= datetime('now', '-${days} days') GROUP BY name;"
+      echo ""
+      sql "SELECT COUNT(DISTINCT task_id) AS tasks_with_gates, COUNT(*) AS gates,
+             SUM(state='met') AS met, SUM(state='failed') AS failed, SUM(state='pending') AS pending, SUM(state='abandoned') AS abandoned
+           FROM task_gates WHERE created_at >= datetime('now', '-${days} days');" ;;
+    status-sources)
+      local days="${2:-7}"
+      [[ "$days" =~ ^[0-9]{1,3}$ ]] || die "days must be an integer"
+      echo -e "${BOLD}=== fast-runner status source — last ${days}d (tasks.output.statusSource) ===${NC}"
+      sql "SELECT COALESCE(json_extract(output,'$.statusSource'),'(pre-8.4 / n/a)') AS source, status, COUNT(*) AS n
+           FROM tasks WHERE agent_type='fast' AND completed_at >= datetime('now', '-${days} days')
+           GROUP BY 1,2 ORDER BY n DESC;" ;;
+    set-ritual)
+      local sid="${2:-}" file="${3:-}"
+      [ -n "$sid" ] && [ -n "$file" ] || die "Usage: mc-ctl gates set-ritual <schedule_id> <file.json|->"
+      [[ "$sid" =~ ^[a-zA-Z0-9_.-]{1,64}$ ]] || die "Invalid schedule_id"
+      local normalized
+      normalized=$( cd "$PROJECT_DIR" && npx --no-install tsx scripts/gates-validate.ts "$file" ) || die "gates JSON rejected"
+      local exists
+      exists=$(sql_raw "SELECT COUNT(*) FROM scheduled_tasks WHERE schedule_id = '${sid}';")
+      [ "$exists" = "1" ] || die "schedule '${sid}' not found"
+      sql "UPDATE scheduled_tasks SET gates = '${normalized//\'/\'\'}' WHERE schedule_id = '${sid}';"
+      echo -e "${GREEN}gates set on ${sid}${NC}: ${normalized}" ;;
+    *)
+      local id="$sub"
+      [[ "$id" =~ ^[a-zA-Z0-9_-]{4,64}$ ]] || die "Invalid task_id format"
+      echo -e "${BOLD}=== Ledger for ${id} ===${NC}"
+      sql "SELECT gate_id, state, check_kind AS kind, source, substr(criterion,1,70) AS criterion,
+             substr(COALESCE(check_cmd,''),1,50) AS check_cmd, substr(COALESCE(evidence, abandon_reason, ''),1,80) AS evidence,
+             frozen_at IS NOT NULL AS frozen, checked_at
+           FROM task_gates WHERE task_id = '${id}' ORDER BY rowid;"
+      echo ""
+      sql "SELECT name, ts, substr(attrs,1,160) AS attrs FROM task_trace_events
+           WHERE task_id = '${id}' AND name LIKE 'gates.%' ORDER BY id;" ;;
+  esac
+}
+
 cmd_briefing_gate() {
   # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
   # ratio over reflection inference + morning-brief promote-rate). Read-only.
@@ -2972,6 +3031,7 @@ case "$cmd" in
   v83-gate)          cmd_v83_gate ;;
   v83-promote)       cmd_v83_promote "$@" ;;
   rule-of-two)       cmd_rule_of_two "$@" ;;
+  gates)             cmd_gates "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

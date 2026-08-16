@@ -16,6 +16,13 @@ export interface ParsedStatus {
   status: RunnerStatus;
   concerns?: string[];
   cleanContent: string;
+  /**
+   * V8.4 (2026-08-16): how the status was obtained. `explicit` = a STATUS
+   * line was parsed; `default` = no line, DONE assumed; `api_error` = the
+   * API-error short-circuit. Lets the missing-STATUS rate be MEASURED
+   * (`mc-ctl gates --status-sources`) instead of quoted from a comment.
+   */
+  statusSource: "explicit" | "default" | "api_error";
 }
 
 const STATUS_RE =
@@ -56,6 +63,7 @@ export function parseRunnerStatus(content: string): ParsedStatus {
       status: "BLOCKED",
       concerns: [firstLine.slice(0, 300)],
       cleanContent: content,
+      statusSource: "api_error",
     };
   }
 
@@ -71,6 +79,7 @@ export function parseRunnerStatus(content: string): ParsedStatus {
     return {
       status: "DONE",
       cleanContent: content,
+      statusSource: "default",
     };
   }
 
@@ -81,5 +90,6 @@ export function parseRunnerStatus(content: string): ParsedStatus {
     status,
     concerns: status === "DONE_WITH_CONCERNS" && detail ? [detail] : undefined,
     cleanContent: content.slice(0, match.index).trim(),
+    statusSource: "explicit",
   };
 }

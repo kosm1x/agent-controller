@@ -24,6 +24,7 @@ import { resolveUseOpus } from "./model-tier.js";
 import { eventBus } from "../lib/event-bus.js";
 import type { PrometheusSnapshot } from "./snapshot.js";
 import { errMsg } from "../lib/err-msg.js";
+import { declareGates, gateSpecsFromGoal } from "../lib/v8-4/gates.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -164,6 +165,25 @@ export async function orchestrate(
       });
       emitProgress(taskId, Phase.PLAN, 25, `Planned ${graph.size} goals`);
       console.log(`[orchestrator] Task ${taskId}: planned ${graph.size} goals`);
+
+      // V8.4: runnable completion criteria the planner emitted become the
+      // task's ledger (source "plan") BEFORE execution starts; the dispatcher's
+      // consumer runs them at completion. Additions only, never blocking.
+      try {
+        const planGates = graph
+          .getAll()
+          .flatMap((g) => gateSpecsFromGoal(g.id, g.metadata));
+        if (planGates.length > 0) {
+          const n = declareGates(taskId, planGates, "plan");
+          console.log(
+            `[orchestrator] Task ${taskId}: declared ${n} plan gate(s) in the ledger`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[orchestrator] Task ${taskId}: plan gates not declared: ${errMsg(err)}`,
+        );
+      }
 
       executionResults = {
         goalResults: {},

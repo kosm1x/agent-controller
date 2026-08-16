@@ -6,7 +6,12 @@ import type { ZodType } from "zod";
 import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool, ToolAnnotations } from "./types.js";
 import { getToolAnnotations } from "./types.js";
-import { priorRunTools, recordRunTool } from "./rule-of-two.js";
+import {
+  currentRunTaskId,
+  priorRunTools,
+  recordRunTool,
+} from "./rule-of-two.js";
+import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
@@ -254,6 +259,11 @@ export class ToolRegistry {
     try {
       const result = await tool.execute(args);
       toolMetrics.record(name, Date.now() - start, true);
+      // V8.4 numbers-provenance corpus: every tool result of the current run
+      // (task id from the run-tool context; no-op outside a run). Digested +
+      // capped inside the collector; freed by the dispatcher at completion.
+      const runTaskId = currentRunTaskId();
+      if (runTaskId) recordToolEvidence(runTaskId, result);
       return result;
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);

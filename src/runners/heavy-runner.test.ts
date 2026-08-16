@@ -361,6 +361,45 @@ describe("heavyRunner container mode", () => {
     mockGetConfig.mockReturnValue(makeConfig(true));
   });
 
+  // V8.4 (2026-08-16): silence ≠ success (sibling of the nanoclaw fix).
+  it("a container blob with no `success` field lands as DONE_WITH_CONCERNS", async () => {
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-test-silent",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve({
+        status: "success",
+        result: JSON.stringify({ content: "Container result", score: 0.9 }),
+      } as ContainerOutput),
+      kill: vi.fn(),
+    });
+    const result = await heavyRunner.execute({
+      taskId: "task-c0",
+      runId: "run-c0",
+      title: "Silent container",
+      description: "worker forgot success",
+    });
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.concerns?.[0]).toMatch(/no `success` field/);
+    // qa I2: `success: null` is not self-attestation either.
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-heavy-test-null",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve({
+        status: "success",
+        result: JSON.stringify({ success: null, content: "Container result" }),
+      } as ContainerOutput),
+      kill: vi.fn(),
+    });
+    const nul = await heavyRunner.execute({
+      taskId: "task-c0b",
+      runId: "run-c0b",
+      title: "Null container",
+      description: "worker sent null",
+    });
+    expect(nul.status).toBe("DONE_WITH_CONCERNS");
+  });
+
   it("should call spawnContainer when containerized", async () => {
     const containerOutput: ContainerOutput = {
       status: "success",

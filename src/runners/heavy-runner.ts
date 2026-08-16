@@ -235,12 +235,19 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     // generic line.
     const containerPromoted =
       parsed.success === false && parsed.completedWithConcerns === true;
+    // V8.4 (2026-08-16): a blob with NO `success` field is a protocol gap,
+    // not a success — deliver, but as completed_with_concerns.
+    const selfAttested = typeof parsed.success === "boolean";
 
     return {
-      success: (parsed.success ?? true) || containerPromoted,
-      ...(containerPromoted && {
+      success: (selfAttested ? parsed.success === true : true) || containerPromoted,
+      ...((containerPromoted || !selfAttested) && {
         status: "DONE_WITH_CONCERNS" as const,
-        concerns: ["Success criteria not fully verified (best-effort goals)"],
+        concerns: [
+          containerPromoted
+            ? "Success criteria not fully verified (best-effort goals)"
+            : "container worker returned no `success` field — completion not self-attested",
+        ],
       }),
       output: {
         content: parsed.content,

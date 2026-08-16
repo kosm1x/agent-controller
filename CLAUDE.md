@@ -92,6 +92,10 @@ Agent progress must be validated through concrete tool results, not LLM self-ass
 
 **The day-log is the only record of work done (operator ruling 2026-06-23).** Signals, detectors, and rituals must judge advancement/stalledness from the **Telegram day-log** (`jarvis_files` path `logs/day-logs/%` + the day-narrative) and the **active-`projects`** list — NEVER from `NorthStar/` (a stale compass of visions/goals) or the `tasks` table (no `due_date` column exists; deriving "overdue" from it fabricates data). `runDetection()` runs only `detectStalledProjects` (day-log-grounded); the legacy NorthStar/task-table detectors are retired. The proactive nudge + weekly-review (NorthStar-based) are off. Do NOT re-wire NorthStar/tasks as a work-source. NorthStar sync (`northstar_sync`, `kb-reindex` skip) stays — it's compass data, not work-truth. **Silence ≠ stall (operator correction 2026-06-24):** day-log absence is ambiguous — a quiet project may be finished, parked, or deliberately deprioritized, not drifting (absence records what did NOT happen, not why). So `detectStalledProjects` skips active projects whose `projects.config` has `stall_exempt: true` (operator override for done/launch-pending work, e.g. VLMP), and the judgment prompt warns the author not to read silence as drift. Absent/malformed config = NOT exempt (fail toward flagging). See `feedback_daylog_is_work_truth.md`.
 
+### Honest done — the completion ledger (V8.4, 2026-08-16)
+
+"Done" is a CLAIM. Tasks may carry a harness-owned acceptance ledger (`task_gates`, `src/lib/v8-4/`): gates declared BEFORE the work (`TaskSubmission.gates` / `POST /api/tasks` `gates` / `scheduled_tasks.gates` / planner object-form criteria `{criterion, check, expect}`), frozen at run start, and — when `TASK_GATES_MODE` is `shadow`|`enforce` — run by the harness at completion (`sh -c`, own process group, minimal env, EXPECT substring or `/regex/`). The model has NO writer for the ledger; `met` REQUIRES evidence; a gate that cannot be met is surrendered visibly with `ABANDON: <id> <reason>` in the report. `enforce` demotes `completed → completed_with_concerns` on a FAILED verdict and pastes the ledger into the deliverable; `TASK_GATES_STOP_HOOK=true` adds the SDK Stop-hook wall (blocks only on FAILED runnable gates, 3-block release). Container blobs without `success` land as DONE_WITH_CONCERNS (silence ≠ success). Spec: `docs/planning/v8.4-honest-done-spec.md`; readout: `./mc-ctl gates <task_id> | summary | status-sources | set-ritual`. When adding a runner or a completion path, route it through `applyCompletionLedger` (dispatcher) — never invent a second "done" decision.
+
 ### Stopping conditions
 
 Every agent loop must have bounded iteration limits, token budgets, and timeouts. No unbounded loops — ever. Prometheus enforces this via `maxIterations`, `budgetTokens`, and `maxReplans`. New runners must implement equivalent guards.
@@ -114,6 +118,7 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl briefing-gate      # V8.1 §13 + V8.2 §17 activation gates (worst-of-two exit)
 ./mc-ctl judgments [id]     # V8.2 shadow judgments — list/detail + §17 gate-readiness header
 ./mc-ctl audit-claim utility --window=24h --stratify-by=bank   # Self-audit before reporting (V8 S2)
+./mc-ctl gates <task_id> | summary [days] | status-sources [days] | set-ritual <id> <file>   # V8.4 completion ledger
 ```
 
 ### Self-audit before reporting aggregate metrics

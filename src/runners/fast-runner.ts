@@ -1340,6 +1340,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           output: {
             text: parsed.cleanContent,
             toolCalls: sdkResult.toolCalls,
+            // V8.4: how the terminal status was obtained (explicit STATUS
+            // line vs the DONE default) — measured via tasks.output.
+            statusSource: parsed.statusSource,
           },
           toolCalls: sdkResult.toolCalls,
           tokenUsage: {
@@ -1760,6 +1763,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             concerns: [
               `Hallucination detected — ${reason}. Response mechanically replaced with honest tool inventory`,
             ],
+            statusSource: parsed.statusSource,
           };
         }
       }
@@ -1916,6 +1920,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         output: {
           text: parsed.cleanContent,
           toolCalls: toolsCalled,
+          statusSource: parsed.statusSource,
           exitReason: result.exitReason,
           roundsCompleted: result.roundsCompleted,
           maxRounds,

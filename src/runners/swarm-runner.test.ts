@@ -59,6 +59,12 @@ vi.mock("../prometheus/reflector.js", () => ({
   reflect: vi.fn(),
 }));
 
+// V8.4: parent re-verification seam (real module needs the DB + runs checks).
+const v84 = vi.hoisted(() => ({ reverify: vi.fn() }));
+vi.mock("../lib/v8-4/consumer.js", () => ({
+  reverifyChildLedger: v84.reverify,
+}));
+
 import {
   buildSubTaskDescription,
   syncSubTaskStatuses,
@@ -856,3 +862,107 @@ describe("swarm chain demotion (task 7466)", () => {
     }
   }, 15_000);
 });
+
+describe("V8.4 ledger: child gates from the plan + parent re-verification", () => {
+  const savedMode = process.env.TASK_GATES_MODE;
+  afterEach(() => {
+    vi.clearAllMocks();
+    v84.reverify.mockReset();
+    if (savedMode === undefined) delete process.env.TASK_GATES_MODE;
+    else process.env.TASK_GATES_MODE = savedMode;
+  });
+
+  it("a goal with metadata.gates spawns its child WITH gates (source plan); a bare goal spawns none", async () => {
+    const g = new GoalGraph();
+    g.addGoal({
+      id: "p-1",
+      description: "gated item",
+      metadata: { gates: [{ criterion: "typecheck", check: "npx tsc --noEmit" }] },
+    });
+    g.addGoal({ id: "p-2", description: "plain item" });
+    mockPlan.mockResolvedValue({
+      graph: g,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    mockSubmitTask.mockRejectedValue(new Error("no capacity"));
+    mockReflect.mockResolvedValue({
+      result: { success: false, score: 0, learnings: [], summary: "n/a" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    await swarmRunner.execute({
+      taskId: "parent-g",
+      runId: "run-g",
+      title: "fan-out",
+      description: "process items",
+    });
+    expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+    const byTitle = new Map(
+      mockSubmitTask.mock.calls.map((c) => [c[0].title, c[0]] as const),
+    );
+    const gated = byTitle.get("[Swarm] gated item")!;
+    expect(gated.gates).toEqual([
+      { id: "p-1.1", criterion: "typecheck", check: "npx tsc --noEmit", kind: "shell" },
+    ]);
+    expect(gated.gatesSource).toBe("plan");
+    const plain = byTitle.get("[Swarm] plain item")!;
+    expect(plain).not.toHaveProperty("gates");
+  }, 15_000);
+
+  async function runFanOut(parentId: string) {
+    const g = new GoalGraph();
+    g.addGoal({ id: "p-1", description: "item A" });
+    g.addGoal({ id: "p-2", description: "item B" });
+    mockPlan.mockResolvedValue({
+      graph: g,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(
+      async () => ({ taskId: `${parentId}-child-${++n}`, agentType: "fast" }) as never,
+    );
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({ task_id: id, status: "completed", output: JSON.stringify({ text: `done ${id}` }) }) as never,
+    );
+    // child-1's ledger fails re-verification; child-2 has no ledger.
+    v84.reverify.mockImplementation(async (_parent: string, child: string) =>
+      child.endsWith("child-1")
+        ? { verdict: "failed", failed: 1, failedRows: [{ gate_id: "p-1.1" }], pending: 0, abandoned: 0 }
+        : null,
+    );
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    const result = await swarmRunner.execute({
+      taskId: parentId,
+      runId: `run-${parentId}`,
+      title: "fan-out",
+      description: "process items",
+    });
+    const goals = (result.goalGraph as { goals: Record<string, { status: string }> }).goals;
+    return { result, goals };
+  }
+
+  it("enforce: a child whose ledger FAILS parent re-verification is demoted to FAILED before reflection", async () => {
+    process.env.TASK_GATES_MODE = "enforce";
+    const { result, goals } = await runFanOut("parent-e");
+    expect(v84.reverify).toHaveBeenCalledTimes(2);
+    expect(v84.reverify.mock.calls.map((c) => c[1]).sort()).toEqual([
+      "parent-e-child-1",
+      "parent-e-child-2",
+    ]);
+    expect(goals["p-1"]!.status).toBe("failed"); // child-1 (goal p-1) demoted by the parent
+    expect(goals["p-2"]!.status).toBe("completed");
+    const trace = result.trace as Array<{ taskId: string; status: string }>;
+    expect(trace.find((t) => t.taskId === "parent-e-child-1")!.status).toBe("failed");
+  }, 30_000);
+
+  it("shadow: the same failing verdict is recorded but nothing is demoted", async () => {
+    process.env.TASK_GATES_MODE = "shadow";
+    const { goals } = await runFanOut("parent-s");
+    expect(v84.reverify).toHaveBeenCalledTimes(2);
+    expect(goals["p-1"]!.status).toBe("completed");
+    expect(goals["p-2"]!.status).toBe("completed");
+  }, 30_000);
+});;

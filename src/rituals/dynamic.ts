@@ -12,6 +12,7 @@
 
 import { getDatabase } from "../db/index.js";
 import { submitTask } from "../dispatch/dispatcher.js";
+import { parseGateSpecs, type GateSpec } from "../lib/v8-4/gates.js";
 import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
@@ -42,6 +43,8 @@ export interface ScheduledTaskRow {
   active: number;
   last_run_at: string | null;
   created_at: string;
+  /** V8.4: JSON array of GateSpec — acceptance gates every run of this schedule must meet. */
+  gates?: string | null;
 }
 
 export interface CreateScheduleParams {
@@ -53,6 +56,8 @@ export interface CreateScheduleParams {
   delivery: "telegram" | "email" | "both";
   emailTo?: string;
   emailSubject?: string;
+  /** V8.4: acceptance gates for every run of this schedule (validated by parseGateSpecs). */
+  gates?: GateSpec[];
 }
 
 // ---------------------------------------------------------------------------
@@ -72,13 +77,22 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   email_subject   TEXT,
   active          INTEGER DEFAULT 1,
   last_run_at     TEXT,
-  created_at      TEXT DEFAULT (datetime('now'))
+  created_at      TEXT DEFAULT (datetime('now')),
+  gates           TEXT
 );
 `;
 
 export function ensureScheduledTasksTable(): void {
   const db = getDatabase();
   db.exec(CREATE_TABLE_SQL);
+  // V8.4 (2026-08-16): additive column probe for pre-existing DBs — this
+  // table is created lazily here, outside the schema.sql migration runner.
+  const cols = db
+    .prepare("SELECT name FROM pragma_table_info('scheduled_tasks')")
+    .all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "gates")) {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN gates TEXT");
+  }
   // H3: Schedule run audit trail
   db.exec(`
     CREATE TABLE IF NOT EXISTS schedule_runs (
@@ -155,8 +169,8 @@ export function getScheduleRuns(
 export function createSchedule(params: CreateScheduleParams): void {
   const db = getDatabase();
   db.prepare(
-    `INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr, tools, delivery, email_to, email_subject)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr, tools, delivery, email_to, email_subject, gates)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.scheduleId,
     params.name,
@@ -166,7 +180,25 @@ export function createSchedule(params: CreateScheduleParams): void {
     params.delivery,
     params.emailTo ?? null,
     params.emailSubject ?? null,
+    params.gates?.length ? JSON.stringify(parseGateSpecs(params.gates)) : null,
   );
+}
+
+/**
+ * V8.4: a schedule's acceptance gates, or [] when unset/malformed (a bad
+ * gates column must never stop the ritual from running — it runs ungated
+ * and the parse error is logged once per submission).
+ */
+export function scheduleGates(schedule: ScheduledTaskRow): GateSpec[] {
+  if (!schedule.gates) return [];
+  try {
+    return parseGateSpecs(schedule.gates);
+  } catch (err) {
+    console.error(
+      `[schedules] "${schedule.name}": invalid gates column — running ungated: ${errMsg(err)}`,
+    );
+    return [];
+  }
 }
 
 export function listSchedules(activeOnly = true): ScheduledTaskRow[] {
@@ -293,6 +325,8 @@ export async function executeScheduleNow(
     description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
     agentType: "fast",
     tools,
+    gates: scheduleGates(schedule),
+    gatesSource: "ritual",
     tags: ["scheduled", "immediate", `schedule:${schedule.schedule_id}`],
     interactive: false,
   });
@@ -413,6 +447,8 @@ async function checkAndExecuteSchedules(): Promise<void> {
         description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
         agentType: "fast",
         tools,
+        gates: scheduleGates(schedule),
+        gatesSource: "ritual",
         tags: ["scheduled", `schedule:${schedule.schedule_id}`],
         interactive: false,
       });
@@ -595,6 +631,8 @@ async function retryScheduledTask(
     description: `${dateContext}${schedule.description}${deliveryInstructions}`,
     agentType: "fast",
     tools,
+    gates: scheduleGates(schedule),
+    gatesSource: "ritual",
     tags: ["scheduled", "retry", `schedule:${schedule.schedule_id}`],
     interactive: false,
   });

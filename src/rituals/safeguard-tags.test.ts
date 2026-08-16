@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockExecFileSync = vi.hoisted(() => vi.fn());
 
-vi.mock("child_process", () => ({
+// Partial mock: scheduler.js now reaches shell.ts (V8.4 gate-check imports the
+// shell guard), which imports `exec`/`spawn` — keep the real module and
+// override only what this test drives.
+vi.mock("child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("child_process")>()),
   execFileSync: mockExecFileSync,
 }));
 

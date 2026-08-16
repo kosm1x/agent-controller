@@ -39,7 +39,7 @@ Respond ONLY with a JSON object:
     {
       "id": "g-1",
       "description": "what this goal achieves",
-      "completion_criteria": ["testable assertion 1", "testable assertion 2"],
+      "completion_criteria": ["testable assertion 1", {"criterion": "testable assertion 2", "check": "shell command that proves it", "expect": "substring or /regex/ its output must contain"}],
       "parent_id": null,
       "depends_on": []
     }
@@ -48,6 +48,7 @@ Respond ONLY with a JSON object:
 
 Rules:
 - Top-level goals have parent_id=null and depends_on=[].
+- Use the object form of a completion criterion whenever a shell command can prove it (a test, a typecheck, a curl, a file check); plain strings for outcomes only a reader can judge.
 - Use depends_on to express ordering constraints between goals.
 - Keep the graph to at most 3 levels deep and 15 goals max.
 - Each goal should have 1-3 completion criteria.
@@ -106,13 +107,53 @@ Emit ONLY valid JSON. No markdown, no commentary.`;
 // LLM response schema
 // ---------------------------------------------------------------------------
 
+/** V8.4: a criterion may carry a runnable proof (check + expect). */
+export interface PlanCriterionEntry {
+  criterion: string;
+  check?: string;
+  expect?: string;
+}
+
 interface PlanGoalEntry {
   id: string;
   description: string;
-  completion_criteria?: string[];
+  completion_criteria?: Array<string | PlanCriterionEntry>;
   parent_id?: string | null;
   depends_on?: string[];
   status?: string;
+}
+
+/**
+ * V8.4: split a goal's criteria into prose (`completionCriteria`, unchanged
+ * contract) and runnable gate specs (kept on `metadata.gates`, consumed by
+ * the orchestrator / swarm to declare the task's ledger). Malformed entries
+ * are dropped, never thrown — a plan must not fail on a bad criterion shape.
+ */
+export function splitCriteria(
+  raw: Array<string | PlanCriterionEntry> | undefined,
+): { completionCriteria: string[]; gates: PlanCriterionEntry[] } {
+  const completionCriteria: string[] = [];
+  const gates: PlanCriterionEntry[] = [];
+  for (const item of raw ?? []) {
+    if (typeof item === "string") {
+      if (item.trim()) completionCriteria.push(item);
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const criterion =
+      typeof item.criterion === "string" ? item.criterion.trim() : "";
+    if (!criterion) continue;
+    completionCriteria.push(criterion);
+    if (typeof item.check === "string" && item.check.trim()) {
+      gates.push({
+        criterion,
+        check: item.check.trim(),
+        ...(typeof item.expect === "string" &&
+          item.expect.trim() && { expect: item.expect }),
+      });
+    }
+  }
+  return { completionCriteria, gates };
 }
 
 interface PlanResponse {
@@ -305,12 +346,14 @@ function parseGoalGraph(raw: string): GoalGraph {
         else if (entry.status === "in_progress")
           status = GoalStatus.IN_PROGRESS;
 
+        const split = splitCriteria(entry.completion_criteria);
         graph.addGoal({
           id: entry.id,
           description: entry.description,
           dependsOn: validDeps,
           parentId,
-          completionCriteria: entry.completion_criteria ?? [],
+          completionCriteria: split.completionCriteria,
+          ...(split.gates.length > 0 && { metadata: { gates: split.gates } }),
           status,
         });
         added.add(entry.id);
@@ -337,12 +380,14 @@ function parseGoalGraph(raw: string): GoalGraph {
           );
         }
 
+        const split = splitCriteria(entry.completion_criteria);
         graph.addGoal({
           id: entry.id,
           description: entry.description,
           dependsOn: validDeps,
           parentId: validParent,
-          completionCriteria: entry.completion_criteria ?? [],
+          completionCriteria: split.completionCriteria,
+          ...(split.gates.length > 0 && { metadata: { gates: split.gates } }),
         });
         added.add(entry.id);
       }

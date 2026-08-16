@@ -28,7 +28,7 @@ vi.mock("../db/jarvis-fs.js", () => ({
   getFile: vi.fn(),
 }));
 
-import { plan, replan } from "./planner.js";
+import { plan, replan, splitCriteria } from "./planner.js";
 import { infer } from "../inference/adapter.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 import { getFilesByQualifier } from "../db/jarvis-fs.js";
@@ -116,6 +116,64 @@ describe("plan", () => {
     expect(sysMsg!.content).toMatch(/quantify over ALL items/i);
     expect(sysMsg!.content).toMatch(/independent \(depends_on=\[\]\)/i);
     expect(sysMsg!.content).toMatch(/never silently drop items/i);
+  });
+
+  // V8.4 (2026-08-16): object-form criteria carry a runnable proof; the prose
+  // contract (`completionCriteria: string[]`) is unchanged and the specs land on
+  // `metadata.gates` for the ledger. Malformed shapes are dropped, never thrown.
+  it("splits object-form completion criteria into prose + metadata.gates", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Ship it",
+            completion_criteria: [
+              "reads well",
+              { criterion: "typecheck passes", check: "npx tsc --noEmit", expect: "/^$/" },
+              { criterion: "no proof, prose only" },
+              { check: "orphan check without criterion" },
+              42,
+            ],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+    const { graph } = await plan("Test task");
+    const g = graph.getGoal("g-1");
+    expect(g.completionCriteria).toEqual(["reads well", "typecheck passes", "no proof, prose only"]);
+    expect(g.metadata.gates).toEqual([
+      { criterion: "typecheck passes", check: "npx tsc --noEmit", expect: "/^$/" },
+    ]);
+  });
+
+  it("splitCriteria: strings only → no metadata.gates key", () => {
+    expect(splitCriteria(["a", "b"])).toEqual({ completionCriteria: ["a", "b"], gates: [] });
+    expect(splitCriteria(undefined)).toEqual({ completionCriteria: [], gates: [] });
+  });
+
+  it("system prompt tells the planner when to use the object form", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({ goals: [] }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+    await plan("x").catch(() => undefined);
+    const sysMsg = mockInfer.mock.calls[0][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    expect(sysMsg!.content).toContain('"check": "shell command that proves it"');
+    expect(sysMsg!.content).toMatch(
+      /object form of a completion criterion whenever a shell command can prove it/,
+    );
   });
 
   it("should strip markdown fences from LLM output", async () => {

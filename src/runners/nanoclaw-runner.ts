@@ -176,8 +176,18 @@ export const nanoclawRunner: Runner = {
         };
       }
 
+      // V8.4 (2026-08-16): a worker blob with NO `success` field is a
+      // protocol gap, not a success. It still delivers (the content exists)
+      // but lands as completed_with_concerns — never a clean `completed`.
+      const selfAttested = typeof parsed.success === "boolean";
       return {
-        success: parsed.success ?? true,
+        success: selfAttested ? parsed.success === true : true,
+        ...(!selfAttested && {
+          status: "DONE_WITH_CONCERNS" as const,
+          concerns: [
+            "container worker returned no `success` field — completion not self-attested",
+          ],
+        }),
         output: {
           content: parsed.content,
           score: parsed.score,

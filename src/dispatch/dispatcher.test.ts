@@ -482,3 +482,131 @@ describe("dispatchTask trace emits", () => {
     expect(terminal.attrs).toMatchObject({ status: "failed", error: "no scope" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// V8.4 completion ledger wiring (2026-08-16)
+// ---------------------------------------------------------------------------
+
+describe("V8.4 ledger wiring: declare at submit → render at run → consumer at completion", () => {
+  const gateRow = {
+    task_id: "x",
+    gate_id: "G1",
+    criterion: "typecheck passes",
+    check_kind: "shell",
+    check_cmd: "true",
+    expect: null,
+    state: "pending",
+    evidence: null,
+    abandon_reason: null,
+    source: "submission",
+    frozen_at: null,
+    checked_at: null,
+    created_at: "",
+  };
+  const savedMode = process.env.TASK_GATES_MODE;
+  afterEach(() => {
+    if (savedMode === undefined) delete process.env.TASK_GATES_MODE;
+    else process.env.TASK_GATES_MODE = savedMode;
+  });
+
+  it("submission.gates are written to task_gates BEFORE dispatch, with the declared source", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, output: "ok" }) as RunnerOutput,
+    });
+    await submitTask({
+      title: "gated",
+      description: "do it",
+      gates: [{ criterion: "typecheck passes", check: "npx tsc --noEmit" }],
+      gatesSource: "ritual",
+    });
+    expect(mockPrepare).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT OR IGNORE INTO task_gates"),
+    );
+    const gateInsert = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, unknown> | undefined)
+      .find((a) => a && a.criterion === "typecheck passes");
+    expect(gateInsert).toMatchObject({
+      gateId: "G1",
+      kind: "shell",
+      check: "npx tsc --noEmit",
+      source: "ritual",
+    });
+    // Ordering: the ledger row is written right after the tasks INSERT and
+    // BEFORE dispatch — assert the ledger insert precedes the runs-row INSERT.
+    const sqls = mockPrepare.mock.calls.map((c) => c[0] as string);
+    const ledgerIdx = sqls.findIndex((s) => s.includes("INSERT OR IGNORE INTO task_gates"));
+    const runIdx = sqls.findIndex((s) => s.includes("INSERT INTO runs"));
+    expect(ledgerIdx).toBeGreaterThan(-1);
+    expect(runIdx === -1 || ledgerIdx < runIdx).toBe(true);
+  });
+
+  it("a task WITH a ledger sees the gates block in its description; ungated tasks are byte-for-byte unchanged", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    mockAll.mockImplementation(() => [] as unknown[]);
+    let seen = "";
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen = input.description;
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({ title: "plain", description: "no gates here" });
+    await vi.waitFor(() => {
+      if (!seen) throw new Error("not run");
+    });
+    expect(seen).toBe("no gates here");
+
+    // Now the ledger query returns a row → the block is rendered and the
+    // ledger is frozen (UPDATE ... frozen_at) before the runner starts.
+    seen = "";
+    mockAll.mockImplementation((...args: unknown[]) => {
+      void args;
+      const lastSql = mockPrepare.mock.calls.at(-1)?.[0] as string;
+      return lastSql?.includes("FROM task_gates") ? [gateRow] : [];
+    });
+    await submitTask({ title: "gated", description: "with gates" });
+    await vi.waitFor(() => {
+      if (!seen) throw new Error("not run");
+    });
+    expect(seen).toContain("with gates");
+    expect(seen).toContain("## Acceptance gates (harness ledger)");
+    expect(seen).toContain("- G1: typecheck passes [CHECK: true]");
+    expect(mockPrepare).toHaveBeenCalledWith(
+      expect.stringContaining("SET frozen_at = datetime('now')"),
+    );
+  });
+
+  it("completion consumer runs before updateTaskStatus: shadow mode records output.gates and a gates.evaluated trace, status untouched", async () => {
+    process.env.TASK_GATES_MODE = "shadow";
+    mockRun.mockReturnValue({ changes: 1 });
+    mockGet.mockReturnValue({ 1: 1 }); // hasGates → true
+    mockAll.mockImplementation(() => {
+      const lastSql = mockPrepare.mock.calls.at(-1)?.[0] as string;
+      return lastSql?.includes("FROM task_gates") ? [gateRow] : [];
+    });
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, output: { text: "Listo." } }) as RunnerOutput,
+    });
+    await submitTask({ title: "gated", description: "with gates" });
+    await vi.waitFor(() => {
+      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+      if (!names.includes("task.completed")) throw new Error("not terminal yet");
+    });
+    const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+    expect(names.indexOf("gates.evaluated")).toBeGreaterThan(-1);
+    expect(names.indexOf("gates.evaluated")).toBeLessThan(names.indexOf("task.completed"));
+    const evaluated = emitTraceMock.mock.calls.find((c) => c[0].name === "gates.evaluated")![0];
+    expect(evaluated.attrs).toMatchObject({ mode: "shadow", status_before: "completed" });
+    // updateTaskStatus persisted the consumer-adjusted output (carries .gates)
+    const statusWrite = mockRun.mock.calls
+      .map((c) => c[0])
+      .find((a) => typeof a === "string" && a.includes('"gates"'));
+    expect(statusWrite).toBeDefined();
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.attrs).toMatchObject({ status: "completed" });
+  });
+});

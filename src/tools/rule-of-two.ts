@@ -407,6 +407,12 @@ export interface RunToolContext {
    * the doctrine is a session property, and a swarm IS one session).
    */
   readonly toolsSoFar: Set<string>;
+  /**
+   * The task this run answers (V8.4): NOT shared — each nested dispatch gets
+   * its own id even though the tool Set is the session's. Read by the
+   * numbers-provenance collector in `ToolRegistry.execute`.
+   */
+  readonly taskId: string;
 }
 
 /**
@@ -432,9 +438,8 @@ export const runToolContext = new AsyncLocalStorage<RunToolContext>();
 
 export function enterRunToolContext<T>(taskId: string, fn: () => T): T {
   const parent = runToolContext.getStore();
-  void taskId; // identity is the ambient store; the id is for call-site legibility
   return runToolContext.run(
-    { toolsSoFar: parent ? parent.toolsSoFar : new Set() },
+    { toolsSoFar: parent ? parent.toolsSoFar : new Set(), taskId },
     fn,
   );
 }
@@ -462,4 +467,9 @@ export function priorRunTools(): readonly string[] | undefined {
 
 export function recordRunTool(name: string): void {
   runToolContext.getStore()?.toolsSoFar.add(name);
+}
+
+/** Task id of the current run; `undefined` outside a run. */
+export function currentRunTaskId(): string | undefined {
+  return runToolContext.getStore()?.taskId;
 }

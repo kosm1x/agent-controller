@@ -281,6 +281,65 @@ describe("nanoclawRunner", () => {
     });
   });
 
+  // V8.4 (2026-08-16): silence ≠ success. A worker blob with NO `success`
+  // field still delivers, but as completed_with_concerns — never a clean
+  // `completed`. Pin both directions.
+  it("a worker blob with no `success` field lands as DONE_WITH_CONCERNS (not silently completed)", async () => {
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-124",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve({
+        status: "success",
+        result: JSON.stringify({ content: "did things", finalAnswer: "Listo." }),
+      } as ContainerOutput),
+      kill: vi.fn(),
+    });
+    const result = await nanoclawRunner.execute({
+      taskId: "task-3b",
+      runId: "run-3b",
+      title: "Silent",
+      description: "worker forgot success",
+    });
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.concerns?.[0]).toMatch(/no `success` field/);
+    // An explicit success:true stays a clean completion (no status override).
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-125",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve({
+        status: "success",
+        result: JSON.stringify({ success: true, content: "did things" }),
+      } as ContainerOutput),
+      kill: vi.fn(),
+    });
+    const clean = await nanoclawRunner.execute({
+      taskId: "task-3c",
+      runId: "run-3c",
+      title: "Explicit",
+      description: "worker set success",
+    });
+    expect(clean.status).toBeUndefined();
+    // qa I2: a non-boolean `success` (null) is NOT self-attestation either.
+    mockSpawnContainer.mockReturnValue({
+      name: "mc-nanoclaw-test-126",
+      process: {} as ContainerHandle["process"],
+      result: Promise.resolve({
+        status: "success",
+        result: JSON.stringify({ success: null, content: "did things" }),
+      } as ContainerOutput),
+      kill: vi.fn(),
+    });
+    const nul = await nanoclawRunner.execute({
+      taskId: "task-3d",
+      runId: "run-3d",
+      title: "Null",
+      description: "worker sent null",
+    });
+    expect(nul.success).toBe(true);
+    expect(nul.status).toBe("DONE_WITH_CONCERNS");
+  });
+
   // Regression (2026-07-12, tasks 7413/7416): the worker's `content` is the
   // reflector's third-person meta-summary; the agent's actual answer travels
   // in `finalAnswer`, which the router prefers for operator delivery. The

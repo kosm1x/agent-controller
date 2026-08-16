@@ -30,6 +30,8 @@ import {
 } from "./swarm-retry-policy.js";
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { gateSpecsFromGoal, gatesMode } from "../lib/v8-4/gates.js";
+import { reverifyChildLedger } from "../lib/v8-4/consumer.js";
 import { renderConversationContext } from "./conversation-context.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
@@ -760,12 +762,20 @@ export const swarmRunner: Runner = {
         graph.updateStatus(goal.id, GoalStatus.IN_PROGRESS);
 
         try {
+          // V8.4: runnable criteria the planner attached to this goal become
+          // the CHILD's ledger (source "plan"); the parent re-verifies it
+          // before reflecting (verification hierarchy, layer 2).
+          const childGates = gateSpecsFromGoal(goal.id, goal.metadata);
           const result = await submitTask({
             title: `[Swarm] ${goal.description.slice(0, 100)}`,
             description: buildSubTaskDescription(goal, graph, trackers),
             parentTaskId: input.taskId,
             spawnType: "subtask",
             tools: input.tools,
+            ...(childGates.length > 0 && {
+              gates: childGates,
+              gatesSource: "plan" as const,
+            }),
             // agentType NOT set — classifier auto-routes
           });
 
@@ -825,6 +835,36 @@ export const swarmRunner: Runner = {
         : undefined;
     if (abandonedNote) {
       console.warn(`[swarm] Task ${input.taskId}: ${abandonedNote}`);
+    }
+
+    // --- PHASE 2.5: PARENT RE-VERIFY (V8.4) ---
+    // The driver re-runs each finished child's ledger itself; a child's own
+    // "completed" is a claim. In enforce mode a FAILED re-verification flips
+    // the goal to FAILED before reflection scores it; in shadow it only
+    // records `gates.parent_reverified`. Children without a ledger: no-op.
+    for (const [goalId, tracker] of trackers) {
+      if (tracker.status !== "completed" || !tracker.taskId) continue;
+      try {
+        const verdict = await reverifyChildLedger(
+          input.taskId,
+          tracker.taskId,
+          tracker.output,
+        );
+        if (verdict?.verdict === "failed" && gatesMode() === "enforce") {
+          tracker.status = "failed";
+          tracker.error = `Parent re-verification: gates FAILED (${verdict.failedRows
+            .map((r) => r.gate_id)
+            .join(", ")})`;
+          graph.updateStatus(goalId, GoalStatus.FAILED);
+          console.warn(
+            `[swarm] Task ${input.taskId}: child ${tracker.taskId} demoted — ${tracker.error}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[swarm] Task ${input.taskId}: child ${tracker.taskId} re-verification errored (ignored): ${errMsg(err)}`,
+        );
+      }
     }
 
     // --- PHASE 3: REFLECT ---

@@ -47,6 +47,7 @@ import type {
 } from "./adapter.js";
 import { errMsg } from "../lib/err-msg.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
 // db/config/pricing — no static cycle back into the inference layer.
 import {
@@ -679,6 +680,14 @@ export async function queryClaudeSdk(opts: {
     );
   }
 
+  // V8.4 ledger wall: an in-process Stop hook that blocks ending the turn
+  // while a runnable acceptance gate is FAILED. Null when dormant
+  // (TASK_GATES_STOP_HOOK unset / mode off / task has no ledger / no task id)
+  // so the options object below is byte-for-byte today's shape.
+  const gatesStopHook = opts.trace?.taskId
+    ? makeGatesStopHook(opts.trace.taskId)
+    : null;
+
   const options: SdkOptions = {
     model: opts.model ?? SONNET_MODEL_ID,
     systemPrompt: safeSystemPromptText,
@@ -729,6 +738,9 @@ export async function queryClaudeSdk(opts: {
     // Undefined while enforcement is dormant — no request-shape change.
     ...(maxBudgetUsd !== undefined && { maxBudgetUsd }),
     abortController,
+    ...(gatesStopHook && {
+      hooks: { Stop: [{ hooks: [gatesStopHook], timeout: 180 }] },
+    }),
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
     thinking: { type: "disabled" },

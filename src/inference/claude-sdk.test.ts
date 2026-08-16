@@ -53,6 +53,19 @@ const remainingBudgetMock = vi.hoisted(() => vi.fn(() => 10));
 const budgetFlags = vi.hoisted(() => ({ enabled: false, enforce: false }));
 
 // V8.5 Phase 6: trace-emit seam mock (real module writes SQLite).
+// V8.4 ledger wall seam: the factory is mocked so these tests never touch the
+// DB; `stopHookFactory.impl` decides what the SDK layer receives.
+const stopHookFactory = vi.hoisted(() => ({
+  impl: (_taskId: string): unknown => null,
+  calls: [] as string[],
+}));
+vi.mock("../lib/v8-4/stop-hook.js", () => ({
+  makeGatesStopHook: (taskId: string) => {
+    stopHookFactory.calls.push(taskId);
+    return stopHookFactory.impl(taskId);
+  },
+}));
+
 const emitTraceMock = vi.hoisted(() => vi.fn());
 vi.mock("../observability/task-trace.js", () => ({
   emitTraceEvent: emitTraceMock,
@@ -2693,5 +2706,65 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       toolNames: [],
     });
     expect(emitTraceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
+  const okResult = () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+  };
+  beforeEach(() => {
+    stopHookFactory.impl = () => null;
+    stopHookFactory.calls = [];
+  });
+  afterEach(() => {
+    stopHookFactory.impl = () => null;
+  });
+
+  it("dormant: no `hooks` key in the SDK options (byte-for-byte today's shape); factory not consulted without a task id", async () => {
+    okResult();
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("hooks");
+    expect(stopHookFactory.calls).toEqual([]);
+  });
+
+  it("with a task id the factory is consulted; a null factory result still yields no hooks key", async () => {
+    okResult();
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-1", runId: "run-1" },
+    });
+    expect(stopHookFactory.calls).toEqual(["task-1"]);
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("hooks");
+  });
+
+  it("armed: the ledger hook is attached under hooks.Stop with a timeout", async () => {
+    const hook = async () => ({});
+    stopHookFactory.impl = () => hook;
+    okResult();
+    await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-2", runId: "run-2" },
+    });
+    const opts = lastQueryArgs.value?.options as {
+      hooks?: { Stop?: Array<{ hooks: unknown[]; timeout?: number }> };
+    };
+    expect(opts.hooks?.Stop).toHaveLength(1);
+    expect(opts.hooks?.Stop?.[0]?.hooks).toEqual([hook]);
+    expect(opts.hooks?.Stop?.[0]?.timeout).toBe(180);
   });
 });
