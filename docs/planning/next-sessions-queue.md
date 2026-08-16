@@ -259,6 +259,8 @@ Adopted from the unlazy v2 review: **"done" is a claim; the harness holds a ledg
 - **8.4.3** — SDK `hooks.Stop` wall (`TASK_GATES_STOP_HOOK=true` + mode≠off + task has ledger): blocks only on FAILED runnable gates, ABANDON honored, 3 same-set blocks ⇒ release recorded (`gates.hook_released`).
 - **8.4.4** — numbers-provenance audit (registry records tool-result digests per run; deliverable numbers vs corpus+input → `numbers.audited`/`output.numbers_audit`; footer only with `TASK_GATES_NUMBERS_ANNOTATE=true`).
 
+**ARMED 2026-08-16 (operator "Arm and deploy"): step 1 done** — drop-in `/etc/systemd/system/mission-control.service.d/v84-gates.conf` = `TASK_GATES_MODE=shadow`, redeployed newPid 2401298 (env verified in `/proc/<pid>/environ`, no Stop hook); first ritual gate set on `MexicoNecesario — Tweet Diario` (`9e06a237…`): G1 "tweet_post invoked in THIS run" = `./mc-ctl db "SELECT COUNT(*) … task_id='$MC_TASK_ID' AND tool='tweet_post'"` EXPECT `/^[1-9][0-9]*$/m` (probed under the runner's minimal env on a real task → `2`; guard-allowed). On no-tweet days the block instructs ABANDON — the first real exercise of the surrender path. Watch: `./mc-ctl gates summary 7` after the next 12:00 MX fire; then steps 2–4 below.
+
 **Arming (operator, in this order; drop-in, not EnvironmentFile if the key already lives there):**
 
 1. `TASK_GATES_MODE=shadow` → restart → give a ritual gates: `./mc-ctl gates set-ritual <schedule_id> gates.json` (e.g. the @MexicoNecesario publisher: `{"criterion":"tweet URL in report","check":"…","expect":"https://x.com/"}`) → watch `./mc-ctl gates summary 7` for a week (expect: failed rate sane, abandoned rate ≈ real impossibilities, landing verdicts on nanoclaw tasks).
