@@ -1878,6 +1878,7 @@ usage() {
   echo -e "  ${GREEN}trace${NC} <id>          Per-task trace timeline (rounds, tools, tokens, latency)"
   echo -e "  ${GREEN}cancel${NC} <id>         Cancel task via API"
   echo -e "  ${GREEN}smoke${NC} [timeoutS]    Post-deploy: run one real fast task, assert it completes"
+  echo -e "  ${GREEN}smoke sandbox${NC} [timeoutS]  Same, through the nanoclaw sandbox path (live SANDBOX_BACKEND); default 1000s"
   echo -e "  ${GREEN}task-resume${NC} <id> [goalId] [--run]  Resume a failed heavy/swarm task from a goal (isolated; --run to fire)"
   echo ""
   echo -e "  ${BOLD}Analytics${NC}"
@@ -1916,6 +1917,7 @@ usage() {
   echo -e "  ${GREEN}v83-promote${NC} <cap>    Operator L1→L2 promotion (dry run; --confirm to execute)"
   echo -e "  ${GREEN}rule-of-two${NC}          V8.5 §5.2 Rule-of-Two audit: tool matrix + trifectas + 30d retrospective (--write → docs/audit)"
   echo -e "  ${GREEN}gates${NC}                V8.4 completion ledger: <task_id> | summary [days] | status-sources [days] | set-ritual <id> <file>"
+  echo -e "  ${GREEN}sandboxes${NC}            Sandbox runtime: active backend, OpenSandbox server health, live sandbox-* containers, DOCKER-USER guard"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2826,13 +2828,22 @@ cmd_resume() {
 # tool count but never executes a task — a deploy that boots yet can't complete
 # the 96%-of-traffic fast path would pass. This closes that gap.
 cmd_smoke() {
-  local key body task_id status waited timeout
+  local key body task_id status waited timeout payload label
   key=$(api_key) || die "MC_API_KEY not found in .env"
   timeout="${1:-45}"
-  echo -e "${CYAN}Smoke:${NC} submitting a trivial fast task..."
+  # `mc-ctl smoke sandbox [timeoutS]` — same probe through the nanoclaw sandbox
+  # path (whatever SANDBOX_BACKEND the live service runs). Read-only prompt.
+  if [ "${1:-}" = "sandbox" ]; then
+    timeout="${2:-1000}"; label="nanoclaw sandbox"   # ≥ NANOCLAW_TIMEOUT_MS/1000 (900) + grace (qa W5)
+    payload='{"title":"mc-ctl smoke sandbox","description":"Sandbox smoke test (read-only). In the sandbox workspace run `git rev-parse --short HEAD` and `node --version`, then report both values in one line. Do NOT modify, create, commit or push anything.","agent_type":"nanoclaw","source":"mc-ctl-smoke"}'
+  else
+    label="fast runner"
+    payload='{"title":"mc-ctl smoke","description":"Smoke test. Reply with exactly: OK","source":"mc-ctl-smoke"}'
+  fi
+  echo -e "${CYAN}Smoke:${NC} submitting a trivial ${label} task..."
   body=$(curl -sf --max-time 10 -X POST \
     -H "X-Api-Key: ${key}" -H "Content-Type: application/json" \
-    -d '{"title":"mc-ctl smoke","description":"Smoke test. Reply with exactly: OK","source":"mc-ctl-smoke"}' \
+    -d "$payload" \
     "${API_URL}/api/tasks" 2>/dev/null) || die "submit failed (API unreachable or auth rejected)"
   task_id=$(echo "$body" | grep -oP '(?<="task_id":")[^"]+' | head -1)
   [ -n "$task_id" ] || die "no task_id in response: $body"
@@ -2844,7 +2855,7 @@ cmd_smoke() {
     printf '\r  status=%s t=%ss   ' "$status" "$waited"
     case "$status" in
       completed|completed_with_concerns)
-        echo -e "\n${GREEN}Smoke PASS${NC} — fast runner completed in ~${waited}s."; return 0 ;;
+        echo -e "\n${GREEN}Smoke PASS${NC} — ${label} completed in ~${waited}s."; return 0 ;;
       failed|cancelled)
         echo -e "\n${RED}Smoke FAIL${NC} — task ended '$status'. Inspect: mc-ctl task $task_id"; return 1 ;;
     esac
@@ -2965,6 +2976,41 @@ cmd_gates() {
            WHERE task_id = '${id}' AND name LIKE 'gates.%' ORDER BY id;" ;;
   esac
 }
+cmd_sandboxes() {
+  # mc-ctl sandboxes — sandbox runtime at a glance (docs/planning/opensandbox-adoption.md).
+  # Backend flag is read from the LIVE service environment by name only (never values).
+  # A failed read is reported as UNKNOWN, never as "docker" (qa W3).
+  local pid backend env_dump egress
+  pid="$(systemctl show -p MainPID --value mission-control 2>/dev/null || echo 0)"
+  backend="UNKNOWN (could not read /proc/${pid}/environ)"
+  egress="UNKNOWN"
+  if [ "${pid:-0}" != "0" ] && env_dump="$(sudo cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n')"; then
+    if printf '%s\n' "$env_dump" | grep -q '^SANDBOX_BACKEND=opensandbox$'; then backend="opensandbox"; else backend="docker (default)"; fi
+    if printf '%s\n' "$env_dump" | grep -q '^SANDBOX_EGRESS_ALLOW=.'; then egress="yes"; else egress="no (unrestricted, docker parity)"; fi
+  fi
+  echo -e "${BOLD}Sandbox backend (live mission-control pid ${pid}):${NC} ${backend}"
+  echo -e "${BOLD}Egress allow-list set:${NC} ${egress}"
+  echo ""
+  echo -e "${BOLD}opensandbox-server:${NC} $(systemctl is-active opensandbox-server 2>/dev/null) · health=$(curl -fsS -m 3 http://127.0.0.1:8098/health >/dev/null 2>&1 && echo ok || echo DOWN) · guard=$(systemctl is-active opensandbox-fw 2>/dev/null)"
+  if command -v iptables >/dev/null 2>&1; then
+    local n4 n6
+    # `grep -c` exits 1 on zero matches — `|| true` keeps this readable under set -e (qa R2 W-1)
+    n4="$( { sudo iptables -S DOCKER-USER 2>/dev/null; sudo iptables -S INPUT 2>/dev/null; } | grep -c 'opensandbox: block public access' || true)"
+    n6="$( { sudo ip6tables -S DOCKER-USER 2>/dev/null; sudo ip6tables -S INPUT 2>/dev/null; } | grep -c 'opensandbox: block public access' || true)"
+    if [ "${n4:-0}" -ge 4 ]; then
+      echo -e "${BOLD}Firewall guard:${NC} present (v4 ${n4}/4, v6 ${n6}/4: eth0 edge · br-+→docker0 cross-bridge · docker0 same-bridge · INPUT hairpin)"
+    else
+      echo -e "${BOLD}Firewall guard:${NC} ${RED}INCOMPLETE (v4 ${n4:-0}/4)${NC} — run: sudo systemctl restart opensandbox-fw"
+    fi
+  fi
+  echo ""
+  echo -e "${BOLD}Live sandbox containers (server-owned, TTL-reaped):${NC}"
+  docker ps --filter "name=^sandbox-" --format '  {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null | sed 's/^/ /' || true
+  local n; n="$(docker ps -q --filter "name=^sandbox-" 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$n" = "0" ] && echo "  (none)"
+  echo -e "${BOLD}Live docker-backend containers (mc-*):${NC}"
+  docker ps --filter "name=^mc-" --format '  {{.Names}}\t{{.Status}}' 2>/dev/null | grep -vE 'mc-(grafana|prometheus|node-exporter)' || echo "  (none)"
+}
 
 cmd_briefing_gate() {
   # mc-ctl briefing-gate — evaluate the V8.1 §13 activation gate (cache-read
@@ -3032,6 +3078,7 @@ case "$cmd" in
   v83-promote)       cmd_v83_promote "$@" ;;
   rule-of-two)       cmd_rule_of_two "$@" ;;
   gates)             cmd_gates "$@" ;;
+  sandboxes)         cmd_sandboxes ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;
@@ -3039,7 +3086,7 @@ case "$cmd" in
   task-resume)       cmd_task_resume "$@" ;;
   audit-closure)     cmd_audit_closure "${1:-}" ;;
 
-  smoke)             cmd_smoke "${1:-}" ;;
+  smoke)             cmd_smoke "$@" ;;
 
   budget)            cmd_budget ;;
 

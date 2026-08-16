@@ -1,0 +1,8 @@
+# Derived execd image for the OpenSandbox lifecycle server (S0, 2026-08-16).
+# The daily `docker image prune -af --filter label!=keep=true`
+# (/etc/cron.d/docker-image-prune) would remove the upstream tag nightly and
+# break sandbox creation the next morning — the same recurrence class as the
+# nanoclaw image (feedback_nanoclaw_image_recurrence_2026_05_23). Rebuild with
+# scripts/build-opensandbox-images.sh when bumping the pinned upstream tag.
+FROM opensandbox/execd:v1.0.22
+LABEL keep=true

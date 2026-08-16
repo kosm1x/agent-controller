@@ -11,13 +11,8 @@ import { orchestrate } from "../prometheus/orchestrator.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { getConfig } from "../config.js";
-import {
-  spawnContainer,
-  killContainer,
-  generateContainerName,
-  imageExistsLocally,
-} from "./container.js";
-import type { ContainerHandle } from "./container.js";
+import { generateContainerName, imageExistsLocally } from "./container.js";
+import { spawnSandbox, type SandboxHandle } from "./sandbox-backend.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
@@ -138,7 +133,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     tools: input.tools,
   };
 
-  let handle: ContainerHandle | undefined;
+  let handle: SandboxHandle | undefined;
 
   try {
     // Pre-flight: same `mission-control:latest` image used by nanoclaw-runner.
@@ -175,7 +170,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       envVars.HOME = "/root";
     }
 
-    handle = spawnContainer({
+    handle = spawnSandbox({
       image: config.heavyRunnerImage,
       name: generateContainerName(`heavy-${input.taskId.slice(0, 8)}`),
       command: ["node", "dist/runners/heavy-worker.js"],
@@ -262,7 +257,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       trace: parsed.trace,
     };
   } catch (err) {
-    if (handle) killContainer(handle);
+    if (handle) handle.kill();
     return {
       success: false,
       error: errMsg(err),

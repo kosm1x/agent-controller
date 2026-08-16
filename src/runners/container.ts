@@ -27,12 +27,20 @@ const GRACEFUL_STOP_TIMEOUT_MS = 10_000; // 10 seconds
  * reads the real value — only its presence matters. Keep INFERENCE_PRIMARY_KEY
  * intact (the SDK/inference path needs it inside the container).
  */
-const SANDBOX_NEUTRALIZED_ENV = new Map<string, string>([
+export const SANDBOX_NEUTRALIZED_ENV = new Map<string, string>([
   ["MC_API_KEY", "sandbox-no-control-plane-access"],
 ]);
 
-/** Host paths a container volume mount is allowed to source from. */
-const VOLUME_ALLOWED_PREFIXES = [
+/**
+ * Host paths a container volume mount is allowed to source from. Shared with
+ * the OpenSandbox backend (opensandbox-backend.ts) so both runtimes enforce
+ * the same client-side allow-list. The lifecycle server keeps its OWN,
+ * deliberately NARROWER list in [storage].allowed_host_paths
+ * (container/opensandbox/sandbox.toml: `/tmp/jarvis-downloads`, not `/tmp/`) —
+ * a mount that passes here can still be rejected there with
+ * HOST_PATH_NOT_ALLOWED; widen the TOML when adding a new host mount.
+ */
+export const VOLUME_ALLOWED_PREFIXES = [
   "/root/claude/",
   "/tmp/",
   "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)

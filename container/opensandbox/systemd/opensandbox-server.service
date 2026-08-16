@@ -1,0 +1,27 @@
+# OpenSandbox lifecycle server — sandbox runtime backend for mission-control
+# (Jarvis). Installed 2026-08-16 via `uv tool install opensandbox-server==0.2.2`.
+# Config: /root/.opensandbox/sandbox.toml · key: /etc/opensandbox/api.env (600)
+# Docs: /root/claude/mission-control/docs/planning/opensandbox-adoption.md
+# Install: scripts/install-opensandbox.sh (copies this file to /etc/systemd/system).
+[Unit]
+Description=OpenSandbox lifecycle server (Jarvis sandbox backend, 127.0.0.1:8098)
+After=network-online.target docker.service opensandbox-fw.service
+Wants=network-online.target opensandbox-fw.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/opensandbox/api.env
+Environment=SANDBOX_CONFIG_PATH=/root/.opensandbox/sandbox.toml
+Environment=TZ=America/Mexico_City
+ExecStart=/root/.local/bin/opensandbox-server
+Restart=on-failure
+RestartSec=5
+MemoryMax=768M
+TasksMax=512
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

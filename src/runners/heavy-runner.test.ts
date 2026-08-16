@@ -39,7 +39,6 @@ import { orchestrate } from "../prometheus/orchestrator.js";
 import { getConfig } from "../config.js";
 import {
   spawnContainer,
-  killContainer,
   imageExistsLocally,
 } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
@@ -47,7 +46,6 @@ import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 const mockOrchestrate = vi.mocked(orchestrate);
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
-const mockKillContainer = vi.mocked(killContainer);
 const mockImageExistsLocally = vi.mocked(imageExistsLocally);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 
@@ -594,7 +592,7 @@ describe("heavyRunner container mode", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Docker daemon unreachable");
-    expect(mockKillContainer).toHaveBeenCalled();
+    expect(killFn).toHaveBeenCalled(); // seam: runners call handle.kill()
   });
 });
 

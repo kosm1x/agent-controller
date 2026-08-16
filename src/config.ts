@@ -74,6 +74,25 @@ export interface Config {
    */
   nanoclawTimeoutMs: number;
 
+  /**
+   * Sandbox runtime backend for container runners (nanoclaw, containerized
+   * heavy). `docker` = the in-tree `docker run` path (container.ts);
+   * `opensandbox` = the OpenSandbox lifecycle server (execd + optional egress
+   * sidecar) via opensandbox-backend.ts. Unknown values resolve to `docker`.
+   * Env: SANDBOX_BACKEND. Adopted 2026-08-16 (docs/planning/opensandbox-adoption.md).
+   */
+  sandboxBackend: "docker" | "opensandbox";
+  /** OpenSandbox lifecycle API `host[:port]` (no scheme). Env: OPENSANDBOX_URL. */
+  opensandboxUrl: string;
+  /** OpenSandbox API key (OPEN-SANDBOX-API-KEY header). Env: OPENSANDBOX_API_KEY. */
+  opensandboxApiKey?: string;
+  /**
+   * Egress allow-list (FQDN / wildcard, comma-separated) applied as a
+   * default-deny networkPolicy to every OpenSandbox sandbox. Empty = no policy
+   * (unrestricted, parity with the docker backend). Env: SANDBOX_EGRESS_ALLOW.
+   */
+  sandboxEgressAllow: string[];
+
   /** Path to MCP servers config file (optional). */
   mcpConfigPath?: string;
 
@@ -229,6 +248,15 @@ export function loadConfig(): Config {
     heavyRunnerImage:
       process.env.HEAVY_RUNNER_IMAGE ?? "mission-control:latest",
     heavyRunnerTimeoutMs: int("HEAVY_RUNNER_TIMEOUT_MS", 900_000),
+
+    sandboxBackend:
+      process.env.SANDBOX_BACKEND === "opensandbox" ? "opensandbox" : "docker",
+    opensandboxUrl: process.env.OPENSANDBOX_URL ?? "127.0.0.1:8098",
+    opensandboxApiKey: optional("OPENSANDBOX_API_KEY"),
+    sandboxEgressAllow: (process.env.SANDBOX_EGRESS_ALLOW ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
 
     mcpConfigPath: optional("MC_MCP_CONFIG"),
 

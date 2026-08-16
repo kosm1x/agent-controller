@@ -1,0 +1,50 @@
+# OpenSandbox lifecycle server — Jarvis sandbox runtime backend (2026-08-16).
+# Reference: /root/claude/mission-control/docs/planning/opensandbox-adoption.md
+# Schema: opensandbox_server/config.py (server 0.2.2). API key comes from
+# /etc/opensandbox/api.env (OPENSANDBOX_SERVER_API_KEY) via the systemd unit.
+
+[server]
+host = "127.0.0.1"                 # loopback only; mission-control is on the same host
+port = 8098                        # 8080 is mission-control
+max_sandbox_timeout_seconds = 7200 # hard TTL cap; runners ask for timeout+grace
+
+[log]
+level = "INFO"
+
+[runtime]
+type = "docker"
+execd_image = "mc-opensandbox-execd:v1.0.22"   # keep=true derivative (nightly prune)
+
+[storage]
+# Prefix allow-list for host bind mounts — mirrors VOLUME_ALLOWED_PREFIXES in
+# src/runners/container.ts. Anything else is rejected server-side.
+allowed_host_paths = ["/root/claude/", "/tmp/jarvis-downloads", "/root/.config/gh", "/root/.claude/.credentials.json"]
+volume_default_size = "1Gi"
+
+[store]
+type = "sqlite"
+path = "~/.opensandbox/opensandbox.db"
+
+[docker]
+network_mode = "bridge"            # required for the egress sidecar
+# Host ports published for execd (+ sidecar). Docker's iptables BYPASS UFW, so
+# opensandbox-fw.service drops eth0 + cross-bridge traffic to this range and
+# same-bridge traffic to 44772/18080 (see the adoption doc §4).
+port_range_min = 40000
+port_range_max = 40999
+drop_capabilities = ["ALL"]        # parity with container.ts --cap-drop=ALL
+no_new_privileges = true
+pids_limit = 512                   # parity with container.ts --pids-limit 512
+apparmor_profile = ""
+seccomp_profile = ""
+
+[ingress]
+mode = "direct"
+
+[egress]
+image = "mc-opensandbox-egress:v1.1.6"        # keep=true derivative
+mode = "dns+nft"                   # default-deny needs IP-level enforcement
+disable_ipv6 = true                # explicit (upstream default); IPv6 egress is not first-class
+
+[renew_intent]
+enabled = false

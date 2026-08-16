@@ -14,13 +14,8 @@ import { registerRunner } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import {
-  spawnContainer,
-  killContainer,
-  generateContainerName,
-  imageExistsLocally,
-} from "./container.js";
-import type { ContainerHandle } from "./container.js";
+import { generateContainerName, imageExistsLocally } from "./container.js";
+import { spawnSandbox, type SandboxHandle } from "./sandbox-backend.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
@@ -31,7 +26,7 @@ export const nanoclawRunner: Runner = {
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
     const config = getConfig();
-    let handle: ContainerHandle | null = null;
+    let handle: SandboxHandle | null = null;
 
     try {
       // Pre-flight: confirm the runner image actually exists locally.
@@ -107,7 +102,7 @@ export const nanoclawRunner: Runner = {
       }
 
       // Spawn container with worker entrypoint, credentials, and repo mount
-      handle = spawnContainer({
+      handle = spawnSandbox({
         image: config.heavyRunnerImage, // mission-control:latest (has compiled dist/)
         name: generateContainerName(`nanoclaw-${input.taskId.slice(0, 8)}`),
         command: ["node", "dist/runners/nanoclaw-worker.js"],
@@ -209,7 +204,7 @@ export const nanoclawRunner: Runner = {
       // Kill container on unexpected error
       if (handle) {
         try {
-          killContainer(handle);
+          handle.kill();
         } catch {
           // Ignore cleanup errors
         }

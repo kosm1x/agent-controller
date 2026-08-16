@@ -39,14 +39,12 @@ import { nanoclawRunner } from "./nanoclaw-runner.js";
 import { getConfig } from "../config.js";
 import {
   spawnContainer,
-  killContainer,
   imageExistsLocally,
 } from "./container.js";
 import { recordNanoclawImageMissing } from "../observability/prometheus.js";
 
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
-const mockKillContainer = vi.mocked(killContainer);
 const mockImageExistsLocally = vi.mocked(imageExistsLocally);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 
@@ -505,6 +503,6 @@ describe("nanoclawRunner", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Docker daemon down");
-    expect(mockKillContainer).toHaveBeenCalled();
+    expect(killFn).toHaveBeenCalled(); // seam: runners call handle.kill()
   });
 });

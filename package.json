@@ -19,6 +19,7 @@
     "eval:gate:dry": "tsx scripts/eval-gate.ts"
   },
   "dependencies": {
+    "@alibaba-group/opensandbox": "0.1.11",
     "@anthropic-ai/claude-agent-sdk": "0.3.207",
     "@anthropic-ai/sdk": "0.111.0",
     "@antv/infographic": "^0.2.17",

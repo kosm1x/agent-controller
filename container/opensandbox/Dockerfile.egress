@@ -1,0 +1,5 @@
+# Derived egress sidecar image for the OpenSandbox lifecycle server (S0,
+# 2026-08-16). Same reason as Dockerfile.execd: LABEL keep=true survives the
+# daily label!=keep=true image prune.
+FROM opensandbox/egress:v1.1.6
+LABEL keep=true

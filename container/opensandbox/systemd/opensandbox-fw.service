@@ -1,0 +1,17 @@
+# Re-applies the DOCKER-USER guard for OpenSandbox sandbox ports after every
+# boot / docker restart (Docker rebuilds its chains; iptables rules are not
+# persisted across reboots on this box — no netfilter-persistent).
+# Install: scripts/install-opensandbox.sh
+[Unit]
+Description=OpenSandbox firewall guard (DOCKER-USER drop for sandbox execd ports)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/opensandbox-fw.sh
+
+[Install]
+WantedBy=multi-user.target docker.service
