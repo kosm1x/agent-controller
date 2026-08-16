@@ -247,6 +247,29 @@ The 08-08 watch inverted: §17 did NOT self-clear on 08-12. Three NEW unfixables
 
 **qa-audit (PASS-w-W, 0 Crit) — folded before deploy:** W1 the probe FAILED OPEN (a thrown probe still emitted the double-probe absence string — the exact fabricated-absence class the guard exists to close; now a `probed` counter gates the message, fail-closed to "absence NOT established"); W2 short-query branch claimed absence with zero probes run (same fail-closed message, so prompt-rule 4's guarantee is now literally true); W3 spec single-source block still said 7d (updated); S1 a THIRD sanitizer sibling — `dispatch/keywords.ts` ASCII split shredded accented task titles, so historical-similarity routing never matched Spanish (fixed, same class); S2 breakdown assertions added on the legacy/retro-classification paths; R3 case-insensitive variant dedupe; R4 entity-identity caveat in the EXISTS message (a substring hit on a name-prefix sibling must not read as presence). Verified-no-action: LIKE escaping empirical (R1), probe cost 5.9 ms/scan at 883 rows (R2 — linear in KB size, revisit at ~10×), 30d window honest vs live data (R5), Unicode tokens injection-safe on both call sites incl. jme's unquoted join (R6). **Residual (R7b):** the breakdown buckets any non-`unsupported` reason as `contradicted` — correct while `UnfixableReason` stays a 3-union; a 4th reason would be silently mislabelled. Trigger: any widening of `UnfixableReason`.
 
+## V8.4 "Honest Done" — completion ledger SHIPPED dormant (2026-08-16)
+
+Adopted from the unlazy v2 review: **"done" is a claim; the harness holds a ledger of acceptance gates written BEFORE the work, runs the runnable ones as subprocesses, records evidence, and only then decides what the terminal status may say.** Spec: `docs/planning/v8.4-honest-done-spec.md`. Five slices in one session, all behind `TASK_GATES_MODE` (default `off`).
+
+**Shipped (`66bc8b6`):**
+
+- **8.4.0 substrate** — `task_gates` (harness-owned; model has no writer; additions only; met REQUIRES evidence; abandoned is final), `TaskSubmission.gates`, `scheduled_tasks.gates` column (+`mc-ctl gates set-ritual`), planner object-form criteria → `goal.metadata.gates` → orchestrator/swarm declare (source `plan`), dispatcher declare-at-submit → freeze+render at run start. Fail-open defaults fixed: nanoclaw/heavy blob without `success` ⇒ DONE_WITH_CONCERNS; `statusSource` measured (`mc-ctl gates status-sources`).
+- **8.4.1 runner + consumer** — `evaluateLedger` (sh -c, own process group, minimal env, group-kill timeout, EXPECT substring|/regex/, evidence tail); modes off/shadow/enforce; enforce demotes completed→completed_with_concerns on FAILED and appends `Gates: n/N met · FAILED · unverified · ABANDONED` to the deliverable; `ABANDON: <id> <reason>` honored.
+- **8.4.2** — swarm parent re-verifies each child's ledger (rerun) before REFLECT; nanoclaw non-messaging tasks get harness `G-landing` verified on the HOST against origin (branch/PR/commit claims) — the 07-17/08-02 "sandbox fix evaporated" class.
+- **8.4.3** — SDK `hooks.Stop` wall (`TASK_GATES_STOP_HOOK=true` + mode≠off + task has ledger): blocks only on FAILED runnable gates, ABANDON honored, 3 same-set blocks ⇒ release recorded (`gates.hook_released`).
+- **8.4.4** — numbers-provenance audit (registry records tool-result digests per run; deliverable numbers vs corpus+input → `numbers.audited`/`output.numbers_audit`; footer only with `TASK_GATES_NUMBERS_ANNOTATE=true`).
+
+**Arming (operator, in this order; drop-in, not EnvironmentFile if the key already lives there):**
+
+1. `TASK_GATES_MODE=shadow` → restart → give a ritual gates: `./mc-ctl gates set-ritual <schedule_id> gates.json` (e.g. the @MexicoNecesario publisher: `{"criterion":"tweet URL in report","check":"…","expect":"https://x.com/"}`) → watch `./mc-ctl gates summary 7` for a week (expect: failed rate sane, abandoned rate ≈ real impossibilities, landing verdicts on nanoclaw tasks).
+2. `TASK_GATES_MODE=enforce` once shadow shows no false FAILED on good runs (spot-check 10 `gates.evaluated` rows).
+3. `TASK_GATES_STOP_HOOK=true` last — it spends turns; watch `gates.hook_blocked`/`hook_released` counts and cost.
+4. Optional: `TASK_GATES_NUMBERS_ANNOTATE=true` after eyeballing `numbers.audited` false-positive rate on Morning Sync / reports.
+
+**Watches:** `mc-ctl gates status-sources 7` (how often the DONE default is what marks a fast task complete — the "~67%" claim becomes a number); first `G-landing` FAILED on a nanoclaw task = the class this was built for.
+
+**Residuals / next:** V9 W1 `verifier.ts` should read `task_gates` as its `checks[]` (manual gates → capable-tier `criteria_check`); the wall is host-only (container workers don't see the flag); plan gates declared mid-run are consumed at completion, not by the wall; numbers regex is heuristic. Ad-hoc gated tasks: `POST /api/tasks` with `gates: [{criterion, check?, expect?}]` (validated at the edge, 400 on a bad payload).
+
 ## V8.5 Phase 5.2 — Rule-of-Two audit SHIPPED (2026-08-15)
 
 Meta's Rule of Two — hold at most two of **[A] untrusted input · [B] sensitive access · [C] state change** per agent SESSION — shipped as two layers, because the doctrine is a composition property (a run that `gmail_read`s (A+B) then `gmail_send`s (C) is the trifecta though no single tool holds all three) and the plan's "per-tool matrix + forced L-level bump" wording only catches the degenerate single-tool case. Operator rulings (2026-08-15): **KB reads = trusted tier (B only)** — untrusted content enters through the ingest edges, which are A; **trifecta ⇒ hard cap L1** at tool level and run level.
