@@ -12,7 +12,8 @@
  * Prometheus/claude-sdk paths). The COVERAGE BOUNDARY the original module doc
  * described ("a gated capability reaching execution by another path runs
  * UNLOGGED") is CLOSED: both seams now record, distinguished by
- * `context.source` ('interactive' here, 'background' at the registry). This
+ * `context.source` ('interactive' here; 'operator' | 'background' at the
+ * registry by run origin, 2026-08-17). This
  * seam calls the registry with `{v83: "skip"}` so the chokepoint does not
  * double-record the same execution.
  *

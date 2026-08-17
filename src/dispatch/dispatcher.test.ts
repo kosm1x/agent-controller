@@ -86,7 +86,13 @@ import {
   isPhantomZeroCostRow,
   registerRunner,
 } from "./dispatcher.js";
-import { priorRunTools, recordRunTool } from "../tools/rule-of-two.js";
+import {
+  BACKGROUND_ORIGIN,
+  currentRunOrigin,
+  priorRunTools,
+  recordRunTool,
+  type RunOrigin,
+} from "../tools/rule-of-two.js";
 import type { RunnerOutput } from "../runners/types.js";
 
 beforeEach(() => {
@@ -405,6 +411,35 @@ describe("dispatchTask Rule-of-Two run context (V8.5 Phase 5.2, qa W3)", () => {
     expect(seenInside).toEqual([]);
     expect(seenAfterRecord).toEqual(["web_search"]);
     expect(priorRunTools()).toBeUndefined(); // context does not leak out of the run
+  });
+});
+
+// Seam origin wiring (qa W2 2026-08-17): the store is tested in rule-of-two;
+// THIS pins the dispatcher's wiring point — delete the 3rd argument at the
+// enterRunToolContext site and the operator label silently reverts to
+// background with a green suite. Fails-open point ⇒ must be tested.
+describe("dispatchTask V8.3 seam origin wiring (qa W2 2026-08-17)", () => {
+  it("submission.threadId → runner executes with an OPERATOR origin on that thread; no threadId → BACKGROUND", async () => {
+    const seen: RunOrigin[] = [];
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        seen.push(currentRunOrigin());
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({
+      title: "op",
+      description: "operator chat turn",
+      threadId: "telegram:42",
+    });
+    await submitTask({ title: "bg", description: "scheduled task" });
+    await vi.waitFor(() => {
+      if (seen.length < 2) throw new Error("runners not yet executed");
+    });
+    expect(seen[0]).toEqual({ source: "operator", threadId: "telegram:42" });
+    expect(seen[1]).toBe(BACKGROUND_ORIGIN);
+    expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN); // no leak out of the run
   });
 });
 

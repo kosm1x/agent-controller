@@ -135,9 +135,19 @@ function toolReportedError(result: string): boolean {
   }
 }
 
+/**
+ * Which seam / run recorded an execution. `interactive` = the router confirm
+ * flow (`trigger.ts`); `operator` = the registry seam inside an
+ * operator-initiated run (chat turn calling a gated tool that needs no
+ * confirmation); `background` = the registry seam in a scheduled / ritual /
+ * reaction run or outside any run. Persisted on the `proposed` event so §14
+ * can stratify the shadow fill by source (2026-08-17).
+ */
+export type GatedExecutionSource = "interactive" | "operator" | "background";
+
 export interface GatedExecutionCtx {
-  /** Which seam recorded this execution (persisted in the decision context). */
-  source: "interactive" | "background";
+  /** Which seam recorded this execution (persisted on the `proposed` event). */
+  source: GatedExecutionSource;
   /** Conversation thread the decision belongs to (persisted on the row). */
   threadId: string;
   /**
@@ -257,13 +267,15 @@ export async function recordGatedExecution(
     if (output === undefined) return executeThunk();
   }
   // qa W2: preserve the chokepoint's failure channel. Before this seam existed,
-  // a background caller (task-executor, Prometheus, claude-sdk bridge) saw the
+  // a registry caller (task-executor, Prometheus, claude-sdk bridge) saw the
   // tool's exception PROPAGATE from registry.execute — the claude-sdk bridge
   // sets its MCP isError flag off that throw. Re-throw the original error so
   // arming a capability never silently converts a throw into a success-shaped
-  // string. The interactive seam keeps its pre-existing JSON-error contract
-  // (the router expects a string result).
-  if (thunkThrew && ctx.source === "background") {
+  // string. `operator` is a registry caller too (an operator chat run reaches
+  // the seam through task-executor), so it shares the contract. Only the
+  // interactive seam keeps its pre-existing JSON-error contract (the router
+  // expects a string result).
+  if (thunkThrew && ctx.source !== "interactive") {
     throw thunkError;
   }
   return output ?? "";

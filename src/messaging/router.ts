@@ -1451,6 +1451,8 @@ export class MessageRouter {
           tools: scopedTools,
           spawnType: "user-background",
           tags: ["messaging", msg.channel, "background-agent"],
+          // V8.3 seam origin: operator-initiated → gated tools ledger on this thread.
+          threadId: this.operatorThreadKey(msg, tk),
         });
 
         const agentNotification = `🤖 Agente lanzado: "${taskText.slice(0, 60)}"\nID: ${result.taskId.slice(0, 8)}\nTe aviso cuando termine. Puedes seguir hablando conmigo.`;
@@ -2113,6 +2115,10 @@ export class MessageRouter {
         msg.channel,
         ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
       ],
+      // V8.3 seam origin: same thread key the interactive confirm seam records
+      // (`executeGatedCapability(…, { threadId: tk })`), so operator rows from
+      // both seams stratify on one key. `undefined` for non-operator senders.
+      threadId: this.operatorThreadKey(msg, tk),
       onTextChunk: streamController
         ? (chunk: string) => streamController!.appendChunk(chunk)
         : undefined,
@@ -3211,6 +3217,30 @@ export class MessageRouter {
     }
 
     return text || null;
+  }
+
+  /**
+   * V8.3 seam origin (qa W1 2026-08-17): the thread key IFF this inbound turn
+   * is the OPERATOR's — an owner channel (community-manager mailboxes are
+   * excluded by `isOwnerChannel`) and, inside a WhatsApp group, a sender whose
+   * JID is the owner's. Any other sender (allow-listed group member, community
+   * mailbox) returns `undefined` ⇒ the run stays unlabelled ⇒ `background`, so
+   * §14's by-source line never shows operator exercise no operator performed.
+   * Conservative by construction: a group participant id that is a LID and
+   * not equal to `WHATSAPP_OWNER_JID` under-counts operator, never over-counts.
+   */
+  private operatorThreadKey(
+    msg: IncomingMessage,
+    tk: string,
+  ): string | undefined {
+    if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+      return undefined;
+    }
+    if (msg.metadata?.isGroup) {
+      const owner = this.getOwnerAddress(msg.channel);
+      if (!owner || msg.metadata.senderJid !== owner) return undefined;
+    }
+    return tk;
   }
 
   private getOwnerAddress(channel: ChannelName): string | null {

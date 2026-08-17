@@ -186,6 +186,57 @@ describe("MessageRouter", () => {
       );
     });
 
+    // V8.3 seam origin (qa W1/W2 2026-08-17): the operator's turn carries its
+    // thread key so gated tools inside the run ledger as `operator`; a group
+    // member's turn must NOT (it would show operator exercise no operator
+    // performed on §14's by-source line). Delete `threadId:` at the submit
+    // site and the first assertion goes red.
+    it("passes threadId (= the thread key) for the OWNER's turn, and omits it for a non-owner group sender", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "agenda algo",
+        timestamp: new Date(),
+      });
+      expect(submitTask).toHaveBeenLastCalledWith(
+        expect.objectContaining({ threadId: "whatsapp" }),
+      );
+
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "grp@g.us",
+        text: "@jarvis agenda algo",
+        timestamp: new Date(),
+        metadata: {
+          isGroup: true,
+          groupJid: "grp@g.us",
+          senderJid: "member@s.whatsapp.net",
+        },
+      });
+      const last = (submitTask as any).mock.calls.at(-1)[0];
+      expect(last.tags).toEqual(["messaging", "whatsapp"]);
+      expect(last.threadId).toBeUndefined();
+
+      // The owner speaking INSIDE the group is still the operator.
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "grp@g.us",
+        text: "@jarvis agenda algo",
+        timestamp: new Date(),
+        metadata: {
+          isGroup: true,
+          groupJid: "grp@g.us",
+          senderJid: "owner@s.whatsapp.net",
+        },
+      });
+      expect(submitTask).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          threadId: "whatsapp:grp@g.us:owner@s.whatsapp.net",
+        }),
+      );
+    });
+
     it("should truncate long message titles at 60 chars", async () => {
       const longText = "A".repeat(100);
       const msg: IncomingMessage = {

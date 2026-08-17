@@ -11,7 +11,10 @@ import { ToolRegistry } from "../../tools/registry.js";
 import type { Tool } from "../../tools/types.js";
 import type { GateConfig } from "./types.js";
 import { recordGatedExecution } from "./gated-execution.js";
-import { enterRunToolContext } from "../../tools/rule-of-two.js";
+import {
+  enterRunToolContext,
+  outsideRunToolContext,
+} from "../../tools/rule-of-two.js";
 
 /** Seed one capability_autonomy row (mirrors trigger.test.ts). */
 function seedCapability(capability: string, level: number, gate: GateConfig) {
@@ -63,6 +66,20 @@ function decisionRows(): Array<{
     .all() as never;
 }
 
+/** The `source` persisted on each decision's `proposed` event (2026-08-17). */
+function proposedSources(): Array<string | null> {
+  return (
+    getDatabase()
+      .prepare(
+        `SELECT json_extract(e.payload_json, '$.source') AS source
+           FROM decisions d
+           JOIN decision_events e ON e.decision_id = d.id AND e.event_kind = 'proposed'
+          ORDER BY d.id`,
+      )
+      .all() as Array<{ source: string | null }>
+  ).map((r) => r.source);
+}
+
 let registry: ToolRegistry;
 let calls: string[];
 
@@ -105,6 +122,63 @@ describe("ToolRegistry.execute — V8.3 background seam", () => {
     expect(rows[0].capability).toBe("gmail_send");
     expect(rows[0].thread_id).toBe("background");
     expect(rows[0].status).toBe("committed");
+    expect(proposedSources()).toEqual(["background"]); // persisted, not just ODD-context
+  });
+
+  // Seam origin (2026-08-17, docs/planning/v8-3-seam-origin-plan.md §2): the
+  // SAME chokepoint labels by who initiated the run. An operator chat turn that
+  // calls a gated tool without a confirmation gate is captured (it always was)
+  // but must ledger as `operator` on its thread key, not the background literal.
+  it("armed: the same execution INSIDE an operator-originated run ledgers source=operator on the thread key", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    registry.register(fakeTool("gmail_send", () => "sent", calls));
+    const out = await enterRunToolContext(
+      "task-op",
+      () => registry.execute("gmail_send", { to: "a@b.c" }),
+      { source: "operator", threadId: "telegram:123" },
+    );
+    expect(out).toBe("sent");
+    expect(calls).toEqual(["gmail_send"]);
+    const rows = decisionRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].thread_id).toBe("telegram:123");
+    expect(rows[0].status).toBe("committed");
+    expect(proposedSources()).toEqual(["operator"]);
+  });
+
+  it("a nested dispatch under an operator run INHERITS operator origin; a plain run and a queue-drained run stay background", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    registry.register(fakeTool("gmail_send", () => "sent", calls));
+    await enterRunToolContext(
+      "parent-op",
+      async () => {
+        // swarm child of a chat turn — no explicit origin, inherits the parent's
+        await enterRunToolContext("child", () =>
+          registry.execute("gmail_send", { to: "child@x" }),
+        );
+        // container-queue drain: exits the ambient store, so an unrelated
+        // dequeued task never inherits the operator thread (qa W-A class)
+        await outsideRunToolContext(() =>
+          enterRunToolContext("dequeued", () =>
+            registry.execute("gmail_send", { to: "dequeued@x" }),
+          ),
+        );
+      },
+      { source: "operator", threadId: "telegram:123" },
+    );
+    // plain run without an origin (scheduled/ritual submission)
+    await enterRunToolContext("ritual", () =>
+      registry.execute("gmail_send", { to: "ritual@x" }),
+    );
+    const rows = decisionRows();
+    expect(rows.map((r) => r.thread_id)).toEqual([
+      "telegram:123",
+      "background",
+      "background",
+    ]);
+    expect(proposedSources()).toEqual(["operator", "background", "background"]);
   });
 
   it("a schedule_task creation through the background seam lands a COMPLETED delete_inverse op", async () => {
@@ -182,6 +256,27 @@ describe("recordGatedExecution — shared wrapper contract", () => {
     const rows = decisionRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("pending"); // executed-with-failure, not committed
+  });
+
+  it("operator: a thunk that THROWS re-throws like background — an operator chat run reaches the seam through task-executor, a registry caller", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    const boom = new Error("smtp down");
+    await expect(
+      recordGatedExecution(
+        "gmail_send",
+        { to: "a@b.c" },
+        async () => {
+          throw boom;
+        },
+        { source: "operator", threadId: "telegram:123" },
+      ),
+    ).rejects.toThrow(boom);
+    const rows = decisionRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].thread_id).toBe("telegram:123");
+    expect(rows[0].status).toBe("pending");
+    expect(proposedSources()).toEqual(["operator"]);
   });
 
   it("interactive: a thunk that THROWS keeps the pre-existing JSON-error contract (router expects a string)", async () => {

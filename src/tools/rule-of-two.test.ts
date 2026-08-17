@@ -20,6 +20,8 @@ import {
   RULE_OF_TWO_CLASSIFICATION,
   RULE_OF_TWO_MCP_OVERRIDES,
   RULE_OF_TWO_PREFIX_DEFAULTS,
+  BACKGROUND_ORIGIN,
+  currentRunOrigin,
   enterRunToolContext,
   outsideRunToolContext,
   isRuleOfTwoClassified,
@@ -421,6 +423,41 @@ describe("Rule of Two — run-level composition (Layer 2)", () => {
       });
       expect(priorRunTools()).toEqual(["gmail_read"]); // nothing leaked back
     });
+  });
+
+  // Seam origin (2026-08-17): who initiated the run rides the same store the
+  // V8.3 seam already reads. Explicit (root) > parent's (nested) > background.
+  it("run origin: BACKGROUND outside a run and for a plain run; explicit on the root; INHERITED by nested dispatch; NOT across outsideRunToolContext", async () => {
+    expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN);
+    await enterRunToolContext("plain", async () => {
+      expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN);
+    });
+    const op = { source: "operator" as const, threadId: "telegram:7" };
+    await enterRunToolContext(
+      "root",
+      async () => {
+        expect(currentRunOrigin()).toEqual(op);
+        await enterRunToolContext("child", async () => {
+          expect(currentRunOrigin()).toEqual(op); // swarm child of a chat turn
+        });
+        await enterRunToolContext(
+          "child-explicit",
+          async () => {
+            expect(currentRunOrigin().threadId).toBe("telegram:9"); // explicit wins
+          },
+          { source: "operator", threadId: "telegram:9" },
+        );
+        await outsideRunToolContext(async () => {
+          expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN); // queue drain: no leak
+          await enterRunToolContext("dequeued", async () => {
+            expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN);
+          });
+        });
+        expect(currentRunOrigin()).toEqual(op); // nothing leaked back
+      },
+      op,
+    );
+    expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN);
   });
 
   it("ToolRegistry.execute records the run's tools (prior snapshot precedes the call)", async () => {

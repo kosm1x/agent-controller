@@ -42,7 +42,7 @@ const COOLDOWN_MS = 30_000; // 30 seconds between reactions for same task
 function parseTaskMeta(
   taskId: string,
   metadata: string | null,
-): { tags?: string[]; tools?: string[]; ritualId?: string } {
+): { tags?: string[]; tools?: string[]; ritualId?: string; threadId?: string } {
   if (!metadata) return {};
   try {
     return JSON.parse(metadata);
@@ -201,6 +201,7 @@ export class ReactionManager {
             tools: meta.tools,
             agentType: task.agent_type ?? undefined,
             ritualId: meta.ritualId,
+            threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",
@@ -234,6 +235,7 @@ export class ReactionManager {
             tools: meta.tools,
             agentType: task.agent_type ?? undefined,
             ritualId: meta.ritualId,
+            threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",

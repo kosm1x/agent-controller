@@ -7,6 +7,7 @@ import type { ToolDefinition } from "../inference/adapter.js";
 import type { Tool, ToolAnnotations } from "./types.js";
 import { getToolAnnotations } from "./types.js";
 import {
+  currentRunOrigin,
   currentRunTaskId,
   priorRunTools,
   recordRunTool,
@@ -206,6 +207,15 @@ export class ToolRegistry {
    * interactive confirm seam (`lib/v8-3/trigger.ts`) records its OWN decision
    * and passes `{v83: "skip"}` so one execution never lands two rows. The
    * check is O(1) map+env lookups when V8.3 is dormant or the tool is ungated.
+   *
+   * Source/thread label (2026-08-17): read from the run's origin (dispatcher
+   * seeds it from `TaskSubmission.threadId`) — an operator chat turn that
+   * calls a gated tool WITHOUT a confirmation gate ledgers as
+   * `source:"operator"` on its thread key; scheduled/ritual/reaction runs and
+   * calls outside any run stay `"background"`. This is a LABEL: every path to
+   * a gated handler already funnels through this method (fast-runner via
+   * task-executor, Prometheus, claude-sdk MCP bridge, trigger.ts) — see
+   * `docs/planning/v8-3-seam-origin-plan.md` §1.
    */
   async execute(
     name: string,
@@ -220,13 +230,14 @@ export class ToolRegistry {
     if (opts?.v83 !== "skip" && shouldRecordGatedExecution(name)) {
       const priorToolNames = priorRunTools();
       recordRunTool(name);
+      const origin = currentRunOrigin();
       return recordGatedExecution(
         name,
         args,
         () => this.executeDirect(name, args),
         {
-          source: "background",
-          threadId: "background",
+          source: origin.source,
+          threadId: origin.threadId,
           priorToolNames,
           resolveToolAnnotations: (n) => this.annotationsOf(n),
         },

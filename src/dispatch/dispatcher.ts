@@ -26,6 +26,7 @@ import { ritualContext } from "../tools/flailing-guard.js";
 import {
   enterRunToolContext,
   outsideRunToolContext,
+  type RunOrigin,
 } from "../tools/rule-of-two.js";
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
@@ -106,6 +107,14 @@ export interface TaskSubmission {
    * EVOLUTION-LOG.md even when the API was healthy.
    */
   ritualId?: string;
+  /**
+   * V8.3 seam origin (2026-08-17): the conversation thread key of the operator
+   * turn this run answers (router chat submit / user-background spawn). When
+   * set, every gated tool executed inside the run is ledgered as
+   * `source:"operator"` on this thread instead of the `"background"` literal;
+   * absent = inherit the parent run's origin or default to background.
+   */
+  threadId?: string;
   /**
    * Deterministic output persistence for rituals (skill-evolution /diagnose,
    * 2026-06-28). When set, the dispatcher stores the runner's report text to
@@ -226,6 +235,18 @@ interface QueuedContainerTask {
 }
 
 const containerQueue: QueuedContainerTask[] = [];
+
+/**
+ * V8.3 seam origin for a submission: `operator` iff the submitter named the
+ * operator thread it answers (`threadId`); otherwise `undefined` so
+ * `enterRunToolContext` inherits the parent run's origin (nested dispatch)
+ * or falls back to background.
+ */
+function runOriginOf(submission: TaskSubmission): RunOrigin | undefined {
+  return submission.threadId
+    ? { source: "operator", threadId: submission.threadId }
+    : undefined;
+}
 
 function enqueueContainerTask(
   taskId: string,
@@ -398,12 +419,19 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     // the retry then went through the classifier with no hints and landed
     // on the wrong runner. ritualId is also persisted so reaction-retried
     // rituals inherit the flailing-guard exemption (yesterday's Fix 1).
+    // threadId (V8.3 seam origin, qa W4 2026-08-17) is persisted for the same
+    // reason: a reaction-retried operator chat task must keep its `operator`
+    // label instead of silently re-ledgering as background.
     metadata:
-      submission.tags || submission.tools || submission.ritualId
+      submission.tags ||
+      submission.tools ||
+      submission.ritualId ||
+      submission.threadId
         ? JSON.stringify({
             ...(submission.tags && { tags: submission.tags }),
             ...(submission.tools && { tools: submission.tools }),
             ...(submission.ritualId && { ritualId: submission.ritualId }),
+            ...(submission.threadId && { threadId: submission.threadId }),
           })
         : null,
     retryCount: submission.retryCount ?? 0,
@@ -665,10 +693,17 @@ async function dispatchWithSlot(
     // context so `ToolRegistry.execute` can see which tools THIS run invoked
     // before a gated capability fires (composition demotion in the V8.3
     // pipeline). Same ALS propagation path ritualContext already relies on.
-    let result = await enterRunToolContext(taskId, () =>
-      ritualId
-        ? ritualContext.run({ ritualId }, () => runner.execute(input))
-        : runner.execute(input),
+    // V8.3 seam origin (2026-08-17): an operator-initiated submission labels
+    // the run (and its nested dispatches) `operator` on its thread; anything
+    // else inherits the parent's origin or defaults to background.
+    const runOrigin = runOriginOf(submission);
+    let result = await enterRunToolContext(
+      taskId,
+      () =>
+        ritualId
+          ? ritualContext.run({ ritualId }, () => runner.execute(input))
+          : runner.execute(input),
+      runOrigin,
     );
 
     // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
@@ -737,8 +772,10 @@ async function dispatchWithSlot(
           "UPDATE tasks SET started_at = datetime('now') WHERE task_id = ? AND status = 'running'",
         ).run(taskId);
         try {
-          const fb = await enterRunToolContext(taskId, () =>
-            fastRunner.execute(input),
+          const fb = await enterRunToolContext(
+            taskId,
+            () => fastRunner.execute(input),
+            runOrigin,
           );
           if (fb.success) {
             result = fb;

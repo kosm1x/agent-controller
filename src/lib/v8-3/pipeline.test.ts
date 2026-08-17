@@ -117,6 +117,48 @@ describe("runDecisionPipeline", () => {
     expect(r.status).toBe("committed");
   });
 
+  // Seam origin (2026-08-17): the `proposed` payload is the ONLY place `source`
+  // is persisted (the row keeps thread_id alone) — §14 stratifies on it. Pin the
+  // shape so dropping the key is red here, not only in the seam's own tests.
+  it("`proposed` payload persists `context.source` when it is a string, and omits the key otherwise", async () => {
+    seedCapability({
+      capability: "c_l1",
+      level: 1,
+      odd: ALWAYS_IN,
+      gate: OPEN_GATE,
+    });
+    const nowIso = "2026-06-26T12:00:00Z";
+    const withSource = await runDecisionPipeline(
+      trigger("c_l1", { ok: true, source: "operator" }),
+      { nowIso },
+    );
+    const withoutSource = await runDecisionPipeline(trigger("c_l1"), {
+      nowIso,
+    });
+    const payloads = getDatabase()
+      .prepare(
+        `SELECT decision_id, payload_json FROM decision_events
+          WHERE event_kind = 'proposed' ORDER BY decision_id`,
+      )
+      .all() as Array<{ decision_id: number; payload_json: string }>;
+    const byId = new Map(
+      payloads.map((p) => [p.decision_id, JSON.parse(p.payload_json)]),
+    );
+    expect(byId.get(withSource.decisionId)).toEqual({
+      route: "confirm",
+      baseLevel: 1,
+      effectiveLevel: 1,
+      cadence: "sync",
+      source: "operator",
+    });
+    expect(byId.get(withoutSource.decisionId)).toEqual({
+      route: "confirm",
+      baseLevel: 1,
+      effectiveLevel: 1,
+      cadence: "sync",
+    });
+  });
+
   it("L4 in-ODD WITH a proven sql_inverse reversal → autonomous, no approve, no demote", async () => {
     seedCapability({
       capability: "task_edit",

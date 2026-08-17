@@ -439,6 +439,14 @@ export async function runDecisionPipeline(
     baseLevel,
     effectiveLevel,
     cadence: CADENCE_BY_LEVEL[effectiveLevel],
+    // Which seam/run recorded this (2026-08-17): the ONLY persisted source
+    // discriminant — the `decisions` row keeps `thread_id` alone, and
+    // `context.source` is otherwise consumed by ODD evaluation and dropped.
+    // §14 stratifies the shadow fill on it (`activation-gate.ts`). Absent on
+    // rows before this ship (the reader falls back to `thread_id`).
+    ...(typeof trigger.context.source === "string"
+      ? { source: trigger.context.source }
+      : {}),
   });
   for (const demotion of demotions) {
     emit("autonomy_demoted", demotion);

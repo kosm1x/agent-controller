@@ -29,20 +29,36 @@ function insertDecision(opts: {
   reversalOp?: string | null;
   /** ISO (production format) — the gate normalizes it via datetime(). */
   proposedAt?: string;
+  /** `decisions.thread_id` (legacy source fallback: 'background' literal ⇒ background). */
+  threadId?: string;
+  /** When set, also lands a `proposed` event carrying `{source}` (2026-08-17 payload). */
+  source?: string;
 }): void {
-  getDatabase()
+  const db = getDatabase();
+  const info = db
     .prepare(
       `INSERT INTO decisions
          (capability, judgment_id, autonomy_level, status, capability_token_json,
           payload_json, reversal_op_json, proposed_at, thread_id)
-       VALUES ('task_edit', ?, ?, 'committed', '{}', '{}', ?, ?, 't')`,
+       VALUES ('task_edit', ?, ?, 'committed', '{}', '{}', ?, ?, ?)`,
     )
     .run(
       opts.judgmentId ?? null,
       opts.autonomyLevel,
       opts.reversalOp ?? null,
       opts.proposedAt ?? new Date().toISOString(),
+      opts.threadId ?? "t",
     );
+  if (opts.source !== undefined) {
+    db.prepare(
+      `INSERT INTO decision_events (decision_id, sequence_no, event_kind, payload_json, occurred_at)
+       VALUES (?, 1, 'proposed', ?, ?)`,
+    ).run(
+      info.lastInsertRowid,
+      JSON.stringify({ route: "confirm", source: opts.source }),
+      new Date().toISOString(),
+    );
+  }
 }
 
 function insertN(n: number, level = 1): void {
@@ -87,6 +103,48 @@ describe("evaluateV83Gate — §14 v1 activation gate", () => {
     const g = evaluateV83Gate();
     expect(g.shadowDecisions).toBe(7);
     expect(g.verdict).toBe("pass");
+  });
+
+  // Seam-origin stratification (2026-08-17, deferred R2 of the 08-08 seam
+  // ship): the shadow fill is reported BY SOURCE so a promotion decision cannot
+  // cite a 100%-background fill as operator-exercised. Informational only —
+  // the verdict never keys on it (a veto here would rank nothing).
+  it("stratifies the 7d shadow by source: payload `source` wins, legacy rows fall back to thread_id; buckets sum to the total; verdict unaffected", () => {
+    seedCapabilities();
+    // 2026-08-17+ rows: source persisted on the proposed event
+    insertDecision({ autonomyLevel: 1, threadId: "telegram:1", source: "operator" });
+    insertDecision({ autonomyLevel: 1, threadId: "telegram:1", source: "interactive" });
+    insertDecision({ autonomyLevel: 1, threadId: "background", source: "background" });
+    insertDecision({ autonomyLevel: 1, threadId: "background", source: "background" });
+    // legacy rows (no proposed payload source): thread_id decides
+    insertDecision({ autonomyLevel: 1, threadId: "background" });
+    insertDecision({ autonomyLevel: 1, threadId: "background" });
+    insertDecision({ autonomyLevel: 1, threadId: "telegram:1" });
+    // an unknown label counts as background so the buckets still sum
+    insertDecision({ autonomyLevel: 1, threadId: "x", source: "someday" });
+    // outside the window: excluded from BOTH the total and the buckets
+    insertDecision({
+      autonomyLevel: 1,
+      threadId: "telegram:1",
+      source: "operator",
+      proposedAt: new Date(Date.now() - 8 * 86_400_000).toISOString(),
+    });
+    const g = evaluateV83Gate();
+    expect(g.shadowDecisions).toBe(8);
+    expect(g.shadowBySource).toEqual({
+      interactive: 2,
+      operator: 1,
+      background: 5,
+    });
+    expect(
+      g.shadowBySource.interactive +
+        g.shadowBySource.operator +
+        g.shadowBySource.background,
+    ).toBe(g.shadowDecisions);
+    expect(g.checks.shadowVolume.detail).toContain(
+      "by source: interactive 2 · operator 1 · background 5",
+    );
+    expect(g.verdict).toBe("pass"); // ≥7, all L1 — stratification is a readout, not a gate
   });
 
   // Audit R2-A1 (2026-08-02): checks 5/6 are violation counts over L≥3

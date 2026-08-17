@@ -413,7 +413,30 @@ export interface RunToolContext {
    * numbers-provenance collector in `ToolRegistry.execute`.
    */
   readonly taskId: string;
+  /**
+   * Who initiated this run (V8.3 seam label, 2026-08-17). `operator` = the run
+   * answers an operator turn on `threadId` (chat submit / user-background
+   * spawn); `background` = scheduled, ritual, reaction, proactive, API, A2A.
+   * Inherited by nested dispatches (a swarm child of a chat turn is still
+   * operator-originated); `BACKGROUND_ORIGIN` outside any run so the seam
+   * degrades to its pre-2026-08-17 label.
+   */
+  readonly origin: RunOrigin;
 }
+
+/** V8.3 seam label for who initiated a run. */
+export type RunSource = "operator" | "background";
+
+export interface RunOrigin {
+  readonly source: RunSource;
+  /** Conversation thread key for `operator`; the literal `"background"` otherwise. */
+  readonly threadId: string;
+}
+
+export const BACKGROUND_ORIGIN: RunOrigin = Object.freeze({
+  source: "background",
+  threadId: "background",
+});
 
 /**
  * Entered by the dispatcher around `runner.execute()`. Tool calls that reach
@@ -436,10 +459,19 @@ export interface RunToolContext {
  */
 export const runToolContext = new AsyncLocalStorage<RunToolContext>();
 
-export function enterRunToolContext<T>(taskId: string, fn: () => T): T {
+export function enterRunToolContext<T>(
+  taskId: string,
+  fn: () => T,
+  origin?: RunOrigin,
+): T {
   const parent = runToolContext.getStore();
   return runToolContext.run(
-    { toolsSoFar: parent ? parent.toolsSoFar : new Set(), taskId },
+    {
+      toolsSoFar: parent ? parent.toolsSoFar : new Set(),
+      taskId,
+      // Explicit (root submission) > parent's (nested dispatch) > background.
+      origin: origin ?? parent?.origin ?? BACKGROUND_ORIGIN,
+    },
     fn,
   );
 }
@@ -472,4 +504,9 @@ export function recordRunTool(name: string): void {
 /** Task id of the current run; `undefined` outside a run. */
 export function currentRunTaskId(): string | undefined {
   return runToolContext.getStore()?.taskId;
+}
+
+/** Origin of the current run; `BACKGROUND_ORIGIN` outside a run. */
+export function currentRunOrigin(): RunOrigin {
+  return runToolContext.getStore()?.origin ?? BACKGROUND_ORIGIN;
 }
