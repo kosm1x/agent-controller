@@ -235,7 +235,7 @@ Jarvis's plan on `jarvis/feat/v8-3-sdk-hook-seam` (KB + branch, untracked) claim
 
 **Watch:** first `source:"operator"` row needs an operator chat turn that calls a gated tool WITHOUT a confirmation gate — today only `schedule_task` (the other three are confirm-gated → interactive seam). Verify: `sqlite3 data/mc.db "SELECT d.thread_id, json_extract(e.payload_json,'$.source') FROM decisions d JOIN decision_events e ON e.decision_id=d.id AND e.event_kind='proposed' ORDER BY d.id DESC LIMIT 5"` and `./mc-ctl v83-gate` (by-source tail on the shadow-volume line).
 
-**Housekeeping:** delete `jarvis/feat/v8-3-sdk-hook-seam` (worktree `/root/claude/mission-control-jarvis`); nothing on it is needed. Jarvis's worktree should be re-based to `main` before its next plan.
+**Housekeeping DONE 2026-08-17:** `jarvis/feat/v8-3-sdk-hook-seam` deleted (0 unique commits; superseded untracked plan removed); Jarvis worktree `/root/claude/mission-control-jarvis` detached at `main` = `b337a23`.
 
 ## §17 unfixable regression — root cause + statistics fix (2026-08-14)
 
