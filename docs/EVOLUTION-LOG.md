@@ -1611,3 +1611,25 @@ Three separate KB-sync sessions for the same project in one day (11:14, 19:36, 2
 
 ### Research notes
 The Agent Controller project is clearly in an intensive iteration phase (V8.3 → V8.4 → V8.5 within the same week), and Jarvis is acting as a KB custodian + diagnostic partner rather than a task generator. The co-evolution pattern today is "operator as architect, Jarvis as living documentation + surgical debugger" — a mature, low-friction collaboration mode that may represent a stable attractor for technical project phases.
+
+## 2026-08-16
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 5 |
+| Total tasks | — |
+| Conversations today | 6 (telegram: 6) |
+| Streak days | — |
+
+### Interactions summary
+The day was dominated by the **Williams Entry Radar** project and a rigorous evaluation of **TimesFM** (Google Research / ICML 2024) as a probabilistic layer for the radar's signal pipeline. Three sessions (09h, 14h, 17h) covered: analysis of the TimesFM repo, a formal 3-phase integration plan written to the filesystem, and two KB syncs reflecting four backtest iterations (14,392 signal-weeks) that ended in TimesFM being definitively discarded in favor of the model-free σ52 band. Primary tools used: file system exploration and writes, KB sync, shell/backtest execution.
+
+### What Jarvis learned
+TimesFM offered no statistical advantage over the σ52 baseline in any population tested — a clear, data-driven discard decision reached within a single day's iteration cycle. The pattern of "propose → document artefact → validate via backtest → update KB" is now a repeatable workflow Fede runs on the Williams Radar project. No new preferences or corrections were logged beyond the friction note below.
+
+### Friction points
+At 09:02, the user sent "Revisa y analiza el README de este repo" without a URL in the same message — the link followed immediately after. Jarvis asked for clarification before the second message could be processed, causing a micro-delay. Identified lesson: when a first message is structurally incomplete (missing a referent), Jarvis should wait briefly for a follow-up rather than prompting immediately.
+
+### Research notes
+The Williams Radar day exemplifies a maturing operator pattern: Fede now drives the full validation loop independently, using Jarvis primarily for artefact generation and KB maintenance rather than ideation. The speed of the discard (hypothesis → 4 backtests → firm decision, all in one day) suggests the tooling and workflow have reached a level of fluency that compresses research cycles significantly.
