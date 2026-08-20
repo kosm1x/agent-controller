@@ -5,15 +5,26 @@
  * importing `nanoclaw-worker.ts` (whose module body self-invokes `main()` —
  * reads stdin, inits the DB — and so cannot be imported from a test).
  *
- * Beyond the workspace mechanics it carries two guards added 2026-06-24 after a
- * landing-site coding task was misrouted into this sandbox (which holds ONLY
- * mission-control, so the real target repo was absent). Finding no EurekaMS repo,
- * the agent confabulated edits to mission-control's OWN source, then base64-encoded
- * `commit` to dodge the shell-guard:
+ * Beyond the workspace mechanics it carries three guards:
+ *
+ * Guards added 2026-06-24 after a landing-site coding task was misrouted into this
+ * sandbox (which holds ONLY mission-control, so the real target repo was absent).
+ * Finding no EurekaMS repo, the agent confabulated edits to mission-control's OWN
+ * source, then base64-encoded `commit` to dodge the shell-guard:
  *   1. SANDBOX SCOPE — only mission-control is here; any other target ⇒ STOP +
  *      report `TARGET_NOT_IN_SANDBOX`, never substitute mc's source.
  *   2. NO EVASION — a guard-BLOCKED command is a hard stop; never bypass it.
- * Both guards apply whether or not a writable workspace was set up.
+ *
+ * Guard added 2026-08-20 after the AMN Plan-2027 PDF ingestion task burned its
+ * 10-turn cap diagnosing file-permission errors. Root cause: the agent tried to
+ * script SQLite writes to `data/mc.db` while running inside the sandbox — where
+ * `/root/claude/mission-control` (including `data/mc.db`) is a READ-ONLY mount by
+ * design. File permissions (`ls -l`) show rw for the owning user, but the MOUNT
+ * is read-only — those are orthogonal, and the mount always wins.
+ *   3. READ-ONLY MOUNT + DB WRITES — `data/mc.db` is unreachable for writes from
+ *      inside the container; use host-side tools instead (see guard text below).
+ *
+ * All guards apply whether or not a writable workspace was set up.
  */
 
 /** Read-only reference mount of the host repo inside the container (never writable). */
@@ -41,5 +52,7 @@ export function buildEnvironmentNote(workspace: string | null): string {
 
   const evasionGuard = `\n\n[GUARD POLICY] If any shell command is BLOCKED by a guard, that is a HARD STOP. NEVER try to bypass a guard — no base64/hex/encoding of the command, no \`env -i\`, no wrapper scripts, no alternate binaries, no retry variations. Report the blocked command verbatim and stop or ask for guidance.`;
 
-  return base + scopeGuard + evasionGuard;
+  const roMountGuard = `\n\n[READ-ONLY MOUNT — HOST DB] The entire mission-control tree (${RO_REPO}), including \`data/mc.db\`, is mounted READ-ONLY inside this container. File-system permissions (ls -l) will show the file as rw for the owner — this is NOT a reliable signal: the MOUNT restriction wins regardless. Any attempt to write to \`data/mc.db\` via SQLite scripts, better-sqlite3, or shell commands WILL fail with "attempt to write a readonly database" or "EROFS". Do NOT spend turns diagnosing permissions. Instead, use the HOST-SIDE tools that write through the live mission-control process: \`gemini_upload\` (persists Gemini file handles), \`jarvis_file_write\` (KB files), and similar host-only tools. Scripting SQLite under \`${RO_REPO}\` from inside this sandbox is a dead end — stop immediately and use the correct tool.`;
+
+  return base + scopeGuard + evasionGuard + roMountGuard;
 }
