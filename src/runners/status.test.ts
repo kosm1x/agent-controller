@@ -107,6 +107,40 @@ describe("parseRunnerStatus", () => {
     expect(result.status).toBe("DONE");
   });
 
+  it("classifies a trailing API error appended to streamed prose as BLOCKED (2026-08-21 content-filter 400)", () => {
+    // Real shape from task 38dca557: the API rejected the FINAL turn of a
+    // 21-turn run; the SDK appended the error to the already-streamed prose
+    // with no newline, the result subtype was `success`, and the raw error
+    // went to Telegram as a "completed" reply.
+    const content =
+      "Tengo el texto verificado. Ahora lo registro y lo entrego.Por ahora registro la entrega de hoy:API Error: 400 Output blocked by content filtering policy";
+    const result = parseRunnerStatus(content);
+    expect(result.status).toBe("BLOCKED");
+    expect(result.statusSource).toBe("api_error");
+    expect(result.concerns![0]).toBe(
+      "API Error: 400 Output blocked by content filtering policy",
+    );
+    expect(result.cleanContent).toBe(content);
+  });
+
+  it("classifies a trailing API error on its own line as BLOCKED", () => {
+    const content = "Busco el poema.\nLo encontré.\n\nAPI Error: 529 overloaded_error\n";
+    expect(parseRunnerStatus(content).status).toBe("BLOCKED");
+  });
+
+  it("does not demote prose that mentions an API error and then continues or ends in a STATUS line", () => {
+    const continues = parseRunnerStatus(
+      "Ayer vimos un API Error: 400 en el runner. Ya quedó resuelto y el poema se entregó.",
+    );
+    expect(continues.status).toBe("DONE");
+    const withStatus = parseRunnerStatus(
+      "El fallo fue API Error: 400 Output blocked by content filtering policy\nSTATUS: DONE",
+    );
+    expect(withStatus.status).toBe("DONE");
+    const bareError = parseRunnerStatus("El proveedor devolvió Error: 500.");
+    expect(bareError.status).toBe("DONE");
+  });
+
   it("classifies leading-whitespace API-error variants as BLOCKED", () => {
     expect(parseRunnerStatus("  API Error: 400 body").status).toBe("BLOCKED");
     expect(parseRunnerStatus("\tAPI Error: 429 rate").status).toBe("BLOCKED");

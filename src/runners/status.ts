@@ -45,6 +45,23 @@ const STATUS_RE =
 const API_ERROR_RE = /^\s*(?:API Error|Error):\s*\d{3}\b/;
 
 /**
+ * Tail variant (2026-08-21, task 38dca557): when the API rejects a LATER turn
+ * of a multi-turn run (e.g. "400 Output blocked by content filtering policy"
+ * on the final answer), the SDK appends the error string to the prose already
+ * streamed — often with no newline before it ("...registro la entrega de
+ * hoy:API Error: 400 ..."). The head anchor above can't see it, the result
+ * subtype is still `success`, and the raw error shipped to Telegram as a
+ * "completed" reply. A failed call is always the LAST thing in the stream,
+ * so anchor on the tail instead. Restricted to the SDK's "API Error:" shape
+ * (not bare "Error:") so a narrative sentence ending in "Error: 500." is not
+ * demoted; the remainder after the code must be a JSON body or a short
+ * fragment with no further sentence (". Word"), so a narrative that
+ * continues — or ends with a STATUS line — never matches.
+ */
+const API_ERROR_TAIL_RE =
+  /(?:^|[\s:.,;])(API Error:\s*\d{3}\b(?:\s*\{[^\n]*|(?:(?![.!?]\s+\S)[^\n]){0,200}))\s*$/;
+
+/**
  * Parse a STATUS: line from the end of LLM output.
  *
  * CCP10: If no status line is found, defaults to DONE_WITH_CONCERNS
@@ -56,8 +73,13 @@ export function parseRunnerStatus(content: string): ParsedStatus {
   // (instead of a real LLM response), classify as BLOCKED so the dispatcher
   // promotes the run to status='failed'. Otherwise a 30-min outage shows
   // up as 100% success in the stats dashboard.
-  if (API_ERROR_RE.test(content)) {
-    const firstLine = content.trim().split("\n")[0] ?? "API error";
+  const tailMatch = API_ERROR_RE.test(content)
+    ? null
+    : API_ERROR_TAIL_RE.exec(content);
+  if (API_ERROR_RE.test(content) || tailMatch) {
+    const firstLine = tailMatch
+      ? tailMatch[1].trim()
+      : (content.trim().split("\n")[0] ?? "API error");
     console.log(`[status] API error detected in runner output: ${firstLine}`);
     return {
       status: "BLOCKED",
