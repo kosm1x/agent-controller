@@ -941,3 +941,13 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **How to execute (Jarvis):** coding task → nanoclaw writable clone workspace → `jarvis/*` branch → PR (host tree is `:ro`; the clone+push path in `nanoclaw-worker.ts setupCodingWorkspace` is the sanctioned route). Scoped vitest on touched files; the pre-commit hook runs the full suite.
 
 **Watch:** next operator PDF ingestion must show `gemini_upload` tool.called rows in `task_trace_events` (host path) and a same-day `gemini_files` row — zero sandbox shell improvisation.
+
+## 2026-08-21 — Content-filter 400 delivered as a "completed" reply (task 38dca557) — FIXED, watch open
+
+**Incident:** "Me regalas un poema de Rumi?" → the API's output filter rejected the final turn (`400 Output blocked by content filtering policy`) because the SOP's "texto EXACTO" rule had Jarvis reproducing a full copyrighted Coleman Barks translation. The SDK appended the error to already-streamed prose (no newline) inside a `success` result; `status.ts` only matched `^API Error`, so the row went `completed` and the raw error shipped to Telegram. First fire in 27 deliveries — no change on our side; the filter is probabilistic/length-sensitive.
+
+**Shipped `d9f1f4a` (deployed pid 1694867):** tail-anchored `API_ERROR_TAIL_RE` in `src/runners/status.ts` (mutation-verified) · SOP v1.1 PASO 2b in `jarvis_files` (public-domain sources verbatim — Nicholson/Whinfield/Redhouse, Arberry is NOT PD; ≤4–6 lines from copyrighted translations; never retry the same text after a filter 400) · Rumi INDEX reconciled (#27 folded from `rumi-delivery-log.md`, stale "8/8" state fixed, undelivered *Where Everything Is Music* recorded as still available) · task 8586 reclassified `failed`.
+
+**Watch:** next operator "poema de Rumi" turn must deliver a poem from a PD source or an attributed excerpt and register #28; any future filter 400 must land as `status='failed'` with `statusSource=api_error` — never as a delivered reply. Cheap check: `sqlite3 data/mc.db "SELECT id,status FROM tasks WHERE output LIKE '%content filtering policy%'"` → every row must be `failed`.
+
+**Not done (deliberate):** no retry/fallback on the filter 400 inside `claude-sdk.ts` — the refusal fallback keys on `stop_reason: "refusal"`, which this error does not carry. Revisit only if the filter fires on non-verbatim content; the SOP change should make the case disappear.
