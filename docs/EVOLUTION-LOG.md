@@ -1743,3 +1743,25 @@ Three friction sources logged: (1) **shell_exec not active at session start** �
 
 ### Research notes
 Today illustrates a **steady-state co-production pattern**: Fede and Jarvis move fluidly between building, content generation, and autonomous agent tasks (swarms, scheduled scans) within the same day. The `shell_exec` re-authorization overhead is now a documented recurring cost in the interaction ritual — a candidate for streamlining as the system matures. The day's volume (19 conversations, multiple domains, no major misalignment) suggests the collaboration has entered a reliable execution groove, with friction sources now predictable and structural rather than conceptual.
+
+## 2026-08-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 23 (telegram: 23) |
+| Streak days | — |
+
+### Interactions summary
+A high-density day split into two distinct blocks. The morning opened with research work: a deep search cataloguing 20 collective intelligence companies across four families (delivered as a Google Doc), a profile of Beeshake.com, a beginner-friendly Williams Radar W34 summary, and a review of Seedance/Meridian Bariatrics video prompts. The afternoon and evening were dominated by the most sustained single-project session of recent memory: the structural redesign of **Fútbol Total (Plan 2027)**, which evolved from v2 to v6 across roughly a dozen consecutive exchanges and culminated in the birth of **Club 23** as the official fan-club identity. Google Docs was the primary delivery artifact; the agent-controller KB was also updated at session close.
+
+### What Jarvis learned
+Two permanent corrections were registered. First, **FOX One ≠ FOX Sports México**: Azteca's partner is FOX Corporation (Nasdaq, Tubi owner), not Grupo Lauman (Manuel Arroyo), which holds only a brand-license for "FOX Sports México" and has no commercial relationship with Azteca — this distinction is now flagged as critical in the KB. Second, the **blended commercial block model** was clarified: Azteca and FOX One sell all 18 Liga MX clubs as a unified block, making the per-team rights framing obsolete for the Fútbol Total pitch. Fede also confirmed that W Radio / W Deportes is permanently out of the 2027 plan, making Fútbol Total a 100% video property.
+
+### Friction points
+Two friction sources logged. (1) **Repeated FOX Sports / FOX One confusion** — Jarvis defaulted to "FOX Sports" in multiple responses and in the Google Doc body, conflating Grupo Lauman with FOX Corporation. Two explicit user corrections were required (19:39 and 19:47) before the distinction was cleanly embedded. This is a case where an existing knowledge gap propagated into a deliverable before being caught. (2) **First naming round too conventional** — initial Club name proposals (including "La Banda") were dismissed by the user for overlapping with existing brands in the market; a second, more creative round was requested before landing on "Club 23."
+
+### Research notes
+Today marks a clear **deep co-authorship milestone**: over a single afternoon session, Fede and Jarvis iterated a strategic business document through six versions, including live conceptual corrections, a branding exercise, a product design decision (Fantasy with 18 teams), and full identity construction for Club 23. The FOX One error is a notable signal — Jarvis carried an incorrect market taxonomy into multiple turns, demonstrating that factual corrections in live sessions must be front-loaded before document writes, not corrected post-hoc. The day's 23 conversations and intensity suggest the collaboration is well into a **high-throughput production phase**, with the principal acting as editor-in-chief directing rapid, iterated deliverables.
