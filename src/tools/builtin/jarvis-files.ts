@@ -19,6 +19,8 @@ import {
   searchFiles,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
+import { currentRunTaskId } from "../rule-of-two.js";
+import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
 import {
   parseLineRanges,
@@ -349,6 +351,15 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       condition,
       relatedTo,
     );
+    // Phase 2 read-back: the harness re-reads this row at completion and
+    // compares the content hash — "KB actualizado" must be provable.
+    declareReadbackGate(
+      currentRunTaskId(),
+      "jarvis_file_write",
+      `kb:${path}`,
+      `KB ${path} escrito y legible`,
+      { path, sha8: sha8(content) },
+    );
 
     return JSON.stringify({ success: true, path, qualifier, priority });
   },
@@ -409,6 +420,7 @@ USE WHEN:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    let declaredAt = new Date().toISOString().slice(0, 19).replace("T", " ");
     const path = args.path as string;
     const append = args.append as string | undefined;
     const tags = args.tags as string[] | undefined;
@@ -434,6 +446,10 @@ USE WHEN:
     }
 
     if (append) {
+      // Read-back freshness reference, taken BEFORE the write (second
+      // precision, same clock as SQLite's datetime('now')) so a sub-second
+      // boundary can never report the row as older than the claim.
+      declaredAt = new Date().toISOString().slice(0, 19).replace("T", " ");
       appendToFile(path, append);
     }
 
@@ -447,6 +463,22 @@ USE WHEN:
     }
 
     const updated = getFile(path);
+    // R1 audit W8: hashing the post-update row is a tautology. Prove what
+    // the update CLAIMED instead — the appended text must be present (and
+    // the row fresh). Metadata-only updates prove existence + freshness.
+    declareReadbackGate(
+      currentRunTaskId(),
+      "jarvis_file_update",
+      `kb:${path}`,
+      `KB ${path} actualizado y legible`,
+      {
+        path,
+        ...(typeof append === "string" && append.trim()
+          ? { must_contain: append.trim().slice(0, 160) }
+          : {}),
+        declared_at: declaredAt,
+      },
+    );
     return JSON.stringify({
       success: true,
       path,
@@ -898,6 +930,13 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
           priority,
           condition,
           relatedTo,
+        );
+        declareReadbackGate(
+          currentRunTaskId(),
+          "jarvis_files_batch_write",
+          `kb:${path}`,
+          `KB ${path} escrito y legible`,
+          { path, sha8: sha8(content) },
         );
         results.push({ path, status: "ok" });
         ok++;

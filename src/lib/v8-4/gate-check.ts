@@ -36,6 +36,7 @@ import {
   type LedgerVerdict,
 } from "./gates.js";
 import { probeLanding, type LandingExec } from "./landing.js";
+import { isReadbackRow, runReadback } from "./readback.js";
 
 export const DEFAULT_CHECK_TIMEOUT_MS = 60_000;
 /** Wall-clock budget for one whole ledger evaluation (all gates, serial). */
@@ -273,7 +274,12 @@ export async function evaluateLedger(
   let rows = listGates(opts.taskId, db);
   let abandonedNow = 0;
   if (opts.outputText) {
-    const known = new Set(rows.map((r) => r.gate_id));
+    // Read-back gates are harness proofs: a model-authored ABANDON line can
+    // never surrender one (R1 audit C2 — "Surrender is visible" must not
+    // become "a proof can be voided by one line").
+    const known = new Set(
+      rows.filter((r) => !isReadbackRow(r)).map((r) => r.gate_id),
+    );
     for (const a of parseAbandonLines(opts.outputText)) {
       if (!known.has(a.gateId)) continue;
       if (
@@ -295,9 +301,25 @@ export async function evaluateLedger(
   for (const row of rows) {
     if (row.state === "abandoned") continue;
     if (row.state === "met" && !opts.rerun) continue;
-    if (row.check_kind === "manual") continue; // never flipped by the harness
+    if (row.check_kind === "manual" && !isReadbackRow(row)) continue; // never flipped by the harness
     if (Date.now() - startedAt > budgetMs) {
       budgetExhausted++;
+      continue;
+    }
+    if (isReadbackRow(row)) {
+      // Phase 2 read-back: re-read the artifact the write claimed, through
+      // the same API, and compare (src/lib/v8-4/readback.ts). Shares the
+      // ledger budget; its own 15 s cap applies inside runReadback.
+      const verdict = await runReadback(row, timeoutMs);
+      ran++;
+      recordGateResult(
+        opts.taskId,
+        row.gate_id,
+        verdict.ok
+          ? { state: "met", evidence: verdict.evidence }
+          : { state: "failed", evidence: verdict.evidence },
+        db,
+      );
       continue;
     }
     if (row.check_kind === "shell") {

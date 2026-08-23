@@ -38,6 +38,7 @@ export type TraceEventName =
   | "task.watchdog_failed"
   // V8.4 completion ledger (2026-08-16)
   | "gates.evaluated"
+  | "gates.readback"
   | "gates.parent_reverified"
   | "gates.hook_blocked"
   | "gates.hook_released"

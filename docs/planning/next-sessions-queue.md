@@ -956,7 +956,8 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 
 - Plan: `docs/planning/jarvis-usability-plan-2026-08-22.md` (§7 = ship record). Review artifact: https://claude.ai/code/artifact/805801b6-49f5-4493-946d-d4f7e07f0d3d.
 - **Phase 1 SHIPPED 2026-08-23** (plan §8): sticky scope + scope-miss auto-widen + prompt. Watch: `journalctl -u mission-control | grep scope-miss`; `./mc-ctl usability 7` → scope-asks 0 / incantations ≤ 3. 1.3 allow-always has no population (no read-only tool is gated) — not built.
-- **NEXT = Phase 2 — Honest Done for writes**: read-back verifiers per write class (Sheets/Docs/KB hash/deploy probe/account login/DB select) feeding `task_gates`; enforce for write classes only; confirmed-model diff. Exit: 14 days, ≥1 gate block observed, 0 user-disproved "Listo".
+- **Phase 2 SHIPPED 2026-08-23** (plan §9): read-back gates for KB/Sheets/Docs/schedules; `⚠️ No quedó` / `✔ Verificado` lines; `mc-ctl gates summary` stratified. Watch: RB-* rows; any false `No quedó` = verifier fixture.
+- **NEXT = Phase 3 — numbers with provenance**: deterministic counts by code, handler-level rejection of unsourced figures in artifacts, citation existence check, route ticker questions to the finance tools. Then Phase 4 (thread pin + auto-recovery + hard stop) which also closes 2.3.
 - Watch (week 1): `./mc-ctl usability 7`; `journalctl -u mission-control | grep deliverable-filter`; `ritual_deliveries` rows at 07:00 MX; Química row `active` flips to 0 on its first run (`./mc-ctl schedule-resume cbd14c88` to resume); Morning Sync PASO 4 produces ≤2 evolution lines or nothing.
 - Known residue: the filter leaves pure-English replies untouched (flagged only); the PM fingerprint still sees the model's own 178-vs-198 rejection wording as "changed" — Phase 5's sent-before ledger will compare normalized items, not numbers.
 

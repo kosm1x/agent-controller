@@ -278,3 +278,13 @@ describe("sanitizeDeliverable — R1 audit regressions (2026-08-23, replayed fro
     expect(r.text).toContain("La API devolvió un error 400. ¿Reintento?");
   });
 });
+
+describe("sanitizeDeliverable — V8.4 read-back lines are harness lines (Phase 2, R1 audit W6)", () => {
+  it("the ledger's trailing lines do not count as content, so a short model sentence before them survives", () => {
+    const raw = "Voy a escribir el archivo.\n\n✔ Verificado: KB projects/demo/x.md (sha 1234, 40 chars, 2026-08-23 02:00:00)\n⚠️ No quedó: KB projects/demo/y.md escrito — KB projects/demo/y.md: no existe tras la escritura\n⏳ Sin releer (no alcancé a verificar): KB projects/demo/z.md escrito\nGates: 1/1 met";
+    const r = sanitizeDeliverable(raw);
+    expect(r.text).toBe(raw);
+    expect(r.stripped).toEqual([]);
+  });
+});
+

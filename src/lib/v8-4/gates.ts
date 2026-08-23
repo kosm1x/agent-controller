@@ -26,6 +26,7 @@
  */
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
+import { isReadbackCheck } from "./ledger-lines.js";
 
 export type GateSource = "submission" | "ritual" | "plan" | "harness";
 export type GateState = "pending" | "met" | "failed" | "abandoned";
@@ -203,13 +204,28 @@ export function declareGates(
       if (!GATE_ID_RE.test(gateId)) {
         throw new Error(`gate id ${JSON.stringify(gateId)} is not valid`);
       }
+      // `RB-…` ids are the harness's read-back namespace (readback.ts): a
+      // submission/plan gate could otherwise pre-empt a write proof by
+      // claiming its deterministic id (R2 audit W5).
+      if (gateId.startsWith("RB-") && source !== "harness") {
+        throw new Error(`gate id ${JSON.stringify(gateId)} is reserved for harness read-backs`);
+      }
       const kind = resolveKind(spec);
       const info = insert.run({
         taskId,
         gateId,
         criterion: spec.criterion.slice(0, MAX_CRITERION),
         kind,
-        check: kind === "shell" ? (spec.check ?? null) : null,
+        // A `manual` row may carry a `readback:` payload (src/lib/v8-4/readback.ts)
+        // — the harness runs its verifier at completion; any other manual
+        // check text is dropped (no runnable proof).
+        check:
+          kind === "shell" ||
+          (kind === "manual" &&
+            source === "harness" &&
+            spec.check?.startsWith("readback:"))
+            ? (spec.check ?? null)
+            : null,
         expect: kind === "shell" ? (spec.expect ?? null) : null,
         source,
       });
@@ -363,6 +379,9 @@ export function ledgerVerdict(rows: readonly GateRow[]): LedgerVerdict {
 
 /** Prompt block appended to a task's description when it has a ledger. */
 export function renderGatesBlock(rows: readonly GateRow[]): string {
+  // Read-back rows are harness proofs the model cannot influence — never
+  // shown to the runner as "state the evidence in your report".
+  rows = rows.filter((r) => !isReadbackRowLike(r));
   if (rows.length === 0) return "";
   const lines = rows.map((r) => {
     const proof =
@@ -382,10 +401,17 @@ export function renderGatesBlock(rows: readonly GateRow[]): string {
 }
 
 /** Compact JSON summary stored on `tasks.output.gates`. */
+const isReadbackRowLike = (r: Pick<GateRow, "check_kind" | "check_cmd">) =>
+  isReadbackCheck(r.check_kind, r.check_cmd);
+
 export function ledgerSummaryJson(
   rows: readonly GateRow[],
   mode: GatesMode,
 ): Record<string, unknown> {
+  // One population for the JSON summary and the rendered block: read-back
+  // rows are reported separately (`readback` key) — R2 audit C1.
+  const readbackRows = rows.filter(isReadbackRowLike);
+  rows = rows.filter((r) => !isReadbackRowLike(r));
   const v = ledgerVerdict(rows);
   return {
     mode,
@@ -403,11 +429,28 @@ export function ledgerSummaryJson(
       ...(r.evidence && { evidence: r.evidence }),
       ...(r.abandon_reason && { reason: r.abandon_reason }),
     })),
+    ...(readbackRows.length > 0 && {
+      readback: {
+        total: readbackRows.length,
+        met: readbackRows.filter((r) => r.state === "met").length,
+        failed: readbackRows.filter((r) => r.state === "failed").length,
+        pending: readbackRows.filter((r) => r.state === "pending").length,
+        withdrawn: readbackRows.filter((r) => r.state === "abandoned").length,
+        gates: readbackRows.map((r) => ({
+          id: r.gate_id,
+          state: r.state,
+          ...(r.evidence && { evidence: r.evidence }),
+        })),
+      },
+    }),
   };
 }
 
 /** Human-readable ledger block appended to a delivered report (enforce mode). */
 export function formatLedgerBlock(rows: readonly GateRow[]): string {
+  // Read-back rows (harness `readback:` payloads) render through their own
+  // Spanish lines (src/lib/v8-4/readback.ts) — never as this English block.
+  rows = rows.filter((r) => !isReadbackRowLike(r));
   const v = ledgerVerdict(rows);
   if (v.total === 0) return "";
   const parts = [`Gates: ${v.met}/${v.total} met`];

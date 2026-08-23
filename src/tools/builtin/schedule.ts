@@ -12,6 +12,11 @@ import {
   type ScheduledTaskRow,
 } from "../../rituals/dynamic.js";
 import { toMexTime } from "../../lib/timezone.js";
+import { currentRunTaskId } from "../rule-of-two.js";
+import {
+  declareReadbackGate,
+  withdrawReadbackGate,
+} from "../../lib/v8-4/readback.js";
 
 // ---------------------------------------------------------------------------
 // schedule_task
@@ -138,6 +143,15 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
         emailTo,
         emailSubject,
       });
+
+      // Phase 2 read-back: the row must exist, be active and carry this cron.
+      declareReadbackGate(
+        currentRunTaskId(),
+        "schedule_task",
+        `schedule:${scheduleId}`,
+        `Schedule «${name}» creado y activo`,
+        { schedule_id: scheduleId, cron_expr: cronExpr },
+      );
 
       // v6.4 OH1.5: Execute immediately so the user gets instant feedback
       // that the schedule works. Runs asynchronously — doesn't block the
@@ -273,6 +287,14 @@ export const deleteScheduleTool: Tool = {
     const deleted = deleteSchedule(scheduleId);
 
     if (deleted) {
+      // A schedule created and deleted in the same task: its read-back is
+      // moot, not failed (R1 audit C1).
+      withdrawReadbackGate(
+        currentRunTaskId(),
+        "schedule_task",
+        `schedule:${scheduleId}`,
+        "deleted in the same task",
+      );
       return JSON.stringify({
         success: true,
         message: `Schedule ${scheduleId} deleted.`,

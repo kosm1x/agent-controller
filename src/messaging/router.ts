@@ -130,6 +130,7 @@ import {
   hasDeliverableField,
 } from "../lib/deliverable.js";
 import { sanitizeDeliverable } from "./deliverable-filter.js";
+import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import {
   detectScopeMiss,
   groupsForTool,
@@ -2709,12 +2710,27 @@ export class MessageRouter {
 
       if (isBackground) {
         // R1 audit W8: the filter's failure line is the LAST line — cap the
-        // body, never the notice that the turn failed.
-        const tail = sanitized?.failureLine;
-        const body =
-          tail && resultText.endsWith(tail)
-            ? resultText.slice(0, -tail.length).trimEnd()
-            : resultText;
+        // body, never the notice that the turn failed. Same for the V8.4
+        // read-back lines («✔ Verificado» / «⚠️ No quedó»), which the
+        // completion ledger appends last.
+        const lines = resultText.split("\n");
+        let cut = lines.length;
+        while (
+          cut > 0 &&
+          (isLedgerLine(lines[cut - 1]) ||
+            lines[cut - 1].trim() === "" ||
+            (sanitized?.failureLine &&
+              lines[cut - 1].trim() === sanitized.failureLine))
+        ) {
+          cut--;
+        }
+        const rawTail = lines.slice(cut).join("\n").trim();
+        const tail = rawTail
+          ? rawTail.length > 800
+            ? rawTail.slice(0, 800) + "…"
+            : rawTail
+          : undefined;
+        const body = lines.slice(0, cut).join("\n").trimEnd();
         const capped = body.length > 500 ? body.slice(0, 500) + "..." : body;
         const summary = tail ? `${capped}\n\n${tail}` : capped;
         const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}\n\n_Escribe "mis agentes" para ver el historial._`;

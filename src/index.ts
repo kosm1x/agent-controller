@@ -5,6 +5,7 @@
  */
 
 import { createServer } from "net";
+import { registerReadbackVerifiers } from "./lib/v8-4/readback-verifiers.js";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
@@ -288,6 +289,9 @@ async function main(): Promise<void> {
 
   // Start dynamic (user-defined) scheduled tasks
   startDynamicScheduler();
+  // Usability Phase 2: read-back verifiers for write tools (KB, Sheets,
+  // Docs, schedules) — the harness proves "Listo" at completion.
+  registerReadbackVerifiers();
 
   // v6.2 M1: Register weekly KB confidence decay sweep
   import("./memory/lesson-decay.js")

@@ -28,6 +28,8 @@
  * flagged (`englishLeading`) for the metrics script, not altered.
  */
 
+import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
+
 export type FailureKind =
   "turn_budget" | "timeout" | "auth" | "api_error" | "task_failed";
 
@@ -155,7 +157,12 @@ function failureLine(kind: FailureKind, hasContent: boolean, code?: string) {
 /** Is this one of our own appended lines? (keeps the content guard idempotent) */
 function isOwnLine(line: string): boolean {
   const t = line.trim();
-  return (Object.values(LINES) as string[]).includes(t) || API_LINE_RE.test(t);
+  return (
+    (Object.values(LINES) as string[]).includes(t) ||
+    API_LINE_RE.test(t) ||
+    // Every line the V8.4 completion ledger can append.
+    isLedgerLine(t)
+  );
 }
 
 // --- fenced-code awareness -------------------------------------------------

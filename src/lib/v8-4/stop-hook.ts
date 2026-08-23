@@ -20,6 +20,7 @@
  * off; the factory returns null otherwise so the SDK options object is
  * byte-for-byte today's when dormant.
  */
+import { isReadbackCheck } from "./ledger-lines.js";
 import type {
   HookCallback,
   HookInput,
@@ -106,7 +107,17 @@ export function makeGatesStopHook(
       stateByTask.delete(taskId);
       return {};
     }
-    const failedIds = res.failedRows.map((r) => r.gate_id).sort();
+    // Read-back rows are completion-time proofs rendered as Spanish lines;
+    // they never wall the model (it cannot "fix" a harness re-read mid-run
+    // except by redoing the write, which the deliverable line already asks).
+    const blocking = res.failedRows.filter(
+      (r) => !isReadbackCheck(r.check_kind, r.check_cmd),
+    );
+    if (blocking.length === 0) {
+      stateByTask.delete(taskId);
+      return {};
+    }
+    const failedIds = blocking.map((r) => r.gate_id).sort();
     const hash = failedIds.join(",");
     const prev = stateByTask.get(taskId);
     const state: HookState =

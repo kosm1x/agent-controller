@@ -4,6 +4,14 @@
 
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
+import { currentRunTaskId } from "../rule-of-two.js";
+import { declareReadbackGate } from "../../lib/v8-4/readback.js";
+
+/** Ledger payload hygiene: a written row may carry PII — keep only what the
+ *  read-back needs to compare, bounded per cell (R1 audit W10). */
+function capCells(row: unknown[] | undefined): string[] {
+  return (row ?? []).slice(0, 12).map((c) => String(c ?? "").slice(0, 60));
+}
 import { validatePathSafety } from "./immutable-core.js";
 
 // ---------------------------------------------------------------------------
@@ -272,6 +280,21 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
         );
 
         const skipped = values.length - dedupedValues.length;
+        if (dedupedValues.length > 0) {
+          declareReadbackGate(
+            currentRunTaskId(),
+            "gsheets_write",
+            // Per-range: N appends to one tab are N proofs (R2 audit W1 —
+            // 4/4 gsheets tasks append ≥2× and none clobbers another).
+            `sheet:${id}|${result.updates.updatedRange}`,
+            `Sheet ${result.updates.updatedRange} contiene las filas escritas`,
+            {
+              spreadsheet_id: id,
+              range: result.updates.updatedRange,
+              first_row: capCells(dedupedValues[0]),
+            },
+          );
+        }
         return JSON.stringify({
           written: true,
           mode: "append",
@@ -292,6 +315,19 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
         );
 
         const skipped = values.length - dedupedValues.length;
+        if (dedupedValues.length > 0) {
+          declareReadbackGate(
+            currentRunTaskId(),
+            "gsheets_write",
+            `sheet:${id}|${result.updatedRange}`,
+            `Sheet ${result.updatedRange} contiene los valores escritos`,
+            {
+              spreadsheet_id: id,
+              range: result.updatedRange,
+              first_row: capCells(dedupedValues[0]),
+            },
+          );
+        }
         return JSON.stringify({
           written: true,
           mode: "overwrite",
@@ -564,6 +600,13 @@ AFTER WRITING: Report the document title and what was appended.`,
         },
       );
 
+      declareReadbackGate(
+        currentRunTaskId(),
+        "gdocs_write",
+        `doc:${docId}`,
+        `Doc ${docId} contiene el texto escrito`,
+        { document_id: docId, snippet: text.slice(0, 120) },
+      );
       return JSON.stringify({
         written: true,
         document_id: docId,

@@ -548,6 +548,30 @@ describe("MessageRouter", () => {
       expect(delivered).toContain("Dime «sigue» para continuar.");
     });
 
+    it("usability Phase 2 (R3 audit C1): a background-agent notice keeps EVERY ledger line past the 500-char cap — including the ones appended last", async () => {
+      dbStatusGet.mockReturnValue({ spawn_type: "user-background", title: "🤖 Agente: sync KB", status: "completed", agent_type: "fast" });
+      try {
+        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: "lanza el agente", timestamp: new Date() });
+        router.startEventListeners();
+        const body = "Resumen del agente. " + "x".repeat(700);
+        const ledger =
+          "⚠️ No quedó: KB projects/x.md escrito — KB projects/x.md: no existe tras la escritura\n" +
+          "⏳ Sin releer (no alcancé a verificar): KB projects/y.md escrito\n\n" +
+          "Gates: 1/1 met";
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: `${body}\n\n${ledger}`, duration_ms: 1 },
+        });
+        const text = waAdapter.sentMessages.at(-1)!.text;
+        expect(text).toContain("Agente terminó");
+        expect(text).toContain("⚠️ No quedó: KB projects/x.md escrito");
+        expect(text).toContain("⏳ Sin releer");
+        expect(text).toContain("Gates: 1/1 met");
+        expect(text).toContain("..."); // the body WAS capped
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
     it("usability Phase 1.2: a scope-ask reply is NOT delivered — the turn is re-run with the widened tool list", async () => {
       const mocked = vi.mocked(submitTask);
       mocked.mockResolvedValueOnce({

@@ -2,7 +2,7 @@
 
 **Source:** 12-agent critic swarm over 816 real exchanges (2026-07-08 → 08-22), 205 ritual outputs, 820 chat tasks, benchmarked vs 26 personal agents. Report: https://claude.ai/code/artifact/805801b6-49f5-4493-946d-d4f7e07f0d3d · raw packs: session scratchpad `jarvis-review/swarm-result.json`.
 **Verdict:** 4.7/10 from the user's seat vs a 2026 bar of ~7.5–8. Wins on project memory and strategic pushback; loses on the three things felt daily — doing what it says, saying only what matters, never asking the user to speak its internal language.
-**Status:** Phase 0 SHIPPED 2026-08-23 (`950514e`; §7). Phase 1 SHIPPED 2026-08-23 (§8). Phases 2–6 open; order is by user impact × frequency.
+**Status:** Phase 0 SHIPPED 2026-08-23 (`950514e`; §7). Phase 1 SHIPPED 2026-08-23 (§8). Phase 2 SHIPPED 2026-08-23 (§9). Phases 3–6 open; order is by user impact × frequency.
 
 ---
 
@@ -240,4 +240,20 @@ Shipped in `950514e`: 0.1 deliverable filter (`src/messaging/deliverable-filter.
 **Audits** — R1 FAIL (Telegram streamed ask stayed on screen; prompt still taught "usa X" 30 lines below; always-on tool → 23 groups → 173 tools; recall ~50%), R2 FAIL (`base` aliased the mutated Set on the inherited branch; hallucinated ask delivered verbatim; regex-only groups unreachable; `mcp__` identifiers invisible; narrow-list prompt replayed), R3 → see commit. Every finding has a fixture quoting the corpus exchange id.
 
 **Verify over the first week:** `./mc-ctl usability 7` → scope-ask replies 0, incantations ≤ 3; `journalctl -u mission-control | grep scope-miss` shows `re-running turn silently` lines and their outcomes; `SELECT message, active_groups FROM scope_telemetry WHERE message LIKE '[scope-miss rerun]%'`.
+
+## 9. Phase 2 ship record (2026-08-23)
+
+**What shipped — read-back gates on the V8.4 ledger** (`src/lib/v8-4/readback.ts`, `readback-verifiers.ts`): a write tool that the API reports as successful declares a harness-owned gate on the task — `RB-<sha8(artifact)>`, a `manual` row whose `check_cmd` is `readback:<json>` (the `check_kind` CHECK constraint cannot be widened without a table rebuild). At completion `evaluateLedger` runs the registered verifier, which re-reads the artifact through the SAME API and compares it with the claim; met/failed carry evidence. A failed read-back demotes `completed → completed_with_concerns` and the deliverable ends with `⚠️ No quedó: <criterion> — <evidence>`; met read-backs end with one `✔ Verificado: …` line (≤3 items + "y N más"); a read-back the ledger could not run ends with `⏳ Sin releer …`. This applies under `shadow` AND `enforce` (the write-class enforce §2.2 asked for) — never under `off`.
+
+**Write classes covered (2.1):** KB (`jarvis_file_write` / `jarvis_files_batch_write` → content sha8; `jarvis_file_update` → appended text present + `updated_at ≥ declared_at`, stamped before the write), Google Sheets (`gsheets_write` → GET the updated range, compare the first written row cell-by-cell with USER_ENTERED-aware equality: %, $, thousands, dates, formulas, accounting negatives), Google Docs (`gdocs_write` → body contains the first 120 chars), scheduled tasks (`schedule_task` → row exists, active, same cron; `delete_schedule` in the same task withdraws the proof). **Not covered:** deploy/service probes, account creation (the #11181 mailbox case) and raw DB writes — all go through `shell_exec`, where the harness cannot know what was written; they remain the model's own verification burden (Phase 6's sandbox default narrows this).
+
+**Identity rule:** gates are keyed by artifact (`kb:<path>`, `sheet:<id>|<updatedRange>`, `doc:<id>`, `schedule:<id>`); a later write to the same artifact in one task supersedes the earlier gate (one proof of the final state — 8 % of KB-writing tasks write the same path twice); `RB-` ids are reserved to the harness at the declare door; a model `ABANDON:` line cannot target a read-back; the stop hook never blocks on one.
+
+**2.3 (confirmed-model diff) — deviation:** §2 wrote it as dependent on Phase 4's thread pin; it is deferred to Phase 4 with that pin. The Sheets verifier already reports the cell that differs from what was WRITTEN; Phase 4 adds "from what the operator CONFIRMED".
+
+**Audits:** R1 FAIL (same-artifact double write → false `No quedó`; a model `ABANDON: R-1` voided a harness proof; `enforce` dropped the Spanish UX; 5/7 hooks unpinned), R2 FAIL (enforce headline contradicted the JSON population; per-tab Sheets key lost 4/4 corpus tasks' proofs; batch_write + filter folds unpinned), R3 FAIL (the router's background-notice tail used a hand-typed prefix whitelist that missed `⏳ Sin releer` and the enforce block → a «No quedó» dropped from "Agente terminó"; swarm parents hard-failed a goal on a read-back). Root cause of R3: every surface re-typed "what is a ledger line" — now one predicate, `src/lib/v8-4/ledger-lines.ts`, used by the router tail, the deliverable filter, the stop hook and the renderers. All folded with fixtures; 7/7 hooks pinned on a real in-memory DB; 7/7 real KB write shapes replayed through the real verifier with 0 false `No quedó`. Known reporting split: `gates.evaluated` trace attrs still count read-back rows (superset), `tasks.output.gates` reports them under `readback`.
+
+**Readout:** `./mc-ctl gates summary 7` now prints read-backs as their own population (RB-* rows + `gates.readback` trace) so the V8.4 enforce decision is not dominated by write proofs.
+
+**Verify over the first week:** every `jarvis_file_*`/`gsheets_write`/`gdocs_write`/`schedule_task` chat ends with `✔ Verificado` or `⚠️ No quedó`; `SELECT gate_id, state, evidence FROM task_gates WHERE gate_id LIKE 'RB-%' ORDER BY created_at DESC LIMIT 20`; any `No quedó` on a write the operator can see succeeded = a verifier bug → fixture + fix.
 

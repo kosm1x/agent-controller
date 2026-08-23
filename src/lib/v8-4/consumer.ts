@@ -22,6 +22,12 @@ import type { AgentType, RunnerOutput } from "../../runners/types.js";
 import { getConfig } from "../../config.js";
 import { getDatabase } from "../../db/index.js";
 import { extractDeliverableText } from "../deliverable.js";
+import {
+  formatNoQuedo,
+  formatSinReleer,
+  formatVerificado,
+  isReadbackRow,
+} from "./readback.js";
 import { emitTraceEvent } from "../../observability/task-trace.js";
 import {
   declareGates,
@@ -29,6 +35,7 @@ import {
   gatesMode,
   hasGates,
   ledgerSummaryJson,
+  ledgerVerdict,
   type GateSpec,
   type LedgerVerdict,
 } from "./gates.js";
@@ -89,7 +96,13 @@ export interface CompletionLedgerOutcome {
   numbers: NumbersAudit | null;
 }
 
-const DELIVERABLE_FIELDS = ["finalAnswer", "text", "content"] as const;
+const DELIVERABLE_FIELDS = [
+  "finalAnswer",
+  "text",
+  "output",
+  "result",
+  "content",
+] as const;
 
 function appendToDeliverable(
   output: RunnerOutput["output"],
@@ -106,6 +119,9 @@ function appendToDeliverable(
       return next;
     }
   }
+  // Nothing to append to: the warning must still reach the operator
+  // (R1 audit W14 — it vanished exactly when the run produced nothing).
+  next.text = suffix;
   return next;
 }
 
@@ -205,11 +221,49 @@ export async function applyCompletionLedger(
     if (output && typeof output === "object") {
       output = { ...output, gates: ledgerSummaryJson(gates.rows, mode) };
     }
-    if (mode === "enforce") {
-      if (gates.verdict === "failed" && taskStatus === "completed") {
+    // Phase 2 (usability plan, write-class enforce): a read-back gate is
+    // deterministic, harness-owned proof that a WRITE landed — or did not.
+    // It demotes and speaks under `shadow` AND `enforce` (R1 audit C3: the
+    // Spanish lines must not vanish the day the operator flips the mode);
+    // other gate kinds keep the mode's semantics below.
+    const readbacks = gates.rows.filter((r) => isReadbackRow(r));
+    if (readbacks.length > 0) {
+      const failedReadback = readbacks.some((r) => r.state === "failed");
+      if (failedReadback && taskStatus === "completed") {
         taskStatus = "completed_with_concerns";
       }
-      output = appendToDeliverable(output, formatLedgerBlock(gates.rows));
+      const lines = [
+        formatVerificado(gates.rows),
+        formatNoQuedo(gates.rows),
+        formatSinReleer(gates.rows),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      output = appendToDeliverable(output, lines);
+      emitTraceEvent({
+        taskId,
+        runId,
+        name: "gates.readback",
+        attrs: {
+          mode,
+          total: readbacks.length,
+          failed: readbacks.filter((r) => r.state === "failed").length,
+          demoted: failedReadback && args.taskStatus === "completed",
+        },
+      });
+    }
+    if (mode === "enforce") {
+      // Population = the non-read-back gates (read-backs were adjudicated
+      // and rendered above); formatLedgerBlock filters the same way, so the
+      // headline can never contradict a «No quedó» line (R2 audit C1).
+      const others = gates.rows.filter((r) => !isReadbackRow(r));
+      const v = ledgerVerdict(others);
+      if (v.verdict === "failed" && taskStatus === "completed") {
+        taskStatus = "completed_with_concerns";
+      }
+      if (others.length > 0) {
+        output = appendToDeliverable(output, formatLedgerBlock(others));
+      }
     }
   } catch (err) {
     emitTraceEvent({
@@ -242,12 +296,20 @@ export async function reverifyChildLedger(
   const childRow = getDatabase()
     .prepare(`SELECT agent_type FROM tasks WHERE task_id = ?`)
     .get(childTaskId) as { agent_type: AgentType | null } | undefined;
-  const verdict = await evaluateLedger({
+  const evaluated = await evaluateLedger({
     taskId: childTaskId,
     outputText,
     rerun: true,
     shellGatesRunnable: !ranInContainer(childRow?.agent_type),
   });
+  // Read-backs were adjudicated and rendered at the child's completion; the
+  // parent's pass/fail decision is over the child's OTHER gates, so a failed
+  // write proof demotes (as on a direct task) rather than hard-failing the
+  // goal (R3 audit W3).
+  const verdict: typeof evaluated = {
+    ...evaluated,
+    ...ledgerVerdict(evaluated.rows.filter((r) => !isReadbackRow(r))),
+  };
   emitTraceEvent({
     taskId: parentTaskId,
     name: "gates.parent_reverified",
