@@ -105,6 +105,28 @@ export class TelegramStreamController {
     }
   }
 
+  /**
+   * Usability Phase 1.2: the streamed text was a scope-ask the router is
+   * about to re-run silently. Wipe what the operator can see (the ask is
+   * already on screen via live edits), keep the same message so the re-run's
+   * answer lands in place, and accept chunks again.
+   */
+  reset(placeholder = "⏳"): void {
+    if (this.editTimer) {
+      clearTimeout(this.editTimer);
+      this.editTimer = null;
+    }
+    this.accumulatedText = "";
+    this.finalized = false;
+    this.lastEditTime = Date.now();
+    if (!this.messageId) return;
+    this.bot.api
+      .editMessageText(this.chatId, this.messageId, placeholder)
+      .catch(() => {
+        /* best effort — the finalize edit will overwrite anyway */
+      });
+  }
+
   /** Get the placeholder message ID (for the router to track). */
   getMessageId(): number | null {
     return this.messageId;

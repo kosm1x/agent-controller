@@ -1008,7 +1008,7 @@ export const fastRunner: Runner = {
 
 DO NOT use \`web_search\`, \`web_read\`, \`browser__*\`, \`exa_search\`, or any other tool to approximate the answer. Those paths cannot pass auth headers and will fabricate numbers.
 
-INSTEAD: respond to the operator with one short sentence asking to reformulate with an explicit shell/coding signal — e.g., "Necesito acceso a shell_exec o http_fetch para correr este query del DENUE Analyzer. Reescribe el mensaje con 'corre el query', 'ejecuta el SQL', o 'usa shell_exec' para activar el scope correcto." Do NOT attempt a partial answer from prior turns.`,
+INSTEAD: respond with ONE line that names the missing tool in backticks and stop — exactly: "Necesito \`shell_exec\` para correr este query del DENUE Analyzer." The router widens the scope and re-runs this turn by itself (usability Phase 1.2); do NOT ask the operator to rewrite the message or to type any keyword. Do NOT attempt a partial answer from prior turns.`,
         });
       } else {
         messages.push({

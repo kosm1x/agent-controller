@@ -12,8 +12,10 @@
 
 const SCOPE_CLASSIFIER_TIMEOUT_MS = 3_000;
 
-/** All valid scope group names the classifier can return. */
-const VALID_GROUPS = new Set([
+/** All valid scope group names the classifier can return. Exported for the
+ *  scope-miss resolver (scope-miss.ts), which maps a requested tool back to
+ *  the group(s) that would have supplied it. */
+export const VALID_GROUPS = new Set([
   "northstar_read",
   "northstar_write",
   "northstar_journal",

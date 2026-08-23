@@ -2,7 +2,7 @@
 
 **Source:** 12-agent critic swarm over 816 real exchanges (2026-07-08 → 08-22), 205 ritual outputs, 820 chat tasks, benchmarked vs 26 personal agents. Report: https://claude.ai/code/artifact/805801b6-49f5-4493-946d-d4f7e07f0d3d · raw packs: session scratchpad `jarvis-review/swarm-result.json`.
 **Verdict:** 4.7/10 from the user's seat vs a 2026 bar of ~7.5–8. Wins on project memory and strategic pushback; loses on the three things felt daily — doing what it says, saying only what matters, never asking the user to speak its internal language.
-**Status:** Phase 0 SHIPPED 2026-08-23 (`950514e`, deployed pid 658075; R1 qa-audit folded — see §7). Phases 1–6 open; order is by user impact × frequency.
+**Status:** Phase 0 SHIPPED 2026-08-23 (`950514e`; §7). Phase 1 SHIPPED 2026-08-23 (§8). Phases 2–6 open; order is by user impact × frequency.
 
 ---
 
@@ -224,4 +224,20 @@ Shipped in `950514e`: 0.1 deliverable filter (`src/messaging/deliverable-filter.
 **Deviations from §2 Phase 0 as written:** (a) the ritual *window guard* is not needed — `checkAndExecuteSchedules` fires only on an in-minute cron match and `scheduleCron` has a 60 s tolerance with no catch-up path; the 17:15 "Son las 8am" case was a manual run, now labelled. (b) "merged at 23:59": the nightly close (23:50) is the single evening message; day-narrative and evolution-log persist but are not broadcast; the evolution summary is folded into Morning Sync (PASO 4), not into the close. (c) The filter does not translate English replies — it strips English narration/preamble when Spanish content follows and flags the rest (`englishLeading`) for the KPI; translation is Phase 1+ work.
 
 **Verify over the first week:** `./mc-ctl usability 7` → harness 0 · English ↓ · pushes/day ≤ 7 (the ritual diet lands fully with Phase 5); `journalctl -u mission-control | grep deliverable-filter` shows what was stripped; PM at 07:00 MX is silenced on an unchanged day (`SELECT * FROM ritual_deliveries`); the Química run at 13:00 MX pauses itself (row `active=0`) on the first run, since 13 repeats already exceed the new limit.
+
+## 8. Phase 1 ship record (2026-08-23)
+
+**1.1 Sticky thread scope** — `decideActiveGroups` unions this turn's classification with the prior thread scope (45-min SLIDING window; a conversational closer does not inherit). The carried prior is the turn's own BASE classification plus any scope-miss widening — never the union — so the set is bounded (R1 audit measured the union-all variant at 29 → 80 tools by turn 10; the shipped rule re-measured 29/50/50/50/62/76 vs 29/38/50/50/62/59 without stickiness). Implemented in memory (`previousScopeGroups` + `previousScopeAt`), not the `thread_scope` table §2 sketched — lost on restart, which is acceptable for a 45-min window.
+
+**1.2 Scope-miss auto-widen** — `src/messaging/scope-miss.ts`: `detectScopeMiss` recognises the corpus's ask shapes in the LAST 700 chars of a reply (an ask the model worked around mid-reply is not a miss), harvests the requested tool identifiers (snake_case and `mcp__x__y`), and labels the ask STRONG (explicit request) or weak (scope mention). The router then: widens by the NARROWEST group that supplies each missing tool (`groupsForTool` subtracts the always-on baseline and spans classifier + regex groups), rebuilds the system prompt for the widened list, re-runs the SAME turn once (original tags incl. `skill:` ids, fresh time line, Telegram placeholder reset so the answer lands in place), and never delivers the ask. Strong ask with every tool already in scope (the model refused a tool it had — corpus 12465) → re-run with the same tools plus a system correction note. Weak mention with nothing missing → deliver as-is. No group supplies the tool → one honest line, no keyword. A miss on the re-run itself → one honest line. The swallowed turn records no outcome and no skill failure.
+
+**Prompt** — both places that taught the operator's incantation (identity rule + `## REGLA CRÍTICA: Solo usa herramientas disponibles`) now say: name the tool in one line and stop; the system activates it. The DENUE advisory in `fast-runner.ts` says the same. eval:gate PASS twice (65.53, then 65.20 vs incumbent 65.75; tolerance 2).
+
+**1.3 Approvals** — NOT shipped: no tool in the ruling-3 allow-always groups (shell-ro, browser, gemini, google-read) is confirmation-gated (gates sit on share/delete/create/update/tweet/wp/video), so "allow-always" has an empty population; confirmation verbs already accept sí/ok/dale; sticky scope (1.1) is what makes "sí" carry the prior scope. Re-open if a read-only tool ever gains a gate.
+
+**1.4 Token budget** — measured on telemetry (above); no ceiling breached; the re-run is a full duplicate turn (~25 per 45 days at the corpus rate).
+
+**Audits** — R1 FAIL (Telegram streamed ask stayed on screen; prompt still taught "usa X" 30 lines below; always-on tool → 23 groups → 173 tools; recall ~50%), R2 FAIL (`base` aliased the mutated Set on the inherited branch; hallucinated ask delivered verbatim; regex-only groups unreachable; `mcp__` identifiers invisible; narrow-list prompt replayed), R3 → see commit. Every finding has a fixture quoting the corpus exchange id.
+
+**Verify over the first week:** `./mc-ctl usability 7` → scope-ask replies 0, incantations ≤ 3; `journalctl -u mission-control | grep scope-miss` shows `re-running turn silently` lines and their outcomes; `SELECT message, active_groups FROM scope_telemetry WHERE message LIKE '[scope-miss rerun]%'`.
 

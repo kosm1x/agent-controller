@@ -151,6 +151,15 @@ describe("MessageRouter", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    // Drain any `mockResolvedValueOnce` a failed test left queued (R3 audit
+    // W5): clearAllMocks keeps once-queues, so one RED cascaded into the next.
+    vi.mocked(submitTask)
+      .mockReset()
+      .mockResolvedValue({
+        taskId: "test-task-123",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
     subscribers.length = 0;
 
     // Set env vars for owner addresses
@@ -537,6 +546,324 @@ describe("MessageRouter", () => {
       expect(delivered).not.toContain("I'll verify");
       expect(delivered.startsWith("Commit 8a49b05 listo.")).toBe(true);
       expect(delivered).toContain("Dime «sigue» para continuar.");
+    });
+
+    it("usability Phase 1.2: a scope-ask reply is NOT delivered — the turn is re-run with the widened tool list", async () => {
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-123",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        // A research-class message: shell_exec is NOT in its scope, so the
+        // model's ask is a genuine miss (a "publica…" message would already
+        // carry the coding group via regex and the ask would be hallucinated).
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      // (No assertion on the first call's tools: the regex fallback also reads
+      // the thread buffer's recent user messages, which earlier tests fill.
+      // If shell_exec were already in scope the re-run below would not happen
+      // and the `scope-rerun` assertions would fail — so the contract holds.)
+      const firstCall = mocked.mock.calls.at(-1)![0] as { title: string };
+
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result:
+            '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Only the ack reached the channel — never the ask.
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+      // The same turn was resubmitted with tweet_post (social group) in scope.
+      const rerun = mocked.mock.calls.at(-1)![0] as {
+        tools: string[];
+        tags: string[];
+        title: string;
+      };
+      expect(rerun.tags).toContain("scope-rerun");
+      expect(rerun.tools).toContain("tweet_post");
+      expect(rerun.title).toBe(firstCall.title);
+
+      // The re-run's real answer is delivered normally.
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-rerun",
+          agent_id: "fast",
+          result: "Publicado: thewilliamsradar.com/w34 responde 200 OK. Commit 8a49b05 en origin/main.",
+          duration_ms: 500,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toContain("Publicado");
+    });
+
+    it("usability Phase 1.2 on Telegram (R1 audit C1): the streamed ask is wiped and the re-run answers IN the same placeholder", async () => {
+      // A telegram adapter whose getBot() returns a fake grammy api — this is
+      // what makes the router create a TelegramStreamController.
+      const edits: { messageId: number; text: string }[] = [];
+      const fakeBot = {
+        api: {
+          sendMessage: vi.fn().mockResolvedValue({ message_id: 777 }),
+          editMessageText: vi
+            .fn()
+            .mockImplementation(async (_chat: string, messageId: number, text: string) => {
+              edits.push({ messageId, text });
+              return true;
+            }),
+        },
+      };
+      const tgAdapter = Object.assign(createMockAdapter("telegram"), {
+        getBot: () => fakeBot,
+      });
+      router.registerChannel(tgAdapter as unknown as ChannelAdapter);
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "tg-task-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "telegram",
+        from: "12345",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      // The first run streamed the ask live (what the operator saw on screen).
+      const firstCall = mocked.mock.calls.at(-1)![0] as {
+        onTextChunk?: (c: string) => void;
+      };
+      firstCall.onTextChunk?.("`tweet_post` no está en el scope activo. Pídeme con \"usa tweet_post\".");
+      vi.advanceTimersByTime(2000);
+      expect(edits.at(-1)?.text).toContain("tweet_post");
+
+      mocked.mockResolvedValueOnce({
+        taskId: "tg-task-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "tg-task-1",
+          agent_id: "fast",
+          result: "`tweet_post` no está en el scope activo. Pídeme con \"usa tweet_post\".",
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      // The placeholder was reset — the ask is no longer what the screen shows.
+      expect(edits.at(-1)?.text).toBe("⏳");
+      // The re-run streams into the SAME message and finalizes it there.
+      const rerunCall = mocked.mock.calls.at(-1)![0] as {
+        onTextChunk?: (c: string) => void;
+        tags: string[];
+      };
+      expect(rerunCall.tags).toContain("scope-rerun");
+      expect(rerunCall.onTextChunk).toBeTypeOf("function");
+      rerunCall.onTextChunk!("Publicado.");
+      vi.advanceTimersByTime(2000);
+      expect(edits.at(-1)?.messageId).toBe(777);
+      expect(edits.at(-1)?.text).toContain("Publicado");
+      findHandler("task.completed")!({
+        data: {
+          task_id: "tg-task-rerun",
+          agent_id: "fast",
+          result: "Publicado: thewilliamsradar.com/w34 responde 200 OK.",
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      // No separate second message: every delivery went through the placeholder edits.
+      expect(tgAdapter.sentMessages).toHaveLength(0);
+      router.unregisterChannel("telegram");
+      expect(edits.at(-1)?.messageId).toBe(777);
+      expect(edits.at(-1)?.text).toContain("Publicado");
+      // The ask WAS on screen before the reset (that is the C1 defect)…
+      const resetIdx = edits.findIndex((e) => e.text === "⏳");
+      expect(resetIdx).toBeGreaterThan(0);
+      expect(edits.slice(0, resetIdx).some((e) => e.text.includes("usa tweet_post"))).toBe(true);
+      // …and never again after it.
+      expect(edits.slice(resetIdx).some((e) => e.text.includes("usa tweet_post"))).toBe(false);
+    });
+
+    it("usability Phase 1.2 (R2 audit C2): a hallucinated ask — tool already in scope — is re-run with a correction note, never delivered (corpus 12465)", async () => {
+      const mocked = vi.mocked(submitTask);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "lee el pdf",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      const first = mocked.mock.calls.at(-1)![0] as { tools: string[] };
+      expect(first.tools).toContain("jarvis_file_read");
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-halluc",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: "`jarvis_file_read` no está en el scope activo. Necesito que me lo actives con \"usa jarvis_file_read\".",
+          duration_ms: 1,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      // Not delivered; re-run with the SAME tool list + a system correction.
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      const rerun = mocked.mock.calls.at(-1)![0] as { tools: string[]; tags: string[]; description: string };
+      expect(rerun.tags).toContain("scope-rerun");
+      expect(rerun.tools.sort()).toEqual([...first.tools].sort());
+      expect(rerun.description).toContain("NOTA DEL SISTEMA");
+      expect(rerun.description).toContain("`jarvis_file_read`");
+    });
+
+    it("usability Phase 1.2: a weak scope MENTION beside a tool it has is delivered as-is (corpus 11723)", async () => {
+      const mocked = vi.mocked(submitTask);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "lee el pdf",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      const calls = mocked.mock.calls.length;
+      const reply =
+        "El PDF es imagen-only y no tengo OCR ni visión directa en este scope.\n\nLo que sí puedo hacer: leer el Slides original con `jarvis_file_read`. ¿Prefieres eso?";
+      findHandler("task.completed")!({
+        data: { task_id: "test-task-123", agent_id: "fast", result: reply, duration_ms: 1 },
+      });
+      expect(mocked.mock.calls.length).toBe(calls);
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toContain("Lo que sí puedo hacer");
+    });
+
+    it("usability Phase 1.2 (R2 audit W5): the widening uses the NARROWEST group — a shell_exec ask adds coding, not meta", async () => {
+      const mocked = vi.mocked(submitTask);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "qué opinas de la propuesta de Emilio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      const first = mocked.mock.calls.at(-1)![0] as { tools: string[] };
+      if (first.tools.includes("shell_exec")) return; // thread history already coding — contract covered by the tweet_post test
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-narrow",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: "Necesito `shell_exec` para esto.",
+          duration_ms: 1,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      const rerun = mocked.mock.calls.at(-1)![0] as { tools: string[]; tags: string[] };
+      expect(rerun.tags).toContain("scope-rerun");
+      expect(rerun.tools).toContain("shell_exec");
+      // `chart_generate` / `rss_read` live in meta (160 tools) but not in
+      // coding (50) — the widening must not reach them.
+      expect(rerun.tools).not.toContain("chart_generate");
+      expect(rerun.tools).not.toContain("rss_read");
+      expect(rerun.tools.length).toBeLessThan(100);
+    });
+
+    it("usability Phase 1.2 (R3 audit W1): a weak scope mention inside the re-run's real answer is delivered, not replaced", async () => {
+      const mocked = vi.mocked(submitTask);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "háblame de beeshake.com",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-rerun-weak",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: { task_id: "test-task-123", agent_id: "fast", result: "Necesito `tweet_post` para publicar.", duration_ms: 1 },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-rerun-weak",
+          agent_id: "fast",
+          result: "Publicado el tweet. Nota: el PDF adjunto es imagen-only y no tengo OCR en este scope, así que lo leí con `jarvis_file_read` del texto que ya tenías en el KB.",
+          duration_ms: 1,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toContain("Publicado el tweet");
+    });
+
+    it("usability Phase 1.2: a scope-ask on the re-run itself delivers the honest fallback line, never a keyword to retype", async () => {
+      const mocked = vi.mocked(submitTask);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "háblame de beeshake.com",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "test-task-rerun2",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: "Las herramientas gemini_image no aparecen en mi lista de herramientas actual — pídeme con «usa gemini».",
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-rerun2",
+          agent_id: "fast",
+          result: "gemini_image sigue sin aparecer en mi lista de herramientas — pídeme con «usa gemini».",
+          duration_ms: 500,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      const text = waAdapter.sentMessages[1].text;
+      expect(text).not.toContain("usa gemini");
+      expect(text).not.toContain("gemini_image");
+      expect(text).toContain("ni al reintentar");
     });
 
     it("a markers-only result delivers one Spanish failure line, never the raw marker (mutation guard for the filter wiring)", async () => {
@@ -1579,15 +1906,47 @@ describe("MessageRouter", () => {
   // `google` scope (regex FP) instead of inheriting prior `coding`. Bug class:
   // empty-Set from semantic classifier was collapsed with null/undefined.
   describe("decideActiveGroups", () => {
-    it("uses semantic groups when classifier returned non-empty", async () => {
+    it("uses semantic groups when classifier returned non-empty (sticky off)", async () => {
       const { decideActiveGroups } = await import("./router.js");
       const semantic = new Set(["coding"]);
       const prior = new Set(["google"]);
       const fallback = vi.fn(() => new Set(["wordpress"]));
-      const result = decideActiveGroups(semantic, prior, fallback);
+      const result = decideActiveGroups(semantic, prior, fallback, undefined, false);
       expect(result.source).toBe("semantic");
       expect([...result.groups]).toEqual(["coding"]);
       expect(fallback).not.toHaveBeenCalled();
+    });
+
+    it("usability Phase 1.1: a NEW classification UNIONS the prior scope (exchange 11189 'confirmo eliminación' keeps coding)", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const semantic = new Set(["destructive"]);
+      const prior = new Set(["coding"]);
+      const result = decideActiveGroups(semantic, prior, vi.fn(() => new Set()), "confirmo eliminación");
+      expect(result.source).toBe("semantic");
+      expect([...result.groups].sort()).toEqual(["coding", "destructive"]);
+    });
+
+    it("usability Phase 1.1 (R2 audit C1): the inherited branch returns SEPARATE Sets — mutating groups never touches base", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const d = decideActiveGroups(new Set<string>(), new Set(["meta"]), vi.fn(() => new Set()), "continúa");
+      expect(d.source).toBe("inherited");
+      d.groups.add("google");
+      expect(d.base.has("google")).toBe(false);
+      expect([...d.base]).toEqual(["meta"]);
+    });
+
+    it("usability Phase 1.1: a conversational closer does NOT drag the prior scope along", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const semantic = new Set(["google"]);
+      const prior = new Set(["coding"]);
+      const result = decideActiveGroups(semantic, prior, vi.fn(() => new Set()), "gracias");
+      expect([...result.groups]).toEqual(["google"]);
+    });
+
+    it("usability Phase 1.1: no prior → semantic only (cold thread)", async () => {
+      const { decideActiveGroups } = await import("./router.js");
+      const result = decideActiveGroups(new Set(["google"]), undefined, vi.fn(() => new Set()), "abre el sheet");
+      expect([...result.groups]).toEqual(["google"]);
     });
 
     it("inherits prior scope when classifier returned explicit empty Set", async () => {

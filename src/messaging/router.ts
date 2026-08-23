@@ -130,6 +130,11 @@ import {
   hasDeliverableField,
 } from "../lib/deliverable.js";
 import { sanitizeDeliverable } from "./deliverable-filter.js";
+import {
+  detectScopeMiss,
+  groupsForTool,
+  scopeMissFallbackLine,
+} from "./scope-miss.js";
 import { applyRitualDeliveryPolicy } from "../rituals/delivery-policy.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
@@ -400,14 +405,9 @@ export function decideActiveGroups(
   priorScope: Set<string> | undefined,
   regexFallback: () => Set<string>,
   currentMessage?: string,
-): { groups: Set<string>; source: ScopeSource } {
-  if (semanticGroups && semanticGroups.size > 0) {
-    return { groups: semanticGroups, source: "semantic" };
-  }
-  const semanticEmpty =
-    semanticGroups !== null &&
-    semanticGroups !== undefined &&
-    semanticGroups.size === 0;
+  /** Phase 1.1: union prior (within TTL — the caller decides) into semantic. */
+  sticky = true,
+): { groups: Set<string>; source: ScopeSource; base: Set<string> } {
   // Conversational filter: short greetings/acks should not inherit prior
   // scope. Mirrors the protection scope.ts:scopeToolsForMessage already
   // applies to its own regex-inheritance branch (CONVERSATIONAL_PATTERN).
@@ -415,12 +415,47 @@ export function decideActiveGroups(
     !!currentMessage &&
     currentMessage.trim().length < 80 &&
     CONVERSATIONAL_PATTERN.test(currentMessage.trim());
-  if (semanticEmpty && priorScope && priorScope.size > 0 && !isConversational) {
-    return { groups: new Set(priorScope), source: "inherited" };
+  if (semanticGroups && semanticGroups.size > 0) {
+    // Phase 1.1 sticky scope: a NEW non-empty classification used to REPLACE
+    // the prior set, so "confirmo eliminación" (→ destructive) dropped the
+    // coding group the previous turn needed and the model asked for "usa
+    // shell" again (exchange 11189). Within the TTL the prior groups ride
+    // along; the prior set is bounded by the TTL, not accumulated forever.
+    // `base` is THIS turn's own classification; the caller stores base (not
+    // the union) as the next prior, so the carried set is bounded to one
+    // turn's groups plus any scope-miss widening — never an accumulation.
+    if (sticky && priorScope && priorScope.size > 0 && !isConversational) {
+      return {
+        groups: new Set([...semanticGroups, ...priorScope]),
+        source: "semantic",
+        base: new Set(semanticGroups),
+      };
+    }
+    return {
+      groups: semanticGroups,
+      source: "semantic",
+      base: new Set(semanticGroups),
+    };
   }
+  const semanticEmpty =
+    semanticGroups !== null &&
+    semanticGroups !== undefined &&
+    semanticGroups.size === 0;
+  if (semanticEmpty && priorScope && priorScope.size > 0 && !isConversational) {
+    // Separate Sets: scopeToolsForMessage MUTATES the groups it receives
+    // (URL/meta injections), and `base` becomes the next turn's prior — an
+    // alias would re-grow the prior to the full injected set (R2 audit C1).
+    return {
+      groups: new Set(priorScope),
+      source: "inherited",
+      base: new Set(priorScope),
+    };
+  }
+  const fallback = regexFallback();
   return {
-    groups: regexFallback(),
+    groups: fallback,
     source: semanticEmpty ? "regex_empty" : "regex",
+    base: new Set(fallback),
   };
 }
 
@@ -429,7 +464,7 @@ function scopeToolsForMessage(
   conversationHistory: ConversationTurn[],
   semanticGroups?: Set<string> | null,
   priorScope?: Set<string>,
-): { tools: string[]; activeGroups: string[] } {
+): { tools: string[]; activeGroups: string[]; baseGroups: string[] } {
   // Scope from recent user messages. Previously slice(-2) to avoid scope
   // accumulation on hallucinated assistant content, but user messages are
   // trusted. Widened to -4 so confirmation chains ("Lista X" → "Elimina 6 y 7"
@@ -522,7 +557,11 @@ function scopeToolsForMessage(
   }).size;
   console.log(`[router] Tool scope: ${tools.length}/${fullCount} tools`);
 
-  return { tools, activeGroups: [...activeGroups] };
+  return {
+    tools,
+    activeGroups: [...activeGroups],
+    baseGroups: [...decision.base],
+  };
 }
 
 interface PendingReply {
@@ -539,6 +578,38 @@ interface PendingReply {
   abortController?: AbortController;
   /** Thread key for conversation isolation (groups vs DMs). */
   tk: string;
+  /**
+   * Phase 1.2: everything needed to resubmit this turn with a wider tool
+   * list when the reply turns out to be a scope-ask. Absent for background
+   * agents and for the re-run itself.
+   */
+  rerunSpec?: ScopeRerunSpec;
+  /** Phase 1.2: set on the re-run's pending entry — a second miss is final. */
+  rerunOf?: string;
+}
+
+/** Phase 1.2: the subset of the chat TaskSubmission a scope re-run replays. */
+interface ScopeRerunSpec {
+  title: string;
+  description: string;
+  /**
+   * R2 audit W4: the system prompt has tool-flag-gated sections (WordPress
+   * protocol, confirmation lines, skills) — rebuilt for the WIDENED list,
+   * never replayed from the narrow one.
+   */
+  buildDescription: (tools: string[]) => string;
+  detectionText: string;
+  /** WITHOUT the time-context line — it is rebuilt at re-run time (R1 audit W8). */
+  conversationHistory: ConversationTurn[];
+  /** The original tags incl. `skill:` ids, so attribution survives (W5/W6). */
+  tags: string[];
+  threadId: string | undefined;
+  tools: string[];
+  /** The resolved (union) groups the first run had. */
+  activeGroups: string[];
+  /** This turn's own classification — what the sticky prior is built from. */
+  baseGroups: string[];
+  isCodingTask: boolean;
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -558,6 +629,17 @@ const threadLastAccess = new Map<string, number>();
 /** Previous scope groups per conversation — used for implicit feedback detection. */
 const previousScopeGroups = new Map<string, Set<string>>();
 const previousMessages = new Map<string, string>();
+/**
+ * Usability Phase 1.1 (2026-08-23): when the prior scope was stored. Within
+ * STICKY_SCOPE_TTL_MS the prior groups are UNIONED into the next turn's
+ * semantic groups (a short "confirmo" / "sigue" / "ahora el push" keeps the
+ * coding group it needs). The window is SLIDING — every turn re-stamps it —
+ * so an active thread keeps its prior; only 45 min of silence clears it.
+ * The carried set is bounded regardless: it is one turn's base groups (plus
+ * a scope-miss widening), never an accumulation.
+ */
+const previousScopeAt = new Map<string, number>();
+export const STICKY_SCOPE_TTL_MS = 45 * 60 * 1000;
 const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let threadAccessCount = 0;
 // Warn once if TELEGRAM_OWNER_CHAT_ID is missing — silent misconfiguration guard.
@@ -902,6 +984,7 @@ function getThreadTurns(channel: string): ConversationTurn[] {
         // groups/community email, so without eviction every stranger adds
         // permanent entries to a long-lived daemon.
         previousScopeGroups.delete(ch);
+        previousScopeAt.delete(ch);
         previousMessages.delete(ch);
       }
     }
@@ -1950,11 +2033,15 @@ export class MessageRouter {
     // Dynamic tool scoping — uses semantic groups if available, regex fallback.
     // Pass normalizedText so regex fallback benefits from typo corrections.
     // Pass prior scope so empty-classifier follow-ups inherit (v8 2026-04-26).
-    let { tools, activeGroups } = scopeToolsForMessage(
+    // Phase 1.1: the prior set is sticky only within STICKY_SCOPE_TTL_MS.
+    const priorAt = previousScopeAt.get(tk);
+    const priorWithinTtl =
+      priorAt !== undefined && Date.now() - priorAt <= STICKY_SCOPE_TTL_MS;
+    let { tools, activeGroups, baseGroups } = scopeToolsForMessage(
       normalizedText,
       conversationHistory,
       semanticGroups,
-      previousScopeGroups.get(tk),
+      priorWithinTtl ? previousScopeGroups.get(tk) : undefined,
     );
 
     // Channel-policy override (FAIL-SAFE). A public-facing email channel must
@@ -1988,8 +2075,11 @@ export class MessageRouter {
     const prevGroups = previousScopeGroups.get(tk);
     const prevMsg = previousMessages.get(tk);
     if (prevGroups && prevMsg && feedbackTaskId) {
+      // Phase 1.1 (R1 audit W3): compare THIS turn's own classification, not
+      // the sticky union — the union always overlaps the prior and would make
+      // `implicit_positive` unreachable.
       const implicitSignal = detectImplicitFeedback(
-        new Set(activeGroups),
+        new Set(baseGroups),
         prevGroups,
         msg.text,
         prevMsg,
@@ -2007,7 +2097,11 @@ export class MessageRouter {
         );
       }
     }
-    previousScopeGroups.set(tk, new Set(activeGroups));
+    // Phase 1.1: the prior carried into the next turn is this turn's BASE
+    // classification (bounded), not the union (R1 audit W2: the union grew
+    // 29 → 80 tools by turn 10 on the real telemetry).
+    previousScopeGroups.set(tk, new Set(baseGroups));
+    previousScopeAt.set(tk, Date.now());
     previousMessages.set(tk, msg.text);
     // Inheritance-chain debug trace — without this, when the next turn fails
     // to inherit (DENUE incident 2026-05-06: task #2's empty result blocked
@@ -2137,43 +2231,17 @@ export class MessageRouter {
     }
 
     // Track pending reply
-    const interimTimer = setTimeout(() => {
-      this.sendToChannel(msg.channel, msg.from, "Sigo trabajando en eso...");
-    }, TASK_TIMEOUT_INTERIM_MS);
-
-    const finalTimer = setTimeout(() => {
-      const pending = this.pendingReplies.get(result.taskId);
-      if (pending) {
-        // Send timeout warning but DON'T delete the pending reply.
-        // The SDK path can take 5-10 minutes for heavy tasks (gdocs_write,
-        // Playwright crawls). Deleting here causes the actual result to be
-        // silently dropped when it arrives seconds later.
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          "Sigo trabajando, esto está tomando más de lo esperado...",
-        );
-      }
-    }, TASK_TIMEOUT_FINAL_MS);
-
     // Hard abandon: coding tasks get 20min (55 turns × tool calls), others 11min
     const isCodingTask = tools.some((t) =>
       ["file_edit", "git_commit", "gh_create_pr"].includes(t),
     );
-    const abandonMs = isCodingTask
-      ? TASK_TIMEOUT_ABANDON_CODING_MS
-      : TASK_TIMEOUT_ABANDON_MS;
-    const abandonTimer = setTimeout(() => {
-      const pending = this.pendingReplies.get(result.taskId);
-      if (pending) {
-        this.pendingReplies.delete(result.taskId);
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          "Se agotó el tiempo. Puedes intentar de nuevo.",
-        );
-      }
-    }, abandonMs);
+    const { interimTimer, finalTimer, abandonTimer } = this.armPendingTimers(
+      result.taskId,
+      msg.channel,
+      msg.from,
+      isCodingTask,
+      { stream: streamController ?? undefined },
+    );
 
     this.pendingReplies.set(result.taskId, {
       channel: msg.channel,
@@ -2187,6 +2255,32 @@ export class MessageRouter {
       abandonTimer,
       ...(streamController && { streamController }),
       abortController: taskAbort,
+      rerunSpec: {
+        title: `Chat: ${titleText}`,
+        description: taskDescription,
+        buildDescription: (widenedTools: string[]) => {
+          const sp = buildJarvisSystemPrompt(
+            widenedTools,
+            userFactsBlock,
+            enrichment.contextBlock,
+            spChannel?.personaContent ?? null,
+            isOwnerChannel(msg.channel, spChannel?.mode),
+          );
+          return sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail;
+        },
+        detectionText: msg.text,
+        conversationHistory,
+        tags: [
+          "messaging",
+          msg.channel,
+          ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
+        ],
+        threadId: this.operatorThreadKey(msg, tk),
+        tools,
+        activeGroups: [...activeGroups],
+        baseGroups: [...baseGroups],
+        isCodingTask,
+      },
     });
 
     console.log(
@@ -2540,7 +2634,43 @@ export class MessageRouter {
     } else if (sanitized?.englishLeading) {
       console.log(`[router] deliverable-filter task=${taskId} english_leading`);
     }
-    const extractedText = sanitized?.text || null;
+    let extractedText = sanitized?.text || null;
+
+    // Usability Phase 1.2: a scope-ask reply never reaches the user. First
+    // occurrence on a chat turn → widen + silent re-run; a miss on the
+    // re-run itself, a hallucinated ask (tool already in scope), or a
+    // background-agent reply (no rerunSpec — R1 audit W4) → one honest line.
+    if (extractedText) {
+      const miss = detectScopeMiss(
+        extractedText,
+        getAllAvailableTools(this.scopeOptions()),
+      );
+      if (miss && pending.rerunSpec && !pending.rerunOf) {
+        const outcome = this.rerunWithWiderScope(
+          taskId,
+          pending,
+          miss.requestedTools,
+          miss.strong,
+        );
+        // W5: the swallowed turn is NOT an outcome — no task_outcomes row, no
+        // skill failure tally; the re-run records its own.
+        if (outcome === "rerun") return;
+        if (outcome === "no_group") {
+          // No scope group supplies the requested tool: nothing to widen.
+          extractedText = scopeMissFallbackLine("no_rerun");
+        }
+      } else if (miss && miss.strong) {
+        // R3 audit W1: only an explicit ask is replaced; a weak scope
+        // MENTION in a re-run's (or background agent's) real answer is content.
+        console.warn(
+          `[router] scope-miss ${pending.rerunOf ? `persisted on re-run ${taskId} (of ${pending.rerunOf})` : `on background task ${taskId}`} tools=[${miss.requestedTools.join(",")}]`,
+        );
+        extractedText = scopeMissFallbackLine(
+          pending.rerunOf ? "rerun_missed" : "no_rerun",
+        );
+      }
+    }
+
     if (extractedText) {
       // Background agent notification: different format
       let isBackground = false;
@@ -3120,6 +3250,234 @@ export class MessageRouter {
     }
 
     trackTaskOutcome(taskId, 0, false, pending.channel);
+  }
+
+  /** The interim / final / abandon timers every pending chat reply carries. */
+  private armPendingTimers(
+    taskId: string,
+    channel: ChannelName,
+    to: string,
+    isCodingTask: boolean,
+    opts: { rerun?: boolean; stream?: TelegramStreamController } = {},
+  ): {
+    interimTimer: ReturnType<typeof setTimeout>;
+    finalTimer: ReturnType<typeof setTimeout>;
+    abandonTimer: ReturnType<typeof setTimeout>;
+  } {
+    // A scope re-run is the same user turn: the first run already sent the
+    // interim notice, so the re-run arms a no-op interim (R2 audit info).
+    const interimTimer = setTimeout(
+      () => {
+        if (!opts.rerun)
+          this.sendToChannel(channel, to, "Sigo trabajando en eso...");
+      },
+      TASK_TIMEOUT_INTERIM_MS,
+    );
+
+    const finalTimer = setTimeout(() => {
+      const pending = this.pendingReplies.get(taskId);
+      if (pending) {
+        // Send timeout warning but DON'T delete the pending reply.
+        // The SDK path can take 5-10 minutes for heavy tasks (gdocs_write,
+        // Playwright crawls). Deleting here causes the actual result to be
+        // silently dropped when it arrives seconds later.
+        this.sendToChannel(
+          channel,
+          to,
+          "Sigo trabajando, esto está tomando más de lo esperado...",
+        );
+      }
+    }, TASK_TIMEOUT_FINAL_MS);
+
+    const abandonMs = isCodingTask
+      ? TASK_TIMEOUT_ABANDON_CODING_MS
+      : TASK_TIMEOUT_ABANDON_MS;
+    const abandonTimer = setTimeout(() => {
+      const pending = this.pendingReplies.get(taskId);
+      if (pending) {
+        this.pendingReplies.delete(taskId);
+        const line = "Se agotó el tiempo. Puedes intentar de nuevo.";
+        // A re-run owns the ⏳ placeholder — close it instead of leaving it.
+        if (opts.stream) {
+          opts.stream.finalize(line).catch(() => {
+            this.sendToChannel(channel, to, line);
+          });
+        } else {
+          this.sendToChannel(channel, to, line);
+        }
+      }
+    }, abandonMs);
+    return { interimTimer, finalTimer, abandonTimer };
+  }
+
+  private scopeOptions() {
+    return {
+      hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
+      hasWordpress: !!process.env.WP_SITES,
+      hasMemory: getMemoryService().backend === "hindsight",
+      hasCrm: !!process.env.CRM_API_TOKEN,
+    };
+  }
+
+  /**
+   * Usability Phase 1.2 — scope-miss auto-widen. The reply asked the user to
+   * activate a tool; instead, map the tool to its scope group(s), widen the
+   * thread's sticky scope and resubmit the SAME turn once. Returns true when
+   * a re-run was submitted (the caller must then NOT deliver the ask).
+   * Returns false when no group supplies the tool (nothing to widen) or the
+   * resubmission throws — the caller delivers the honest fallback line.
+   */
+  private rerunWithWiderScope(
+    taskId: string,
+    pending: PendingReply,
+    requestedTools: string[],
+    strongAsk: boolean,
+  ): "rerun" | "no_group" | "deliver_as_is" {
+    const spec = pending.rerunSpec;
+    if (!spec) return "no_group";
+    const options = this.scopeOptions();
+    // R1 audit C3: a tool that was ALREADY in scope is a hallucinated ask —
+    // widening cannot help, and attributing an always-on tool to a group
+    // would resolve to every group (173/216 tools).
+    const missing = requestedTools.filter((t) => !spec.tools.includes(t));
+    const newGroups = new Set<string>();
+    for (const tool of missing) {
+      // Narrowest group that supplies the tool (groupsForTool sorts by size).
+      const [g] = groupsForTool(tool, options);
+      if (g) newGroups.add(g);
+    }
+    if (missing.length > 0 && newGroups.size === 0) {
+      console.warn(
+        `[router] scope-miss task=${taskId} tools=[${missing.join(",")}] — no group supplies them, delivering fallback`,
+      );
+      return "no_group";
+    }
+    // R2 audit C2: every requested tool was already in the list — the model
+    // refused a tool it had (corpus 12465: "`shell_exec` no está en el scope
+    // activo" with coding active). Delivering that verbatim is the exact
+    // failure Phase 1 removes; instead re-run the SAME turn with the same
+    // tools plus a one-line system correction. `hallucinated` keeps the
+    // widening path honest in the logs.
+    const hallucinated = missing.length === 0;
+    if (hallucinated && !strongAsk) {
+      // A scope MENTION beside tools it has, not an ask (corpus 11723) —
+      // the reply is content; deliver it.
+      console.log(
+        `[router] scope-miss task=${taskId} weak scope mention, tools in scope — delivering as-is`,
+      );
+      return "deliver_as_is";
+    }
+    // Sticky prior for the thread = this turn's base + the widening (bounded).
+    const stickyGroups = new Set([...spec.baseGroups, ...newGroups]);
+    const runGroups = new Set([...spec.activeGroups, ...newGroups]);
+    // scopeToolsForMessage mutates the Set it is given (W9) — pass a copy.
+    const widened = hallucinated
+      ? [...spec.tools]
+      : scopeToolsPure(
+          spec.detectionText,
+          [],
+          DEFAULT_SCOPE_PATTERNS,
+          options,
+          new Set(runGroups),
+        );
+    console.log(
+      hallucinated
+        ? `[router] scope-miss task=${taskId} tools=[${requestedTools.join(",")}] were already in scope (hallucinated ask) — re-running with a correction note`
+        : `[router] scope-miss task=${taskId} tools=[${missing.join(",")}] → +groups [${[...newGroups].join(",")}] (${widened.length} tools), re-running turn silently`,
+    );
+    previousScopeGroups.set(pending.tk, stickyGroups);
+    previousScopeAt.set(pending.tk, Date.now());
+    let scopeRowId = 0;
+    try {
+      // R3 audit W2: the tuning miners read `message` as the user's text —
+      // record it verbatim (the widened groups ARE the right answer for it),
+      // never with a synthetic prefix.
+      scopeRowId = recordScopeDecision(
+        pending.originalText,
+        [...runGroups],
+        widened,
+      );
+    } catch {
+      /* telemetry never blocks */
+    }
+    // R1 audit C1: on Telegram the ask is already on screen through live
+    // edits — wipe it and hand the same placeholder to the re-run so the
+    // real answer lands in place, streamed.
+    const stream = pending.streamController;
+    stream?.reset("⏳");
+    // W8: the time-context line is rebuilt now, not replayed from the first run.
+    const mxDate = nowMexDate();
+    const mxTime = nowMexTime();
+    const history: ConversationTurn[] = spec.conversationHistory.map(
+      (turn, i) =>
+        i === spec.conversationHistory.length - 1 && turn.role === "user"
+          ? {
+              ...turn,
+              content: `${timeContextLine(mxDate, mxTime)}\n\n${turn.content}`,
+            }
+          : turn,
+    );
+    const correction = hallucinated
+      ? `\n\n## NOTA DEL SISTEMA (reintento automático)\nTu intento anterior de este mismo turno dijo que ${requestedTools.map((t) => "`" + t + "`").join(", ")} no estaba disponible. SÍ está en tu lista de herramientas. Úsala directamente ahora y entrega el resultado; no vuelvas a pedir activación.`
+      : "";
+    const abort = new AbortController();
+    submitTask({
+      title: spec.title,
+      description: spec.buildDescription(widened) + correction,
+      detectionText: spec.detectionText,
+      agentType: "auto",
+      tools: widened,
+      conversationHistory: history,
+      tags: [...spec.tags, "scope-rerun"],
+      threadId: spec.threadId,
+      onTextChunk: stream
+        ? (chunk: string) => stream.appendChunk(chunk)
+        : undefined,
+      abortController: abort,
+    })
+      .then((result) => {
+        if (scopeRowId > 0) {
+          try {
+            linkScopeToTask(scopeRowId, result.taskId);
+          } catch {
+            /* non-fatal */
+          }
+        }
+        const timers = this.armPendingTimers(
+          result.taskId,
+          pending.channel,
+          pending.to,
+          spec.isCodingTask,
+          { rerun: true, stream: stream ?? undefined },
+        );
+        this.pendingReplies.set(result.taskId, {
+          channel: pending.channel,
+          to: pending.to,
+          originalText: pending.originalText,
+          imageUrl: pending.imageUrl,
+          scopeGroups: [...runGroups],
+          tk: pending.tk,
+          ...timers,
+          ...(stream && { streamController: stream }),
+          abortController: abort,
+          rerunOf: taskId,
+        });
+        console.log(
+          `[router] scope-miss re-run of ${taskId} → task ${result.taskId}`,
+        );
+      })
+      .catch((err) => {
+        console.error(`[router] scope-miss re-run submit failed:`, err);
+        const line = scopeMissFallbackLine("error");
+        if (stream) {
+          stream.finalize(line).catch(() => {
+            this.sendToChannel(pending.channel, pending.to, line);
+          });
+        } else {
+          this.sendToChannel(pending.channel, pending.to, line);
+        }
+      });
+    return "rerun";
   }
 
   /**

@@ -165,9 +165,15 @@ describe("conditional prompt sections", () => {
     // model confabulated a "don't ask block" and punted ("hazlo tú manualmente")
     // instead of naming the missing capability so its scope re-activates. The
     // persona must offer the escape-hatch, and the old dead-end must be gone.
+    // 2026-08-23 usability Phase 1.2: the escape-hatch is no longer a
+    // keyword for the user to type — the model names the tool in ONE line
+    // and the router widens scope + re-runs the turn. The persona must say
+    // so, and must forbid asking for "usa X"; the dead-end stays gone.
     const s = identitySection();
-    expect(s).toContain("reactiva su scope");
-    expect(s).toContain("usa shell_exec");
+    expect(s).toContain("Necesito `shell_exec` para esto");
+    expect(s).toContain("reintenta tu turno solo");
+    expect(s).not.toContain('pídemelo con \"usa shell_exec\"');
+    expect(s).not.toContain("reformule con la palabra clave");
     expect(s).not.toContain(
       "No tengo esa herramienta disponible en este momento",
     );
