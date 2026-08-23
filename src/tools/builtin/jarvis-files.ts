@@ -21,6 +21,7 @@ import {
 import type { JarvisFile } from "../../db/jarvis-fs.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
+import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
 import {
   parseLineRanges,
@@ -257,6 +258,8 @@ QUALIFIERS:
 - "reference" — Available via jarvis_file_read (DEFAULT — use this for most files)
 - "workspace" — Scratch space for ongoing work
 
+PROVENANCE: figures (amounts, %, counts, M/B) must come from a tool result of this run or the user's message, or their paragraph/table must carry "fuente: <url|archivo|herramienta>", "calc: <expresión>" or "supuesto: <por qué>". Unsourced figures are REJECTED (the error lists them); a figure from memory stays in chat as "~X (sin verificar)".
+
 AFTER WRITING: Report what you did — path, title, qualifier. If updating an existing file, mention what changed.`,
       parameters: {
         type: "object",
@@ -341,6 +344,15 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       });
     }
 
+    // Usability Phase 3.2: figures written to the KB need provenance.
+    const provenance = checkArtifactProvenance({
+      tool: "jarvis_file_write",
+      artifact: `kb:${path}`,
+      text: content,
+      priorContent: getFile(path)?.content ?? null,
+    });
+    if (!provenance.ok) return provenance.error!;
+
     upsertFile(
       path,
       title,
@@ -381,7 +393,9 @@ export const jarvisFileUpdateTool: Tool = {
 USE WHEN:
 - You need to add new information to an existing file without rewriting it
 - You want to change a file's qualifier or priority
-- You're building up a document incrementally`,
+- You're building up a document incrementally
+
+PROVENANCE: same rule as jarvis_file_write — figures in the appended text must come from a tool result of this run or the user's message, or the paragraph must carry "fuente:" / "calc:" / "supuesto:"; unsourced figures are REJECTED.`,
       parameters: {
         type: "object",
         properties: {
@@ -446,6 +460,12 @@ USE WHEN:
     }
 
     if (append) {
+      const provenance = checkArtifactProvenance({
+        tool: "jarvis_file_update",
+        artifact: `kb:${path}`,
+        text: append,
+      });
+      if (!provenance.ok) return provenance.error!;
       // Read-back freshness reference, taken BEFORE the write (second
       // precision, same clock as SQLite's datetime('now')) so a sub-second
       // boundary can never report the row as older than the claim.
@@ -916,6 +936,21 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
             path,
             status: "error",
             error: "title and content are required strings",
+          });
+          errors++;
+          continue;
+        }
+        const provenance = checkArtifactProvenance({
+          tool: "jarvis_files_batch_write",
+          artifact: `kb:${path}`,
+          text: content,
+          priorContent: getFile(path)?.content ?? null,
+        });
+        if (!provenance.ok) {
+          results.push({
+            path,
+            status: "rejected",
+            error: (JSON.parse(provenance.error!) as { error: string }).error,
           });
           errors++;
           continue;

@@ -209,6 +209,7 @@ import { diagramGenerateTool } from "../builtin/diagram-generate.js";
 import { infographicGenerateTool } from "../builtin/infographic-generate.js";
 import { marketChartRenderTool } from "../builtin/market-chart-render.js";
 import { marketChartPatternsTool } from "../builtin/market-chart-patterns.js";
+import { dataSummarizeTool } from "../builtin/data-summarize.js";
 import { TEACHING_TOOL_OBJECTS } from "../builtin/teaching-tools.js";
 import type { Tool } from "../types.js";
 
@@ -219,6 +220,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   shellTool,
   httpTool,
   fileReadTool,
+  dataSummarizeTool,
   fileWriteTool,
   fileEditTool,
   fileDeleteTool,

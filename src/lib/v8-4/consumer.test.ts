@@ -4,7 +4,7 @@
  * Plus: landing gate declared for sandboxed coding tasks; numbers audit
  * always; parent re-verification; never throws.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import type { RunnerOutput } from "../../runners/types.js";
 import {
@@ -15,9 +15,14 @@ import {
 } from "./consumer.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import { _resetToolEvidence, recordToolEvidence } from "./numbers.js";
+import { _resetCitationCache } from "./citations.js";
 import { _setLandingExecForTests } from "./landing.js";
 
-const ENV_KEYS = ["TASK_GATES_MODE", "TASK_GATES_NUMBERS_ANNOTATE"] as const;
+const ENV_KEYS = [
+  "TASK_GATES_MODE",
+  "TASK_GATES_NUMBERS_ANNOTATE",
+  "CITATION_CHECK",
+] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -254,23 +259,24 @@ describe("applyCompletionLedger — landing gate", () => {
 });
 
 describe("applyCompletionLedger — numbers audit", () => {
-  it("audits the deliverable against recorded tool evidence + task input, records a trace + output field", async () => {
+  it("audits the deliverable against recorded tool evidence + task input, annotates inline, records a trace + output field", async () => {
     recordToolEvidence("t1", '{"count": 1741}');
     const out = await applyCompletionLedger(
       base({
         taskDescription: "Report on the 436 brands",
         result: okResult({
-          text: "1,741 hallazgos en 436 marcas; 99 sin clasificar.",
+          text: "1,741 hallazgos en 436 marcas; 99 registros sin clasificar.",
         }),
       }),
     );
-    expect(out.numbers).toEqual({
+    expect(out.numbers).toMatchObject({
       found: ["1,741", "436", "99"],
       unverified: ["99"],
     });
     expect((out.output as Record<string, unknown>).numbers_audit).toEqual({
       found: 3,
       unverified: ["99"],
+      annotated: 1,
     });
     expect(
       traceNames("t1").find((t) => t.name === "numbers.audited")?.attrs,
@@ -278,36 +284,82 @@ describe("applyCompletionLedger — numbers audit", () => {
       found: 3,
       unverified: 1,
       evidence_chunks: 1,
+      annotated: 1,
     });
+    // Phase 3: the doubt sits where the number is — inline, by default.
     expect((out.output as { text: string }).text).toBe(
-      "1,741 hallazgos en 436 marcas; 99 sin clasificar.",
-    ); // no footer by default
+      "1,741 hallazgos en 436 marcas; 99 registros (sin verificar) sin clasificar.",
+    );
   });
 
-  it("appends the unverified footer only when TASK_GATES_NUMBERS_ANNOTATE=true", async () => {
-    process.env.TASK_GATES_NUMBERS_ANNOTATE = "true";
+  it("TASK_GATES_NUMBERS_ANNOTATE=false disarms the annotation (audit still recorded)", async () => {
+    process.env.TASK_GATES_NUMBERS_ANNOTATE = "false";
     recordToolEvidence("t1", "nothing numeric");
     const out = await applyCompletionLedger(
       base({ result: okResult({ text: "Ingresos: $12,500" }) }),
     );
-    expect((out.output as { text: string }).text).toBe(
-      "Ingresos: $12,500\n\n⚠️ Cifras sin respaldo en las herramientas de esta corrida (no verificadas): $12,500",
+    expect((out.output as { text: string }).text).toBe("Ingresos: $12,500");
+    expect(out.numbers?.unverified).toEqual(["$12,500"]);
+  });
+
+  it("falls back to the footer when the carrier cannot be rewritten in place", async () => {
+    const out = await applyCompletionLedger(
+      base({ result: okResult(JSON.stringify({ text: "Ingresos: $12,500" })) }),
+    );
+    expect(out.output).toBe(
+      '{"text":"Ingresos: $12,500"}\n\n⚠️ Cifras sin respaldo en las herramientas de esta corrida (no verificadas): $12,500',
     );
   });
 
-  it("skips the audit for a non-scheduled task with no tool evidence (nothing to compare against)", async () => {
+  it("audits a chat turn with NO tool evidence — figures from memory are the case (#11265)", async () => {
     const out = await applyCompletionLedger(
-      base({ result: okResult({ text: "88 runs" }) }),
+      base({ result: okResult({ text: "BSX cotiza en $78.40 hoy." }) }),
     );
-    expect(out.numbers).toBeNull();
+    expect(out.numbers?.unverified).toEqual(["$78.40"]);
+    expect((out.output as { text: string }).text).toBe(
+      "BSX cotiza en $78.40 (sin verificar) hoy.",
+    );
     const sched = await applyCompletionLedger(
       base({
         taskId: "t2",
         tags: ["scheduled"],
-        result: okResult({ text: "88 runs" }),
+        result: okResult({ text: "88 registros" }),
       }),
     );
-    expect(sched.numbers).toEqual({ found: ["88"], unverified: ["88"] });
+    expect(sched.numbers).toMatchObject({ found: ["88"], unverified: ["88"] });
+  });
+});
+
+describe("applyCompletionLedger — citations (usability Phase 3.3)", () => {
+  it("drops a positively-missing reference from the deliverable and records a trace; shadow leaves the text", async () => {
+    const fetchMock = vi.fn(async (url: string) => ({
+      status: url.includes("gone") ? 404 : 200,
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const text =
+        "Resumen [1][2].\n\n## Referencias\n[1] https://example.com/ok\n[2] https://example.com/gone";
+      const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+      expect((out.output as { text: string }).text).toBe(
+        "Resumen [1].\n\n## Referencias\n[1] https://example.com/ok\n\n⚠️ Quité 1 referencia que no existe (DOI/URL/Crossref sin registro): «https://example.com/gone».",
+      );
+      expect(
+        traceNames("t1").find((t) => t.name === "citations.checked")?.attrs,
+      ).toMatchObject({ total: 2, resolved: 1, missing: 1, mode: "enforce" });
+
+      process.env.CITATION_CHECK = "shadow";
+      _resetCitationCache();
+      const shadow = await applyCompletionLedger(
+        base({ taskId: "t2", result: okResult({ text }) }),
+      );
+      expect((shadow.output as { text: string }).text).toBe(text);
+      expect(
+        traceNames("t2").find((t) => t.name === "citations.checked")?.attrs,
+      ).toMatchObject({ missing: 1, mode: "shadow" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

@@ -160,6 +160,7 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   // ---- host FS / code / git / VPS (privileged system access) ----
   shell_exec: B, // args-borne fetches are a named residual (see header)
   file_read: B,
+  data_summarize: B, // reads local files under the same read denylist as file_read
   file_write: B,
   file_delete: B,
   file_edit: B,

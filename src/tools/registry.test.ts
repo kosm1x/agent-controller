@@ -382,7 +382,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-06-23: 194 → 195 (X read path — tweet_mentions added).
     // 2026-07-05: 195 → 194 (efficiency-audit Phase 1 — jarvis_init one-shot removed).
     // 2026-07-05: 194 → 191 (hardening sweep — SOCIAL_PUBLISH stub removed: 3 tools).
-    expect(ALL_TOOLS.length).toBe(191);
+    // 2026-08-23: 191 → 192 (usability Phase 3.1 — data_summarize core tool).
+    expect(ALL_TOOLS.length).toBe(192);
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -467,8 +468,14 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "skill invocation contract + arg-validation rules",
     },
     jarvis_file_write: {
-      maxLen: 1989,
-      reason: "KB write policy + tag conventions + path rules",
+      maxLen: 2300,
+      reason:
+        "KB write policy + tag conventions + path rules + provenance rule (usability Phase 3.2)",
+    },
+    gsheets_write: {
+      maxLen: 1700,
+      reason:
+        "2D-array contract + dedup + append/overwrite modes + provenance rule (usability Phase 3.2)",
     },
     jarvis_file_read: {
       maxLen: 1630,
@@ -642,5 +649,119 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
           `\n\nAdd them to a scope group in src/messaging/scope.ts, or list them in CHAT_UNREACHABLE_EXCEPTIONS with a reason.`,
       );
     }
+  });
+});
+
+describe("evidence corpus typing (usability Phase 3 — R1 C4, R2 C-1/C-4, R3 C-4/C-5/C-6 pins)", () => {
+  async function setup() {
+    const { enterRunToolContext } = await import("./rule-of-two.js");
+    const { _resetToolEvidence, takeToolEvidence } = await import(
+      "../lib/v8-4/numbers.js"
+    );
+    _resetToolEvidence();
+    const reg = new ToolRegistry();
+    const add = (name: string, readOnlyHint: boolean, exec: (a: Record<string, unknown>) => string) => {
+      const t = makeTool(name);
+      (t as { readOnlyHint?: boolean }).readOnlyHint = readOnlyHint;
+      t.execute = async (a) => exec(a);
+      reg.register(t);
+    };
+    return { reg, enterRunToolContext, takeToolEvidence };
+  }
+
+  it("evidence is an ALLOW-LIST by what the tool does: shell_exec (readOnlyHint:false) counts, humanize_text (readOnlyHint:true) does not, errors never", async () => {
+    const { reg, enterRunToolContext, takeToolEvidence } = await setup();
+    const add = (name: string, ro: boolean, out: string) => {
+      const t = makeTool(name);
+      (t as { readOnlyHint?: boolean }).readOnlyHint = ro;
+      t.execute = async () => out;
+      reg.register(t);
+    };
+    add("shell_exec", false, '{"stdout":"94 filas procesadas\\n","exit_code":0}');
+    add("humanize_text", true, '{"result":"Procesamos 94 filas de ventas."}');
+    add("memory_search", true, "recuerdo: 9400000 de ingresos");
+    add("market_watchlist_add", false, "added 777777 rows");
+    add("web_read", false, "Error: connection refused to 10.0.94.0 after 9400000 ms");
+    add("file_read", true, '{"error": "ENOENT 9400000"}');
+    await enterRunToolContext("t-ev", async () => {
+      for (const n of ["shell_exec", "humanize_text", "memory_search", "market_watchlist_add", "web_read", "file_read"])
+        await reg.execute(n, {});
+    });
+    expect(takeToolEvidence("t-ev")).toEqual(['{"stdout":"94 filas procesadas\\n","exit_code":0}']);
+  });
+
+  it("a read of an artifact THIS run wrote — by path, parent dir, stem, or created id — is not evidence; a rejected write registers nothing", async () => {
+    const { reg, enterRunToolContext, takeToolEvidence } = await setup();
+    const add = (name: string, out: (a: Record<string, unknown>) => string) => {
+      const t = makeTool(name);
+      (t as { readOnlyHint?: boolean }).readOnlyHint = false;
+      t.execute = async (a) => out(a);
+      reg.register(t);
+    };
+    add("jarvis_file_write", (a) => (a.path === "rejected/x.md" ? '{"error":"Escritura rechazada"}' : '{"success":true}'));
+    add("jarvis_file_read", () => "Ventas: $9,400,000");
+    add("grep", () => "proyectos/notas.md: $9,400,000");
+    add("shell_exec", (a) => (String(a.command).includes("notas") ? "$9,400,000" : "independent 123456"));
+    add("gslides_create", () => '{"presentation_id":"PRES12345678","url":"x"}');
+    add("gslides_read", () => "slide says 7,700,000");
+    await enterRunToolContext("t-lau", async () => {
+      await reg.execute("jarvis_file_write", { path: "proyectos/notas.md", title: "N", content: "Ventas: $9,400,000" });
+      await reg.execute("jarvis_file_read", { path: "proyectos/notas.md" });
+      await reg.execute("grep", { pattern: "Ventas", path: "proyectos" });
+      await reg.execute("shell_exec", { command: "cat $(find . -name 'notas*')" });
+      await reg.execute("shell_exec", { command: "wc -l ventas.csv" });
+      await reg.execute("gslides_create", { title: "Deck" });
+      await reg.execute("gslides_read", { presentation_id: "PRES12345678" });
+      await reg.execute("jarvis_file_write", { path: "rejected/x.md", title: "R", content: "x" });
+      await reg.execute("jarvis_file_read", { path: "rejected/x.md" });
+    });
+    expect(takeToolEvidence("t-lau")).toEqual(["independent 123456", "Ventas: $9,400,000"]);
+  });
+});
+
+describe("writeTargetKeys — every row pinned (R4 audit W4-1)", () => {
+  it("maps each write/create tool to its artifact key(s); short plain words are not keys", async () => {
+    const { writeTargetKeys } = await import("./registry.js");
+    const rows: Array<[string, Record<string, unknown>, string[]]> = [
+      ["jarvis_file_write", { path: "p/a.md" }, ["p/a.md"]],
+      ["jarvis_file_update", { path: "p/a.md" }, ["p/a.md"]],
+      ["file_write", { path: "/tmp/x.csv" }, ["/tmp/x.csv"]],
+      ["file_edit", { path: "/tmp/x.csv" }, ["/tmp/x.csv"]],
+      ["jarvis_file_move", { old_path: "p/a.md", new_path: "q/b.md" }, ["p/a.md", "q/b.md"]],
+      ["jarvis_files_batch_write", { files: [{ path: "p/a.md" }, { path: "p/b.md" }] }, ["p/a.md", "p/b.md"]],
+      ["kb_batch_insert", { entries: [{ path: "kb/x.md" }] }, ["kb/x.md"]],
+      ["kb_ingest_pdf_structured", { namespace: "plan-2027", pdf_path: "/tmp/amn.pdf" }, ["plan-2027", "/tmp/amn.pdf"]],
+      ["gdocs_write", { document_id: "DOC12345678" }, ["DOC12345678"]],
+      ["gdocs_replace", { document_id: "DOC12345678" }, ["DOC12345678"]],
+      ["gsheets_write", { spreadsheet_id: "SHEET1234567" }, ["SHEET1234567"]],
+      ["gdrive_upload", { file_id: "FILE12345678", name: "data" }, ["FILE12345678"]],
+      ["file_convert", { input_path: "/tmp/in.md", output_path: "/tmp/out.pdf" }, ["/tmp/out.pdf"]],
+      ["gdrive_upload", { name: "data" }, []], // a short plain word never poisons reads (W-4)
+      ["jarvis_file_write", { path: "data" }, []], // neither does a short non-path key
+      ["web_read", { url: "https://x" }, []],
+    ];
+    for (const [name, args, want] of rows) {
+      expect(writeTargetKeys(name, args), name).toEqual(want);
+    }
+  });
+
+  it("grep/glob/list_dir with NO path (cwd default) are not evidence once this run wrote something (R4 W4-2)", async () => {
+    const { enterRunToolContext } = await import("./rule-of-two.js");
+    const { _resetToolEvidence, takeToolEvidence } = await import("../lib/v8-4/numbers.js");
+    _resetToolEvidence();
+    const reg = new ToolRegistry();
+    const w = makeTool("jarvis_file_write");
+    w.execute = async () => '{"success":true}';
+    const g = makeTool("grep");
+    g.execute = async () => "proyectos/notas.md:3: 4820 unidades";
+    reg.register(w);
+    reg.register(g);
+    await enterRunToolContext("t-grep", async () => {
+      await reg.execute("grep", { pattern: "x" }); // before any write: evidence
+      await reg.execute("jarvis_file_write", { path: "proyectos/notas.md", title: "n", content: "4820 unidades" });
+      await reg.execute("grep", { pattern: "unidades" }); // defaulted path after a write: not evidence
+      await reg.execute("grep", { pattern: "unidades", path: "/var/log" }); // explicit unrelated path: evidence
+    });
+    expect(takeToolEvidence("t-grep")).toHaveLength(2);
   });
 });

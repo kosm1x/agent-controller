@@ -343,6 +343,10 @@ describe("MessageRouter", () => {
 
       const call = (submitTask as any).mock.calls[0][0];
       expect(call.description).toContain("Jarvis");
+      // Usability Phase 3: the always-on provenance rule is WIRED into the
+      // prompt (R1 audit W7 — the section test alone cannot catch an
+      // unhooked p2.push).
+      expect(call.description).toContain("REGLA CRÍTICA: Cifras con procedencia");
       // User message is now the last turn in conversationHistory, not in description
       expect(call.conversationHistory).toBeDefined();
       const lastTurn =
@@ -570,6 +574,45 @@ describe("MessageRouter", () => {
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }
+    });
+
+    it("usability Phase 3 (R2 W-7): when the harness tail exceeds 800 chars the END is kept — the ledger lines appended last survive, the numbers footer is what gets cut", async () => {
+      dbStatusGet.mockReturnValue({ spawn_type: "user-background", title: "🤖 Agente: sync KB", status: "completed", agent_type: "fast" });
+      try {
+        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: "lanza el agente", timestamp: new Date() });
+        router.startEventListeners();
+        const footer = "⚠️ Cifras sin respaldo en las herramientas de esta corrida (no verificadas): " + Array.from({ length: 120 }, (_, i) => `$${i},000`).join(", ");
+        const ledger = "⚠️ No quedó: KB projects/x.md escrito — no existe tras la escritura\n\nGates: 1/1 met";
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: `Resumen.\n\n${footer}\n\n${ledger}`, duration_ms: 1 },
+        });
+        const text = waAdapter.sentMessages.at(-1)!.text;
+        expect(footer.length + ledger.length).toBeGreaterThan(800);
+        expect(text).toContain("⚠️ No quedó: KB projects/x.md escrito");
+        expect(text).toContain("Gates: 1/1 met");
+        expect(text).toContain("…⚠️ Cifras sin respaldo".slice(0, 1)); // ellipsis marks the cut at the START of the tail
+        expect(text).not.toContain("$0,000, $1,000"); // the head of the footer was cut, not the ledger
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("usability Phase 3 (R1 C3): the user's message joins the numbers-evidence corpus of the submitted task", async () => {
+      const numbers = await import("../lib/v8-4/numbers.js");
+      numbers._resetToolEvidence();
+      vi.mocked(submitTask).mockResolvedValueOnce({
+        taskId: "task-evidence-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "Estoy viendo 975 M de impresiones en el sheet y no 776 M",
+        timestamp: new Date(),
+      });
+      const corpus = numbers.takeToolEvidence("task-evidence-1");
+      expect(corpus[0]).toBe("Estoy viendo 975 M de impresiones en el sheet y no 776 M");
     });
 
     it("usability Phase 1.2: a scope-ask reply is NOT delivered — the turn is re-run with the widened tool list", async () => {

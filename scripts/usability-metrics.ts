@@ -29,6 +29,8 @@ const dbPath = process.env.MC_DB_PATH ?? resolve(process.cwd(), "data/mc.db");
 
 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 const since = `datetime('now', '-${days} days')`;
+// task_trace_events.ts is ISO-8601 with a 'T' — compare against the same shape.
+const sinceIso = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-${days} days')`;
 
 // --- patterns (mirror the review's regexes) --------------------------------
 const SCOPE_ASK_RE =
@@ -201,6 +203,39 @@ for (const heads of byPrefix.values()) {
   }
 }
 
+// --- provenance (usability Phase 3) -----------------------------------------
+// Artifact writes checked by the handler gate, how many were rejected, how
+// many unsourced figures the model ATTEMPTED to write (rejected or not —
+// the plan's exit criterion is this number trending to 0, i.e. the model
+// reaching for the tool before the write; R1 audit W1: the "accepted"
+// variant is 0 by construction under enforce and cannot fail), chat
+// figures annotated inline, and citations dropped. All from task_trace_events.
+const prov = db
+  .prepare(
+    `SELECT
+       COUNT(*) AS checked,
+       SUM(CASE WHEN json_extract(attrs,'$.rejected') = 1 THEN 1 ELSE 0 END) AS rejected,
+       COALESCE(SUM(json_extract(attrs,'$.unsourced')), 0) AS unsourced_attempted
+     FROM task_trace_events
+     WHERE name = 'provenance.checked' AND ts >= ${sinceIso} AND json_extract(attrs,'$.error') IS NULL`,
+  )
+  .get() as { checked: number; rejected: number | null; unsourced_attempted: number };
+const numbersRow = db
+  .prepare(
+    `SELECT COUNT(*) AS audits,
+            SUM(CASE WHEN json_extract(attrs,'$.unverified') > 0 THEN 1 ELSE 0 END) AS with_unverified,
+            COALESCE(SUM(json_extract(attrs,'$.annotated')), 0) AS annotated
+     FROM task_trace_events WHERE name = 'numbers.audited' AND ts >= ${sinceIso}`,
+  )
+  .get() as { audits: number; with_unverified: number | null; annotated: number };
+const citeRow = db
+  .prepare(
+    `SELECT COUNT(*) AS checks, COALESCE(SUM(json_extract(attrs,'$.missing')), 0) AS missing,
+            COALESCE(SUM(json_extract(attrs,'$.unreachable')), 0) AS unreachable
+     FROM task_trace_events WHERE name = 'citations.checked' AND ts >= ${sinceIso} AND json_extract(attrs,'$.error') IS NULL`,
+  )
+  .get() as { checks: number; missing: number; unreachable: number };
+
 // --- output -----------------------------------------------------------------
 const out = {
   window_days: days,
@@ -226,6 +261,13 @@ const out = {
   push_words_per_day: Math.round(wordsPerDay),
   rituals_silenced: silenced,
   ritual_repeats_gt2: repeats,
+  artifact_writes_checked: prov.checked,
+  artifact_writes_rejected: prov.rejected ?? 0,
+  unsourced_figures_attempted: prov.unsourced_attempted,
+  figures_annotated_per_day: Number((numbersRow.annotated / days).toFixed(1)),
+  replies_with_unverified_figures: numbersRow.with_unverified ?? 0,
+  citations_dropped: citeRow.missing,
+  citations_unreachable: citeRow.unreachable,
 };
 
 if (asJson) {
@@ -260,6 +302,12 @@ if (asJson) {
   row("push words / day", out.push_words_per_day, "≤ 700");
   row("rituals silenced (no change)", out.rituals_silenced, "—");
   row("ritual repeats > 2 days", out.ritual_repeats_gt2, "0");
+  console.log("  PROVENANCE");
+  row("artifact writes checked", out.artifact_writes_checked, "—");
+  row("  rejected (unsourced)", out.artifact_writes_rejected, "↓");
+  row("unsourced figures attempted", out.unsourced_figures_attempted, "→ 0");
+  row("figures marked (sin verificar)/day", out.figures_annotated_per_day, "↓");
+  row("citations dropped / unreachable", `${out.citations_dropped} / ${out.citations_unreachable}`, "0 / —");
   console.log(
     "\n  Script baseline, same regexes, 45d to 2026-08-22: friction 7.3% · incantations 25 · scope-asks 15 · harness 17 · English 16 · empty 0 · 10.5 pushes/day · 3,355 words/day · p50 47s · p90 176s\n" +
       "  (The critic review's human-read figures are wider — friction ~17–26%, scope-asks 37 — because they count corrections the regexes do not; compare against the script line.)\n",

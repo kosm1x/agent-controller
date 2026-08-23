@@ -14,6 +14,7 @@ import {
   browserSection,
   researchSection,
   sourceGroundingSection,
+  figuresProvenanceSection,
   confirmationSection,
   toolFirstSection,
   availableSkillsSection,
@@ -381,6 +382,23 @@ describe("cohortSection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// figuresProvenanceSection — usability Phase 3 (2026-08-23)
+// ---------------------------------------------------------------------------
+
+describe("figuresProvenanceSection", () => {
+  it("names the deterministic tools, the inline mark and the artifact tags the harness enforces", () => {
+    const s = figuresProvenanceSection();
+    expect(s).toContain("data_summarize");
+    expect(s).toContain("market_quote");
+    expect(s).toContain("(sin verificar)");
+    expect(s).toContain("fuente:");
+    expect(s).toContain("calc:");
+    expect(s).toContain("supuesto:");
+    // Never teaches the magic-word path (Phase 1 invariant).
+    expect(s).not.toMatch(/usa X|palabra clave/);
+  });
+});
+
 // sourceGroundingSection — citation anti-fabrication rule (2026-07-20 incident)
 // ---------------------------------------------------------------------------
 

@@ -96,6 +96,7 @@ import {
   browserSection,
   researchSection,
   sourceGroundingSection,
+  figuresProvenanceSection,
   availableSkillsSection,
   cohortSection,
 } from "./prompt-sections.js";
@@ -131,6 +132,7 @@ import {
 } from "../lib/deliverable.js";
 import { sanitizeDeliverable } from "./deliverable-filter.js";
 import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
+import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
   detectScopeMiss,
   groupsForTool,
@@ -308,6 +310,7 @@ function buildJarvisSystemPrompt(
   // (the section would otherwise hallucinate calls on stranger-sent data).
   if (flags.hasUserFacts) p2.push(personalDataSection());
   p2.push(correctionMemorySection());
+  p2.push(figuresProvenanceSection());
 
   // P3: Domain-specific (VARIABLE — varies by tool scope)
   if (flags.hasBrowser) p3.push(verificationSection());
@@ -400,6 +403,23 @@ function buildJarvisSystemPrompt(
  *   semantic null/undefined → regex fallback ("regex")
  */
 export type ScopeSource = "semantic" | "inherited" | "regex" | "regex_empty";
+
+/** Phase 3: the user's message + recent user turns join the evidence corpus. */
+export function recordUserEvidence(
+  taskId: string,
+  message: string,
+  history: readonly ConversationTurn[] | undefined,
+): void {
+  try {
+    recordToolEvidence(taskId, message);
+    const userTurns = (history ?? [])
+      .filter((t) => t.role === "user")
+      .slice(-3);
+    for (const t of userTurns) recordToolEvidence(taskId, t.content);
+  } catch {
+    /* evidence is best-effort */
+  }
+}
 
 export function decideActiveGroups(
   semanticGroups: Set<string> | null | undefined,
@@ -1540,6 +1560,7 @@ export class MessageRouter {
           // V8.3 seam origin: operator-initiated → gated tools ledger on this thread.
           threadId: this.operatorThreadKey(msg, tk),
         });
+        recordUserEvidence(result.taskId, taskText, undefined);
 
         const agentNotification = `🤖 Agente lanzado: "${taskText.slice(0, 60)}"\nID: ${result.taskId.slice(0, 8)}\nTe aviso cuando termine. Puedes seguir hablando conmigo.`;
         this.sendToChannel(msg.channel, msg.from, agentNotification);
@@ -2231,6 +2252,13 @@ export class MessageRouter {
       }
     }
 
+    // Usability Phase 3: the user's own words are evidence — a figure the
+    // operator typed ("975 M de impresiones") must never be rejected as
+    // unsourced when written back (R1 audit C3). Current turn + recent
+    // user turns; the task description is the persona prompt, not the
+    // message, so it cannot serve this role.
+    recordUserEvidence(result.taskId, msg.text, conversationHistory);
+
     // Track pending reply
     // Hard abandon: coding tasks get 20min (55 turns × tool calls), others 11min
     const isCodingTask = tools.some((t) =>
@@ -2725,9 +2753,12 @@ export class MessageRouter {
           cut--;
         }
         const rawTail = lines.slice(cut).join("\n").trim();
+        // Keep the END: the ledger block / read-back lines are appended
+        // last, after the numbers footer and the citation note (Phase 3 R2
+        // audit W-7 — a start-anchored cap cut «No quedó» first).
         const tail = rawTail
           ? rawTail.length > 800
-            ? rawTail.slice(0, 800) + "…"
+            ? "…" + rawTail.slice(-800)
             : rawTail
           : undefined;
         const body = lines.slice(0, cut).join("\n").trimEnd();
@@ -3459,6 +3490,7 @@ export class MessageRouter {
             /* non-fatal */
           }
         }
+        recordUserEvidence(result.taskId, spec.detectionText, history);
         const timers = this.armPendingTimers(
           result.taskId,
           pending.channel,

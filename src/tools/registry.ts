@@ -12,7 +12,14 @@ import {
   priorRunTools,
   recordRunTool,
 } from "./rule-of-two.js";
-import { recordToolEvidence } from "../lib/v8-4/numbers.js";
+import {
+  UNRESOLVED_TARGET_TOOL_RE,
+  hasRunWrites,
+  isEvidenceTool,
+  recordRunWrite,
+  recordToolEvidence,
+  targetsRunWrite,
+} from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
@@ -40,6 +47,76 @@ function levenshtein(a: string, b: string): number {
     }
   }
   return dp[n];
+}
+
+/** Artifact keys a WRITE tool call targets (paths / doc / sheet ids), from its args. */
+export function writeTargetKeys(
+  name: string,
+  args: Record<string, unknown>,
+): string[] {
+  // Path-like keys (any length ≥ 3) or opaque ids (≥ 8 chars) — a short
+  // plain word like "data" would poison unrelated reads (R3 audit W-4).
+  const str = (v: unknown): string[] =>
+    typeof v === "string" &&
+    (v.length >= 8 || (v.length >= 3 && /[/.]/.test(v)))
+      ? [v]
+      : [];
+  switch (name) {
+    case "jarvis_file_write":
+    case "jarvis_file_update":
+    case "file_write":
+    case "file_edit":
+      return str(args.path);
+    case "jarvis_file_move":
+      return [...str(args.old_path), ...str(args.new_path)];
+    case "jarvis_files_batch_write":
+      return Array.isArray(args.files)
+        ? (args.files as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
+        : [];
+    case "kb_batch_insert":
+      return Array.isArray(args.entries)
+        ? (args.entries as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
+        : [];
+    case "kb_ingest_pdf_structured":
+      return [...str(args.namespace), ...str(args.pdf_path)];
+    case "gdocs_write":
+    case "gdocs_replace":
+      return str(args.document_id);
+    case "gsheets_write":
+      return str(args.spreadsheet_id);
+    case "gdrive_upload":
+      return str(args.file_id);
+    case "file_convert":
+      return str(args.output_path);
+    default:
+      return [];
+  }
+}
+
+/** Ids a CREATE tool reports in its result (gslides_create, gdrive_create, gtasks_create, wp_publish…). */
+function createdKeys(name: string, result: unknown): string[] {
+  if (
+    !/^(gslides_create|gdrive_create|gtasks_create|wp_publish|wp_create\w*|memory_store|gdrive_upload|file_convert)$/.test(name) ||
+    typeof result !== "string"
+  )
+    return [];
+  try {
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    const out: string[] = [];
+    for (const k of ["id", "file_id", "document_id", "spreadsheet_id", "presentation_id", "post_id", "memory_id", "output_path"]) {
+      const v = parsed[k];
+      if (typeof v === "string" && v.length >= 8) out.push(v);
+      if (typeof v === "number") out.push(String(v));
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Any error-shaped result — `{"error":…}` JSON or a plain "Error:" string. */
+function isErrorResult(result: unknown): boolean {
+  return typeof result !== "string" || /^\s*(\{\s*"error"|Error\b|❌)/.test(result);
 }
 
 export class ToolRegistry {
@@ -273,8 +350,32 @@ export class ToolRegistry {
       // V8.4 numbers-provenance corpus: every tool result of the current run
       // (task id from the run-tool context; no-op outside a run). Digested +
       // capped inside the collector; freed by the dispatcher at completion.
+      // Only READ-class results count as evidence (named allow-list — the
+      // readOnlyHint is a risk annotation and excludes shell_exec), never an
+      // error string, and never a read of an artifact THIS run wrote: a
+      // figure the model wrote and read back must not source its own claim
+      // (usability Phase 3 R1 C4 / R2 C-1, C-4).
       const runTaskId = currentRunTaskId();
-      if (runTaskId) recordToolEvidence(runTaskId, result);
+      if (runTaskId) {
+        const isError = isErrorResult(result);
+        const written = isError
+          ? []
+          : [...writeTargetKeys(name, args), ...createdKeys(name, result)];
+        for (const key of written) recordRunWrite(runTaskId, key);
+        if (
+          written.length === 0 &&
+          isEvidenceTool(name) &&
+          !isError &&
+          !targetsRunWrite(runTaskId, JSON.stringify(args)) &&
+          !(
+            UNRESOLVED_TARGET_TOOL_RE.test(name) &&
+            typeof args.path !== "string" &&
+            hasRunWrites(runTaskId)
+          )
+        ) {
+          recordToolEvidence(runTaskId, result as string);
+        }
+      }
       return result;
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);

@@ -615,6 +615,22 @@ Cuando cites trabajos externos (papers, estudios, artículos, autores, estadíst
 }
 
 /**
+ * Usability plan Phase 3 (2026-08-23) — numbers with provenance. The
+ * structural gates are in the harness (numbers.ts annotates `(sin
+ * verificar)` inline; provenance-gate.ts rejects unsourced figures on
+ * KB/Sheets/Docs writes; data_summarize computes counts). This section tells
+ * the model what those gates will do so it reaches for the tool first
+ * instead of discovering the rejection.
+ */
+export function figuresProvenanceSection(): string {
+  return `## REGLA CRÍTICA: Cifras con procedencia
+- Conteos y estadísticas sobre un archivo o tabla (filas, totales, promedios, "cuántos por estado") se CALCULAN con data_summarize o shell_exec — nunca se estiman leyendo. Un número leído de una vista previa es una estimación.
+- Precios, cotizaciones, market cap y P/E salen de market_quote / market_history. Sin resultado de herramienta, no des un precio: di que necesitas la herramienta (una línea, nombre exacto) o marca la cifra como "~X (sin verificar)".
+- Toda cifra que no venga de una herramienta de ESTA corrida ni del mensaje del usuario sale al chat como "~X (sin verificar)" — el sistema marca sola las que se te pasen.
+- En un archivo del KB, una Sheet o un Doc, cada cifra lleva en su mismo párrafo o fila "fuente: <url|archivo|herramienta>", "calc: <expresión>" o "supuesto: <por qué>"; la escritura se RECHAZA si falta. Las cifras de memoria no se escriben en artefactos.`;
+}
+
+/**
  * v7.6 Spine 5 — Available skills section.
  *
  * Lists first-party skill scaffolding (html-compose suite + svg-diagram

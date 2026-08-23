@@ -39,7 +39,55 @@ export const VALID_GROUPS = new Set([
   "teaching",
   "xpoz",
   "projects",
+  "finance",
 ]);
+
+/**
+ * Usability Phase 3.4 (2026-08-23): the finance tools (market_quote,
+ * market_history, …) had 0 chat uses in 45 days because `finance` was not a
+ * classifier group — market vocabulary landed in `intel` and the model
+ * quoted prices from memory (#11265 BSX). Besides the prompt line, these
+ * deterministic signals union `finance` into any non-empty classification.
+ */
+/**
+ * `$TICKER` (not a shell variable), or a price noun followed by an
+ * upper-case ticker (not a Spanish acronym the operator uses daily: IVA,
+ * SAT, CFDI, CRM, VPS, KB, CTV, API…). Case-sensitive on the ticker so
+ * "precio de la campaña" never fires (R1 audit W10).
+ */
+const NOT_TICKER =
+  "(?!(?:HOME|PATH|PWD|USER|SHELL|DB|ENV|PORT|TMP|IVA|SAT|CFDI|CRM|VPS|KB|CTV|API|URL|PDF|CSV|IA|RFC|CURP|USD|MXN|SQL|SEO|ADS|TV|OTT|CPM|CPC|CPA|ROAS|KPI|OKR|PM|AM|MC|WA|OK)\\b)";
+const FINANCE_TICKER_RE = new RegExp(
+  String.raw`\$${NOT_TICKER}[A-Z]{1,5}\b(?![/_])|\b(?:[Pp]recio|[Cc]otizaci[oó]n|[Vv]aluaci[oó]n|[Mm]arket\s*[Cc]ap|[Cc]apitalizaci[oó]n)\s+(?:de\s+|del\s+|actual\s+de\s+)?(?:la\s+acci[oó]n\s+(?:de\s+)?)?${NOT_TICKER}[A-Z]{2,5}\b|\bP\/E\b`,
+);
+const FINANCE_ASSET_RE =
+  /\b(?:precio|cotizaci[oó]n)\s+(?:de\s+|del\s+)?(?:bitcoin|btc|ethereum|eth|oro|plata|petr[oó]leo|crudo|d[oó]lar)\b/i;
+
+/** Case-sensitive on the ticker so "precio de la campaña" never fires. */
+export function hasStrongFinanceSignal(message: string): boolean {
+  return FINANCE_TICKER_RE.test(message) || FINANCE_ASSET_RE.test(message);
+}
+
+/**
+ * Union deterministic groups into a NON-EMPTY semantic classification
+ * (an empty one falls back to the regex scope, which already knows
+ * finance) — pure: returns a new Set. A destructive turn is never widened
+ * (R1 audit W9).
+ */
+export function withDeterministicGroups(
+  message: string,
+  groups: Set<string>,
+): Set<string> {
+  const out = new Set(groups);
+  if (
+    out.size > 0 &&
+    !out.has("destructive") &&
+    hasStrongFinanceSignal(message)
+  ) {
+    out.add("finance");
+  }
+  return out;
+}
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
 
@@ -55,7 +103,8 @@ GROUPS (return only the ones that apply):
 - schedule: recurring tasks, cron, reports, reminders, automation, programar, cada día/hora
 - wordpress: blog posts, WordPress, livingjoyfully.art, redlightinsider.com, publish to blog. Also fires on bare "WP" shorthand ("en WP", "el WP"), article-anchored integer-referenced posts ("el articulo 546", "el post 123", "la entrada 7"), and ES update-verb forms including subjunctive and accented clitic stems ("actualiza/actualice el articulo", "edita/edítalo el post", "modifica/modifique la entrada", "cambia/cámbialo"). Does NOT fire on generic UI "páginas" (login, 404, dashboard) — those are frontend work, not WP
 - crm: CRM, Azteca, customer management (only when explicitly mentioned)
-- intel: intelligence, signals, market, earthquake, cyber, threats, bitcoin, treasury
+- intel: intelligence alerts and signal digests, earthquake, cyber, threats, treasury (NOT stock/crypto prices or tickers — those are finance)
+- finance: stock / ETF / crypto prices and quotes, tickers ($AAPL, BSX, SPY), "precio de X", "cuánto vale X", "cómo está el mercado", valuación, market cap, P/E, prospecto/perfil de una acción, watchlist, technical indicators (RSI, MACD), macro (VIX, CPI, fed funds). Any request whose answer contains a market price or valuation figure needs finance.
 - video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration
 - social: publish to Instagram/Facebook/TikTok/YouTube, social media posts, redes sociales
 - meta: list tools, capabilities, diagnostics, herramientas disponibles
@@ -126,7 +175,8 @@ export async function classifyScopeGroups(
     );
 
     const raw = (result.content ?? "").trim();
-    const parsed = parseScopeGroups(raw);
+    const parsed0 = parseScopeGroups(raw);
+    const parsed = parsed0 ? withDeterministicGroups(message, parsed0) : parsed0;
     if (parsed === null) {
       // Silent-failure observability: a null here silently downgrades scope
       // to regex fallback (which dropped the research group in the 2026-07-22

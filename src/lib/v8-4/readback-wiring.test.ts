@@ -112,7 +112,7 @@ describe("write tools declare read-back gates inside a run", () => {
     });
     const { gsheetsWriteTool } = await import("../../tools/builtin/google-docs.js");
     await enterRunToolContext("task-sheet", async () => {
-      await gsheetsWriteTool.execute({ spreadsheet_id: "S1", range: "Hoja!A:C", values: [["Margen bruto", "16 MDP", "40%"]] });
+      await gsheetsWriteTool.execute({ spreadsheet_id: "S1", range: "Hoja!A:C", values: [["Margen bruto", "16 MDP", "40%"]], fuente: "https://docs.google.com/spreadsheets/d/S1" });
       await gsheetsWriteTool.execute({ spreadsheet_id: "S1", range: "Hoja!K30:L30", values: [["x".repeat(100), "y"]], append: false });
     });
     const rows = listGates("task-sheet");

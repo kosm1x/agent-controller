@@ -42,7 +42,10 @@ export type TraceEventName =
   | "gates.parent_reverified"
   | "gates.hook_blocked"
   | "gates.hook_released"
-  | "numbers.audited";
+  | "numbers.audited"
+  // Usability Phase 3 (2026-08-23): artifact provenance + citation checks
+  | "provenance.checked"
+  | "citations.checked";
 
 export interface TraceEvent {
   taskId: string;

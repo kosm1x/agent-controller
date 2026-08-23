@@ -6,6 +6,7 @@ import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate } from "../../lib/v8-4/readback.js";
+import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 
 /** Ledger payload hygiene: a written row may carry PII — keep only what the
  *  read-back needs to compare, bounded per cell (R1 audit W10). */
@@ -130,6 +131,8 @@ ROW TARGETING: When updating specific cells, use the "row" number from gsheets_r
 
 WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.
 
+PROVENANCE: numeric cells must be traceable — produced by a tool of this run (gsheets_read, shell_exec, web_read, data_summarize…) or given by the user — else pass \`fuente\` (URL, file, or "tool + query") or put a "fuente:/calc:/supuesto:" cell in the row. Unsourced figures are REJECTED; figures from memory stay in chat as "~X (sin verificar)".
+
 AFTER WRITING: Report the spreadsheet name, range written, and number of rows affected.`,
       parameters: {
         type: "object",
@@ -137,6 +140,11 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
           spreadsheet_id: {
             type: "string",
             description: "Spreadsheet ID",
+          },
+          fuente: {
+            type: "string",
+            description:
+              "Where the figures in `values` come from: a URL, a file path, or '<tool> <query>' (e.g. 'shell_exec wc -l ventas.csv', 'gsheets_read Ventas!A:F'). Required when values contain numbers that no tool of this run produced.",
           },
           range: {
             type: "string",
@@ -214,6 +222,15 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
           : [String(row)],
       );
     }
+
+    // Usability Phase 3.2: figures in a sheet need provenance.
+    const provenance = checkArtifactProvenance({
+      tool: "gsheets_write",
+      artifact: `sheet:${id}|${range}`,
+      cells: values,
+      fuente: args.fuente,
+    });
+    if (!provenance.ok) return provenance.error!;
 
     // If the range targets specific rows (e.g., K6:L6), auto-detect overwrite mode.
     // Append mode ignores row numbers — data goes to the end of the sheet.
@@ -517,6 +534,8 @@ WORKFLOW for long documents:
 1. Write content to a temp file with file_write (e.g., /tmp/doc-content.txt)
 2. Call gdocs_write with document_id and content_file=<that path>
 
+PROVENANCE: figures must be traceable — from a tool result of this run or the user's message, or their paragraph carries "fuente:", "calc:" or "supuesto:", or pass \`fuente\` for the whole append. Unsourced figures are REJECTED; figures from memory stay in chat as "~X (sin verificar)".
+
 AFTER WRITING: Report the document title and what was appended.`,
       parameters: {
         type: "object",
@@ -524,6 +543,11 @@ AFTER WRITING: Report the document title and what was appended.`,
           document_id: {
             type: "string",
             description: "Google Doc ID",
+          },
+          fuente: {
+            type: "string",
+            description:
+              "Where the figures in the text come from (URL, file path, or '<tool> <query>'). Only needed when the text carries numbers that no tool of this run produced and no paragraph names its source.",
           },
           text: {
             type: "string",
@@ -573,6 +597,15 @@ AFTER WRITING: Report the document title and what was appended.`,
           "Either text or content_file is required. For large documents, use content_file.",
       });
     }
+
+    // Usability Phase 3.2: figures in a doc need provenance.
+    const provenance = checkArtifactProvenance({
+      tool: "gdocs_write",
+      artifact: `doc:${docId}`,
+      text,
+      fuente: args.fuente,
+    });
+    if (!provenance.ok) return provenance.error!;
 
     try {
       // First get the doc to find the end index
@@ -647,6 +680,8 @@ DIFFERENCE FROM gdocs_write:
 
 LARGE CONTENT: Pass content_file=<path> instead of inline text.
 
+PROVENANCE: same rule as gdocs_write — figures must be traceable (read-tool result of this run, the user's message, a "fuente:/calc:/supuesto:" in the paragraph, or a checkable \`fuente\` parameter); unsourced figures are REJECTED.
+
 AFTER REPLACING: Report the document title and confirm the content was replaced.`,
       parameters: {
         type: "object",
@@ -654,6 +689,11 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
           document_id: {
             type: "string",
             description: "Google Doc ID",
+          },
+          fuente: {
+            type: "string",
+            description:
+              "Where the figures in the text come from: URL, file path, or '<read tool> <query>'. Needed only when the text carries numbers no tool of this run produced and no paragraph names its source.",
           },
           text: {
             type: "string",
@@ -701,6 +741,16 @@ AFTER REPLACING: Report the document title and confirm the content was replaced.
         error: "text or content_file is required",
       });
     }
+
+    // Usability Phase 3.2: same gate as gdocs_write — the execution-pattern
+    // line steers the model to gdocs_replace, so it cannot be the ungated verb.
+    const provenance = checkArtifactProvenance({
+      tool: "gdocs_replace",
+      artifact: `doc:${docId}`,
+      text,
+      fuente: args.fuente,
+    });
+    if (!provenance.ok) return provenance.error!;
 
     try {
       // Get current doc to find content range

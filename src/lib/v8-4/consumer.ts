@@ -39,8 +39,10 @@ import {
   type GateSpec,
   type LedgerVerdict,
 } from "./gates.js";
+import { checkCitations, citationMode } from "./citations.js";
 import { evaluateLedger, type EvaluateResult } from "./gate-check.js";
 import {
+  annotateUnverified,
   auditNumbers,
   formatUnverifiedFooter,
   numbersAnnotateEnabled,
@@ -104,6 +106,32 @@ const DELIVERABLE_FIELDS = [
   "content",
 ] as const;
 
+/**
+ * Rewrite the deliverable field in place (the one `extractDeliverableText`
+ * picked — same field order). Returns `replaced:false` when the carrier is
+ * a shape we cannot edit without re-deriving it (JSON-encoded string).
+ */
+function replaceDeliverable(
+  output: RunnerOutput["output"],
+  from: string,
+  to: string,
+): { output: RunnerOutput["output"]; replaced: boolean } {
+  if (typeof output === "string") {
+    // extractDeliverableText trims string carriers; compare on the same basis.
+    return output.trim() === from.trim()
+      ? { output: to, replaced: true }
+      : { output, replaced: false };
+  }
+  if (!output || typeof output !== "object") return { output, replaced: false };
+  for (const field of DELIVERABLE_FIELDS) {
+    const cur = output[field];
+    if (typeof cur === "string" && cur === from) {
+      return { output: { ...output, [field]: to }, replaced: true };
+    }
+  }
+  return { output, replaced: false };
+}
+
 function appendToDeliverable(
   output: RunnerOutput["output"],
   suffix: string,
@@ -141,14 +169,31 @@ export async function applyCompletionLedger(
   const deliverable = extractDeliverableText(output) ?? "";
 
   // ── numbers audit (always; free) ─────────────────────────────────────────
+  // Usability Phase 3 (2026-08-23): runs on EVERY deliverable — a turn with
+  // no tool evidence is exactly the "figure from memory" case (#11265 BSX
+  // price quoted with 0 tools) — and the unverified figures are annotated
+  // inline `(sin verificar)` unless TASK_GATES_NUMBERS_ANNOTATE=false.
   let numbers: NumbersAudit | null = null;
   const evidence = takeToolEvidence(taskId);
   try {
-    if (
-      deliverable &&
-      (evidence.length > 0 || args.tags.includes("scheduled"))
-    ) {
+    if (deliverable) {
       numbers = auditNumbers(deliverable, [...evidence, args.taskDescription]);
+      let annotated = 0;
+      if (numbersAnnotateEnabled() && numbers.unverified.length > 0) {
+        const marked = annotateUnverified(deliverable, numbers);
+        const replaced = replaceDeliverable(output, deliverable, marked.text);
+        if (replaced.replaced) {
+          output = replaced.output;
+          annotated = marked.annotated;
+        } else {
+          // Shape we cannot rewrite in place (JSON-encoded string carrier):
+          // the doubt still reaches the reader as a footer.
+          output = appendToDeliverable(
+            output,
+            formatUnverifiedFooter(numbers).trim(),
+          );
+        }
+      }
       emitTraceEvent({
         taskId,
         runId,
@@ -157,6 +202,7 @@ export async function applyCompletionLedger(
           found: numbers.found.length,
           unverified: numbers.unverified.length,
           evidence_chunks: evidence.length,
+          annotated,
         },
       });
       if (output && typeof output === "object") {
@@ -165,14 +211,9 @@ export async function applyCompletionLedger(
           numbers_audit: {
             found: numbers.found.length,
             unverified: numbers.unverified.slice(0, 20),
+            annotated,
           },
         };
-      }
-      if (numbersAnnotateEnabled() && numbers.unverified.length > 0) {
-        output = appendToDeliverable(
-          output,
-          formatUnverifiedFooter(numbers).trim(),
-        );
       }
     }
   } catch (err) {
@@ -180,6 +221,44 @@ export async function applyCompletionLedger(
       taskId,
       runId,
       name: "numbers.audited",
+      attrs: { error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+
+  // ── citation existence (usability Phase 3.3) ─────────────────────────────
+  // Only fires on a references section or a DOI/arXiv id; positively
+  // missing entries are dropped with one note line, unreachable ones kept.
+  try {
+    const cmode = citationMode();
+    const current = extractDeliverableText(output) ?? "";
+    if (cmode !== "off" && current) {
+      const report = await checkCitations(current, { mode: cmode });
+      if (report) {
+        emitTraceEvent({
+          taskId,
+          runId,
+          name: "citations.checked",
+          attrs: {
+            total: report.total,
+            resolved: report.resolved,
+            missing: report.missing,
+            unreachable: report.unreachable,
+            dropped: report.dropped.slice(0, 5),
+            mode: cmode,
+            ms: report.ms,
+          },
+        });
+        if (cmode === "enforce" && report.missing > 0) {
+          const replaced = replaceDeliverable(output, current, report.text);
+          if (replaced.replaced) output = replaced.output;
+        }
+      }
+    }
+  } catch (err) {
+    emitTraceEvent({
+      taskId,
+      runId,
+      name: "citations.checked",
       attrs: { error: err instanceof Error ? err.message : String(err) },
     });
   }

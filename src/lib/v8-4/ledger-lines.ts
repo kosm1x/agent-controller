@@ -17,6 +17,10 @@ export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "⚠️ No quedó:",
   "⏳ Sin releer",
   "Gates:", // the enforce-mode block is ONE line joined with " · "
+  // Usability Phase 3 (numbers.ts / citations.ts) — harness-appended notes.
+  "⚠️ Y ", // "⚠️ Y N cifras más sin respaldo…" (inline-annotation overflow)
+  "⚠️ Cifras sin respaldo",
+  "⚠️ Quité ", // "⚠️ Quité N referencias que no existen…"
 ];
 
 export function isLedgerLine(line: string): boolean {
