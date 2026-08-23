@@ -951,3 +951,11 @@ Third silent casualty of the Phase 0 dep batch (after cron skips + image drift):
 **Watch:** next operator "poema de Rumi" turn must deliver a poem from a PD source or an attributed excerpt and register #28; any future filter 400 must land as `status='failed'` with `statusSource=api_error` — never as a delivered reply. Cheap check: `sqlite3 data/mc.db "SELECT id,status FROM tasks WHERE output LIKE '%content filtering policy%'"` → every row must be `failed`.
 
 **Not done (deliberate):** no retry/fallback on the filter 400 inside `claude-sdk.ts` — the refusal fallback keys on `stop_reason: "refusal"`, which this error does not carry. Revisit only if the filter fires on non-verbatim content; the SOP change should make the case disappear.
+
+## 2026-08-23 — Usability plan Phase 0 SHIPPED; Phase 1 is next
+
+- Plan: `docs/planning/jarvis-usability-plan-2026-08-22.md` (§7 = ship record). Review artifact: https://claude.ai/code/artifact/805801b6-49f5-4493-946d-d4f7e07f0d3d.
+- **NEXT = Phase 1 — kill the magic-word protocol**: sticky thread scope (TTL, short follow-ups inherit), scope-miss detector → widen → silent re-run once, task-phrased approvals answered with «sí» (allow-always: shell-ro, browser, gemini, google-read per ruling 3), token-budget check on the always-on delta. Exit: 7 days with 0 scope-ask replies (`./mc-ctl usability 7`).
+- Watch (week 1): `./mc-ctl usability 7`; `journalctl -u mission-control | grep deliverable-filter`; `ritual_deliveries` rows at 07:00 MX; Química row `active` flips to 0 on its first run (`./mc-ctl schedule-resume cbd14c88` to resume); Morning Sync PASO 4 produces ≤2 evolution lines or nothing.
+- Known residue: the filter leaves pure-English replies untouched (flagged only); the PM fingerprint still sees the model's own 178-vs-198 rejection wording as "changed" — Phase 5's sent-before ledger will compare normalized items, not numbers.
+

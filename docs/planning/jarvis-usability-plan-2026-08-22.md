@@ -2,7 +2,7 @@
 
 **Source:** 12-agent critic swarm over 816 real exchanges (2026-07-08 → 08-22), 205 ritual outputs, 820 chat tasks, benchmarked vs 26 personal agents. Report: https://claude.ai/code/artifact/805801b6-49f5-4493-946d-d4f7e07f0d3d · raw packs: session scratchpad `jarvis-review/swarm-result.json`.
 **Verdict:** 4.7/10 from the user's seat vs a 2026 bar of ~7.5–8. Wins on project memory and strategic pushback; loses on the three things felt daily — doing what it says, saying only what matters, never asking the user to speak its internal language.
-**Status:** PLAN — no code changed. Each phase ships independently; order is by user impact × frequency.
+**Status:** Phase 0 SHIPPED 2026-08-23 (`950514e`, deployed pid 658075; R1 qa-audit folded — see §7). Phases 1–6 open; order is by user impact × frequency.
 
 ---
 
@@ -214,3 +214,14 @@ Phases 0 and 5 are independent of everything; 1 unlocks 2 and 4 (both need stick
 - Every phase: scoped vitest for touched files, full suite via the pre-commit hook, mutation test per gate, one live production check of the exact behaviour that was broken (quoted exchange id from the review as the reproduction).
 - Weekly: `./mc-ctl usability 7` → the §0 table; drift in any KPI reopens the phase.
 - Week 4 and week 8: re-run the critic swarm (same rubric, same shard sizes) and publish the delta next to the 08-22 artifact.
+
+## 7. Phase 0 ship record (2026-08-23)
+
+Shipped in `950514e`: 0.1 deliverable filter (`src/messaging/deliverable-filter.ts`, wired at all four send seams, `{raw:true}` for router-authored diagnostics) · 0.3 ritual delivery policy (`src/rituals/delivery-policy.ts` + `ritual_deliveries` ledger; nightly-close 23:50; pm 07:00 MX; `[PAUSAR-SCHEDULE]` sentinel + `mc-ctl schedule-resume`) · 0.2 manual-run time note · 0.5 Piotr/WhatsApp block conditional on `WHATSAPP_ENABLED` (eval:gate PASS) · 0.4 `./mc-ctl usability [days]`. Schedule prompts updated in `scheduled_tasks` (Química 2-then-pause; Posthumanismo "no muestres el cálculo del día"; Morning Sync PASO 4 = 2-line evolution fold, `file_read` added) — backups in the session scratchpad.
+
+**R1 audit (qa-auditor, replayed 387 real replies + 6 real PM reports) FAILED the first cut; all findings folded:** C1 filename dots ended sentences mid-token → terminator must be followed by whitespace/EOS/uppercase/emoji; C2 a `reserve` constant voided the "≥80 chars must remain" guard → guard measured without the filter's own line; C3 error regexes fired on replies that QUOTED an error → line-anchored + fenced-code exempt; W1 PM gate silenced 0/6 (fingerprint scraped prices/dates; "stale" is in the prompt's own format) → per-field fingerprint, negated mentions excluded; W3 `broadcastToAll` rewrote router alerts → `raw` opt-out; W5–W7 metrics read post-filter text / no double-subtract / plan-exact regexes; W8 background notice keeps the failure line past the 500-char cap.
+
+**Deviations from §2 Phase 0 as written:** (a) the ritual *window guard* is not needed — `checkAndExecuteSchedules` fires only on an in-minute cron match and `scheduleCron` has a 60 s tolerance with no catch-up path; the 17:15 "Son las 8am" case was a manual run, now labelled. (b) "merged at 23:59": the nightly close (23:50) is the single evening message; day-narrative and evolution-log persist but are not broadcast; the evolution summary is folded into Morning Sync (PASO 4), not into the close. (c) The filter does not translate English replies — it strips English narration/preamble when Spanish content follows and flags the rest (`englishLeading`) for the KPI; translation is Phase 1+ work.
+
+**Verify over the first week:** `./mc-ctl usability 7` → harness 0 · English ↓ · pushes/day ≤ 7 (the ritual diet lands fully with Phase 5); `journalctl -u mission-control | grep deliverable-filter` shows what was stripped; PM at 07:00 MX is silenced on an unchanged day (`SELECT * FROM ritual_deliveries`); the Química run at 13:00 MX pauses itself (row `active=0`) on the first run, since 13 repeats already exceed the new limit.
+
