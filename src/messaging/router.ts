@@ -129,6 +129,8 @@ import {
   extractDeliverableText,
   hasDeliverableField,
 } from "../lib/deliverable.js";
+import { sanitizeDeliverable } from "./deliverable-filter.js";
+import { applyRitualDeliveryPolicy } from "../rituals/delivery-policy.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -2248,12 +2250,21 @@ export class MessageRouter {
    * fire-and-forget callers ignore the value unchanged.
    */
   async broadcastToAll(
-    text: string,
+    rawText: string,
     onChannelFailure?: (channelName: ChannelName, err: unknown) => void,
+    opts: { raw?: boolean } = {},
   ): Promise<{ sent: number; failed: number }> {
     let sent = 0;
     let failed = 0;
     const promises: Promise<void>[] = [];
+
+    // Phase 0.1: rituals and scheduled tasks broadcast LLM text through here.
+    // `raw: true` is for ROUTER-AUTHORED diagnostics (schedule failure alerts,
+    // canary, MCP/intel alerts, diff digest) whose text may legitimately quote
+    // an error string the filter would otherwise rewrite (R1 audit W3: a
+    // "FAILED: API Error: 400 Output blocked…" alert lost its cause).
+    const text = opts.raw ? rawText : this.filterForDelivery(rawText, "broadcast");
+    if (!text) return { sent: 0, failed: 0 };
 
     for (const [name, adapter] of this.channels) {
       // Email channels are request/response, not push surfaces — a ritual or
@@ -2308,11 +2319,17 @@ export class MessageRouter {
    * never rejects.
    */
   async sendBriefingToOwner(
-    text: string,
+    rawText: string,
+    opts: { raw?: boolean } = {},
   ): Promise<{ sent: number; failed: number }> {
     let sent = 0;
     let failed = 0;
     const promises: Promise<void>[] = [];
+    // Phase 0.1 (R1 audit R1): the V8.1 brief is LLM text — filtered. Mechanical
+    // senders (ritual-failure notice, Prometheus alert poller, X probe) pass
+    // `raw: true` so their diagnostic strings survive verbatim.
+    const text = opts.raw ? rawText : this.filterForDelivery(rawText, "briefing");
+    if (!text) return { sent: 0, failed: 0 };
     for (const [name, adapter] of this.channels) {
       if (!isOwnerChannel(name, adapter.mode)) continue;
       const to = this.getOwnerAddress(name);
@@ -2423,9 +2440,24 @@ export class MessageRouter {
         resultText = buildRitualDigest(taskId, data.result, resultText);
       }
       if (resultText) {
-        this.broadcastToAll(resultText).catch((err) => {
-          console.error(`[router] Ritual broadcast failed:`, err);
-        });
+        // Phase 0.3 (operator ruling 2, 2026-08-22): evolution-log and
+        // day-narrative stay on disk; pm-daily-rebalance is change-only.
+        // Synchronous on purpose — the decision must not race the test or
+        // the shutdown path. A ledger failure falls back to DELIVER.
+        const decision = applyRitualDeliveryPolicy(
+          ritualId,
+          taskId,
+          resultText,
+        );
+        if (!decision.deliver) {
+          console.log(
+            `[router] ritual ${ritualId} not broadcast (${decision.reason})`,
+          );
+        } else {
+          this.broadcastToAll(resultText).catch((err) => {
+            console.error(`[router] Ritual broadcast failed:`, err);
+          });
+        }
       }
       // F9 audit C2: close the alert-budget loop for budget-aware rituals.
       // Market-morning-scan + market-eod-scan consume from the daily cap; a
@@ -2493,7 +2525,22 @@ export class MessageRouter {
     clearTimeout(pending.abandonTimer);
     this.pendingReplies.delete(taskId);
 
-    const extractedText = this.extractResultText(data.result);
+    // Phase 0.1 (usability plan 2026-08-22): the deliverable filter runs on
+    // the EXTRACTED text so both the streaming finalize and the fresh-send
+    // paths below deliver the same sanitized reply (harness markers, STATUS
+    // lines, leading narration → one Spanish failure line at most).
+    const rawExtracted = this.extractResultText(data.result);
+    const sanitized = rawExtracted ? sanitizeDeliverable(rawExtracted) : null;
+    if (sanitized && sanitized.stripped.length > 0) {
+      console.log(
+        `[router] deliverable-filter task=${taskId} stripped=[${sanitized.stripped.join(",")}]` +
+          (sanitized.failureKind ? ` failure=${sanitized.failureKind}` : "") +
+          (sanitized.englishLeading ? " english_leading" : ""),
+      );
+    } else if (sanitized?.englishLeading) {
+      console.log(`[router] deliverable-filter task=${taskId} english_leading`);
+    }
+    const extractedText = sanitized?.text || null;
     if (extractedText) {
       // Background agent notification: different format
       let isBackground = false;
@@ -2531,10 +2578,15 @@ export class MessageRouter {
           : extractedText;
 
       if (isBackground) {
-        const summary =
-          resultText.length > 500
-            ? resultText.slice(0, 500) + "..."
+        // R1 audit W8: the filter's failure line is the LAST line — cap the
+        // body, never the notice that the turn failed.
+        const tail = sanitized?.failureLine;
+        const body =
+          tail && resultText.endsWith(tail)
+            ? resultText.slice(0, -tail.length).trimEnd()
             : resultText;
+        const capped = body.length > 500 ? body.slice(0, 500) + "..." : body;
+        const summary = tail ? `${capped}\n\n${tail}` : capped;
         const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}\n\n_Escribe "mis agentes" para ver el historial._`;
         // Background-agent notification IS LLM-derived (summary contains LLM
         // output); route through the gate so community-manager mailboxes get
@@ -3071,6 +3123,21 @@ export class MessageRouter {
   }
 
   /**
+   * Phase 0.1 deliverable filter with one log line per altered send. Pure
+   * (src/messaging/deliverable-filter.ts); idempotent, so a text that already
+   * passed on the task-completed path is unchanged here.
+   */
+  private filterForDelivery(rawText: string, seam: string): string {
+    const filtered = sanitizeDeliverable(rawText);
+    if (filtered.stripped.length > 0) {
+      console.log(
+        `[router] deliverable-filter ${seam} stripped=[${filtered.stripped.join(",")}]`,
+      );
+    }
+    return filtered.text;
+  }
+
+  /**
    * Direct sync send. Use for router-generated text (status notifications,
    * orphan-restart messages, etc.) that is safe-by-construction and does NOT
    * need the community-reply write-gate. LLM-generated replies MUST flow
@@ -3114,7 +3181,7 @@ export class MessageRouter {
   private sendLLMReplyToChannel(
     channel: ChannelName,
     to: string,
-    text: string,
+    rawText: string,
   ): void {
     const adapter = this.channels.get(channel);
     if (!adapter) return;
@@ -3122,8 +3189,15 @@ export class MessageRouter {
     // v6.3 W1.5: log AI writing patterns on the ORIGINAL text, before any
     // gate substitution, so observability captures what the LLM produced.
     import("./post-filter.js")
-      .then(({ logAIPatterns }) => logAIPatterns(text, channel))
+      .then(({ logAIPatterns }) => logAIPatterns(rawText, channel))
       .catch(() => {});
+
+    // Phase 0.1: every LLM-derived send passes the deliverable filter. The
+    // task-completed path already sanitized; the filter is idempotent, so
+    // this catches the other callers (needs_context/blocked text, heavy
+    // partials, background-agent notifications) without double effects.
+    const text = this.filterForDelivery(rawText, `send:${channel}`);
+    if (!text) return;
 
     // Positive default-deny: any email channel that is NOT explicitly
     // owner-only gets the gate. Matches applyCommunityChannelScopeOverride's

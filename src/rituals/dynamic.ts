@@ -17,6 +17,7 @@ import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
 import { errMsg } from "../lib/err-msg.js";
+import { PAUSE_SCHEDULE_TAG } from "../messaging/deliverable-filter.js";
 import { getSyncSurfaceScheduleId } from "../lib/v8-2/flags.js";
 import {
   markJudgmentSurfaced,
@@ -319,7 +320,7 @@ export async function executeScheduleNow(
   }
 
   const strategic = maybeStrategicInjection(schedule);
-  const dateContext = buildDateContext(now);
+  const dateContext = buildDateContext(now, true);
   const result = await submitTask({
     title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
     description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
@@ -351,7 +352,7 @@ let pollingJob: ScheduledTask | null = null;
  * This prevents day-of-week calculation bugs (e.g. 2026-06-29 = lunes
  * being miscalculated as domingo).
  */
-function buildDateContext(now: Date): string {
+function buildDateContext(now: Date, manual = false): string {
   const dateLabel = now.toLocaleDateString("en-CA", { timeZone: TIMEZONE }); // YYYY-MM-DD
   const dayName = now.toLocaleDateString("es-MX", {
     timeZone: TIMEZONE,
@@ -363,7 +364,13 @@ function buildDateContext(now: Date): string {
     minute: "2-digit",
     hour12: false,
   }); // HH:MM
-  return `[Hoy: ${dateLabel} (${dayName}), ${timeLabel} CDMX]\n\n`;
+  // Phase 0.2 (usability plan 2026-08-22): a manual "run now" fires outside
+  // the schedule's window — the 2026-08-03 "Son las 8am del lunes" brief went
+  // out at 17:15. Say so, so the prompt's own clock words don't win.
+  const manualNote = manual
+    ? "[Ejecución manual fuera del horario programado — usa la fecha y hora reales de arriba, no las del horario.]\n\n"
+    : "";
+  return `[Hoy: ${dateLabel} (${dayName}), ${timeLabel} CDMX]\n\n${manualNote}`;
 }
 
 /**
@@ -686,7 +693,7 @@ export function handleScheduledTaskResult(
           : ". gmail_send was never called.");
     console.warn(`[schedules] DELIVERY MISS: ${alert}`);
     if (router) {
-      router.broadcastToAll(alert).catch((err) => {
+      router.broadcastToAll(alert, undefined, { raw: true }).catch((err) => {
         console.error(`[schedules] Delivery alert broadcast failed: ${err}`);
       });
     }
@@ -695,6 +702,19 @@ export function handleScheduledTaskResult(
 
   // Delivery verified — mark as completed in audit trail (after delivery check, audit C2)
   updateScheduleRun(taskId, "completed", result?.slice(0, 500));
+
+  // Phase 0.3 (operator ruling 1, 2026-08-22): a schedule whose prompt
+  // decides it has repeated unanswered too often ends its text with
+  // PAUSE_SCHEDULE_TAG. The scheduler deactivates the row here — the model
+  // has no tool for that — and the broadcast below carries the question
+  // (the tag itself is stripped by the deliverable filter). Re-enable:
+  //   ./mc-ctl db "UPDATE scheduled_tasks SET active=1 WHERE schedule_id='<id>'"
+  if (result?.includes(PAUSE_SCHEDULE_TAG)) {
+    const paused = deactivateSchedule(meta.scheduleId);
+    console.warn(
+      `[schedules] "${meta.name}" requested pause (${PAUSE_SCHEDULE_TAG}) — ${paused ? "deactivated" : "already inactive"}`,
+    );
+  }
 
   // Broadcast result via Telegram if needed
   if (
@@ -755,7 +775,7 @@ export function handleScheduledTaskFailure(
 
   const router = getRouter();
   if (router) {
-    router.broadcastToAll(alert).catch((err) => {
+    router.broadcastToAll(alert, undefined, { raw: true }).catch((err) => {
       console.error(`[schedules] Failure alert broadcast failed: ${err}`);
     });
   }

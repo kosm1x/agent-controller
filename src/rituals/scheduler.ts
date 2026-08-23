@@ -160,7 +160,7 @@ export async function notifyRitualFailure(
     (async (text: string) => {
       const router = getRouter();
       if (!router) return { sent: 0, failed: 0 };
-      return router.sendBriefingToOwner(text);
+      return router.sendBriefingToOwner(text, { raw: true });
     });
 
   const text =

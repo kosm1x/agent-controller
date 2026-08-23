@@ -443,9 +443,11 @@ async function main(): Promise<void> {
 
   // Wire MCP alerts + intel alerts to Telegram (after messaging is ready)
   if (router) {
-    mcpSource.setAlertFn((msg: string) => router.broadcastToAll(msg));
+    mcpSource.setAlertFn((msg: string) =>
+      router.broadcastToAll(msg, undefined, { raw: true }),
+    );
     setIntelBroadcast((msg: string) =>
-      router.broadcastToAll(msg).then(() => undefined),
+      router.broadcastToAll(msg, undefined, { raw: true }).then(() => undefined),
     );
     startProactiveScheduler(router);
   }

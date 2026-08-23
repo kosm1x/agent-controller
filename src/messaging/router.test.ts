@@ -93,7 +93,9 @@ vi.mock("../memory/jme.js", () => ({
 
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
-    prepare: () => ({ get: dbStatusGet }),
+    prepare: () => ({ get: dbStatusGet, run: () => ({ changes: 1 }), all: () => [] }),
+    // ritual delivery-policy ledger (ensure table / insert) — no-op in tests
+    exec: () => undefined,
   }),
 }));
 
@@ -504,6 +506,66 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
     });
 
+    it("delivers a sanitized reply when the runner output carries harness markers (usability plan Phase 0.1)", async () => {
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "test markers",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result:
+            "[error_max_turns — Reached maximum number of turns (55)] Partial response below — turn/budget limit hit before completion.\n\n" +
+            "I'll verify the push first.\n\n" +
+            "Commit 8a49b05 listo. Falta el push y verificar en producción (thewilliamsradar.com/w34 debe responder 200).\n\n" +
+            "STATUS: DONE_WITH_CONCERNS — SDK reported error_max_turns; content above is partial",
+          duration_ms: 500,
+        },
+      });
+
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      const delivered = waAdapter.sentMessages[1].text;
+      expect(delivered).not.toContain("[error_max_turns");
+      expect(delivered).not.toContain("STATUS:");
+      expect(delivered).not.toContain("I'll verify");
+      expect(delivered.startsWith("Commit 8a49b05 listo.")).toBe(true);
+      expect(delivered).toContain("Dime «sigue» para continuar.");
+    });
+
+    it("a markers-only result delivers one Spanish failure line, never the raw marker (mutation guard for the filter wiring)", async () => {
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "test markers only",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result:
+            "[timeout after 900s — partial response below]\n\nSTATUS: DONE_WITH_CONCERNS — query hit the 900s hard timeout",
+          duration_ms: 500,
+        },
+      });
+
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toBe(
+        "La tarea se cortó por tiempo antes de producir resultado. ¿La reintento?",
+      );
+    });
+
     it("prefixes a caveat when a promoted heavy task completes with concerns (qa-audit W1)", async () => {
       // Heavy graded-down completions (all goals done, reflection below the
       // gate) are delivered via the completed path as completed_with_concerns
@@ -758,6 +820,39 @@ describe("MessageRouter", () => {
           "Jarvis: No hay pregunta en tu mensaje. ¿Qué necesitas?",
         );
         expect(exchange).not.toContain("[Task failed]");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("usability Phase 0.1: runner text delivered on the needs_context path passes the sendLLMReplyToChannel filter", async () => {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: poema",
+        status: "needs_context",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "poema",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "blocked",
+            result: {
+              text: 'Aquí va el poema:API Error: 400 {"type":"error","error":{"message":"Output blocked by content filtering policy"}}',
+            },
+          },
+        });
+        expect(waAdapter.sentMessages).toHaveLength(2);
+        const text = waAdapter.sentMessages[1].text;
+        expect(text).not.toContain("content filtering");
+        expect(text).toContain("La API devolvió un error 400. ¿Reintento?");
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }
@@ -1304,6 +1399,48 @@ describe("MessageRouter", () => {
 
       expect(waAdapter.sentMessages).toHaveLength(1);
       expect(waAdapter.sentMessages[0].text).toBe("Buenos días, Fede...");
+    });
+
+    it("usability Phase 0.1/0.3: a ritual broadcast is filtered at the broadcastToAll seam (mutation guard)", async () => {
+      router.watchRitualTask("ritual-task-pm", "nightly-close");
+      router.startEventListeners();
+      findHandler("task.completed")!({
+        data: {
+          task_id: "ritual-task-pm",
+          agent_id: "fast",
+          result:
+            "[timeout after 900s — partial response below]\n\n**Cierre del día** 🌙 2026-08-22\n\n**✅ Lo que se movió hoy**\n- Plan de usabilidad aprobado y Phase 0 en marcha.\n\nSTATUS: DONE_WITH_CONCERNS — partial",
+          duration_ms: 5000,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      const text = waAdapter.sentMessages[0].text;
+      expect(text).not.toContain("[timeout after");
+      expect(text).not.toContain("STATUS:");
+      expect(text.startsWith("**Cierre del día**")).toBe(true);
+      expect(text).toContain("¿Sigo desde donde quedó?");
+    });
+
+    it("usability Phase 0.3 (ruling 2): evolution-log and day-narrative are never broadcast", async () => {
+      router.watchRitualTask("ritual-evo", "evolution-log");
+      router.watchRitualTask("ritual-narr", "day-narrative");
+      router.startEventListeners();
+      const h = findHandler("task.completed")!;
+      h({ data: { task_id: "ritual-evo", agent_id: "fast", result: "## 2026-08-22\n\nEvolution entry…", duration_ms: 1 } });
+      h({ data: { task_id: "ritual-narr", agent_id: "fast", result: "Narrativa del día…", duration_ms: 1 } });
+      expect(waAdapter.sentMessages).toHaveLength(0);
+    });
+
+    it("broadcastToAll({raw:true}) delivers router-authored diagnostics verbatim (R1 audit W3)", async () => {
+      const alert =
+        '⚠️ Scheduled task "Williams Journal" FAILED:\n[error_max_turns — Reached maximum number of turns (55)]\nAPI Error: 400 Output blocked by content filtering policy';
+      await router.broadcastToAll(alert, undefined, { raw: true });
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages[0].text).toBe(alert);
+      // …and the same text WITHOUT raw is rewritten — proving the seam filters.
+      waAdapter.sentMessages.length = 0;
+      await router.broadcastToAll(alert);
+      expect(waAdapter.sentMessages[0].text).not.toBe(alert);
     });
 
     // 2026-07-13 operator request: skill-evolution's full report arrived as

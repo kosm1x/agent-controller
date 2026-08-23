@@ -2,7 +2,7 @@
  * Tests for prompt-sections.ts — detectToolFlags and conditional sections.
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import {
   detectToolFlags,
   identitySection,
@@ -403,5 +403,30 @@ describe("sourceGroundingSection", () => {
 
   it("is deterministic (stable for prompt cache)", () => {
     expect(sourceGroundingSection()).toBe(sourceGroundingSection());
+  });
+});
+
+describe("identitySection — WhatsApp dormant (operator ruling 2026-08-22)", () => {
+  const prev = process.env.WHATSAPP_ENABLED;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.WHATSAPP_ENABLED;
+    else process.env.WHATSAPP_ENABLED = prev;
+  });
+
+  it("omits the Piotr/group block and names only Telegram when WhatsApp is not enabled", () => {
+    delete process.env.WHATSAPP_ENABLED;
+    const text = identitySection();
+    expect(text).not.toContain("Grupos de WhatsApp");
+    expect(text).not.toContain("Piotr");
+    expect(text).toContain("Además de Telegram, te pueden escribir por correo");
+    expect(text).toContain("igual que en Telegram.");
+  });
+
+  it("restores the block when the channel is enabled (config flip, not a rebuild)", () => {
+    process.env.WHATSAPP_ENABLED = "true";
+    const text = identitySection();
+    expect(text).toContain("## Grupos de WhatsApp");
+    expect(text).toContain("Tu nombre en WhatsApp es Piotr");
+    expect(text).toContain("Además de WhatsApp y Telegram");
   });
 });

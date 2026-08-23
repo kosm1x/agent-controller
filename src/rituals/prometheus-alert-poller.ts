@@ -281,7 +281,9 @@ async function defaultSend(text: string): Promise<void> {
   // to nobody) — using that would commit the announced-set and lose the alert
   // forever. sendBriefingToOwner returns a {sent,failed} tally; sent===0 means
   // nothing went out, so we throw → state is not committed → retried next tick.
-  const { sent, failed } = await router.sendBriefingToOwner(text);
+  const { sent, failed } = await router.sendBriefingToOwner(text, {
+    raw: true,
+  });
   if (sent === 0) {
     throw new Error(
       `alert not delivered to any operator channel (failed=${failed}) — check WHATSAPP_OWNER_JID / TELEGRAM_OWNER_CHAT_ID`,

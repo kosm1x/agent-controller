@@ -5,6 +5,7 @@
 
 ## Project Knowledge
 
+- [usability-phase0-r1-audit](usability-phase0-r1-audit.md) — deliverable filter + ritual delivery policy (08-23): FAIL, 3 Crit. Score a sanitizer against the CORPUS, not fixtures (40% of 379 real replies altered, 7 mid-token truncations via `index.html`); a `reserve` on both sides of a guard makes it vacuous; a change-only gate suppressed 0/6 real PM reports; sentinel with no producer.
 - [v83-seam-origin-r1-audit](v83-seam-origin-r1-audit.md) — §14 origin label + `shadowBySource` (08-17): PASS W/WARN, 0 Crit. A label whose producer serves EVERY inbound sender is not "operator" (WA group members reach it with the full toolset); both wiring points untested ⇒ deleting one reads 100% background silently; `in` on a bucket table, 3rd recurrence.
 - [v85-opensandbox-adoption-r2-audit](v85-opensandbox-adoption-r2-audit.md) — R1 folds verified (08-16): MERGE-READY W/WARN, 0 Crit. A `grep -c` readout aborts under `set -e` exactly when the count is 0 — the INCOMPLETE branch is unreachable when the guard is GONE; "keep the marker" truncation deletes the memory bound; docker-proxy hairpin lives in INPUT, outside any DOCKER-USER guard.
 - [v85-opensandbox-adoption-r1-audit](v85-opensandbox-adoption-r1-audit.md) — SANDBOX_BACKEND seam + OpenSandbox runtime (08-16): FAIL, 2 Crit. Porting a timeout across runtimes changes its KIND (activity→wall-clock); a DOCKER-USER `-i eth0` rule guards only the EXTERNAL edge, not container→container; `exitCode:null` guarded by `typeof==="number"` fails OPEN.

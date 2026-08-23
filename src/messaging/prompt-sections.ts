@@ -53,7 +53,31 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
 // Sections
 // ---------------------------------------------------------------------------
 
+/**
+ * Operator ruling 2026-08-22 (usability plan §5.6): Piotr lives on Telegram
+ * only; WhatsApp stays dormant for a future deploy (the systemd drop-in
+ * `no-whatsapp.conf` unsets WHATSAPP_ENABLED). The group-persona block is
+ * injected only while the WhatsApp channel is actually enabled — 0 WA
+ * traffic in 45 days made it pure prompt weight. Env is read per call so a
+ * future re-enable is a config flip, not a code change.
+ */
+export function whatsappEnabled(): boolean {
+  return process.env.WHATSAPP_ENABLED === "true";
+}
+
 export function identitySection(): string {
+  // Process-static (env is fixed for the service's lifetime), so the cache
+  // invariant below still holds — the prefix differs between deployments,
+  // never between calls.
+  const wa = whatsappEnabled();
+  const waGroupsSection = wa
+    ? `## Grupos de WhatsApp
+Cuando el mensaje empiece con [Grupo: ..., De: ...], estás en un grupo. Tu nombre en WhatsApp es Piotr. Responde a quien te habla por su nombre/número. Tienes las mismas capacidades que en conversación privada. Si no conoces a quien te escribe, preséntate brevemente.
+
+`
+    : "";
+  const chatSurfaces = wa ? "WhatsApp y Telegram" : "Telegram";
+  const chatSurfacesSlash = wa ? "WhatsApp/Telegram" : "Telegram";
   // IMPORTANT: this block must be STATIC across calls so the Anthropic SDK's
   // prompt cache can hit on it. Anything dynamic (current time, task-specific
   // facts) goes into the user message via `timeContextLine()` or the
@@ -67,6 +91,9 @@ export function identitySection(): string {
   //     reply" paragraph inside community-manager subsection.
   //   - 2026-05-22 (date-bug fix): clarified the "[Hoy: …]" format in the
   //     "Fecha y hora" section to match nowMexDate()'s ISO+weekday output.
+  //   - 2026-08-22 (usability plan Phase 0.5, ruling §5.6): the "Grupos de
+  //     WhatsApp" block and the WhatsApp mentions are conditional on
+  //     WHATSAPP_ENABLED — absent in production (drop-in unsets it).
   // Future additions: append the date here so the next contributor can spot
   // when the prefix changed.
   return `## Identidad — regla absoluta
@@ -74,15 +101,12 @@ NO eres Claude. NO eres Claude.ai. NO eres un asistente genérico de Anthropic. 
 
 Eres Jarvis, el asistente estratégico de Fede (Federico) y su equipo. Habla en español mexicano, conciso y orientado a la acción.
 
-## Grupos de WhatsApp
-Cuando el mensaje empiece con [Grupo: ..., De: ...], estás en un grupo. Tu nombre en WhatsApp es Piotr. Responde a quien te habla por su nombre/número. Tienes las mismas capacidades que en conversación privada. Si no conoces a quien te escribe, preséntate brevemente.
-
-## Correo electrónico
-Además de WhatsApp y Telegram, te pueden escribir por correo, y gestionas varias cuentas (una por proyecto). El mensaje empieza con un encabezado entre corchetes — el "id" de la Cuenta te dice EN CUÁL buzón de proyecto llegó, úsalo para saber de qué proyecto se trata. El correo es asíncrono: NO mandas acuses tipo "trabajando en eso" — respondes UNA sola vez, completa y bien estructurada. Tu reply se manda automáticamente desde esa misma cuenta y en el mismo hilo.
+${waGroupsSection}## Correo electrónico
+Además de ${chatSurfaces}, te pueden escribir por correo, y gestionas varias cuentas (una por proyecto). El mensaje empieza con un encabezado entre corchetes — el "id" de la Cuenta te dice EN CUÁL buzón de proyecto llegó, úsalo para saber de qué proyecto se trata. El correo es asíncrono: NO mandas acuses tipo "trabajando en eso" — respondes UNA sola vez, completa y bien estructurada. Tu reply se manda automáticamente desde esa misma cuenta y en el mismo hilo.
 
 Cada cuenta opera en uno de dos modos, marcado en el encabezado:
 
-- **owner-only** (sin tag "Modo:" en el encabezado, formato [Cuenta: ... | Asunto: ...]). Estás hablando con Fede o su equipo, igual que en WhatsApp/Telegram. Tienes todas tus capacidades, incluyendo las herramientas gmail_* para leer, buscar y enviar correo en otros buzones.
+- **owner-only** (sin tag "Modo:" en el encabezado, formato [Cuenta: ... | Asunto: ...]). Estás hablando con Fede o su equipo, igual que en ${chatSurfacesSlash}. Tienes todas tus capacidades, incluyendo las herramientas gmail_* para leer, buscar y enviar correo en otros buzones.
 
 - **community-manager** (encabezado incluye "Modo: community-manager | De: <remitente>"). Eres el community manager oficial de la organización dueña de ese buzón — el remitente es alguien del público (miembro de la comunidad, donador, proveedor, etc.), NO Fede.
 

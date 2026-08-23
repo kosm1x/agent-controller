@@ -1918,6 +1918,8 @@ usage() {
   echo -e "  ${GREEN}rule-of-two${NC}          V8.5 §5.2 Rule-of-Two audit: tool matrix + trifectas + 30d retrospective (--write → docs/audit)"
   echo -e "  ${GREEN}gates${NC}                V8.4 completion ledger: <task_id> | summary [days] | status-sources [days] | set-ritual <id> <file>"
   echo -e "  ${GREEN}sandboxes${NC}            Sandbox runtime: active backend, OpenSandbox server health, live sandbox-* containers, DOCKER-USER guard"
+  echo -e "  ${GREEN}schedule-resume${NC} <id>  Re-activate a scheduled task paused by the [PAUSAR-SCHEDULE] sentinel"
+  echo -e "  ${GREEN}usability${NC} [days]      Usability KPIs vs the 2026-08-22 critic review (friction, scope-asks, harness strings, pushes/day); --json"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -2976,6 +2978,28 @@ cmd_gates() {
            WHERE task_id = '${id}' AND name LIKE 'gates.%' ORDER BY id;" ;;
   esac
 }
+cmd_schedule_resume() {
+  # mc-ctl schedule-resume <schedule_id prefix> — re-activate a scheduled task
+  # paused by the [PAUSAR-SCHEDULE] sentinel (usability plan Phase 0.3).
+  local prefix="${1:-}"
+  if [ -z "$prefix" ]; then echo "usage: mc-ctl schedule-resume <schedule_id|prefix>"; return 1; fi
+  local n
+  n=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM scheduled_tasks WHERE schedule_id LIKE '${prefix}%'")
+  if [ "$n" != "1" ]; then echo "prefix '${prefix}' matches ${n} schedules — be more specific"; return 1; fi
+  sqlite3 "$DB_PATH" "UPDATE scheduled_tasks SET active = 1 WHERE schedule_id LIKE '${prefix}%'"
+  sqlite3 "$DB_PATH" "SELECT schedule_id, name, cron_expr, active FROM scheduled_tasks WHERE schedule_id LIKE '${prefix}%'"
+  echo "(the poller reloads active rows every minute — no restart needed)"
+}
+
+cmd_usability() {
+  # mc-ctl usability [days] [--json] — the §0 KPI table of
+  # docs/planning/jarvis-usability-plan-2026-08-22.md, read-only over mc.db.
+  # Same measurements the 2026-08-22 critic swarm used (friction, incantations,
+  # scope-asks, harness strings, English-first, empty replies, pushes/day).
+  ( cd "$PROJECT_DIR" && MC_DB_PATH="${DB_PATH}" \
+      npx --no-install tsx scripts/usability-metrics.ts "$@" )
+}
+
 cmd_sandboxes() {
   # mc-ctl sandboxes — sandbox runtime at a glance (docs/planning/opensandbox-adoption.md).
   # Backend flag is read from the LIVE service environment by name only (never values).
@@ -3048,6 +3072,7 @@ case "$cmd" in
 
   schedules)         cmd_schedules ;;
   schedule-delete)   cmd_schedule_delete "${1:-}" ;;
+  schedule-resume)   cmd_schedule_resume "${1:-}" ;;
 
   tools)             cmd_tools ;;
   tool-health)       cmd_tool_health ;;
@@ -3079,6 +3104,7 @@ case "$cmd" in
   rule-of-two)       cmd_rule_of_two "$@" ;;
   gates)             cmd_gates "$@" ;;
   sandboxes)         cmd_sandboxes ;;
+  usability)         cmd_usability "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

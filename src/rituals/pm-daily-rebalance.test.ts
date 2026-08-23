@@ -37,11 +37,12 @@ describe("createPmDailyRebalance", () => {
 });
 
 describe("pm-daily-rebalance ritual config", () => {
-  it("is registered in rituals[] with correct cron + tz", () => {
+  it("is registered in rituals[] at 07:00 MX (usability plan Phase 0.2 — was 06:00 ET = 04:00 MX)", () => {
     const r = rituals.find((x) => x.id === "pm-daily-rebalance");
     expect(r).toBeDefined();
-    expect(r?.cron).toBe("0 6 * * *");
-    expect(r?.timezone).toBe("America/New_York");
+    expect(r?.cron).toBe("0 7 * * *");
+    // No per-ritual override → RITUALS_TIMEZONE (America/Mexico_City).
+    expect(r?.timezone).toBeUndefined();
     expect(r?.enabled).toBe(true);
   });
 

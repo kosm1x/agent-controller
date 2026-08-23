@@ -87,7 +87,9 @@ async function defaultNotify(text: string): Promise<void> {
   const { getRouter } = await import("../../messaging/index.js");
   const router = getRouter();
   if (!router) throw new Error("messaging router unavailable");
-  const { sent, failed } = await router.sendBriefingToOwner(text);
+  const { sent, failed } = await router.sendBriefingToOwner(text, {
+    raw: true,
+  });
   if (sent === 0) {
     throw new Error(
       `X probe alert reached no operator channel (failed=${failed})`,

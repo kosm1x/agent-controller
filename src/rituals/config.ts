@@ -42,8 +42,15 @@ export const rituals: RitualDefinition[] = [
   {
     id: "nightly-close",
     title: "Nightly close",
-    // Production: '0 22 * * *' (10:00 PM daily)
-    cron: "0 22 * * *",
+    // 2026-08-22 (usability plan Phase 0.3, operator ruling 2 "merged at
+    // 23:59"): moved from 22:00 — which fired before the operator's late
+    // sessions and reported them as "día silencioso" — to 23:50, the latest
+    // slot that still runs AFTER day-narrative (23:30) and BEFORE
+    // evolution-log (23:59, which also claims the day's `alreadyRanToday`
+    // label). It is the single evening message: day-narrative and
+    // evolution-log persist but are no longer broadcast
+    // (src/rituals/delivery-policy.ts).
+    cron: "50 23 * * *",
     enabled: true,
   },
   {
@@ -107,13 +114,15 @@ export const rituals: RitualDefinition[] = [
   {
     id: "pm-daily-rebalance",
     title: "PM daily rebalance",
-    // F8.1c — 6:00 AM ET every day INCLUDING weekends. Prediction markets
-    // don't follow the equity calendar; political / sports / breaking-news
-    // events resolve on their own clocks, so weekend rebalance catches
-    // Saturday-Sunday midpoint moves before Monday. No NYSE trading-day
-    // gate applies — explicitly opt-out via the scheduler's gate-list.
-    cron: "0 6 * * *",
+    // F8.1c — every day INCLUDING weekends. Prediction markets don't follow
+    // the equity calendar; political / sports / breaking-news events resolve
+    // on their own clocks, so weekend rebalance catches Saturday-Sunday
+    // midpoint moves before Monday. No NYSE trading-day gate applies —
+    // explicitly opt-out via the scheduler's gate-list.
+    // 2026-08-22 (usability plan Phase 0.2/0.3): 07:00 MX instead of 06:00 ET
+    // (= 04:00 MX — a 4 a.m. push with 0 orders in 22 runs). Delivery is now
+    // change-only (src/rituals/delivery-policy.ts); the run itself is daily.
+    cron: "0 7 * * *",
     enabled: true,
-    timezone: "America/New_York",
   },
 ];

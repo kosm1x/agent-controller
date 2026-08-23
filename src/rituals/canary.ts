@@ -173,7 +173,7 @@ export function scheduleCanary(): void {
           console.warn(`[canary] ${result.alerts.length} alerts triggered`);
           const router = getRouter();
           if (router) {
-            router.broadcastToAll(message).catch((err: Error) => {
+            router.broadcastToAll(message, undefined, { raw: true }).catch((err: Error) => {
               console.error(`[canary] Alert broadcast failed: ${err.message}`);
             });
           }

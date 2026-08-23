@@ -160,7 +160,7 @@ export async function executeDiffDigest(): Promise<{
   }
 
   try {
-    await router.broadcastToAll(html);
+    await router.broadcastToAll(html, undefined, { raw: true });
     return { sent: true, sections };
   } catch (err) {
     console.error("[diff-digest] Failed to send:", err);
