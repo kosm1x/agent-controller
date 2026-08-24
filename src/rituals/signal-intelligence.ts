@@ -15,7 +15,10 @@
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
 
-export function createSignalIntelligence(dateLabel: string): TaskSubmission {
+export function createSignalIntelligence(
+  dateLabel: string,
+  movesBlock = "",
+): TaskSubmission {
   return {
     title: `Signal intelligence — ${dateLabel}`,
     description: `You are Jarvis, Fede's strategic intelligence analyst. Execute the daily signal intelligence scan.
@@ -23,7 +26,7 @@ export function createSignalIntelligence(dateLabel: string): TaskSubmission {
 ## Objective
 
 Scan the web for signals relevant to Fede's active projects and interests.
-Store a structured digest that the morning briefing can reference.
+Store a structured digest that the morning briefing can reference.${movesBlock}
 
 ## Step 0: Check the Intelligence Depot first
 

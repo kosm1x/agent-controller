@@ -18,6 +18,19 @@ import cron, { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
 import { errMsg } from "../lib/err-msg.js";
 import { PAUSE_SCHEDULE_TAG } from "../messaging/deliverable-filter.js";
+import { cronMatchesAt } from "./cron-next.js";
+import { applyRitualDeliveryPolicy } from "./delivery-policy.js";
+import {
+  consumeDeferralIds,
+  deferredBlock,
+  handlesIn,
+  isMorningSync,
+} from "./ritual-controls.js";
+import {
+  ensureSentItemsTable,
+  recordSentItems,
+  sentBeforeBlock,
+} from "./sent-before.js";
 import { getSyncSurfaceScheduleId } from "../lib/v8-2/flags.js";
 import {
   markJudgmentSurfaced,
@@ -227,6 +240,14 @@ export function deleteSchedule(scheduleId: string): boolean {
   return result.changes > 0;
 }
 
+/** `/rituales pausa|reanuda` for DB schedules (Phase 5.5). */
+export function setScheduleActive(scheduleId: string, active: boolean): boolean {
+  const result = getDatabase()
+    .prepare("UPDATE scheduled_tasks SET active = ? WHERE schedule_id = ?")
+    .run(active ? 1 : 0, scheduleId);
+  return result.changes > 0;
+}
+
 export function deactivateSchedule(scheduleId: string): boolean {
   const db = getDatabase();
   const result = db
@@ -297,6 +318,26 @@ export function maybeStrategicInjection(
  * Called after schedule creation so the user gets instant feedback
  * that the report works without waiting for the next cron match.
  */
+/**
+ * Phase 5 prompt blocks: the Morning Sync receives yesterday's deferred
+ * pushes (5.6/5.5); every other schedule receives its own sent-before list
+ * (5.1) — the only lever for email-delivered schedules the seam never sees.
+ * Failures degrade to "" (the schedule runs as before).
+ */
+export function promptExtras(schedule: ScheduledTaskRow): { text: string; deferralIds: number[] } {
+  try {
+    if (isMorningSync(schedule)) {
+      const d = deferredBlock();
+      return { text: d.block, deferralIds: d.ids };
+    }
+    ensureSentItemsTable();
+    return { text: sentBeforeBlock(`schedule:${schedule.schedule_id}`), deferralIds: [] };
+  } catch (err) {
+    console.error(`[schedules] prompt extras failed for "${schedule.name}":`, errMsg(err));
+    return { text: "", deferralIds: [] };
+  }
+}
+
 export async function executeScheduleNow(
   scheduleId: string,
 ): Promise<string | null> {
@@ -321,9 +362,10 @@ export async function executeScheduleNow(
 
   const strategic = maybeStrategicInjection(schedule);
   const dateContext = buildDateContext(now, true);
+  const extras = promptExtras(schedule);
   const result = await submitTask({
     title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-    description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
+    description: `${dateContext}${schedule.description}${extras.text}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
     agentType: "fast",
     tools,
     gates: scheduleGates(schedule),
@@ -333,7 +375,7 @@ export async function executeScheduleNow(
   });
 
   insertScheduleRun(schedule.schedule_id, result.taskId);
-  watchScheduledTask(result.taskId, schedule, 0, strategic);
+  watchScheduledTask(result.taskId, schedule, 0, strategic, true, extras.deferralIds);
   markExecuted(schedule.schedule_id);
   return result.taskId;
 }
@@ -449,9 +491,10 @@ async function checkAndExecuteSchedules(): Promise<void> {
 
       const strategic = maybeStrategicInjection(schedule);
       const dateContext = buildDateContext(now);
+      const extras = promptExtras(schedule);
       const result = await submitTask({
         title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
-        description: `${dateContext}${schedule.description}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
+        description: `${dateContext}${schedule.description}${extras.text}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
         agentType: "fast",
         tools,
         gates: scheduleGates(schedule),
@@ -463,7 +506,7 @@ async function checkAndExecuteSchedules(): Promise<void> {
       // H3: Record execution in audit trail
       insertScheduleRun(schedule.schedule_id, result.taskId);
       // Watch for result to verify delivery and broadcast
-      watchScheduledTask(result.taskId, schedule, 0, strategic);
+      watchScheduledTask(result.taskId, schedule, 0, strategic, false, extras.deferralIds);
     } catch (err) {
       const message = errMsg(err);
       console.error(
@@ -491,86 +534,13 @@ async function checkAndExecuteSchedules(): Promise<void> {
 }
 
 /**
- * Check if a cron expression matches the current time.
- * Uses node-cron's validate + a 1-minute window check.
+ * Check if a cron expression matches the current time (1-minute window, in
+ * the scheduler timezone). The matcher itself lives in cron-next.ts so
+ * `/rituales` can reuse it for next-fire computation.
  */
 function cronMatchesNow(cronExpr: string, now: Date): boolean {
   if (!cron.validate(cronExpr)) return false;
-
-  // Parse cron fields: minute hour dom month dow
-  const parts = cronExpr.trim().split(/\s+/);
-  if (parts.length < 5) return false;
-
-  // Get current time in target timezone
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE,
-    hour: "numeric",
-    minute: "numeric",
-    hour12: false,
-  });
-  const timeParts = formatter.formatToParts(now);
-  const currentHour = parseInt(
-    timeParts.find((p) => p.type === "hour")?.value ?? "0",
-  );
-  const currentMinute = parseInt(
-    timeParts.find((p) => p.type === "minute")?.value ?? "0",
-  );
-
-  const dayFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE,
-    weekday: "short",
-  });
-  const currentDow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(
-    dayFormatter.format(now),
-  );
-
-  const dateFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE,
-    day: "numeric",
-    month: "numeric",
-  });
-  const dateParts = dateFormatter.formatToParts(now);
-  const currentDom = parseInt(
-    dateParts.find((p) => p.type === "day")?.value ?? "1",
-  );
-  const currentMonth = parseInt(
-    dateParts.find((p) => p.type === "month")?.value ?? "1",
-  );
-
-  return (
-    fieldMatches(parts[0], currentMinute, 0, 59) &&
-    fieldMatches(parts[1], currentHour, 0, 23) &&
-    fieldMatches(parts[2], currentDom, 1, 31) &&
-    fieldMatches(parts[3], currentMonth, 1, 12) &&
-    fieldMatches(parts[4], currentDow, 0, 6)
-  );
-}
-
-/** Check if a single cron field matches a value. Supports *, ranges, lists, steps. */
-function fieldMatches(
-  field: string,
-  value: number,
-  min: number,
-  max: number,
-): boolean {
-  if (field === "*") return true;
-
-  for (const part of field.split(",")) {
-    if (part.includes("/")) {
-      const [range, stepStr] = part.split("/");
-      const step = parseInt(stepStr);
-      const start = range === "*" ? min : parseInt(range);
-      for (let i = start; i <= max; i += step) {
-        if (i === value) return true;
-      }
-    } else if (part.includes("-")) {
-      const [startStr, endStr] = part.split("-");
-      if (value >= parseInt(startStr) && value <= parseInt(endStr)) return true;
-    } else {
-      if (parseInt(part) === value) return true;
-    }
-  }
-  return false;
+  return cronMatchesAt(cronExpr, now, TIMEZONE);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +559,10 @@ interface PendingSchedule {
    *  verified delivery. In-memory only — a restart between submit and
    *  completion loses it, which fails SAFE (no stamp, judgment stays eligible). */
   strategic?: StrategicInjection | null;
+  /** Operator-triggered run (`/run`): never muted or budget-deferred. */
+  manual?: boolean;
+  /** Morning Sync only: deferral ids folded into its prompt — consumed on delivery of their handles. */
+  deferralIds?: number[];
 }
 
 const pendingScheduled = new Map<string, PendingSchedule>();
@@ -600,6 +574,8 @@ export function watchScheduledTask(
   schedule: ScheduledTaskRow,
   retryCount = 0,
   strategic: StrategicInjection | null = null,
+  manual = false,
+  deferralIds: number[] = [],
 ): void {
   pendingScheduled.set(taskId, {
     name: schedule.name,
@@ -608,6 +584,8 @@ export function watchScheduledTask(
     scheduleId: schedule.schedule_id,
     retryCount,
     strategic,
+    manual,
+    deferralIds,
   });
 }
 
@@ -633,9 +611,10 @@ async function retryScheduledTask(
   }
 
   const dateContext = buildDateContext(now);
+  const extras = promptExtras(schedule);
   const result = await submitTask({
     title: `[Retry] ${schedule.name} — ${todayLabel}`,
-    description: `${dateContext}${schedule.description}${deliveryInstructions}`,
+    description: `${dateContext}${schedule.description}${extras.text}${deliveryInstructions}`,
     agentType: "fast",
     tools,
     gates: scheduleGates(schedule),
@@ -645,7 +624,7 @@ async function retryScheduledTask(
   });
 
   insertScheduleRun(schedule.schedule_id, result.taskId);
-  watchScheduledTask(result.taskId, schedule, retryCount);
+  watchScheduledTask(result.taskId, schedule, retryCount, null, false, extras.deferralIds);
 }
 
 export function handleScheduledTaskResult(
@@ -716,6 +695,19 @@ export function handleScheduledTaskResult(
     );
   }
 
+  const ritualKey = `schedule:${meta.scheduleId}`;
+
+  // Phase 5.1: an email-only schedule (Pharma) never reaches the broadcast
+  // seam — its items are ledgered here so the next run's prompt lists them.
+  if (meta.delivery === "email" && result) {
+    try {
+      ensureSentItemsTable();
+      recordSentItems(ritualKey, taskId, result);
+    } catch (err) {
+      console.error(`[schedules] sent-before ledger failed for "${meta.name}":`, errMsg(err));
+    }
+  }
+
   // Broadcast result via Telegram if needed
   if (
     (meta.delivery === "telegram" || meta.delivery === "both") &&
@@ -727,10 +719,44 @@ export function handleScheduledTaskResult(
     // stamp is written only when ≥1 channel actually delivered — a resolved
     // broadcast with 0 sends must not claim the operator saw the judgment.
     const strategic = meta.strategic;
-    const outbound = strategic ? `${result}\n\n${strategic.line}` : result;
+    const composed = strategic ? `${result}\n\n${strategic.line}` : result;
+    // Phase 5: scheduled broadcasts go through the same seam as rituals
+    // (sent-before, mute, reading budget). Morning Sync always delivers.
+    const decision = applyRitualDeliveryPolicy(ritualKey, taskId, composed, {
+      displayName: meta.name,
+      scheduleId: meta.scheduleId,
+      emailed: meta.delivery === "both",
+      forced: meta.manual === true,
+    });
+    if (!decision.deliver) {
+      console.log(
+        `[schedules] "${meta.name}" not broadcast (${decision.reason})` +
+          (strategic ? ` — strategic reading NOT stamped: judgment #${strategic.judgmentId}` : ""),
+      );
+      return;
+    }
+    const outbound = decision.text;
+    const folded = meta.deferralIds ?? [];
     router
       .broadcastToAll(outbound)
       .then((tally) => {
+        // Phase 5.6 (R2 W5 / R3 W2): the deferrals folded into this Morning
+        // Sync are consumed only once it was delivered AND only those whose
+        // handle the delivered text actually carries — a dropped fold stays
+        // pending and re-lists tomorrow.
+        if (folded.length > 0 && tally.sent > 0) {
+          try {
+            const echoed = handlesIn(outbound).filter((id) => folded.includes(id));
+            const n = consumeDeferralIds(echoed);
+            const missing = folded.length - echoed.length;
+            console.log(
+              `[schedules] "${meta.name}" delivered — ${n} deferral(s) consumed` +
+                (missing > 0 ? `, ${missing} NOT echoed by the model (still pending)` : ""),
+            );
+          } catch (err) {
+            console.error(`[schedules] consumeDeferrals failed:`, errMsg(err));
+          }
+        }
         if (!strategic) return;
         if (tally.sent > 0) {
           try {

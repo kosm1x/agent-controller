@@ -112,6 +112,18 @@ vi.mock("../memory/jme.js", () => ({
   queryMemory: vi.fn().mockResolvedValue([]),
 }));
 
+// Usability Phase 5.5: the `/rituales` intercept is router plumbing; the
+// command itself (config + DB) is unit-tested in rituals/rituales-command.test.ts.
+const ritualesMocks = vi.hoisted(() => ({
+  handleRitualesCommand: vi.fn((text: string) =>
+    text.includes("pausa") ? "Pausado: Signal intelligence." : "🗓 Rituales (hora MX)\n1. Signal intelligence — diario 06:00",
+  ),
+}));
+vi.mock("../rituals/rituales-command.js", () => ({
+  RITUALES_RE: /^\/?rituales\b/i,
+  handleRitualesCommand: ritualesMocks.handleRitualesCommand,
+}));
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({
@@ -1955,7 +1967,11 @@ describe("MessageRouter", () => {
     // 2026-07-13 operator request: skill-evolution's full report arrived as
     // 5 Telegram chunks — digest rituals broadcast the reflector summary +
     // a mc-ctl pointer instead of the multi-chunk artifact.
-    it("broadcasts a digest (not the full report) for digest rituals", () => {
+    // Usability Phase 5.3 (2026-08-24): skill-evolution is now SUPPRESSED at
+    // the delivery seam (memory bank + `mc-ctl task` keep the report; the
+    // nightly close is the single evening message). The digest builder stays
+    // for any future digest ritual; this pins that nothing is broadcast.
+    it("skill-evolution is not broadcast at all (Phase 5.3)", () => {
       router.watchRitualTask("evo-task-1", "skill-evolution");
       router.startEventListeners();
 
@@ -1972,11 +1988,7 @@ describe("MessageRouter", () => {
         },
       });
 
-      expect(waAdapter.sentMessages).toHaveLength(1);
-      const text = waAdapter.sentMessages[0].text;
-      expect(text).toContain("Resumen corto de la corrida de evolución.");
-      expect(text).toContain("mc-ctl task evo-task-1");
-      expect(text).not.toContain("xxxx");
+      expect(waAdapter.sentMessages).toHaveLength(0);
     });
 
     it("non-digest rituals still broadcast the full deliverable", () => {
@@ -2004,35 +2016,6 @@ describe("MessageRouter", () => {
     });
   });
 
-  describe("buildRitualDigest", () => {
-    it("prefers result.content and appends the task pointer", async () => {
-      const { buildRitualDigest } = await import("./router.js");
-      const out = buildRitualDigest(
-        "abc-123",
-        { content: "Resumen.", finalAnswer: "reporte largo" },
-        "reporte largo",
-      );
-      expect(out).toBe("Resumen.\n\n📄 Reporte completo: mc-ctl task abc-123");
-    });
-
-    it("falls back to the full text when content is absent or empty", async () => {
-      const { buildRitualDigest } = await import("./router.js");
-      expect(buildRitualDigest("t1", { content: "  " }, "cuerpo")).toContain(
-        "cuerpo",
-      );
-      expect(buildRitualDigest("t1", "string result", "cuerpo")).toContain(
-        "cuerpo",
-      );
-    });
-
-    it("truncates bodies longer than the digest cap", async () => {
-      const { buildRitualDigest } = await import("./router.js");
-      const out = buildRitualDigest("t1", { content: "y".repeat(5000) }, "z");
-      expect(out.length).toBeLessThan(1400);
-      expect(out).toContain("…");
-      expect(out).toContain("mc-ctl task t1");
-    });
-  });
 
   describe("no reply for unknown task", () => {
     it("should not send anything for untracked task_id", () => {
@@ -3036,5 +3019,91 @@ describe("R5 audit W3 — checkpoint continuation is operator-only", () => {
     expect(call).toBeDefined();
     expect(call.description).not.toContain("CONTINUACIÓN DE TAREA ANTERIOR");
     expect(call.description).not.toContain("termina el reporte de señales");
+  });
+});
+
+describe("usability Phase 5.5 — /rituales intercept", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    _resetThreadPins();
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("the owner's /rituales is answered from the command module — no task, retained", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "/rituales",
+      timestamp: new Date(),
+    });
+    expect(ritualesMocks.handleRitualesCommand).toHaveBeenCalledWith("/rituales");
+    expect(waAdapter.sentMessages[0].text).toMatch(/^🗓 Rituales/);
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(memoryRetainSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Rituales (hora MX)"),
+      expect.objectContaining({ tags: expect.arrayContaining(["rituales"]) }),
+    );
+  });
+
+  it("'rituales pausa 1' without the slash also works", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "rituales pausa 1",
+      timestamp: new Date(),
+    });
+    expect(waAdapter.sentMessages[0].text).toBe("Pausado: Signal intelligence.");
+    expect(submitTask).not.toHaveBeenCalled();
+  });
+
+  it("a community-email sender's /rituales is NOT a command (falls through to the normal path)", async () => {
+    const emailAdapter = {
+      name: "email:comunidades",
+      mode: "community-manager" as const,
+      sentMessages: [] as OutgoingMessage[],
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockResolvedValue("id"),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    };
+    router.registerChannel(emailAdapter as never);
+    await router.handleInbound({
+      channel: "email:comunidades" as never,
+      from: "alice@example.com",
+      text: "/rituales pausa 1",
+      timestamp: new Date(),
+    });
+    expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
+    expect(submitTask).toHaveBeenCalled();
+  });
+
+  it("a WhatsApp GROUP member's /rituales is NOT a command (R1 audit W6 — the group branch of the owner gate)", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "estrategia@g.us",
+      text: "[Grupo: Estrategia, De: Member]\n/rituales pausa 1",
+      timestamp: new Date(),
+      metadata: { isGroup: true, senderJid: "member@s.whatsapp.net" },
+    });
+    expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
+    expect(waAdapter.sentMessages.some((m) => /Pausado|Rituales/.test(m.text))).toBe(false);
+  });
+
+  it("a non-command ('ritualesco') is not intercepted", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "ritualesco es una palabra",
+      timestamp: new Date(),
+    });
+    expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
   });
 });

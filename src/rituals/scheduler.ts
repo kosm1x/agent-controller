@@ -15,6 +15,8 @@ import { getRouter } from "../messaging/index.js";
 import { getEventBus } from "../lib/event-bus.js";
 import type { ScheduleRunFailedPayload } from "../lib/events/types.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
+import { isRitualPaused } from "./ritual-controls.js";
+import { movesPromptBlock, safeTrackedMoves } from "./signal-moves.js";
 import { createMorningBriefing } from "./morning.js";
 import { composeMorningBriefDriftSection } from "../lib/s3/delivery.js";
 import { createNightlyClose } from "./nightly.js";
@@ -192,8 +194,11 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
   // dedup keys align across DST / day-boundary edges between MX and NY.
   const date = todayLabel(ritual.timezone);
   switch (ritual.id) {
-    case "signal-intelligence":
-      return createSignalIntelligence(date);
+    case "signal-intelligence": {
+      // Phase 5.4: the ≥10 % 24h moves are computed HERE (deterministic, from
+      // the depot) so the model's job is to lead with them, not to notice them.
+      return createSignalIntelligence(date, movesPromptBlock(safeTrackedMoves()));
+    }
     case "morning-briefing": {
       // v7.7 Spine 2 Bundle 2+3: pre-render S3 drift alerts + Sunday aging
       // baseline reminders for inclusion in the brief. Computed at task-
@@ -252,6 +257,12 @@ function alreadyRanToday(ritual: RitualDefinition): boolean {
 }
 
 async function executeRitual(ritual: RitualDefinition): Promise<void> {
+  // Phase 5.5: `/rituales pausa <id>` — the run is skipped entirely (no
+  // tokens), unlike a mute which defers the delivery only.
+  if (isRitualPaused(ritual.id)) {
+    console.log(`[rituals] ${ritual.id}: paused via /rituales, skipping`);
+    return;
+  }
   if (alreadyRanToday(ritual)) {
     console.log(
       `[rituals] ${ritual.id}: already ran today (${todayLabel(ritual.timezone)}), skipping`,

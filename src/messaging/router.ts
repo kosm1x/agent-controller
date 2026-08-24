@@ -145,6 +145,10 @@ import {
   bindTaskConfirmedFigures,
 } from "./thread-pins.js";
 import { applyRitualDeliveryPolicy } from "../rituals/delivery-policy.js";
+import {
+  RITUALES_RE,
+  handleRitualesCommand,
+} from "../rituals/rituales-command.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -238,24 +242,6 @@ export function stripCacheMarker(text: string): string {
  * `mc-ctl task <task_id>` and the mc-operational memory bank (the ritual's
  * `persistResult` writes it deterministically, so the digest loses nothing).
  */
-export const DIGEST_RITUAL_IDS = new Set(["skill-evolution"]);
-
-const RITUAL_DIGEST_MAX_CHARS = 1200;
-
-export function buildRitualDigest(
-  taskId: string,
-  result: unknown,
-  fullText: string,
-): string {
-  const content = (result as { content?: unknown } | null)?.content;
-  let body =
-    typeof content === "string" && content.trim() ? content.trim() : fullText;
-  if (body.length > RITUAL_DIGEST_MAX_CHARS) {
-    body = `${body.slice(0, RITUAL_DIGEST_MAX_CHARS).trimEnd()}…`;
-  }
-  return `${body}\n\n📄 Reporte completo: mc-ctl task ${taskId}`;
-}
-
 /**
  * Build the static (byte-identical across calls) portion of the Jarvis system
  * prompt. The current date/time is deliberately NOT included here — it goes
@@ -1741,6 +1727,43 @@ export class MessageRouter {
     return false;
   }
 
+  /**
+   * `/rituales …` (usability Phase 5.5) — operator-only phone control of the
+   * ritual layer. No LLM, no task: the reply is rendered from config + DB.
+   * Non-operator senders (community mailboxes, group members) fall through —
+   * the command must not be a lever for anyone else.
+   */
+  private interceptRituales(msg: IncomingMessage, tk: string): boolean {
+    const text = msg.text.replace(/^\[Grupo:.*\]\s*\n?/i, "").trim();
+    if (!RITUALES_RE.test(text)) return false;
+    if (this.operatorThreadKey(msg, tk) === undefined) return false;
+    let reply: string;
+    try {
+      reply = handleRitualesCommand(text) ?? "";
+    } catch (err) {
+      console.error(`[rituales] command failed:`, errMsg(err));
+      reply = "No pude leer los rituales ahora mismo. Intenta de nuevo en un momento.";
+    }
+    if (!reply) return false;
+    this.sendToChannel(msg.channel, msg.from, reply);
+    pushToThread(tk, `User: ${msg.text}\nJarvis: ${reply}`);
+    try {
+      getMemoryService()
+        .retain(`User: ${msg.text}\nJarvis: ${reply}`, {
+          bank: "mc-jarvis",
+          tags: [msg.channel, "conversation", "rituales"],
+          async: true,
+          trustTier: 2,
+          source: "router",
+        })
+        .catch(() => {});
+    } catch {
+      /* non-fatal */
+    }
+    console.log(`[rituales] channel=${msg.channel} text="${text.slice(0, 60)}"`);
+    return true;
+  }
+
   /** Task-cancel intent (CANCEL_INTENT_RE) — aborts the active task for this channel. Returns true when handled (stop). */
   private interceptTaskCancel(msg: IncomingMessage, tk: string): boolean {
     // --- v6.2 S2: Task cancellation from Telegram ---
@@ -2455,6 +2478,7 @@ export class MessageRouter {
     if (this.interceptAgentList(msg)) return;
     if (this.interceptAgentCancel(msg)) return;
     if (this.interceptTaskCancel(msg, tk)) return;
+    if (this.interceptRituales(msg, tk)) return;
     if (await this.interceptPendingConfirmation(msg, tk)) return;
     if (await this.interceptBriefingVerdict(msg, tk)) return;
     const feedbackTaskId = this.recordFeedbackWindowSignal(msg, tk);
@@ -2676,10 +2700,7 @@ export class MessageRouter {
     const ritualId = this.ritualWatches.get(taskId);
     if (ritualId) {
       this.ritualWatches.delete(taskId);
-      let resultText = this.extractResultText(data.result);
-      if (resultText && DIGEST_RITUAL_IDS.has(ritualId)) {
-        resultText = buildRitualDigest(taskId, data.result, resultText);
-      }
+      const resultText = this.extractResultText(data.result);
       if (resultText) {
         // Phase 0.3 (operator ruling 2, 2026-08-22): evolution-log and
         // day-narrative stay on disk; pm-daily-rebalance is change-only.
@@ -2695,7 +2716,8 @@ export class MessageRouter {
             `[router] ritual ${ritualId} not broadcast (${decision.reason})`,
           );
         } else {
-          this.broadcastToAll(resultText).catch((err) => {
+          // Phase 5: the seam may have filtered / capped / lead-lined the text.
+          this.broadcastToAll(decision.text).catch((err) => {
             console.error(`[router] Ritual broadcast failed:`, err);
           });
         }

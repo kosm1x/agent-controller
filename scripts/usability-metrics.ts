@@ -162,29 +162,64 @@ const pushes = db
   )
   .all() as { title: string; created_at: string; reply: string | null }[];
 
+// Phase 5: the ledger records EVERY ritual + scheduled decision with reason,
+// words and MX day. Silences (unchanged / no_new_items) and deferrals (budget /
+// muted → next Morning Sync) are subtracted from the task-row push count; the
+// delivered word total comes from the ledger when it has the column.
 let silenced = 0;
+let deferred = 0;
+let ledgerWords: number | null = null;
+let ledgerPushes: number | null = null;
+/** SQLite `datetime('now')` shape of the window start, for coverage checks against MIN(created_at). */
+const sinceStamp = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 19).replace("T", " ");
 try {
   const row = db
     .prepare(
-      `SELECT COUNT(*) AS n FROM ritual_deliveries
-       WHERE delivered = 0 AND reason = 'unchanged' AND created_at > ${since}`,
+      `SELECT
+         SUM(CASE WHEN delivered = 0 AND reason IN ('unchanged','no_new_items') THEN 1 ELSE 0 END) AS silenced,
+         SUM(CASE WHEN delivered = 0 AND reason IN ('budget','muted') THEN 1 ELSE 0 END) AS deferred
+       FROM ritual_deliveries WHERE created_at > ${since}`,
     )
-    .get() as { n: number };
-  silenced = row.n;
+    .get() as { silenced: number | null; deferred: number | null };
+  silenced = row.silenced ?? 0;
+  deferred = row.deferred ?? 0;
+  // Ledger words only when the ledger COVERS the whole window (R1 audit W3:
+  // one post-deploy day ÷ 7 understated the KPI ~86 %); otherwise the task
+  // rows' word count stands, as before Phase 5.
+  const w = db
+    .prepare(
+      `SELECT SUM(words) AS w, COUNT(*) AS n, MIN(created_at) AS first FROM ritual_deliveries
+       WHERE delivered = 1 AND words IS NOT NULL`,
+    )
+    .get() as { w: number | null; n: number; first: string | null };
+  if (w.n > 0 && w.first !== null && w.first <= sinceStamp) {
+    // Ledger-covered window: pushes AND words come from the ledger — every
+    // Telegram push (rituals + schedules) has a row, email-only schedules do
+    // not (R2 audit W2: the task-row count charged Pharma's email as a push).
+    const inWindow = db
+      .prepare(
+        `SELECT SUM(words) AS w, COUNT(*) AS n FROM ritual_deliveries
+         WHERE delivered = 1 AND words IS NOT NULL AND created_at > ${since}`,
+      )
+      .get() as { w: number | null; n: number };
+    ledgerWords = inWindow.w ?? 0;
+    ledgerPushes = inWindow.n;
+  }
 } catch {
   /* table appears with the first post-deploy ritual */
 }
 // Suppressed-by-title rituals are removed here; `silenced` above counts only
-// change-only silences, so the two never overlap (R1 audit W6).
-const suppressedTitles = /^(?:Evolution log|Day log narrative)/;
+// change-only / no-new-items silences, so the two never overlap (R1 audit W6).
+const suppressedTitles = /^(?:Evolution log|Day log narrative|Skill evolution)/;
 const delivered = pushes.filter((p) => !suppressedTitles.test(p.title));
 const pushWords = delivered.reduce(
   (acc, p) => acc + (p.reply ?? "").split(/\s+/).filter(Boolean).length,
   0,
 );
 const effectiveDays = Math.max(1, days);
-const pushesPerDay = Math.max(0, delivered.length - silenced) / effectiveDays;
-const wordsPerDay = pushWords / effectiveDays;
+const pushesPerDay =
+  (ledgerPushes ?? Math.max(0, delivered.length - silenced - deferred)) / effectiveDays;
+const wordsPerDay = (ledgerWords ?? pushWords) / effectiveDays;
 
 // repeats: same scheduled title prefix delivered > 2 consecutive days with the
 // same first 120 chars of reply (coarse; the exact topic check lives in the plan)
@@ -201,6 +236,29 @@ for (const heads of byPrefix.values()) {
     run = heads[i] === heads[i - 1] && heads[i] ? run + 1 : 1;
     if (run === 3) repeats++;
   }
+}
+// Phase 5 (R3 audit W3): once the sent-before ledger covers the window, a
+// repeat is an ITEM delivered on ≥3 distinct days — the granularity every
+// Phase-5 mechanism acts on (the task-row heuristic above cannot move).
+let ledgerCovered = ledgerPushes !== null;
+try {
+  const first = db
+    .prepare("SELECT MIN(created_at) AS first FROM ritual_sent_items")
+    .get() as { first: string | null };
+  if (first.first !== null && first.first <= sinceStamp) {
+    const r = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM (
+           SELECT item_key FROM ritual_sent_items WHERE created_at > ${since}
+           GROUP BY ritual_id, item_key HAVING COUNT(DISTINCT substr(created_at, 1, 10)) >= 3)`,
+      )
+      .get() as { n: number };
+    repeats = r.n;
+  } else {
+    ledgerCovered = false;
+  }
+} catch {
+  /* table appears with the first post-deploy ritual */
 }
 
 // --- provenance (usability Phase 3) -----------------------------------------
@@ -292,6 +350,8 @@ const out = {
   pushes_per_day: Number(pushesPerDay.toFixed(1)),
   push_words_per_day: Math.round(wordsPerDay),
   rituals_silenced: silenced,
+  rituals_deferred: deferred,
+  ledger_covered: ledgerCovered,
   ritual_repeats_gt2: repeats,
   artifact_writes_checked: prov.checked,
   artifact_writes_rejected: prov.rejected ?? 0,
@@ -337,7 +397,13 @@ if (asJson) {
   row("pushes / day", out.pushes_per_day, "≤ 4");
   row("push words / day", out.push_words_per_day, "≤ 700");
   row("rituals silenced (no change)", out.rituals_silenced, "—");
+  row("rituals deferred → Morning Sync", out.rituals_deferred, "—");
   row("ritual repeats > 2 days", out.ritual_repeats_gt2, "0");
+  if (!out.ledger_covered) {
+    console.log(
+      `    (Phase 5 ledger does not cover ${days} d yet — pushes/words/repeats above are the pre-Phase-5 task-row estimate; use a shorter window)`,
+    );
+  }
   console.log("  PROVENANCE");
   row("artifact writes checked", out.artifact_writes_checked, "—");
   row("  rejected (unsourced)", out.artifact_writes_rejected, "↓");

@@ -27,6 +27,13 @@ vi.mock("node-cron", () => ({
   schedule: mockSchedule,
 }));
 
+// Usability Phase 5.5: `/rituales pausa` — a paused ritual is skipped BEFORE
+// submitTask (no tokens).
+const mockIsRitualPaused = vi.hoisted(() => vi.fn(() => false));
+vi.mock("./ritual-controls.js", () => ({
+  isRitualPaused: mockIsRitualPaused,
+}));
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({ prepare: mockPrepare }),
 }));
@@ -668,5 +675,32 @@ describe("selectStaleContainersForPrune", () => {
     ].join("\n");
     const out = selectStaleContainersForPrune(lines, now);
     expect(out).toEqual([]);
+  });
+});
+
+describe("usability Phase 5.5 — paused rituals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsRitualPaused.mockReturnValue(false);
+  });
+  afterEach(() => {
+    stopRitualScheduler();
+  });
+
+  it("a paused ritual never reaches submitTask; unpausing restores it", async () => {
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+    mockIsRitualPaused.mockImplementation((id: string) => id === "signal-intelligence");
+    startRitualScheduler();
+    const { rituals } = await import("./config.js");
+    const idx = rituals
+      .filter((r) => (r.id === "overnight-tuning" ? false : r.enabled))
+      .findIndex((r) => r.id === "signal-intelligence");
+    const callback = mockSchedule.mock.calls[idx][1] as () => Promise<void>;
+    await callback();
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+
+    mockIsRitualPaused.mockReturnValue(false);
+    await callback();
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
   });
 });
