@@ -99,6 +99,10 @@ vi.mock("../intelligence/scope-telemetry.js", () => ({
 }));
 
 // Checkpoint: spied on by Test B.
+vi.mock("../inference/claude-sdk.js", () => ({
+  queryClaudeSdk: vi.fn(),
+}));
+
 vi.mock("./checkpoint.js", () => ({
   writeCheckpoint: vi.fn(),
 }));
@@ -147,6 +151,8 @@ vi.mock("../messaging/confirmation-verbs.js", () => ({
 import { fastRunner } from "./fast-runner.js";
 import { inferWithTools } from "../inference/adapter.js";
 import { writeCheckpoint } from "./checkpoint.js";
+import { queryClaudeSdk } from "../inference/claude-sdk.js";
+import { getConfig } from "../config.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
@@ -702,5 +708,420 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       // x's and fail this assertion.
       expect(retryMsg).not.toContain("x".repeat(151));
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Phase 4.3 — auto-recovery before delivery (usability plan)
+// ────────────────────────────────────────────────────────────────────
+describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
+  it("resumes ONCE and delivers the completed second leg (no checkpoint)", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Voy a la mitad…",
+        exitReason: "max_rounds",
+        roundsCompleted: 12,
+        totalUsage: { prompt_tokens: 10_000, completion_tokens: 500 },
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "STATUS: DONE\nTerminado.",
+        exitReason: "done",
+        roundsCompleted: 3,
+        totalUsage: { prompt_tokens: 4_000, completion_tokens: 200 },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-resume",
+      runId: "run-resume",
+      title: "Tarea larga",
+      description: "Haz una tarea larga con varios pasos",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE");
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    // The resume leg carries the continuation nudge as its last message.
+    const resumeMessages = mockInferWithTools.mock.calls[1][0];
+    const lastMsg = resumeMessages[resumeMessages.length - 1];
+    expect(lastMsg.role).toBe("user");
+    expect(String(lastMsg.content)).toContain("CONTINÚA AUTOMÁTICO");
+    // Usage sums both legs.
+    expect(result.tokenUsage?.promptTokens).toBe(14_000);
+    expect(result.tokenUsage?.completionTokens).toBe(700);
+    // Completed second leg → no checkpoint, no ¿Sigo?
+    expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+    expect(result.output?.text).not.toContain("¿Sigo?");
+  });
+
+  it("double cap: delivers partial + ¿Sigo? and writes ONE checkpoint with summed rounds", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Parte 1…",
+        exitReason: "max_rounds",
+        roundsCompleted: 12,
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Parte 2, sigo sin terminar…",
+        exitReason: "max_rounds",
+        roundsCompleted: 12,
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-double-cap",
+      runId: "run-double-cap",
+      title: "Tarea interminable",
+      description: "Haz una tarea muy larga",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.output?.text).toContain("¿Sigo?");
+    expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
+    const cp = mockWriteCheckpoint.mock.calls[0][0];
+    expect(cp.exitReason).toBe("max_rounds");
+    expect(cp.roundsCompleted).toBe(24);
+  });
+
+  it("a failed resume leg still delivers the first-leg partial", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Avance parcial real.",
+        exitReason: "token_budget",
+        roundsCompleted: 8,
+      }),
+    );
+    mockInferWithTools.mockRejectedValueOnce(new Error("provider down"));
+
+    const result = await fastRunner.execute({
+      taskId: "task-resume-fail",
+      runId: "run-resume-fail",
+      title: "Tarea",
+      description: "Haz algo largo",
+    });
+
+    expect(result.output?.text).toContain("Avance parcial real.");
+    expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Phase 4.3 auth-failure retry", () => {
+  it("retries once on a 401-class failure and delivers the clean second leg", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content:
+          "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]",
+        exitReason: "provider_failure",
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nListo." }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-auth",
+      runId: "run-auth",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(true);
+    expect(result.output?.text).not.toContain("401");
+  });
+
+  it("still-failing auth escalates in Spanish — never delivers the raw 401", async () => {
+    const authFail = makeInferResult({
+      content:
+        "[error_during_execution — API Error: 401 authentication_error: OAuth token has been revoked]",
+      exitReason: "provider_failure",
+    });
+    mockInferWithTools.mockResolvedValueOnce(authFail);
+    mockInferWithTools.mockResolvedValueOnce(authFail);
+
+    const result = await fastRunner.execute({
+      taskId: "task-auth-2",
+      runId: "run-auth-2",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.output?.text).toContain("rotar el token");
+    expect(result.output?.text).not.toContain("authentication_error");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Phase 4.3 on the PRODUCTION (claude-sdk) path — R1 audit C1: the first
+// cut only existed on the openai branch. These tests run the real SDK
+// branch (getConfig → claude-sdk) with only queryClaudeSdk itself mocked.
+// ────────────────────────────────────────────────────────────────────
+const mockQuerySdk = vi.mocked(queryClaudeSdk);
+const mockGetConfig = vi.mocked(getConfig);
+
+const SDK_CONFIG = {
+  inferencePrimaryProvider: "claude-sdk",
+  inferencePrimaryUrl: "http://localhost:9999",
+  inferencePrimaryKey: "test-key",
+  inferencePrimaryModel: "test-model",
+  inferenceContextLimit: 200_000,
+  compressionThreshold: 0.85,
+  inferenceTimeoutMs: 30_000,
+  inferenceMaxTokens: 4096,
+  inferenceMaxRetries: 3,
+} as ReturnType<typeof getConfig>;
+
+function makeSdkResult(
+  overrides: Partial<{
+    text: string;
+    toolCalls: string[];
+    numTurns: number;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+    };
+    costUsd: number;
+  }> = {},
+) {
+  return {
+    text: "STATUS: DONE\nListo.",
+    toolCalls: [] as string[],
+    numTurns: 3,
+    usage: {
+      promptTokens: 1000,
+      completionTokens: 100,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    },
+    model: "claude-sonnet-4-6",
+    costUsd: 0.01,
+    costAuthoritative: true,
+    durationMs: 500,
+    ...overrides,
+  };
+}
+
+describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+  });
+
+  it("auto-resumes ONCE after a cap marker and delivers the finished second leg", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_max_turns — max turns reached] Parte 1 del análisis…\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported error_max_turns; content above is partial and the task did not formally complete.",
+        toolCalls: ["shell_exec"],
+        numTurns: 24,
+        usage: {
+          promptTokens: 10_000,
+          completionTokens: 400,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "STATUS: DONE\nAnálisis terminado.",
+        toolCalls: ["jarvis_file_write"],
+        numTurns: 5,
+        usage: {
+          promptTokens: 4_000,
+          completionTokens: 150,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "sdk-resume",
+      runId: "run-sdk-resume",
+      title: "Analiza el corpus",
+      description: "Analiza el corpus completo y guarda el reporte",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    const resumeArgs = mockQuerySdk.mock.calls[1][0];
+    expect(resumeArgs.prompt).toContain("CONTINÚA AUTOMÁTICO");
+    expect(resumeArgs.prompt).toContain("Parte 1 del análisis");
+    // R2 audit C2: the resume prompt NAMES the tools that already ran.
+    expect(resumeArgs.prompt).toContain("Herramientas YA ejecutadas");
+    expect(resumeArgs.prompt).toContain("shell_exec");
+    // W4: the resume leg is bounded to half the rounds.
+    expect(resumeArgs.maxTurns).toBeLessThan(24);
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE");
+    // Usage sums both legs; tool calls union both legs.
+    expect(result.tokenUsage?.promptTokens).toBe(14_000);
+    expect(result.toolCalls).toEqual(
+      expect.arrayContaining(["shell_exec", "jarvis_file_write"]),
+    );
+    expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("double cap → partial + ¿Sigo? + a checkpoint on the SDK path", async () => {
+    const capped = (part: string) =>
+      makeSdkResult({
+        text: `[error_max_turns — max turns reached] ${part}\n\nSTATUS: DONE_WITH_CONCERNS — partial.`,
+        numTurns: 24,
+      });
+    mockQuerySdk.mockResolvedValueOnce(capped("Parte 1…"));
+    mockQuerySdk.mockResolvedValueOnce(capped("Parte 2…"));
+
+    const result = await fastRunner.execute({
+      taskId: "sdk-double-cap",
+      runId: "run-sdk-double-cap",
+      title: "Tarea interminable",
+      description: "Haz la tarea interminable",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(result.output?.text).toContain("¿Sigo?");
+    expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockWriteCheckpoint.mock.calls[0][0].roundsCompleted).toBe(48);
+  });
+
+  it("a BLOCKED confirmation prompt WITHOUT a cap marker never triggers a resume", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "STATUS: BLOCKED\n¿Confirmas que borre los 3 archivos del KB? Esta acción es destructiva y necesito tu confirmación explícita antes de proceder con la eliminación.",
+      }),
+    );
+    await fastRunner.execute({
+      taskId: "sdk-blocked",
+      runId: "run-sdk-blocked",
+      title: "Borra archivos",
+      description: "Borra los archivos viejos",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+  });
+
+  it("auth-class failure retries once and delivers the clean second leg", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nListo." }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth",
+      runId: "run-sdk-auth",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(true);
+    expect(result.output?.text).not.toContain("401");
+  });
+
+  it("still-failing auth escalates in Spanish, never the raw 401", async () => {
+    const authFail = () =>
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has been revoked]\n\nSTATUS: BLOCKED — provider error.",
+      });
+    mockQuerySdk.mockResolvedValueOnce(authFail());
+    mockQuerySdk.mockResolvedValueOnce(authFail());
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth-2",
+      runId: "run-sdk-auth-2",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.output?.text).toContain("rotar el token");
+    expect(result.output?.text).not.toContain("authentication_error");
+  });
+
+  it("R2 C2: leg-1's streamed work survives when leg-2 returns only a thin closer", async () => {
+    const longBody = "Análisis del corpus: " + "hallazgo relevante. ".repeat(20);
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: `[error_max_turns — max turns reached] Partial response below — turn/budget limit hit before completion.\n\n${longBody}\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported error_max_turns; content above is partial and the task did not formally complete.`,
+        numTurns: 24,
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Listo.\n\nSTATUS: DONE" }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-thin-closer",
+      runId: "run-sdk-thin-closer",
+      title: "Analiza",
+      description: "Analiza el corpus",
+    });
+    expect(result.output?.text).toContain("hallazgo relevante");
+  });
+
+  it("R2 W4: a [timeout leg does NOT auto-resume (router already abandoned the reply)", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[timeout after 900000ms — partial output preserved]\nAvance…",
+      }),
+    );
+    await fastRunner.execute({
+      taskId: "sdk-timeout",
+      runId: "run-sdk-timeout",
+      title: "Tarea",
+      description: "Haz algo largo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+  });
+
+  it("a task ABOUT a 401 (no SDK error marker) keeps its content — no retry, no escalation", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "Tu API devuelve 401 porque el header Authorization va vacío — revisa el token del cliente.\n\nSTATUS: DONE",
+      }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-about-401",
+      runId: "run-sdk-about-401",
+      title: "Debug API",
+      description: "Explica por qué mi API devuelve 401",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(result.output?.text).toContain("Authorization");
+  });
+});
+
+describe("R4 audit W1 — a thrown resume still counts as THE recovery leg", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+  });
+
+  it("cap + resume-throw + 401-in-partial fires exactly 2 legs, never 3", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_max_turns — API Error: 401 authentication_error mid-run] Parte 1…\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+        numTurns: 24,
+      }),
+    );
+    mockQuerySdk.mockRejectedValueOnce(new Error("provider down"));
+    // If the auth gate re-fired, a third queued value would be consumed:
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nno debería ejecutarse" }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "sdk-three-leg",
+      runId: "run-sdk-three-leg",
+      title: "Tarea",
+      description: "Haz algo largo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(result.output?.text).toContain("Parte 1");
   });
 });

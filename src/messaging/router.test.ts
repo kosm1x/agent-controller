@@ -18,6 +18,7 @@ vi.mock("../dispatch/dispatcher.js", () => ({
     agentType: "fast",
     classification: { score: 1, reason: "test", explicit: false },
   }),
+  cancelTask: vi.fn(() => true),
 }));
 
 vi.mock("../lib/event-bus.js", () => ({
@@ -54,6 +55,26 @@ vi.mock("../memory/outcome-tag.js", () => ({
 // short-circuit in handleTaskCompleted/Failed. Default returns undefined
 // (legacy path); tests can override to return {status:"cancelled"}.
 const dbStatusGet = vi.fn().mockReturnValue(undefined);
+// Phase 4 / R5-W3: checkpoint module mocked so continuation tests control
+// what findRecentCheckpoint returns without a live DB.
+vi.mock("../runners/checkpoint.js", () => ({
+  findRecentCheckpoint: vi.fn(() => ({
+    taskId: "cp-task-1",
+    title: "Chat: tarea previa",
+    userMessage: "termina el reporte de señales",
+    toolsCalled: ["shell_exec"],
+    scopeGroups: [],
+    exitReason: "max_rounds",
+    roundsCompleted: 24,
+    maxRounds: 24,
+    summary: "parcial",
+    createdAt: new Date().toISOString(),
+  })),
+  clearCheckpoint: vi.fn(),
+  writeCheckpoint: vi.fn(),
+  pruneExpiredCheckpoints: vi.fn(() => 0),
+}));
+
 vi.mock("./community-reply-gate.js", () => ({
   gateCommunityReply: vi.fn(),
   COMMUNITY_REPLY_FALLBACK: "FALLBACK_TEXT_FOR_TEST",
@@ -93,7 +114,11 @@ vi.mock("../memory/jme.js", () => ({
 
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
-    prepare: () => ({ get: dbStatusGet, run: () => ({ changes: 1 }), all: () => [] }),
+    prepare: () => ({
+      get: dbStatusGet,
+      run: () => ({ changes: 1 }),
+      all: () => [],
+    }),
     // ritual delivery-policy ledger (ensure table / insert) — no-op in tests
     exec: () => undefined,
   }),
@@ -104,7 +129,15 @@ import {
   threadKey,
   isOwnerChannel,
   isPoisonedExchange,
+  threadImageLive,
+  _testSeedThread,
 } from "./router.js";
+import {
+  pinFromExchange,
+  getPins,
+  getTaskConfirmedFigures,
+  _resetThreadPins,
+} from "./thread-pins.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import type {
   ChannelAdapter,
@@ -346,7 +379,9 @@ describe("MessageRouter", () => {
       // Usability Phase 3: the always-on provenance rule is WIRED into the
       // prompt (R1 audit W7 — the section test alone cannot catch an
       // unhooked p2.push).
-      expect(call.description).toContain("REGLA CRÍTICA: Cifras con procedencia");
+      expect(call.description).toContain(
+        "REGLA CRÍTICA: Cifras con procedencia",
+      );
       // User message is now the last turn in conversationHistory, not in description
       expect(call.conversationHistory).toBeDefined();
       const lastTurn =
@@ -553,9 +588,19 @@ describe("MessageRouter", () => {
     });
 
     it("usability Phase 2 (R3 audit C1): a background-agent notice keeps EVERY ledger line past the 500-char cap — including the ones appended last", async () => {
-      dbStatusGet.mockReturnValue({ spawn_type: "user-background", title: "🤖 Agente: sync KB", status: "completed", agent_type: "fast" });
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: sync KB",
+        status: "completed",
+        agent_type: "fast",
+      });
       try {
-        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: "lanza el agente", timestamp: new Date() });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza el agente",
+          timestamp: new Date(),
+        });
         router.startEventListeners();
         const body = "Resumen del agente. " + "x".repeat(700);
         const ledger =
@@ -563,7 +608,12 @@ describe("MessageRouter", () => {
           "⏳ Sin releer (no alcancé a verificar): KB projects/y.md escrito\n\n" +
           "Gates: 1/1 met";
         findHandler("task.completed")!({
-          data: { task_id: "test-task-123", agent_id: "fast", result: `${body}\n\n${ledger}`, duration_ms: 1 },
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: `${body}\n\n${ledger}`,
+            duration_ms: 1,
+          },
         });
         const text = waAdapter.sentMessages.at(-1)!.text;
         expect(text).toContain("Agente terminó");
@@ -577,14 +627,32 @@ describe("MessageRouter", () => {
     });
 
     it("usability Phase 3 (R2 W-7): when the harness tail exceeds 800 chars the END is kept — the ledger lines appended last survive, the numbers footer is what gets cut", async () => {
-      dbStatusGet.mockReturnValue({ spawn_type: "user-background", title: "🤖 Agente: sync KB", status: "completed", agent_type: "fast" });
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: sync KB",
+        status: "completed",
+        agent_type: "fast",
+      });
       try {
-        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: "lanza el agente", timestamp: new Date() });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza el agente",
+          timestamp: new Date(),
+        });
         router.startEventListeners();
-        const footer = "⚠️ Cifras sin respaldo en las herramientas de esta corrida (no verificadas): " + Array.from({ length: 120 }, (_, i) => `$${i},000`).join(", ");
-        const ledger = "⚠️ No quedó: KB projects/x.md escrito — no existe tras la escritura\n\nGates: 1/1 met";
+        const footer =
+          "⚠️ Cifras sin respaldo en las herramientas de esta corrida (no verificadas): " +
+          Array.from({ length: 120 }, (_, i) => `$${i},000`).join(", ");
+        const ledger =
+          "⚠️ No quedó: KB projects/x.md escrito — no existe tras la escritura\n\nGates: 1/1 met";
         findHandler("task.completed")!({
-          data: { task_id: "test-task-123", agent_id: "fast", result: `Resumen.\n\n${footer}\n\n${ledger}`, duration_ms: 1 },
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: `Resumen.\n\n${footer}\n\n${ledger}`,
+            duration_ms: 1,
+          },
         });
         const text = waAdapter.sentMessages.at(-1)!.text;
         expect(footer.length + ledger.length).toBeGreaterThan(800);
@@ -612,7 +680,9 @@ describe("MessageRouter", () => {
         timestamp: new Date(),
       });
       const corpus = numbers.takeToolEvidence("task-evidence-1");
-      expect(corpus[0]).toBe("Estoy viendo 975 M de impresiones en el sheet y no 776 M");
+      expect(corpus[0]).toBe(
+        "Estoy viendo 975 M de impresiones en el sheet y no 776 M",
+      );
     });
 
     it("usability Phase 1.2: a scope-ask reply is NOT delivered — the turn is re-run with the widened tool list", async () => {
@@ -673,7 +743,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "test-task-rerun",
           agent_id: "fast",
-          result: "Publicado: thewilliamsradar.com/w34 responde 200 OK. Commit 8a49b05 en origin/main.",
+          result:
+            "Publicado: thewilliamsradar.com/w34 responde 200 OK. Commit 8a49b05 en origin/main.",
           duration_ms: 500,
         },
       });
@@ -690,10 +761,12 @@ describe("MessageRouter", () => {
           sendMessage: vi.fn().mockResolvedValue({ message_id: 777 }),
           editMessageText: vi
             .fn()
-            .mockImplementation(async (_chat: string, messageId: number, text: string) => {
-              edits.push({ messageId, text });
-              return true;
-            }),
+            .mockImplementation(
+              async (_chat: string, messageId: number, text: string) => {
+                edits.push({ messageId, text });
+                return true;
+              },
+            ),
         },
       };
       const tgAdapter = Object.assign(createMockAdapter("telegram"), {
@@ -717,7 +790,9 @@ describe("MessageRouter", () => {
       const firstCall = mocked.mock.calls.at(-1)![0] as {
         onTextChunk?: (c: string) => void;
       };
-      firstCall.onTextChunk?.("`tweet_post` no está en el scope activo. Pídeme con \"usa tweet_post\".");
+      firstCall.onTextChunk?.(
+        '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
+      );
       vi.advanceTimersByTime(2000);
       expect(edits.at(-1)?.text).toContain("tweet_post");
 
@@ -730,7 +805,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "tg-task-1",
           agent_id: "fast",
-          result: "`tweet_post` no está en el scope activo. Pídeme con \"usa tweet_post\".",
+          result:
+            '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
           duration_ms: 500,
         },
       });
@@ -767,9 +843,13 @@ describe("MessageRouter", () => {
       // The ask WAS on screen before the reset (that is the C1 defect)…
       const resetIdx = edits.findIndex((e) => e.text === "⏳");
       expect(resetIdx).toBeGreaterThan(0);
-      expect(edits.slice(0, resetIdx).some((e) => e.text.includes("usa tweet_post"))).toBe(true);
+      expect(
+        edits.slice(0, resetIdx).some((e) => e.text.includes("usa tweet_post")),
+      ).toBe(true);
       // …and never again after it.
-      expect(edits.slice(resetIdx).some((e) => e.text.includes("usa tweet_post"))).toBe(false);
+      expect(
+        edits.slice(resetIdx).some((e) => e.text.includes("usa tweet_post")),
+      ).toBe(false);
     });
 
     it("usability Phase 1.2 (R2 audit C2): a hallucinated ask — tool already in scope — is re-run with a correction note, never delivered (corpus 12465)", async () => {
@@ -792,7 +872,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "test-task-123",
           agent_id: "fast",
-          result: "`jarvis_file_read` no está en el scope activo. Necesito que me lo actives con \"usa jarvis_file_read\".",
+          result:
+            '`jarvis_file_read` no está en el scope activo. Necesito que me lo actives con "usa jarvis_file_read".',
           duration_ms: 1,
         },
       });
@@ -800,7 +881,11 @@ describe("MessageRouter", () => {
       await Promise.resolve();
       // Not delivered; re-run with the SAME tool list + a system correction.
       expect(waAdapter.sentMessages).toHaveLength(1);
-      const rerun = mocked.mock.calls.at(-1)![0] as { tools: string[]; tags: string[]; description: string };
+      const rerun = mocked.mock.calls.at(-1)![0] as {
+        tools: string[];
+        tags: string[];
+        description: string;
+      };
       expect(rerun.tags).toContain("scope-rerun");
       expect(rerun.tools.sort()).toEqual([...first.tools].sort());
       expect(rerun.description).toContain("NOTA DEL SISTEMA");
@@ -820,7 +905,12 @@ describe("MessageRouter", () => {
       const reply =
         "El PDF es imagen-only y no tengo OCR ni visión directa en este scope.\n\nLo que sí puedo hacer: leer el Slides original con `jarvis_file_read`. ¿Prefieres eso?";
       findHandler("task.completed")!({
-        data: { task_id: "test-task-123", agent_id: "fast", result: reply, duration_ms: 1 },
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: reply,
+          duration_ms: 1,
+        },
       });
       expect(mocked.mock.calls.length).toBe(calls);
       expect(waAdapter.sentMessages).toHaveLength(2);
@@ -853,7 +943,10 @@ describe("MessageRouter", () => {
       });
       await Promise.resolve();
       await Promise.resolve();
-      const rerun = mocked.mock.calls.at(-1)![0] as { tools: string[]; tags: string[] };
+      const rerun = mocked.mock.calls.at(-1)![0] as {
+        tools: string[];
+        tags: string[];
+      };
       expect(rerun.tags).toContain("scope-rerun");
       expect(rerun.tools).toContain("shell_exec");
       // `chart_generate` / `rss_read` live in meta (160 tools) but not in
@@ -878,7 +971,12 @@ describe("MessageRouter", () => {
         classification: { score: 1, reason: "test", explicit: false },
       });
       findHandler("task.completed")!({
-        data: { task_id: "test-task-123", agent_id: "fast", result: "Necesito `tweet_post` para publicar.", duration_ms: 1 },
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: "Necesito `tweet_post` para publicar.",
+          duration_ms: 1,
+        },
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -886,7 +984,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "test-task-rerun-weak",
           agent_id: "fast",
-          result: "Publicado el tweet. Nota: el PDF adjunto es imagen-only y no tengo OCR en este scope, así que lo leí con `jarvis_file_read` del texto que ya tenías en el KB.",
+          result:
+            "Publicado el tweet. Nota: el PDF adjunto es imagen-only y no tengo OCR en este scope, así que lo leí con `jarvis_file_read` del texto que ya tenías en el KB.",
           duration_ms: 1,
         },
       });
@@ -912,7 +1011,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "test-task-123",
           agent_id: "fast",
-          result: "Las herramientas gemini_image no aparecen en mi lista de herramientas actual — pídeme con «usa gemini».",
+          result:
+            "Las herramientas gemini_image no aparecen en mi lista de herramientas actual — pídeme con «usa gemini».",
           duration_ms: 500,
         },
       });
@@ -922,7 +1022,8 @@ describe("MessageRouter", () => {
         data: {
           task_id: "test-task-rerun2",
           agent_id: "fast",
-          result: "gemini_image sigue sin aparecer en mi lista de herramientas — pídeme con «usa gemini».",
+          result:
+            "gemini_image sigue sin aparecer en mi lista de herramientas — pídeme con «usa gemini».",
           duration_ms: 500,
         },
       });
@@ -1820,8 +1921,22 @@ describe("MessageRouter", () => {
       router.watchRitualTask("ritual-narr", "day-narrative");
       router.startEventListeners();
       const h = findHandler("task.completed")!;
-      h({ data: { task_id: "ritual-evo", agent_id: "fast", result: "## 2026-08-22\n\nEvolution entry…", duration_ms: 1 } });
-      h({ data: { task_id: "ritual-narr", agent_id: "fast", result: "Narrativa del día…", duration_ms: 1 } });
+      h({
+        data: {
+          task_id: "ritual-evo",
+          agent_id: "fast",
+          result: "## 2026-08-22\n\nEvolution entry…",
+          duration_ms: 1,
+        },
+      });
+      h({
+        data: {
+          task_id: "ritual-narr",
+          agent_id: "fast",
+          result: "Narrativa del día…",
+          duration_ms: 1,
+        },
+      });
       expect(waAdapter.sentMessages).toHaveLength(0);
     });
 
@@ -1978,7 +2093,13 @@ describe("MessageRouter", () => {
       const semantic = new Set(["coding"]);
       const prior = new Set(["google"]);
       const fallback = vi.fn(() => new Set(["wordpress"]));
-      const result = decideActiveGroups(semantic, prior, fallback, undefined, false);
+      const result = decideActiveGroups(
+        semantic,
+        prior,
+        fallback,
+        undefined,
+        false,
+      );
       expect(result.source).toBe("semantic");
       expect([...result.groups]).toEqual(["coding"]);
       expect(fallback).not.toHaveBeenCalled();
@@ -1988,14 +2109,24 @@ describe("MessageRouter", () => {
       const { decideActiveGroups } = await import("./router.js");
       const semantic = new Set(["destructive"]);
       const prior = new Set(["coding"]);
-      const result = decideActiveGroups(semantic, prior, vi.fn(() => new Set()), "confirmo eliminación");
+      const result = decideActiveGroups(
+        semantic,
+        prior,
+        vi.fn(() => new Set()),
+        "confirmo eliminación",
+      );
       expect(result.source).toBe("semantic");
       expect([...result.groups].sort()).toEqual(["coding", "destructive"]);
     });
 
     it("usability Phase 1.1 (R2 audit C1): the inherited branch returns SEPARATE Sets — mutating groups never touches base", async () => {
       const { decideActiveGroups } = await import("./router.js");
-      const d = decideActiveGroups(new Set<string>(), new Set(["meta"]), vi.fn(() => new Set()), "continúa");
+      const d = decideActiveGroups(
+        new Set<string>(),
+        new Set(["meta"]),
+        vi.fn(() => new Set()),
+        "continúa",
+      );
       expect(d.source).toBe("inherited");
       d.groups.add("google");
       expect(d.base.has("google")).toBe(false);
@@ -2006,13 +2137,23 @@ describe("MessageRouter", () => {
       const { decideActiveGroups } = await import("./router.js");
       const semantic = new Set(["google"]);
       const prior = new Set(["coding"]);
-      const result = decideActiveGroups(semantic, prior, vi.fn(() => new Set()), "gracias");
+      const result = decideActiveGroups(
+        semantic,
+        prior,
+        vi.fn(() => new Set()),
+        "gracias",
+      );
       expect([...result.groups]).toEqual(["google"]);
     });
 
     it("usability Phase 1.1: no prior → semantic only (cold thread)", async () => {
       const { decideActiveGroups } = await import("./router.js");
-      const result = decideActiveGroups(new Set(["google"]), undefined, vi.fn(() => new Set()), "abre el sheet");
+      const result = decideActiveGroups(
+        new Set(["google"]),
+        undefined,
+        vi.fn(() => new Set()),
+        "abre el sheet",
+      );
       expect([...result.groups]).toEqual(["google"]);
     });
 
@@ -2569,5 +2710,331 @@ describe("MessageRouter — community-reply write-gate (v7.7 Phase 2b)", () => {
     expect(adapter.send).toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((router as any).gateInflight.size).toBe(0);
+  });
+});
+
+describe("Phase 4.2 — thread image expiry", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("only the LAST exchange's image reaches the next turn's history", async () => {
+    _testSeedThread("whatsapp", [
+      {
+        text: "User: mira esta captura\nJarvis: La veo.",
+        imageUrl: "data:image/png;base64,OLD",
+      },
+      {
+        text: "User: y esta otra\nJarvis: También.",
+        imageUrl: "data:image/png;base64,RECENT",
+      },
+    ]);
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "qué diferencias ves?",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls[0][0];
+    const images = call.conversationHistory
+      .filter((t: any) => t.imageUrl)
+      .map((t: any) => t.imageUrl);
+    expect(images).toEqual(["data:image/png;base64,RECENT"]);
+  });
+
+  it("an image two exchanges back is never re-injected (stale-image hijack)", async () => {
+    _testSeedThread("whatsapp", [
+      {
+        text: "User: mira esta captura\nJarvis: La veo.",
+        imageUrl: "data:image/png;base64,STALE",
+      },
+      { text: "User: ahora hablemos del P&L\nJarvis: Claro." },
+    ]);
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "dame el resumen",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls[0][0];
+    expect(call.conversationHistory.some((t: any) => t.imageUrl)).toBe(false);
+    // The TEXT of the old exchange survives — only the image expires.
+    expect(
+      call.conversationHistory.some((t: any) => /captura/.test(t.content)),
+    ).toBe(true);
+  });
+
+  it("threadImageLive: only the final index is live", () => {
+    expect(threadImageLive(2, 3)).toBe(true);
+    expect(threadImageLive(1, 3)).toBe(false);
+    expect(threadImageLive(0, 3)).toBe(false);
+    expect(threadImageLive(0, 1)).toBe(true);
+  });
+});
+
+describe("Phase 4.4 — hard stop", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("'Para ya' with no active task replies one line, no question, no task submitted", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Para ya",
+      timestamp: new Date(),
+    });
+    expect(waAdapter.sentMessages).toHaveLength(1);
+    expect(waAdapter.sentMessages[0].text).toBe(
+      "Detenido: no había tareas activas.",
+    );
+    expect(waAdapter.sentMessages[0].text).not.toContain("?");
+    expect(submitTask).not.toHaveBeenCalled();
+  });
+
+  it("'Para el viernes recuérdame el reporte' is NOT a stop — task submitted", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Para el viernes recuérdame el reporte",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalled();
+    expect(
+      waAdapter.sentMessages.some((m) => m.text.startsWith("Detenido")),
+    ).toBe(false);
+  });
+
+  it("'Detente, cambio de plan' is a stop even with a tail", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Detente, cambio de plan",
+      timestamp: new Date(),
+    });
+    expect(waAdapter.sentMessages[0].text).toMatch(/^Detenido:/);
+    expect(submitTask).not.toHaveBeenCalled();
+  });
+
+  // R1 audit W2/C3: the central behaviour — ALL tasks of THIS thread stop,
+  // other threads on the same channel are untouched.
+  it("cancels ALL pending tasks of the thread and reports the count", async () => {
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    (submitTask as any)
+      .mockResolvedValueOnce({
+        taskId: "task-stop-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "t", explicit: false },
+      })
+      .mockResolvedValueOnce({
+        taskId: "task-stop-2",
+        agentType: "fast",
+        classification: { score: 1, reason: "t", explicit: false },
+      })
+      .mockResolvedValueOnce({
+        taskId: "task-stop-group",
+        agentType: "fast",
+        classification: { score: 1, reason: "t", explicit: false },
+      });
+    // Two DM tasks (tk = "whatsapp") …
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "genera el reporte semanal de señales",
+      timestamp: new Date(),
+    });
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "analiza el corpus de la semana",
+      timestamp: new Date(),
+    });
+    // … and one GROUP task from the owner (tk = "whatsapp:g:owner").
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "estrategia@g.us",
+      text: "[Grupo: Estrategia, De: Owner]\ngenera el resumen del grupo",
+      timestamp: new Date(),
+      metadata: { senderJid: "owner@s.whatsapp.net" },
+    });
+
+    waAdapter.sentMessages.length = 0;
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Para ya",
+      timestamp: new Date(),
+    });
+    // Both DM tasks cancelled, the group thread's task untouched.
+    expect(waAdapter.sentMessages[0].text).toBe(
+      "Detenido: 2 tareas canceladas.",
+    );
+    // R3 audit C2: the stop exchange is RETAINED (pushToThread is in-memory
+    // only) — without this, `stops_honoured` reads 0 forever.
+    expect(memoryRetainSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Detenido: 2 tareas canceladas."),
+      expect.objectContaining({ bank: "mc-jarvis" }),
+    );
+  });
+
+  // R1 audit C4: a group "Para ya" arrives with the [Grupo: …] prefix and
+  // must still stop that group's own task.
+  it("group-prefixed 'Para ya' stops the group thread's task", async () => {
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    (submitTask as any).mockResolvedValueOnce({
+      taskId: "task-group-stop",
+      agentType: "fast",
+      classification: { score: 1, reason: "t", explicit: false },
+    });
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "estrategia@g.us",
+      text: "[Grupo: Estrategia, De: Owner]\ngenera el resumen del grupo",
+      timestamp: new Date(),
+      metadata: { senderJid: "owner@s.whatsapp.net" },
+    });
+    waAdapter.sentMessages.length = 0;
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "estrategia@g.us",
+      text: "[Grupo: Estrategia, De: Owner]\nPara ya",
+      timestamp: new Date(),
+      metadata: { senderJid: "owner@s.whatsapp.net" },
+    });
+    expect(waAdapter.sentMessages[0].text).toBe("Detenido: 1 tarea cancelada.");
+  });
+});
+
+describe("Phase 4.1 — thread pins wiring", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    _resetThreadPins();
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("a pinned URL is injected FIRST in the next turn's variable half", async () => {
+    pinFromExchange(
+      "whatsapp",
+      "User: publica el demo\nJarvis: Listo: https://ant-colony.187.77.25.101.nip.io",
+    );
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "cómo va el demo?",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls[0][0];
+    expect(call.description).toContain("## FIJADO EN ESTE HILO");
+    expect(call.description).toContain(
+      "https://ant-colony.187.77.25.101.nip.io",
+    );
+  });
+
+  it("no pins → no FIJADO section", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "hola qué tal todo",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls[0][0];
+    expect(call.description).not.toContain("## FIJADO EN ESTE HILO");
+  });
+
+  it("'Confirmo' pins the previous reply's figures and binds them to the submitted task (2.3)", async () => {
+    _testSeedThread("whatsapp", [
+      {
+        text: "User: dame el modelo\nJarvis: Modelo final:\n- Margen bruto: 34%\n- Utilidad neta: $1.2M",
+      },
+    ]);
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Confirmo, pásalo al Sheet",
+      timestamp: new Date(),
+    });
+    // Pinned on the thread…
+    const figs = getPins("whatsapp").filter((p) => p.kind === "figure");
+    expect(figs.map((f) => f.value)).toContain("34%");
+    // …and bound to the task the router submitted (2.3 seam).
+    const bound = getTaskConfirmedFigures("test-task-123");
+    expect(bound.map((f) => f.raw)).toContain("34%");
+    // The confirming turn itself already sees the pins.
+    const call = (submitTask as any).mock.calls[0][0];
+    expect(call.description).toContain("## FIJADO EN ESTE HILO");
+    expect(call.description).toContain("34%");
+  });
+});
+
+describe("R5 audit W3 — checkpoint continuation is operator-only", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    _resetThreadPins();
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("the OWNER's continúa injects the checkpoint block", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "continúa",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls[0][0];
+    expect(call.description).toContain("CONTINUACIÓN DE TAREA ANTERIOR");
+    expect(call.description).toContain("termina el reporte de señales");
+  });
+
+  it("a community-email sender's continúa gets NO checkpoint (operator partial must not leak)", async () => {
+    // A public-mailbox sender reaches the same submit path as the owner —
+    // this is the population the R4/R5 gate exists for.
+    const emailAdapter = {
+      name: "email:comunidades",
+      mode: "community-manager" as const,
+      sentMessages: [] as OutgoingMessage[],
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockResolvedValue("id"),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    };
+    router.registerChannel(emailAdapter as never);
+    await router.handleInbound({
+      channel: "email:comunidades" as never,
+      from: "alice@example.com",
+      text: "continúa",
+      timestamp: new Date(),
+    });
+    const call = (submitTask as any).mock.calls.at(-1)?.[0];
+    expect(call).toBeDefined();
+    expect(call.description).not.toContain("CONTINUACIÓN DE TAREA ANTERIOR");
+    expect(call.description).not.toContain("termina el reporte de señales");
   });
 });

@@ -22,6 +22,11 @@ import {
   sha8,
   withdrawReadbackGate,
 } from "./readback.js";
+import {
+  pinConfirmedFigures,
+  bindTaskConfirmedFigures,
+  _resetThreadPins,
+} from "../../messaging/thread-pins.js";
 
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
@@ -46,75 +51,177 @@ const okResult = (text: string): RunnerOutput => ({
 
 describe("declareReadbackGate", () => {
   it("stores a harness-owned manual row keyed by ARTIFACT with the readback payload", () => {
-    registerReadback("jarvis_file_write", async () => ({ ok: true, evidence: "x" }));
-    expect(declareReadbackGate("t1", "jarvis_file_write", "kb:a.md", "KB a.md escrito", { path: "a.md", sha8: "abc" })).toBe(true);
-    expect(declareReadbackGate("t1", "jarvis_file_write", "kb:b.md", "KB b.md escrito", { path: "b.md", sha8: "def" })).toBe(true);
+    registerReadback("jarvis_file_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    expect(
+      declareReadbackGate(
+        "t1",
+        "jarvis_file_write",
+        "kb:a.md",
+        "KB a.md escrito",
+        { path: "a.md", sha8: "abc" },
+      ),
+    ).toBe(true);
+    expect(
+      declareReadbackGate(
+        "t1",
+        "jarvis_file_write",
+        "kb:b.md",
+        "KB b.md escrito",
+        { path: "b.md", sha8: "def" },
+      ),
+    ).toBe(true);
     const rows = listGates("t1");
-    expect(rows.map((r) => r.gate_id).sort()).toEqual([readbackGateId("kb:a.md"), readbackGateId("kb:b.md")].sort());
+    expect(rows.map((r) => r.gate_id).sort()).toEqual(
+      [readbackGateId("kb:a.md"), readbackGateId("kb:b.md")].sort(),
+    );
     const a = rows.find((r) => r.gate_id === readbackGateId("kb:a.md"))!;
     expect(a.check_kind).toBe("manual");
     expect(a.source).toBe("harness");
     expect(isReadbackRow(a)).toBe(true);
-    expect(parseReadback(a)).toEqual({ tool: "jarvis_file_write", data: { path: "a.md", sha8: "abc" } });
+    expect(parseReadback(a)).toEqual({
+      tool: "jarvis_file_write",
+      data: { path: "a.md", sha8: "abc" },
+    });
   });
 
   it("R1 audit C1: a second write to the SAME artifact supersedes the first gate — one proof, the final state", () => {
-    registerReadback("jarvis_file_write", async () => ({ ok: true, evidence: "x" }));
-    registerReadback("jarvis_file_update", async () => ({ ok: true, evidence: "x" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md", sha8: "first" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    registerReadback("jarvis_file_update", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md", sha8: "first" },
+    );
     // simulate an evaluation having run on the first gate
-    getDatabase().prepare("UPDATE task_gates SET state='failed', evidence='old' WHERE task_id='t1'").run();
-    declareReadbackGate("t1", "jarvis_file_update", "kb:x.md", "KB x.md actualizado", { path: "x.md", must_contain: "sección 2" });
+    getDatabase()
+      .prepare(
+        "UPDATE task_gates SET state='failed', evidence='old' WHERE task_id='t1'",
+      )
+      .run();
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_update",
+      "kb:x.md",
+      "KB x.md actualizado",
+      { path: "x.md", must_contain: "sección 2" },
+    );
     const rows = listGates("t1");
     expect(rows).toHaveLength(1);
     expect(rows[0].state).toBe("pending");
     expect(rows[0].evidence).toBeNull();
     expect(rows[0].criterion).toBe("KB x.md actualizado");
-    expect(parseReadback(rows[0])).toEqual({ tool: "jarvis_file_update", data: { path: "x.md", must_contain: "sección 2" } });
+    expect(parseReadback(rows[0])).toEqual({
+      tool: "jarvis_file_update",
+      data: { path: "x.md", must_contain: "sección 2" },
+    });
   });
 
   it("never re-points a row the harness did not author, even with the same id", () => {
-    registerReadback("jarvis_file_write", async () => ({ ok: true, evidence: "x" }));
+    registerReadback("jarvis_file_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
     const id = readbackGateId("kb:a.md");
     // The RB- namespace is reserved at the declare door (R2 audit W5), so a
     // non-harness row with this id can only exist by direct DB write — seed it.
     getDatabase()
-      .prepare(`INSERT INTO task_gates (task_id, gate_id, criterion, check_kind, check_cmd, source) VALUES ('t1', ?, 'operator gate', 'shell', 'true', 'submission')`)
+      .prepare(
+        `INSERT INTO task_gates (task_id, gate_id, criterion, check_kind, check_cmd, source) VALUES ('t1', ?, 'operator gate', 'shell', 'true', 'submission')`,
+      )
       .run(id);
-    expect(declareReadbackGate("t1", "jarvis_file_write", "kb:a.md", "KB", { path: "a.md" })).toBe(false);
-    expect(listGates("t1")[0]).toMatchObject({ source: "submission", criterion: "operator gate" });
+    expect(
+      declareReadbackGate("t1", "jarvis_file_write", "kb:a.md", "KB", {
+        path: "a.md",
+      }),
+    ).toBe(false);
+    expect(listGates("t1")[0]).toMatchObject({
+      source: "submission",
+      criterion: "operator gate",
+    });
   });
 
   it("R1 audit C1: a same-task delete withdraws the gate (harness-abandoned, rendered silently)", () => {
-    registerReadback("schedule_task", async () => ({ ok: true, evidence: "x" }));
-    declareReadbackGate("t1", "schedule_task", "schedule:abc", "Schedule creado", { schedule_id: "abc" });
-    expect(withdrawReadbackGate("t1", "schedule_task", "schedule:abc", "deleted in the same task")).toBe(true);
+    registerReadback("schedule_task", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    declareReadbackGate(
+      "t1",
+      "schedule_task",
+      "schedule:abc",
+      "Schedule creado",
+      { schedule_id: "abc" },
+    );
+    expect(
+      withdrawReadbackGate(
+        "t1",
+        "schedule_task",
+        "schedule:abc",
+        "deleted in the same task",
+      ),
+    ).toBe(true);
     const row = listGates("t1")[0];
     expect(row.state).toBe("abandoned");
     expect(isWithdrawnReadback(row)).toBe(true);
     expect(formatNoQuedo([row])).toBe("");
     expect(formatVerificado([row])).toBe("");
-    expect(withdrawReadbackGate("t1", "schedule_task", "schedule:nope", "x")).toBe(false);
+    expect(
+      withdrawReadbackGate("t1", "schedule_task", "schedule:nope", "x"),
+    ).toBe(false);
   });
 
   it("is a no-op without a task id or without a verifier for the tool", () => {
-    expect(declareReadbackGate(null, "jarvis_file_write", "kb:c", "c", {})).toBe(false);
-    expect(declareReadbackGate("t1", "tool_without_verifier", "kb:c", "c", {})).toBe(false);
+    expect(
+      declareReadbackGate(null, "jarvis_file_write", "kb:c", "c", {}),
+    ).toBe(false);
+    expect(
+      declareReadbackGate("t1", "tool_without_verifier", "kb:c", "c", {}),
+    ).toBe(false);
     expect(listGates("t1")).toHaveLength(0);
   });
 
   it("R1 audit W1: a readback payload from a NON-harness source keeps NO check text", () => {
-    declareGates("t2", [{ criterion: "c", kind: "manual", check: 'readback:{"tool":"gsheets_write","data":{}}' }], "submission");
+    declareGates(
+      "t2",
+      [
+        {
+          criterion: "c",
+          kind: "manual",
+          check: 'readback:{"tool":"gsheets_write","data":{}}',
+        },
+      ],
+      "submission",
+    );
     expect(listGates("t2")[0].check_cmd).toBeNull();
-    declareGates("t3", [{ criterion: "c", kind: "manual", check: "rm -rf /" }], "submission");
+    declareGates(
+      "t3",
+      [{ criterion: "c", kind: "manual", check: "rm -rf /" }],
+      "submission",
+    );
     expect(listGates("t3")[0].check_cmd).toBeNull();
   });
 });
 
 describe("runReadback", () => {
   it("dispatches to the registered verifier and caps evidence at 400 chars", async () => {
-    registerReadback("gsheets_write", async (d) => ({ ok: true, evidence: "x".repeat(1000) + String(d.range) }));
-    declareReadbackGate("t1", "gsheets_write", "sheet:s|Hoja", "Sheet", { range: "A1" });
+    registerReadback("gsheets_write", async (d) => ({
+      ok: true,
+      evidence: "x".repeat(1000) + String(d.range),
+    }));
+    declareReadbackGate("t1", "gsheets_write", "sheet:s|Hoja", "Sheet", {
+      range: "A1",
+    });
     const v = await runReadback(listGates("t1")[0]);
     expect(v.ok).toBe(true);
     expect(v.evidence.length).toBe(400);
@@ -122,7 +229,11 @@ describe("runReadback", () => {
 
   it("R1 audit W4: an unknown verifier, a throw and a timeout all FAIL with a phone-ready Spanish reason — never raw API text", async () => {
     registerReadback("slow", () => new Promise(() => {}));
-    registerReadback("boom", async () => { throw new Error('Google API 403: {"error":{"code":403,"message":"The caller does not have permission"}}'); });
+    registerReadback("boom", async () => {
+      throw new Error(
+        'Google API 403: {"error":{"code":403,"message":"The caller does not have permission"}}',
+      );
+    });
     declareReadbackGate("t1", "slow", "a:1", "c", {});
     declareReadbackGate("t1", "boom", "a:2", "c", {});
     const rows = listGates("t1");
@@ -133,36 +244,75 @@ describe("runReadback", () => {
     expect(b.ok).toBe(false);
     expect(b.evidence).toBe("no pude releerlo (permiso denegado HTTP 403)");
     expect(b.evidence).not.toContain("Google API");
-    expect(await runReadback({ check_cmd: 'readback:{"tool":"gone","data":{}}' })).toMatchObject({ ok: false });
-    expect(await runReadback({ check_cmd: "readback:not-json" })).toMatchObject({ ok: false });
+    expect(
+      await runReadback({ check_cmd: 'readback:{"tool":"gone","data":{}}' }),
+    ).toMatchObject({ ok: false });
+    expect(await runReadback({ check_cmd: "readback:not-json" })).toMatchObject(
+      { ok: false },
+    );
   });
 });
 
 describe("evaluateLedger runs read-back rows", () => {
   it("met with evidence on ok, failed with evidence on mismatch", async () => {
     registerReadback("jarvis_file_write", async (d) =>
-      d.path === "ok.md" ? { ok: true, evidence: "KB ok.md (sha 1234)" } : { ok: false, evidence: "KB bad.md: no existe" },
+      d.path === "ok.md"
+        ? { ok: true, evidence: "KB ok.md (sha 1234)" }
+        : { ok: false, evidence: "KB bad.md: no existe" },
     );
-    declareReadbackGate("t1", "jarvis_file_write", "kb:ok.md", "KB ok.md escrito", { path: "ok.md" });
-    declareReadbackGate("t1", "jarvis_file_write", "kb:bad.md", "KB bad.md escrito", { path: "bad.md" });
-    const res = await evaluateLedger({ taskId: "t1", outputText: "Listo.", shellGatesRunnable: false });
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:ok.md",
+      "KB ok.md escrito",
+      { path: "ok.md" },
+    );
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:bad.md",
+      "KB bad.md escrito",
+      { path: "bad.md" },
+    );
+    const res = await evaluateLedger({
+      taskId: "t1",
+      outputText: "Listo.",
+      shellGatesRunnable: false,
+    });
     expect(res.ran).toBe(2);
-    const rows = listGates("t1").sort((a, b) => a.criterion.localeCompare(b.criterion));
+    const rows = listGates("t1").sort((a, b) =>
+      a.criterion.localeCompare(b.criterion),
+    );
     expect(rows.map((r) => [r.state, r.evidence])).toEqual([
       ["failed", "KB bad.md: no existe"],
       ["met", "KB ok.md (sha 1234)"],
     ]);
-    expect(formatNoQuedo(rows)).toBe("⚠️ No quedó: KB bad.md escrito — KB bad.md: no existe");
+    expect(formatNoQuedo(rows)).toBe(
+      "⚠️ No quedó: KB bad.md escrito — KB bad.md: no existe",
+    );
     expect(formatVerificado(rows)).toBe("✔ Verificado: KB ok.md (sha 1234)");
   });
 });
 
 describe("evaluateLedger — R1 audit C2: a model ABANDON line cannot void a read-back", () => {
   it("ABANDON: RB-… in the report is ignored; the verifier still runs and fails the gate", async () => {
-    registerReadback("jarvis_file_write", async () => ({ ok: false, evidence: "KB ghost.md: no existe tras la escritura" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:ghost.md", "KB ghost.md escrito", { path: "ghost.md" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: false,
+      evidence: "KB ghost.md: no existe tras la escritura",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:ghost.md",
+      "KB ghost.md escrito",
+      { path: "ghost.md" },
+    );
     const id = readbackGateId("kb:ghost.md");
-    await evaluateLedger({ taskId: "t1", outputText: `Listo, ya actualicé el KB.\nABANDON: ${id} no pude escribirlo`, shellGatesRunnable: false });
+    await evaluateLedger({
+      taskId: "t1",
+      outputText: `Listo, ya actualicé el KB.\nABANDON: ${id} no pude escribirlo`,
+      shellGatesRunnable: false,
+    });
     const row = listGates("t1")[0];
     expect(row.state).toBe("failed");
     expect(row.abandon_reason).toBeNull();
@@ -172,54 +322,128 @@ describe("evaluateLedger — R1 audit C2: a model ABANDON line cannot void a rea
 describe("applyCompletionLedger — write-class enforce under shadow", () => {
   it("a failed read-back demotes completed → completed_with_concerns and appends «No quedó» even in shadow mode", async () => {
     process.env.TASK_GATES_MODE = "shadow";
-    registerReadback("gsheets_write", async () => ({ ok: false, evidence: "Sheet A1:C3: col 2 dice «12», escribí «16»" }));
-    declareReadbackGate("t1", "gsheets_write", "sheet:s|Hoja", "Sheet A1:C3 contiene las filas escritas", { range: "A1:C3" });
+    registerReadback("gsheets_write", async () => ({
+      ok: false,
+      evidence: "Sheet A1:C3: col 2 dice «12», escribí «16»",
+    }));
+    declareReadbackGate(
+      "t1",
+      "gsheets_write",
+      "sheet:s|Hoja",
+      "Sheet A1:C3 contiene las filas escritas",
+      { range: "A1:C3" },
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: okResult("Listo. Sheet actualizado con el modelo confirmado."), taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: okResult("Listo. Sheet actualizado con el modelo confirmado."),
+      taskStatus: "completed",
     });
     expect(out.taskStatus).toBe("completed_with_concerns");
     const text = (out.output as { text: string }).text;
-    expect(text).toContain("⚠️ No quedó: Sheet A1:C3 contiene las filas escritas — Sheet A1:C3: col 2 dice «12», escribí «16»");
-    const trace = getDatabase().prepare("SELECT name, attrs FROM task_trace_events WHERE task_id='t1' AND name='gates.readback'").get() as { attrs: string };
-    expect(JSON.parse(trace.attrs)).toMatchObject({ total: 1, failed: 1, demoted: true });
+    expect(text).toContain(
+      "⚠️ No quedó: Sheet A1:C3 contiene las filas escritas — Sheet A1:C3: col 2 dice «12», escribí «16»",
+    );
+    const trace = getDatabase()
+      .prepare(
+        "SELECT name, attrs FROM task_trace_events WHERE task_id='t1' AND name='gates.readback'",
+      )
+      .get() as { attrs: string };
+    expect(JSON.parse(trace.attrs)).toMatchObject({
+      total: 1,
+      failed: 1,
+      demoted: true,
+    });
   });
 
   it("a met read-back keeps the status and appends one «Verificado» line", async () => {
     process.env.TASK_GATES_MODE = "shadow";
-    registerReadback("jarvis_file_write", async () => ({ ok: true, evidence: "KB x.md (sha 9f3a)" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md", sha8: "9f3a" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: true,
+      evidence: "KB x.md (sha 9f3a)",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md", sha8: "9f3a" },
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: okResult("KB actualizado."), taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: okResult("KB actualizado."),
+      taskStatus: "completed",
     });
     expect(out.taskStatus).toBe("completed");
-    expect((out.output as { text: string }).text).toBe("KB actualizado.\n\n✔ Verificado: KB x.md (sha 9f3a)");
+    expect((out.output as { text: string }).text).toBe(
+      "KB actualizado.\n\n✔ Verificado: KB x.md (sha 9f3a)",
+    );
   });
 
   it("R1 audit C3: under `enforce` the Spanish lines still render and no English ledger block mentions the read-back", async () => {
     process.env.TASK_GATES_MODE = "enforce";
-    registerReadback("jarvis_file_write", async () => ({ ok: false, evidence: "KB ghost.md: no existe tras la escritura" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:ghost.md", "KB ghost.md escrito y legible", { path: "ghost.md" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: false,
+      evidence: "KB ghost.md: no existe tras la escritura",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:ghost.md",
+      "KB ghost.md escrito y legible",
+      { path: "ghost.md" },
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: okResult("Listo, ya actualicé el KB."), taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: okResult("Listo, ya actualicé el KB."),
+      taskStatus: "completed",
     });
     expect(out.taskStatus).toBe("completed_with_concerns");
     const text = (out.output as { text: string }).text;
-    expect(text).toContain("⚠️ No quedó: KB ghost.md escrito y legible — KB ghost.md: no existe tras la escritura");
+    expect(text).toContain(
+      "⚠️ No quedó: KB ghost.md escrito y legible — KB ghost.md: no existe tras la escritura",
+    );
     expect(text).not.toContain("Gates:");
     expect(text).not.toContain("FAILED:");
   });
 
   it("R2 audit C1: under `enforce`, one failed read-back + one met shell gate → no contradictory headline, JSON populations agree", async () => {
     process.env.TASK_GATES_MODE = "enforce";
-    registerReadback("jarvis_file_update", async () => ({ ok: false, evidence: "KB x.md: el texto agregado no aparece" }));
-    declareReadbackGate("t1", "jarvis_file_update", "kb:x.md", "KB x.md actualizado y legible", { path: "x.md" });
-    declareGates("t1", [{ id: "G1", criterion: "tests green", check: "true" }], "submission");
+    registerReadback("jarvis_file_update", async () => ({
+      ok: false,
+      evidence: "KB x.md: el texto agregado no aparece",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_update",
+      "kb:x.md",
+      "KB x.md actualizado y legible",
+      { path: "x.md" },
+    );
+    declareGates(
+      "t1",
+      [{ id: "G1", criterion: "tests green", check: "true" }],
+      "submission",
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: okResult("Listo."), taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: okResult("Listo."),
+      taskStatus: "completed",
     });
     const text = (out.output as { text: string }).text;
     expect(out.taskStatus).toBe("completed_with_concerns");
@@ -228,30 +452,64 @@ describe("applyCompletionLedger — write-class enforce under shadow", () => {
     expect(text).toContain("Gates: 1/1 met");
     // …and the stored JSON says the same about the same population, with the read-back reported apart.
     const gates = (out.output as { gates: Record<string, unknown> }).gates;
-    expect(gates).toMatchObject({ total: 1, met: 1, failed: 0, verdict: "met", readback: { total: 1, failed: 1 } });
+    expect(gates).toMatchObject({
+      total: 1,
+      met: 1,
+      failed: 0,
+      verdict: "met",
+      readback: { total: 1, failed: 1 },
+    });
   });
 
   it("R2 audit W6: a read-back the ledger could not run renders as «Sin releer», never silently", async () => {
     process.env.TASK_GATES_MODE = "shadow";
-    registerReadback("jarvis_file_write", async () => ({ ok: true, evidence: "unreachable" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: true,
+      evidence: "unreachable",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md" },
+    );
     // A read-back never run stays `pending`.
     const { formatSinReleer } = await import("./readback.js");
-    expect(formatSinReleer(listGates("t1"))).toBe("⏳ Sin releer (no alcancé a verificar): KB x.md escrito");
+    expect(formatSinReleer(listGates("t1"))).toBe(
+      "⏳ Sin releer (no alcancé a verificar): KB x.md escrito",
+    );
     // Through the consumer: a shell gate declared FIRST burns the whole
     // ledger budget, so the read-back (evaluated after it) is never run —
     // the line must still reach the deliverable (R3 audit W2).
     getDatabase().prepare("DELETE FROM task_gates WHERE task_id='t1'").run();
-    declareGates("t1", [{ id: "G1", criterion: "slow", check: "sleep 0.3" }], "submission");
-    declareReadbackGate("t1", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md" });
+    declareGates(
+      "t1",
+      [{ id: "G1", criterion: "slow", check: "sleep 0.3" }],
+      "submission",
+    );
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md" },
+    );
     process.env.TASK_GATES_LEDGER_BUDGET_MS = "50";
     try {
       const out = await applyCompletionLedger({
-        taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-        result: okResult("Listo."), taskStatus: "completed",
+        taskId: "t1",
+        runId: "r1",
+        agentType: "fast",
+        tags: [],
+        taskDescription: "x",
+        result: okResult("Listo."),
+        taskStatus: "completed",
       });
       const text = (out.output as { text: string }).text;
-      expect(text).toContain("⏳ Sin releer (no alcancé a verificar): KB x.md escrito");
+      expect(text).toContain(
+        "⏳ Sin releer (no alcancé a verificar): KB x.md escrito",
+      );
       expect(text).not.toContain("✔ Verificado");
     } finally {
       delete process.env.TASK_GATES_LEDGER_BUDGET_MS;
@@ -259,28 +517,73 @@ describe("applyCompletionLedger — write-class enforce under shadow", () => {
   });
 
   it("R2 audit W5: a submission/plan gate cannot claim the RB- namespace", () => {
-    expect(() => declareGates("t1", [{ id: "RB-deadbeef", criterion: "x", check: "true" }], "submission")).toThrow(/reserved/);
-    expect(() => declareGates("t1", [{ id: "RB-deadbeef", criterion: "x", check: "true" }], "plan")).toThrow(/reserved/);
+    expect(() =>
+      declareGates(
+        "t1",
+        [{ id: "RB-deadbeef", criterion: "x", check: "true" }],
+        "submission",
+      ),
+    ).toThrow(/reserved/);
+    expect(() =>
+      declareGates(
+        "t1",
+        [{ id: "RB-deadbeef", criterion: "x", check: "true" }],
+        "plan",
+      ),
+    ).toThrow(/reserved/);
   });
 
   it("R1 audit W14: a run with an EMPTY deliverable still carries the «No quedó» line", async () => {
     process.env.TASK_GATES_MODE = "shadow";
-    registerReadback("jarvis_file_write", async () => ({ ok: false, evidence: "KB ghost.md: no existe tras la escritura" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:ghost.md", "KB ghost.md escrito", { path: "ghost.md" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: false,
+      evidence: "KB ghost.md: no existe tras la escritura",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:ghost.md",
+      "KB ghost.md escrito",
+      { path: "ghost.md" },
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: { success: true, status: "DONE", output: { text: "" }, durationMs: 1 }, taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: {
+        success: true,
+        status: "DONE",
+        output: { text: "" },
+        durationMs: 1,
+      },
+      taskStatus: "completed",
     });
     expect((out.output as { text: string }).text).toContain("⚠️ No quedó");
   });
 
   it("mode off: read-backs are not run (nothing appended, status untouched)", async () => {
     process.env.TASK_GATES_MODE = "off";
-    registerReadback("jarvis_file_write", async () => ({ ok: false, evidence: "nope" }));
-    declareReadbackGate("t1", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md" });
+    registerReadback("jarvis_file_write", async () => ({
+      ok: false,
+      evidence: "nope",
+    }));
+    declareReadbackGate(
+      "t1",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md" },
+    );
     const out = await applyCompletionLedger({
-      taskId: "t1", runId: "r1", agentType: "fast", tags: [], taskDescription: "x",
-      result: okResult("KB actualizado."), taskStatus: "completed",
+      taskId: "t1",
+      runId: "r1",
+      agentType: "fast",
+      tags: [],
+      taskDescription: "x",
+      result: okResult("KB actualizado."),
+      taskStatus: "completed",
     });
     expect(out.taskStatus).toBe("completed");
     expect((out.output as { text: string }).text).toBe("KB actualizado.");
@@ -291,9 +594,22 @@ describe("reverifyChildLedger — R3 audit W3", () => {
   it("a failed read-back on a child does not fail the parent's verdict (other gates decide); read-backs are not re-run", async () => {
     process.env.TASK_GATES_MODE = "enforce";
     let calls = 0;
-    registerReadback("jarvis_file_write", async () => { calls++; return { ok: false, evidence: "KB x.md: no existe tras la escritura" }; });
-    declareReadbackGate("child", "jarvis_file_write", "kb:x.md", "KB x.md escrito", { path: "x.md" });
-    declareGates("child", [{ id: "G1", criterion: "ok", check: "true" }], "plan");
+    registerReadback("jarvis_file_write", async () => {
+      calls++;
+      return { ok: false, evidence: "KB x.md: no existe tras la escritura" };
+    });
+    declareReadbackGate(
+      "child",
+      "jarvis_file_write",
+      "kb:x.md",
+      "KB x.md escrito",
+      { path: "x.md" },
+    );
+    declareGates(
+      "child",
+      [{ id: "G1", criterion: "ok", check: "true" }],
+      "plan",
+    );
     const { reverifyChildLedger } = await import("./consumer.js");
     const v = await reverifyChildLedger("parent", "child", { text: "done" });
     expect(v?.verdict).toBe("met");
@@ -313,14 +629,118 @@ describe("sha8", () => {
 describe("formatVerificado / formatNoQuedo caps", () => {
   it("shows at most 3 evidences and counts the rest (both lines — R1 audit W5)", () => {
     const rows = Array.from({ length: 7 }, (_, i) => ({
-      task_id: "t", gate_id: `R-${i + 1}`, criterion: `c${i}`, check_kind: "manual" as const,
-      check_cmd: 'readback:{"tool":"x","data":{}}', expect: null, state: "met" as const,
-      evidence: `e${i}`, abandon_reason: null, source: "harness" as const, frozen_at: null, checked_at: null, created_at: "",
+      task_id: "t",
+      gate_id: `R-${i + 1}`,
+      criterion: `c${i}`,
+      check_kind: "manual" as const,
+      check_cmd: 'readback:{"tool":"x","data":{}}',
+      expect: null,
+      state: "met" as const,
+      evidence: `e${i}`,
+      abandon_reason: null,
+      source: "harness" as const,
+      frozen_at: null,
+      checked_at: null,
+      created_at: "",
     }));
     expect(formatVerificado(rows)).toBe("✔ Verificado: e0 · e1 · e2 · y 4 más");
     const failed = rows.map((r) => ({ ...r, state: "failed" as const }));
     const nq = formatNoQuedo(failed);
     expect(nq.split("\n")).toHaveLength(3);
     expect(nq.endsWith(" · y 4 más")).toBe(true);
+  });
+});
+
+describe("Phase 2.3 — confirmed figures ride the read-back payload", () => {
+  it("declareReadbackGate embeds __confirmed from the task's thread binding", () => {
+    registerReadback("gsheets_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    _resetThreadPins();
+    pinConfirmedFigures("th-23", "Confirmo", "Margen bruto: 34%");
+    bindTaskConfirmedFigures("t-conf", "th-23");
+    expect(
+      declareReadbackGate("t-conf", "gsheets_write", "sheet:S1!A1", "crit", {
+        spreadsheet_id: "S1",
+        range: "A1",
+      }),
+    ).toBe(true);
+    const row = getDatabase()
+      .prepare("SELECT check_cmd FROM task_gates WHERE task_id = 't-conf'")
+      .get() as { check_cmd: string };
+    const payload = parseReadback(row);
+    expect(payload).not.toBeNull();
+    const confirmed = payload!.data.__confirmed as Array<{ raw: string }>;
+    expect(confirmed[0].raw).toBe("34%");
+    _resetThreadPins();
+  });
+
+  it("a task with no confirmed binding gets an untouched payload", () => {
+    registerReadback("gsheets_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    _resetThreadPins();
+    declareReadbackGate("t-plain", "gsheets_write", "sheet:S2!A1", "crit", {
+      spreadsheet_id: "S2",
+      range: "A1",
+    });
+    const row = getDatabase()
+      .prepare("SELECT check_cmd FROM task_gates WHERE task_id = 't-plain'")
+      .get() as { check_cmd: string };
+    const payload = parseReadback(row);
+    expect(payload!.data.__confirmed).toBeUndefined();
+  });
+});
+
+describe("Phase 2.3 — declare→verifier wiring (S3)", () => {
+  it("runReadback hands the verifier the __confirmed the declare embedded", async () => {
+    let seen: Record<string, unknown> | null = null;
+    registerReadback("gsheets_write", async (data) => {
+      seen = data;
+      return { ok: true, evidence: "x" };
+    });
+    _resetThreadPins();
+    pinConfirmedFigures("th-s3", "Confirmo", "Margen bruto: 34%");
+    bindTaskConfirmedFigures("t-s3", "th-s3");
+    declareReadbackGate("t-s3", "gsheets_write", "sheet:S9!A1", "crit", {
+      spreadsheet_id: "S9",
+      range: "A1",
+    });
+    const row = getDatabase()
+      .prepare(
+        "SELECT check_kind, check_cmd FROM task_gates WHERE task_id = 't-s3'",
+      )
+      .get() as { check_kind: string; check_cmd: string };
+    const verdict = await runReadback(row as never);
+    expect(verdict?.ok).toBe(true);
+    expect(seen).not.toBeNull();
+    const confirmed = (seen as unknown as Record<string, unknown>)
+      .__confirmed as Array<{ raw: string }>;
+    expect(confirmed[0].raw).toBe("34%");
+    _resetThreadPins();
+  });
+
+  it("an oversize payload sheds __confirmed but keeps the read-back data", () => {
+    registerReadback("gsheets_write", async () => ({
+      ok: true,
+      evidence: "x",
+    }));
+    _resetThreadPins();
+    pinConfirmedFigures("th-big", "Confirmo", "Margen bruto: 34%");
+    bindTaskConfirmedFigures("t-big", "th-big");
+    declareReadbackGate("t-big", "gsheets_write", "sheet:SB!A1", "crit", {
+      spreadsheet_id: "SB",
+      range: "A1",
+      first_row: ["x".repeat(1900)],
+    });
+    const row = getDatabase()
+      .prepare("SELECT check_cmd FROM task_gates WHERE task_id = 't-big'")
+      .get() as { check_cmd: string };
+    const payload = parseReadback(row);
+    expect(payload!.data.__confirmed).toBeUndefined();
+    expect(payload!.data.spreadsheet_id).toBe("SB");
+    _resetThreadPins();
   });
 });

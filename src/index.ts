@@ -152,6 +152,7 @@ async function main(): Promise<void> {
   // and immediately drains any unread events, so ordering matters.
   if (orphanedTaskIds.length > 0) {
     const { getEventBus } = await import("./lib/event-bus.js");
+    const { writeCheckpoint } = await import("./runners/checkpoint.js");
     const bus = getEventBus();
     for (const taskId of orphanedTaskIds) {
       try {
@@ -166,6 +167,53 @@ async function main(): Promise<void> {
         log.warn(
           { err, taskId },
           "failed to emit orphaned-task event (non-fatal)",
+        );
+      }
+      // Phase 4.3: an orphaned CHAT task must be recoverable, not just
+      // reported — write a checkpoint so the operator's "continúa" resumes
+      // it through the existing continuation seam (#07-12 03:23: a restart
+      // mid-task dropped the request with no way back).
+      try {
+        const row = db
+          .prepare(`SELECT title, tags FROM tasks WHERE task_id = ?`)
+          .get(taskId) as { title: string; tags: string | null } | undefined;
+        if (row?.title?.startsWith("Chat: ")) {
+          // Best-effort thread stamp (R3 audit W3): tags are
+          // ["messaging", <channel>, ...] for chat tasks. A channel-level
+          // stamp matches every thread on that channel — good enough to
+          // stop cross-CHANNEL leaks; the runner writers stamp nothing.
+          let channel: string | undefined;
+          try {
+            const tags = JSON.parse(row.tags ?? "[]") as string[];
+            if (tags[0] === "messaging" && typeof tags[1] === "string") {
+              channel = tags[1];
+            }
+          } catch {
+            /* unstamped */
+          }
+          // The title is 60-char truncated (R1 audit W3); the continuation
+          // task also carries the hydrated thread history, so point there.
+          const fromTitle = row.title.slice("Chat: ".length);
+          writeCheckpoint({
+            taskId,
+            title: row.title,
+            userMessage: fromTitle.endsWith("...")
+              ? `${fromTitle} (título truncado — la solicitud completa está en el historial del hilo)`
+              : fromTitle,
+            toolsCalled: [],
+            scopeGroups: [],
+            exitReason: "orphaned_restart",
+            roundsCompleted: 0,
+            maxRounds: 0,
+            responseText:
+              "(el servicio se reinició a mitad de la tarea — no hay resultado parcial)",
+            ...(channel ? { threadKey: channel } : {}),
+          });
+        }
+      } catch (err) {
+        log.warn(
+          { err, taskId },
+          "failed to checkpoint orphaned chat task (non-fatal)",
         );
       }
     }
@@ -451,7 +499,9 @@ async function main(): Promise<void> {
       router.broadcastToAll(msg, undefined, { raw: true }),
     );
     setIntelBroadcast((msg: string) =>
-      router.broadcastToAll(msg, undefined, { raw: true }).then(() => undefined),
+      router
+        .broadcastToAll(msg, undefined, { raw: true })
+        .then(() => undefined),
     );
     startProactiveScheduler(router);
   }

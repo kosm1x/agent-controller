@@ -141,6 +141,12 @@ import { withTimeout } from "../lib/with-timeout.js";
  * prevent. C3 audit fix (round 2, 2026-05-08). */
 const CONFIRM_PATTERN = buildConfirmRegex("strict");
 
+/** Phase 4.3: auth-class provider failures — expired/revoked OAuth or API
+ *  key. Matched against the run's final content, which carries the SDK's
+ *  error marker on the error path. */
+const AUTH_ERROR_RE =
+  /\b401\b|authentication_error|invalid x-api-key|OAuth token.{0,40}(expired|revoked)|token (expirad|revocad)/i;
+
 /** Maximum tokens of JME facts injected into the system prompt per turn. */
 const JME_INJECTION_BUDGET_TOKENS = 1500;
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
@@ -1187,7 +1193,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         .trim();
       const isConversational =
         rawUserMsg.length < 50 &&
-        !/\?|busca|crea|haz|envía|agenda|programa|genera|analiz|revis|actualiz|configur|escrib/i.test(
+        // Phase 4 R1 audit R4: short imperatives are TASKS, not chit-chat —
+        // "manda el reporte" must keep its auto-resume (and its nudge).
+        !/\?|busca|crea|haz|envía|envia|manda|agenda|programa|genera|analiz|revis|actualiz|configur|escrib|dime|dame|traduce|calcula|publica|corre|lista|muestra|borra|elimina|verifica|checa|consulta|resume|apaga|prende|sube|baja|instala|arregla|corrige/i.test(
           rawUserMsg,
         );
 
@@ -1269,7 +1277,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             (sdkImages.length > 0 ? `, images=${sdkImages.length}` : ""),
         );
 
-        const sdkResult = await queryClaudeSdk({
+        let sdkResult = await queryClaudeSdk({
           prompt: userPrompt,
           systemPrompt,
           toolNames: allToolNames,
@@ -1286,8 +1294,183 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           ...(sdkImages.length > 0 && { images: sdkImages }),
         });
 
+        // ── Phase 4.3 on the PRODUCTION path (R1 audit C1: the first cut
+        // lived only on the openai branch, which this box never runs). ──
+        //
+        // Cap detection uses the SDK's own terminal markers: queryClaudeSdk
+        // embeds `[error_max_turns — …]` / `[error_max_budget_usd — …]` on
+        // the error path. A BLOCKED without a marker is a confirmation
+        // prompt, NOT a cap — it must never trigger a resume. `[timeout` is
+        // deliberately NOT a trigger (R2 audit W4): the SDK timeout is 900s
+        // while the router abandons the pendingReply at 660s, so a resume
+        // after a timeout burns a full leg into a reply nobody delivers.
+        const sdkCapped = (text: string): boolean =>
+          /\[(error_max_turns|error_max_budget_usd)\b/.test(text);
+        const sdkAuthFailed = (text: string): boolean =>
+          AUTH_ERROR_RE.test(text) && /\[error_|API Error/i.test(text);
+        const mergeSdkLegs = (
+          first: typeof sdkResult,
+          second: typeof sdkResult,
+        ): typeof sdkResult => ({
+          ...second,
+          toolCalls: [...new Set([...first.toolCalls, ...second.toolCalls])],
+          ...(first.toolCallsWithArgs || second.toolCallsWithArgs
+            ? {
+                toolCallsWithArgs: [
+                  ...(first.toolCallsWithArgs ?? []),
+                  ...(second.toolCallsWithArgs ?? []),
+                ],
+              }
+            : {}),
+          numTurns: first.numTurns + second.numTurns,
+          usage: {
+            promptTokens: first.usage.promptTokens + second.usage.promptTokens,
+            completionTokens:
+              first.usage.completionTokens + second.usage.completionTokens,
+            cacheReadTokens:
+              first.usage.cacheReadTokens + second.usage.cacheReadTokens,
+            cacheCreationTokens:
+              first.usage.cacheCreationTokens +
+              second.usage.cacheCreationTokens,
+          },
+          costUsd: first.costUsd + second.costUsd,
+          costAuthoritative:
+            first.costAuthoritative && second.costAuthoritative,
+          durationMs: first.durationMs + second.durationMs,
+        });
+
+        let sdkAutoResumed = false;
+        // R3 audit W2: set BEFORE the await — a resume that THROWS must
+        // still count as the run's one recovery leg, or a capped partial
+        // containing "401" fires a third full-size leg via the auth gate.
+        let recoveryLegUsed = false;
+        if (
+          sdkCapped(sdkResult.text) &&
+          !(rawUserMsg.length > 0 && isConversational)
+        ) {
+          console.log(
+            `[recovery] auto-resume after cap, ${sdkResult.numTurns} turns (task ${input.taskId})`,
+          );
+          recoveryLegUsed = true;
+          try {
+            const firstLegText = sdkResult.text;
+            const resumeLeg = await queryClaudeSdk({
+              prompt:
+                `${userPrompt}\n\n[AVANCE PREVIO — la ejecución anterior alcanzó su límite de turnos/presupuesto antes de terminar]\n` +
+                `${firstLegText.slice(0, 4000)}\n\n` +
+                // R2 audit C2: the claim must carry the evidence — name the
+                // tools that ALREADY ran so mutating calls (send/write/post)
+                // are not repeated.
+                `Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ${sdkResult.toolCalls.join(", ") || "ninguna"}.\n` +
+                `CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.`,
+              systemPrompt,
+              toolNames: allToolNames,
+              // R1 audit W4: bounded — half the rounds finishes a nearly-done
+              // task; anything needing more re-caps into checkpoint + ¿Sigo?.
+              maxTurns: Math.max(4, Math.ceil(maxRounds / 2)),
+              abortSignal: input.signal,
+              costLedger: false,
+              trace: { taskId: input.taskId, runId: input.runId },
+              // A capped vision task keeps its image on resume (R2 info).
+              ...(sdkImages.length > 0 && { images: sdkImages }),
+            });
+            sdkResult = mergeSdkLegs(sdkResult, resumeLeg);
+            // R2 audit C2: leg-1's streamed work must survive when leg-2
+            // returns only a thin closer — the partial IS the deliverable.
+            const leg2Body = resumeLeg.text
+              .replace(/\n*STATUS:[^\n]*$/, "")
+              .trim();
+            if (leg2Body.length < 200) {
+              const leg1Body = firstLegText
+                .replace(/^\[[^\]]*\]\s*(Partial response below[^\n]*)?\n*/, "")
+                .replace(/\n*STATUS: DONE_WITH_CONCERNS[^]*$/, "")
+                .trim();
+              if (leg1Body.length >= 200) {
+                sdkResult = {
+                  ...sdkResult,
+                  text: `${leg1Body}\n\n${resumeLeg.text}`,
+                };
+              }
+            }
+            sdkAutoResumed = true;
+            console.log(
+              `[recovery] auto-resume finished (task ${input.taskId})`,
+            );
+          } catch (resumeErr) {
+            console.warn(
+              `[recovery] auto-resume failed, delivering first-leg partial: ${errMsg(resumeErr)}`,
+            );
+          }
+        }
+
+        // Auth-class failure: retry once (credentials are re-read per call —
+        // an operator rotation mid-run heals), then escalate in clean
+        // Spanish. Never both legs (≤1 extra call per run — gated on the
+        // BEFORE-await flag, R3 audit W2).
+        if (!recoveryLegUsed && sdkAuthFailed(sdkResult.text)) {
+          console.log(
+            `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
+          );
+          try {
+            const authLeg = await queryClaudeSdk({
+              prompt: userPrompt,
+              systemPrompt,
+              toolNames: allToolNames,
+              maxTurns: maxRounds,
+              abortSignal: input.signal,
+              costLedger: false,
+              trace: { taskId: input.taskId, runId: input.runId },
+              ...(sdkImages.length > 0 && { images: sdkImages }),
+            });
+            if (!sdkAuthFailed(authLeg.text)) {
+              sdkResult = mergeSdkLegs(sdkResult, authLeg);
+              console.log(
+                `[recovery] auth retry succeeded (task ${input.taskId})`,
+              );
+            } else {
+              sdkResult = {
+                ...mergeSdkLegs(sdkResult, authLeg),
+                text: "⚠️ Credenciales del proveedor de inferencia inválidas o revocadas (401). Reintenté una vez sin éxito — no reintentaré más. Necesitas rotar el token (operator).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
+              };
+              console.warn(
+                `[recovery] auth retry still failing — escalating (task ${input.taskId})`,
+              );
+            }
+          } catch (authErr) {
+            console.warn(`[recovery] auth retry threw: ${errMsg(authErr)}`);
+          }
+        }
+
         // Map SDK result to RunnerOutput
         let parsed = parseRunnerStatus(sdkResult.text);
+
+        // Double cap (resume also hit the limit): deliver the partial, ask
+        // the ONE allowed short question, and leave a checkpoint so
+        // "continúa" resumes through the existing seam. Closes the SDK
+        // branch's pre-existing no-checkpoint gap for exactly this case.
+        if (sdkAutoResumed && sdkCapped(sdkResult.text)) {
+          if (!parsed.cleanContent.includes("¿Sigo?")) {
+            parsed = {
+              ...parsed,
+              cleanContent: `${parsed.cleanContent}\n\n¿Sigo?`,
+            };
+          }
+          try {
+            writeCheckpoint({
+              taskId: input.taskId,
+              title: input.title,
+              userMessage: rawUserMsg || input.title,
+              toolsCalled: sdkResult.toolCalls,
+              scopeGroups: [],
+              exitReason: "max_rounds",
+              roundsCompleted: sdkResult.numTurns,
+              maxRounds,
+              responseText: parsed.cleanContent,
+            });
+          } catch {
+            // Non-fatal — checkpoint is best-effort
+          }
+        }
 
         // Safety net: if the LLM returned substantial content but reported
         // BLOCKED/NEEDS_CONTEXT (e.g. a confirmation prompt for a destructive
@@ -1366,7 +1549,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         };
       }
 
-      const result = await inferWithTools(messages, definitions, taskExecutor, {
+      let result = await inferWithTools(messages, definitions, taskExecutor, {
         maxRounds,
         providerName,
         effort: tierToEffort(input.modelTier),
@@ -1379,6 +1562,157 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // Dispatcher aggregate meters this run — see the SDK-path opt-out. (3.3)
         costLedger: false,
       });
+
+      // Phase 4.3: ONE automatic checkpoint-resume before delivering a
+      // capped partial. The operator should never have to type "continúa"
+      // for a limit the harness can see (plan 4.3/4.5 — "turn budget is the
+      // harness's problem"). Structurally once: no loop, and the resume leg
+      // itself is never resumed. A capped CONVERSATIONAL turn is a wedge,
+      // not an unfinished task — but only when there IS a user message to
+      // judge: scheduled/background tasks have no history and must resume.
+      const skipAutoResume = rawUserMsg.length > 0 && isConversational;
+      let autoResumed = false;
+      if (
+        (result.exitReason === "max_rounds" ||
+          result.exitReason === "token_budget") &&
+        !skipAutoResume
+      ) {
+        console.log(
+          `[recovery] auto-resume after ${result.exitReason} round ${result.roundsCompleted}/${maxRounds} (task ${input.taskId})`,
+        );
+        try {
+          const resumeResult = await inferWithTools(
+            [
+              ...result.messages,
+              {
+                role: "user" as const,
+                content:
+                  "CONTINÚA AUTOMÁTICO: la ejecución alcanzó su límite de rondas/presupuesto antes de terminar. NO repitas trabajo ya hecho (revisa las herramientas ya llamadas arriba). Retoma en el último paso pendiente y TERMINA la tarea. Si ya no falta nada, entrega el resultado final con su STATUS.",
+              },
+            ],
+            definitions,
+            taskExecutor,
+            {
+              // R1 audit W4: bounded — a full-size second leg can outlive
+              // the router's 660s abandon budget. Half the rounds finishes
+              // a nearly-done task; a task needing more re-caps into the
+              // checkpoint + ¿Sigo? path.
+              maxRounds: Math.max(4, Math.ceil(maxRounds / 2)),
+              providerName,
+              effort: tierToEffort(input.modelTier),
+              tokenBudget,
+              // No onTextChunk: leg-2 chunks would append onto leg-1's
+              // partial in the stream placeholder (R1 audit W4); the final
+              // text arrives whole at completion.
+              signal: input.signal,
+              taskId: input.taskId,
+              // Resume leg of the same dispatched run — same aggregate. (3.3)
+              costLedger: false,
+            },
+          );
+          autoResumed = true;
+          result = {
+            ...resumeResult,
+            roundsCompleted:
+              result.roundsCompleted + resumeResult.roundsCompleted,
+            totalUsage: {
+              prompt_tokens:
+                result.totalUsage.prompt_tokens +
+                resumeResult.totalUsage.prompt_tokens,
+              completion_tokens:
+                result.totalUsage.completion_tokens +
+                resumeResult.totalUsage.completion_tokens,
+              ...((result.totalUsage.cache_read_tokens !== undefined ||
+                resumeResult.totalUsage.cache_read_tokens !== undefined) && {
+                cache_read_tokens:
+                  (result.totalUsage.cache_read_tokens ?? 0) +
+                  (resumeResult.totalUsage.cache_read_tokens ?? 0),
+              }),
+              ...((result.totalUsage.cache_creation_tokens !== undefined ||
+                resumeResult.totalUsage.cache_creation_tokens !==
+                  undefined) && {
+                cache_creation_tokens:
+                  (result.totalUsage.cache_creation_tokens ?? 0) +
+                  (resumeResult.totalUsage.cache_creation_tokens ?? 0),
+              }),
+            },
+          };
+          console.log(
+            `[recovery] auto-resume finished: ${result.exitReason} (task ${input.taskId})`,
+          );
+        } catch (resumeErr) {
+          // The first leg's partial is still deliverable — never trade a
+          // partial for an error.
+          console.warn(
+            `[recovery] auto-resume failed, delivering first-leg partial: ${errMsg(resumeErr)}`,
+          );
+        }
+      }
+
+      // Phase 4.3: auth-class failure (expired/revoked OAuth) — retry ONCE
+      // (credentials are re-read per call, so an operator rotation mid-run
+      // heals), then escalate in clean Spanish instead of delivering the
+      // raw 401 (the #4× "401 revoked" delivery class). Skipped when a
+      // resume leg already ran — at most one extra leg per run.
+      // R1 audit W5: gated on PROVIDER-error exits only — a task whose
+      // ANSWER discusses a 401 (debugging someone's API) exits max_rounds/
+      // natural and must never lose its content to the canned escalation.
+      if (
+        !autoResumed &&
+        (result.exitReason === "provider_failure" ||
+          result.exitReason === "wrapup_failed") &&
+        AUTH_ERROR_RE.test(result.content)
+      ) {
+        console.log(
+          `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
+        );
+        try {
+          const authRetry = await inferWithTools(
+            messages,
+            definitions,
+            taskExecutor,
+            {
+              maxRounds,
+              providerName,
+              effort: tierToEffort(input.modelTier),
+              tokenBudget,
+              onTextChunk: input.onTextChunk,
+              signal: input.signal,
+              taskId: input.taskId,
+              costLedger: false,
+            },
+          );
+          if (!AUTH_ERROR_RE.test(authRetry.content)) {
+            // R1 audit W6: sum both legs' usage — the first leg still
+            // consumed tokens the ledger must see.
+            result = {
+              ...authRetry,
+              totalUsage: {
+                prompt_tokens:
+                  result.totalUsage.prompt_tokens +
+                  authRetry.totalUsage.prompt_tokens,
+                completion_tokens:
+                  result.totalUsage.completion_tokens +
+                  authRetry.totalUsage.completion_tokens,
+              },
+            };
+            console.log(
+              `[recovery] auth retry succeeded (task ${input.taskId})`,
+            );
+          } else {
+            result = {
+              ...result,
+              content:
+                "⚠️ Credenciales del proveedor de inferencia inválidas o revocadas (401). Reintenté una vez sin éxito — no reintentaré más. Necesitas rotar el token (operator).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
+            };
+            console.warn(
+              `[recovery] auth retry still failing — escalating (task ${input.taskId})`,
+            );
+          }
+        } catch (authErr) {
+          console.warn(`[recovery] auth retry threw: ${errMsg(authErr)}`);
+        }
+      }
 
       let parsed = parseRunnerStatus(result.content);
 
@@ -1892,6 +2226,15 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         result.exitReason === "max_rounds" ||
         result.exitReason === "token_budget"
       ) {
+        // Phase 4.3: reaching here WITH autoResumed means both legs capped —
+        // deliver the partial and ask ONE short question (the only case the
+        // plan allows a "¿Sigo?").
+        if (autoResumed && !parsed.cleanContent.includes("¿Sigo?")) {
+          parsed = {
+            ...parsed,
+            cleanContent: `${parsed.cleanContent}\n\n¿Sigo?`,
+          };
+        }
         try {
           const lastUserMsg =
             input.conversationHistory?.filter((t) => t.role === "user").pop()

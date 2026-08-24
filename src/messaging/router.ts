@@ -138,6 +138,12 @@ import {
   groupsForTool,
   scopeMissFallbackLine,
 } from "./scope-miss.js";
+import {
+  pinFromExchange,
+  pinConfirmedFigures,
+  pinnedThreadSection,
+  bindTaskConfirmedFigures,
+} from "./thread-pins.js";
 import { applyRitualDeliveryPolicy } from "../rituals/delivery-policy.js";
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
@@ -151,8 +157,19 @@ const CONTEXT_CLEAR_RE =
   /^(limpia\s+(?:tu\s+)?contexto|clear\s+context|contexto\s+limpio|borra\s+(?:el\s+)?contexto)\s*/i;
 const BACKGROUND_AGENT_RE =
   /\b(lanza\s+(?:un\s+)?agente|investiga\s+en\s+background|averigua\s+mientras|agente.*investig[ae])\b/i;
+/** Phase 4.4 hard stop. Standalone stop-verbs, optionally followed by
+ *  BOUNDED qualifiers ("para ya", "cancela todo", "detente por favor").
+ *  Free-tail matching is deliberately NOT allowed for `para`/`cancela` —
+ *  "Para el viernes…" is a preposition and "Cancela la reunión…" is a
+ *  calendar op, not a task stop (see CANCEL_LEADING_RE for the verbs that
+ *  ARE unambiguous with a tail). #11367–11369: stops must never get a
+ *  clarifying question back. */
 const CANCEL_INTENT_RE =
-  /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
+  /^(cancela|detente|para|alto|stop|cancel|aborta|déjalo|dejalo)((\s+|,\s*)(ya|ahora|todo|todas?|eso|esto|la\s+tarea|las\s+tareas|todas\s+las\s+tareas|por\s+favor|porfa|please))*\s*[.!]*\s*$/i;
+/** Stop-verbs unambiguous even with a free tail: "Detente, cambio de plan",
+ *  "Alto — eso no era lo que pedí". `alto` needs punctuation after it —
+ *  "alto rendimiento" is an adjective, not a stop. */
+const CANCEL_LEADING_RE = /^detente\b[\s,.!—:-]|^alto\s*[,.!—:;-]/i;
 const CONTINUATION_RE =
   /^(contin[uú]a|sigue|termin[ae]|completa|finaliza|acaba|resume|continúe|continue)\b/i;
 
@@ -883,6 +900,14 @@ function pushToThread(
   const thread = conversationThreads.get(channel)!;
   thread.push({ text: exchange, imageUrl });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
+  // Phase 4.1: every exchange that enters the thread buffer also feeds the
+  // pin ledger (URLs created/shared in this thread). Single seam — every
+  // delivered exchange crosses pushToThread.
+  try {
+    pinFromExchange(channel, exchange);
+  } catch {
+    // Pins are best-effort; never break the thread buffer.
+  }
   // Keys created here that never pass through getThreadTurns (e.g. the
   // background-agent spawn path) would otherwise have no lastAccess entry
   // and never be TTL-evicted.
@@ -989,6 +1014,27 @@ export function isPoisonedExchange(jarvisResponse: string): boolean {
  * Filters out poisoned exchanges (hallucinated success, system errors, refusals)
  * that would teach the LLM to repeat failures or refuse to use tools.
  */
+/** Phase 4.2 image expiry: an image is context for the exchange it arrived
+ *  in, plus the immediately following turn — the entry is still the thread's
+ *  LAST when that next turn is assembled. Older entries never re-inject
+ *  their image: 13 stale-image hijacks in review shard 4 were vision
+ *  follow-ups anchored to screenshots many turns old. The exchange TEXT
+ *  stays; only the image expires. */
+export function threadImageLive(index: number, length: number): boolean {
+  return index === length - 1;
+}
+
+/** Test-only: seed a thread buffer directly (the production path fills it
+ *  on task completion, which unit tests don't reach). */
+export function _testSeedThread(
+  channel: string,
+  entries: Array<{ text: string; imageUrl?: string }>,
+): void {
+  hydratedChannels.add(channel);
+  conversationThreads.set(channel, [...entries]);
+  threadLastAccess.set(channel, Date.now());
+}
+
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
 
@@ -1016,9 +1062,14 @@ function getThreadTurns(channel: string): ConversationTurn[] {
 
   const turns: ConversationTurn[] = [];
   let poisonedCount = 0;
-  for (const entry of thread) {
+  for (const [i, entry] of thread.entries()) {
     const jarvisIdx = entry.text.indexOf("\nJarvis: ");
     if (jarvisIdx === -1) continue;
+
+    // Phase 4.2: only the last entry's image survives into this turn.
+    const liveImage = threadImageLive(i, thread.length)
+      ? entry.imageUrl
+      : undefined;
 
     const userText = entry.text.slice("User: ".length, jarvisIdx).trim();
     const assistantText = entry.text
@@ -1034,7 +1085,7 @@ function getThreadTurns(channel: string): ConversationTurn[] {
         turns.push({
           role: "user",
           content: userText,
-          ...(entry.imageUrl && { imageUrl: entry.imageUrl }),
+          ...(liveImage && { imageUrl: liveImage }),
         });
       }
       continue;
@@ -1044,7 +1095,7 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       turns.push({
         role: "user",
         content: userText,
-        ...(entry.imageUrl && { imageUrl: entry.imageUrl }),
+        ...(liveImage && { imageUrl: liveImage }),
       });
     if (assistantText)
       turns.push({ role: "assistant", content: assistantText });
@@ -1695,11 +1746,21 @@ export class MessageRouter {
     // --- v6.2 S2: Task cancellation from Telegram ---
     // Detect cancel intent: "cancela", "detente", "para", "stop", "cancel"
     // Aborts the running task for this channel, extracts partial result, notifies user.
-    if (CANCEL_INTENT_RE.test(msg.text.trim())) {
-      // Find the active pending reply for this channel
-      let cancelledTaskId: string | null = null;
+    // R1 audit C4: WhatsApp group messages arrive with a "[Grupo: …]\n"
+    // prefix that every sibling intercept strips before matching — a group
+    // "Para ya" must stop, not fall to the conversational fast path.
+    // Greedy to the line's LAST `]` (R2 info): a group name containing `]`
+    // must not leave a stray bracket that defeats the ^-anchored match.
+    const text = msg.text.replace(/^\[Grupo:.*\]\s*\n?/i, "").trim();
+    if (CANCEL_INTENT_RE.test(text) || CANCEL_LEADING_RE.test(text)) {
+      // Phase 4.4: cancel ALL running tasks for this THREAD, not just the
+      // first match — "Para" means everything stops (#11367–11369).
+      // R1 audit C3: scope is the thread key, mirroring threadKey() — a
+      // channel-wide sweep would let one community-email sender (or one
+      // group member) cancel every other sender's running task.
+      let cancelled = 0;
       for (const [taskId, pending] of this.pendingReplies.entries()) {
-        if (pending.channel === msg.channel) {
+        if (pending.tk === tk) {
           // Abort the running inference loop
           if (pending.abortController) {
             pending.abortController.abort();
@@ -1712,30 +1773,40 @@ export class MessageRouter {
           clearTimeout(pending.abandonTimer);
           // Stop streaming if active
           if (pending.streamController) {
-            pending.streamController
-              .finalize("🛑 Tarea cancelada.")
-              .catch(() => {});
+            pending.streamController.finalize("🛑 Detenido.").catch(() => {});
           }
           this.pendingReplies.delete(taskId);
-          cancelledTaskId = taskId;
-          break;
+          cancelled++;
         }
       }
 
-      if (cancelledTaskId) {
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          `🛑 Tarea cancelada (${cancelledTaskId.slice(0, 8)}). ¿En qué más te ayudo?`,
-        );
-        pushToThread(tk, `User: ${msg.text}\nJarvis: Tarea cancelada.`);
-      } else {
-        this.sendToChannel(
-          msg.channel,
-          msg.from,
-          "No hay tarea activa para cancelar.",
-        );
+      // One line. Never a clarifying question, never a greeting (4.4).
+      const reply =
+        cancelled > 0
+          ? `Detenido: ${cancelled} ${cancelled === 1 ? "tarea cancelada" : "tareas canceladas"}.`
+          : "Detenido: no había tareas activas.";
+      this.sendToChannel(msg.channel, msg.from, reply);
+      pushToThread(tk, `User: ${msg.text}\nJarvis: ${reply}`);
+      // R3 audit C2: persist the stop exchange — pushToThread is in-memory
+      // only, so without this retain the `stops_honoured` metric (and any
+      // later review of stop behaviour) reads 0 forever. Mirrors the
+      // fast-path retain above.
+      try {
+        getMemoryService()
+          .retain(`User: ${msg.text}\nJarvis: ${reply}`, {
+            bank: "mc-jarvis",
+            tags: [msg.channel, "conversation", "hard-stop"],
+            async: true,
+            trustTier: 2,
+            source: "router",
+          })
+          .catch(() => {});
+      } catch {
+        /* non-fatal */
       }
+      console.log(
+        `[hard-stop] channel=${msg.channel} cancelled=${cancelled} text="${text.slice(0, 60)}"`,
+      );
       return true;
     }
     return false;
@@ -2170,10 +2241,24 @@ export class MessageRouter {
 
     // Task continuity: check for a recent checkpoint ONLY on continuation
     // messages. Checkpoint blocks are per-call by definition — VARIABLE half.
+    // R4 audit W2: OWNER channels only — the runner-written checkpoints
+    // carry no thread stamp (RunnerInput has no thread field), so an
+    // unstamped checkpoint matches any thread; without this gate an
+    // external community sender's "continúa" could resume — and read the
+    // partial of — the operator's task. Checkpoint continuation is an
+    // operator feature.
     let checkpointBlock = "";
-    if (CONTINUATION_RE.test(msg.text.trim())) {
+    if (
+      CONTINUATION_RE.test(msg.text.trim()) &&
+      // R5 audit W2: isOwnerChannel means "not a public email channel" —
+      // a WA group member still passed it. operatorThreadKey is the real
+      // operator predicate (group senderJid must BE the owner).
+      this.operatorThreadKey(msg, tk) !== undefined
+    ) {
       try {
-        const cp = findRecentCheckpoint();
+        // R3 audit W3: scoped to THIS thread — sender A's "continúa"
+        // must never resume sender B's checkpoint.
+        const cp = findRecentCheckpoint(tk);
         if (cp) {
           checkpointBlock =
             `\n\n## CONTINUACIÓN DE TAREA ANTERIOR\n` +
@@ -2193,11 +2278,31 @@ export class MessageRouter {
       }
     }
 
+    // Phase 4.1/2.3: a confirmation message pins the previous reply's
+    // figures BEFORE this turn's prompt is assembled, so "Confirmo" itself
+    // already runs with the pins in context.
+    const lastAssistant = [...conversationHistory]
+      .reverse()
+      .find((t) => t.role === "assistant")?.content;
+    const pinnedCount = pinConfirmedFigures(tk, msg.text, lastAssistant);
+    if (pinnedCount > 0) {
+      console.log(`[thread-pins] confirmed ${pinnedCount} figure(s) on ${tk}`);
+    }
+    // Pins go FIRST among the variable-half additions (plan 4.1: "injected
+    // first in the next turns"). Owner threads only (R1 audit R3): the
+    // FIJADO header is an instruction block, and a community/external
+    // sender must not get their pasted URLs elevated into it.
+    const pinsBlock = isOwnerChannel(msg.channel, spChannel?.mode)
+      ? pinnedThreadSection(tk)
+      : "";
+
     // v8 S1: assemble description with cache-break marker between stable
-    // and variable halves. Per-call additions (patternBlock, checkpointBlock)
-    // join the variable half — they'd bust the cache anyway.
+    // and variable halves. Per-call additions (pinsBlock, patternBlock,
+    // checkpointBlock) join the variable half — they'd bust the cache anyway.
     const variableTail =
-      (patternBlock ? "\n\n" + patternBlock : "") + checkpointBlock;
+      (pinsBlock ? "\n\n" + pinsBlock : "") +
+      (patternBlock ? "\n\n" + patternBlock : "") +
+      checkpointBlock;
     const taskDescription =
       stableSP + CACHE_BREAK_MARKER + variableSP + variableTail;
 
@@ -2250,6 +2355,15 @@ export class MessageRouter {
       } catch {
         /* non-fatal */
       }
+    }
+
+    // Phase 2.3: bind the thread's operator-confirmed figures to this task
+    // so the Sheets/Docs read-back verifier can fail a write that
+    // contradicts the confirmed model (#11959).
+    try {
+      bindTaskConfirmedFigures(result.taskId, tk);
+    } catch {
+      /* non-fatal */
     }
 
     // Usability Phase 3: the user's own words are evidence — a figure the
@@ -2386,7 +2500,9 @@ export class MessageRouter {
     // canary, MCP/intel alerts, diff digest) whose text may legitimately quote
     // an error string the filter would otherwise rewrite (R1 audit W3: a
     // "FAILED: API Error: 400 Output blocked…" alert lost its cause).
-    const text = opts.raw ? rawText : this.filterForDelivery(rawText, "broadcast");
+    const text = opts.raw
+      ? rawText
+      : this.filterForDelivery(rawText, "broadcast");
     if (!text) return { sent: 0, failed: 0 };
 
     for (const [name, adapter] of this.channels) {
@@ -2451,7 +2567,9 @@ export class MessageRouter {
     // Phase 0.1 (R1 audit R1): the V8.1 brief is LLM text — filtered. Mechanical
     // senders (ritual-failure notice, Prometheus alert poller, X probe) pass
     // `raw: true` so their diagnostic strings survive verbatim.
-    const text = opts.raw ? rawText : this.filterForDelivery(rawText, "briefing");
+    const text = opts.raw
+      ? rawText
+      : this.filterForDelivery(rawText, "briefing");
     if (!text) return { sent: 0, failed: 0 };
     for (const [name, adapter] of this.channels) {
       if (!isOwnerChannel(name, adapter.mode)) continue;
@@ -3313,13 +3431,10 @@ export class MessageRouter {
   } {
     // A scope re-run is the same user turn: the first run already sent the
     // interim notice, so the re-run arms a no-op interim (R2 audit info).
-    const interimTimer = setTimeout(
-      () => {
-        if (!opts.rerun)
-          this.sendToChannel(channel, to, "Sigo trabajando en eso...");
-      },
-      TASK_TIMEOUT_INTERIM_MS,
-    );
+    const interimTimer = setTimeout(() => {
+      if (!opts.rerun)
+        this.sendToChannel(channel, to, "Sigo trabajando en eso...");
+    }, TASK_TIMEOUT_INTERIM_MS);
 
     const finalTimer = setTimeout(() => {
       const pending = this.pendingReplies.get(taskId);

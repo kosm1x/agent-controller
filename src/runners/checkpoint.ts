@@ -26,6 +26,9 @@ function parseUtcTimestamp(s: string): number {
 export interface Checkpoint {
   taskId: string;
   title: string;
+  /** Thread key of the originating conversation (R3 audit W3). Absent on
+   *  checkpoints from writers that don't know it — those match any thread. */
+  threadKey?: string;
   userMessage: string;
   toolsCalled: string[];
   scopeGroups: string[];
@@ -49,6 +52,7 @@ export function writeCheckpoint(opts: {
   roundsCompleted: number;
   maxRounds: number;
   responseText: string;
+  threadKey?: string;
 }): void {
   const path = `${CHECKPOINT_PREFIX}${opts.taskId}.md`;
   const now = new Date().toISOString();
@@ -57,6 +61,7 @@ export function writeCheckpoint(opts: {
     `# Checkpoint: ${opts.title}`,
     ``,
     `**Task ID:** ${opts.taskId}`,
+    ...(opts.threadKey ? [`**Thread:** ${opts.threadKey}`] : []),
     `**Exit reason:** ${opts.exitReason} (round ${opts.roundsCompleted}/${opts.maxRounds})`,
     `**Created:** ${now}`,
     ``,
@@ -89,10 +94,7 @@ export function writeCheckpoint(opts: {
       `[checkpoint] Saved: ${path} (${opts.exitReason}, round ${opts.roundsCompleted}/${opts.maxRounds})`,
     );
   } catch (err) {
-    console.warn(
-      `[checkpoint] Failed to save:`,
-      errMsg(err),
-    );
+    console.warn(`[checkpoint] Failed to save:`, errMsg(err));
   }
 }
 
@@ -100,7 +102,9 @@ export function writeCheckpoint(opts: {
  * Find the most recent checkpoint (within TTL).
  * Returns null if no checkpoint exists or it's expired.
  */
-export function findRecentCheckpoint(): Checkpoint | null {
+export function findRecentCheckpoint(
+  threadKey?: string,
+): Checkpoint | null {
   try {
     const files = listFiles({
       prefix: CHECKPOINT_PREFIX,
@@ -114,20 +118,39 @@ export function findRecentCheckpoint(): Checkpoint | null {
       (a, b) =>
         parseUtcTimestamp(b.updated_at) - parseUtcTimestamp(a.updated_at),
     );
-    const latest = sorted[0];
 
-    // Check TTL
-    const age = Date.now() - parseUtcTimestamp(latest.updated_at);
-    if (age > CHECKPOINT_TTL_MS) {
-      // Expired — clean up
-      deleteFile(latest.path);
-      return null;
+    // Phase 4 R1 audit W3: a boot-written `orphaned_restart` checkpoint is
+    // an empty shell (no tools, no partial). When a richer runner-written
+    // checkpoint is also live, prefer it — newest non-orphan first, orphan
+    // only as fallback. Expired entries are pruned as encountered.
+    let orphanFallback: Checkpoint | null = null;
+    for (const entry of sorted) {
+      const age = Date.now() - parseUtcTimestamp(entry.updated_at);
+      if (age > CHECKPOINT_TTL_MS) {
+        deleteFile(entry.path);
+        continue;
+      }
+      const file = getFile(entry.path);
+      if (!file) continue;
+      const cp = parseCheckpoint(entry.path, file.content);
+      if (!cp) continue;
+      // R3 audit W3: a checkpoint stamped for another thread is invisible
+      // here — sender A's "continúa" must not resume sender B's task. A
+      // stamp of just the channel matches every thread on that channel
+      // (the boot-orphan writer only knows the channel). Unstamped rows
+      // (legacy + runner writers without thread context) match any.
+      if (
+        cp.threadKey &&
+        threadKey &&
+        cp.threadKey !== threadKey &&
+        !threadKey.startsWith(cp.threadKey + ":")
+      ) {
+        continue;
+      }
+      if (cp.exitReason !== "orphaned_restart") return cp;
+      if (!orphanFallback) orphanFallback = cp;
     }
-
-    // Read full content for parsing
-    const file = getFile(latest.path);
-    if (!file) return null;
-    return parseCheckpoint(latest.path, file.content);
+    return orphanFallback;
   } catch {
     return null;
   }
@@ -166,9 +189,7 @@ export function pruneExpiredCheckpoints(
         deleteFile(f.path);
         deleted++;
       } catch (err) {
-        console.warn(
-          `[checkpoint] prune failed for ${f.path}: ${errMsg(err)}`,
-        );
+        console.warn(`[checkpoint] prune failed for ${f.path}: ${errMsg(err)}`);
       }
     }
   } catch (err) {
@@ -198,6 +219,7 @@ export function clearCheckpoint(taskId: string): void {
 function parseCheckpoint(_path: string, content: string): Checkpoint | null {
   try {
     const taskIdMatch = content.match(/\*\*Task ID:\*\*\s*(.+)/);
+    const threadMatch = content.match(/\*\*Thread:\*\*\s*(.+)/);
     const exitMatch = content.match(
       /\*\*Exit reason:\*\*\s*(\S+)\s*\(round (\d+)\/(\d+)\)/,
     );
@@ -215,6 +237,7 @@ function parseCheckpoint(_path: string, content: string): Checkpoint | null {
 
     return {
       taskId: taskIdMatch[1].trim(),
+      ...(threadMatch ? { threadKey: threadMatch[1].trim() } : {}),
       title: content.match(/^# Checkpoint:\s*(.+)/m)?.[1]?.trim() ?? "Unknown",
       userMessage: userMsgMatch?.[1]?.trim() ?? "",
       toolsCalled: (toolsMatch?.[1] ?? "").split(", ").filter(Boolean),

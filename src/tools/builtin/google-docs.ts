@@ -638,7 +638,14 @@ AFTER WRITING: Report the document title and what was appended.`,
         "gdocs_write",
         `doc:${docId}`,
         `Doc ${docId} contiene el texto escrito`,
-        { document_id: docId, snippet: text.slice(0, 120) },
+        {
+          document_id: docId,
+          snippet: text.slice(0, 120),
+          // R1 audit W1: the confirmed-figure contradiction check must run
+          // over what THIS write inserted, not the whole document — an
+          // untouched 2023 paragraph must not fail a 2026 write.
+          written_text: text.slice(0, 800),
+        },
       );
       return JSON.stringify({
         written: true,

@@ -225,6 +225,291 @@ function prune(now: number): void {
   }
 }
 
+/** Read-only diagnostic commands exempt from strike ENFORCEMENT (Phase 4
+ *  fold-in, 2026-08-23 ant-colony incident): after three failing
+ *  `curl https://ant-colony…` calls, the FIRST `journalctl -u caddy …
+ *  ant-colony` — a novel command that would have revealed no ACME attempt
+ *  existed — was blocked because it shared the "colony" token. Blocking
+ *  novel diagnostics converts "stop flailing" into "stop diagnosing", and
+ *  the model then theorizes instead of reading logs.
+ *
+ *  Exemption is ENFORCEMENT-only: diagnostic calls still record their
+ *  failures (recordCall is unchanged), so a loop of failing greps still
+ *  strikes the next WRITE-class variation. Network mutators (curl, wget)
+ *  stay enforced — they were the original flailing class. */
+const DIAG_SIMPLE = new Set([
+  // journalctl is handled by its own allow-by-membership branch below.
+  "dmesg",
+  "ss",
+  "netstat",
+  // NOT `ip` (`ip link set … down` mutates), NOT `date` (`date -s` sets the
+  // clock), NOT `env` (it is a WRAPPER — `env curl …` must be judged as
+  // curl), NOT bare `find` (`-delete`/`-exec` mutate — see DIAG_FIND below).
+  // R1 audit C2 (2026-08-23).
+  "ping",
+  "dig",
+  "host",
+  "nslookup",
+  "traceroute",
+  "ps",
+  "pgrep",
+  "lsof",
+  "df",
+  "du",
+  "free",
+  "uptime",
+  "uname",
+  "whoami",
+  "id",
+  "stat",
+  "readlink",
+  "which",
+  "whereis",
+  "type",
+  "wc",
+  "md5sum",
+  "sha1sum",
+  "sha256sum",
+  "grep",
+  "egrep",
+  "fgrep",
+  "zgrep",
+  "cat",
+  "head",
+  "tail",
+  "ls",
+  "tr",
+  "cut",
+  "column",
+  "jq",
+  "strings",
+  "printenv",
+]);
+// R3 audit C1 (3-strike rule — flag-subtraction failed three rounds):
+// membership above is now a POSITIVE property — a binary is listed only if
+// it has NO write or exec mode under ANY flag. Dropped for having one:
+// `sort` (-o/-uo), `uniq` (IN OUT), `xxd` (IN OUT, -r), `rg` (--pre CMD
+// executes it), `file` (-C compiles magic), `hostname` (sets it), `ip`,
+// `date`, `env`, bare `find`. The four flag-guarded exceptions below are
+// the only binaries where a mutating MODE hides behind flags.
+
+/** `find` mutates through these; a find carrying any of them is enforced. */
+const FIND_MUTATING_RE = /-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b/;
+
+/** The only flag-guarded exceptions: binaries whose mutating modes hide
+ *  behind flags (R2 W3, hardened R3 C1). `letters` are dangerous SHORT
+ *  flags checked by set-membership inside each `-abc` bundle — a regex
+ *  `\b` cannot see inside `-Cw`/`-uo` bundles, which is how R2's fix was
+ *  defeated. `longRe` covers `--long` forms (no bundling there). */
+const DANGEROUS_FLAGS: Record<string, { letters?: string; longRe?: RegExp }> = {
+  dmesg: { letters: "CcDEn", longRe: /^--(clear|console|read-clear)/ },
+  ss: { letters: "K", longRe: /^--kill/ },
+  git: { longRe: /^--output/ },
+};
+
+/** journalctl is the one binary where flag-DENY enumeration failed four
+ *  audit rounds in a row (R1 `\n`, R2 vacuum/rotate/…, R3 bundling, R4
+ *  --cursor-file/--update-catalog/--smart-relinquish-var — the first a
+ *  proven root file-write). Inverted to ALLOW-by-membership (R4 C1): an
+ *  option not on this list simply loses the exemption — the command still
+ *  runs, it just stays under normal strike enforcement (fail-safe).
+ *  Positional args are journal match expressions (reads) — always fine. */
+const JOURNALCTL_SHORT_ALLOW = new Set([..."abcDefFgkmMnNopqrStuUx"]);
+const JOURNALCTL_LONG_ALLOW = new Set([
+  "unit",
+  "user-unit",
+  "user",
+  "system",
+  "follow",
+  "lines",
+  "output",
+  "output-fields",
+  "since",
+  "until",
+  "priority",
+  "grep",
+  "case-sensitive",
+  "boot",
+  "dmesg",
+  "no-pager",
+  "no-full",
+  "full",
+  "all",
+  "reverse",
+  "catalog",
+  "quiet",
+  "utc",
+  "identifier",
+  "facility",
+  "merge",
+  "no-hostname",
+  "disk-usage",
+  "list-boots",
+  "header",
+  "directory",
+  "file",
+  "root",
+  "namespace",
+  "no-tail",
+  // R5 verify: read-only options that were losing the exemption for no
+  // safety gain.
+  "cursor",
+  "after-cursor",
+  "show-cursor",
+  "fields",
+  "field",
+  "machine",
+  "list-catalog",
+  "dump-catalog",
+  "verify",
+  "truncate-newline",
+]);
+
+/** True iff every flag on a journalctl segment is on the allow-list. */
+function journalctlFlagsAllowed(args: string[]): boolean {
+  for (const w of args) {
+    // R5 audit W1: a negative NUMBER is an option value ("-b -1",
+    // "--since -1h"), not a flag — must not cost the exemption.
+    if (/^-\d/.test(w)) continue;
+    if (w.startsWith("--")) {
+      const name = w.slice(2).split("=")[0];
+      if (!JOURNALCTL_LONG_ALLOW.has(name)) return false;
+    } else if (w.startsWith("-") && w.length > 1) {
+      for (const ch of w.slice(1)) {
+        if (!JOURNALCTL_SHORT_ALLOW.has(ch)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** True when any arg after the binary carries a dangerous flag — bundled
+ *  short letters included. */
+function hasDangerousFlag(
+  args: string[],
+  spec: { letters?: string; longRe?: RegExp },
+): boolean {
+  for (const w of args) {
+    if (w.startsWith("--")) {
+      if (spec.longRe?.test(w)) return true;
+    } else if (w.startsWith("-") && w.length > 1 && spec.letters) {
+      for (const ch of w.slice(1)) {
+        if (spec.letters.includes(ch)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Binaries that are diagnostic only under specific subcommands. The
+ *  subcommand is the first token, NOT a flag-skip scan — `git -C /x push`
+ *  reads "/x" as the subcommand and correctly fails the allow-list. */
+const DIAG_SUBCOMMANDS: Record<string, Set<string>> = {
+  systemctl: new Set([
+    "status",
+    "is-active",
+    "is-enabled",
+    "is-failed",
+    "list-units",
+    "list-unit-files",
+    "list-timers",
+    "list-sockets",
+    "show",
+    "cat",
+  ]),
+  caddy: new Set(["validate", "version", "list-modules"]),
+  docker: new Set([
+    "ps",
+    "logs",
+    "inspect",
+    "images",
+    "version",
+    "info",
+    "stats",
+    "top",
+    "port",
+  ]),
+  // NOT `branch`/`remote` — `git branch -D x` and `git remote set-url`
+  // mutate (R1 audit C2).
+  git: new Set(["status", "log", "diff", "show", "describe", "rev-parse"]),
+};
+
+/** True when EVERY top-level segment of the command is a read-only
+ *  diagnostic. Scope after three audit rounds (R1 C2, R2 C1/W3, R3 C1):
+ *  DIAG_SIMPLE holds only binaries with NO write/exec mode under any flag;
+ *  journalctl/dmesg/ss/git are admitted behind bundling-proof dangerous-
+ *  flag checks; `find` behind FIND_MUTATING_RE; systemctl/caddy/docker/git
+ *  behind first-token subcommand allow-lists. Everything else — an unknown
+ *  binary, a real redirect, command substitution, a parse ambiguity —
+ *  returns false and stays under normal enforcement (fails toward
+ *  "blocked like today"). This is a strike-ENFORCEMENT exemption inside
+ *  shell_exec's own guard, not a security boundary: validateShellCommand
+ *  still screens every command first. */
+export function isReadOnlyDiagnostic(command: string): boolean {
+  // Strip harmless redirects, then refuse any remaining `>` (file writes
+  // via `awk … > out`, `tee`, etc. are not diagnostics).
+  const stripped = command
+    .replace(/2>&1/g, " ")
+    .replace(/[12&]?>>?\s*\/dev\/null/g, " ");
+  if (stripped.includes(">")) return false;
+  // Command substitution runs an inner command this parser never sees —
+  // refuse (validateShellCommand also blocks these upstream; belt+braces).
+  if (/\$\(|`/.test(stripped)) return false;
+
+  // Segment split must mirror /bin/sh -c: NEWLINE, `;` and single `&`
+  // (background) are all top-level separators (R1 C2 + R2 C1 —
+  // "journalctl -u caddy & curl -X POST …" is two commands). `&&` yields
+  // an empty middle segment, which the loop skips.
+  const segments = stripped.split(/[\n;&]|\|\||\|/);
+  let realSegments = 0;
+  for (const seg of segments) {
+    if (seg.trim() === "") continue; // empty side of a trailing separator
+    realSegments++;
+    const words = seg.trim().split(/\s+/).filter(Boolean);
+    // Drop wrappers and env assignments: `sudo`, `command`, `env`,
+    // `timeout 30`, `FOO=bar`. `env` is a wrapper, not a diagnostic —
+    // `env curl …` must be judged as curl (R1 audit C2).
+    while (words.length > 0) {
+      const w = words[0];
+      if (w === "sudo" || w === "command" || w === "env") {
+        words.shift();
+      } else if (w === "timeout" && /^\d/.test(words[1] ?? "")) {
+        words.shift();
+        words.shift();
+      } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) {
+        words.shift();
+      } else {
+        break;
+      }
+    }
+    const bin = words[0];
+    if (!bin) return false;
+    const base = bin.slice(bin.lastIndexOf("/") + 1);
+    if (base === "find") {
+      // find is diagnostic only without its mutating actions.
+      if (!FIND_MUTATING_RE.test(seg)) continue;
+      return false;
+    }
+    if (base === "journalctl") {
+      // R4 C1: allow-by-membership — an unknown flag loses the exemption.
+      if (journalctlFlagsAllowed(words.slice(1))) continue;
+      return false;
+    }
+    // R2 W3 / R3 C1: a flag-guarded binary running in a mutating mode is
+    // enforced — bundled short flags included.
+    const teeth = DANGEROUS_FLAGS[base];
+    if (teeth && hasDangerousFlag(words.slice(1), teeth)) return false;
+    if (DIAG_SIMPLE.has(base)) continue;
+    const subs = DIAG_SUBCOMMANDS[base];
+    if (subs) {
+      const sub = words[1];
+      if (sub && subs.has(sub)) continue;
+    }
+    return false;
+  }
+  return realSegments > 0;
+}
+
 /** Inspect the current command against history. Returns the shared token
  *  and matching count if the strike limit is met, otherwise null. */
 export function checkFlailing(
@@ -232,6 +517,9 @@ export function checkFlailing(
   now: number = Date.now(),
 ): { token: string; strikes: number } | null {
   if (isInRitualContext()) return null;
+  // Enforcement-only exemption — recordCall still logs these, so failing
+  // diagnostics keep striking subsequent write-class variations.
+  if (isReadOnlyDiagnostic(command)) return null;
   prune(now);
   const tokens = extractTokens(command);
   if (tokens.size === 0) return null;

@@ -1061,3 +1061,25 @@ describe("classifier outcome adjustments", () => {
     expect(result.reason).not.toContain("tier upgrade");
   });
 });
+
+// Usability plan Phase 4.5: "turn budget is the harness's problem" — a long
+// coding chat must never land on the fast runner (that's where the operator
+// had to type "No agotes tus turnos"). Classification pins the routing; the
+// fast-runner auto-resume (4.3) is the safety net for whatever slips through.
+describe("Phase 4.5 — long coding chat routes off the fast runner", () => {
+  it("routes 'implementa el endpoint y corre los tests' to nanoclaw", () => {
+    const result = classify({
+      title: "Chat: Implementa el endpoint de previews y corre los tests",
+      description: "Chat: Implementa el endpoint de previews y corre los tests",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+
+  it("routes a plan→ship chat to nanoclaw even without a code noun", () => {
+    const result = classify({
+      title: "Chat: Haz un plan para el cambio y ejecútalo con commit",
+      description: "Chat: Haz un plan para el cambio y ejecútalo con commit",
+    });
+    expect(result.agentType).toBe("nanoclaw");
+  });
+});

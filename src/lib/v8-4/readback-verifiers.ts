@@ -14,9 +14,34 @@ import { getFile } from "../../db/jarvis-fs.js";
 import { getSchedule } from "../../rituals/dynamic.js";
 import { googleFetch } from "../../google/client.js";
 import { registerReadback, sha8, type ReadbackVerdict } from "./readback.js";
+import {
+  confirmedMismatch,
+  type ConfirmedFigure,
+} from "../../messaging/thread-pins.js";
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/** Phase 2.3: fail the read-back when the artifact CONTRADICTS a figure the
+ *  operator confirmed in the originating thread (#11959 — the Sheet said
+ *  the opposite of the model confirmed minutes earlier). `__confirmed` is
+ *  embedded by declareReadbackGate; absent for tasks with no confirmation.
+ *  Returns null when there is no contradiction. */
+function confirmedCheck(
+  data: Record<string, unknown>,
+  readText: string,
+): ReadbackVerdict | null {
+  const confirmed = Array.isArray(data.__confirmed)
+    ? (data.__confirmed as ConfirmedFigure[])
+    : [];
+  if (confirmed.length === 0) return null;
+  const hit = confirmedMismatch(readText, confirmed);
+  if (!hit) return null;
+  return {
+    ok: false,
+    evidence: `Contradice la cifra confirmada «${hit.figure.raw}» (${hit.figure.label.slice(0, 60)}): la línea dice «${hit.line}»`,
+  };
 }
 
 /**
@@ -140,6 +165,18 @@ export async function verifySheetWrite(
       evidence: `Sheet ${range}: col ${mismatch + 1} dice «${gotFirst[mismatch] ?? ""}», escribí «${want[mismatch]}»`,
     };
   }
+  // Phase 2.3: matching what was written is not enough — the write must
+  // also not contradict what the operator confirmed in chat.
+  const rereadText = got
+    .map((row) => (row ?? []).map((c) => String(c ?? "")).join(" | "))
+    .join("\n");
+  const contradiction = confirmedCheck(data, rereadText);
+  if (contradiction) {
+    return {
+      ...contradiction,
+      evidence: `Sheet ${range}: ${contradiction.evidence}`,
+    };
+  }
   return {
     ok: true,
     evidence: `Sheet ${range} (${got.length} fila${got.length === 1 ? "" : "s"}: ${gotFirst.slice(0, 4).join(" | ").slice(0, 80)})`,
@@ -169,6 +206,20 @@ export async function verifyDocWrite(
     return {
       ok: false,
       evidence: `Doc «${doc.title ?? docId}»: no contiene el texto escrito (${norm(text).length} chars leídos)`,
+    };
+  }
+  // Phase 2.3: the WRITE must not contradict operator-confirmed figures.
+  // Scoped to the inserted text (R1 audit W1) — a pre-existing paragraph
+  // elsewhere in the doc is not this write's claim. Falls back to the
+  // snippet for gates declared before `written_text` existed.
+  const contradiction = confirmedCheck(
+    data,
+    asString(data.written_text) || snippet,
+  );
+  if (contradiction) {
+    return {
+      ...contradiction,
+      evidence: `Doc «${doc.title ?? docId}»: ${contradiction.evidence}`,
     };
   }
   return {

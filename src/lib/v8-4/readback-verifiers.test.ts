@@ -110,3 +110,96 @@ describe("cellEquals (USER_ENTERED round-trips)", () => {
     expect(cellEquals("(1,234)", "-1234")).toBe(true);
   });
 });
+
+describe("Phase 2.3 — contradiction against operator-confirmed figures", () => {
+  const confirmed = [{ raw: "34%", label: "Margen bruto: 34%" }];
+
+  it("verifySheetWrite fails when the reread sheet contradicts a confirmed figure", async () => {
+    mocks.googleFetch.mockResolvedValue({
+      values: [["Margen bruto", "28%"]],
+    });
+    const v = await verifySheetWrite({
+      spreadsheet_id: "S",
+      range: "Hoja1!A1:B1",
+      first_row: ["Margen bruto", "28%"],
+      __confirmed: confirmed,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.evidence).toContain("34%");
+    expect(v.evidence).toContain("confirmada");
+  });
+
+  it("verifySheetWrite passes when the sheet carries the confirmed value", async () => {
+    mocks.googleFetch.mockResolvedValue({
+      values: [["Margen bruto", "34%"]],
+    });
+    const v = await verifySheetWrite({
+      spreadsheet_id: "S",
+      range: "Hoja1!A1:B1",
+      first_row: ["Margen bruto", "34%"],
+      __confirmed: confirmed,
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it("verifySheetWrite ignores confirmed figures with no label match (different topic)", async () => {
+    mocks.googleFetch.mockResolvedValue({
+      values: [["Inventario", "500"]],
+    });
+    const v = await verifySheetWrite({
+      spreadsheet_id: "S",
+      range: "Hoja1!A1:B1",
+      first_row: ["Inventario", "500"],
+      __confirmed: confirmed,
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it("verifyDocWrite fails when the doc contradicts a confirmed figure", async () => {
+    mocks.googleFetch.mockResolvedValue({
+      title: "Modelo",
+      body: {
+        content: [
+          {
+            paragraph: {
+              elements: [{ textRun: { content: "Margen bruto: 28%\n" } }],
+            },
+          },
+        ],
+      },
+    });
+    const v = await verifyDocWrite({
+      document_id: "D",
+      snippet: "Margen bruto",
+      written_text: "Margen bruto: 28%",
+      __confirmed: confirmed,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.evidence).toContain("34%");
+  });
+
+  it("verifyDocWrite ignores a pre-existing paragraph that contradicts — only the WRITTEN text counts (R1 W1)", async () => {
+    mocks.googleFetch.mockResolvedValue({
+      title: "Modelo",
+      body: {
+        content: [
+          {
+            paragraph: {
+              elements: [
+                { textRun: { content: "El margen bruto de 2023 fue de 21%.\n" } },
+                { textRun: { content: "Nota nueva sin cifras.\n" } },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const v = await verifyDocWrite({
+      document_id: "D",
+      snippet: "Nota nueva",
+      written_text: "Nota nueva sin cifras.",
+      __confirmed: confirmed,
+    });
+    expect(v.ok).toBe(true);
+  });
+});

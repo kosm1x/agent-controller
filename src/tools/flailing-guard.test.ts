@@ -7,6 +7,7 @@ import {
   isInRitualContext,
   ritualContext,
   _resetFlailingGuard,
+  isReadOnlyDiagnostic,
 } from "./flailing-guard.js";
 
 describe("flailing-guard", () => {
@@ -266,5 +267,173 @@ describe("flailing-guard", () => {
       // The message must steer toward "reply to user" not "try again"
       expect(msg.toLowerCase()).toMatch(/reply.*user|tell.*user|surface/);
     });
+  });
+});
+
+describe("read-only diagnostic exemption (Phase 4, ant-colony incident)", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  /** Three failed curls sharing the "colony" token — the incident setup. */
+  function strikeColony(): void {
+    recordCall("curl -sI https://ant-colony.187.77.25.101.nip.io", 35);
+    recordCall(
+      "curl -v https://ant-colony.187.77.25.101.nip.io/index.html",
+      35,
+    );
+    recordCall("curl --insecure https://ant-colony.187.77.25.101.nip.io", 35);
+  }
+
+  it("allows a novel journalctl diagnostic after 3 strikes on its token", () => {
+    strikeColony();
+    // Sanity: enforcement is live for non-diagnostics.
+    expect(
+      checkFlailing("curl https://ant-colony.187.77.25.101.nip.io"),
+    ).not.toBeNull();
+    // The exact command class the guard blocked on 2026-08-23.
+    expect(
+      checkFlailing("journalctl -u caddy | grep -i ant-colony"),
+    ).toBeNull();
+    expect(checkFlailing("systemctl status ant-colony")).toBeNull();
+    expect(
+      checkFlailing("grep ant-colony /etc/caddy/previews-generated.caddy"),
+    ).toBeNull();
+  });
+
+  it("keeps enforcing network mutators — the original flailing class", () => {
+    strikeColony();
+    expect(
+      checkFlailing("curl -X POST https://ant-colony.187.77.25.101.nip.io"),
+    ).not.toBeNull();
+    expect(
+      checkFlailing("wget https://ant-colony.187.77.25.101.nip.io"),
+    ).not.toBeNull();
+    expect(checkFlailing("node /tmp/ant-colony-probe.cjs")).not.toBeNull();
+  });
+
+  it("a redirect to a real file disqualifies the exemption", () => {
+    strikeColony();
+    expect(
+      checkFlailing("journalctl -u caddy | grep ant-colony > /tmp/out.txt"),
+    ).not.toBeNull();
+  });
+
+  it("harmless redirects (/dev/null, 2>&1) keep the exemption", () => {
+    strikeColony();
+    expect(
+      checkFlailing("journalctl -u caddy 2>&1 | grep ant-colony"),
+    ).toBeNull();
+    expect(
+      checkFlailing("grep ant-colony /var/log/caddy/access.log 2>/dev/null"),
+    ).toBeNull();
+  });
+
+  it("every segment of a compound must be diagnostic", () => {
+    strikeColony();
+    expect(
+      checkFlailing("journalctl -u caddy && rm -rf /tmp/ant-colony"),
+    ).not.toBeNull();
+    expect(
+      checkFlailing("systemctl restart caddy && journalctl -u ant-colony"),
+    ).not.toBeNull();
+  });
+
+  it("diagnostic failures still record strikes for later write-class calls", () => {
+    recordCall("grep ant-colony /var/log/caddy/access.log", 1);
+    recordCall("grep ant-colony /var/log/syslog", 1);
+    recordCall("journalctl -u caddy | grep ant-colony", 1);
+    expect(checkFlailing("node /tmp/fix-ant-colony.cjs")).not.toBeNull();
+  });
+
+  describe("isReadOnlyDiagnostic table", () => {
+    const rows: Array<[string, boolean]> = [
+      ["journalctl -u mission-control --since '5 min ago'", true],
+      ["sudo journalctl -u caddy", true],
+      ["timeout 30 journalctl -f -u caddy", true],
+      ["FOO=bar journalctl -u caddy", true],
+      ["/usr/bin/journalctl -u caddy", true],
+      ["systemctl status caddy", true],
+      ["systemctl is-active preview-caddy-sync.path", true],
+      ["systemctl cat caddy", true],
+      ["systemctl restart caddy", false],
+      ["systemctl stop caddy", false],
+      ["caddy validate --config /etc/caddy/Caddyfile", true],
+      ["caddy reload", false],
+      ["docker logs crm-hindsight", true],
+      ["docker restart crm-hindsight", false],
+      ["git log --oneline -5", true],
+      ["git push origin main", false],
+      ["ss -tlnp", true],
+      ["dig ant-colony.187.77.25.101.nip.io", true],
+      ["curl -sI https://example.com", false],
+      ["wget https://example.com", false],
+      ["rm -rf /tmp/x", false],
+      ["sed -i 's/a/b/' file.txt", false],
+      ["sqlite3 data/mc.db 'SELECT 1'", false],
+      ["echo hi", false],
+      ["", false],
+      ["awk '{print}' f.txt > out.txt", false],
+      ["cat f.txt | grep x | wc -l", true],
+      // R1 audit C2 — the rows that defeated the first grammar:
+      ["journalctl -u caddy\ncurl -X POST https://x.com", false],
+      ["env curl -sI https://x.com", false],
+      ["find /tmp/ant-colony -delete", false],
+      ["find . -name '*.log' -exec rm {} +", false],
+      ["find /var/log -name '*.log' -mtime -1", true],
+      ["git branch -D feature/x", false],
+      ["git branch", false],
+      ["ip link set eth0 down", false],
+      ["ip addr show", false],
+      ["date -s '2020-01-01'", false],
+      ["grep x `cat list`", false],
+      ["grep x $(cat list)", false],
+      ["systemctl --no-pager status caddy", false], // flag before subcommand — strict
+      ["journalctl -u caddy;", true], // trailing separator, empty segment
+      // R2 audit C1 — `&` (background) is a top-level separator too:
+      ["journalctl -u caddy & curl -X POST https://x.com", false],
+      ["grep foo f & wget https://x.com", false],
+      ["journalctl -u caddy &", true],
+      // R2 audit W3 — listed binaries in mutating modes:
+      ["journalctl --vacuum-time=1d", false],
+      ["journalctl --rotate", false],
+      ["dmesg --clear", false],
+      ["dmesg -C", false],
+      ["sort -o /etc/passwd f", false],
+      ["sort --output=/tmp/pwned f", false],
+      ["sort f.txt", false], // dropped R3 C1 — has a write mode (-o)
+      ["uniq /tmp/in /tmp/out", false],
+      ["uniq /tmp/in", false], // dropped R3 C1 — has a write mode (IN OUT)
+      ["ss -K dst 1.2.3.4", false],
+      ["git diff --output=/tmp/x", false],
+      // R3 audit C1 — bundled short flags and write/exec-mode binaries:
+      ["sort -uo victim.txt in.txt", false],
+      ["dmesg -Cw", false],
+      ["dmesg -w", true],
+      ["ss -Kn", false],
+      ["rg --pre /bin/rm doomed target", false],
+      ["rg TODO src/", false],
+      ["xxd file.bin", false],
+      ["xxd -r dump.hex out.bin", false],
+      ["hostname evil-name", false],
+      ["hostname", false],
+      ["file -C -m magic", false],
+      ["git log --output=/tmp/x -3", false],
+      // R4 audit C1 — journalctl is allow-by-membership now; the three
+      // R4 escapes plus an unknown-future-flag canary:
+      ["journalctl -n 1 --cursor-file=/tmp/cur", false],
+      ["journalctl --update-catalog", false],
+      ["journalctl --smart-relinquish-var", false],
+      ["journalctl --some-future-flag", false],
+      ["journalctl -u caddy --since '5 min ago' -o json --no-pager", true],
+      ["journalctl -xeu caddy", true],
+      ["journalctl --disk-usage", true],
+      ["journalctl -f -u mission-control", true],
+    ];
+    for (const [cmd, expected] of rows) {
+      it(`${JSON.stringify(cmd)} → ${expected}`, () => {
+        expect(isReadOnlyDiagnostic(cmd)).toBe(expected);
+      });
+    }
   });
 });

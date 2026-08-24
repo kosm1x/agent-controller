@@ -264,3 +264,160 @@ describe("pruneExpiredCheckpoints", () => {
     );
   });
 });
+
+describe("Phase 4 R1 W3 — orphan checkpoints never shadow runner checkpoints", () => {
+  const mkContent = (taskId: string, exitReason: string) =>
+    [
+      `# Checkpoint: ${taskId}`,
+      "",
+      `**Task ID:** ${taskId}`,
+      `**Exit reason:** ${exitReason} (round 10/35)`,
+      `**Created:** ${new Date().toISOString()}`,
+      "",
+      "## User's Original Request",
+      "Termina el reporte",
+      "",
+      "## What Was Done",
+      "Tools called: file_read",
+      "",
+      "## What Was NOT Completed",
+      "…",
+      "",
+      "## Last Response (truncated)",
+      "parcial",
+      "",
+      "## Scope Groups",
+      "coding",
+    ].join("\n");
+
+  const entry = (path: string, updatedAt: string, size = 100) => ({
+    path,
+    title: path,
+    tags: ["checkpoint"],
+    qualifier: "workspace",
+    priority: 0,
+    size,
+    updated_at: updatedAt,
+  });
+
+  it("prefers the newest NON-orphan checkpoint even when an orphan is newer", () => {
+    const older = new Date(Date.now() - 5 * 60_000).toISOString();
+    const newer = new Date().toISOString();
+    mockListFiles.mockReturnValue([
+      entry("workspace/checkpoints/task-real.md", older),
+      entry("workspace/checkpoints/task-orphan.md", newer),
+    ]);
+    mockGetFile.mockImplementation((path: string) =>
+      path.includes("orphan")
+        ? { content: mkContent("task-orphan", "orphaned_restart") }
+        : { content: mkContent("task-real", "max_rounds") },
+    );
+
+    const cp = findRecentCheckpoint();
+    expect(cp).not.toBeNull();
+    expect(cp!.taskId).toBe("task-real");
+    expect(cp!.exitReason).toBe("max_rounds");
+  });
+
+  it("falls back to the orphan checkpoint when it is the only one", () => {
+    mockListFiles.mockReturnValue([
+      entry("workspace/checkpoints/task-orphan.md", new Date().toISOString()),
+    ]);
+    mockGetFile.mockReturnValue({
+      content: mkContent("task-orphan", "orphaned_restart"),
+    });
+    const cp = findRecentCheckpoint();
+    expect(cp).not.toBeNull();
+    expect(cp!.exitReason).toBe("orphaned_restart");
+  });
+});
+
+describe("R3 audit W3 — thread-scoped checkpoints", () => {
+  const mk = (taskId: string, threadLine: string | null) =>
+    [
+      `# Checkpoint: ${taskId}`,
+      "",
+      `**Task ID:** ${taskId}`,
+      ...(threadLine ? [threadLine] : []),
+      `**Exit reason:** max_rounds (round 10/35)`,
+      `**Created:** ${new Date().toISOString()}`,
+      "",
+      "## User's Original Request",
+      "Termina",
+      "",
+      "## What Was Done",
+      "Tools called: file_read",
+      "",
+      "## What Was NOT Completed",
+      "…",
+      "",
+      "## Last Response (truncated)",
+      "parcial",
+      "",
+      "## Scope Groups",
+      "",
+    ].join("\n");
+
+  const entry = (path: string) => ({
+    path,
+    title: path,
+    tags: ["checkpoint"],
+    qualifier: "workspace",
+    priority: 0,
+    size: 100,
+    updated_at: new Date().toISOString(),
+  });
+
+  it("a checkpoint stamped for another thread is invisible", () => {
+    mockListFiles.mockReturnValue([entry("workspace/checkpoints/t-a.md")]);
+    mockGetFile.mockReturnValue({
+      content: mk("t-a", "**Thread:** whatsapp:grupo@g.us:sender-b"),
+    });
+    expect(findRecentCheckpoint("whatsapp")).toBeNull();
+    expect(
+      findRecentCheckpoint("whatsapp:grupo@g.us:sender-b"),
+    ).not.toBeNull();
+  });
+
+  it("a channel-level stamp matches every thread on that channel", () => {
+    mockListFiles.mockReturnValue([entry("workspace/checkpoints/t-c.md")]);
+    mockGetFile.mockReturnValue({
+      content: mk("t-c", "**Thread:** email:comunidades"),
+    });
+    expect(
+      findRecentCheckpoint("email:comunidades:alice@x.com"),
+    ).not.toBeNull();
+    expect(findRecentCheckpoint("telegram")).toBeNull();
+    // R4 info: the ":" separator is load-bearing — a sibling-prefixed
+    // channel must NOT match ("email" stamp vs "email2:…" thread).
+    mockGetFile.mockReturnValue({
+      content: mk("t-c", "**Thread:** email"),
+    });
+    expect(findRecentCheckpoint("email2:bob@x.com")).toBeNull();
+    expect(findRecentCheckpoint("email:bob@x.com")).not.toBeNull();
+  });
+
+  it("an unstamped checkpoint matches any thread (legacy/runner writers)", () => {
+    mockListFiles.mockReturnValue([entry("workspace/checkpoints/t-u.md")]);
+    mockGetFile.mockReturnValue({ content: mk("t-u", null) });
+    expect(findRecentCheckpoint("whatsapp")).not.toBeNull();
+    expect(findRecentCheckpoint()).not.toBeNull();
+  });
+
+  it("writeCheckpoint emits and parseCheckpoint round-trips the thread stamp", () => {
+    writeCheckpoint({
+      taskId: "t-rt",
+      title: "T",
+      userMessage: "m",
+      toolsCalled: [],
+      scopeGroups: [],
+      exitReason: "orphaned_restart",
+      roundsCompleted: 0,
+      maxRounds: 0,
+      responseText: "x",
+      threadKey: "telegram",
+    });
+    const content = mockUpsertFile.mock.calls[0][2] as string;
+    expect(content).toContain("**Thread:** telegram");
+  });
+});

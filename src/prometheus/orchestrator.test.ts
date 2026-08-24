@@ -256,6 +256,9 @@ describe("orchestrate", () => {
       stage: "no-object",
       rawSample: `random LLM prose with ${sentinel} inline`,
     });
+    // Phase 4.3: an unparseable-JSON rejection is retried once, so queue it
+    // twice to reach the wrapper (the leak surface under test).
+    mockPlan.mockRejectedValueOnce(parseErr);
     mockPlan.mockRejectedValueOnce(parseErr);
 
     let caught: unknown = null;
@@ -268,6 +271,49 @@ describe("orchestrate", () => {
     const err = caught as Error;
     expect(err.message).toContain("Planning failed");
     expect(err.message).not.toContain(sentinel);
+  });
+
+  // Phase 4.3 (usability plan): a malformed planning response is stochastic —
+  // retry exactly once before failing the task.
+  it("retries planning ONCE on unparseable JSON and succeeds on the second attempt", async () => {
+    const { LLMJsonParseError } = await import("./types.js");
+    mockPlan.mockRejectedValueOnce(
+      new LLMJsonParseError({ stage: "no-object", rawSample: "garbage" }),
+    );
+    mockPlan.mockResolvedValueOnce({
+      graph: makeGraph(),
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 200, completionTokens: 100 },
+    });
+
+    const result = await orchestrate("task-retry-ok", "Test task");
+    expect(result.success).toBe(true);
+    expect(mockPlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("a second unparseable response fails the task — exactly 2 attempts, never 3", async () => {
+    const { LLMJsonParseError } = await import("./types.js");
+    const parseErr = () =>
+      new LLMJsonParseError({ stage: "no-object", rawSample: "garbage" });
+    mockPlan.mockRejectedValueOnce(parseErr());
+    mockPlan.mockRejectedValueOnce(parseErr());
+
+    await expect(orchestrate("task-retry-fail", "Test task")).rejects.toThrow(
+      "Planning failed",
+    );
+    expect(mockPlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("a non-parse planning error does NOT retry", async () => {
+    mockPlan.mockRejectedValueOnce(new Error("LLM unreachable"));
+    await expect(orchestrate("task-no-retry", "Test task")).rejects.toThrow(
+      "Planning failed",
+    );
+    expect(mockPlan).toHaveBeenCalledTimes(1);
   });
 
   it("should trigger replan when tool failure rate exceeds threshold for 2 consecutive passes (k=2)", async () => {

@@ -219,7 +219,11 @@ const prov = db
      FROM task_trace_events
      WHERE name = 'provenance.checked' AND ts >= ${sinceIso} AND json_extract(attrs,'$.error') IS NULL`,
   )
-  .get() as { checked: number; rejected: number | null; unsourced_attempted: number };
+  .get() as {
+  checked: number;
+  rejected: number | null;
+  unsourced_attempted: number;
+};
 const numbersRow = db
   .prepare(
     `SELECT COUNT(*) AS audits,
@@ -227,7 +231,11 @@ const numbersRow = db
             COALESCE(SUM(json_extract(attrs,'$.annotated')), 0) AS annotated
      FROM task_trace_events WHERE name = 'numbers.audited' AND ts >= ${sinceIso}`,
   )
-  .get() as { audits: number; with_unverified: number | null; annotated: number };
+  .get() as {
+  audits: number;
+  with_unverified: number | null;
+  annotated: number;
+};
 const citeRow = db
   .prepare(
     `SELECT COUNT(*) AS checks, COALESCE(SUM(json_extract(attrs,'$.missing')), 0) AS missing,
@@ -235,6 +243,30 @@ const citeRow = db
      FROM task_trace_events WHERE name = 'citations.checked' AND ts >= ${sinceIso} AND json_extract(attrs,'$.error') IS NULL`,
   )
   .get() as { checks: number; missing: number; unreachable: number };
+
+// --- continuity & recovery (usability Phase 4) ------------------------------
+// All from the conversations router bank (delivered text is the source of
+// truth). Exit criteria: 0 "no agotes tus turnos" / bare "continúa"-after-
+// failure in 14 days; stops answered with the one-line "Detenido:".
+const contRow = (like: string): number =>
+  (
+    db
+      .prepare(
+        // source filter: auto-persist rows are verbatim twins of the router
+        // rows and double-count unanchored LIKE metrics (R3 audit W4).
+        `SELECT COUNT(*) AS n FROM conversations
+         WHERE bank = 'mc-jarvis' AND content LIKE ?
+           AND source != 'auto-persist'
+           AND created_at >= datetime('now', '-${days} days')`,
+      )
+      .get(like) as { n: number }
+  ).n;
+const stopsHonoured = contRow("%Jarvis: Detenido:%");
+const noAgotes = contRow("%no agotes%");
+// One term only — SQLite LIKE is case-insensitive for ASCII, so a second
+// "User: contin%" term counted every row exactly twice (R2 audit W6).
+const bareContinua = contRow("User: Contin%");
+const sigoAsks = contRow("%¿Sigo?%");
 
 // --- output -----------------------------------------------------------------
 const out = {
@@ -268,6 +300,10 @@ const out = {
   replies_with_unverified_figures: numbersRow.with_unverified ?? 0,
   citations_dropped: citeRow.missing,
   citations_unreachable: citeRow.unreachable,
+  stops_honoured: stopsHonoured,
+  no_agotes_msgs: noAgotes,
+  continua_msgs: bareContinua,
+  sigo_asks: sigoAsks,
 };
 
 if (asJson) {
@@ -307,7 +343,16 @@ if (asJson) {
   row("  rejected (unsourced)", out.artifact_writes_rejected, "↓");
   row("unsourced figures attempted", out.unsourced_figures_attempted, "→ 0");
   row("figures marked (sin verificar)/day", out.figures_annotated_per_day, "↓");
-  row("citations dropped / unreachable", `${out.citations_dropped} / ${out.citations_unreachable}`, "0 / —");
+  row(
+    "citations dropped / unreachable",
+    `${out.citations_dropped} / ${out.citations_unreachable}`,
+    "0 / —",
+  );
+  console.log("  CONTINUITY (Phase 4)");
+  row("stops honoured (Detenido:)", out.stops_honoured, "all");
+  row('"no agotes tus turnos" msgs', out.no_agotes_msgs, "0");
+  row('user "continúa" msgs', out.continua_msgs, "→ 0");
+  row("double-cap ¿Sigo? asks", out.sigo_asks, "↓");
   console.log(
     "\n  Script baseline, same regexes, 45d to 2026-08-22: friction 7.3% · incantations 25 · scope-asks 15 · harness 17 · English 16 · empty 0 · 10.5 pushes/day · 3,355 words/day · p50 47s · p90 176s\n" +
       "  (The critic review's human-read figures are wider — friction ~17–26%, scope-asks 37 — because they count corrections the regexes do not; compare against the script line.)\n",

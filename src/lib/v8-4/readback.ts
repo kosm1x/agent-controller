@@ -46,6 +46,7 @@ import { createHash } from "node:crypto";
 import { getDatabase } from "../../db/index.js";
 import { declareGates, type GateRow } from "./gates.js";
 import { READBACK_PREFIX, isReadbackCheck } from "./ledger-lines.js";
+import { getTaskConfirmedFigures } from "../../messaging/thread-pins.js";
 
 export { READBACK_PREFIX };
 const MAX_PAYLOAD = 2000; // mirrors gates.ts MAX_CHECK
@@ -148,8 +149,24 @@ export function declareReadbackGate(
     // jarvis_file_write followed by a jarvis_file_update on the same path is
     // ONE proof — the final state.
     const gateId = readbackGateId(artifactKey);
-    const payload: ReadbackPayload = { tool, data };
+    // Phase 2.3: figures the operator confirmed in the originating thread
+    // ride the payload, so the verifier can fail a write that contradicts
+    // the confirmed model — not just one that differs from what the model
+    // claims it wrote (#11959). Bounded (≤5 figures, labels ≤80 chars) so
+    // the payload stays inside MAX_PAYLOAD.
+    const confirmed = getTaskConfirmedFigures(taskId)
+      .slice(0, 5)
+      .map((f) => ({ raw: f.raw, label: f.label.slice(0, 80) }));
+    const payload: ReadbackPayload = {
+      tool,
+      data: confirmed.length > 0 ? { ...data, __confirmed: confirmed } : data,
+    };
     let check = READBACK_PREFIX + JSON.stringify(payload);
+    if (check.length > MAX_PAYLOAD && confirmed.length > 0) {
+      // Shed the 2.3 extra first — losing the contradiction check is
+      // strictly better than losing the whole read-back (R1 audit rec).
+      check = READBACK_PREFIX + JSON.stringify({ tool, data });
+    }
     if (check.length > MAX_PAYLOAD) {
       // Oversized payloads (a huge first row) are not worth a ledger row that
       // cannot be stored faithfully — keep the identity, drop the detail.
@@ -315,4 +332,3 @@ export function formatSinReleer(rows: readonly GateRow[]): string {
     (s) => `⏳ Sin releer (no alcancé a verificar): ${s.join(" · ")}`,
   );
 }
-

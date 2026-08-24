@@ -137,26 +137,45 @@ export async function orchestrate(
       emitProgress(taskId, Phase.PLAN, 10, "Planning task decomposition");
       traceRecord(trace, "phase_start", { phase: Phase.PLAN });
 
-      try {
-        const { graph: g, usage: planUsage } = await plan(
-          taskDescription,
-          useOpus,
-        );
-        graph = g;
-        totalPromptTokens += planUsage.promptTokens;
-        totalCompletionTokens += planUsage.completionTokens;
-        totalCacheReadTokens += planUsage.cacheReadTokens ?? 0;
-        totalCacheCreationTokens += planUsage.cacheCreationTokens ?? 0;
-        if (planUsage.actualCostUsd !== undefined) {
-          totalActualCostUsd =
-            (totalActualCostUsd ?? 0) + planUsage.actualCostUsd;
+      // Phase 4.3 (usability plan): retry ONCE when the planner returns
+      // unparseable JSON — a malformed planning response is stochastic, and
+      // "Planning failed: LLM returned unparseable JSON" delivered on the
+      // first bad parse wasted the whole task. Any other planning error
+      // (and a second bad parse) still fails immediately.
+      for (let planAttempt = 1; ; planAttempt++) {
+        try {
+          const { graph: g, usage: planUsage } = await plan(
+            taskDescription,
+            useOpus,
+          );
+          graph = g;
+          totalPromptTokens += planUsage.promptTokens;
+          totalCompletionTokens += planUsage.completionTokens;
+          totalCacheReadTokens += planUsage.cacheReadTokens ?? 0;
+          totalCacheCreationTokens += planUsage.cacheCreationTokens ?? 0;
+          if (planUsage.actualCostUsd !== undefined) {
+            totalActualCostUsd =
+              (totalActualCostUsd ?? 0) + planUsage.actualCostUsd;
+          }
+          break;
+        } catch (err) {
+          if (planAttempt === 1 && /unparseable JSON/i.test(errMsg(err))) {
+            traceRecord(trace, "phase_error", {
+              phase: Phase.PLAN,
+              error: String(err),
+              retrying: true,
+            });
+            console.warn(
+              `[orchestrator] Task ${taskId}: planner returned unparseable JSON — retrying once`,
+            );
+            continue;
+          }
+          traceRecord(trace, "phase_error", {
+            phase: Phase.PLAN,
+            error: String(err),
+          });
+          throw new Error(`Planning failed: ${errMsg(err)}`);
         }
-      } catch (err) {
-        traceRecord(trace, "phase_error", {
-          phase: Phase.PLAN,
-          error: String(err),
-        });
-        throw new Error(`Planning failed: ${errMsg(err)}`);
       }
 
       traceRecord(trace, "phase_end", {

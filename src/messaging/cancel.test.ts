@@ -8,11 +8,21 @@ import { describe, it, expect } from "vitest";
  * (the router itself requires full messaging stack to test).
  */
 
-// Cancel intent regex — must match the one in router.ts
+// Cancel intent regexes — must match the ones in router.ts (Phase 4.4)
 const CANCEL_INTENT_RE =
-  /^(cancela|detente|para|stop|cancel|aborta|déjalo|dejalo)\s*$/i;
+  /^(cancela|detente|para|alto|stop|cancel|aborta|déjalo|dejalo)((\s+|,\s*)(ya|ahora|todo|todas?|eso|esto|la\s+tarea|las\s+tareas|todas\s+las\s+tareas|por\s+favor|porfa|please))*\s*[.!]*\s*$/i;
+const CANCEL_LEADING_RE = /^detente\b[\s,.!—:-]|^alto\s*[,.!—:;-]/i;
+const isCancel = (t: string): boolean =>
+  CANCEL_INTENT_RE.test(t.trim()) || CANCEL_LEADING_RE.test(t.trim());
 
 describe("cancel intent detection", () => {
+  it("test regexes mirror the ones in router.ts (drift guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("./router.ts", import.meta.url), "utf-8");
+    expect(src).toContain(CANCEL_INTENT_RE.source);
+    expect(src).toContain(CANCEL_LEADING_RE.source);
+  });
+
   describe("matches valid cancel commands", () => {
     const validCancels = [
       "cancela",
@@ -33,11 +43,25 @@ describe("cancel intent detection", () => {
       "dejalo",
       "  cancela  ", // whitespace trimmed by router
       "DETENTE",
+      // Phase 4.4: bounded qualifiers after the stop-verb
+      "para ya",
+      "Para ya!",
+      "alto",
+      "Alto!",
+      "cancela todo",
+      "Cancela todas las tareas",
+      "detente ahora",
+      "para, por favor",
+      "aborta eso",
+      // Phase 4.4: unambiguous leading stop-verbs with a free tail
+      "Detente, cambio de plan",
+      "detente un momento y escucha", // leading detente = stop (#11367–11369)
+      "Alto — eso no era lo que pedí",
     ];
 
     for (const cmd of validCancels) {
       it(`matches "${cmd}"`, () => {
-        expect(CANCEL_INTENT_RE.test(cmd.trim())).toBe(true);
+        expect(isCancel(cmd)).toBe(true);
       });
     }
   });
@@ -46,11 +70,13 @@ describe("cancel intent detection", () => {
     const notCancels = [
       "cancela agente", // background agent cancel (separate handler)
       "cancela la tarea de mañana",
+      "Cancela la reunión del viernes", // calendar op, not a task stop
       "para qué sirve esto?",
       "para mañana necesito",
+      "Para el viernes recuérdame el reporte",
+      "alto rendimiento en ventas", // adjective, not a stop
       "stop the world",
       "cancel my subscription",
-      "detente un momento y escucha",
       "hola",
       "qué tal",
       "hazme un video",
@@ -61,7 +87,7 @@ describe("cancel intent detection", () => {
 
     for (const msg of notCancels) {
       it(`does NOT match "${msg}"`, () => {
-        expect(CANCEL_INTENT_RE.test(msg.trim())).toBe(false);
+        expect(isCancel(msg)).toBe(false);
       });
     }
   });
