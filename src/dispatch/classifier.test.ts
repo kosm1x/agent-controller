@@ -13,6 +13,7 @@ import {
   referencesForeignProject,
   referencesJarvisSelfDev,
   isFanOutTask,
+  referencesHostAttachment,
 } from "./classifier.js";
 import type {
   RunnerStats,
@@ -1059,6 +1060,85 @@ describe("classifier outcome adjustments", () => {
       [], // no feedback stats
     );
     expect(result.reason).not.toContain("tier upgrade");
+  });
+
+  // ----- Host-attachment routing guard (2026-08-20 AMN PDF ingestion incident) -----
+  // Tasks with /tmp/jarvis-downloads paths or "ingesta" language must route to a
+  // HOST runner — the nanoclaw sandbox cannot write to data/mc.db (ro mount), so
+  // gemini_upload / jarvis_file_write only succeed on fast/heavy/swarm.
+  describe("referencesHostAttachment", () => {
+    it("detects a /tmp/jarvis-downloads path (exact incident message)", () => {
+      expect(
+        referencesHostAttachment(
+          "Analiza el contenido de /tmp/jarvis-downloads/AMN_plan_2027.pdf",
+        ),
+      ).toBe(true);
+    });
+
+    it("detects any file under /tmp/jarvis-downloads/", () => {
+      expect(
+        referencesHostAttachment("/tmp/jarvis-downloads/deck-vendedor.pdf"),
+      ).toBe(true);
+    });
+
+    it("detects 'ingesta' keyword (ES)", () => {
+      expect(referencesHostAttachment("ingesta del PDF del Plan 2027")).toBe(
+        true,
+      );
+    });
+
+    it("detects 'ingestar' variant (ES)", () => {
+      expect(referencesHostAttachment("necesito ingestar el archivo")).toBe(
+        true,
+      );
+    });
+
+    it("detects 'ingest' (EN)", () => {
+      expect(referencesHostAttachment("ingest the PDF and save to KB")).toBe(
+        true,
+      );
+    });
+
+    it("does NOT fire on unrelated coding tasks", () => {
+      expect(
+        referencesHostAttachment("fix the regex in classifier.ts"),
+      ).toBe(false);
+    });
+
+    it("does NOT fire on a bare /tmp path (no jarvis-downloads)", () => {
+      expect(referencesHostAttachment("cat /tmp/output.txt")).toBe(false);
+    });
+  });
+
+  // Integration: classify() routes ingestion tasks to a HOST runner, not nanoclaw
+  it("classifies a /tmp/jarvis-downloads coding-shaped message as non-nanoclaw (host runner)", () => {
+    const result = classify({
+      title:
+        "Chat: Analiza el archivo /tmp/jarvis-downloads/AMN_plan_2027.pdf y guarda en KB",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+    expect(["fast", "heavy", "swarm"]).toContain(result.agentType);
+  });
+
+  it("classifies an 'ingesta' message as non-nanoclaw (host runner)", () => {
+    const result = classify({
+      title: "Chat: ingesta del PDF Plan 2027 para vendedores de Azteca",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).not.toBe("nanoclaw");
+    expect(["fast", "heavy", "swarm"]).toContain(result.agentType);
+  });
+
+  it("keeps a plain mc coding task on nanoclaw (host-attachment guard does not over-fire)", () => {
+    const result = classify({
+      title: "Chat: fix the retry logic in scheduler.ts and add a test",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("nanoclaw");
   });
 });
 

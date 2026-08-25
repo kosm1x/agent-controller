@@ -66,4 +66,35 @@ describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
     ).toBe(false);
     expect(emittedTargetNotInSandbox("")).toBe(false);
   });
+
+  // Layer D — read-only mount + host-DB guard (2026-08-20 AMN PDF ingestion
+  // incident). The agent burned its 10-turn cap diagnosing file permissions when
+  // the wall was the READ-ONLY mount. Must fire on BOTH branches so the guard is
+  // always present regardless of whether a writable workspace exists.
+  it.each([["/workspace"], [null]] as const)(
+    "includes the READ-ONLY MOUNT guard naming data/mc.db and host-side tools (workspace=%s)",
+    (ws) => {
+      const note = buildEnvironmentNote(ws);
+      expect(note).toContain("READ-ONLY MOUNT");
+      expect(note).toContain("data/mc.db");
+      expect(note).toMatch(/gemini_upload/i);
+      expect(note).toMatch(/jarvis_file_write/i);
+      // Must explicitly say the mount wins — not file permissions
+      expect(note).toMatch(/mount.*wins|MOUNT.*always wins/i);
+      // Must tell the agent NOT to spend turns diagnosing permissions
+      expect(note).toMatch(/do NOT spend turns|stop immediately/i);
+    },
+  );
+
+  // Mutation-verify: removing the roMountGuard from buildEnvironmentNote breaks
+  // the test above (this assertion is the wiring check — if the guard text is
+  // absent, the .toContain("READ-ONLY MOUNT") assertion fails first).
+  it("roMountGuard text is actually included in both branches", () => {
+    for (const ws of ["/workspace", null] as const) {
+      const note = buildEnvironmentNote(ws);
+      // Both strings are unique to the roMountGuard block — not in base/scope/evasion.
+      expect(note).toContain("attempt to write a readonly database");
+      expect(note).toContain("dead end");
+    }
+  });
 });

@@ -297,6 +297,29 @@ export function referencesForeignProject(
   });
 }
 
+// Host-attachment ingestion tasks (2026-08-20): a task that explicitly names a
+// file from /tmp/jarvis-downloads, or uses "ingesta"/"ingest" language paired
+// with a PDF/file reference, is a HOST-only operation. The nanoclaw sandbox
+// cannot write to data/mc.db (read-only mount) — so gemini_upload and
+// jarvis_file_write can only succeed on a HOST runner (fast/heavy/swarm).
+// Pattern is narrow: only fires on the canonical download path or explicit
+// ingestion language, avoiding false-positives on unrelated coding tasks.
+const HOST_ATTACHMENT_PATH =
+  /\/tmp\/jarvis-downloads\/[\w.-]+/i;
+const HOST_INGESTION_PHRASE =
+  /\b(ingesta|ingestar?|ingest)\b/i;
+
+/**
+ * True when the task is an attachment-ingestion operation that requires
+ * host-side tools (gemini_upload, jarvis_file_write) and MUST NOT run in the
+ * nanoclaw sandbox (whose mission-control mount — including data/mc.db — is
+ * read-only). Fires on explicit /tmp/jarvis-downloads paths or "ingesta" /
+ * "ingest" language. Used as an exclusion on the nanoclaw coding gate.
+ */
+export function referencesHostAttachment(text: string): boolean {
+  return HOST_ATTACHMENT_PATH.test(text) || HOST_INGESTION_PHRASE.test(text);
+}
+
 // Jarvis SELF-DEV surfaces are HOST-only. Since the P1 worktree split
 // (2026-07-12), Jarvis's mission-control git work happens ONLY in the linked
 // worktree /root/claude/mission-control-jarvis via jarvis_dev — which fails
@@ -474,7 +497,8 @@ export function classify(input: ClassificationInput): ClassificationResult {
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames) &&
-    !referencesJarvisSelfDev(detectText)
+    !referencesJarvisSelfDev(detectText) &&
+    !referencesHostAttachment(detectText)
   ) {
     return {
       agentType: "nanoclaw",
@@ -612,7 +636,8 @@ export function classify(input: ClassificationInput): ClassificationResult {
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames) &&
-    !referencesJarvisSelfDev(detectText)
+    !referencesJarvisSelfDev(detectText) &&
+    !referencesHostAttachment(detectText)
   ) {
     agentType = "nanoclaw";
   } else if (score >= 3) {
