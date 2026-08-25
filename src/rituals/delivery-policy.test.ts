@@ -387,6 +387,39 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     expect(pendingDeferrals().map((r) => r.title)).toEqual(["market-eod-scan"]);
   });
 
+  it("ANCHOR_SCHEDULE_IDS: a schedule in the list delivers even when the budget is full", () => {
+    const READING_ID = "bdb82f0c-c2f4-4414-8244-300bf4721d78";
+    process.env.ANCHOR_SCHEDULE_IDS = READING_ID;
+    fillBudget(2);
+    const d = applyRitualDeliveryPolicy(
+      `schedule:${READING_ID}`,
+      "t-reading",
+      "Reflexión filosófica del día",
+      { displayName: "Transición al Posthumanismo — Reflexión Diaria", scheduleId: READING_ID, now: NOW },
+    );
+    expect(d.deliver).toBe(true);
+    // Must be recorded as anchor so the ledger is honest.
+    const row = db().prepare("SELECT anchor FROM ritual_deliveries WHERE task_id = 't-reading'").get() as { anchor: number };
+    expect(row.anchor).toBe(1);
+    delete process.env.ANCHOR_SCHEDULE_IDS;
+  });
+
+  it("ANCHOR_SCHEDULE_IDS: a schedule NOT in the list still hits the budget", () => {
+    process.env.ANCHOR_SCHEDULE_IDS = "some-other-id";
+    fillBudget(2);
+    const d = applyRitualDeliveryPolicy("schedule:x", "t-not-anchor", "hola", { displayName: "Química", scheduleId: "x", now: NOW });
+    expect(d).toMatchObject({ deliver: false, reason: "budget" });
+    delete process.env.ANCHOR_SCHEDULE_IDS;
+  });
+
+  it("ANCHOR_SCHEDULE_IDS: empty/whitespace env var has no effect", () => {
+    process.env.ANCHOR_SCHEDULE_IDS = "  ,  ";
+    fillBudget(2);
+    const d = applyRitualDeliveryPolicy("schedule:x", "t-empty", "hola", { displayName: "Química", scheduleId: "x", now: NOW });
+    expect(d).toMatchObject({ deliver: false, reason: "budget" });
+    delete process.env.ANCHOR_SCHEDULE_IDS;
+  });
+
   it("an operator-forced run (/run) delivers over the cap", () => {
     fillBudget(2);
     const d = applyRitualDeliveryPolicy("schedule:x", "t8", "manual", { displayName: "Química", scheduleId: "x", forced: true, now: NOW });

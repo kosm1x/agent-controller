@@ -99,8 +99,31 @@ export const RITUAL_WORD_CAPS: ReadonlyMap<string, number> = new Map([
   ["nightly-close", 250],
 ]);
 
+/**
+ * Schedules that always deliver regardless of reading budget (same semantics
+ * as Morning Sync and nightly-close). Configured via `ANCHOR_SCHEDULE_IDS`
+ * as a comma-separated list of schedule UUIDs. Added to support curated daily
+ * readings (e.g. Transhumanismo reflection) that should never be budget-deferred.
+ * Note: anchors still respect manual /rituales silencio mutes.
+ */
+export function getAnchorScheduleIds(): ReadonlySet<string> {
+  const raw = process.env.ANCHOR_SCHEDULE_IDS ?? "";
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
 export function isAnchor(ritualId: string, opts: DeliveryOptions): boolean {
   if (ritualId === "nightly-close") return true;
+  if (
+    opts.scheduleId !== undefined &&
+    getAnchorScheduleIds().has(opts.scheduleId)
+  ) {
+    return true;
+  }
   return (
     opts.scheduleId !== undefined &&
     opts.displayName !== undefined &&
