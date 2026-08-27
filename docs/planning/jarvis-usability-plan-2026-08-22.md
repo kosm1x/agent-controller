@@ -18,7 +18,7 @@
 | Empty / silent replies (docx, PDF)      | chat task completed with reply length < 20                                                                           | 4                                           | 0                                                        |
 | False-done claims                       | operator-tagged (`reactions` / weekly manual tally of "Listo" followed by user disproof within 3 turns)              | ≥ 15                                        | ≤ 2, all caught by the gate before delivery              |
 | Figures without provenance in artifacts | numbers written to Sheet/Doc/KB lacking `fuente:` or `calc:`                                                         | uncounted (≥ 5/shard fabrications)          | 0 in artifacts; chat figures flagged `~ (sin verificar)` |
-| Ritual pushes / day · words / day       | `tasks` ritual rows delivered per MX day                                                                             | 9.3 · ~3,000                                | ≤ 4 · ≤ 700                                              |
+| Ritual pushes / day · words / day       | `tasks` ritual rows delivered per MX day                                                                             | 9.3 · ~3,000                                | ≤ 5 · ≤ 1,400 (ruling 2026-08-27)                        |
 | Ritual repeats                          | identical-topic pushes > 2 days running                                                                              | Química ×13, PM ×19, Signal item 14/21      | 0 beyond 2                                               |
 | Time errors                             | wrong weekday / TZ in delivered text                                                                                 | ≥ 5                                         | 0                                                        |
 | Chat latency                            | p50 / p90 created→completed                                                                                          | 47 s / 160 s                                | 25 s / 90 s                                              |
@@ -158,9 +158,9 @@ Exit: 0 `No agotes tus turnos` / bare `Continúa` after a failure in 14 days; 3/
 **5.3 Merge the nightly trio** — nightly close + day narrative + evolution summary → one 23:59 message ≤ 250 words; narrative + log stay on disk/KB.
 **5.4 Signal digest memory** — compare against yesterday's depot; a ≥ 10 % move in a tracked asset is a lead line, "estables" is forbidden when a tracked series moved (BTC +22 % case).
 **5.5 `/rituales`** — phone command: list active rituals with next fire time, `pausa <id>`, `reanuda <id>`, `silencio hasta <hora>`; backed by `scheduled_tasks.enabled` + a per-ritual `muted_until`. (ChatGPT Scheduled page / Gemini Scheduled Actions parity, from the chat.)
-**5.6 Reading budget** — a daily cap (4 pushes, 700 words) enforced at the delivery seam; lower-priority rituals queue into Morning Sync when the cap is hit.
+**5.6 Reading budget** — a daily cap enforced at the delivery seam; lower-priority rituals queue into Morning Sync when the cap is hit. **Ruling 2026-08-27: 5 pushes / 1,400 words** (was 4/700). Root cause: the 12:00 reflexión (schedule `bdb82f0c`) was blocked by push-cap+word-cap simultaneously — at 12:00 there were already 3 delivered pushes (market-morning-scan + pm-daily-rebalance + Morning Sync) and the nightly-close reserved the 4th slot, filling the old PUSH_CAP=4. With 1,400 words the reading now has a slot after both morning rituals and the Sync.
 
-Exit: ≤ 4 pushes/day, ≤ 700 words/day, 0 repeats > 2 days, Morning Sync untouched.
+Exit: ≤ 5 pushes/day, ≤ 1,400 words/day, 0 repeats > 2 days, Morning Sync untouched.
 
 ---
 
