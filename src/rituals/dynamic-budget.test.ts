@@ -54,7 +54,7 @@ function db(): Database.Database {
   return mocks.db as Database.Database;
 }
 
-/** Both anchors + `n` optional pushes: n=2 fills the day (slots are reserved for undelivered anchors). */
+/** Both anchors + `n` optional pushes: n=PUSH_CAP-2 fills the day up to PUSH_CAP, leaving exactly one free slot under the cap. */
 function fillBudget(n: number) {
   applyRitualDeliveryPolicy("schedule:ms", "a-sync", "Buenos días", { displayName: "Morning Sync — Piotr 8am", scheduleId: "ms" });
   applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre");
@@ -95,7 +95,7 @@ describe("handleScheduledTaskResult → delivery seam", () => {
   });
 
   it("over the cap the schedule is NOT broadcast; a deferral is queued for the Morning Sync", async () => {
-    fillBudget(2);
+    fillBudget(PUSH_CAP - 2);
     watchScheduledTask("t2", makeSchedule());
     handleScheduledTaskResult("t2", "Tesis del día…", "completed", []);
     await flush();
@@ -105,7 +105,7 @@ describe("handleScheduledTaskResult → delivery seam", () => {
   });
 
   it("the Morning Sync broadcasts over the cap", async () => {
-    fillBudget(2);
+    fillBudget(PUSH_CAP - 2);
     watchScheduledTask("t3", makeSchedule({ schedule_id: "ms", name: "Morning Sync — Piotr 8am" }));
     handleScheduledTaskResult("t3", "Buenos días, Fede…", "completed", []);
     await flush();
@@ -113,7 +113,7 @@ describe("handleScheduledTaskResult → delivery seam", () => {
   });
 
   it("a manual run (executeScheduleNow → watch(…, manual=true)) broadcasts over the cap", async () => {
-    fillBudget(2);
+    fillBudget(PUSH_CAP - 2);
     watchScheduledTask("t4", makeSchedule(), 0, null, true);
     handleScheduledTaskResult("t4", "Corrida manual", "completed", []);
     await flush();
