@@ -54,7 +54,7 @@ function db(): Database.Database {
   return mocks.db as Database.Database;
 }
 
-/** Both anchors + `n` optional pushes: n=PUSH_CAP-2 fills the day up to PUSH_CAP, leaving exactly one free slot under the cap. */
+/** Both anchors + `n` optional pushes: n = PUSH_CAP − 2 fills the day exactly (slots are reserved for undelivered anchors). */
 function fillBudget(n: number) {
   applyRitualDeliveryPolicy("schedule:ms", "a-sync", "Buenos días", { displayName: "Morning Sync — Piotr 8am", scheduleId: "ms" });
   applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre");

@@ -274,7 +274,7 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
   });
 
   it(`the ${PUSH_CAP + 1}th push of the day is deferred into the Morning Sync queue`, () => {
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     const d = applyRitualDeliveryPolicy("market-eod-scan", "t5", "SPY −1.2%", { now: NOW });
     expect(d).toMatchObject({ deliver: false, reason: "budget" });
     expect(deferrals()).toEqual([{ ritual_id: "market-eod-scan", title: "market-eod-scan", reason: "budget" }]);
@@ -327,28 +327,25 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     expect(budgetUsed(DAY)).toMatchObject({ pushes: 2, emailedPushes: 1 });
   });
 
-  // (a) word-cap: push-cap free but words exceed 1400 → deferred with "word-cap" in reason.
-  // Mutation guard: set WORD_CAP=99999 → this test turns RED (word check never fires).
+  // (a) word-cap, plan-literal 1400 (ruling 2026-08-27). Anchors are uncapped, so a long
+  // Morning Sync is the only seam-produced path to a large `used.words` (audit W2).
+  // Absolute numbers on purpose: WORD_CAP=700 (the old value) and 99999 both turn this RED (audit C2).
   it("a push that would pass the day's word cap is deferred (pushes still free)", () => {
-    // Seed the ledger directly: 1 delivered non-anchor push with 1300 words already "used".
-    // This leaves push-cap free (only 1 push used, anchors still pending) but only 100 words left.
-    // Anchors must be seeded as delivered so anchorsPending=0 (no reserved slots).
-    applyRitualDeliveryPolicy("schedule:ms", "a-sync", "Buenos días Fede", SYNC);
-    applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre del día", { now: NOW });
-    // Insert a delivered non-anchor row with 1300 words directly (simulates a long optional push).
-    db().prepare(
-      "INSERT INTO ritual_deliveries (ritual_id, task_id, fingerprint, delivered, reason, words, day, anchor, emailed) VALUES (?, ?, ?, 1, 'default', 1300, ?, 0, 0)"
-    ).run("schedule:long-post", "tp-long", "fp-long", DAY);
-    // Now: pushes=3 (sync+close+long), words=1300, anchorsPending=0 → 1 push slot free but only 100 words left.
-    // A 200-word push → 1300+200=1500 > 1400=WORD_CAP → deferred by word-cap.
-    const d = applyRitualDeliveryPolicy("schedule:post", "t1", "palabra ".repeat(200).trim(), { displayName: "Posthumanismo", scheduleId: "post", now: NOW });
-    expect(d).toMatchObject({ deliver: false, reason: "budget" }); // 1500 > 1400
+    applyRitualDeliveryPolicy("schedule:ms", "a-sync", "palabra ".repeat(1300).trim(), SYNC); // 1300, uncapped anchor
+    applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre del día", { now: NOW }); // 3 → 1303 used
+    expect(budgetUsed(DAY).words).toBe(1303);
+    // 2 delivered anchors, 0 optionals, anchorsPending=0 → 3 push slots free; only words can bind.
+    const over = applyRitualDeliveryPolicy("schedule:post", "t-over", "palabra ".repeat(98).trim(), { displayName: "Posthumanismo", scheduleId: "post", now: NOW });
+    expect(over).toMatchObject({ deliver: false, reason: "budget" }); // 1303 + 98 = 1401 > 1400
+    const fits = applyRitualDeliveryPolicy("schedule:tweet", "t-fits", "palabra ".repeat(97).trim(), { displayName: "Tweet", scheduleId: "tw", now: NOW });
+    expect(fits.deliver).toBe(true); // 1303 + 97 = 1400, not over
+    expect(budgetUsed(DAY).words).toBe(1400);
   });
 
   // (b) push-cap: low words, 3 optionals + anchors = 5 = PUSH_CAP → next deferred; 2 optionals → delivered.
   // Mutation guard: set PUSH_CAP=99 → this test turns RED (push check never fires).
-  it("push-cap: 3 optionals + 2 anchor slots = 5 = PUSH_CAP → 6th push deferred; 2 optionals → delivered", () => {
-    fillBudget(3); // anchors(2) + optionals(3) = PUSH_CAP=5 → full
+  it("push-cap: 3 optionals + 2 delivered anchors = 5 = PUSH_CAP → 6th push deferred; 2 optionals → delivered", () => {
+    fillBudget(PUSH_CAP - 2); // anchors(2) + optionals(3) = PUSH_CAP=5 → full
     const over = applyRitualDeliveryPolicy("market-eod-scan", "t-over", "SPY", { now: NOW });
     expect(over).toMatchObject({ deliver: false, reason: "budget" });
     // With only 2 optionals (below cap) a new push fits.
@@ -360,7 +357,7 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
   });
 
   it("the budget is per MX day: yesterday's pushes do not count", () => {
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     db().prepare("UPDATE ritual_deliveries SET day = '2026-08-23'").run();
     const d = applyRitualDeliveryPolicy("market-eod-scan", "t5", "SPY −1.2%", { now: NOW });
     expect(d.deliver).toBe(true);
@@ -396,7 +393,7 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
 
   it("the Morning Sync is identified by V82_SYNC_SCHEDULE_ID when set (name is the fallback only)", () => {
     process.env.V82_SYNC_SCHEDULE_ID = "ms";
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     const impostor = applyRitualDeliveryPolicy("schedule:x", "t1", "hola", { displayName: "Morning Sync — Piotr 8am", scheduleId: "x", now: NOW });
     expect(impostor).toMatchObject({ deliver: false, reason: "budget" });
     const renamed = applyRitualDeliveryPolicy("schedule:ms", "t2", "hola", { displayName: "Briefing matutino", scheduleId: "ms", now: NOW });
@@ -406,20 +403,20 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
 
   it("a paused Morning Sync does not void the budget: the push is still deferred and reachable by id (R2 C3/W3)", () => {
     seedSync(0);
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     const d = applyRitualDeliveryPolicy("market-eod-scan", "t5", "SPY −1.2%", { now: NOW });
     expect(d).toMatchObject({ deliver: false, reason: "budget" });
     expect(pendingDeferrals().map((r) => r.title)).toEqual(["market-eod-scan"]);
   });
 
   it("an operator-forced run (/run) delivers over the cap", () => {
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     const d = applyRitualDeliveryPolicy("schedule:x", "t8", "manual", { displayName: "Química", scheduleId: "x", forced: true, now: NOW });
     expect(d.deliver).toBe(true);
   });
 
   it("deferred pushes are NOT counted as delivered", () => {
-    fillBudget(3);
+    fillBudget(PUSH_CAP - 2);
     applyRitualDeliveryPolicy("market-eod-scan", "t5", "SPY −1.2%", { now: NOW });
     expect(budgetUsed(DAY).pushes).toBe(PUSH_CAP);
   });

@@ -25,9 +25,13 @@
  *       Sync and nightly-close always deliver (they count); everything else
  *       over the cap is deferred into the next Morning Sync.
  *       Ruling 2026-08-27: 5/1400 (was 4/700). Root cause: push-cap+word-cap
- *       both blocked the 12:00 reading (bdb82f0c) after 3 optionals + 1
- *       anchor-pending = 4 = old PUSH_CAP. Ritual pushes/day · words/day
- *       now: anchors ~350w × 2 + 3 optional slots × ~250w = ~1100w / 5 total.
+ *       both blocked the 12:00 reading (bdb82f0c): 2 optionals + the delivered
+ *       Morning Sync + the reserved close = 4 = old PUSH_CAP, and 543+176 = 719
+ *       > 700 words. Binding arithmetic now: anchors are uncapped (~450w live:
+ *       sync ~330 + close ~130); the optional layer is 3 slots × ≤250w = ≤750w,
+ *       so a maxed day is ~1,200w and WORD_CAP=1400 only binds when the Morning
+ *       Sync alone runs ≳650w — PUSH_CAP is the operative gate (audit C1
+ *       2026-08-27; operator to re-size WORD_CAP or accept).
  *
  * Every decision is recorded in `ritual_deliveries` (delivered 0/1 + reason
  * + words + MX day) so the metrics script can count silences and deferrals.
@@ -88,14 +92,14 @@ export const EMAILED_RITUALS: ReadonlySet<string> = new Set([
  * (`anchorsPending`); words are NOT reserved for them — the close is ~130
  * words (cap 250) and reserving its cap would defer the operator's own
  * readings daily — so a day ends at ≤ 1400 words + the close.
- * Arithmetic the operator should know: the anchors are ~350 words and 2 of
- * the 5 slots, so 3 pushes / ~1050 words a day remain for the optional layer
+ * Arithmetic the operator should know: the anchors take 2 of the 5 slots, so
+ * 3 pushes / ≤ 750 words (3 × the 250 cap) a day remain for the optional layer
  * in fire order; a 400–600-word daily reading arrives capped at 250 with its
  * `/rituales completo <id>` handle.
  * Operator ruling 2026-08-27: 5/1400 — root cause was push-cap+word-cap
- * both firing (3 optional + 1 anchor-pending = 4 = old cap before close);
- * raising PUSH_CAP to 5 gives the 12:00 reading a slot after Morning Sync
- * and the two early-morning optionals.
+ * both firing (2 optionals + the delivered Morning Sync + the reserved close
+ * = 4 = old cap, and 719 > 700 words); raising PUSH_CAP to 5 gives the 12:00
+ * reading a slot after Morning Sync and the two early-morning optionals.
  */
 export const PUSH_CAP = 5;
 export const WORD_CAP = 1400;

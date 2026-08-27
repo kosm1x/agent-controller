@@ -21,6 +21,7 @@
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
 import { extractDeliverableText } from "../src/lib/deliverable.js";
+import { PUSH_CAP, WORD_CAP } from "../src/rituals/delivery-policy.js";
 
 const args = process.argv.slice(2);
 const days = Number(args.find((a) => /^\d+$/.test(a)) ?? 7);
@@ -394,8 +395,8 @@ if (asJson) {
   row("English-first replies", out.english_first_replies, "0");
   row("empty replies", out.empty_replies, "0");
   console.log("  PROACTIVE LAYER");
-  row("pushes / day", out.pushes_per_day, "≤ 4");
-  row("push words / day", out.push_words_per_day, "≤ 700");
+  row("pushes / day", out.pushes_per_day, `≤ ${PUSH_CAP}`);
+  row("push words / day", out.push_words_per_day, `≤ ${WORD_CAP}`);
   row("rituals silenced (no change)", out.rituals_silenced, "—");
   row("rituals deferred → Morning Sync", out.rituals_deferred, "—");
   row("ritual repeats > 2 days", out.ritual_repeats_gt2, "0");
