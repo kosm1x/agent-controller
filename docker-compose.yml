@@ -49,8 +49,8 @@ services:
     image: ghcr.io/vectorize-io/hindsight:latest
     profiles: ["hindsight"]
     ports:
-      - "${HINDSIGHT_PORT:-8888}:8888"
-      - "${HINDSIGHT_UI_PORT:-9999}:9999"
+      - "127.0.0.1:${HINDSIGHT_PORT:-8888}:8888"
+      - "127.0.0.1:${HINDSIGHT_UI_PORT:-9999}:9999"
     environment:
       - HINDSIGHT_API_LLM_PROVIDER=openai
       - HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_LLM_API_KEY:-${INFERENCE_PRIMARY_KEY}}
