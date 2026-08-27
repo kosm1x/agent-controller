@@ -1620,6 +1620,68 @@ describe("flattenMessagesForSdk respects cacheable hint (#224)", () => {
   });
 });
 
+describe("/loop — queryClaudeSdk({unlimited}) arms no wall-clock timer (2026-08-27)", () => {
+  const SDK_TIMEOUT_MS = 15 * 60_000;
+  const ok = () =>
+    [
+      {
+        type: "result",
+        subtype: "success",
+        result: "Listo.\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 10,
+      },
+    ] as unknown as MockMessage[];
+
+  it("unlimited:true → the 15-min setTimeout is never scheduled", async () => {
+    mockMessages.value = ok();
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await queryClaudeSdk({
+        prompt: "t",
+        systemPrompt: "s",
+        toolNames: [],
+        unlimited: true,
+      });
+      expect(spy.mock.calls.some((c) => c[1] === SDK_TIMEOUT_MS)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("default → the 15-min timer IS scheduled (the cap every other task keeps)", async () => {
+    mockMessages.value = ok();
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+      expect(spy.mock.calls.some((c) => c[1] === SDK_TIMEOUT_MS)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("an already-aborted signal aborts the query even without the timer (W6)", async () => {
+    mockMessages.value = ok();
+    const ac = new AbortController();
+    ac.abort();
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+      unlimited: true,
+      abortSignal: ac.signal,
+    });
+    // The mocked generator still yields its result, but the query's own
+    // controller must be aborted — assert via the options the SDK received.
+    const opts = lastQueryArgs.value?.options as
+      { abortController?: AbortController } | undefined;
+    expect(opts?.abortController?.signal.aborted).toBe(true);
+    expect(result).toBeDefined();
+  });
+});
+
 describe("queryClaudeSdk abort/timeout preserves usage + omits authoritative cost (#225)", () => {
   it("accumulates per-turn usage from assistant messages so abort writes non-zero tokens", async () => {
     // Three assistant turns with per-turn usage but NO terminal `result`

@@ -1372,7 +1372,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               toolNames: allToolNames,
               // R1 audit W4: bounded — half the rounds finishes a nearly-done
               // task; anything needing more re-caps into checkpoint + ¿Sigo?.
-              maxTurns: Math.max(4, Math.ceil(maxRounds / 2)),
+              maxTurns: input.unlimited
+                ? LOOP_MAX_TURNS
+                : Math.max(4, Math.ceil(maxRounds / 2)),
               unlimited: input.unlimited,
               abortSignal: input.signal,
               costLedger: false,

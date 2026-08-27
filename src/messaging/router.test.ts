@@ -3178,3 +3178,116 @@ describe("/loop — operator-instructed unlimited task (2026-08-27)", () => {
     );
   });
 });
+
+describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+  let tgAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    _resetThreadPins();
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    process.env.TELEGRAM_OWNER_CHAT_ID = "12345";
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    tgAdapter = createMockAdapter("telegram");
+    router.registerChannel(waAdapter);
+    router.registerChannel(tgAdapter);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete process.env.TELEGRAM_OWNER_CHAT_ID;
+  });
+
+  it("Telegram, slash-less `loop <tarea>` (the adapter drops `/`-messages) → unlimited task", async () => {
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: "loop Revisa todos los PRs abiertos y ciérralos uno por uno",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.agentType).toBe("fast");
+    expect(sub.title).toBe(
+      "Chat: Revisa todos los PRs abiertos y ciérralos uno por uno",
+    );
+  });
+
+  it("WhatsApp group from the owner: the `[Grupo:]` header is kept, the prefix behind it is stripped", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "group@g.us",
+      text: "[Grupo: group@g.us, De: owner]\nloop Cierra los PRs abiertos",
+      timestamp: new Date(),
+      metadata: {
+        isGroup: true,
+        groupJid: "group@g.us",
+        senderJid: "owner@s.whatsapp.net",
+      },
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.detectionText).toMatch(
+      /^\[Grupo: group@g\.us, De: owner\]\s*Cierra los PRs abiertos$/,
+    );
+  });
+
+  it("a group MEMBER's `loop …` never becomes an unlimited task", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "group@g.us",
+      text: "[Grupo: group@g.us, De: member]\nloop Cierra los PRs abiertos",
+      timestamp: new Date(),
+      metadata: {
+        isGroup: true,
+        groupJid: "group@g.us",
+        senderJid: "member@s.whatsapp.net",
+      },
+    });
+    for (const call of vi.mocked(submitTask).mock.calls) {
+      expect(call[0].unlimited).not.toBe(true);
+      expect(call[0].tags ?? []).not.toContain("loop");
+    }
+  });
+
+  it("a /loop task is NEVER abandoned: 21 min later the abort registry still holds it, a nudge was sent, no 'Se agotó'", async () => {
+    vi.useFakeTimers();
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "loop Revisa todos los PRs abiertos y ciérralos",
+      timestamp: new Date(),
+    });
+    await vi.advanceTimersByTimeAsync(21 * 60_000);
+    const pending = (
+      router as unknown as { pendingReplies: Map<string, unknown> }
+    ).pendingReplies;
+    expect(pending.has("test-task-123")).toBe(true);
+    const texts = waAdapter.sentMessages.map((m) => m.text);
+    expect(texts.some((t) => t.startsWith("Se agotó el tiempo"))).toBe(false);
+    expect(texts.some((t) => t.startsWith("Sigo en /loop"))).toBe(true);
+  });
+
+  it("a normal task still abandons at 11 min (the registry entry is released)", async () => {
+    vi.useFakeTimers();
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Revisa todos los PRs abiertos y ciérralos",
+      timestamp: new Date(),
+    });
+    await vi.advanceTimersByTimeAsync(12 * 60_000);
+    const pending = (
+      router as unknown as { pendingReplies: Map<string, unknown> }
+    ).pendingReplies;
+    expect(pending.has("test-task-123")).toBe(false);
+    const texts = waAdapter.sentMessages.map((m) => m.text);
+    expect(texts.some((t) => t.startsWith("Se agotó el tiempo"))).toBe(true);
+  });
+});

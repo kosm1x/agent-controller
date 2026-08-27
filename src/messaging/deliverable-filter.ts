@@ -56,6 +56,8 @@ const SDK_ERROR_MARKER_RE =
   /^[ \t]*\[(error_max_turns|error_max_budget_usd|error_during_execution|error_max_structured_output_retries)[^\]\n]*\](?:[ \t]*Partial response below[^\n]*)?/gm;
 /** `[timeout after 900s — partial response below]` */
 const TIMEOUT_MARKER_RE = /^[ \t]*\[timeout after \d+s[^\]\n]*\]/gm;
+/** `[MODO /loop — sin límite de turnos …]` — the router's own user-turn line for a `/loop` task, echoed back. Not a failure. */
+const LOOP_MODE_MARKER_RE = /^[ \t]*\[MODO \/loop[^\]\n]*\][ \t]*$/gm;
 /** `STATUS: DONE_WITH_CONCERNS — …` on its own line (parseRunnerStatus strips only the tail). */
 const STATUS_LINE_RE =
   /^[ \t]*STATUS:\s*(?:DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)\b[^\n]*$/gm;
@@ -203,6 +205,8 @@ export function sanitizeDeliverable(raw: string): SanitizeResult {
   cut(TIMEOUT_MARKER_RE, "timeout_marker", () => {
     failureKind ??= "timeout";
   });
+  // Echoed `/loop` mode line: a record, not a reply and not a failure.
+  cut(LOOP_MODE_MARKER_RE, "loop_mode_marker");
   // Auth / API errors name the CAUSE; a turn/timeout marker is usually the
   // consequence — so these override rather than defer.
   cut(AUTH_FAILURE_RE, "auth_failure", () => {
@@ -251,8 +255,7 @@ export function sanitizeDeliverable(raw: string): SanitizeResult {
       // A preamble carrying a bold headline or its own paragraphs is content
       // (corpus replay ce948187: "✅ **KB de Pulso Aura actualizado**" before
       // the "## Delta" block) — never dropped.
-      const isRunLog =
-        RUN_LOG_RE.test(pre) && !/\*\*|\n\n/.test(pre.trim());
+      const isRunLog = RUN_LOG_RE.test(pre) && !/\*\*|\n\n/.test(pre.trim());
       if (isRunLog && contentLength(text.slice(m.index)) >= 80) {
         text = text.slice(m.index).replace(/^\s*---[ \t]*\n/, "");
         stripped.push("preamble");

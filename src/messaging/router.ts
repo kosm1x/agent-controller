@@ -154,6 +154,7 @@ const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
 const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → give up (past SDK 15min timeout with grace)
 const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
+const LOOP_NUDGE_MS = 600_000; // /loop: no abandon — a "sigo" line every 10 min instead
 
 // Intent regexes for handleInbound. Module-level (they close over nothing) so
 // they compile once, not on every inbound message.
@@ -1244,7 +1245,11 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
  * cap, no SDK wall-clock, exempt from the stuck-task kill. Only the hard stop
  * ("Para") ends it. Operator-only; the prefix is stripped before anything
  * else sees the text. */
-const LOOP_RE = /^\/loop\b[\s:—-]*/i;
+// Slash OPTIONAL, like RITUALES_RE: the Telegram adapter drops every message
+// that starts with "/" before the router sees it (telegram.ts `message:text`),
+// so the phone form is `loop <tarea>` (qa-audit C1).
+const LOOP_RE = /^\/?loop\b[\s:—-]*/i;
+const LOOP_GROUP_HEADER_RE = /^\[Grupo:.*\]\s*\n?/i;
 const LOOP_TURN_LINE =
   "\n[MODO /loop — sin límite de turnos ni de tiempo: continúa hasta TERMINAR la tarea completa; el operador puede detenerte con «Para».]";
 const LOOP_USAGE =
@@ -2423,7 +2428,7 @@ export class MessageRouter {
       msg.channel,
       msg.from,
       isCodingTask,
-      { stream: streamController ?? undefined },
+      { stream: streamController ?? undefined, unlimited: msg.loop === true },
     );
 
     this.pendingReplies.set(result.taskId, {
@@ -2476,9 +2481,6 @@ export class MessageRouter {
   async handleInbound(msg: IncomingMessage): Promise<void> {
     this.lastMessageTime = Date.now();
 
-    // Day log: record user message (mechanical, no LLM)
-    appendDayLog("USER", msg.text);
-
     const senderJid = (msg.metadata?.senderJid as string) ?? undefined;
     // Pass the channel adapter's email mode so threadKey can per-sender isolate
     // community-manager mailboxes (each external sender gets their own buffer +
@@ -2491,22 +2493,31 @@ export class MessageRouter {
       this.channels.get(msg.channel)?.mode,
     );
 
-    // `/loop <tarea>` (operator only): strip the prefix and flag the message;
-    // submitInboundTask lifts every cap for this one task.
-    if (
-      LOOP_RE.test(msg.text) &&
-      this.operatorThreadKey(msg, tk) !== undefined
-    ) {
-      msg.text = msg.text.replace(LOOP_RE, "").trim();
-      if (!msg.text) {
-        this.sendToChannel(msg.channel, msg.from, LOOP_USAGE);
-        return;
+    // `/loop <tarea>` (operator only, Telegram/WhatsApp — never email): strip
+    // the prefix and flag the message; submitInboundTask lifts every cap for
+    // this one task. A WhatsApp group message carries a `[Grupo: …]` header —
+    // match past it and keep it (the model reads the sender from it).
+    if (msg.channel === "telegram" || msg.channel === "whatsapp") {
+      const grupo = msg.text.match(LOOP_GROUP_HEADER_RE)?.[0] ?? "";
+      const body = msg.text.slice(grupo.length);
+      if (LOOP_RE.test(body) && this.operatorThreadKey(msg, tk) !== undefined) {
+        const rest = body.replace(LOOP_RE, "").trim();
+        if (!rest) {
+          this.sendToChannel(msg.channel, msg.from, LOOP_USAGE);
+          return;
+        }
+        msg.text = grupo + rest;
+        msg.loop = true;
+        console.log(
+          `[loop] channel=${msg.channel} unlimited task: "${rest.slice(0, 60)}"`,
+        );
       }
-      msg.loop = true;
-      console.log(
-        `[loop] channel=${msg.channel} unlimited task: "${msg.text.slice(0, 60)}"`,
-      );
     }
+
+    // Day log: record user message (mechanical, no LLM) — after the /loop
+    // strip so the work-truth surface never stores the prefix.
+    appendDayLog("USER", msg.text);
+
     if (this.interceptContextClear(msg, tk)) return;
     if (await this.interceptBackgroundAgentSpawn(msg, tk)) return;
     if (this.interceptAgentList(msg)) return;
@@ -3479,7 +3490,12 @@ export class MessageRouter {
     channel: ChannelName,
     to: string,
     isCodingTask: boolean,
-    opts: { rerun?: boolean; stream?: TelegramStreamController } = {},
+    opts: {
+      rerun?: boolean;
+      stream?: TelegramStreamController;
+      /** `/loop`: no abandon timer, repeating progress nudge instead. */
+      unlimited?: boolean;
+    } = {},
   ): {
     interimTimer: ReturnType<typeof setTimeout>;
     finalTimer: ReturnType<typeof setTimeout>;
@@ -3507,6 +3523,24 @@ export class MessageRouter {
       }
     }, TASK_TIMEOUT_FINAL_MS);
 
+    // `/loop`: NEVER abandon — the pendingReplies entry is the abort registry
+    // ("Para" walks it) and the result must land whenever it arrives; the
+    // repeating nudge is the progress surface instead (qa-audit C2/W7).
+    // Node's clearTimeout cancels an interval handle too, so the existing
+    // clear sites need no change.
+    if (opts.unlimited) {
+      const startedAt = Date.now();
+      const abandonTimer = setInterval(() => {
+        if (!this.pendingReplies.get(taskId)) return;
+        const min = Math.round((Date.now() - startedAt) / 60_000);
+        this.sendToChannel(
+          channel,
+          to,
+          `Sigo en /loop — ${min} min. «Para» lo detiene.`,
+        );
+      }, LOOP_NUDGE_MS);
+      return { interimTimer, finalTimer, abandonTimer };
+    }
     const abandonMs = isCodingTask
       ? TASK_TIMEOUT_ABANDON_CODING_MS
       : TASK_TIMEOUT_ABANDON_MS;
@@ -3669,7 +3703,11 @@ export class MessageRouter {
           pending.channel,
           pending.to,
           spec.isCodingTask,
-          { rerun: true, stream: stream ?? undefined },
+          {
+            rerun: true,
+            stream: stream ?? undefined,
+            unlimited: spec.tags.includes("loop"),
+          },
         );
         this.pendingReplies.set(result.taskId, {
           channel: pending.channel,

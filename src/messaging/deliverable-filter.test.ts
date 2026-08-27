@@ -7,6 +7,7 @@ import {
 const MARKERS = [
   "[error_max_turns",
   "[timeout after",
+  "[MODO /loop",
   "STATUS:",
   "Partial response below",
   "[Task failed]",
@@ -32,7 +33,9 @@ describe("sanitizeDeliverable — harness markers", () => {
     expect(r.failureKind).toBe("turn_budget");
     expect(r.text.startsWith("Commit 8a49b05 listo.")).toBe(true);
     expect(r.text).toContain("Dime «sigue» para continuar.");
-    expect(r.text.split("\n").filter((l) => l.includes("presupuesto"))).toHaveLength(1);
+    expect(
+      r.text.split("\n").filter((l) => l.includes("presupuesto")),
+    ).toHaveLength(1);
   });
 
   it("a markers-only reply becomes a single failure line, never silence", () => {
@@ -53,6 +56,18 @@ describe("sanitizeDeliverable — harness markers", () => {
     expect(r.failureKind).toBe("timeout");
     expect(r.text).toMatch(/^Análisis del PDF: tres hallazgos\./);
     expect(r.text).toContain("¿Sigo desde donde quedó?");
+  });
+
+  it("echoed /loop mode line → stripped as a record, NOT a failure (2026-08-27)", () => {
+    const body =
+      "Revisé los tres PRs abiertos: #32 sigue esperando revisión, #33 quedó obsoleto tras #35 y lo cerré con nota, #34 ya estaba cerrado. Nada más pendiente.";
+    const r = sanitizeDeliverable(
+      `[MODO /loop — sin límite de turnos ni de tiempo: continúa hasta TERMINAR la tarea completa; el operador puede detenerte con «Para».]\n\n${body}`,
+    );
+    expectClean(r.text);
+    expect(r.stripped).toContain("loop_mode_marker");
+    expect(r.failureKind).toBeUndefined();
+    expect(r.text).toBe(body);
   });
 
   it("task 12375 shape: duplicated markers, English sandbox monologue, 401 OAuth ×4 → one auth line", () => {
@@ -76,16 +91,18 @@ describe("sanitizeDeliverable — harness markers", () => {
     // Exactly one Spanish failure line, last. The content guard (R1 audit
     // C2) keeps the final English sentence because nothing else remains —
     // it is flagged, not dropped (Phase 0 does not translate).
-    expect(r.text.endsWith(
-      "Se venció la sesión de autenticación (OAuth). Reintenta en unos minutos; si persiste, hay que renovar el token.",
-    )).toBe(true);
+    expect(
+      r.text.endsWith(
+        "Se venció la sesión de autenticación (OAuth). Reintenta en unos minutos; si persiste, hay que renovar el token.",
+      ),
+    ).toBe(true);
     expect(r.text.match(/Se venció/g)).toHaveLength(1);
     expect(r.text.startsWith("Let me verify the EROFS")).toBe(true);
   });
 
   it("API Error 400 in a BLOCKED runner text → prose + api line with the code", () => {
     const r = sanitizeDeliverable(
-      "Aquí va el poema:\n\nAPI Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Output blocked by content filtering policy\"}}",
+      'Aquí va el poema:\n\nAPI Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Output blocked by content filtering policy"}}',
     );
     expect(r.failureKind).toBe("api_error");
     expect(r.text).toContain("La API devolvió un error 400. ¿Reintento?");
@@ -281,10 +298,10 @@ describe("sanitizeDeliverable — R1 audit regressions (2026-08-23, replayed fro
 
 describe("sanitizeDeliverable — V8.4 read-back lines are harness lines (Phase 2, R1 audit W6)", () => {
   it("the ledger's trailing lines do not count as content, so a short model sentence before them survives", () => {
-    const raw = "Voy a escribir el archivo.\n\n✔ Verificado: KB projects/demo/x.md (sha 1234, 40 chars, 2026-08-23 02:00:00)\n⚠️ No quedó: KB projects/demo/y.md escrito — KB projects/demo/y.md: no existe tras la escritura\n⏳ Sin releer (no alcancé a verificar): KB projects/demo/z.md escrito\nGates: 1/1 met";
+    const raw =
+      "Voy a escribir el archivo.\n\n✔ Verificado: KB projects/demo/x.md (sha 1234, 40 chars, 2026-08-23 02:00:00)\n⚠️ No quedó: KB projects/demo/y.md escrito — KB projects/demo/y.md: no existe tras la escritura\n⏳ Sin releer (no alcancé a verificar): KB projects/demo/z.md escrito\nGates: 1/1 met";
     const r = sanitizeDeliverable(raw);
     expect(r.text).toBe(raw);
     expect(r.stripped).toEqual([]);
   });
 });
-

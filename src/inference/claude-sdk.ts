@@ -637,7 +637,11 @@ export async function queryClaudeSdk(opts: {
 
   const abortController = new AbortController();
   if (opts.abortSignal) {
-    opts.abortSignal.addEventListener("abort", () => abortController.abort());
+    // A signal aborted BEFORE this point never fires the listener; for an
+    // `unlimited` query there is no timer to catch that race (qa-audit W6).
+    if (opts.abortSignal.aborted) abortController.abort();
+    else
+      opts.abortSignal.addEventListener("abort", () => abortController.abort());
   }
 
   // Hard timeout: kill the subprocess if it hangs. SDK has no built-in timeout
